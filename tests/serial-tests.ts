@@ -40,6 +40,8 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/instrumentation.test.ts",
   "tests/integration/build-smoke.test.ts",
   "tests/integration/example-notes.test.ts",
+  "tests/integration/rate-limit-header-server.test.ts",
+  "tests/job-discovery.test.ts",
   "tests/mcp-dev-logs-spa.test.ts",
   "tests/mcp-devtools.test.ts",
   "tests/migrate-effect-fixture.test.ts",
@@ -54,7 +56,6 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/server-misc-coverage.test.ts",
   "tests/spa-export.test.ts",
   "tests/tailwind.test.ts",
-  "tests/task-discovery.test.ts",
   "tests/ui-desktop-feature.test.ts",
 ];
 

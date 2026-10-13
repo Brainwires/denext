@@ -67,6 +67,9 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "actionMaxBodyBytes",
     "canonicalOrigin",
     "trustForwardedHeaders",
+    // Which address the per-address limits key on behind a proxy (or on a LAN).
+    "rateLimitHeader",
+    "rateLimitLocalAddresses",
     // Response compression: a proxy that compresses in front of the server turns it off.
     "compress",
     // Shared-cache headers on ISR pages: what a CDN in front may cache.
@@ -97,7 +100,7 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
 /**
  * Keys whose editor lives on another panel altogether.
  *
- * `scheduledTasks` and `tasks` are cron. The Cron page already writes both — the schedules as
+ * `scheduledJobs` and `jobs` are cron. The Cron page already writes both — the schedules as
  * rows, the history as a toggle — and a second editor for them here would mean two forms, two
  * `_base` stamps and two ways to disagree about one key. They stay in the `/api/config` twin,
  * which reports what the file holds; they are simply not edited from the key views.
@@ -106,8 +109,8 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
  * than that key sitting beside `cacheComponents` on Rendering.
  */
 const OWNED_ELSEWHERE: ReadonlyMap<string, string> = new Map([
-  ["scheduledTasks", "/config/cron"],
-  ["tasks", "/config/cron"],
+  ["scheduledJobs", "/config/cron"],
+  ["jobs", "/config/cron"],
 ]);
 
 /**

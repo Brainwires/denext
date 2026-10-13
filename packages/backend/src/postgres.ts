@@ -93,7 +93,7 @@ export function openPostgres(
 
 type ContextBridge = { __denextCurrentRequestContext?: () => { request?: Request } | undefined };
 
-/** The request context the code runs in, or `undefined` (a task, a script, module load). */
+/** The request context the code runs in, or `undefined` (a job, a script, module load). */
 function currentRequestContext(): object | undefined {
   const context = (globalThis as ContextBridge).__denextCurrentRequestContext?.();
   return context?.request ? context : undefined;
@@ -179,7 +179,7 @@ export interface Db {
  * import { db } from "@denext/backend/server";
  * // Inside a request: runs as the signed-in user (`auth.uid()` in your policies), else as anon.
  * const notes = await db()`select id, body from notes order by id`;
- * // A task acting for a user, or as the server itself:
+ * // A job acting for a user, or as the server itself:
  * await db({ as: { id: userId } })`insert into notes (owner, body) values (${userId}, ${body})`;
  * await db.service()`delete from notes where created_at < now() - interval '1 year'`;
  * ```

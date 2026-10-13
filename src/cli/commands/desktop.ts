@@ -108,7 +108,8 @@ export const desktopCommand: CommandSpec = {
     "                                         Sign a full-app update (archive + app-update.json)\n" +
     "  denext desktop publish-update --resign Re-sign the published manifest before it expires\n" +
     "  denext desktop doctor                  The pinned runtime, and on Linux the session's tray host,\n" +
-    "                                         Secret Service and portals, each with a fix (--json)",
+    "                                         Secret Service and portals, each with a fix (--json)\n" +
+    "  Deno's own `deno desktop` (compile a script into a desktop app): `denext deno desktop`.",
   positionals: [
     {
       name: "action",

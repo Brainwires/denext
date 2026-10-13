@@ -507,7 +507,7 @@ Deno.test("enabling RLS writes a migration for a catalog table, and runs no SQL"
       await Deno.readTextFile(join(h.dir, "migrations", files[0])),
       'ALTER TABLE "public"."notes" ENABLE ROW LEVEL SECURITY;',
     );
-    assert(await exists(join(h.dir, "tasks", "migrate.ts")), "the runner comes with it");
+    assert(await exists(join(h.dir, "jobs", "migrate.ts")), "the runner comes with it");
     assertEquals(sent.every((e) => e.request.op === "policies"), true, "only the catalog was read");
     const unknown = await postTo(
       h,

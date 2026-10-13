@@ -5,7 +5,10 @@
 // hold no privilege on gets no route. Also the statements themselves on a real server: typed
 // filters, `in`, `like`, ordering, `count=exact`, a one-column PATCH, bulk inserts through
 // `json_populate_recordset`, a unique violation (409), the statement timeout (504), and the row
-// types generated from the live catalog.
+// types generated from the live catalog. A second app: a `security_invoker` view read with each
+// caller's rights, `count=exact` refused for anon, the CSRF rule for cookie writes (a cookieless
+// cross-site write reaches the policies), and `maxConcurrent` answering 503 + `Retry-After`
+// while a statement sleeps on the server.
 //
 // The app connects as a NON-superuser role in a database of its own (both dropped afterwards).
 // Opt-in, on denext's Deno runtime (the built-in `Deno.SQL`), with a superuser URL:
@@ -294,6 +297,140 @@ Deno.test({
       assertStringIncludes(types, `"is_public"?: boolean;`);
       const insert = types.slice(types.indexOf("Insert:"), types.indexOf("Update:"));
       assert(!insert.includes(`"words"`), "a generated column is never written");
+    } finally {
+      resetPlugins();
+      installPostgres(undefined);
+      await env.drop();
+      await Deno.remove(root, { recursive: true });
+    }
+  },
+});
+
+/** Notes behind a `security_invoker` view, and a slow view to hold a statement slot. */
+const VIEWS = `
+  create table notes (id serial primary key, owner uuid not null, body text not null);
+  alter table notes enable row level security;
+  create policy "read own" on notes for select to authenticated using (owner = auth.uid());
+  create policy "insert own" on notes for insert to authenticated with check (owner = auth.uid());
+  grant select, insert on notes to authenticated;
+  grant select on notes to anon;
+  grant usage on sequence notes_id_seq to authenticated;
+  create view my_notes with (security_invoker = on) as select id, owner, body from notes;
+  grant select on my_notes to authenticated, anon;
+  create view nap with (security_invoker = on) as select pg_sleep(1.5)::text as nap;
+  grant select on nap to anon;
+`;
+
+Deno.test({
+  name:
+    `auto-REST on a real Postgres: security_invoker views, maxConcurrent, exactCount, CSRF${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await environment();
+    const root = await Deno.makeTempDir({ prefix: "dnx-rest-pg-" });
+    try {
+      await Deno.mkdir(`${root}/app`);
+      resetPlugins();
+      installPostgres(undefined);
+      const config = {
+        plugins: [
+          denextAuth(authConfig),
+          backend({ postgres: { sql: env.app }, rest: { maxConcurrent: 1 } }),
+        ],
+      } as DenextConfig;
+      await applyPlugins({ projectRoot: root, appDir: `${root}/app`, config, mode: "build", load });
+      await rlsReady();
+      await db.service().unsafe(VIEWS).simple!();
+      await db.service().unsafe(
+        `insert into notes (owner, body) values ($1, 'a1'), ($1, 'a2'), ($2, 'b1')`,
+        [A, B],
+      );
+      const manifest = await scanRoutes(`${root}/app`);
+      const handler = createApp({
+        getManifest: () => manifest,
+        load,
+        matchExternal: getPluginRequestHandler(),
+      });
+      const cookies: Record<string, string> = { [A]: await cookieFor(A), [B]: await cookieFor(B) };
+      const call = (
+        path: string,
+        init: RequestInit & { as?: string; origin?: string } = {},
+      ) => {
+        const { as, origin, ...rest } = init;
+        const headers = new Headers(rest.headers);
+        headers.set("host", "app.test");
+        if (as) headers.set("cookie", cookies[as]);
+        if (rest.method && rest.method !== "GET") headers.set("origin", origin ?? ORIGIN);
+        if (rest.body !== undefined) headers.set("content-type", "application/json");
+        return handler(new Request(new URL(path, ORIGIN), { ...rest, headers }));
+      };
+      const bodies = async (res: Response) => {
+        assertEquals(res.status, 200, await res.clone().text());
+        return ((await res.json()) as { body: string }[]).map((r) => r.body).sort();
+      };
+
+      // A security_invoker view is served under "*" and reads with the CALLER's rights: the
+      // policies on the table underneath decide, per user, and anon sees nothing.
+      assertEquals(await bodies(await call("/rest/v1/my_notes?select=body", { as: A })), [
+        "a1",
+        "a2",
+      ]);
+      assertEquals(await bodies(await call("/rest/v1/my_notes?select=body", { as: B })), ["b1"]);
+      assertEquals(await bodies(await call("/rest/v1/my_notes?select=body")), []);
+
+      // count=exact is for signed-in users by default: anon is refused before any statement.
+      const anonCount = await call("/rest/v1/my_notes", { headers: { prefer: "count=exact" } });
+      assertEquals([anonCount.status, (await anonCount.json()).code], [400, "PGRST100"]);
+      const counted = await call("/rest/v1/my_notes?select=body&limit=1", {
+        as: A,
+        headers: { prefer: "count=exact" },
+      });
+      assertEquals([counted.status, counted.headers.get("content-range")], [206, "0-0/2"]);
+      await counted.body?.cancel();
+
+      // CSRF: a cookie-carrying write from another site is refused before the database; the
+      // same write same-site goes through; a cookieless cross-site one reaches Postgres (and
+      // its policies, which refuse anon).
+      const write = JSON.stringify({ owner: A, body: "a3" });
+      const forged = await call("/rest/v1/notes", {
+        as: A,
+        method: "POST",
+        body: write,
+        origin: "https://evil.test",
+      });
+      assertEquals([forged.status, (await forged.json()).code], [403, "csrf_failed"]);
+      const sameSite = await call("/rest/v1/notes", { as: A, method: "POST", body: write });
+      assertEquals(sameSite.status, 201);
+      await sameSite.body?.cancel();
+      const cookieless = await call("/rest/v1/notes", {
+        method: "POST",
+        body: write,
+        origin: "https://evil.test",
+      });
+      assertEquals([cookieless.status, (await cookieless.json()).code], [403, "42501"]);
+      assertEquals(
+        (await db.service()`select count(*)::int as n from notes where body = 'a3'`)[0].n,
+        1,
+        "only the same-site write landed",
+      );
+
+      // maxConcurrent: 1 — while one statement sleeps on the server, the next waits its second,
+      // then is turned away with 503 PGRST003 and Retry-After; the slot frees afterwards.
+      const slow = call("/rest/v1/nap");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const turnedAway = await call("/rest/v1/my_notes", { as: A });
+      assertEquals(turnedAway.status, 503);
+      assertEquals(turnedAway.headers.get("retry-after"), "1");
+      assertEquals((await turnedAway.json()).code, "PGRST003");
+      const napped = await slow;
+      assertEquals(napped.status, 200);
+      await napped.body?.cancel();
+      assertEquals(
+        (await bodies(await call("/rest/v1/my_notes?select=body", { as: A }))).length,
+        3,
+      );
     } finally {
       resetPlugins();
       installPostgres(undefined);

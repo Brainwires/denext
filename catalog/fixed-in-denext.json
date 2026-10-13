@@ -539,23 +539,23 @@
       "errorText": [],
       "affects": { "stack": "Next.js", "versions": "any" },
       "cause": "Next.js has no scheduler of its own.",
-      "denext": "A task in `tasks/<name>.ts` with `defineTask` runs on a cron schedule (`Deno.cron` where available, else a built-in scheduler that never overlaps a running instance), on demand with `runTask()` or `denext task <name>`, with optional run history.",
+      "denext": "A job in `jobs/<name>.ts` with `defineJob` runs on a cron schedule (`Deno.cron` where available, else a built-in scheduler that never overlaps a running instance), on demand with `runJob()` or `denext job <name>`, with optional run history.",
       "upstreamFirst": null,
       "evidence": [
         {
-          "test": "tests/tasks.test.ts",
-          "name": "scheduleTasks uses Deno.cron when available and hands it the schedule"
+          "test": "tests/jobs.test.ts",
+          "name": "scheduleJobs uses Deno.cron when available and hands it the schedule"
         },
         {
-          "test": "tests/tasks.test.ts",
-          "name": "userland scheduler: never on registration, once per matching minute, never overlapping, aborted on dispose"
+          "test": "tests/jobs-timers.vitest.ts",
+          "name": "never fires on registration, once per matching minute, never overlapping, aborted on dispose"
         },
         {
-          "test": "tests/cli-task-history.test.ts",
+          "test": "tests/cli-job-history.test.ts",
           "name": "a manual CLI run is recorded, exactly like a scheduled one"
         }
       ],
-      "docs": "/docs/tasks"
+      "docs": "/docs/jobs"
     },
     {
       "id": "self-hosted-cache",

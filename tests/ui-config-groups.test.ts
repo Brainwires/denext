@@ -44,20 +44,20 @@ Deno.test("every schema key lands in one view or is owned elsewhere, and no view
 Deno.test("the cron keys are owned by the Cron page, and no view shows them", () => {
   // Two editors for one key would mean two forms, two `_base` stamps, and two ways to disagree
   // about what the file says.
-  assertEquals(ownedElsewhere("scheduledTasks"), "/config/cron");
-  assertEquals(ownedElsewhere("tasks"), "/config/cron");
+  assertEquals(ownedElsewhere("scheduledJobs"), "/config/cron");
+  assertEquals(ownedElsewhere("jobs"), "/config/cron");
   assertEquals(ownedElsewhere("basePath"), null);
 
   const sections = [
-    { key: "scheduledTasks", description: "Cron schedules for background tasks." },
-    { key: "tasks", description: "Scheduled task behaviour." },
+    { key: "scheduledJobs", description: "Cron schedules for background jobs." },
+    { key: "jobs", description: "Scheduled job behaviour." },
     { key: "cache", description: "Cache store." },
   ];
   // Not on any view...
   for (const group of CONFIG_GROUPS) {
     const shown = visibleSections(sections, group).shown.map((s) => s.key);
-    assert(!shown.includes("scheduledTasks"), `${group} shows scheduledTasks`);
-    assert(!shown.includes("tasks"), `${group} shows tasks`);
+    assert(!shown.includes("scheduledJobs"), `${group} shows scheduledJobs`);
+    assert(!shown.includes("jobs"), `${group} shows jobs`);
   }
 });
 

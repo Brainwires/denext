@@ -2721,10 +2721,15 @@ spawn(command, args, { env: { ...process.env, ...env }, stdio });`}
           runs in the child too, so guard it with <code>if (!app.sidecarChild)</code>.
         </li>
         <li>
-          The child has the app&apos;s baked permissions, nothing more, and opens no listener. The
-          sidecar needs <code>permissions.run</code> to cover the app&apos;s executable:{" "}
-          <code>["*"]</code>, since its installed path is only known on the user&apos;s machine
-          (<code>spawnSelf</code> throws the reason when the app may not run it).
+          The child has the app&apos;s baked permissions, nothing more, and opens no listener. It
+          needs no{" "}
+          <code>permissions.run</code>: denext&apos;s pinned runtime authorizes a fork of its own
+          executable that has an IPC channel (<code>spawnSelf</code>, or a spawn of your own from
+          {" "}
+          <code>childCommand</code>) itself. Under the stock runtime and <code>deno run</code>{" "}
+          the sidecar needs <code>permissions.run</code>{" "}
+          to cover the executable (<code>["*"]</code>, since its installed path is only known on the
+          user&apos;s machine), and <code>spawnSelf</code> throws the reason when it doesn&apos;t.
         </li>
         <li>
           The child&apos;s stdout is the module&apos;s alone: denext&apos;s pinned runtime prints

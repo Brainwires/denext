@@ -4,13 +4,15 @@
 // project writes, and the re-exec decision itself, driven through its process seams.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { join, resolve } from "@std/path";
 import {
+  configFromCommandLine,
   maybeReexecPinned,
   pinnedDenextCli,
   pinnedVersion,
   type ReexecPinnedDeps,
   samePin,
+  toolchainConfigArgs,
 } from "../src/cli/self-exec.ts";
 import { buildRegistry } from "../src/cli/register.ts";
 
@@ -369,10 +371,40 @@ Deno.test("the verbs a binary defers are exactly the module-loading ones", () =>
   // those are, so a verb that starts loading a project's modules has to declare it here too.
   const verbs = buildRegistry().list();
   const deferred = verbs.filter((c) => c.loadsModules).map((c) => c.name).sort();
-  for (const name of ["dev", "build", "export", "start", "task", "doctor", "analyze", "profile"]) {
+  for (const name of ["dev", "build", "export", "start", "job", "doctor", "analyze", "profile"]) {
     assert(deferred.includes(name), `${name} loads the project's modules`);
   }
   for (const name of ["ui", "create", "init", "completions", "commands", "mcp", "fmt", "lint"]) {
     assert(!deferred.includes(name), `${name} never loads the project's modules in-process`);
   }
+});
+
+Deno.test("toolchainConfigArgs: the --config this process was started with, else nothing", async () => {
+  const argv = (a: string[] | null) => () => Promise.resolve(a);
+  assertEquals(
+    configFromCommandLine(["deno", "run", "-A", "--config", "x.json", "cli.ts"]),
+    "x.json",
+  );
+  assertEquals(configFromCommandLine(["deno", "run", "-c", "y.json", "cli.ts"]), "y.json");
+  assertEquals(
+    configFromCommandLine(["deno", "run", "--config=z.json", "cli.ts", "dev"]),
+    "z.json",
+  );
+  // After the script, a --config belongs to the program, not to Deno.
+  assertEquals(
+    configFromCommandLine(["deno", "run", "-A", "cli.ts", "--config", "a.json"]),
+    undefined,
+  );
+  assertEquals(configFromCommandLine(["deno", "eval", "--config", "b.json"]), undefined);
+  assertEquals(
+    await toolchainConfigArgs(argv(["deno", "run", "--config", "/p/deno.json", "c.ts"])),
+    [
+      "--config",
+      resolve("/p/deno.json"),
+    ],
+  );
+  assertEquals(await toolchainConfigArgs(argv(["deno", "run", "-A", "c.ts"])), []);
+  assertEquals(await toolchainConfigArgs(argv(null)), []);
+  // The real reader works on this host (or reports nothing).
+  assert(Array.isArray(await toolchainConfigArgs()));
 });

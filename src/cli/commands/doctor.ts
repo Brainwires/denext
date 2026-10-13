@@ -8,11 +8,12 @@
 
 import { platformFilesReport } from "../../build/platform-extensions.ts";
 import type { DenextConfig } from "../../server/config.ts";
-import { join } from "@std/path";
+import { join, resolve } from "@std/path";
 import { denoVersionOk, MIN_DENO_VERSION } from "../../build/deno-version.ts";
 import { VERSION } from "../../../mod.ts";
-import type { CommandSpec } from "../command.ts";
-import { projectDir } from "../shared.ts";
+import type { CommandContext, CommandSpec } from "../command.ts";
+import { commandCwd, denoGlobalArgs, projectDir } from "../shared.ts";
+import { runDenoPassthrough } from "./deno-toolchain.ts";
 import { resolveProject } from "../../build/paths.ts";
 import { type ConformanceReport, probeApp } from "../../testing/conformance.ts";
 import {
@@ -27,15 +28,49 @@ import { leakedCssShimKeys } from "../../build/css-config-guard.ts";
 import { DESKTOP_APP_CONFIG_FILE, desktopAppIdentity } from "../../build/desktop-app-config.ts";
 import { readJson } from "../../build/json-edit.ts";
 import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
+import { denoToolchainStatus } from "../../build/deno-toolchain.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { loadNativeDirs } from "../../build/capacitor-native-dirs.ts";
 
+/** Whether `path` is an existing directory. */
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isDirectory;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The project directory `denext info` describes, or null when the invocation is Deno's `info`:
+ * no argument (the cwd, or `--cwd`) or one argument naming a directory is denext's; a module,
+ * file or URL — or any Deno flag — is Deno's.
+ */
+async function infoProjectDir(ctx: CommandContext): Promise<string | null> {
+  if (ctx.rest.length === 0) return projectDir(ctx);
+  if (ctx.rest.length > 1 || ctx.rest[0].startsWith("-")) return null;
+  const dir = resolve(commandCwd(ctx), ctx.rest[0]);
+  return await isDirectory(dir) ? dir : null;
+}
+
 export const infoCommand: CommandSpec = {
   name: "info",
-  summary: "Print environment + project facts",
-  positionals: [{ name: "dir", help: "Project directory (default: .)" }],
+  summary: "Print environment + project facts; with a module, Deno's info",
+  passthrough: true,
+  usage: "  denext info [dir]              denext, Deno and platform versions + the project's\n" +
+    "                                 config, mode and app dir (--json)\n" +
+    "  denext info <module|file|URL>  Deno's `deno info` for that module (its flags pass through)\n" +
+    "Deno's cache locations (`deno info` with no argument): `denext deno info`.",
+  positionals: [{ name: "target", help: "Project directory (default: .), or a module for Deno" }],
   run: async (ctx) => {
-    const dir = projectDir(ctx);
+    const dir = await infoProjectDir(ctx);
+    if (dir === null) {
+      return await runDenoPassthrough(
+        ["info", ...denoGlobalArgs(ctx, { json: true }), ...ctx.rest],
+        commandCwd(ctx),
+        true,
+      );
+    }
     const paths = await resolveProject(dir);
     const facts = {
       denext: VERSION,
@@ -58,6 +93,7 @@ export const infoCommand: CommandSpec = {
     console.log(`  config     ${facts.config ?? "— (using defaults)"}`);
     console.log(`  mode       ${facts.mode}`);
     console.log(`  app dir    ${facts.appDir}\n`);
+    console.log("  Deno's cache info: denext deno info\n");
   },
 };
 
@@ -305,6 +341,59 @@ export async function desktopRuntimeCheck(
   return { name: "desktop runtime", ok: status.ok, detail: status.detail, critical: false };
 }
 
+/** A task command that runs `deno test` itself (stock Deno under `deno task`). */
+const STOCK_DENO_TEST = /(?:^|[;&|(]\s*)deno\s+test\b/;
+
+/** The deno.json tasks that call `deno test` directly. */
+async function stockDenoTestTasks(dir: string): Promise<string[]> {
+  const tasks = (await readDenoJson(dir))?.tasks;
+  if (typeof tasks !== "object" || tasks === null) return [];
+  return Object.entries(tasks as Record<string, unknown>)
+    .filter(([, v]) => {
+      const command = typeof v === "string" ? v : (v as { command?: unknown })?.command;
+      return typeof command === "string" && STOCK_DENO_TEST.test(command);
+    })
+    .map(([name]) => name);
+}
+
+/**
+ * denext's Deno toolchain: the pinned version, whether it is cached and verified, and whether
+ * this run is on it (or stock Deno, and why). When the toolchain is in use, it also names the
+ * deno.json tasks that call `deno test` themselves — `deno task` runs those on the Deno that
+ * started it, stock Deno, so they miss the toolchain's Vitest/Jest compat and `Deno.SQL`.
+ * Advisory; never downloads.
+ *
+ * @param dir The project directory.
+ * @param options Seams for {@linkcode denoToolchainStatus}.
+ * @returns The check.
+ */
+export async function denoToolchainCheck(
+  dir: string,
+  options: Parameters<typeof denoToolchainStatus>[0] = {},
+): Promise<Check> {
+  let status;
+  try {
+    status = await denoToolchainStatus(options);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { name: "deno toolchain", ok: false, detail, critical: false };
+  }
+  const tasks = status.mode === "stock" || status.state === "unpinned" ||
+      status.state === "unsupported"
+    ? []
+    : await stockDenoTestTasks(dir);
+  const note = tasks.length === 0 ? "" : `; deno.json task${tasks.length > 1 ? "s" : ""} ` +
+    `${tasks.map((t) => `"${t}"`).join(", ")} run${tasks.length > 1 ? "" : "s"} \`deno test\` ` +
+    "on stock Deno under a plain `deno task` — run it with `denext task`, " +
+    "or use `denext test` there";
+  return {
+    name: "deno toolchain",
+    ok: status.ok && tasks.length === 0,
+    detail: status.detail + note,
+    critical: false,
+  };
+}
+
 /**
  * The last build's client chunks, or `null` when `outDir` holds no client build output.
  * Reads what `denext build` emitted; never builds.
@@ -329,7 +418,7 @@ async function builtClientChunks(outDir: string): Promise<BundleChunk[] | null> 
  * @returns The report; see {@link DoctorReport} for when a section is `null`.
  */
 export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
-  const checks: Check[] = [denoVersionCheck()];
+  const checks: Check[] = [denoVersionCheck(), await denoToolchainCheck(dir)];
 
   // resolveProject loads + validates denext.config and throws on a malformed one; catch it
   // so `doctor` reports config *correctness* as a failed check, not a crash before any print.

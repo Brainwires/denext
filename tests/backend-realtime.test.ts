@@ -648,6 +648,35 @@ Deno.test("realtime: signed out behind an untrusted proxy-looking address, the q
   }
 });
 
+Deno.test("realtime: signed out, the app's rateLimitHeader / rateLimitLocalAddresses key the quota as the Live hub does", async () => {
+  const env = await setUp({ maxSubscriptionsPerIdentity: 1 });
+  try {
+    // Behind a loopback proxy that names each client: the quota is that client's (an IPv6 one's
+    // /64, an IPv4-mapped one's IPv4), shared across its tabs.
+    const named = (client: string) =>
+      env.hub.conn("", "127.0.0.1", {
+        headers: { "cf-connecting-ip": client },
+        policy: { header: "cf-connecting-ip" },
+      });
+    for (
+      const [first, second] of [
+        ["198.51.100.60", "198.51.100.60"],
+        ["2001:db8:7:8::1", "2001:db8:7:8::2"],
+        ["::ffff:198.51.100.61", "198.51.100.61"],
+      ]
+    ) {
+      assert((await env.hub.subscribe(named(first), "notes", { subId: "1" })).ok, first);
+      assertEquals((await env.hub.subscribe(named(second), "notes", { subId: "2" })).ok, false);
+    }
+    // A LAN client counted by its own private address: two tabs share one quota.
+    const lan = () => env.hub.conn("", "10.1.2.3", { policy: { localAddresses: true } });
+    assert((await env.hub.subscribe(lan(), "notes", { subId: "1" })).ok);
+    assertEquals((await env.hub.subscribe(lan(), "notes", { subId: "2" })).ok, false);
+  } finally {
+    await env.done();
+  }
+});
+
 Deno.test("realtime: at the instance cap a disconnected subscription gives way; live ones refuse", async () => {
   const env = await setUp({ maxSubscribers: 2 });
   const original = console.warn;

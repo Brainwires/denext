@@ -11,6 +11,7 @@ import {
   cliPermissionFlags,
   parentChildBase,
   readSidecarChildLaunch,
+  runtimeAuthorizesSelfFork,
   type SidecarChildBase,
   sidecarChildBase,
   sidecarChildHelpersUrl,
@@ -62,6 +63,7 @@ Deno.test("sidecarChildBase: a compiled app re-runs its own executable as `run <
         args: ["run", entry],
         env: { [SIDECAR_CHILD_ENV]: "server" },
         argcEnv: SIDECAR_CHILD_ARGC_ENV,
+        selfForkAuthorized: false,
       },
     );
   }
@@ -91,10 +93,51 @@ Deno.test("sidecarChildBase: the Deno CLI gets the app's unscoped permissions; n
       args: ["run", "--allow-read", "--allow-net", "/p/desktop.ts"],
       env: { [SIDECAR_CHILD_ENV]: "server" },
       argcEnv: SIDECAR_CHILD_ARGC_ENV,
+      selfForkAuthorized: false,
     },
   );
   const none = sidecarChildBase({ name: "server", execPath: "/deno", standalone: false });
   assert("error" in none && /importMetaUrl/.test(none.error), JSON.stringify(none));
+});
+
+Deno.test("sidecarChildBase: only a compiled app's runtime can authorize its self-forks", () => {
+  const base = (standalone: boolean) =>
+    sidecarChildBase({
+      name: "server",
+      execPath: "/app",
+      entryPath: "/e.ts",
+      standalone,
+      selfForkAuthorized: true,
+    });
+  const compiled = base(true);
+  assertEquals("error" in compiled ? compiled.error : compiled.selfForkAuthorized, true);
+  // The Deno CLI registers no self-fork token: `deno run` needs --allow-run over itself.
+  const cli = base(false);
+  assertEquals("error" in cli ? cli.error : cli.selfForkAuthorized, false);
+});
+
+Deno.test("runtimeAuthorizesSelfFork: denext's runtime (an app launch or a fork it authorized), never stock or the CLI", () => {
+  const unset = () => undefined;
+  // An app's own launch: Deno.desktop with the fork's authSession.cancel.
+  assert(runtimeAuthorizesSelfFork({ authSession: { cancel: () => false, start() {} } }, unset));
+  // A child the runtime forked: the worker token it was handed.
+  assert(
+    runtimeAuthorizesSelfFork(
+      undefined,
+      (k) => k === "DENO_DESKTOP_WORKER_TOKEN" ? "v1.1.x" : undefined,
+    ),
+  );
+  // The stock runtime (no cancel), the CLI (no Deno.desktop), an empty token, a refused read.
+  assert(!runtimeAuthorizesSelfFork({ authSession: { start() {} } }, unset));
+  assert(!runtimeAuthorizesSelfFork(undefined, unset));
+  assert(!runtimeAuthorizesSelfFork(undefined, () => ""));
+  assert(
+    !runtimeAuthorizesSelfFork(undefined, () => {
+      throw new Deno.errors.NotCapable("env");
+    }),
+  );
+  // This test process is plain `deno test`.
+  assert(!runtimeAuthorizesSelfFork());
 });
 
 Deno.test("cliPermissionFlags: only the kinds granted unscoped; an unknown kind is skipped", () => {
@@ -248,6 +291,7 @@ Deno.test("childCommand: the base, then the child's arguments and their count", 
     args: ["run", "C:\\Temp\\desktop.ts"],
     env: { [SIDECAR_CHILD_ENV]: "server" },
     argcEnv: SIDECAR_CHILD_ARGC_ENV,
+    selfForkAuthorized: false,
   });
   assertEquals(childCommand(["mcp-bridge", 3 as unknown as string]), {
     command: "C:\\Program Files\\My App\\My App.exe",
@@ -285,6 +329,7 @@ async function spawnFake(
     args: ["run", "-A", script],
     env: { [SIDECAR_CHILD_ENV]: "server" },
     argcEnv: SIDECAR_CHILD_ARGC_ENV,
+    selfForkAuthorized: false,
   });
   const child = spawnSelf(["a", "b"], {
     env: { ...Deno.env.toObject(), FAKE_PREFIX: JSON.stringify(prefix), DENO_DESKTOP_WS_URL: "x" },
@@ -324,11 +369,16 @@ const { sidecarChildHelpersUrl } = await import(${
     JSON.stringify(import.meta.resolve("../src/desktop/sidecar-child.ts"))
   });
 const { childHelpers } = await import(sidecarChildHelpersUrl());
-try {
-  childHelpers({ name: "server", command: Deno.execPath(), args: ["run", "x.ts"], env: {}, argcEnv: "N" }).spawnSelf([]);
-  console.log("spawned");
-} catch (err) {
-  console.log(err.message);
+for (const selfForkAuthorized of [false, true]) {
+  try {
+    const base = { name: "server", command: Deno.execPath(), args: ["run", "x.ts"], env: {}, argcEnv: "N", selfForkAuthorized };
+    const child = childHelpers(base).spawnSelf([]);
+    child.on("error", () => {});
+    child.kill();
+    console.log(selfForkAuthorized + ": spawned");
+  } catch (err) {
+    console.log(selfForkAuthorized + ": " + err.message);
+  }
 }`;
   const dir = await Deno.makeTempDir({ prefix: "denext-sidecar-child-" });
   const file = join(dir, "probe.mjs");
@@ -347,7 +397,10 @@ try {
     stderr: "piped",
   }).output().finally(() => Deno.remove(dir, { recursive: true }));
   const text = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
-  assert(/sidecar server: spawnSelf\(\) .*permissions\.run/.test(text), text);
+  assert(/false: sidecar server: spawnSelf\(\) .*permissions\.run/.test(text), text);
+  // A runtime that authorizes its self-forks (denext's pinned one) is not second-guessed: the
+  // permission is the runtime's to check at the spawn.
+  assert(!/true: sidecar server: spawnSelf\(\)/.test(text), text);
 });
 
 // ── a real module sidecar and its child ──────────────────────────────────────────────────────

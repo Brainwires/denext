@@ -5,13 +5,13 @@
 // written over an existing file (that rule lives in `generate.ts`).
 //
 // - `migration <name>` writes `migrations/<UTC timestamp>_<name>.sql` and, the first time,
-//   `tasks/migrate.ts`: a `defineTask` that applies every pending file in order on Deno's
-//   built-in `node:sqlite`, recording each in a `_migrations` table (`denext task migrate`) —
+//   `jobs/migrate.ts`: a `defineJob` that applies every pending file in order on Deno's
+//   built-in `node:sqlite`, recording each in a `_migrations` table (`denext job migrate`) —
 //   or, when `DATABASE_URL` is a `postgres://` URL, on Postgres through `migratePostgres`. A
 //   project that uses Postgres (that URL in the environment or `.env`, or a `postgres:` key in
 //   its denext config) gets Postgres SQL in the new file. A Prisma or Drizzle project is pointed
 //   at its own migration tool instead.
-// - `seed [name]` writes `tasks/seed.ts` (`denext task seed`): a `node:sqlite` seed by
+// - `seed [name]` writes `jobs/seed.ts` (`denext job seed`): a `node:sqlite` seed by
 //   default, a `PrismaClient` one in a Prisma project.
 // - `ci` writes `.github/workflows/ci.yml`: Deno pinned to the version generating it, then the
 //   project's own `check` task (else `deno fmt --check`, `deno lint`, `deno test`) and its
@@ -22,6 +22,7 @@
 import { parse as parseJsonc } from "@std/jsonc";
 import { join } from "@std/path";
 import { detectDockerMode } from "./docker-template.ts";
+import { denoReleaseVersion } from "./deno-version.ts";
 
 /** One file an ops scaffold would write. */
 export interface OpsPlanFile {
@@ -96,7 +97,7 @@ function migrationSql(slug: string, postgres: boolean): string {
       "-- BEGIN / COMMIT here)."
     : "-- Write forward-only SQL; each file runs once, inside a transaction (one that begins and commits\n" +
       "-- its own transaction runs as written).";
-  return `${sentinel("migration", "--")} — applied in file-name order by \`denext task migrate\`.
+  return `${sentinel("migration", "--")} — applied in file-name order by \`denext job migrate\`.
 ${transaction}
 
 -- ${slug}
@@ -144,14 +145,14 @@ async function readText(path: string): Promise<string | undefined> {
 }
 
 /**
- * `tasks/migrate.ts`: applies pending `migrations/*.sql` on Postgres when `DATABASE_URL` is a
+ * `jobs/migrate.ts`: applies pending `migrations/*.sql` on Postgres when `DATABASE_URL` is a
  * `postgres://` URL, else on `node:sqlite`. `{ "dryRun": true }` / `{ "status": true }` as the
  * payload list instead of applying.
  */
-const MIGRATE_TASK = `${sentinel("migration", "//")} — run it with \`denext task migrate\`.
+const MIGRATE_JOB = `${sentinel("migration", "//")} — run it with \`denext job migrate\`.
 //
 // Applies every \`migrations/*.sql\` not yet recorded in the \`_migrations\` table, in file-name
-// order, each inside its own transaction. \`denext task migrate --payload '{"dryRun":true}'\`
+// order, each inside its own transaction. \`denext job migrate --payload '{"dryRun":true}'\`
 // lists what would run; \`--payload '{"status":true}'\` shows what ran.
 //
 // Postgres when DATABASE_URL is a postgres:// URL: migratePostgres takes an advisory lock, so two
@@ -164,7 +165,7 @@ const MIGRATE_TASK = `${sentinel("migration", "//")} — run it with \`denext ta
 // ours. DB_PATH picks the database file (default app.db) — the same one lib/db.ts opens.
 import { DatabaseSync } from "node:sqlite";
 import {
-  defineTask,
+  defineJob,
   isPostgresUrl,
   migratePostgres,
   postgresClient,
@@ -182,7 +183,7 @@ interface MigratePayload {
   status?: boolean;
 }
 
-export default defineTask({
+export default defineJob({
   description: "Apply pending SQL migrations",
   handler: async ({ payload }) => {
     const options = (payload ?? {}) as MigratePayload;
@@ -281,7 +282,7 @@ async function onSqlite(options: MigratePayload): Promise<string> {
 
 /**
  * The files `denext generate migration <name>` writes: the timestamped SQL file (Postgres SQL
- * in a project that uses Postgres), plus the `tasks/migrate.ts` runner — Postgres or
+ * in a project that uses Postgres), plus the `jobs/migrate.ts` runner — Postgres or
  * `node:sqlite`, chosen by `DATABASE_URL` when it runs — when the project has none.
  *
  * @param projectDir The project root.
@@ -313,21 +314,21 @@ export async function migrationPlan(
     path: join(projectDir, "migrations", `${migrationStamp(now)}_${slug}.sql`),
     contents: migrationSql(slug, await usesPostgres(projectDir)),
   }];
-  const runner = join(projectDir, "tasks", "migrate.ts");
-  if (!(await exists(runner))) plan.push({ path: runner, contents: MIGRATE_TASK });
+  const runner = join(projectDir, "jobs", "migrate.ts");
+  if (!(await exists(runner))) plan.push({ path: runner, contents: MIGRATE_JOB });
   return plan;
 }
 
-/** `tasks/seed.ts` on `node:sqlite`. */
+/** `jobs/seed.ts` on `node:sqlite`. */
 function sqliteSeed(): string {
-  return `${sentinel("seed", "//")} — run it with \`denext task seed\`.
+  return `${sentinel("seed", "//")} — run it with \`denext job seed\`.
 //
 // Inserts development data. Keep it idempotent (INSERT OR IGNORE / upserts) so it can run
-// again; run \`denext task migrate\` first so the tables exist.
+// again; run \`denext job migrate\` first so the tables exist.
 import { DatabaseSync } from "node:sqlite";
-import { defineTask } from "denext/server";
+import { defineJob } from "denext/server";
 
-export default defineTask({
+export default defineJob({
   description: "Seed the database with development data",
   handler: () => {
     const db = new DatabaseSync(Deno.env.get("DB_PATH") ?? "app.db");
@@ -345,15 +346,15 @@ export default defineTask({
 `;
 }
 
-/** `tasks/seed.ts` through the project's `PrismaClient`. */
+/** `jobs/seed.ts` through the project's `PrismaClient`. */
 function prismaSeed(): string {
-  return `${sentinel("seed", "//")} — run it with \`denext task seed\`.
+  return `${sentinel("seed", "//")} — run it with \`denext job seed\`.
 //
 // Inserts development data through Prisma. Keep it idempotent (upsert) so it can run again.
 import { PrismaClient } from "@prisma/client";
-import { defineTask } from "denext/server";
+import { defineJob } from "denext/server";
 
-export default defineTask({
+export default defineJob({
   description: "Seed the database with development data",
   handler: async () => {
     const prisma = new PrismaClient();
@@ -370,7 +371,7 @@ export default defineTask({
 }
 
 /**
- * The file `denext generate seed [flavor]` writes: `tasks/seed.ts` for the detected data layer
+ * The file `denext generate seed [flavor]` writes: `jobs/seed.ts` for the detected data layer
  * (`sqlite` | `prisma`; Drizzle gets the `node:sqlite` shape to adapt).
  *
  * @param projectDir The project root.
@@ -384,7 +385,7 @@ export async function seedPlan(projectDir: string, override?: string): Promise<O
   }
   const flavor = await detectDataFlavor(projectDir, o);
   return [{
-    path: join(projectDir, "tasks", "seed.ts"),
+    path: join(projectDir, "jobs", "seed.ts"),
     contents: flavor === "prisma" ? prismaSeed() : sqliteSeed(),
   }];
 }
@@ -451,7 +452,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v${Deno.version.deno}
+          deno-version: v${denoReleaseVersion(Deno.version.deno)}
           cache: true
 ${checkSteps(tasks)}${buildTask ? `      - run: deno task ${buildTask}\n` : ""}`;
   return [{ path: join(projectDir, ".github", "workflows", "ci.yml"), contents }];

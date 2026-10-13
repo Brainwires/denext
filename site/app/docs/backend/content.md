@@ -8,7 +8,7 @@ lead: "@denext/backend puts backend services inside your app as one opt-in plugi
 denext plugin add @denext/backend
 ```
 
-Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.1.0"` to `deno.json`'s `imports`,
+Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.2.0"` to `deno.json`'s `imports`,
 then the plugin to `denext.config.ts`.
 
 Moving a project from Supabase? [Coming from Supabase](/docs/coming-from-supabase) maps each
@@ -65,7 +65,7 @@ no auth.
 
 **When `authorize` runs.** On every storage call made inside a request: the plugin's own endpoints,
 and the server API called from a route handler, Server Action or Server Component, with that
-request's session. Outside any request (a [task](/docs/tasks), a script, module load) there is no
+request's session. Outside any request (a [job](/docs/jobs), a script, module load) there is no
 session to authorize, so a plain handle is refused (`forbidden`; a public bucket's downloads stay
 open): code that acts as the server takes a service handle, there or inside a request (a webhook,
 an admin action). `storage.bucket("invoices", { service: true })` skips `authorize`; the size cap,
@@ -250,7 +250,7 @@ text spliced into the query. It also has `unsafe(text, params)` and `begin(async
 transaction. Every query it runs is scoped by [row-level security](#row-level-security) to the
 request's user; `db.service()` is the unscoped connection.
 
-The client is `Deno.SQL`, the Postgres client built into denext's Deno runtime, opened at startup
+The client is `Deno.SQL`, the Postgres client built into [denext's Deno toolchain](/docs/toolchain), opened at startup
 and closed when the server drains. On stock Deno there is none: the app still builds and starts,
 and `db()` throws an error with `code: "unsupported"` that says so. Pass a client of your own as
 `postgres: { sql }` instead — the npm `postgres` package through `fromPostgresJs` from
@@ -258,7 +258,7 @@ and `db()` throws an error with `code: "unsupported"` that says so. Pass a clien
 
 `backendAuthAdapter({ schema?, migrate? })` is `postgresAuthAdapter` on that client (see
 [Auth › Postgres](/docs/auth#postgres)): its `auth_*` tables are created by migrations on first
-use. Your own tables come from `denext generate migration <name>` and `denext task migrate`
+use. Your own tables come from `denext generate migration <name>` and `denext job migrate`
 ([Databases › Postgres migrations](/docs/database#plain-sql-files-on-postgres)).
 
 ## Row-level security
@@ -306,7 +306,7 @@ export async function POST(request: Request): Promise<Response> {
 | `db({ as: "anon" })`                                                   | `anon`                                   | `null`        |
 | `db.service()` / `db({ as: "service" })`                               | the app's own database user — **no RLS** | `null`        |
 
-Outside a request (a [task](/docs/tasks), a script) nobody is signed in, so `db()` is `anon` there:
+Outside a request (a [job](/docs/jobs), a script) nobody is signed in, so `db()` is `anon` there:
 act for a user with `db({ as: { id: userId } })`, or as the server itself with `db.service()`.
 `db()` reads who is asking for each query, from the request that makes it (once per request), not
 when the client was made — so a module-level `const sql = db()` is fine: it serves each visitor
@@ -504,7 +504,8 @@ if signed-out visitors may watch it) for its rows to be readable at all.
 visitors at one client address (`clientIpForLimits({ bucket: true })`, an IPv6 address counting
 as its `/64`: one Live connection when no address is
 known, or when it is a loopback/private socket peer — a reverse proxy every visitor shares; set
-`trustForwardedHeaders` behind one to key on each visitor's address) — may hold
+`trustForwardedHeaders` behind one, or name its client-address header in `rateLimitHeader`, to key
+on each visitor's address; `rateLimitLocalAddresses` counts such a peer as itself) — may hold
 `maxSubscriptionsPerIdentity` subscriptions (default 64), which also bounds
 the distinct filters (re-read groups) it adds to a burst; the instance holds `maxSubscribers`. An
 unsubscribed key is forgotten at once. One whose connection closed is kept for 15 seconds so a
@@ -557,7 +558,7 @@ through `fromPostgresJs`); without one every instance revalidates, with a warnin
 | `maxTrackedKeys`              | 10 000  | Keys tracked per subscription, for deletes.                                                           |
 | `queryTimeoutMs`              | 5 000   | `statement_timeout` of each re-read and subscribe-time query (transaction-local).                     |
 
-Realtime needs a Postgres client with `listen`: `Deno.SQL` (denext's Deno runtime), or the npm
+Realtime needs a Postgres client with `listen`: `Deno.SQL` (denext's [Deno toolchain](/docs/toolchain)), or the npm
 `postgres` package through `postgres: { sql: fromPostgresJs(postgres(url)) }` on stock Deno.
 Without one, `onTableChange` and `tableChanges` throw `RealtimeUnsupportedError`
 (`code: "unsupported"`), browser subscriptions are refused, and `denext dev` says so at startup.
@@ -745,4 +746,4 @@ and honours `--read-only`.
 
 Storage, Postgres, row-level security, realtime from the database and auto-REST are the services in
 `@denext/backend`. Auth ([`denextAuth`](/docs/auth)), push and live data ([Live](/docs/live)), functions ([route handlers](/docs/typed-api)) and scheduled
-[tasks](/docs/tasks) are already part of denext itself.
+[jobs](/docs/jobs) are already part of denext itself.

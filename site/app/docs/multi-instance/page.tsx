@@ -5,7 +5,7 @@ import { MarkdownDoc } from "../../../components/markdown.tsx";
 export const metadata = {
   title: "Multi-instance deployments",
   description:
-    "Every per-node component — CacheStore, SessionStore, RateLimitStore, AuthAdapter, ChannelTransport, the cron scheduler, task history — with its interface, what breaks across replicas, and how to share it.",
+    "Every per-node component — CacheStore, SessionStore, RateLimitStore, AuthAdapter, ChannelTransport, the cron scheduler, job history — with its interface, what breaks across replicas, and how to share it.",
 };
 
 export default async function MultiInstance() {

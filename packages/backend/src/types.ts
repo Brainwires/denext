@@ -39,7 +39,7 @@ export interface BucketConfig {
   /**
    * Decide one operation for the current request. Runs whenever a storage call is made inside
    * a request (the plugin's endpoints, and the server API called from a route handler, Server
-   * Action or page); a call outside any request (a task, a script) is trusted and skips it.
+   * Action or page); a call outside any request (a job, a script) is trusted and skips it.
    * Absent, every operation is denied — except downloads from a {@link public} bucket.
    */
   authorize?: (context: StorageAuthorizeContext) => boolean | Promise<boolean>;

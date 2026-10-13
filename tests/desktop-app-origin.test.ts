@@ -13,6 +13,7 @@ import {
   RESERVED_DESKTOP_SCHEMES,
 } from "../src/desktop/app-origin.ts";
 import {
+  DESKTOP_MINIMUM_RUNTIME,
   DESKTOP_RELAY_MARKING_RUNTIME,
   DESKTOP_RELAY_TOKEN_RUNTIME,
   DESKTOP_WS_URL_ENV,
@@ -267,14 +268,17 @@ Deno.test("trust: a runtime older than denext.7 (no relay marking) is refused", 
   assertEquals(resolveDesktopTrust(undefined).trust, LOOPBACK_TRUST);
 });
 
-Deno.test("runtime skew: the memory world without DENO_DESKTOP_WS_URL names denext.9 and the fix", () => {
+Deno.test("runtime skew: the memory world without DENO_DESKTOP_WS_URL names the minimum (denext.14) and the fix", () => {
   const memory = resolveDesktopTrust("t3code://app", "t3code://app", true).trust;
   // denext.7 / .8: the memory transport and the relay mark, but no relay URL published.
   for (const published of [undefined, ""]) {
     const w = desktopRuntimeSkewWarning(memory, published);
     assert(w !== undefined, String(published));
     assertEquals(DESKTOP_RELAY_TOKEN_RUNTIME, "2.9.7-denext.9");
-    assertStringIncludes(w, `older than ${DESKTOP_RELAY_TOKEN_RUNTIME}`);
+    assertEquals(DESKTOP_MINIMUM_RUNTIME, "2.9.7-denext.14");
+    assertStringIncludes(w, `older than ${DESKTOP_MINIMUM_RUNTIME}, the oldest denext supports`);
+    assertStringIncludes(w, `which came in ${DESKTOP_RELAY_TOKEN_RUNTIME}`);
+    assertStringIncludes(w, "spawnSelf");
     assertStringIncludes(w, DESKTOP_WS_URL_ENV);
     assertStringIncludes(w, "WebSockets");
     assertStringIncludes(w, "full-app updates");

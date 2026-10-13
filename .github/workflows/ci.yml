@@ -4,9 +4,10 @@ name: CI
 # development → main merge PR at a release. Triggering on `main` alone meant an rc could be
 # tagged from sixty commits none of which had been through CI. So every push to `development`
 # runs the fast `check` job (and the `bundle-budget` and macOS `ios-export-router` jobs); the
-# three heavy jobs (integration builds, real-npm next-compat, the coverage re-run) run on pull
-# requests, `main` and a manual dispatch, not on a plain push — a dozen pushes a day to the
-# working branch would otherwise queue an hour of runners each.
+# heavy jobs (integration builds, real-npm next-compat, the coverage re-run, the backend suites
+# against real Postgres + MinIO) run on pull requests, `main` and a manual dispatch, not on a
+# plain push — a dozen pushes a day to the working branch would otherwise queue an hour of
+# runners each.
 #
 # A release is cut from a commit these heavy jobs passed on: `deno task release` refuses to tag
 # unless the newest ci.yml run on HEAD that ran them has every job green. On `development` that
@@ -207,6 +208,101 @@ jobs:
 
       - name: Coverage (fails under the threshold)
         run: deno task test:coverage
+
+  # @denext/backend and denext's Postgres stores against REAL services: Postgres (17, the major
+  # Supabase runs) and MinIO (S3) as service containers. The suites connect as
+  # the superuser only to create a throwaway NON-superuser app role + database per case; RLS's
+  # `anon` / `authenticated` roles and `auth.*` come from the backend's own migration, realtime
+  # uses plain LISTEN/NOTIFY (no wal settings), and the S3 suite creates its bucket. They need
+  # `Deno.SQL`, so they run on denext's Deno toolchain (the fork's CLI, SHA-256 pinned below).
+  # Every one of these tests is IGNORED without its service, so this job also fails if any test
+  # was ignored: a green run means each one really ran. Heavy (PRs, `main`, a dispatch).
+  backend-integration:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: pw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+      minio:
+        # MinIO publishes no public images any more (minio/minio and quay.io/minio refuse
+        # pulls); Bitnami's legacy build is the same server, and its entrypoint serves /data.
+        image: bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20
+        env:
+          MINIO_ROOT_USER: dnxtest
+          MINIO_ROOT_PASSWORD: dnxtest-secret
+        ports:
+          - 9100:9000
+    env:
+      DENEXT_TEST_POSTGRES_URL: postgres://postgres:pw@127.0.0.1:5432/postgres
+      DENEXT_TEST_POSTGRES_JS: "1" # the stock-Deno path (npm:postgres via fromPostgresJs) too
+      DENEXT_TEST_S3_ENDPOINT: http://127.0.0.1:9100
+      DENEXT_TEST_S3_ACCESS_KEY: dnxtest
+      DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
+      # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
+      DENEXT_DENO_RELEASE: denext-runtime-v2.9.7-denext.15
+      DENEXT_DENO_ZIP: deno-cli-2.9.7-denext.15-x86_64-unknown-linux-gnu.zip
+      DENEXT_DENO_SHA256: 2bf1c7af80c63bad582c0e72129cbf2cfc6a6e84e7bb4bf485a51f41be971146
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up denext's Deno toolchain
+        run: |
+          dir="$RUNNER_TEMP/denext-deno"
+          mkdir -p "$dir"
+          curl -fsSL --retry 3 -o "$dir/deno.zip" \
+            "https://github.com/Brainwires/deno/releases/download/$DENEXT_DENO_RELEASE/$DENEXT_DENO_ZIP"
+          echo "$DENEXT_DENO_SHA256  $dir/deno.zip" | sha256sum -c -
+          unzip -q -o "$dir/deno.zip" -d "$dir"
+          echo "$dir" >> "$GITHUB_PATH"
+          "$dir/deno" --version
+          "$dir/deno" eval 'if (typeof Deno.SQL !== "function") throw new Error("no Deno.SQL")'
+
+      - name: Cache Deno dependencies
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~/.cache/deno
+          key: ${{ runner.os }}-deno-backend-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-deno-backend-
+
+      - name: Wait for MinIO
+        run: |
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:9100/minio/health/live && exit 0
+            sleep 1
+          done
+          exit 1
+
+      - name: Backend + Postgres integration tests (real Postgres and MinIO)
+        env:
+          NO_COLOR: "1" # plain test names for the grep below
+        run: |
+          set -o pipefail
+          deno test -A --unstable-kv \
+            tests/backend-rls-integration.test.ts \
+            tests/backend-rest-integration.test.ts \
+            tests/backend-realtime-integration.test.ts \
+            tests/backend-auth-integration.test.ts \
+            tests/db-admin-integration.test.ts \
+            tests/postgres-integration.test.ts \
+            tests/backend-s3-minio.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
+
+      - name: No test was ignored (each service was really reached)
+        run: |
+          if grep -E '\.\.\. ignored|[1-9][0-9]* ignored' "$RUNNER_TEMP/backend.txt"; then
+            echo "::error::a backend integration test was ignored: its service env is not wired"
+            exit 1
+          fi
+          grep -E '^ok \| [0-9]+ passed' "$RUNNER_TEMP/backend.txt"
 
   # The iOS shell's export router (Swift), compiled with swiftc and run over the shared export-route
   # vectors (tests/export-routes-conformance.test.ts). The test is ignored where there is no darwin

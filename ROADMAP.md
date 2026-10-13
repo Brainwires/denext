@@ -5,10 +5,8 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> denext **3.4** is in progress on `development`: LegendList on `VirtualList` (`lists`), SPA
-> builds at Vite parity (plugins, `client:*` deferred mounts, `spa.assetsDir`, TanStack Router
-> code-splitting), React Router's browser half, React 19.2's same-page `<ViewTransition>` and
-> hidden `<Activity>`, and `denext migrate --enable-capacitor`.
+> denext **3.4.x** ships continuously from `development` as patch releases; what each one added is in
+> the changelog.
 
 ## Deno Desktop
 
@@ -121,6 +119,8 @@ Each is documented as a manual recipe today (the
   to a tap, a bucket and winget-pkgs; a Windows Arm64 `denext` binary.
 - **`@denext/backend` database type generator:** row types for every table of the schema, for
   server-side `db()` queries (auto-REST's `.denext/rest.ts` types only the tables it serves).
+- **`@denext/backend` realtime over logical replication,** for the very high write volumes that
+  LISTEN/NOTIFY serializes on commit.
 
 ## `denext ui` and DevTools
 

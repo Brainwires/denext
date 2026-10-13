@@ -13,12 +13,37 @@
 // script is emitted without that project's verbs. Because that same `setup` is arbitrary user
 // code that may leave a timer or a watcher open, this verb always `Deno.exit`s once the script
 // is on stdout: a leaked handle must never keep the shell's completion call alive.
+//
+// The Deno verbs the CLI forwards (`denext compile`, `denext x`, …) are listed too, after the
+// denext and project verbs, with Deno's own summaries: a name a denext or project verb already
+// has is not forwarded, so it is not offered twice.
 
 import type { CommandRegistry, CommandSpec } from "../command.ts";
+import { forwardedDenoVerbs } from "../deno-verbs.ts";
 
-/** Visible (non-hidden) verb names, sorted. */
+/** One completion row: a verb and its one-line summary. */
+interface Row {
+  readonly name: string;
+  readonly summary: string;
+}
+
+/** The visible (non-hidden) registered verbs, then the forwarded Deno verbs. */
+function rows(reg: CommandRegistry): Row[] {
+  const own = reg.list().filter((c) => !c.hidden)
+    .map((c) => ({ name: c.name, summary: c.summary }));
+  const deno = forwardedDenoVerbs((name) => reg.get(name) !== undefined)
+    .map((v) => ({ name: v.name, summary: `deno ${v.name}: ${v.summary}` }));
+  return [...own, ...deno];
+}
+
+/** Every completable verb name, sorted. */
 function verbs(reg: CommandRegistry): string[] {
-  return reg.list().filter((c) => !c.hidden).map((c) => c.name).sort();
+  return rows(reg).map((row) => row.name).sort();
+}
+
+/** A summary made safe for a single-quoted shell string. */
+function quoted(summary: string): string {
+  return summary.replace(/'/g, "");
 }
 
 function bashScript(reg: CommandRegistry): string {
@@ -35,9 +60,8 @@ complete -F _denext_complete denext
 }
 
 function zshScript(reg: CommandRegistry): string {
-  const lines = reg.list()
-    .filter((c) => !c.hidden)
-    .map((c) => `    '${c.name}:${c.summary.replace(/'/g, "")}'`)
+  const lines = rows(reg)
+    .map((row) => `    '${row.name}:${quoted(row.summary)}'`)
     .join("\n");
   return `#compdef denext
 # denext zsh completions — denext completions zsh > "\${fpath[1]}/_denext"
@@ -53,13 +77,11 @@ _denext "$@"
 }
 
 function fishScript(reg: CommandRegistry): string {
-  return verbs(reg)
-    .map((n) => {
-      const c = reg.get(n)!;
-      return `complete -c denext -n __fish_use_subcommand -a ${n} -d '${
-        c.summary.replace(/'/g, "")
-      }'`;
-    })
+  return rows(reg)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((row) =>
+      `complete -c denext -n __fish_use_subcommand -a ${row.name} -d '${quoted(row.summary)}'`
+    )
     .join("\n") + "\n";
 }
 
@@ -75,6 +97,8 @@ export function makeCompletionsCommand(reg: CommandRegistry): CommandSpec {
   return {
     name: "completions",
     summary: "Print a shell completion script (bash|zsh|fish)",
+    usage: "Completes denext's verbs, the project's own and the Deno verbs denext forwards.\n" +
+      "Deno's own completion script (`deno completions`): `denext deno completions <shell>`.",
     positionals: [{ name: "shell", help: "bash | zsh | fish", required: true }],
     run: (ctx) => {
       const shell = ctx.positionals[0];

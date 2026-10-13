@@ -55,6 +55,12 @@ export interface BuildContext {
   /** The app-wide boundary manifest (only when the app has a Flight route). */
   boundary: BoundaryManifest | null;
   /**
+   * The boundary the build crawled, Flight route or not: `manifest.json` records it so
+   * `denext start` never re-crawls the import graph (a `deno info` child per start, which a
+   * least-privilege start without `--allow-run` cannot spawn). Null with no page route.
+   */
+  crawledBoundary: BoundaryManifest | null;
+  /**
    * The `"use server"` modules every route reaches (the boundary's `server`, computed whether or
    * not the app has a Flight route): each client bundle gets an action stub for them.
    */

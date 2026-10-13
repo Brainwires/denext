@@ -534,7 +534,7 @@ denextAuth({
 
 The same contract as the SQLite adapter, method for method (the shared contract suite runs
 against it on a real server), on a database every replica shares. `url` opens a client on
-`Deno.SQL`, the Postgres client built into denext's Deno runtime; on stock Deno pass
+`Deno.SQL`, the Postgres client built into [denext's Deno toolchain](/docs/toolchain); on stock Deno pass
 `sql: fromPostgresJs(postgres(url))` with the npm `postgres` package instead (see
 [Databases › Postgres](/docs/database#postgres)) — a `url` there throws an error with
 `code: "unsupported"`. A client you pass is never closed by the adapter; one it opened is
@@ -1391,8 +1391,10 @@ and bucketed by **/64**, so a client cannot walk its own prefix for a fresh budg
 Two behaviours worth knowing:
 
 - **An undeclared proxy disables the per-IP budgets rather than sharing one.** When a
-  request arrives from a private or loopback peer carrying `x-forwarded-for` while
-  `trustForwardedHeaders` is off, every visitor looks like the proxy — so the sign-in-start
+  request arrives from a loopback, private, link-local or unique-local peer and no trusted
+  `x-forwarded-for` hop names the client (the limit-address rule `rateLimit()` and
+  `clientIpForLimits()` follow; with or without the header, and in local development too),
+  every visitor looks like the proxy — so the sign-in-start
   and session-read budgets are skipped for it and every IP-wide bucket is dropped, with one
   console warning naming the fix, instead of turning the 21st sign-in site-wide into a
   fifteen-minute outage. The per-subject keys keep working: the credentials limiter's (it
@@ -1400,6 +1402,12 @@ Two behaviours worth knowing:
   budget's user.
   Setting `canonicalOrigin` while neither `denextAuth` nor the app decided
   `trustForwardedHeaders` warns once, on the first auth request, for the same reason.
+  Two app settings change that rule for every per-address limit, auth's included:
+  `rateLimitHeader` (a header such as `cf-connecting-ip` that your proxy sets to the client
+  address — the model is Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`) keys the budgets on that
+  address whenever a request carries one, and `rateLimitLocalAddresses: true` counts a
+  loopback/private peer by its own address instead of skipping it. See
+  [Deploy › Per-address limits](/docs/deploy#per-address-limits-behind-a-proxy).
 - **The default store never evicts a key mid-lockout.** Past `maxKeys` it drops expired
   windows and quiet keys (in one pass, down to 90% of the cap), never one that is actually
   locked out — otherwise flooding fresh keys would clear a lockout. When every tracked key

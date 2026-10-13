@@ -6,7 +6,7 @@ import type { I18nConfig } from "./i18n.ts";
 import type { DenextPlugin } from "../plugin/mod.ts";
 import type { CspSetting } from "./segment-config.ts";
 import type { CacheStore } from "./cache.ts";
-import type { TaskHistoryStore } from "./task-history.ts";
+import type { JobHistoryStore } from "./job-history.ts";
 import { envGet } from "../runtime/env-safe.ts";
 import { parseDesktopAppOrigin } from "../desktop/app-origin.ts";
 // Type-only (erased at runtime) — `src/cli/command.ts` is a dependency-free leaf whose
@@ -528,10 +528,10 @@ export interface CacheConfig {
   maxPageEntries?: number;
 }
 
-/** Scheduled/background task behaviour ({@link DenextConfig.tasks}). */
-export interface TasksConfig {
+/** Scheduled/background job behaviour ({@link DenextConfig.jobs}). */
+export interface JobsConfig {
   /**
-   * Record every task run — scheduled and on demand — to `.denext/tasks.db`, so `denext ui`'s
+   * Record every job run — scheduled and on demand — to `.denext/jobs.db`, so `denext ui`'s
    * Cron panel can show last status, success/failure counts and a recent-run feed.
    *
    * Off unless set: denext writes no run history unasked. Once on, recording can never fail or
@@ -539,41 +539,41 @@ export interface TasksConfig {
    *
    * Each row keeps the run's output in plain text: the tail of a string the handler returned
    * (up to 2 KB) and, for a failure, the error's message and stack. A task that returns a token,
-   * a DSN or another secret should return nothing instead. The file is `tasks.db` (with its
+   * a DSN or another secret should return nothing instead. The file is `jobs.db` (with its
    * `-wal`/`-shm` siblings) inside the build output directory, `.denext/` by default, created
    * owner-only (mode 0600) where the platform has file modes.
    *
    * The object form picks where the history is kept: `{ store }` takes any
-   * {@link TaskHistoryStore} — `postgresTaskHistoryStore({ url })` shares one history across
+   * {@link JobHistoryStore} — `postgresJobHistoryStore({ url })` shares one history across
    * every replica — and `{ maxRuns }` sets the default store's cap. `{}` is the same as `true`.
    *
    * ```ts
-   * tasks: { history: { store: postgresTaskHistoryStore({ url: Deno.env.get("DATABASE_URL") }) } }
+   * jobs: { history: { store: postgresJobHistoryStore({ url: Deno.env.get("DATABASE_URL") }) } }
    * ```
    */
-  history?: boolean | TaskHistoryConfig;
+  history?: boolean | JobHistoryConfig;
   /**
-   * Runs kept per task before the oldest are dropped (default 500).
+   * Runs kept per job before the oldest are dropped (default 500).
    *
-   * Per task rather than overall, so a task running every minute cannot evict a daily task's
-   * history. A task running more often than roughly every 20 minutes fills this inside a week,
-   * so raise it for such a task if its counts should cover the whole window.
+   * Per job rather than overall, so a job running every minute cannot evict a daily job's
+   * history. A job running more often than roughly every 20 minutes fills this inside a week,
+   * so raise it for such a job if its counts should cover the whole window.
    *
    * @minimum 1
    */
   historyMaxRuns?: number;
 }
 
-/** The object form of {@link TasksConfig.history}. */
-export interface TaskHistoryConfig {
+/** The object form of {@link JobsConfig.history}. */
+export interface JobHistoryConfig {
   /**
-   * Where runs are recorded. Default: the SQLite file `.denext/tasks.db`. A store passed here is
-   * the app's: denext never closes it on a dev re-boot (only a one-shot `denext task` run does,
+   * Where runs are recorded. Default: the SQLite file `.denext/jobs.db`. A store passed here is
+   * the app's: denext never closes it on a dev re-boot (only a one-shot `denext job` run does,
    * as its process ends).
    */
-  store?: TaskHistoryStore;
+  store?: JobHistoryStore;
   /**
-   * Runs kept per task by the default store (default 500; `historyMaxRuns` is the same knob).
+   * Runs kept per job by the default store (default 500; `historyMaxRuns` is the same knob).
    * A `store` takes its own cap.
    *
    * @minimum 1
@@ -1506,24 +1506,24 @@ export interface DenextConfig {
   /** Declarative response headers, evaluated once at startup. */
   headers?: () => HeaderRule[] | Promise<HeaderRule[]>;
   /**
-   * Cron schedules for background tasks: a map of a 5-field cron expression to the task name(s)
-   * to run on it (a task is `tasks/<name>.ts` exporting `defineTask(...)`). Registered at server
+   * Cron schedules for background jobs: a map of a 5-field cron expression to the job name(s)
+   * to run on it (a job is `jobs/<name>.ts` exporting `defineJob(...)`). Registered at server
    * startup via `Deno.cron` when the runtime exposes it (Deno Deploy, or `--unstable-cron`) and a
    * dependency-free minute-tick scheduler otherwise. A task may also declare its own `schedule`.
    *
    * ```ts
-   * scheduledTasks: { "0 3 * * *": "cleanup", "0 0 * * 1": ["digest", "warm-cache"] }
+   * scheduledJobs: { "0 3 * * *": "cleanup", "0 0 * * 1": ["digest", "warm-cache"] }
    * ```
    */
-  scheduledTasks?: Record<string, string | string[]>;
+  scheduledJobs?: Record<string, string | string[]>;
   /**
-   * Scheduled/background task behaviour. Currently run history, which is off unless asked for.
+   * Scheduled/background job behaviour. Currently run history, which is off unless asked for.
    *
    * ```ts
-   * tasks: { history: true }
+   * jobs: { history: true }
    * ```
    */
-  tasks?: TasksConfig;
+  jobs?: JobsConfig;
   /**
    * Image-optimization config. Remote sources are refused by default (local-only,
    * SSRF-safe); allowlist hosts here to enable optimizing remote images.
@@ -1663,12 +1663,45 @@ export interface DenextConfig {
    * Trust `X-Forwarded-Proto` / `X-Forwarded-Host` from a reverse proxy when deriving the
    * request origin (absolute URLs, the Server Action origin check, HSTS), and
    * `X-Forwarded-For` / an inbound `X-Request-Id` for `clientIp()`, `requestId()` and the
-   * rate limiters (`denextAuth` inherits it unless it sets its own). Enable ONLY when clients
-   * cannot reach denext directly — a client that can spoofs them. The origin part is ignored
-   * when {@link DenextConfig.canonicalOrigin} is set. Unset, `DENEXT_TRUST_PROXY=1` turns it on
-   * (config > env > `false`).
+   * rate limiters (`denextAuth` and `rateLimit()` inherit it unless they set their own). Enable
+   * ONLY when clients cannot reach denext directly — a client that can spoofs them. The origin
+   * part is ignored when {@link DenextConfig.canonicalOrigin} is set. Unset,
+   * `DENEXT_TRUST_PROXY=1` turns it on (config > env > `false`).
    */
   trustForwardedHeaders?: boolean;
+  /**
+   * A request header the fronting proxy sets to the client address — `"cf-connecting-ip"`
+   * (Cloudflare), `"fly-client-ip"` (Fly.io), `"x-real-ip"` (nginx) — that every **per-address
+   * limit** keys on: `rateLimit()`, `denextAuth`'s per-IP budgets,
+   * `live.limits.maxConnectionsPerIp`, `@denext/backend` realtime's signed-out quota and
+   * `clientIpForLimits()`. Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`, for denext. When a request
+   * carries an IP address in it (its last comma-separated value), that address is the limit key,
+   * IPv6 bucketed by /64 and an IPv4-mapped address as its IPv4 — a loopback/private one too.
+   *
+   * A request **without** it (or with a value that is not an IP address) did not come through
+   * the proxy that sets it, so it falls back to the rule without this option (the trusted
+   * `x-forwarded-for` hop, else the socket peer) and one warning is logged — where Supabase Auth
+   * applies no limit at all to it, which would let anyone who reaches the server directly skip
+   * every limit by leaving the header out.
+   *
+   * It only names the LIMIT address: `clientIp()` still follows `trustForwardedHeaders`. Set it
+   * ONLY when clients cannot reach denext except through a proxy that overwrites the header —
+   * a client that can reach it directly picks its own bucket. Unset, the
+   * `DENEXT_RATE_LIMIT_HEADER` env var is read at boot (config > env > none).
+   */
+  rateLimitHeader?: string;
+  /**
+   * Apply per-address limits (`rateLimit()`, `denextAuth`'s per-IP budgets,
+   * `live.limits.maxConnectionsPerIp`, `@denext/backend` realtime's signed-out quota,
+   * `clientIpForLimits()`) to a loopback, private, link-local or unique-local socket peer too,
+   * counted by its own address. Default `false`: such a peer is usually a reverse proxy every
+   * visitor shares, so its limit would be site-wide, and the limits are skipped for it with a
+   * warning. Turn it on where those peers are real clients — a LAN or VPN deployment, a
+   * container network with no proxy in front. A trusted forwarded hop or a
+   * {@link DenextConfig.rateLimitHeader} address still takes precedence. Unset,
+   * `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1` turns it on (config > env > `false`).
+   */
+  rateLimitLocalAddresses?: boolean;
   /**
    * `denext dev` only: extra hosts allowed to reach the dev server's `/_denext/*` assets (the
    * bundles, the module graph, the reload stream, the Live hub), beyond loopback. Each entry is
@@ -2284,10 +2317,12 @@ export function resolveCacheComponents(
 
 /**
  * The production-server knobs `denext start` / `denext dev` hand to `createApp()`: the
- * config's `canonicalOrigin`, `trustForwardedHeaders`, `requestTimeout`, `maxConcurrency`,
- * `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams`, `cdnCacheHeaders` and `compress`, each falling back
+ * config's `canonicalOrigin`, `trustForwardedHeaders`, `rateLimitHeader`,
+ * `rateLimitLocalAddresses`, `requestTimeout`, `maxConcurrency`, `slotBackstop`,
+ * `actionMaxBodyBytes`, `cacheKeyParams`, `cdnCacheHeaders` and `compress`, each falling back
  * to its env var when the config leaves it unset (`DENEXT_CANONICAL_ORIGIN`,
- * `DENEXT_TRUST_PROXY=1`, `DENEXT_REQUEST_TIMEOUT_MS`, `DENEXT_MAX_CONCURRENCY`), else
+ * `DENEXT_TRUST_PROXY=1`, `DENEXT_RATE_LIMIT_HEADER`, `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`,
+ * `DENEXT_REQUEST_TIMEOUT_MS`, `DENEXT_MAX_CONCURRENCY`), else
  * `undefined` so `createApp`'s own default applies — config > env > default. A malformed env value (a non-numeric
  * timeout, a non-origin) is ignored with one warning rather than failing the boot, since
  * env is set by an operator, not type-checked like the config. Plus the normalized
@@ -2298,6 +2333,10 @@ export interface ServerOptions {
   canonicalOrigin?: string;
   /** Whether `X-Forwarded-*` headers are trusted. */
   trustForwardedHeaders?: boolean;
+  /** The header naming the client address for per-address limits. */
+  rateLimitHeader?: string;
+  /** Whether per-address limits count a loopback/private peer by its own address. */
+  rateLimitLocalAddresses?: boolean;
   /** The per-request deadline (ms; `0` = none). */
   requestTimeout?: number;
   /** The in-process concurrency ceiling. */
@@ -2344,6 +2383,26 @@ function envOrigin(name: string): string | undefined {
 }
 
 /**
+ * An HTTP header-name env value (`DENEXT_RATE_LIMIT_HEADER`), lower-cased, or `undefined` + a
+ * warning when it is not a header name.
+ */
+function envHeaderName(name: string): string | undefined {
+  const raw = envValue(name)?.trim();
+  if (raw === undefined || raw === "") return undefined;
+  if (isHeaderName(raw)) return raw.toLowerCase();
+  console.warn(`denext: ignoring ${name}="${raw}" — expected a header name like cf-connecting-ip`);
+  return undefined;
+}
+
+/**
+ * Whether `value` is an HTTP header name (an RFC 9110 token), the shape `rateLimitHeader`
+ * accepts.
+ */
+export function isHeaderName(value: string): boolean {
+  return /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(value);
+}
+
+/**
  * Whether `value` is exactly an http(s) origin — scheme + host (+ port), no path, query,
  * hash or credentials — the shape `canonicalOrigin` accepts.
  */
@@ -2364,6 +2423,9 @@ export function resolveServerOptions(config: DenextConfig | null | undefined): S
   return {
     canonicalOrigin: config?.canonicalOrigin ?? envOrigin("DENEXT_CANONICAL_ORIGIN"),
     trustForwardedHeaders: config?.trustForwardedHeaders ?? envFlag("DENEXT_TRUST_PROXY"),
+    rateLimitHeader: config?.rateLimitHeader ?? envHeaderName("DENEXT_RATE_LIMIT_HEADER"),
+    rateLimitLocalAddresses: config?.rateLimitLocalAddresses ??
+      envFlag("DENEXT_RATE_LIMIT_LOCAL_ADDRESSES"),
     requestTimeout: config?.requestTimeout ?? envInteger("DENEXT_REQUEST_TIMEOUT_MS", 0),
     maxConcurrency: config?.maxConcurrency ?? envInteger("DENEXT_MAX_CONCURRENCY", 1),
     slotBackstop: config?.slotBackstop,

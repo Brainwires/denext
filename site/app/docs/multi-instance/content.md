@@ -13,8 +13,8 @@ lead: One denext process is self-contained by default — its cache, sessions, r
 | Rate-limit counters                    | `inMemoryRateLimitStore()` per process                                | every limit is multiplied by the replica count                                     | `store` → your `RateLimitStore`                                                     |
 | Users, accounts, credentials           | `sqliteAuthAdapter` = one SQLite file                                 | single node (or a shared volume)                                                   | `adapter` → your `AuthAdapter`                                                      |
 | Live channels + tag pushes             | in-memory loopback transport                                          | a `publish` on A reaches A's sockets only                                          | `setChannelTransport(t)` → `broadcastChannelTransport()` or your `ChannelTransport` |
-| Scheduled tasks (userland)             | minute-tick scheduler in every process                                | **fires on every replica**                                                         | one designated instance, or `Deno.cron`                                             |
-| Task run history                       | `.denext/tasks.db` per process                                        | each node sees its own fragment                                                    | (per node by design)                                                                |
+| Scheduled jobs (userland)              | minute-tick scheduler in every process                                | **fires on every replica**                                                         | one designated instance, or `Deno.cron`                                             |
+| Job run history                        | `.denext/jobs.db` per process                                         | each node sees its own fragment                                                    | (per node by design)                                                                |
 
 Signed-cookie sessions (`getSession()` and auth's default `strategy: "cookie"`)
 are the one thing on the list that is already replica-safe: the whole payload is
@@ -253,39 +253,39 @@ socket and the actions that publish to it land on the same node — which works
 for a single user's own updates and not for anything shared between users. See
 [Live › Delivery semantics & scaling](/docs/live#delivery-semantics--scaling).
 
-## Scheduled tasks: one runner, not one per replica
+## Scheduled jobs: one runner, not one per replica
 
-The userland scheduler is a minute tick inside every process that has tasks.
+The userland scheduler is a minute tick inside every process that has jobs.
 There is **no leader election**: three replicas each run `0 3 * * *` at 03:00
-UTC, and the overlap guard (a task never runs concurrently with _itself_) is per
+UTC, and the overlap guard (a job never runs concurrently with _itself_) is per
 process. Pick one of:
 
 - **Designate one instance.** Start exactly one replica with the schedules
-  configured and the others with `scheduledTasks` empty — for example gate the
+  configured and the others with `scheduledJobs` empty — for example gate the
   config on an env var:
 
   ```ts
   // denext.config.ts
-  const runner = Deno.env.get("TASK_RUNNER") === "1";
+  const runner = Deno.env.get("JOB_RUNNER") === "1";
   export default {
-    scheduledTasks: runner ? { "0 3 * * *": "cleanup" } : {},
+    scheduledJobs: runner ? { "0 3 * * *": "cleanup" } : {},
   };
   ```
 
-  A task's own `schedule` in `defineTask` counts too; keep schedules in the
+  A job's own `schedule` in `defineJob` counts too; keep schedules in the
   config so the gate covers all of them.
-- **A separate process** for tasks: a worker with no web traffic that runs the
+- **A separate process** for jobs: a worker with no web traffic that runs the
   same build with the schedules, or system cron / a Kubernetes `CronJob` calling
-  `denext task <name>` on demand.
+  `denext job <name>` on demand.
 - **`Deno.cron`** on Deno Deploy (or a self-host started with
   `--unstable-cron`): the platform runs each schedule once per deployment, which
   is the managed scheduler denext prefers whenever it is present.
 
-Make handlers **idempotent** regardless — a retry, a manual `denext task` during
+Make handlers **idempotent** regardless — a retry, a manual `denext job` during
 a scheduled run on another node, or a redeploy mid-run all produce a second
-execution. Run history (`tasks: { history: true }`) is a per-node SQLite file,
+execution. Run history (`jobs: { history: true }`) is a per-node SQLite file,
 so the Project UI's Cron page shows the runs of whichever node's project
-directory it reads. See [Scheduled tasks](/docs/tasks).
+directory it reads. See [Scheduled jobs](/docs/jobs).
 
 ## What does not need anything
 

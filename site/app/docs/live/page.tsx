@@ -221,7 +221,10 @@ export default {
         <code>maxConnections</code>) unless the proxy is trusted: behind a reverse proxy every
         visitor arrives from the proxy&#39;s address, so the cap would be site-wide. The server
         warns once when that happens — set <code>trustForwardedHeaders</code> (or{" "}
-        <code>DENEXT_TRUST_PROXY=1</code>) behind a proxy to cap each visitor&#39;s own address.
+        <code>DENEXT_TRUST_PROXY=1</code>) behind a proxy to cap each visitor&#39;s own address,
+        name the header it sets to the client address in <code>rateLimitHeader</code>{" "}
+        (<code>cf-connecting-ip</code>), or set <code>rateLimitLocalAddresses: true</code>{" "}
+        to cap such a peer by its own address.
       </p>
       <p>
         Or, instead of a <code>canSubscribe</code>{" "}

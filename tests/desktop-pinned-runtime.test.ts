@@ -26,12 +26,19 @@ import {
   parseSha256Sums,
   type PinFile,
   pinFromRelease,
+  toolchainPinFromRelease,
 } from "../scripts/desktop-pin-runtime.ts";
 
 /** The pin CLI with the archive attestation stubbed (its own test below covers it). */
 const attested: PinFile[] = [];
-const pinRuntimeMain = (args: string[], out: string) =>
-  pinMainWithAttest(args, out, (pin) => (attested.push(pin), Promise.resolve()));
+const attestedCli: unknown[] = [];
+const pinRuntimeMain = (args: string[], out: string, toolchainOut = `${out}.toolchain.json`) =>
+  pinMainWithAttest(
+    args,
+    out,
+    (pin, o) => (attested.push(pin), attestedCli.push(o.cli), Promise.resolve()),
+    toolchainOut,
+  );
 import { desktopRuntimeCheck } from "../src/cli/commands/doctor.ts";
 import { sha256Hex, tarGz } from "./_archive-fixtures.ts";
 
@@ -1313,6 +1320,199 @@ Deno.test("desktop:pin-runtime: every archive is hashed and attested to the rele
     );
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** {@linkcode release} plus the fork's CLI archives (the manifest's `cli` section). */
+function releaseWithCli() {
+  const r = release();
+  const sha = (n: number) => (0xc00 + n).toString(16).padStart(64, "0");
+  const targets: Record<string, Record<string, unknown>> = {};
+  const sums: string[] = [];
+  let n = 1;
+  for (const t of ["x86_64-pc-windows-msvc", "aarch64-apple-darwin"]) {
+    const file = `deno-cli-2.9.7-denext.1-${t}.zip`;
+    targets[t] = {
+      binary: t.includes("windows") ? "deno.exe" : "deno",
+      file,
+      url: `https://github.com/Brainwires/deno/releases/download/${TAG}/${file}`,
+      sha256: sha(n),
+      size: 5000 + n,
+      format: "zip",
+    };
+    sums.push(`${sha(n++)}  ${file}`);
+  }
+  const manifest = { ...r.manifest, cli: { version: "2.9.7-denext.1", targets } };
+  return { manifest, sums: r.sums + sums.join("\n") + "\n" };
+}
+
+Deno.test("toolchainPinFromRelease: the CLI archives, keyed by denext's <os>-<arch>", () => {
+  const { manifest, sums } = releaseWithCli();
+  const pin = toolchainPinFromRelease(TAG, manifest, sums)!;
+  assertEquals(pin.version, "2.9.7-denext.1");
+  assertEquals(pin.deno, "2.9.7");
+  assertEquals(pin.tag, TAG);
+  assertEquals(Object.keys(pin.targets), ["darwin-aarch64", "windows-x86_64"]);
+  assertEquals(
+    pin.targets["windows-x86_64"].file,
+    "deno-cli-2.9.7-denext.1-x86_64-pc-windows-msvc.zip",
+  );
+  assertEquals(pin.targets["darwin-aarch64"].format, "zip");
+  // The runtime pin ignores the CLI archives in SHA256SUMS; a release without them has no
+  // toolchain pin.
+  assertEquals(Object.keys(pinFromRelease(TAG, manifest, sums).targets).length, 2);
+  const plain = release();
+  assertEquals(toolchainPinFromRelease(TAG, plain.manifest, plain.sums), null);
+});
+
+Deno.test("toolchainPinFromRelease refuses any inconsistency", () => {
+  // deno-lint-ignore no-explicit-any
+  type R = { manifest: any; sums: string };
+  const win = (r: R) => r.manifest.cli.targets["x86_64-pc-windows-msvc"];
+  const cases: Array<[string, (r: R) => void]> = [
+    [
+      "SHA256SUMS",
+      (r) => (r.sums = r.sums.replace(/^[0-9a-f]{64}( {2}deno-cli-)/m, "f".repeat(64) + "$1")),
+    ],
+    [
+      "not in SHA256SUMS",
+      (
+        r,
+      ) => (r.sums = r.sums.split("\n").filter((l) =>
+        !l.includes("windows-msvc.zip") || !l.includes("deno-cli")
+      ).join("\n")),
+    ],
+    [
+      "SHA256SUMS only",
+      (
+        r,
+      ) => (r.sums += `${"e".repeat(64)}  deno-cli-2.9.7-denext.1-x86_64-unknown-linux-gnu.zip\n`),
+    ],
+    ["SHA256SUMS only", (r) => delete r.manifest.cli],
+    ["expected https://github.com", (r) => (win(r).url = "https://evil.example/x")],
+    ["expected deno-cli-", (r) => (win(r).file = "deno.zip")],
+    ["format tar.gz, expected zip", (r) => (win(r).format = "tar.gz")],
+    ["binary deno, expected deno.exe", (r) => (win(r).binary = "deno")],
+    ["bad size", (r) => (win(r).size = -1)],
+    ["unknown target", (r) => (r.manifest.cli.targets["riscv64gc-unknown-linux-gnu"] = {})],
+    ["cli version", (r) => (r.manifest.cli.version = "2.9.7-denext.2")],
+    ["lists no archives", (r) => {
+      r.manifest.cli.targets = {};
+      r.sums = r.sums.split("\n").filter((l) => !l.includes("deno-cli-")).join("\n");
+    }],
+  ];
+  for (const [msg, mutate] of cases) {
+    const r = releaseWithCli() as R;
+    mutate(r);
+    const err = (() => {
+      try {
+        toolchainPinFromRelease(TAG, r.manifest, r.sums);
+      } catch (e) {
+        return e;
+      }
+    })();
+    assert(err instanceof Error, msg);
+    assertStringIncludes(err.message, "desktop:pin-runtime: ");
+    assertStringIncludes(err.message, msg);
+  }
+});
+
+Deno.test("desktop:pin-runtime CLI: a release with CLI archives writes the toolchain pin too, attested", async () => {
+  const { manifest, sums } = releaseWithCli();
+  const dir = await Deno.makeTempDir();
+  const out = join(dir, "pin.json");
+  const toolchainOut = join(dir, "toolchain.json");
+  const mf = join(dir, "manifest.json");
+  const sf = join(dir, "SHA256SUMS");
+  await Deno.writeTextFile(mf, JSON.stringify(manifest));
+  await Deno.writeTextFile(sf, sums);
+  const prevLog = console.log;
+  const logged: string[] = [];
+  console.log = (...a: unknown[]) => void logged.push(a.join(" "));
+  try {
+    await pinRuntimeMain([TAG, "--manifest", mf, "--sums", sf], out, toolchainOut);
+    const written = JSON.parse(await Deno.readTextFile(toolchainOut));
+    assertEquals(written, toolchainPinFromRelease(TAG, manifest, sums));
+    assertEquals(attestedCli.at(-1), written);
+    assertStringIncludes(logged.join("\n"), "deno toolchain 2.9.7-denext.1, 2 CLI archives");
+  } finally {
+    console.log = prevLog;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop:pin-runtime: the CLI archives are hashed and attested like the runtime's", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const bytes = new TextEncoder().encode("cli archive");
+    const file = "deno-cli-2.9.7-denext.1-x86_64-unknown-linux-gnu.zip";
+    await Deno.writeFile(join(dir, file), bytes);
+    const pin: PinFile = {
+      schema: 1,
+      version: "2.9.7-denext.1",
+      tag: TAG,
+      repository: "https://github.com/Brainwires/deno",
+      deno: "2.9.7",
+      denoSha: "",
+      laufeySha: "",
+      laufeyApiVersion: null,
+      targets: {},
+    };
+    const cli = {
+      schema: 1 as const,
+      version: "2.9.7-denext.1",
+      tag: TAG,
+      repository: "https://github.com/Brainwires/deno",
+      deno: "2.9.7",
+      targets: {
+        "linux-x86_64": {
+          file,
+          url: `https://example.invalid/${file}`,
+          sha256: await sha256Hex(bytes),
+          size: bytes.length,
+          format: "zip" as const,
+        },
+      },
+    };
+    const runs: string[][] = [];
+    await attestPin(pin, { archives: dir, cli, run: (a) => (runs.push(a), Promise.resolve(0)) });
+    assertEquals(runs.length, 1);
+    assertStringIncludes(runs[0][2], file);
+    const err = await assertRejects(() =>
+      attestPin(pin, {
+        cli,
+        fetch: () => Promise.resolve(new Response("tampered")),
+        run: () => Promise.resolve(0),
+      })
+    );
+    assertStringIncludes((err as Error).message, "!= pinned");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the checked-in toolchain pin: the runtime pin's release, every target, a zip each", async () => {
+  const { DENO_TOOLCHAIN: tc } = await import("../src/build/deno-toolchain.ts");
+  const { DESKTOP_RUNTIME_PIN: rt } = await import("../src/build/desktop-runtime.ts");
+  if (tc.version === null) return; // a denext version that pins no toolchain
+  assertEquals(tc.version, rt.version);
+  assertEquals(tc.deno, rt.deno);
+  assertEquals(Object.keys(tc.targets).sort(), [
+    "darwin-aarch64",
+    "darwin-x86_64",
+    "linux-aarch64",
+    "linux-x86_64",
+    "windows-x86_64",
+  ]);
+  for (const [key, a] of Object.entries(tc.targets)) {
+    assertEquals(a.format, "zip", key);
+    assert(/^[0-9a-f]{64}$/.test(a.sha256), `${key}: sha256`);
+    assert(Number.isSafeInteger(a.size) && a.size! > 0, `${key}: size`);
+    assertEquals(
+      a.url,
+      `https://github.com/Brainwires/deno/releases/download/${rt.tag}/${a.file}`,
+      key,
+    );
   }
 });
 

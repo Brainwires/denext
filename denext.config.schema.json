@@ -424,8 +424,8 @@
         "wrapper": "function"
       }
     },
-    "scheduledTasks": {
-      "description": "Cron schedules for background tasks: a map of a 5-field cron expression to the task name(s) to run on it (a task is `tasks/<name>.ts` exporting `defineTask(...)`). Registered at server startup via `Deno.cron` when the runtime exposes it (Deno Deploy, or `--unstable-cron`) and a dependency-free minute-tick scheduler otherwise. A task may also declare its own `schedule`.",
+    "scheduledJobs": {
+      "description": "Cron schedules for background jobs: a map of a 5-field cron expression to the job name(s) to run on it (a job is `jobs/<name>.ts` exporting `defineJob(...)`). Registered at server startup via `Deno.cron` when the runtime exposes it (Deno Deploy, or `--unstable-cron`) and a dependency-free minute-tick scheduler otherwise. A task may also declare its own `schedule`.",
       "type": "object",
       "additionalProperties": {
         "anyOf": [
@@ -441,12 +441,12 @@
         ]
       }
     },
-    "tasks": {
-      "description": "Scheduled/background task behaviour. Currently run history, which is off unless asked for.",
+    "jobs": {
+      "description": "Scheduled/background job behaviour. Currently run history, which is off unless asked for.",
       "type": "object",
       "properties": {
         "history": {
-          "description": "Record every task run — scheduled and on demand — to `.denext/tasks.db`, so `denext ui`'s Cron panel can show last status, success/failure counts and a recent-run feed.",
+          "description": "Record every job run — scheduled and on demand — to `.denext/jobs.db`, so `denext ui`'s Cron panel can show last status, success/failure counts and a recent-run feed.",
           "anyOf": [
             {
               "type": "boolean"
@@ -455,10 +455,10 @@
               "type": "object",
               "properties": {
                 "store": {
-                  "description": "Where runs are recorded. Default: the SQLite file `.denext/tasks.db`. A store passed here is the app's: denext never closes it on a dev re-boot (only a one-shot `denext task` run does, as its process ends)."
+                  "description": "Where runs are recorded. Default: the SQLite file `.denext/jobs.db`. A store passed here is the app's: denext never closes it on a dev re-boot (only a one-shot `denext job` run does, as its process ends)."
                 },
                 "maxRuns": {
-                  "description": "Runs kept per task by the default store (default 500; `historyMaxRuns` is the same knob). A `store` takes its own cap.",
+                  "description": "Runs kept per job by the default store (default 500; `historyMaxRuns` is the same knob). A `store` takes its own cap.",
                   "type": "number",
                   "minimum": 1
                 }
@@ -467,7 +467,7 @@
           ]
         },
         "historyMaxRuns": {
-          "description": "Runs kept per task before the oldest are dropped (default 500).",
+          "description": "Runs kept per job before the oldest are dropped (default 500).",
           "type": "number",
           "minimum": 1
         }
@@ -1060,7 +1060,15 @@
       "type": "string"
     },
     "trustForwardedHeaders": {
-      "description": "Trust `X-Forwarded-Proto` / `X-Forwarded-Host` from a reverse proxy when deriving the request origin (absolute URLs, the Server Action origin check, HSTS), and `X-Forwarded-For` / an inbound `X-Request-Id` for `clientIp()`, `requestId()` and the rate limiters (`denextAuth` inherits it unless it sets its own). Enable ONLY when clients cannot reach denext directly — a client that can spoofs them. The origin part is ignored when DenextConfig.canonicalOrigin is set. Unset, `DENEXT_TRUST_PROXY=1` turns it on (config > env > `false`).",
+      "description": "Trust `X-Forwarded-Proto` / `X-Forwarded-Host` from a reverse proxy when deriving the request origin (absolute URLs, the Server Action origin check, HSTS), and `X-Forwarded-For` / an inbound `X-Request-Id` for `clientIp()`, `requestId()` and the rate limiters (`denextAuth` and `rateLimit()` inherit it unless they set their own). Enable ONLY when clients cannot reach denext directly — a client that can spoofs them. The origin part is ignored when DenextConfig.canonicalOrigin is set. Unset, `DENEXT_TRUST_PROXY=1` turns it on (config > env > `false`).",
+      "type": "boolean"
+    },
+    "rateLimitHeader": {
+      "description": "A request header the fronting proxy sets to the client address — `\"cf-connecting-ip\"` (Cloudflare), `\"fly-client-ip\"` (Fly.io), `\"x-real-ip\"` (nginx) — that every **per-address limit** keys on: `rateLimit()`, `denextAuth`'s per-IP budgets, `live.limits.maxConnectionsPerIp`, `@denext/backend` realtime's signed-out quota and `clientIpForLimits()`. Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`, for denext. When a request carries an IP address in it (its last comma-separated value), that address is the limit key, IPv6 bucketed by /64 and an IPv4-mapped address as its IPv4 — a loopback/private one too.",
+      "type": "string"
+    },
+    "rateLimitLocalAddresses": {
+      "description": "Apply per-address limits (`rateLimit()`, `denextAuth`'s per-IP budgets, `live.limits.maxConnectionsPerIp`, `@denext/backend` realtime's signed-out quota, `clientIpForLimits()`) to a loopback, private, link-local or unique-local socket peer too, counted by its own address. Default `false`: such a peer is usually a reverse proxy every visitor shares, so its limit would be site-wide, and the limits are skipped for it with a warning. Turn it on where those peers are real clients — a LAN or VPN deployment, a container network with no proxy in front. A trusted forwarded hop or a DenextConfig.rateLimitHeader address still takes precedence. Unset, `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1` turns it on (config > env > `false`).",
       "type": "boolean"
     },
     "allowedDevOrigins": {

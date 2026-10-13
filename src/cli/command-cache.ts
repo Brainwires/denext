@@ -120,3 +120,38 @@ export async function writeCommandCache(dir: string, verbs: ProjectVerb[]): Prom
     await Deno.writeTextFile(path, `${JSON.stringify(cache, null, 2)}\n`);
   } catch { /* a listing is worth having, not worth failing for */ }
 }
+
+/** The notices file's contents: which one-time notices were shown under which fingerprint. */
+interface NoticeLog {
+  readonly fingerprint: string;
+  readonly shown: string[];
+}
+
+/**
+ * Whether a one-time notice (`key`) should be shown now: true the first time for the project's
+ * current verb-set fingerprint (its denext config, `deno.json`, `deno.lock`), and recorded so the
+ * same notice stays quiet until one of those files changes. Best-effort: a project whose
+ * `.denext/` can't be written shows the notice every time rather than never.
+ *
+ * @param dir The project directory.
+ * @param key The notice's identity (e.g. `shadow:bench`).
+ * @returns Whether to print it.
+ */
+export async function firstNotice(dir: string, key: string): Promise<boolean> {
+  const path = join(dir, ".denext", "notices.json");
+  const fingerprint = await fingerprintOf(dir);
+  let log: NoticeLog = { fingerprint, shown: [] };
+  try {
+    const parsed = JSON.parse(await Deno.readTextFile(path)) as NoticeLog;
+    if (parsed?.fingerprint === fingerprint && Array.isArray(parsed.shown)) log = parsed;
+  } catch { /* no log yet */ }
+  if (log.shown.includes(key)) return false;
+  try {
+    await Deno.mkdir(dirname(path), { recursive: true });
+    await Deno.writeTextFile(
+      path,
+      `${JSON.stringify({ fingerprint, shown: [...log.shown, key] })}\n`,
+    );
+  } catch { /* shown again next time */ }
+  return true;
+}

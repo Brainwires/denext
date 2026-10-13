@@ -57,11 +57,10 @@ Each line: what to set → where it is documented. Config keys go in
 - `trustForwardedHeaders: true` (env `DENEXT_TRUST_PROXY=1`) — only when clients
   **cannot** reach denext directly; it makes `X-Forwarded-Proto` /
   `X-Forwarded-Host` trusted for the origin and HSTS. Ignored when
-  `canonicalOrigin` is set. The rate limiters key on the socket peer unless told
-  the same thing separately — `rateLimit({
-  trustForwardedHeaders: true })` and
-  `denextAuth({ trustForwardedHeaders: true })` — and then use the **last**
-  `x-forwarded-for` hop, the one your proxy appended. →
+  `canonicalOrigin` is set. The rate limiters (`rateLimit()`, `denextAuth`'s) and
+  `clientIp()` follow it too, keying on the **last** `x-forwarded-for` hop, the
+  one your proxy appended; a limiter's own `trustForwardedHeaders` overrides the
+  app for that limiter. →
   [same section](/docs/deploy#6-tell-denext-about-your-proxy-origin--forwarded-headers)
 - A concurrency ceiling and TLS **at the edge** (nginx `limit_conn`, Caddy, your
   platform) — the in-process `maxConcurrency` complements it, it does not
@@ -80,7 +79,7 @@ Each line: what to set → where it is documented. Config keys go in
 **Permissions and files**
 
 - `--allow-write=.denext` on the start command — the durable `node:sqlite` cache
-  lives at `.denext/cache.db` and task history at `.denext/tasks.db`. Without
+  lives at `.denext/cache.db` and job history at `.denext/jobs.db`. Without
   the grant the cache **silently falls back to memory** (one warning line at
   boot; `/_denext/health` reports `"cacheStore": "memory"`). The scaffold's
   `deno task start` already grants it. →
@@ -88,9 +87,9 @@ Each line: what to set → where it is documented. Config keys go in
 - Back up `.denext/*.db` and any app database (`auth.db` from
   `sqliteAuthAdapter`, `.denext/sessions.db` from `sqliteSessionStore`, your own
   `app.db`) like any SQLite file: copy the `-wal`/`-shm` siblings too, or use
-  `VACUUM INTO` from a task. The cache is disposable; the others are not. →
+  `VACUUM INTO` from a job. The cache is disposable; the others are not. →
   [Databases](/docs/database)
-- Deno Deploy has **no persistent disk**: the cache is per-isolate memory, task
+- Deno Deploy has **no persistent disk**: the cache is per-isolate memory, job
   history is a fragment that resets, and a SQLite file does not survive. Inject
   a shared `CacheStore` / `SessionStore` / `AuthAdapter` there. →
   [Multi-instance](/docs/multi-instance)
@@ -121,8 +120,11 @@ Each line: what to set → where it is documented. Config keys go in
   stores are **per process**; pass a shared `store` behind replicas.
   `rateLimit()`'s default key skips a request whose address is a loopback or
   private socket peer with no trusted forwarded hop (a proxy every visitor
-  shares) and warns once: behind your proxy, pass `trustForwardedHeaders: true`
-  or a `key`. An IPv6 client counts as its `/64`. →
+  shares) and warns once: behind your proxy, set the app's
+  `trustForwardedHeaders: true` (or `DENEXT_TRUST_PROXY=1`), name the header it
+  sets to the client address in `rateLimitHeader` (`cf-connecting-ip`), or pass a
+  `key`; `rateLimitLocalAddresses: true` limits such peers by their own address
+  (a LAN deployment). An IPv6 client counts as its `/64`. →
   [Typed API](/docs/typed-api), [Auth › Rate limiting](/docs/auth#rate-limiting)
 
 **Headers and policy**
@@ -186,7 +188,7 @@ Each line: what to set → where it is documented. Config keys go in
 - If you run more than one replica: a shared `cache.store`, a shared auth
   `sessionStore` / `adapter`, a shared `rateLimit.store`, a `ChannelTransport`
   for Live, and **one** designated instance (or `Deno.cron`) for scheduled
-  tasks. Every item is a per-node component by default. →
+  jobs. Every item is a per-node component by default. →
   [Multi-instance](/docs/multi-instance)
 
 ## Copy-paste
@@ -217,7 +219,7 @@ import type { DenextConfig } from "denext/server";
 export default {
   canonicalOrigin: "https://example.com",
   maxConcurrency: 100,
-  tasks: { history: true },
+  jobs: { history: true },
 } satisfies DenextConfig;
 ```
 

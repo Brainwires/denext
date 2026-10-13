@@ -78,8 +78,8 @@ Deno.test("a union round-trips through whichever branch holds the value", () => 
   assertRoundTrip(specAt("hsts"), false, "a non-string enum branch stays a boolean");
   assertRoundTrip(specAt("hsts"), { maxAge: 63072000, preload: true }, "object branch");
   assertRoundTrip(specAt("cache", "store"), "sqlite", "enum branch");
-  assertRoundTrip(specAt("scheduledTasks"), { "0 3 * * *": ["cleanup", "digest"] }, "map of union");
-  assertRoundTrip(specAt("scheduledTasks"), { "0 3 * * *": "cleanup" }, "map of union (scalar)");
+  assertRoundTrip(specAt("scheduledJobs"), { "0 3 * * *": ["cleanup", "digest"] }, "map of union");
+  assertRoundTrip(specAt("scheduledJobs"), { "0 3 * * *": "cleanup" }, "map of union (scalar)");
 });
 
 Deno.test("an absent field stays absent, and an empty list stays empty", () => {

@@ -6,24 +6,24 @@
 // `denext test --filter x path/to.test.ts` behaves exactly like the `deno` original.
 
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { commandCwd, spawnDenoAndExit } from "../shared.ts";
+import { commandCwd, denoGlobalArgs, spawnDenoAndExit } from "../shared.ts";
 
 /**
  * Forward to `deno <sub> [...leading] [...positionals] [...passthrough]` in the
- * project directory. `--config` is forwarded when the global flag is set. The
- * positionals are files/dirs handed to `deno` (not a project dir), so cwd comes from
+ * project directory. The global flags denext parses that Deno's subcommand also has are
+ * handed back: `--config` and `--quiet` always, `--json` where Deno's verb takes it (`lint`).
+ * The positionals are files/dirs handed to `deno` (not a project dir), so cwd comes from
  * `--cwd` (or the real cwd). Never returns.
  */
 function runDeno(
   sub: string,
   ctx: CommandContext,
   leading: string[] = [],
+  json = false,
 ): Promise<never> {
-  const args = [sub, ...leading];
-  if (ctx.global.config) args.push("--config", ctx.global.config);
   // Passthrough verbs fold positionals + unknown flags into `rest` in original
   // order (see CommandRegistry.parse), so forward `rest` alone — no reordering.
-  args.push(...ctx.rest);
+  const args = [sub, ...leading, ...denoGlobalArgs(ctx, { json }), ...ctx.rest];
   return spawnDenoAndExit(args, commandCwd(ctx));
 }
 
@@ -71,7 +71,7 @@ export const lintCommand: CommandSpec = {
     name: "paths",
     help: "Files/dirs to lint (default: project)",
   }],
-  run: (ctx) => runDeno("lint", ctx),
+  run: (ctx) => runDeno("lint", ctx, [], true),
 };
 
 export const fmtCommand: CommandSpec = {

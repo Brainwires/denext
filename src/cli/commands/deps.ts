@@ -4,7 +4,7 @@
 // changes — keeping one tool for the whole dependency workflow.
 
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { commandCwd, spawnDenoAndExit } from "../shared.ts";
+import { commandCwd, denoGlobalArgs, spawnDenoAndExit } from "../shared.ts";
 
 function runDeno(
   sub: string,
@@ -12,8 +12,9 @@ function runDeno(
   leading: string[] = [],
 ): Promise<never> {
   // Passthrough verbs fold positionals + unknown flags into `rest` in original
-  // order (see CommandRegistry.parse), so forward `rest` alone — no reordering.
-  const args = [sub, ...leading, ...ctx.rest];
+  // order (see CommandRegistry.parse), so forward `rest` alone — no reordering. `--config` and
+  // `--quiet`, which denext parses as global flags, are Deno's too and handed back.
+  const args = [sub, ...leading, ...denoGlobalArgs(ctx), ...ctx.rest];
   return spawnDenoAndExit(args, commandCwd(ctx));
 }
 

@@ -309,6 +309,8 @@ function withEnv(vars: Record<string, string | undefined>, fn: () => void): void
 const SERVER_ENV = {
   DENEXT_CANONICAL_ORIGIN: undefined,
   DENEXT_TRUST_PROXY: undefined,
+  DENEXT_RATE_LIMIT_HEADER: undefined,
+  DENEXT_RATE_LIMIT_LOCAL_ADDRESSES: undefined,
   DENEXT_REQUEST_TIMEOUT_MS: undefined,
   DENEXT_MAX_CONCURRENCY: undefined,
 };
@@ -318,6 +320,8 @@ Deno.test("resolveServerOptions: unset config + unset env leaves every knob unde
     assertEquals(resolveServerOptions(null), {
       canonicalOrigin: undefined,
       trustForwardedHeaders: undefined,
+      rateLimitHeader: undefined,
+      rateLimitLocalAddresses: undefined,
       requestTimeout: undefined,
       maxConcurrency: undefined,
       slotBackstop: undefined,
@@ -360,6 +364,34 @@ Deno.test("resolveServerOptions: the env vars fill in what the config leaves uns
       );
     });
   }
+});
+
+Deno.test("resolveServerOptions: rateLimitHeader / rateLimitLocalAddresses — config > env, a bad header name warned and ignored", () => {
+  withEnv({
+    ...SERVER_ENV,
+    DENEXT_RATE_LIMIT_HEADER: " CF-Connecting-IP ",
+    DENEXT_RATE_LIMIT_LOCAL_ADDRESSES: "1",
+  }, () => {
+    const r = resolveServerOptions({});
+    assertEquals([r.rateLimitHeader, r.rateLimitLocalAddresses], ["cf-connecting-ip", true]);
+    const own = resolveServerOptions({
+      rateLimitHeader: "fly-client-ip",
+      rateLimitLocalAddresses: false,
+    });
+    assertEquals([own.rateLimitHeader, own.rateLimitLocalAddresses], ["fly-client-ip", false]);
+  });
+  const original = console.warn;
+  const warned: string[] = [];
+  console.warn = (...args: unknown[]) => warned.push(args.map(String).join(" "));
+  try {
+    withEnv({ ...SERVER_ENV, DENEXT_RATE_LIMIT_HEADER: "x real ip" }, () => {
+      assertEquals(resolveServerOptions({}).rateLimitHeader, undefined);
+    });
+  } finally {
+    console.warn = original;
+  }
+  assertEquals(warned.length, 1);
+  assert(warned[0].includes("DENEXT_RATE_LIMIT_HEADER"), warned[0]);
 });
 
 Deno.test("resolveServerOptions: the config wins over the env var", () => {

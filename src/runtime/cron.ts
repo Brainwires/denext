@@ -1,5 +1,5 @@
 // A tiny, dependency-free cron-expression matcher — the userland fallback scheduler for
-// scheduled tasks when the platform's managed `Deno.cron` isn't available (a self-hosted
+// scheduled jobs when the platform's managed `Deno.cron` isn't available (a self-hosted
 // long-running process started without `--unstable-cron`). On Deno Deploy (and with the
 // flag) the schedule string is handed to `Deno.cron` through {@linkcode toDenoCron} instead,
 // so this matcher runs only off-platform. Standard 5-field Vixie cron:

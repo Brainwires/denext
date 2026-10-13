@@ -15,6 +15,7 @@ import type { DesktopRuntimePin, DesktopRuntimeStatus } from "../src/build/deskt
 import { desktopDoctor } from "../src/cli/commands/desktop-doctor.ts";
 import type { CommandContext } from "../src/cli/command.ts";
 import { join } from "@std/path";
+import { denoReleaseVersion } from "../src/build/deno-version.ts";
 import { capture, stubExit } from "./_cli-coverage-helpers.ts";
 
 /** A full answer: an exit code with its stdout / stderr. */
@@ -319,6 +320,14 @@ Deno.test("desktop doctor: the runtime — deno mismatch, a pre-probe pin, stock
   assertStringIncludes(old.findings[0].message, "needs Deno 2.9.7 exactly");
   assertStringIncludes(old.findings[1].message, "predates Deno.desktop.platformFeatures()");
   assertStringIncludes(old.findings[0].fix, "deno upgrade --version 2.9.7");
+  // denext's Deno toolchain (`2.9.7-denext.N`) is Deno 2.9.7: no mismatch.
+  const toolchain = await runDesktopDoctor({
+    ...linux,
+    runtimeStatus: () =>
+      Promise.resolve(status({ deno: { found: "2.9.7-denext.15", required: "2.9.7" } })),
+    pin: pin(45),
+  });
+  assertEquals(checksOf(toolchain).filter((c) => c === "error:runtime"), []);
   // Off Linux the pre-probe pin is not a finding (the facts only matter there).
   const mac = await runDesktopDoctor({
     runtimeStatus: () => Promise.resolve(status()),
@@ -620,8 +629,11 @@ Deno.test("desktop doctor CLI: without a seam the runtime status is read from th
     assertEquals(report.runtime.status.backend, null);
     assertStringIncludes(report.runtime.status.detail, 'desktop.backend is "gtk4"');
     // The unpinned backend is an error; a `deno` other than the pin's exact version (CI's unit job
-    // runs a newer one) adds its own runtime error, so this test reads the deno it ran under.
-    const denoMatches = report.runtime.status.deno.found === report.runtime.status.deno.required;
+    // runs a newer one) adds its own runtime error, so this test reads the deno it ran under —
+    // denext's Deno toolchain (`2.9.7-denext.N`) is that release.
+    const found = report.runtime.status.deno.found;
+    const denoMatches = found !== null &&
+      denoReleaseVersion(found) === report.runtime.status.deno.required;
     assertEquals(
       report.findings.map((f) => `${f.level}:${f.check}`),
       denoMatches ? ["error:runtime"] : ["error:runtime", "error:runtime"],

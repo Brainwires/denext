@@ -287,6 +287,8 @@ export {
   type HeaderRule,
   type HstsConfig,
   type ImagesConfig,
+  type JobHistoryConfig,
+  type JobsConfig,
   type LiveConfig,
   type LiveConnectionContext,
   type LiveLimits,
@@ -309,8 +311,6 @@ export {
   type SpaShellConfig,
   type SpaTanstackRouterConfig,
   type TailwindConfig,
-  type TaskHistoryConfig,
-  type TasksConfig,
 } from "./config.ts";
 export { defineConfig } from "./define-config.ts";
 
@@ -373,31 +373,24 @@ export type {
   RouteRegistry,
 } from "./request-context.ts";
 export type { RenderScope } from "../runtime/render-scope.ts";
-// Scheduled/background tasks: define one in `tasks/<name>.ts`, schedule it via `scheduledTasks`
-// in denext.config.ts or a per-task `schedule`, and/or run it on demand (`runTask` / `denext task`).
-export { defineTask, getTask, isTask, registerTask, runTask, taskNames } from "./tasks.ts";
+// Scheduled/background jobs: define one in `jobs/<name>.ts`, schedule it via `scheduledJobs`
+// in denext.config.ts or a per-job `schedule`, and/or run it on demand (`runJob` / `denext job`).
+export { defineJob, getJob, isJob, jobNames, registerJob, runJob } from "./jobs.ts";
+export type { Job, JobBackoff, JobContext, JobDefinition, JobRetry, JobRunRecord } from "./jobs.ts";
+export { sqliteJobHistoryStore } from "./job-history.ts";
 export type {
-  Task,
-  TaskBackoff,
-  TaskContext,
-  TaskDefinition,
-  TaskRetry,
-  TaskRunRecord,
-} from "./tasks.ts";
-export { sqliteTaskHistoryStore } from "./task-history.ts";
-export type {
-  SqliteTaskHistoryStoreOptions,
-  TaskHistory,
-  TaskHistoryCleared,
-  TaskHistoryOptions,
-  TaskHistoryPruneOptions,
-  TaskHistoryReadOptions,
-  TaskHistoryRow,
-  TaskHistoryRun,
-  TaskHistoryStore,
-} from "./task-history.ts";
-export { postgresTaskHistoryStore } from "./postgres-task-history.ts";
-export type { PostgresTaskHistoryStoreOptions } from "./postgres-task-history.ts";
+  JobHistory,
+  JobHistoryCleared,
+  JobHistoryOptions,
+  JobHistoryPruneOptions,
+  JobHistoryReadOptions,
+  JobHistoryRow,
+  JobHistoryRun,
+  JobHistoryStore,
+  SqliteJobHistoryStoreOptions,
+} from "./job-history.ts";
+export { postgresJobHistoryStore } from "./postgres-job-history.ts";
+export type { PostgresJobHistoryStoreOptions } from "./postgres-job-history.ts";
 
 // Signed-cookie sessions (auth primitive).
 export { getSession } from "./session.ts";

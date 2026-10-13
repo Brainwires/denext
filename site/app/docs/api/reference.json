@@ -4176,7 +4176,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 3.4.16",
+          "signature": "VERSION: 4.0.0-rc.1",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -5812,7 +5812,7 @@
           "kind": "function",
           "signature": "clientIp(): string | undefined",
           "doc": "The client's IP address for the current request. Throws outside a request context (like headers); undefined when the request has no recorded peer (a handler invoked directly in a test, not through denext's server loop).",
-          "docFull": "The client's IP address for the current request. Throws outside a request context\n(like {@linkcode headers}); `undefined` when the request has no recorded peer (a handler\ninvoked directly in a test, not through denext's server loop).\n\nWhen the app trusts a fronting proxy ({@linkcode AppConfig.trustForwardedHeaders} /\n`DENEXT_TRUST_PROXY=1`), the last hop of `x-forwarded-for` is returned; otherwise the\nsocket peer the server saw. Never read `x-forwarded-for` yourself without that flag — any\nclient can set it.\n\nReading it makes the render **dynamic** (per-request), exactly like {@linkcode headers}:\na page that branches on the client IP cannot be statically cached. Use it in a route\nhandler, a Server Action, or middleware where that is already the case.",
+          "docFull": "The client's IP address for the current request. Throws outside a request context\n(like {@linkcode headers}); `undefined` when the request has no recorded peer (a handler\ninvoked directly in a test, not through denext's server loop).\n\nWhen the app trusts a fronting proxy ({@linkcode AppConfig.trustForwardedHeaders} /\n`DENEXT_TRUST_PROXY=1`), the last hop of `x-forwarded-for` is returned; otherwise the\nsocket peer the server saw. Never read `x-forwarded-for` yourself without that flag — any\nclient can set it. {@linkcode AppConfig.rateLimitHeader} does not change it: that header names\nthe address per-address limits key on ({@linkcode clientIpForLimits}), nothing more.\n\nReading it makes the render **dynamic** (per-request), exactly like {@linkcode headers}:\na page that branches on the client IP cannot be statically cached. Use it in a route\nhandler, a Server Action, or middleware where that is already the case.",
           "params": [],
           "returns": "The client IP, or undefined when the request has no recorded peer.",
           "examples": [],
@@ -5824,7 +5824,7 @@
           "kind": "function",
           "signature": "clientIpForLimits(options?: object): string | undefined",
           "doc": "The client address to key a **per-address limit** on (a quota, a connection cap): clientIp — or undefined when that address is the socket peer and a loopback, private, link-local or unique-local one while the proxy is not trusted. Behind a reverse proxy without AppConfig.trustForwardedHeaders (or DENEXT_TRUST_PROXY=1) every visitor arrives from the proxy's address, so limiting on it would make one limit site-wide; key the limit on something else (a session, a connection) instead. A directly connected public peer and a trusted proxy's hop are returned as clientIp returns them — or, with { bucket: true }, as their limit bucket (an IPv6 address's /64), which is what a limit should key on.",
-          "docFull": "The client address to key a **per-address limit** on (a quota, a connection cap):\n{@linkcode clientIp} — or `undefined` when that address is the socket peer and a loopback,\nprivate, link-local or unique-local one while the proxy is not trusted. Behind a reverse proxy\nwithout {@linkcode AppConfig.trustForwardedHeaders} (or `DENEXT_TRUST_PROXY=1`) every visitor\narrives from the proxy's address, so limiting on it would make one limit site-wide; key the\nlimit on something else (a session, a connection) instead. A directly connected public peer and\na trusted proxy's hop are returned as {@linkcode clientIp} returns them — or, with\n`{ bucket: true }`, as their limit bucket (an IPv6 address's `/64`), which is what a limit\nshould key on.\n\nThrows outside a request context and makes the render dynamic, exactly like\n{@linkcode clientIp}.",
+          "docFull": "The client address to key a **per-address limit** on (a quota, a connection cap):\n{@linkcode clientIp} — or `undefined` when that address is the socket peer and a loopback,\nprivate, link-local or unique-local one while the proxy is not trusted. Behind a reverse proxy\nwithout {@linkcode AppConfig.trustForwardedHeaders} (or `DENEXT_TRUST_PROXY=1`) every visitor\narrives from the proxy's address, so limiting on it would make one limit site-wide; key the\nlimit on something else (a session, a connection) instead. A directly connected public peer and\na trusted proxy's hop are returned as {@linkcode clientIp} returns them — or, with\n`{ bucket: true }`, as their limit bucket (an IPv6 address's `/64`), which is what a limit\nshould key on.\n\nTwo app settings widen it (the model is Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`):\n{@linkcode AppConfig.rateLimitHeader} (`DENEXT_RATE_LIMIT_HEADER`) names a header the proxy sets\nto the client address (`cf-connecting-ip`, `fly-client-ip`, `x-real-ip`) — its last value is the\nanswer whenever it holds an IP address, local or not; a request without it falls back to the\nrule above. {@linkcode AppConfig.rateLimitLocalAddresses}\n(`DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`) answers a loopback/private socket peer as itself instead\nof `undefined` — for a host where those peers are real clients (a LAN, a VPN).\n\nThrows outside a request context and makes the render dynamic, exactly like\n{@linkcode clientIp}.",
           "params": [
             {
               "name": "options",
@@ -6339,6 +6339,18 @@
           "denextOnly": true
         },
         {
+          "name": "defineJob",
+          "slug": "defineJob",
+          "kind": "function",
+          "signature": "defineJob<R>(def: JobDefinition<R>): Job<R>",
+          "doc": "Define a scheduled/background job. Validates any declared schedule up front (throws on a malformed cron expression). Place the result as the default export of a jobs/<name>.ts file, or register it programmatically with registerJob.",
+          "docFull": "Define a scheduled/background job. Validates any declared `schedule` up front (throws on a\nmalformed cron expression). Place the result as the default export of a `jobs/<name>.ts` file,\nor register it programmatically with {@linkcode registerJob}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "defineSubscription",
           "slug": "defineSubscription",
           "kind": "function",
@@ -6352,18 +6364,6 @@
             }
           ],
           "returns": "The subscription reference.",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "defineTask",
-          "slug": "defineTask",
-          "kind": "function",
-          "signature": "defineTask<R>(def: TaskDefinition<R>): Task<R>",
-          "doc": "Define a scheduled/background task. Validates any declared schedule up front (throws on a malformed cron expression). Place the result as the default export of a tasks/<name>.ts file, or register it programmatically with registerTask.",
-          "docFull": "Define a scheduled/background task. Validates any declared `schedule` up front (throws on a\nmalformed cron expression). Place the result as the default export of a `tasks/<name>.ts` file,\nor register it programmatically with {@linkcode registerTask}.",
-          "params": [],
-          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -7319,6 +7319,18 @@
           "denextOnly": true
         },
         {
+          "name": "getJob",
+          "slug": "getJob",
+          "kind": "function",
+          "signature": "getJob(name: string): Job | undefined",
+          "doc": "The registered job for name, or undefined.",
+          "docFull": "The registered job for `name`, or undefined.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "getSession",
           "slug": "getSession",
           "kind": "function",
@@ -7335,18 +7347,6 @@
           "examples": [
             "```ts\nconst session = await getSession<{ userId: string }>({ secret: Deno.env.get(\"SESSION_SECRET\")! });\nif (!session.data) redirect(\"/login\");\n// after a successful login:\nawait session.set({ userId: user.id });\n```"
           ],
-          "denextOnly": true
-        },
-        {
-          "name": "getTask",
-          "slug": "getTask",
-          "kind": "function",
-          "signature": "getTask(name: string): Task | undefined",
-          "doc": "The registered task for name, or undefined.",
-          "docFull": "The registered task for `name`, or undefined.",
-          "params": [],
-          "returns": "",
-          "examples": [],
           "denextOnly": true
         },
         {
@@ -7971,6 +7971,18 @@
           "denextOnly": true
         },
         {
+          "name": "isJob",
+          "slug": "isJob",
+          "kind": "function",
+          "signature": "isJob(value: unknown): value is Job",
+          "doc": "True if value came from defineJob.",
+          "docFull": "True if `value` came from {@linkcode defineJob}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "IslandPayload",
           "slug": "IslandPayload",
           "kind": "interface",
@@ -8088,24 +8100,216 @@
           "denextOnly": true
         },
         {
-          "name": "isTask",
-          "slug": "isTask",
-          "kind": "function",
-          "signature": "isTask(value: unknown): value is Task",
-          "doc": "True if value came from defineTask.",
-          "docFull": "True if `value` came from {@linkcode defineTask}.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
           "name": "isUnauthorized",
           "slug": "isUnauthorized",
           "kind": "function",
           "signature": "isUnauthorized(value: unknown): value is UnauthorizedError",
           "doc": "True if value is an UnauthorizedError raised by unauthorized() (or Next's own).",
           "docFull": "True if `value` is an {@link UnauthorizedError} raised by `unauthorized()` (or Next's own).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Job",
+          "slug": "Job",
+          "kind": "interface",
+          "signature": "interface Job<R>",
+          "doc": "A job descriptor. Returned by defineJob; the shape a jobs/ file default-exports.",
+          "docFull": "A job descriptor. Returned by {@linkcode defineJob}; the shape a `jobs/` file default-exports.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "JobBackoff",
+          "slug": "JobBackoff",
+          "kind": "typeAlias",
+          "signature": "type JobBackoff = number | object",
+          "doc": "How long to wait before a retry: a number is a fixed delay in ms; the object form picks a strategy (default \"exponential\": delayMs, then twice that, … capped at maxDelayMs).",
+          "docFull": "How long to wait before a retry: a number is a fixed delay in ms; the object form picks a\nstrategy (default `\"exponential\"`: `delayMs`, then twice that, … capped at `maxDelayMs`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "JobContext",
+          "slug": "JobContext",
+          "kind": "interface",
+          "signature": "interface JobContext",
+          "doc": "Context passed to a job's handler.",
+          "docFull": "Context passed to a job's handler.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "JobDefinition",
+          "slug": "JobDefinition",
+          "kind": "interface",
+          "signature": "interface JobDefinition<R>",
+          "doc": "A job definition passed to defineJob.",
+          "docFull": "A job definition passed to {@linkcode defineJob}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "JobHistory",
+          "slug": "JobHistory",
+          "kind": "interface",
+          "signature": "interface JobHistory",
+          "doc": "What a read returns — including why there is nothing, which is itself an answer.",
+          "docFull": "What a read returns — including why there is nothing, which is itself an answer.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "JobHistoryCleared",
+          "slug": "JobHistoryCleared",
+          "kind": "interface",
+          "signature": "interface JobHistoryCleared",
+          "doc": "What clearing the history did, or why it could not.",
+          "docFull": "What clearing the history did, or why it could not.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "JobHistoryConfig",
+          "slug": "JobHistoryConfig",
+          "kind": "interface",
+          "signature": "interface JobHistoryConfig",
+          "doc": "The object form of JobsConfig.history.",
+          "docFull": "The object form of {@link JobsConfig.history}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "JobHistoryOptions",
+          "slug": "JobHistoryOptions",
+          "kind": "interface",
+          "signature": "interface JobHistoryOptions",
+          "doc": "Options for jobHistoryRecorder and readJobHistory.",
+          "docFull": "Options for {@linkcode jobHistoryRecorder} and {@linkcode readJobHistory}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "JobHistoryPruneOptions",
+          "slug": "JobHistoryPruneOptions",
+          "kind": "interface",
+          "signature": "interface JobHistoryPruneOptions",
+          "doc": "Options for JobHistoryStore.prune.",
+          "docFull": "Options for {@linkcode JobHistoryStore.prune}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "JobHistoryReadOptions",
+          "slug": "JobHistoryReadOptions",
+          "kind": "interface",
+          "signature": "interface JobHistoryReadOptions",
+          "doc": "Options for JobHistoryStore.read.",
+          "docFull": "Options for {@linkcode JobHistoryStore.read}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "JobHistoryRow",
+          "slug": "JobHistoryRow",
+          "kind": "interface",
+          "signature": "interface JobHistoryRow",
+          "doc": "One job's standing, as the panel shows it.",
+          "docFull": "One job's standing, as the panel shows it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "JobHistoryRun",
+          "slug": "JobHistoryRun",
+          "kind": "interface",
+          "signature": "interface JobHistoryRun",
+          "doc": "One run in the recent feed.",
+          "docFull": "One run in the recent feed.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "JobHistoryStore",
+          "slug": "JobHistoryStore",
+          "kind": "interface",
+          "signature": "interface JobHistoryStore",
+          "doc": "Where job run history is kept — the seam behind jobs: { history }.",
+          "docFull": "Where job run history is kept — the seam behind `jobs: { history }`.\n\ndenext records one row per completed run: its start (`startedAt`), how it ended (`ok`: it\nfinished; `!ok`: it threw, with the error's head in `detail`) and, for a job with `retry`,\nthe attempt. The default store is a SQLite file in `.denext/` ({@linkcode\nsqliteJobHistoryStore}); {@linkcode postgresJobHistoryStore} keeps it in Postgres, shared by\nevery replica. Any object with these methods works:\n\n```ts\n// denext.config.ts\nimport { postgresJobHistoryStore } from \"denext/server\";\nexport default {\n  jobs: { history: { store: postgresJobHistoryStore({ url: Deno.env.get(\"DATABASE_URL\") }) } },\n};\n```\n\nThe contract a store must keep: **recording never fails or delays a run.** `record` is\ncalled on the tail of every run and never awaited; it must not throw (a returned promise must\nnot reject), and a store that cannot write drops the row. The readers never throw either:\nan unreadable store is `{ available: false, reason }`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "jobNames",
+          "slug": "jobNames",
+          "kind": "function",
+          "signature": "jobNames(): string[]",
+          "doc": "Every registered job name, sorted.",
+          "docFull": "Every registered job name, sorted.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "JobRetry",
+          "slug": "JobRetry",
+          "kind": "interface",
+          "signature": "interface JobRetry",
+          "doc": "A job's retry policy (JobDefinition.retry).",
+          "docFull": "A job's retry policy ({@linkcode JobDefinition.retry}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "JobRunRecord",
+          "slug": "JobRunRecord",
+          "kind": "interface",
+          "signature": "interface JobRunRecord",
+          "doc": "One completed run, as the recorder receives it.",
+          "docFull": "One completed run, as the recorder receives it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "JobsConfig",
+          "slug": "JobsConfig",
+          "kind": "interface",
+          "signature": "interface JobsConfig",
+          "doc": "Scheduled/background job behaviour (DenextConfig.jobs).",
+          "docFull": "Scheduled/background job behaviour ({@link DenextConfig.jobs}).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -9712,6 +9916,35 @@
           "denextOnly": true
         },
         {
+          "name": "postgresJobHistoryStore",
+          "slug": "postgresJobHistoryStore",
+          "kind": "function",
+          "signature": "postgresJobHistoryStore(options: PostgresJobHistoryStoreOptions): JobHistoryStore",
+          "doc": "Job run history on Postgres — pass it as jobs: { history: { store } }.",
+          "docFull": "Job run history on Postgres — pass it as `jobs: { history: { store } }`.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "A client (sql) or a postgres:// URL, an optional schema, the per-job cap and migrate: false when the table is created out of band."
+            }
+          ],
+          "returns": "The store. Nothing connects until the first run is recorded (or history is read).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PostgresJobHistoryStoreOptions",
+          "slug": "PostgresJobHistoryStoreOptions",
+          "kind": "interface",
+          "signature": "interface PostgresJobHistoryStoreOptions",
+          "doc": "Options for postgresJobHistoryStore.",
+          "docFull": "Options for {@linkcode postgresJobHistoryStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "PostgresJsLike",
           "slug": "PostgresJsLike",
           "kind": "interface",
@@ -9809,35 +10042,6 @@
           "signature": "interface PostgresSessionStoreOptions",
           "doc": "Options for postgresSessionStore.",
           "docFull": "Options for {@linkcode postgresSessionStore}.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "postgresTaskHistoryStore",
-          "slug": "postgresTaskHistoryStore",
-          "kind": "function",
-          "signature": "postgresTaskHistoryStore(options: PostgresTaskHistoryStoreOptions): TaskHistoryStore",
-          "doc": "Task run history on Postgres — pass it as tasks: { history: { store } }.",
-          "docFull": "Task run history on Postgres — pass it as `tasks: { history: { store } }`.",
-          "params": [
-            {
-              "name": "options",
-              "doc": "A client (sql) or a postgres:// URL, an optional schema, the per-task cap and migrate: false when the table is created out of band."
-            }
-          ],
-          "returns": "The store. Nothing connects until the first run is recorded (or history is read).",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "PostgresTaskHistoryStoreOptions",
-          "slug": "PostgresTaskHistoryStoreOptions",
-          "kind": "interface",
-          "signature": "interface PostgresTaskHistoryStoreOptions",
-          "doc": "Options for postgresTaskHistoryStore.",
-          "docFull": "Options for {@linkcode postgresTaskHistoryStore}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -10013,8 +10217,8 @@
           "slug": "rateLimit",
           "kind": "function",
           "signature": "rateLimit(options: ApiRateLimitOptions): ApiMiddleware<object>",
-          "doc": "Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429 rate_limited envelope carrying retry-after (seconds) — before validation, so a flood never reaches a schema or the handler. The client identity is the socket peer, or the last x-forwarded-for hop only when trustForwardedHeaders is set (a forged header can't dodge it); an IPv6 address counts against its /64.",
-          "docFull": "Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429\n`rate_limited` envelope carrying `retry-after` (seconds) — before validation, so a flood\nnever reaches a schema or the handler. The client identity is the socket peer, or the last\n`x-forwarded-for` hop only when `trustForwardedHeaders` is set (a forged header can't dodge it);\nan IPv6 address counts against its /64.\n\nThe default key is skipped — the request is not limited — when the client address is a\nloopback, private, link-local or unique-local socket peer and no trusted forwarded hop names\nthe client (`clientIpForLimits()`'s rule): that peer is most likely a reverse proxy every\nvisitor shares, so one bucket would rate-limit the whole site. A warning says so once per\nprocess. A custom `key` is always applied.",
+          "doc": "Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429 rate_limited envelope carrying retry-after (seconds) — before validation, so a flood never reaches a schema or the handler. The client identity is the socket peer, or the last x-forwarded-for hop only when the proxy is trusted (a forged header can't dodge it): the limiter's own trustForwardedHeaders when set, else the app's (trustForwardedHeaders / DENEXT_TRUST_PROXY=1, read per request). An IPv6 address counts against its /64.",
+          "docFull": "Fixed-window rate limit per key: the (max+1)th request in a window fails with a 429\n`rate_limited` envelope carrying `retry-after` (seconds) — before validation, so a flood\nnever reaches a schema or the handler. The client identity is the socket peer, or the last\n`x-forwarded-for` hop only when the proxy is trusted (a forged header can't dodge it): the\nlimiter's own `trustForwardedHeaders` when set, else the app's (`trustForwardedHeaders` /\n`DENEXT_TRUST_PROXY=1`, read per request). An IPv6 address counts against its /64.\n\nThe default key is skipped — the request is not limited — when the client address is a\nloopback, private, link-local or unique-local socket peer and no trusted forwarded hop names\nthe client (`clientIpForLimits()`'s rule): that peer is most likely a reverse proxy every\nvisitor shares, so one bucket would rate-limit the whole site. A warning says so once per\nprocess. The app's `rateLimitLocalAddresses` counts such a peer by its own address instead,\nand its `rateLimitHeader` (e.g. `cf-connecting-ip`) keys on the address the proxy names there\nwhenever a request carries one — both app-wide, whatever this limiter's own\n`trustForwardedHeaders`. A custom `key` is always applied.",
           "params": [
             {
               "name": "options",
@@ -10205,12 +10409,12 @@
           "denextOnly": true
         },
         {
-          "name": "registerTask",
-          "slug": "registerTask",
+          "name": "registerJob",
+          "slug": "registerJob",
           "kind": "function",
-          "signature": "registerTask(name: string, task: Task): void",
-          "doc": "Register (or replace) a task by name — used by the tasks/ loader and by app code.",
-          "docFull": "Register (or replace) a task by name — used by the `tasks/` loader and by app code.",
+          "signature": "registerJob(name: string, job: Job): void",
+          "doc": "Register (or replace) a job by name — used by the jobs/ loader and by app code.",
+          "docFull": "Register (or replace) a job by name — used by the `jobs/` loader and by app code.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11038,12 +11242,12 @@
           "denextOnly": true
         },
         {
-          "name": "runTask",
-          "slug": "runTask",
+          "name": "runJob",
+          "slug": "runJob",
           "kind": "function",
-          "signature": "runTask(name: string, payload?: unknown, opts?: object): Promise<unknown>",
-          "doc": "Run a task by name and return its handler's result. Throws if no such task is registered. Callable from app code (a route handler, an action) to trigger work on demand. The handler's signal aborts when opts.signal does and when the server shuts down.",
-          "docFull": "Run a task by name and return its handler's result. Throws if no such task is registered.\nCallable from app code (a route handler, an action) to trigger work on demand. The handler's\n`signal` aborts when `opts.signal` does and when the server shuts down.",
+          "signature": "runJob(name: string, payload?: unknown, opts?: object): Promise<unknown>",
+          "doc": "Run a job by name and return its handler's result. Throws if no such job is registered. Callable from app code (a route handler, an action) to trigger work on demand. The handler's signal aborts when opts.signal does and when the server shuts down.",
+          "docFull": "Run a job by name and return its handler's result. Throws if no such job is registered.\nCallable from app code (a route handler, an action) to trigger work on demand. The handler's\n`signal` aborts when `opts.signal` does and when the server shuts down.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11826,6 +12030,35 @@
           "denextOnly": true
         },
         {
+          "name": "sqliteJobHistoryStore",
+          "slug": "sqliteJobHistoryStore",
+          "kind": "function",
+          "signature": "sqliteJobHistoryStore(options: SqliteJobHistoryStoreOptions): JobHistoryStore",
+          "doc": "The default JobHistoryStore: a SQLite file (.denext/jobs.db when denext installs it), on Deno's built-in node:sqlite.",
+          "docFull": "The default {@linkcode JobHistoryStore}: a SQLite file (`.denext/jobs.db` when denext\ninstalls it), on Deno's built-in `node:sqlite`.\n\nThe writer opens on the first recorded run — enabling history creates no file — and is\ncreated owner-only (mode 0600). After an open failure, or three consecutive write failures,\nit latches off for the rest of the process. The readers open the file read-only and separately\nfrom the writer (WAL lets `denext ui` read while the app writes), and neither a read nor a clear\ncreates a file that is not there.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The file, the per-job cap, and an optional open hook."
+            }
+          ],
+          "returns": "The store.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteJobHistoryStoreOptions",
+          "slug": "SqliteJobHistoryStoreOptions",
+          "kind": "interface",
+          "signature": "interface SqliteJobHistoryStoreOptions",
+          "doc": "Options for sqliteJobHistoryStore.",
+          "docFull": "Options for {@linkcode sqliteJobHistoryStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "sqliteSessionStore",
           "slug": "sqliteSessionStore",
           "kind": "function",
@@ -11849,35 +12082,6 @@
           "signature": "interface SqliteSessionStoreOptions",
           "doc": "Options for sqliteSessionStore.",
           "docFull": "Options for {@linkcode sqliteSessionStore}.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "sqliteTaskHistoryStore",
-          "slug": "sqliteTaskHistoryStore",
-          "kind": "function",
-          "signature": "sqliteTaskHistoryStore(options: SqliteTaskHistoryStoreOptions): TaskHistoryStore",
-          "doc": "The default TaskHistoryStore: a SQLite file (.denext/tasks.db when denext installs it), on Deno's built-in node:sqlite.",
-          "docFull": "The default {@linkcode TaskHistoryStore}: a SQLite file (`.denext/tasks.db` when denext\ninstalls it), on Deno's built-in `node:sqlite`.\n\nThe writer opens on the first recorded run — enabling history creates no file — and is\ncreated owner-only (mode 0600). After an open failure, or three consecutive write failures,\nit latches off for the rest of the process. The readers open the file read-only and separately\nfrom the writer (WAL lets `denext ui` read while the app writes), and neither a read nor a clear\ncreates a file that is not there.",
-          "params": [
-            {
-              "name": "options",
-              "doc": "The file, the per-task cap, and an optional open hook."
-            }
-          ],
-          "returns": "The store.",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "SqliteTaskHistoryStoreOptions",
-          "slug": "SqliteTaskHistoryStoreOptions",
-          "kind": "interface",
-          "signature": "interface SqliteTaskHistoryStoreOptions",
-          "doc": "Options for sqliteTaskHistoryStore.",
-          "docFull": "Options for {@linkcode sqliteTaskHistoryStore}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -12085,210 +12289,6 @@
             }
           ],
           "returns": "A disposer that stops the tap.",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "Task",
-          "slug": "Task",
-          "kind": "interface",
-          "signature": "interface Task<R>",
-          "doc": "A task descriptor. Returned by defineTask; the shape a tasks/ file default-exports.",
-          "docFull": "A task descriptor. Returned by {@linkcode defineTask}; the shape a `tasks/` file default-exports.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TaskBackoff",
-          "slug": "TaskBackoff",
-          "kind": "typeAlias",
-          "signature": "type TaskBackoff = number | object",
-          "doc": "How long to wait before a retry: a number is a fixed delay in ms; the object form picks a strategy (default \"exponential\": delayMs, then twice that, … capped at maxDelayMs).",
-          "docFull": "How long to wait before a retry: a number is a fixed delay in ms; the object form picks a\nstrategy (default `\"exponential\"`: `delayMs`, then twice that, … capped at `maxDelayMs`).",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TaskContext",
-          "slug": "TaskContext",
-          "kind": "interface",
-          "signature": "interface TaskContext",
-          "doc": "Context passed to a task's handler.",
-          "docFull": "Context passed to a task's handler.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TaskDefinition",
-          "slug": "TaskDefinition",
-          "kind": "interface",
-          "signature": "interface TaskDefinition<R>",
-          "doc": "A task definition passed to defineTask.",
-          "docFull": "A task definition passed to {@linkcode defineTask}.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TaskHistory",
-          "slug": "TaskHistory",
-          "kind": "interface",
-          "signature": "interface TaskHistory",
-          "doc": "What a read returns — including why there is nothing, which is itself an answer.",
-          "docFull": "What a read returns — including why there is nothing, which is itself an answer.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TaskHistoryCleared",
-          "slug": "TaskHistoryCleared",
-          "kind": "interface",
-          "signature": "interface TaskHistoryCleared",
-          "doc": "What clearing the history did, or why it could not.",
-          "docFull": "What clearing the history did, or why it could not.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TaskHistoryConfig",
-          "slug": "TaskHistoryConfig",
-          "kind": "interface",
-          "signature": "interface TaskHistoryConfig",
-          "doc": "The object form of TasksConfig.history.",
-          "docFull": "The object form of {@link TasksConfig.history}.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TaskHistoryOptions",
-          "slug": "TaskHistoryOptions",
-          "kind": "interface",
-          "signature": "interface TaskHistoryOptions",
-          "doc": "Options for taskHistoryRecorder and readTaskHistory.",
-          "docFull": "Options for {@linkcode taskHistoryRecorder} and {@linkcode readTaskHistory}.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TaskHistoryPruneOptions",
-          "slug": "TaskHistoryPruneOptions",
-          "kind": "interface",
-          "signature": "interface TaskHistoryPruneOptions",
-          "doc": "Options for TaskHistoryStore.prune.",
-          "docFull": "Options for {@linkcode TaskHistoryStore.prune}.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TaskHistoryReadOptions",
-          "slug": "TaskHistoryReadOptions",
-          "kind": "interface",
-          "signature": "interface TaskHistoryReadOptions",
-          "doc": "Options for TaskHistoryStore.read.",
-          "docFull": "Options for {@linkcode TaskHistoryStore.read}.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TaskHistoryRow",
-          "slug": "TaskHistoryRow",
-          "kind": "interface",
-          "signature": "interface TaskHistoryRow",
-          "doc": "One task's standing, as the panel shows it.",
-          "docFull": "One task's standing, as the panel shows it.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TaskHistoryRun",
-          "slug": "TaskHistoryRun",
-          "kind": "interface",
-          "signature": "interface TaskHistoryRun",
-          "doc": "One run in the recent feed.",
-          "docFull": "One run in the recent feed.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TaskHistoryStore",
-          "slug": "TaskHistoryStore",
-          "kind": "interface",
-          "signature": "interface TaskHistoryStore",
-          "doc": "Where task run history is kept — the seam behind tasks: { history }.",
-          "docFull": "Where task run history is kept — the seam behind `tasks: { history }`.\n\ndenext records one row per completed run: its start (`startedAt`), how it ended (`ok`: it\nfinished; `!ok`: it threw, with the error's head in `detail`) and, for a task with `retry`,\nthe attempt. The default store is a SQLite file in `.denext/` ({@linkcode\nsqliteTaskHistoryStore}); {@linkcode postgresTaskHistoryStore} keeps it in Postgres, shared by\nevery replica. Any object with these methods works:\n\n```ts\n// denext.config.ts\nimport { postgresTaskHistoryStore } from \"denext/server\";\nexport default {\n  tasks: { history: { store: postgresTaskHistoryStore({ url: Deno.env.get(\"DATABASE_URL\") }) } },\n};\n```\n\nThe contract a store must keep: **recording never fails or delays a run.** `record` is\ncalled on the tail of every run and never awaited; it must not throw (a returned promise must\nnot reject), and a store that cannot write drops the row. The readers never throw either:\nan unreadable store is `{ available: false, reason }`.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "taskNames",
-          "slug": "taskNames",
-          "kind": "function",
-          "signature": "taskNames(): string[]",
-          "doc": "Every registered task name, sorted.",
-          "docFull": "Every registered task name, sorted.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TaskRetry",
-          "slug": "TaskRetry",
-          "kind": "interface",
-          "signature": "interface TaskRetry",
-          "doc": "A task's retry policy (TaskDefinition.retry).",
-          "docFull": "A task's retry policy ({@linkcode TaskDefinition.retry}).",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TaskRunRecord",
-          "slug": "TaskRunRecord",
-          "kind": "interface",
-          "signature": "interface TaskRunRecord",
-          "doc": "One completed run, as the recorder receives it.",
-          "docFull": "One completed run, as the recorder receives it.",
-          "params": [],
-          "returns": "",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "TasksConfig",
-          "slug": "TasksConfig",
-          "kind": "interface",
-          "signature": "interface TasksConfig",
-          "doc": "Scheduled/background task behaviour (DenextConfig.tasks).",
-          "docFull": "Scheduled/background task behaviour ({@link DenextConfig.tasks}).",
-          "params": [],
-          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -26482,6 +26482,18 @@
           "signature": "VERB_NAME: RegExp",
           "doc": "A project CLI verb name: lowercase, digits and dashes, starting with a letter. The grammar denext.config.ts's commands: validation enforces (src/server/config-validate.ts), and what the help cache accepts back from disk.",
           "docFull": "A project CLI verb name: lowercase, digits and dashes, starting with a letter. The grammar\n`denext.config.ts`'s `commands:` validation enforces (`src/server/config-validate.ts`), and\nwhat the help cache accepts back from disk.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "verbIndex",
+          "slug": "verbIndex",
+          "kind": "function",
+          "signature": "verbIndex(argv: typeOperator): number",
+          "doc": "Index of the first bare token in argv — the verb — or -1 when there is none. The separate value of a valued global flag (--cwd <dir>) is skipped, not taken as the verb.",
+          "docFull": "Index of the first bare token in `argv` — the verb — or -1 when there is none. The\nseparate value of a valued global flag (`--cwd <dir>`) is skipped, not taken as the verb.",
           "params": [],
           "returns": "",
           "examples": [],

@@ -19,7 +19,12 @@ import {
   entrypointArg,
   isStandaloneBinary,
   maybeReexecPinned as reexecPinned,
+  maybeReexecToolchain,
+  runsProjectCode,
+  toolchainConfigArgs,
 } from "./src/cli/self-exec.ts";
+import { loadDenoToolchainPin, resolveDenoToolchain } from "./src/build/deno-toolchain.ts";
+import { runDenoPassthrough } from "./src/cli/commands/deno-toolchain.ts";
 import { CONFIG_FILES, resolveProject } from "./src/build/paths.ts";
 import {
   buildAppCss,
@@ -29,6 +34,7 @@ import {
 } from "./src/build/css.ts";
 import { guardRestore, healLeakedCssShims, signalExitCode } from "./src/build/css-config-guard.ts";
 import { tailwindPaths } from "./src/build/tailwind.ts";
+import { buildServesCss } from "./src/build/server-copies.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs } from "./src/build/bundle.ts";
 import {
   configAnchorsResolution,
@@ -38,14 +44,20 @@ import {
 } from "./src/build/module-config.ts";
 import { loadEnv } from "./src/server/env.ts";
 import { cliNpmModeArgs } from "./src/build/pnpm-workspace.ts";
-import { loadPluginCommands } from "./src/cli/plugin-commands.ts";
+import {
+  COMMAND_DISPATCH_BUDGET_MS,
+  discoveryShortfall,
+  loadPluginCommands,
+} from "./src/cli/plugin-commands.ts";
 import { VERSION } from "./mod.ts";
 import type { CommandContext, CommandSpec, ParseOutcome, ProjectVerb } from "./src/cli/command.ts";
-import { type CommandRegistry, GLOBAL_FLAGS } from "./src/cli/command.ts";
+import { type CommandRegistry, GLOBAL_FLAGS, verbIndex } from "./src/cli/command.ts";
 import { buildRegistry } from "./src/cli/register.ts";
 import { envTierFor, projectDir, SHUTDOWN_SIGNALS } from "./src/cli/shared.ts";
-import { readCommandCache } from "./src/cli/command-cache.ts";
+import { firstNotice, readCommandCache } from "./src/cli/command-cache.ts";
 import { acquireProjectLocks } from "./src/build/project-locks.ts";
+import { denoForwardFor, denoVerbArgs, verbatimFrom } from "./src/cli/deno-forward.ts";
+import { DENO_VERBS, forwardedDenoVerbs, isDenoVerb, shadowNotice } from "./src/cli/deno-verbs.ts";
 
 /**
  * The `--allow-*` flags to give a re-exec child: mirror the parent's coarse
@@ -195,6 +207,29 @@ async function forwardShutdown(child: Deno.ChildProcess): Promise<number> {
 }
 
 /**
+ * Run a CLI child — `deno run [flags] <cli> <this process's argv>` under `deno` with `env` added
+ * — stdio inherited and shutdown signals forwarded; resolves the code to exit with. The one
+ * spawn behind both whole-invocation re-execs: the pinned denext ({@linkcode maybeReexecPinned})
+ * and denext's Deno toolchain ({@linkcode toolchainGate}).
+ */
+function spawnCliChild(
+  deno: string,
+  flags: string[],
+  cli: string,
+  env: Record<string, string>,
+): Promise<number> {
+  return forwardShutdown(
+    new Deno.Command(deno, {
+      args: ["run", ...flags, cli, ...Deno.args],
+      env,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    }).spawn(),
+  );
+}
+
+/**
  * A compiled binary defers a module verb to the denext the project pins — the decision is
  * {@linkcode reexecPinned} (src/cli/self-exec.ts, where it is testable); this wires it to the
  * process: the pinned CLI runs as a `deno run` child with stdio and shutdown signals forwarded,
@@ -206,16 +241,75 @@ function maybeReexecPinned(dir: string): Promise<boolean> {
   return reexecPinned(dir, VERSION, Deno.args, {
     standalone: isStandaloneBinary,
     env: (name) => Deno.env.get(name),
+    // In a pnpm workspace the CLI's npm imports stay off the pnpm tree (pnpm-workspace.ts).
+    // `denoExecutable()` is denext's Deno toolchain once {@linkcode toolchainGate} chose it.
     spawn: (cli) =>
-      forwardShutdown(
-        new Deno.Command(denoExecutable(), {
-          // In a pnpm workspace the CLI's npm imports stay off the pnpm tree (pnpm-workspace.ts).
-          args: ["run", "-A", ...cliNpmModeArgs(dir), ...minDepAgeArgs(), cli, ...Deno.args],
-          env: { DENEXT_PINNED_ACTIVE: "1" },
-          stdin: "inherit",
-          stdout: "inherit",
-          stderr: "inherit",
-        }).spawn(),
+      spawnCliChild(denoExecutable(), ["-A", ...cliNpmModeArgs(dir), ...minDepAgeArgs()], cli, {
+        DENEXT_PINNED_ACTIVE: "1",
+      }),
+    exit: (code) => Deno.exit(code),
+    warn: (message) => console.error(message),
+  });
+}
+
+/**
+ * The toolchain child's permission flags: `-A` when this process holds every coarse grant (it was
+ * run with `-A`, which also allows remote imports from any host — a grant Deno's permission query
+ * can't name), else the coarse grants it holds ({@linkcode childPermissionFlags}) plus a
+ * `--deny-<name>` for each permission this process was denied (`--deny-net`, as `denext ui
+ * --offline` starts its children): left out, the child would be asked instead of refused.
+ */
+async function toolchainPermissionFlags(): Promise<string[]> {
+  const flags = await childPermissionFlags();
+  if (flags.length === 7) return ["-A"];
+  const names: Deno.PermissionName[] = ["read", "write", "net", "env", "run", "sys", "ffi"];
+  for (const name of names) {
+    const state = await Deno.permissions.query({ name }).then((s) => s.state, () => "prompt");
+    if (state === "denied") flags.push(`--deny-${name}`);
+  }
+  return flags;
+}
+
+/** The pinned toolchain version, or `null` (none pinned, or an unreadable pin file override). */
+function pinnedToolchainVersion(): string | null {
+  try {
+    return loadDenoToolchainPin().version;
+  } catch {
+    return null; // resolveDenoToolchain() reports a bad DENEXT_TOOLCHAIN_PIN_FILE
+  }
+}
+
+/** The directory a verb's re-exec gates read the project from. */
+function gateDir(command: CommandSpec, ctx: CommandContext): string {
+  return command.moduleDir ? command.moduleDir(ctx) : projectDir(ctx);
+}
+
+/**
+ * Run a verb that executes project code on denext's Deno toolchain — the decision is
+ * {@linkcode maybeReexecToolchain} (src/cli/self-exec.ts); this wires it to the process: the same
+ * invocation re-runs under the toolchain binary with this process's permission grants, stdio and
+ * shutdown signals forwarded, and the process exits with the child's code. Returns whether the
+ * caller should stop.
+ */
+function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boolean> {
+  return maybeReexecToolchain(runsProjectCode(command, ctx.positionals[0]), {
+    env: (name) => Deno.env.get(name),
+    setEnv: (name, value) => Deno.env.set(name, value),
+    denoVersion: Deno.version.deno,
+    pinnedVersion: pinnedToolchainVersion(),
+    standalone: isStandaloneBinary,
+    resolve: () => resolveDenoToolchain(),
+    spawn: async (deno, marker) =>
+      spawnCliChild(
+        deno,
+        [
+          ...await toolchainPermissionFlags(),
+          ...await toolchainConfigArgs(),
+          ...cliNpmModeArgs(gateDir(command, ctx)),
+          ...minDepAgeArgs(),
+        ],
+        entrypointArg(import.meta.url),
+        { DENEXT_TOOLCHAIN_ACTIVE: marker },
       ),
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),
@@ -301,18 +395,35 @@ async function maybeReexecForModules(dir: string): Promise<boolean> {
 }
 
 /**
+ * Whether `denext start` serves the project in `dir` without the CSS import map, and so without
+ * {@linkcode maybeReexecForCss} — which rebuilds the stylesheets (Tailwind spawns its binary) and
+ * spawns a second `deno`, neither of which a least-privilege `start` (no `--allow-run`) may do. A
+ * SPA's server imports none of the app's modules; a native App Router build's server copies point
+ * every stylesheet import at its shim (`buildServesCss`). Anything else (a next-compat or older
+ * build, a moved project) keeps the re-exec.
+ */
+async function startServesCss(dir: string): Promise<boolean> {
+  const paths = await resolveProject(dir);
+  if (paths.config?.mode === "spa") return true;
+  return await buildServesCss(paths.projectDir, paths.outDir);
+}
+
+/**
  * For a module-loading verb, load `.env` then apply the CSS/module re-exec gate.
  * Returns `true` if the process re-exec'd (the caller should stop). A no-op for
  * verbs that don't load user modules.
  */
 async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<boolean> {
   if (!command.loadsModules) return false;
-  const dir = command.moduleDir ? command.moduleDir(ctx) : projectDir(ctx);
+  const dir = gateDir(command, ctx);
   if (await maybeReexecPinned(dir)) return true;
   await loadEnv({ dir, mode: envTierFor(command) });
   // `dev` builds unminified CSS; the other module verbs minify (matching 1.x).
   // `doctor` reports leaked css-shim entries instead of silently healing them.
-  if (await maybeReexecForCss(dir, command.name !== "dev", command.name !== "doctor")) return true;
+  const cssGate = command.name !== "start" || !(await startServesCss(dir));
+  if (cssGate && await maybeReexecForCss(dir, command.name !== "dev", command.name !== "doctor")) {
+    return true;
+  }
   if (await maybeReexecForModules(dir)) return true;
   return false;
 }
@@ -403,14 +514,78 @@ async function hasDenextConfig(dir: string): Promise<boolean> {
   return false;
 }
 
-async function main(): Promise<void> {
-  const registry = buildRegistry();
-  let outcome = registry.parse(Deno.args);
-  // An unknown verb may be one the project contributes — load them and retry.
-  if (outcome.kind === "error" && outcome.message.startsWith("unknown command")) {
-    await loadPluginCommands(registry, cwdFromArgs(Deno.args));
-    outcome = registry.parse(Deno.args);
+/** Whether a token asks for help (`--help` / `-h`). */
+function isHelpToken(token: string): boolean {
+  return token === "--help" || token === "-h";
+}
+
+/** Every Deno verb name — offered as a did-you-mean for an unknown verb (`denext compil`). */
+const DENO_VERB_NAMES: readonly string[] = DENO_VERBS.map((verb) => verb.name);
+
+/**
+ * The Deno invocation for an argv denext hands to Deno before parsing: `denext deno …` (every
+ * token after `deno` verbatim — flags such as `--config`, `--quiet` and `--json` included, which
+ * the parser would otherwise claim) and `denext task …` (Deno's `task`; a task's arguments are its
+ * own), after any leading global flags (`denext --cwd app deno fmt --quiet`). A help or version
+ * flag before the verb is denext's: `denext --help task` describes the verb and `denext --version
+ * task` prints denext's version. Null for everything else.
+ */
+function denoBeforeParse(
+  argv: string[],
+): { args: string[]; cwd: string; forwarded: boolean } | null {
+  const at = verbIndex(argv);
+  if (at < 0 || (argv[at] !== "deno" && argv[at] !== "task")) return null;
+  if (argv.slice(0, at).some((tok) => isHelpToken(tok) || isVersionToken(tok))) return null;
+  if (argv[at] === "deno") return { ...denoVerbArgs(argv, at), forwarded: false };
+  return { ...verbatimFrom(argv, at), forwarded: true };
+}
+
+/** Whether a token asks for the version (`--version` / `-v`). */
+function isVersionToken(token: string): boolean {
+  return token === "--version" || token === "-v";
+}
+
+/**
+ * Parse the argv with denext's precedence: a built-in verb, else one the project contributes
+ * (loaded on the first miss, so a plain project pays nothing), else a Deno verb or a script, which
+ * runs on denext's Deno exactly as `denext deno <args…>` would (and never returns).
+ *
+ * Discovery here runs under the DISPATCH budget, not the listing one: the verb was asked for by
+ * name, so a slow config import on a loaded machine must not make it "unknown". When discovery
+ * still falls short, the unknown-command error says why instead of only that it is unknown.
+ */
+async function resolveOutcome(registry: CommandRegistry): Promise<ParseOutcome> {
+  let outcome = registry.parse(Deno.args, DENO_VERB_NAMES);
+  if (outcome.kind !== "error" || !outcome.unknownVerb) return outcome;
+  const loaded = await loadPluginCommands(registry, cwdFromArgs(Deno.args), {
+    timeoutMs: COMMAND_DISPATCH_BUDGET_MS,
+  });
+  outcome = registry.parse(Deno.args, DENO_VERB_NAMES);
+  if (outcome.kind !== "error" || !outcome.unknownVerb) return outcome;
+  const forward = denoForwardFor(Deno.args, outcome.unknownVerb);
+  if (forward) return await runDenoPassthrough(forward.args, forward.cwd, true);
+  const shortfall = discoveryShortfall(loaded, COMMAND_DISPATCH_BUDGET_MS);
+  return shortfall === null
+    ? outcome
+    : { ...outcome, message: `${outcome.message} (${shortfall})` };
+}
+
+/**
+ * Say once — by the process that runs the verb (after any re-exec), and once per state of the
+ * project's config files — that a project verb shadows a Deno verb of the same name.
+ */
+async function noticeShadow(command: CommandSpec): Promise<void> {
+  if ((command.source ?? "core") === "core" || !isDenoVerb(command.name)) return;
+  if (await firstNotice(cwdFromArgs(Deno.args), `shadow:${command.name}`)) {
+    console.error(shadowNotice(command.name));
   }
+}
+
+async function main(): Promise<void> {
+  const early = denoBeforeParse(Deno.args);
+  if (early) return await runDenoPassthrough(early.args, early.cwd, early.forwarded);
+  const registry = buildRegistry();
+  const outcome = await resolveOutcome(registry);
   // Completions enumerate the whole verb set, so they load project verbs up front — under a
   // time budget, since a plugin's `setup` is arbitrary user code (the verb then exits, so a
   // handle that `setup` leaked cannot keep the shell waiting).
@@ -423,7 +598,9 @@ async function main(): Promise<void> {
       : null;
     return printOutcome(registry, outcome, project);
   }
+  if (await toolchainGate(outcome.command, outcome.ctx)) return;
   if (await moduleGate(outcome.command, outcome.ctx)) return;
+  await noticeShadow(outcome.command);
   // Cargo-style build locks, taken here — in the process that runs the verb, after any re-exec —
   // and held for the whole run (the OS drops them if the process exits or is killed).
   const lockRequest = outcome.command.locks?.(outcome.ctx);
@@ -446,7 +623,11 @@ function printOutcome(
   } else if (outcome.kind === "help") {
     const help = outcome.command
       ? registry.formatCommandHelp(outcome.command)
-      : registry.formatHelp(VERSION, project?.verbs ?? []);
+      : registry.formatHelp(
+        VERSION,
+        project?.verbs ?? [],
+        forwardedDenoVerbs((name) => registry.get(name) !== undefined).map((verb) => verb.name),
+      );
     console.log(project && !outcome.command ? `${help}\n\n${project.note}` : help);
   } else {
     console.error(

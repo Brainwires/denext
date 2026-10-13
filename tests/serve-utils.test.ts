@@ -1,10 +1,5 @@
 import { assert, assertEquals, assertNotEquals } from "@std/assert";
-import {
-  displayHost,
-  installDrainDeadline,
-  isContentHashed,
-  serveWithPortFallback,
-} from "../src/server/serve-utils.ts";
+import { displayHost, isContentHashed, serveWithPortFallback } from "../src/server/serve-utils.ts";
 
 Deno.test("displayHost renders a clickable URL host", () => {
   // Loopback / any-interface → localhost (the bare forms aren't clickable URLs).
@@ -98,29 +93,7 @@ Deno.test("throws AddrInUse when no port is free within the range", async () => 
 });
 
 // ---- graceful-shutdown drain deadline --------------------------------------
-
-Deno.test("installDrainDeadline: fires onTimeout when the drain outlasts the deadline", async () => {
-  let fired = 0;
-  // A drain that never settles on its own → the deadline must trip.
-  installDrainDeadline(new Promise<void>(() => {}), 20, () => fired++);
-  await delay(60);
-  assertEquals(fired, 1, "the deadline fired exactly once");
-});
-
-Deno.test("installDrainDeadline: does NOT fire when the drain settles first", async () => {
-  let fired = 0;
-  installDrainDeadline(delay(10), 50, () => fired++);
-  await delay(80);
-  assertEquals(fired, 0, "a completed drain cancels the deadline");
-});
-
-Deno.test("installDrainDeadline: drainMs <= 0 waits indefinitely (never fires)", async () => {
-  let fired = 0;
-  const cancel = installDrainDeadline(new Promise<void>(() => {}), 0, () => fired++);
-  await delay(30);
-  assertEquals(fired, 0);
-  cancel(); // no-op, but must be callable
-});
+// `installDrainDeadline` itself is tests/serve-drain-deadline.vitest.ts (fake clock).
 
 Deno.test("serveWithPortFallback: a signal wires the drain deadline (no hang on clean shutdown)", async () => {
   // With no in-flight requests, aborting the signal drains immediately and the

@@ -1,7 +1,7 @@
 // The request-serving parts of denext.config: routing, images, security headers (CSP, HSTS,
-// CORS, app links), the production-server knobs, the API batch, caches and task history.
+// CORS, app links), the production-server knobs, the API batch, caches and job history.
 
-import { type DenextConfig, isOrigin } from "../config.ts";
+import { type DenextConfig, isHeaderName, isOrigin } from "../config.ts";
 import { resolveCors } from "../cors.ts";
 import { ROUTE_CSP_KEYS } from "../segment-config.ts";
 import { validateAppLinks } from "../app-links.ts";
@@ -147,7 +147,25 @@ function validateCdnCacheHeaders(cdn: unknown, fail: Fail): void {
 }
 
 /**
- * The production-server knobs (`canonicalOrigin`, `trustForwardedHeaders`, `compress`,
+ * `rateLimitHeader` (an HTTP header name) and `rateLimitLocalAddresses` (a boolean): a malformed
+ * header name could never match a request, silently leaving every limit on the fallback address.
+ */
+function validateRateLimitAddress(config: DenextConfig, fail: Fail): void {
+  const { rateLimitHeader, rateLimitLocalAddresses } = config;
+  if (
+    rateLimitHeader !== undefined &&
+    (typeof rateLimitHeader !== "string" || !isHeaderName(rateLimitHeader))
+  ) {
+    fail("rateLimitHeader", 'must be an HTTP header name (e.g. "cf-connecting-ip")');
+  }
+  if (rateLimitLocalAddresses !== undefined && typeof rateLimitLocalAddresses !== "boolean") {
+    fail("rateLimitLocalAddresses", "must be a boolean");
+  }
+}
+
+/**
+ * The production-server knobs (`canonicalOrigin`, `trustForwardedHeaders`, `rateLimitHeader`,
+ * `rateLimitLocalAddresses`, `compress`,
  * `requestTimeout`, `maxConcurrency`, `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams`):
  * a bare origin, booleans, whole numbers in range, a list of param names. A bad `canonicalOrigin` would
  * otherwise silently 403 every Server Action (the origin check compares against it).
@@ -166,6 +184,7 @@ function validateServerOptions(config: DenextConfig, fail: Fail): void {
   if (trustForwardedHeaders !== undefined && typeof trustForwardedHeaders !== "boolean") {
     fail("trustForwardedHeaders", "must be a boolean");
   }
+  validateRateLimitAddress(config, fail);
   validateCdnCacheHeaders(config.cdnCacheHeaders, fail);
   validateCompress(config.compress, fail);
   if (config.requestTimeout !== undefined) {
@@ -247,25 +266,25 @@ export function validateCacheAndEnv(config: DenextConfig, fail: Fail): void {
   }
 }
 
-/** The `TaskHistoryStore` methods a `tasks.history.store` must have. */
+/** The `JobHistoryStore` methods a `jobs.history.store` must have. */
 const HISTORY_STORE_METHODS = ["record", "read", "listRuns", "prune", "clear"] as const;
 
 /**
- * `tasks.historyMaxRuns` / `tasks.history.maxRuns` are finite whole numbers >= 1; `tasks.history`
- * is a boolean or `{ store?, maxRuns? }`, and a `store` has every `TaskHistoryStore` method.
+ * `jobs.historyMaxRuns` / `jobs.history.maxRuns` are finite whole numbers >= 1; `jobs.history`
+ * is a boolean or `{ store?, maxRuns? }`, and a `store` has every `JobHistoryStore` method.
  */
-export function validateTasks(tasks: DenextConfig["tasks"], fail: Fail): void {
-  if (tasks?.historyMaxRuns !== undefined) {
-    num(fail, "tasks.historyMaxRuns", tasks.historyMaxRuns, { int: true, min: 1 });
+export function validateJobs(jobs: DenextConfig["jobs"], fail: Fail): void {
+  if (jobs?.historyMaxRuns !== undefined) {
+    num(fail, "jobs.historyMaxRuns", jobs.historyMaxRuns, { int: true, min: 1 });
   }
-  const history: unknown = tasks?.history;
+  const history: unknown = jobs?.history;
   if (history === undefined || typeof history === "boolean") return;
   if (history === null || typeof history !== "object" || Array.isArray(history)) {
-    fail("tasks.history", "must be a boolean or { store?, maxRuns? }");
+    fail("jobs.history", "must be a boolean or { store?, maxRuns? }");
     return;
   }
   const { store, maxRuns } = history as { store?: unknown; maxRuns?: unknown };
-  if (maxRuns !== undefined) num(fail, "tasks.history.maxRuns", maxRuns, { int: true, min: 1 });
+  if (maxRuns !== undefined) num(fail, "jobs.history.maxRuns", maxRuns, { int: true, min: 1 });
   if (store === undefined) return;
   const missing = store !== null && typeof store === "object"
     ? HISTORY_STORE_METHODS.filter((m) =>
@@ -273,6 +292,6 @@ export function validateTasks(tasks: DenextConfig["tasks"], fail: Fail): void {
     )
     : HISTORY_STORE_METHODS;
   if (missing.length > 0) {
-    fail("tasks.history.store", `must be a TaskHistoryStore (missing ${missing.join(", ")})`);
+    fail("jobs.history.store", `must be a JobHistoryStore (missing ${missing.join(", ")})`);
   }
 }

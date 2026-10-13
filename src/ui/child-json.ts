@@ -1,7 +1,7 @@
 // Reading a JSON document back out of a `deno` child's combined output.
 //
 // Two panels discover by spawning a CLI verb with `--json` and parsing what it printed
-// (`denext commands --json`, `denext task --list --json`). Neither gets a clean stdout: Deno
+// (`denext commands --json`, `denext job --list --json`). Neither gets a clean stdout: Deno
 // itself may write a `Download …` line, a warning, or a permission prompt around the document.
 // Both verbs pretty-print, so the document reliably opens on a bare `{` line and closes on the
 // last bare `}` line — everything outside that span is noise and is dropped.

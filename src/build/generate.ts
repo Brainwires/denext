@@ -26,7 +26,7 @@ export const GENERATE_KINDS = [
   "api",
   "action",
   "middleware",
-  "task",
+  "job",
   "test",
   "docker",
   "migration",
@@ -209,17 +209,17 @@ export const config = {
 `;
 }
 
-function taskSource(name: string): string {
-  const desc = pascal(name) || "Task";
-  return `import { defineTask } from "denext/server";
+function jobSource(name: string): string {
+  const desc = pascal(name) || "Job";
+  return `import { defineJob } from "denext/server";
 
-export default defineTask({
+export default defineJob({
   description: ${JSON.stringify(desc)},
   // schedule: "0 3 * * *", // optional cron (evaluated in UTC); or list it in
-  // denext.config.ts \`scheduledTasks\`.
+  // denext.config.ts \`scheduledJobs\`.
   handler: async ({ payload }) => {
     void payload;
-    // Do the work here. Run it with \`denext task ${name}\` or runTask("${name}").
+    // Do the work here. Run it with \`denext job ${name}\` or runJob("${name}").
   },
 });
 `;
@@ -425,9 +425,9 @@ function artifactTarget(
     case "middleware":
       // Sits beside `app/` — at `src/` when the app lives in `src/app`, else project root.
       return { path: safeJoin(srcBase, "middleware.ts"), content: middlewareSource() };
-    case "task": {
-      const base = segment.replace(/\.ts$/, "") || "task";
-      return { path: safeJoin(projectDir, "tasks", base + ".ts"), content: taskSource(name) };
+    case "job": {
+      const base = segment.replace(/\.ts$/, "") || "job";
+      return { path: safeJoin(projectDir, "jobs", base + ".ts"), content: jobSource(name) };
     }
     case "component":
       return {

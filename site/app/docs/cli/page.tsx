@@ -4,7 +4,7 @@ import cliJson from "./cli.json" with { type: "json" };
 export const metadata = {
   title: "CLI reference",
   description:
-    "Every built-in denext verb with its flags and positionals — dev, build, start, export, migrate, generate, doctor, analyze, profile, desktop, plugin, patch, task, mcp and the rest — generated from the command registry.",
+    "Every built-in denext verb with its flags and positionals — dev, build, start, export, migrate, generate, doctor, analyze, profile, desktop, plugin, patch, job, mcp and the rest, plus the Deno commands it forwards — generated from the command registry.",
 };
 
 interface Flag {
@@ -34,7 +34,11 @@ interface Command {
   positionals: Positional[];
 }
 
-const cli = cliJson as unknown as { globalFlags: Flag[]; commands: Command[] };
+const cli = cliJson as unknown as {
+  globalFlags: Flag[];
+  commands: Command[];
+  denoVerbs: { name: string; summary: string }[];
+};
 
 /** `--port, -p <port>` — the label column of a flags table. */
 function flagLabel(f: Flag): string {
@@ -103,6 +107,7 @@ function Verb({ c }: { c: Command }) {
 
 export default function Cli() {
   const toc = [
+    { id: "deno-verbs", text: "Deno's own commands", level: 2 as const },
     { id: "global-flags", text: "Global flags", level: 2 as const },
     { id: "build-locks", text: "Concurrency and build locks", level: 2 as const },
     ...cli.commands.map((c) => ({ id: c.name, text: `denext ${c.name}`, level: 2 as const })),
@@ -140,6 +145,43 @@ export default function Cli() {
         (also <code>--version</code>/<code>-v</code>) prints the version, and{" "}
         <code>denext help [command]</code> (also <code>--help</code>/<code>-h</code>) prints help.
       </p>
+
+      <h2 id="deno-verbs">Deno's own commands</h2>
+      <p>
+        Every Deno command denext does not define itself runs on{" "}
+        <a href="/docs/toolchain">denext's Deno toolchain</a>, exactly as{" "}
+        <code>denext deno &lt;command&gt;</code>{" "}
+        would: the arguments pass through verbatim, and the exit code and signals come back. A
+        script or URL in the verb's place is <code>deno run</code>{" "}
+        (<code>denext main.ts</code>). The order is denext's built-ins, then the project's own verbs
+        (which print a one-line notice when they shadow a Deno verb), then Deno's. For Deno's
+        meaning of a verb denext keeps — <code>test</code>, <code>fmt</code>, <code>upgrade</code>,
+        {" "}
+        <code>desktop</code>, <code>create</code>, <code>init</code>, … — run{" "}
+        <code>denext deno &lt;command&gt;</code>. <code>denext task</code> is Deno's{" "}
+        <code>deno task</code>; background and scheduled jobs are{" "}
+        <a href="#job">
+          <code>denext job</code>
+        </a>.
+      </p>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Command</th>
+            <th>Deno's summary</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cli.denoVerbs.map((v) => (
+            <tr key={v.name}>
+              <td>
+                <code>denext {v.name}</code>
+              </td>
+              <td>{v.summary}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
       <h2 id="global-flags">Global flags</h2>
       <p>Accepted on every command, before or after the verb:</p>

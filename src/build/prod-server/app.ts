@@ -27,8 +27,9 @@ import {
   runRegister,
   setNextRuntimeEnv,
 } from "../../server/instrumentation.ts";
-import { bootScheduledTasks } from "../../server/task-loader.ts";
+import { bootScheduledJobs } from "../../server/job-loader.ts";
 import { installLiveHub } from "../../server/live.ts";
+import { resolveLimitPolicy } from "../../server/remote-addr.ts";
 import { sameOriginUpgrade } from "../../server/origin-check.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../../server/middleware.ts";
 import { defaultLoader } from "../../server/mod.ts";
@@ -170,19 +171,19 @@ export async function createProdApp(
   );
   const appHandler = createApp(appConfig);
   if (flightRoutes.size > 0) {
-    installProdLiveHub(paths, appHandler, appConfig.trustForwardedHeaders);
+    installProdLiveHub(paths, appHandler, appConfig);
   }
   return appHandler;
 }
 
 /**
- * The process-lifetime services the server boots with: the scheduled tasks, the durable default
+ * The process-lifetime services the server boots with: the scheduled jobs, the durable default
  * cache store and the stale-page sweep. Returns the denext.config redirect/rewrite/header rules.
  */
 async function bootProdServices(paths: ProjectPaths, info: BuildInfo): Promise<ResolvedRules> {
-  // Discover tasks/ and register cron schedules (Deno.cron on Deploy, else a userland tick). The
+  // Discover jobs/ and register cron schedules (Deno.cron on Deploy, else a userland tick). The
   // scheduler lives for the server process (created once here); the disposer is not retained.
-  await bootScheduledTasks(paths.projectDir, paths.config ?? undefined, paths.outDir);
+  await bootScheduledJobs(paths.projectDir, paths.config ?? undefined, paths.outDir);
   const rules = await resolveConfigRules(paths.config);
   await resolveDefaultCacheStore(
     paths.config?.cache?.path
@@ -257,7 +258,7 @@ function prodAppConfig(
 function installProdLiveHub(
   paths: ProjectPaths,
   appHandler: (request: Request) => Promise<Response>,
-  trustForwardedHeaders: boolean | undefined,
+  appConfig: AppConfig,
 ): void {
   // Strict same-origin for the Live handshake; a Deno Desktop window's own
   // `desktop.app.origin` (exactly) counts as same-origin.
@@ -266,6 +267,7 @@ function installProdLiveHub(
     appHandler,
     originAllowed: (req) => sameOriginUpgrade(req, desktopAppOrigin),
     config: resolveLive(paths.config),
-    trustForwardedHeaders,
+    trustForwardedHeaders: appConfig.trustForwardedHeaders,
+    limitPolicy: resolveLimitPolicy(appConfig),
   });
 }

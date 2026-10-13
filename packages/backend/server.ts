@@ -1,7 +1,7 @@
 /**
  * `@denext/backend/server` — the storage server API, the app's Postgres client (`db()`, scoped
  * by row-level security; `db.service()` bypasses it) and realtime on the server (`onTableChange`,
- * `tableChanges`), for route handlers, Server Actions, Server Components and tasks.
+ * `tableChanges`), for route handlers, Server Actions, Server Components and jobs.
  *
  * ```ts
  * // app/api/avatar/route.ts
@@ -15,7 +15,7 @@
  * ```
  *
  * Every operation enforces the bucket's rules. Inside a request, the bucket's `authorize` runs
- * with that request's session (`auth()` under `denextAuth`); outside one (a task, a script) the
+ * with that request's session (`auth()` under `denextAuth`); outside one (a job, a script) the
  * call is trusted. `storage.bucket(name, { service: true })` skips `authorize` inside a request
  * too, for the server acting on its own behalf.
  *

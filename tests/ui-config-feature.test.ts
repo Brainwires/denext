@@ -539,7 +539,7 @@ Deno.test("an unknown, managed or cron-owned section is refused before anything"
 
     // The cron keys are written by the Cron page. A second editor here would mean two forms and
     // two `_base` stamps against one key — which is how two tabs quietly overwrite each other.
-    for (const key of ["scheduledTasks", "tasks"]) {
+    for (const key of ["scheduledJobs", "jobs"]) {
       const cron = await call(dir, `/api/config?section=${key}`, { form: {} });
       assertEquals(cron.status, 400, key);
       assertStringIncludes((await cron.json()).reason, "/config/cron");

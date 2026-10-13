@@ -202,6 +202,20 @@ Deno.test("production-server keys: a bare origin, a boolean, whole numbers in ra
     Error,
     "`trustForwardedHeaders` must be a boolean",
   );
+  // rateLimitHeader is a header name; rateLimitLocalAddresses a boolean.
+  validateDenextConfig({ rateLimitHeader: "CF-Connecting-IP", rateLimitLocalAddresses: true });
+  for (const bad of ["x real ip", "", "x-ip:", 7 as never]) {
+    assertThrows(
+      () => validateDenextConfig({ rateLimitHeader: bad }),
+      Error,
+      "`rateLimitHeader` must be an HTTP header name",
+    );
+  }
+  assertThrows(
+    () => validateDenextConfig({ rateLimitLocalAddresses: "yes" as never }),
+    Error,
+    "`rateLimitLocalAddresses` must be a boolean",
+  );
   assertThrows(
     () => validateDenextConfig({ requestTimeout: -1 }),
     Error,
@@ -256,6 +270,8 @@ Deno.test("production-server keys: a bare origin, a boolean, whole numbers in ra
     const key of [
       "canonicalOrigin",
       "trustForwardedHeaders",
+      "rateLimitHeader",
+      "rateLimitLocalAddresses",
       "requestTimeout",
       "maxConcurrency",
       "slotBackstop",

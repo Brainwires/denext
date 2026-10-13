@@ -33,6 +33,12 @@ function sourceContainsName(source: string, name: string): boolean {
   return source.includes(JSON.stringify(name).slice(1, -1));
 }
 
+/** Whether `source` declares a test: `Deno.test`, or Vitest's `it` / `test` in a `.vitest.ts`. */
+function declaresTests(path: string, source: string): boolean {
+  if (/\bDeno\.test\b/.test(source)) return true;
+  return path.endsWith(".vitest.ts") && /^\s*(?:it|test)\s*\(/m.test(source);
+}
+
 Deno.test("catalog: every evidence test file exists and contains the cited test name", () => {
   const problems: string[] = [];
   for (const e of catalog.entries) {
@@ -41,8 +47,8 @@ Deno.test("catalog: every evidence test file exists and contains the cited test 
       const source = readRepoFile(ev.test);
       if (source === null) {
         problems.push(`${e.id}: ${ev.test} does not exist`);
-      } else if (!/\bDeno\.test\b/.test(source)) {
-        problems.push(`${e.id}: ${ev.test} declares no Deno.test`);
+      } else if (!declaresTests(ev.test, source)) {
+        problems.push(`${e.id}: ${ev.test} declares no test`);
       } else if (!sourceContainsName(source, ev.name)) {
         problems.push(`${e.id}: ${ev.test} has no test named "${ev.name}"`);
       }

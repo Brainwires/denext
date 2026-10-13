@@ -34,6 +34,8 @@ export interface RunDenoOptions {
    * generated program without it ever existing as a file or a `data:` URL.
    */
   readonly stdin?: string;
+  /** The `deno` binary to run (default {@linkcode denoExecutable}). */
+  readonly deno?: string;
 }
 
 /**
@@ -51,7 +53,7 @@ const OFFLINE_FLAGS: readonly string[] = ["--deny-net", "--cached-only"];
 /**
  * What closes the grandchild gap for a child that only READS the project: `--deny-run` takes
  * precedence over `-A`, so a `denext.config.ts` (or a plugin `setup()`) evaluated inside
- * `denext commands --json` or `denext task --list --json` cannot reach the network through a
+ * `denext commands --json` or `denext job --list --json` cannot reach the network through a
  * `curl` of its own. Those verbs never spawn anything themselves, so nothing legitimate is lost.
  */
 const DENY_RUN: readonly string[] = ["--deny-run"];
@@ -149,7 +151,7 @@ export interface ProcResult {
  * @returns The exit code and captured output.
  */
 export async function runDeno(args: string[], opts: RunDenoOptions): Promise<ProcResult> {
-  const child = new Deno.Command(denoExecutable(), {
+  const child = new Deno.Command(opts.deno ?? denoExecutable(), {
     args,
     cwd: opts.cwd,
     env: opts.env,

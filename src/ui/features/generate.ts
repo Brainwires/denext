@@ -42,11 +42,11 @@ const KIND_LEAD: Record<GenerateKind, string> = {
   "api": "app/<name>/route.ts — a route handler returning a Response",
   "action": 'actions/<name>.ts — a "use server" Server Action',
   "middleware": "middleware.ts beside app/ — runs before matched routes",
-  "task": "tasks/<name>.ts — a defineTask job for cron or runTask()",
+  "job": "jobs/<name>.ts — a defineJob job for cron or runJob()",
   "test": "tests/<Name>.test.tsx — a component test using denext/testing",
   "docker": "Dockerfile + docker-compose.yml + .dockerignore",
-  "migration": "migrations/<stamp>_<name>.sql (+ tasks/migrate.ts) — a node:sqlite migration",
-  "seed": "tasks/seed.ts — idempotent development data (denext task seed)",
+  "migration": "migrations/<stamp>_<name>.sql (+ jobs/migrate.ts) — a node:sqlite migration",
+  "seed": "jobs/seed.ts — idempotent development data (denext job seed)",
   "ci": ".github/workflows/ci.yml — check + build on every push and pull request",
 };
 

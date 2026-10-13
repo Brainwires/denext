@@ -227,7 +227,7 @@ Each field gets the control its type deserves:
 | Array of `enum`                    | Checkbox group (`images.formats`)                                                                                                                           |
 | Array of scalars                   | Chips: add, remove, reorder (`publicEnv`, `i18n.locales`)                                                                                                   |
 | Array of objects                   | A typed sub-form per row with `↑` `↓` `✕` and `+ Add` (`redirects`, `rewrites`, `headers`, `images.remotePatterns`, `images.localPatterns`, `i18n.domains`) |
-| `Record<string, T>`                | Key/value map rows (`scheduledTasks`, `features`)                                                                                                           |
+| `Record<string, T>`                | Key/value map rows (`scheduledJobs`, `features`)                                                                                                            |
 | Object with properties             | A named group of fields                                                                                                                                     |
 | `boolean` / `number` / `string`    | Toggle / number (with the schema's bounds) / one-line text                                                                                                  |
 | `string` tagged `@widget textarea` | A multi-line textarea (`spa.head`, `spa.loading`)                                                                                                           |
@@ -453,7 +453,7 @@ the UI checks the permission and never prompts.
 
 `/generate` is a GUI over `denext generate`. Pick one of the sixteen kinds — `page`,
 `route`, `layout`, `loading`, `error`, `not-found`, `component`, `api`, `action`,
-`middleware`, `task`, `test`, `docker`, `migration`, `seed`, `ci` — name it, and preview.
+`middleware`, `job`, `test`, `docker`, `migration`, `seed`, `ci` — name it, and preview.
 
 Preview is the real dry run: the same plan the write uses, showing every file it would
 create with its full contents, so what you read is what lands. "Write files" answers `303`
@@ -665,8 +665,8 @@ button. The buttons post to `/tasks/run`, the SSE runner that is the only route 
 it refuses any name the project does not declare, passes it as an argv element rather than
 through a shell, and ties the child to the stream so closing the page takes the task with it.
 
-Not to be confused with the Cron page's scheduled tasks: those are `tasks/<name>.ts` modules
-registered with `defineTask`; these are `deno.json` scripts.
+Not to be confused with the Cron page's scheduled jobs: those are `jobs/<name>.ts` modules
+registered with `defineJob`; these are `deno.json` scripts.
 
 **The dev server, and stopping it.** Starting `denext dev` answers _in place_ rather than
 redirecting, and the step keeps a `<pre class="out">` that the server's output streams into over
@@ -736,7 +736,7 @@ however it is spelled. Generated columns and `GENERATED ALWAYS` identity columns
 written; a view, or a table without a primary key, is shown read-only.
 
 **Enabling row-level security** writes `migrations/<stamp>_enable_rls_<schema>_<table>.sql`
-through the same planner as `denext generate migration` (adding `tasks/migrate.ts` when the
+through the same planner as `denext generate migration` (adding `jobs/migrate.ts` when the
 project has none): an `ALTER TABLE … ENABLE ROW LEVEL SECURITY` and a commented example policy.
 Add the policies the table needs — with RLS on and none, only its owner sees its rows — then
 apply it from Migrations.
@@ -761,13 +761,13 @@ server startup, when each next fires, and which of them will not fire at all.
 
 A schedule reaches the scheduler from one of two places, and the page is explicit about which:
 
-| Source                                          | Shown | Editable                                        |
-| ----------------------------------------------- | ----- | ----------------------------------------------- |
-| `scheduledTasks` in `denext.config.ts`          | yes   | yes — through the `scheduledTasks` editor       |
-| `schedule:` inside a task's `defineTask({ … })` | yes   | no — it is code, and the UI never rewrites code |
+| Source                                        | Shown | Editable                                        |
+| --------------------------------------------- | ----- | ----------------------------------------------- |
+| `scheduledJobs` in `denext.config.ts`         | yes   | yes — through the `scheduledJobs` editor        |
+| `schedule:` inside a job's `defineJob({ … })` | yes   | no — it is code, and the UI never rewrites code |
 
-The listing comes from one subprocess (`denext task --list --json`), never from this process:
-listing tasks means importing the project's task modules. The child returns the schedule
+The listing comes from one subprocess (`denext job --list --json`), never from this process:
+listing jobs means importing the project's job modules. The child returns the schedule
 `collectSchedules` computes — the same function the server calls at boot — so the page shows what
 will really happen rather than re-deriving the merge. A successful listing is reused for a few
 seconds, but only for the config file it was computed from: it is keyed on the file's stamp, so a
@@ -776,16 +776,16 @@ the child's own last meaningful line ("invalid denext.config.ts: `redirects` mus
 rather than "printed no listing".
 
 Two kinds of entry are flagged **never fires**, because the scheduler skips them at startup with
-nothing more than a log line: a malformed cron expression, and a schedule naming a task that is
+nothing more than a log line: a malformed cron expression, and a schedule naming a job that is
 not defined. Times are UTC, which is what `Deno.cron` and the userland scheduler both use, and
 weekdays are POSIX — `0–6` with `0` (or `7`) for Sunday — which the server translates into names
-for `Deno.cron` (see [Scheduled tasks](/docs/tasks#cron-syntax)).
+for `Deno.cron` (see [Scheduled jobs](/docs/jobs#cron-syntax)).
 
-The config half is editable here: one row per schedule — the expression, the task it runs, and a
-box that drops it — plus a blank row to add another, whose task picker starts on "— choose a
-task —" (a `<select>` always posts something, so without that blank option an untouched add row
-posted the first task's name and every save was refused). Every expression is parsed before
-anything is written and every task name is checked against the tasks that actually exist, so a
+The config half is editable here: one row per schedule — the expression, the job it runs, and a
+box that drops it — plus a blank row to add another, whose job picker starts on "— choose a
+job —" (a `<select>` always posts something, so without that blank option an untouched add row
+posted the first job's name and every save was refused). Every expression is parsed before
+anything is written and every job name is checked against the jobs that actually exist, so a
 schedule that could never fire is refused rather than saved. The write is the same one the
 [configuration editor](#configuration-editor) performs: `setConfigValue` splices the key, you get
 a unified diff to review, and only a confirm writes — atomically, and refused with a `409` if the
@@ -814,7 +814,7 @@ nothing is missing — only the round trip.
 
 Removing every schedule is its own button. An empty form is refused instead, because a dropped
 field or a stale tab would otherwise read as "delete them all". See
-[Scheduled tasks](/docs/tasks) for the feature itself.
+[Scheduled jobs](/docs/jobs) for the feature itself.
 
 ### Run history
 
@@ -822,22 +822,22 @@ The page can also answer what actually ran, and whether it worked — but only i
 Run history is **off by default**: denext records nothing and writes no file until you turn it on,
 so upgrading never gives an app a side effect nobody requested.
 
-Turning it on from this page writes `tasks: { history: true }` to your denext config through the
+Turning it on from this page writes `jobs: { history: true }` to your denext config through the
 same diff-then-confirm as everything else here — you see the exact change before anything lands.
-From then on every run is recorded, scheduled and manual alike (`runTask`, the scheduler, and
-`denext task <name>` from the command line), into `.denext/tasks.db`, and the page shows each
-task's last result, how long it took, and its successes and failures over the last seven days.
+From then on every run is recorded, scheduled and manual alike (`runJob`, the scheduler, and
+`denext job <name>` from the command line), into `.denext/jobs.db`, and the page shows each
+job's last result, how long it took, and its successes and failures over the last seven days.
 Each row keeps the run's output in plain text — the tail of a string the handler returned, up to
-2 KB, and for a failure the error's message and stack — so a task that would return a token or a
+2 KB, and for a failure the error's message and stack — so a job that would return a token or a
 DSN should return nothing instead. The file is created owner-only (`0600`; its `-wal`/`-shm`
-siblings inherit the mode). Retention is 14 days and `tasks.historyMaxRuns` runs per task (default
-500; per task, so a minute-cron task cannot evict a daily task's history), applied on the first
-recorded run of every process — a one-shot `denext task` prunes too. `historyMaxRuns` is not
-offered here; set it in the config. See [Run history](/docs/tasks#run-history) for the key.
+siblings inherit the mode). Retention is 14 days and `jobs.historyMaxRuns` runs per job (default
+500; per job, so a minute-cron job cannot evict a daily job's history), applied on the first
+recorded run of every process — a one-shot `denext job` prunes too. `historyMaxRuns` is not
+offered here; set it in the config. See [Run history](/docs/jobs#run-history) for the key.
 
 Two things are worth knowing. It takes effect **the next time the app starts**, including under
 `denext dev`: the recorder is installed at server boot, and the dev server's watcher re-bundles
-routes without re-running task boot. And recording can never fail or delay a run — a read-only
+routes without re-running job boot. And recording can never fail or delay a run — a read-only
 filesystem, a full disk or a locked file degrades to no history rather than to a broken job.
 
 The page distinguishes four states rather than showing one empty table: history off, on but nothing
@@ -845,8 +845,8 @@ recorded yet, on with no runs inside the window, and on with results. "Off" and 
 yet" are different facts, and reading one as the other is how you end up waiting for data that was
 never going to arrive.
 
-A store your config constructs (`tasks: { history: { store } }`) is read through a
-`denext task --history` child; under `--read-only` that child runs with `--read-only` too, which
+A store your config constructs (`jobs: { history: { store } }`) is read through a
+`denext job --history` child; under `--read-only` that child runs with `--read-only` too, which
 the store receives as `read({ readOnly: true })`. Reading never creates or migrates anything —
 the Postgres store answers "no history recorded yet" until its first run creates the table.
 
@@ -855,15 +855,15 @@ asks you to confirm, the second deletes them. It is a `DELETE`, not a file unlin
 may hold that database open — so the database survives and recording simply continues. Your denext
 config is not touched, and nothing about the schedules changes.
 
-On Deno Deploy it records and says so: `.denext/tasks.db` is per-isolate and ephemeral there, so
+On Deno Deploy it records and says so: `.denext/jobs.db` is per-isolate and ephemeral there, so
 what you see is one isolate's fragment that resets when it cycles. A history that is quietly wrong
 is worse than none, so the caveat is printed at boot rather than the setting being ignored.
 
-A project can keep its history somewhere else — `tasks: { history: { store } }`, such as
-`postgresTaskHistoryStore` (see [Where history is kept](/docs/tasks#history-store)). That store is
+A project can keep its history somewhere else — `jobs: { history: { store } }`, such as
+`postgresJobHistoryStore` (see [Where history is kept](/docs/jobs#history-store)). That store is
 constructed by your config, which is project code, and project code never runs in the UI's process:
-the page reads and clears it by running `denext task --history --json` and
-`denext task --clear-history --json` in the project, as it lists tasks, and shows the same four
+the page reads and clears it by running `denext job --history --json` and
+`denext job --clear-history --json` in the project, as it lists jobs, and shows the same four
 states. A store set in code is not offered as the on/off toggle, because the page never rewrites a
 call expression in your config.
 
@@ -1047,7 +1047,7 @@ describes what its panel does, it does not flatten every panel into one shape:
 | ---------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `/api/config`          | `{ ok, file, form, keys, schema? }`                                                   | `{ ok, applied, diff }` (a write adds `file`)                                                    |
 | `/api/config/next`     | `{ ok, … }` the read next.config view                                                 | — (read-only)                                                                                    |
-| `/api/config/cron`     | `{ ok, tasks, schedules, configScheduled, denoCron }`                                 | `{ ok, applied, diff, scheduledTasks }` — the diff-then-confirm envelope                         |
+| `/api/config/cron`     | `{ ok, jobs, schedules, configScheduled, denoCron }`                                  | `{ ok, applied, diff, scheduledJobs }` — the diff-then-confirm envelope                          |
 | `/api/plugins`         | `{ ok, installed, catalog, config, jsr }`                                             | `{ ok, applied, diff, name, op, command, bailed, … }`                                            |
 | `/api/plugins/options` | `{ ok, name, callee, values, codeKeys, schema }` (`{ ok, plugins }` with no `?name=`) | `{ ok, applied, diff, values }`                                                                  |
 | `/api/generate`        | `{ ok, kinds }`                                                                       | `{ ok, written, skipped, preview? }`                                                             |

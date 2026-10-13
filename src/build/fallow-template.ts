@@ -102,8 +102,8 @@ entry = [
   "src/instrumentation.ts",
   "instrumentation-client.ts",
   "src/instrumentation-client.ts",
-  # Scheduled tasks (tasks/<name>.ts) and mobile background tasks (background/).
-  "tasks/*.ts",
+  # Scheduled jobs (jobs/<name>.ts) and mobile background tasks (background/).
+  "jobs/*.ts",
   "background/**",
   # SPA mode: the entry (and worker) named by \`spa.entry\`.
   "src/main.tsx",
@@ -205,7 +205,7 @@ the verdict. Inherited findings on touched files are reported under \`attributio
 annotated with \`introduced: false\`, but do not block the commit. Set \`[audit] gate = "all"\`
 in \`fallow.toml\` to gate every finding in changed files.
 
-A file denext loads by path (a route, \`denext.config.ts\`, \`middleware.ts\`, \`tasks/*.ts\`) is
+A file denext loads by path (a route, \`denext.config.ts\`, \`middleware.ts\`, \`jobs/*.ts\`) is
 an entry point in \`fallow.toml\`; add a new path-loaded convention there rather than
 suppressing the "unused file" finding.
 

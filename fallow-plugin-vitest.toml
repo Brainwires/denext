@@ -1,0 +1,12 @@
+# The Vitest test files (`tests/**/*.vitest.ts`): run by scripts/test-run.ts on denext's Deno
+# toolchain, never through an import, so they are entry points — and TEST entry points, so fallow
+# scores them as tests (like the `*.test.ts` files Deno's own discovery finds), not as untested
+# application code.
+name = "denext-vitest-files"
+entryPoints = ["tests/**/*.vitest.ts"]
+entryPointRole = "test"
+toolingDependencies = ["vitest"]
+
+[detection]
+type = "fileExists"
+pattern = "tests/**/*.vitest.ts"

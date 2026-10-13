@@ -39,7 +39,7 @@ export default {
 denext plugin add @denext/backend
 ```
 
-Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.1.0"` to `deno.json`'s `imports` and
+Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.2.0"` to `deno.json`'s `imports` and
 the plugin to `denext.config.ts` as above. Set `DENEXT_STORAGE_SECRET` (at least 32 characters):
 it signs the plugin's URLs and upload tokens.
 
@@ -123,7 +123,7 @@ from `@denext/backend/client` builds the requests, typed by the generated `.dene
 
 - **`authorize`** decides every operation (`upload`, `download`, `delete`, `list`) made inside a
   request, with `auth()`'s session; without one, everything but a public bucket's downloads is
-  denied. Outside a request (tasks, scripts) there is no session, so only a service handle
+  denied. Outside a request (jobs, scripts) there is no session, so only a service handle
   (`storage.bucket(name, { service: true })`) or a public bucket's download works.
 - **Size, type and content**: `maxBytes` and the `mime` allow-list are checked when an upload is
   signed and again on the bytes; a declared image must start with that format's magic bytes.

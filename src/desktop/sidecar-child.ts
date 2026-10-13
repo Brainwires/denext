@@ -39,6 +39,7 @@ import {
   sidecarModuleUrl,
 } from "./sidecar.ts";
 import { prepareSidecarModules } from "./sidecar-modules.ts";
+import { runtimeMarksRelay } from "./transport.ts";
 
 /**
  * What a sidecar needs to start children of the app: the command and its leading arguments, the
@@ -57,6 +58,11 @@ export type SidecarChildBase =
     readonly env: Readonly<Record<string, string>>;
     /** The variable the child's argument count goes in. */
     readonly argcEnv: string;
+    /**
+     * Whether the runtime authorizes the app's forks of its own executable itself, so `spawnSelf`
+     * needs no `run` permission over it ({@linkcode runtimeAuthorizesSelfFork}).
+     */
+    readonly selfForkAuthorized: boolean;
   }
   | {
     /** Why no child can be started. */
@@ -75,6 +81,11 @@ export interface SidecarChildBaseOptions {
   readonly standalone: boolean;
   /** The Deno CLI's `--allow-*` flags (not used by a compiled app, whose flags are baked). */
   readonly permissionFlags?: readonly string[];
+  /**
+   * Whether the runtime authorizes a fork of its own executable without `--allow-run`
+   * ({@linkcode runtimeAuthorizesSelfFork}); only a compiled app's runtime can.
+   */
+  readonly selfForkAuthorized?: boolean;
 }
 
 /**
@@ -99,7 +110,37 @@ export function sidecarChildBase(options: SidecarChildBaseOptions): SidecarChild
     args: ["run", ...flags, options.entryPath],
     env: { [SIDECAR_CHILD_ENV]: options.name },
     argcEnv: SIDECAR_CHILD_ARGC_ENV,
+    selfForkAuthorized: options.standalone && options.selfForkAuthorized === true,
   };
+}
+
+/** The variable denext's pinned runtime hands the forks it authorizes (their per-launch token). */
+const WORKER_TOKEN_ENV = "DENO_DESKTOP_WORKER_TOKEN";
+
+/**
+ * Whether the running runtime starts a fork of the app's own executable (with an IPC channel, as
+ * `spawnSelf` and `childCommand` set up) without the `run` permission: denext's pinned Deno Desktop
+ * runtime from `2.9.7-denext.14` (`DESKTOP_MINIMUM_RUNTIME`), which authorizes such a fork with the per-launch
+ * token it hands only its own forks. Feature-detected as denext's runtime (no release number is
+ * readable at run time): `Deno.desktop` with the fork's `authSession.cancel` in an app's own launch,
+ * or the worker token in a child the runtime forked (which registers its own forks the same way).
+ * Releases older than the minimum are not supported; the stock runtime and the Deno CLI answer
+ * `false` and keep needing `run` over the executable.
+ *
+ * @param desktop `Deno.desktop` (default: the running runtime's).
+ * @param env Reads a variable (default: `Deno.env.get`; a refused read counts as unset).
+ * @returns Whether the runtime authorizes the app's self-forks.
+ */
+export function runtimeAuthorizesSelfFork(
+  desktop: unknown = (Deno as unknown as { desktop?: unknown }).desktop,
+  env: (key: string) => string | undefined = (key) => Deno.env.get(key),
+): boolean {
+  if (runtimeMarksRelay(desktop)) return true;
+  try {
+    return (env(WORKER_TOKEN_ENV) ?? "") !== "";
+  } catch {
+    return false;
+  }
 }
 
 /** The permission kinds a Deno CLI child is granted when the app holds them unscoped. */
@@ -151,7 +192,9 @@ export function parentChildBase(name: string, importMetaUrl: string | undefined)
     execPath: Deno.execPath(),
     standalone,
     ...(entryPath !== undefined ? { entryPath } : {}),
-    ...(standalone ? {} : { permissionFlags: cliPermissionFlags() }),
+    ...(standalone
+      ? { selfForkAuthorized: runtimeAuthorizesSelfFork() }
+      : { permissionFlags: cliPermissionFlags() }),
   });
 }
 
@@ -282,11 +325,14 @@ export function childHelpers(base) {
     const cmd = childCommand(args);
     let state = "granted";
     try {
-      state = Deno.permissions.querySync({ name: "run", command: cmd.command }).state;
+      if (!base.selfForkAuthorized) {
+        state = Deno.permissions.querySync({ name: "run", command: cmd.command }).state;
+      }
     } catch { /* no permissions API: let the spawn say */ }
     if (state !== "granted") {
       throw new Error("sidecar " + base.name + ": spawnSelf() starts the app's own executable, " +
-        "which needs permissions.run on the sidecar to cover it (run: ['*'])");
+        "which this runtime runs only with permissions.run on the sidecar covering it " +
+        "(run: ['*']); denext's pinned runtime authorizes it without");
     }
     const env = {};
     for (const [k, v] of Object.entries(options.env ?? process.env)) {

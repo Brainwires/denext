@@ -32,6 +32,7 @@ const PUSH_JOBS = jobs("success", {
   integration: "skipped",
   "next-compat": "skipped",
   coverage: "skipped",
+  "backend-integration": "skipped",
 });
 
 /** A fake `gh` over `runs` (the list) and `jobsOf` (each run's jobs); records its calls. */
@@ -51,6 +52,7 @@ Deno.test("release CI gate: the jobs a release needs, and what is unmet", () => 
     "integration",
     "next-compat",
     "coverage",
+    "backend-integration",
     "ios-export-router",
     "windows-resolve",
   ]);

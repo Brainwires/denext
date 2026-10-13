@@ -199,6 +199,22 @@ itself (it reads neither the config keys nor the env vars for them).
   for `clientIp()`, `requestId()` and the rate limiters (`denextAuth` inherits
   it unless it sets its own). Only when clients **cannot** reach denext
   directly. The origin part is ignored when `canonicalOrigin` is set.
+- **`rateLimitHeader`** — `string` (env `DENEXT_RATE_LIMIT_HEADER`; default
+  none). A header your proxy sets to the client address (`"cf-connecting-ip"`,
+  `"fly-client-ip"`, `"x-real-ip"`) that every per-address limit keys on —
+  `rateLimit()`, `denextAuth`'s per-IP budgets, `live.limits.maxConnectionsPerIp`,
+  `@denext/backend` realtime's signed-out quota and `clientIpForLimits()`; not
+  `clientIp()`. The model is Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`. A
+  request whose header holds no IP address falls back to the rule without it
+  (one warning) rather than going unlimited. Only when clients **cannot** reach
+  denext except through that proxy, and it overwrites the header. Not an HTTP
+  header name → fails validation at boot.
+- **`rateLimitLocalAddresses`** — `boolean` (env
+  `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`; default `false`). Apply those
+  per-address limits to a loopback, private, link-local or unique-local socket
+  peer too, counted by its own address, instead of skipping them as a likely
+  shared proxy. For LAN, VPN or container-network deployments with no proxy in
+  front.
 - **`requestTimeout`** — `number` ms (env `DENEXT_REQUEST_TIMEOUT_MS`; default
   `30000`, `0` disables). A request running past it is aborted and answered
   `503`; the per-request `AbortSignal` fires so cooperative work cancels.
@@ -405,33 +421,33 @@ Both are top-level fields — shipped, complete capabilities, not experiments.
   subscriptions. Resource caps in `LiveLimits` always apply. See
   [Live components](/docs/live).
 
-## Tasks
+## Jobs
 
-- **`scheduledTasks`** — `Record<string, string | string[]>`. Cron expression →
-  the task name(s) it runs, merged with each task's own `schedule:`. Five-field
+- **`scheduledJobs`** — `Record<string, string | string[]>`. Cron expression →
+  the job name(s) it runs, merged with each job's own `schedule:`. Five-field
   Vixie cron in **UTC**, weekdays POSIX (`0–6`, `0` = Sunday); denext translates
   the weekday field into names for `Deno.cron`, which numbers days differently.
-  A malformed expression or an unknown task is skipped at boot with an error.
-  See [Scheduled tasks](/docs/tasks#cron-syntax).
-- **`tasks`** — `TasksConfig`. Run history. `history: true` records every run —
-  scheduled, `runTask`, and `denext task <name>` — to `.denext/tasks.db`
+  A malformed expression or an unknown job is skipped at boot with an error.
+  See [Scheduled jobs](/docs/jobs#cron-syntax).
+- **`jobs`** — `JobsConfig`. Run history. `history: true` records every run —
+  scheduled, `runJob`, and `denext job <name>` — to `.denext/jobs.db`
   (created `0600`; each row keeps a returned string's tail and a failure's
   message/stack in plain text, up to 2 KB). Off unless set, and never able to
   fail or delay a run. `historyMaxRuns` (whole number ≥ 1, default `500`) is the
-  runs kept **per task**; rows older than 14 days go regardless. The object form
-  `history: { store }` records to any `TaskHistoryStore` instead (e.g.
-  `postgresTaskHistoryStore({ url })`, shared by every replica), and
+  runs kept **per job**; rows older than 14 days go regardless. The object form
+  `history: { store }` records to any `JobHistoryStore` instead (e.g.
+  `postgresJobHistoryStore({ url })`, shared by every replica), and
   `history: { maxRuns }` caps the default store. See
-  [Run history](/docs/tasks#run-history) and the Project UI's
+  [Run history](/docs/jobs#run-history) and the Project UI's
   [Cron page](/docs/ui#cron), which owns both keys in the editor.
 
 ```ts
 export default {
-  scheduledTasks: {
+  scheduledJobs: {
     "0 3 * * *": "cleanup",
     "0 0 * * 1": ["digest", "warm-cache"],
   },
-  tasks: { history: true, historyMaxRuns: 200 },
+  jobs: { history: true, historyMaxRuns: 200 },
 } satisfies DenextConfig;
 ```
 
@@ -580,7 +596,7 @@ can't drift.
 It describes the shape, not just the names: array `items` (so `redirects`,
 `rewrites`, `headers`, `images.remotePatterns` carry their rule schema),
 `additionalProperties` for a `Record` / index signature (the value schema of
-`scheduledTasks`, `features`), `anyOf` for a union of mappable members and a
+`scheduledJobs`, `features`), `anyOf` for a union of mappable members and a
 single `enum` for a union of literals, and `minimum` / `maximum` from explicit
 `@minimum` / `@maximum` tags where `config-validate.ts` enforces that exact
 bound. Two `x-denext` markers tell a form renderer what a plain array or object

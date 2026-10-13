@@ -19,6 +19,7 @@
 
 import { relative } from "@std/path";
 import { readCompose } from "../../build/compose-edit.ts";
+import { denoReleaseVersion } from "../../build/deno-version.ts";
 import {
   COMPOSE_FILE_NAMES,
   detectDockerMode,
@@ -406,9 +407,9 @@ function parsePort(value: string, strict: boolean): number {
 
 /** The Deno image tag, restricted to what may appear after `denoland/deno:`. */
 function parseTag(value: string, strict: boolean): string {
-  if (value === "") return Deno.version.deno;
+  if (value === "") return denoReleaseVersion(Deno.version.deno);
   if (!/^[\w.\-]+$/.test(value)) {
-    if (!strict) return Deno.version.deno;
+    if (!strict) return denoReleaseVersion(Deno.version.deno);
     throw new Error(`invalid Deno tag "${value}" (letters, digits, dot, dash and underscore only)`);
   }
   return value;
@@ -556,7 +557,7 @@ function OptionFields({ state }: ViewProps): VNode {
       id: "dk-tag",
       name: "tag",
       autocomplete: "off",
-      value: state.values.tag || Deno.version.deno,
+      value: state.values.tag || denoReleaseVersion(Deno.version.deno),
     }),
     h(
       "label",

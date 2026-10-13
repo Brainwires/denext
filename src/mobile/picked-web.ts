@@ -42,11 +42,6 @@ export function webHandle(id: string): FileSystemHandle | undefined {
   return registry?.get(id);
 }
 
-/** Forget every page-memory handle (tests). */
-export function resetPickedHandlesForTesting(): void {
-  registry = undefined;
-}
-
 /**
  * Whether `err` is the File System Access API's cancel rejection.
  *

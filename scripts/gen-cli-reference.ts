@@ -22,6 +22,7 @@
 import { GLOBAL_FLAGS } from "../src/cli/command.ts";
 import type { CommandSpec, FlagSpec, PositionalSpec } from "../src/cli/command.ts";
 import { buildRegistry } from "../src/cli/register.ts";
+import { forwardedDenoVerbs } from "../src/cli/deno-verbs.ts";
 import { dirname, fromFileUrl } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
@@ -71,11 +72,20 @@ export interface RefProjectCommands {
   note: string;
 }
 
+/** A Deno verb the CLI forwards to its Deno toolchain (`denext compile` → `deno compile`). */
+export interface RefDenoVerb {
+  name: string;
+  /** Deno's own one-line summary. */
+  summary: string;
+}
+
 /** The generated document. */
 export interface CliReference {
   globalFlags: RefFlag[];
   commands: RefCommand[];
   projectCommands: RefProjectCommands;
+  /** Every Deno verb no built-in claims, in Deno's order. */
+  denoVerbs: RefDenoVerb[];
 }
 
 /** The project-verb note emitted with every reference (data, not a source comment). */
@@ -87,7 +97,8 @@ const PROJECT_COMMANDS: RefProjectCommands = {
     "it never imports the project — and inside a denext project it ends with " +
     '"Project verbs: run `denext commands` (they are also in shell completions)." ' +
     "`denext commands` and `denext completions <shell>` load them (under a 1.5 s budget). " +
-    "A built-in verb always wins a name collision.",
+    "A built-in verb always wins a name collision, and a project verb wins over a Deno verb " +
+    "(with a one-line notice; `denext deno <verb>` reaches Deno's).",
 };
 
 /** One flag, with a stable key order regardless of which optionals are present. */
@@ -139,7 +150,8 @@ function refCommand(spec: CommandSpec): RefCommand {
 
 /** Build the reference document from the live registry (sorted by verb name). */
 export function cliReference(): CliReference {
-  const commands = buildRegistry().list()
+  const registry = buildRegistry();
+  const commands = registry.list()
     .filter((c) => !c.hidden)
     .map(refCommand)
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -147,6 +159,8 @@ export function cliReference(): CliReference {
     globalFlags: GLOBAL_FLAGS.map(refFlag),
     commands,
     projectCommands: PROJECT_COMMANDS,
+    denoVerbs: forwardedDenoVerbs((name) => registry.get(name) !== undefined)
+      .map(({ name, summary }) => ({ name, summary })),
   };
 }
 

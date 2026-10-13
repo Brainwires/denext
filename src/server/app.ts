@@ -20,6 +20,7 @@ import { applyDefaultSecurityHeaders } from "./response-headers.ts";
 import { type AppRuntime, type CompiledRules, compileRules } from "./pipeline-state.ts";
 import { runPipeline } from "./request-pipeline.ts";
 import { resolveCors } from "./cors.ts";
+import { resolveLimitPolicy } from "./remote-addr.ts";
 import { createAppLinksHandler } from "./app-links.ts";
 import { compressEncodings, compressOrPassThrough, type ContentCoding } from "./compress.ts";
 import type { RequestContext } from "./request-context.ts";
@@ -65,6 +66,7 @@ export function createApp(config: AppConfig): RequestHandler {
     handle: null!, // wired below — the ISR background regen loops back through it
     // Validated here, at boot: a malformed origin or `"*"` with credentials throws now.
     cors: resolveCors(config.cors),
+    limitPolicy: resolveLimitPolicy(config),
     appLinks: config.appLinks ? createAppLinksHandler(config.appLinks) : undefined,
   };
   // The typed API client's server-side calls run in-process through this app's pipeline
@@ -107,6 +109,7 @@ function dispatch(
   // server components, route handlers, and middleware.
   const requestCtx = createRequestContext(originalRequest, undefined, {
     trustForwardedHeaders: config.trustForwardedHeaders,
+    limitPolicy: app.limitPolicy,
   });
   requestCtx.routes = { manifest: config.getManifest, load: config.load };
   requestCtx.cors = app.cors ?? null;

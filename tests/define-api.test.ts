@@ -14,6 +14,7 @@ import { parsePattern } from "../src/router/segments.ts";
 import type { ApiMatch } from "../src/router/match.ts";
 import { inMemoryRateLimitStore } from "../src/server/auth/rate-limit.ts";
 import { setRemoteAddr } from "../src/server/remote-addr.ts";
+import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { unauthorized } from "../src/runtime/error-boundary.ts";
 
 /** A minimal Standard Schema: an object whose listed keys must be strings; extra keys are STRIPPED. */
@@ -281,6 +282,31 @@ Deno.test("rateLimit: an untrusted loopback/private peer (a shared proxy) is not
   assertEquals((await rejects(trusted(viaProxy(), ctx()))).status, 429);
 });
 
+Deno.test("rateLimit: unset, it inherits the APP's trustForwardedHeaders; its own setting wins", async () => {
+  const store = inMemoryRateLimitStore();
+  const inherit = createApi().use(rateLimit({ max: 1, windowMs: 60_000, store })).define(
+    {},
+    () => "ok",
+  );
+  const own = createApi()
+    .use(rateLimit({ max: 1, windowMs: 60_000, store, trustForwardedHeaders: false }))
+    .define({}, () => "ok");
+  // Behind the app's trusted proxy (`trustForwardedHeaders` / DENEXT_TRUST_PROXY=1).
+  const call = (handler: typeof inherit, xff: string, peer = "10.0.0.2") => {
+    const request = fromPeer(peer, { "x-forwarded-for": xff });
+    return runWithContext(
+      createRequestContext(request, undefined, { trustForwardedHeaders: true }),
+      () => handler(request, ctx()),
+    );
+  };
+  assertEquals((await call(inherit, "203.0.113.4")).status, 200);
+  assertEquals((await rejects(call(inherit, "203.0.113.4"))).status, 429, "the hop is the client");
+  assertEquals((await call(inherit, "203.0.113.5")).status, 200, "another forwarded client");
+  // An explicit `false` overrides the app: the public socket peer is the bucket again.
+  assertEquals((await call(own, "1.1.1.1", "198.51.100.20")).status, 200);
+  assertEquals((await rejects(call(own, "2.2.2.2", "198.51.100.20"))).status, 429);
+});
+
 Deno.test("rateLimit: a public peer is limited, an IPv6 one per /64", async () => {
   const store = inMemoryRateLimitStore();
   const GET = createApi().use(rateLimit({ max: 1, windowMs: 60_000, store })).define(
@@ -294,6 +320,48 @@ Deno.test("rateLimit: a public peer is limited, an IPv6 one per /64", async () =
   assertEquals((await rejects(GET(fromPeer("2001:db8:1:2:ffff::1"), ctx()))).status, 429);
   assertEquals((await rejects(GET(fromPeer("2001:0DB8:1:2::b"), ctx()))).status, 429);
   assertEquals((await GET(fromPeer("2001:db8:1:3::a"), ctx())).status, 200, "another /64");
+});
+
+Deno.test("rateLimit: the app's rateLimitHeader keys each named client behind a loopback proxy (IPv6 per /64, mapped as IPv4)", async () => {
+  const store = inMemoryRateLimitStore();
+  const GET = createApi().use(rateLimit({ max: 1, windowMs: 60_000, store })).define(
+    {},
+    () => "ok",
+  );
+  const call = (client: string) => {
+    const request = fromPeer("127.0.0.1", { "fly-client-ip": client });
+    return runWithContext(
+      createRequestContext(request, undefined, { limitPolicy: { header: "fly-client-ip" } }),
+      () => GET(request, ctx()),
+    );
+  };
+  assertEquals((await call("203.0.113.4")).status, 200);
+  assertEquals((await rejects(call("203.0.113.4"))).status, 429, "one client's own bucket");
+  assertEquals((await call("203.0.113.5")).status, 200, "another client behind the same proxy");
+  assertEquals((await call("2001:db8:1:2::a")).status, 200);
+  assertEquals((await rejects(call("2001:db8:1:2:ffff::1"))).status, 429, "the same /64");
+  assertEquals((await call("::ffff:198.51.100.30")).status, 200);
+  assertEquals((await rejects(call("198.51.100.30"))).status, 429, "mapped = its IPv4");
+});
+
+Deno.test("rateLimit: the app's rateLimitLocalAddresses limits a loopback/private peer by its own address", async () => {
+  const store = inMemoryRateLimitStore();
+  const GET = createApi().use(rateLimit({ max: 1, windowMs: 60_000, store })).define(
+    {},
+    () => "ok",
+  );
+  const call = (peer: string) => {
+    const request = fromPeer(peer);
+    return runWithContext(
+      createRequestContext(request, undefined, { limitPolicy: { localAddresses: true } }),
+      () => GET(request, ctx()),
+    );
+  };
+  assertEquals((await call("10.0.0.2")).status, 200);
+  assertEquals((await rejects(call("10.0.0.2"))).status, 429);
+  assertEquals((await call("10.0.0.3")).status, 200, "another LAN client");
+  assertEquals((await call("::1")).status, 200);
+  assertEquals((await rejects(call("0:0:0:0:0:0:0:1"))).status, 429, "one loopback, any spelling");
 });
 
 // --- through handleApi: the redacted-500 path for DEFINED routes -----------------

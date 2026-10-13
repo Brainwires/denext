@@ -253,9 +253,9 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
 - **Instrumentation** (`instrumentation.ts`, `instrumentation-client.ts`): `register()` + `onRequestError()`
   with Next-shaped context (`routerKind`, `routePath`, `routeType`,
   `renderSource`, `revalidateReason`).
-- **Scheduled / background tasks** (`tasks/<name>.ts` → `defineTask({ handler })`):
-  run on a cron schedule (`scheduledTasks` in `denext.config.ts`, or a per-task
-  `schedule`) and/or on demand (`runTask(name)` from app code, `denext task <name>`
+- **Scheduled / background jobs** (`jobs/<name>.ts` → `defineJob({ handler })`):
+  run on a cron schedule (`scheduledJobs` in `denext.config.ts`, or a per-job
+  `schedule`) and/or on demand (`runJob(name)` from app code, `denext job <name>`
   from the CLI). Scheduling uses the platform's managed **`Deno.cron`** when available
   (Deno Deploy, or `--unstable-cron`) and a dependency-free minute-tick scheduler
   otherwise. Zero cost when the app defines none. `retry: { attempts, backoff }` retries a
@@ -267,7 +267,10 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   the import map (natively) and in memory in the compat runtime prebuild.
 - **`safeFetch`** (SSRF-guarded fetch for untrusted URLs).
 - **Databases**: any DB that runs on Deno works — built-in **`node:sqlite`** and
-  **Deno KV** are zero-npm; Postgres/MySQL/Drizzle via standard drivers. See
+  **Deno KV** are zero-npm; Postgres/MySQL/Drizzle via standard drivers, and Postgres
+  first-party — `postgresClient` on `Deno.SQL` (or `fromPostgresJs` on stock Deno), Postgres
+  auth / session / rate-limit / cache / job-history stores and `migratePostgres` (see
+  [Backend](#backend-opt-in-plugin-denextbackend)). See
   [the database guide](https://denext.dev/docs/database), [`examples/notes`](./examples/notes) (SQLite,
   single process), and [`examples/postgres-load`](./examples/postgres-load) (a
   networked Postgres pool driven under concurrent load).
@@ -302,7 +305,11 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   and re-runs it under the viewer's session on tag invalidation;
   `usePresence(room)` gives who's-online / cursors
   (`{ self, others, peers, setState }`); `useLiveOptimistic` pairs an optimistic
-  overlay with the live value. A Convex/Liveblocks-class layer, zero npm.
+  overlay with the live value. A Convex/Liveblocks-class layer, zero npm. Postgres
+  writes reach the same socket through `@denext/backend`'s realtime (`useTableChanges`, or
+  `revalidateTag("table:<name>")` per burst; see [Backend](#backend-opt-in-plugin-denextbackend)).
+  The hub caps sockets per client address (`live.limits.maxConnectionsPerIp`, default 64; an
+  IPv6 address counts as its `/64`).
 - **Resumability** ⚑ — `export const resumable = true` makes a route interactive
   with **no up-front hydration**; plain `useState` + `onClick` components work
   unchanged. Fine-grained primitives: island-level
@@ -312,6 +319,84 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   code-split/serializable event handlers, and `useSignal`/`useStore` reactive
   serializable state (adopted on resume, not recomputed). The runtime is a
   separate `@denext/denext/lazy` chunk; requires a Flight (RSC) route.
+
+## Backend (opt-in plugin: `@denext/backend`)
+
+Backend services inside the app — no hosted service, nothing to run beside it, zero npm:
+`plugins: [backend({ storage, postgres, realtime, rest })]`, each key opt-in
+(`packages/backend`). The Postgres primitives it builds on are in core (`denext/server`), so an
+app without the plugin uses them too. See [the backend guide](https://denext.dev/docs/backend)
+and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
+
+- **Storage** ⚑ — `backend({ storage: { driver, buckets } })` on **S3, Cloudflare R2 or MinIO**
+  (`s3({ region, bucket, endpoint? })`: `fetch` plus AWS Signature Version 4 on `crypto.subtle`,
+  no SDK) or the local filesystem (`fs({ dir })`). Per-bucket rules: `public`, `maxBytes`,
+  `mime`, and `authorize({ session, op, key })`, run with the request's session (no `authorize`
+  denies). Server API from `@denext/backend/server`: `storage.bucket(name)` →
+  `createSignedUploadUrl` / `createSignedUrl` / `upload` / `download` / `head` / `list` /
+  `remove` (`{ service: true }` skips `authorize` in a job). The browser uploads to the store
+  directly with presigned URLs — `uploadFile(bucket, file, { onProgress })` and `getFileUrl`
+  from `@denext/backend/client`, **multipart** on S3 above `multipartThreshold` — and the
+  server checks size, type and first bytes at completion. **Image transforms** on download
+  (`transform: { width, height, quality, format }`) run through denext's image pipeline, bounded
+  to the configured sizes and qualities. The signing endpoint is CSRF-gated like Server Actions,
+  and a presigned `GET` pins the stored type, with an `attachment` disposition for anything that
+  could render as a page. — `packages/backend/src/storage.ts`, `s3-driver.ts`, `fs-driver.ts`,
+  `sigv4.ts`.
+- **Postgres everywhere** — `postgresClient(url?)` (`denext/server`) is a tagged-template client
+  on **`Deno.SQL`**, built into denext's Deno runtime; on stock Deno,
+  `fromPostgresJs(postgres(url))` adapts the npm `postgres` package to the same `SqlClient`
+  shape. The Postgres stores take `{ sql | url, schema? }` and create their tables by migration
+  on first use: `postgresAuthAdapter` (denext auth's users, accounts, credentials, tokens and
+  factors), `postgresSessionStore`, `postgresRateLimitStore`, `postgresCacheStore` and
+  `postgresJobHistoryStore` (one job-run history across replicas). `migratePostgres` /
+  `postgresMigrationStatus` apply `migrations/*.sql` in order, each in its own transaction under
+  an advisory lock (`denext generate migration <name>` + `denext job migrate`). With the plugin,
+  `backend({ postgres: {} })` (reads `DATABASE_URL`) opens one client for the app and
+  `backendAuthAdapter()` puts auth's tables on it. — `src/server/postgres.ts`,
+  `postgres-migrate.ts`, `postgres-cache.ts`, `postgres-job-history.ts`,
+  `src/server/auth/postgres-*.ts`.
+- **Supabase-compatible row-level security** ⚑ — `db()` from `@denext/backend/server` runs every
+  query as the request's user: `authenticated` with the session's claims in `request.jwt.claims`
+  (the keys of a Supabase access token), or `anon` when signed out or outside a request, set
+  transaction-locally — so policies written for Supabase (`auth.uid()`, `auth.jwt()`,
+  `auth.role()`, `auth.email()`) run unchanged. The identity is bound when the query is made.
+  `db({ as: { id } })` acts for a user in a job; `db.service()` is the unscoped connection
+  (maintenance only). The roles and `auth.*` functions come from the plugin's first migration,
+  or from an administrator running `rlsSetupSql(role)`. — `packages/backend/src/rls.ts`,
+  `postgres.ts`.
+- **Realtime from the database** ⚑ — `realtime({ tables })` installs per-table triggers that
+  `pg_notify` the changed row's **key** (never the row); one `LISTEN` connection per instance
+  coalesces each 16 ms burst and re-reads the changed rows **as each subscriber**, under their
+  own policies, one keyed query per identity and filter. `useTableChanges(table, { initial,
+  filter })` (`@denext/backend/client`) keeps a row list live in the browser over the Live
+  socket (Supabase's `col=eq.value` filter form, or an object); `tableChanges` and
+  `onTableChange(table, fn)` serve the server side. A delete reaches only subscribers that could
+  see the row. `realtime({ revalidate: true })` turns each burst into
+  `revalidateTag("table:<name>")`, so existing `<Live>` / `useLive` / `useApi({ tags })` code
+  follows the table, and `revalidate: { owner: "one" }` elects one instance per database to do
+  it (a session-level advisory lock). Subscriptions are capped per identity
+  (`maxSubscriptionsPerIdentity`) and per instance (`maxSubscribers`). —
+  `packages/backend/src/realtime.ts`, `realtime-sql.ts`, `table-changes-client.ts`.
+- **Auto-REST** ⚑ — `backend({ rest: {} })` serves a schema's tables as PostgREST-style routes
+  (`GET` / `HEAD` / `POST` / `PATCH` / `DELETE` on `/rest/v1/<table>`: column selection,
+  filters and `not`, ordering, paging and `Range`, `Prefer: count=exact`, single-object
+  responses, inserts, filtered updates and deletes), every statement run through `db()` so RLS
+  scopes it. By default only RLS-enabled tables and `security_invoker` views that the `anon` /
+  `authenticated` roles were granted get a route; everything skipped is listed in a startup
+  warning. Names come only from the catalog (never request text), values are typed `$n`
+  parameters, each request has a `statement_timeout`, REST statements are capped at a share of
+  the pool (`maxConcurrent`, then `503`), a full count is for signed-in callers by default, and a
+  cookie-carrying cross-site write is refused (`csrf_failed`). The typed client — `from(table)`
+  and `restClient({ url })` from `@denext/backend/client`, a supabase-js-shaped builder that
+  resolves to `{ data, error, count, status }` — is typed by `.denext/rest.ts`, generated from
+  the live catalog at `denext dev` and `denext build`. — `packages/backend/src/rest*.ts`.
+- **The Database section of `denext ui`** — for a project on Postgres: tables with their
+  columns, indexes and keys; rows (keyset-paged, editable, each write previewed as its exact SQL
+  first); row-level security policies; migrations (applied, pending, edited since); the storage
+  buckets and their objects; denext auth's users (revoke sessions, delete a user). Each
+  operation is a `denext db-admin` child that loads the project, so project code never runs in
+  the UI process; `--read-only` is honoured. — `src/ui/features/database.ts`, `src/ui/database/`.
 
 ## Client runtime
 
@@ -628,7 +713,9 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 Hardened by default — secure cookie defaults, **hash-based CSP** on buffered
 responses, opinionated hardening headers (nosniff, frame-options, HSTS over
 HTTPS), error redaction, correlation ids (`x-request-id`), config validation,
-SSRF-pinned image fetch, and a continuously-run **CVE-defense** probe suite. The
+SSRF-pinned image fetch, per-address limits (`rateLimit()`, Live's connection cap,
+`clientIpForLimits()`) that switch off rather than go site-wide behind an untrusted proxy, and a
+continuously-run **CVE-defense** probe suite. The
 full mechanism ledger is **Part 2 §1**; the threat-by-threat posture is in
 [the CVE-defense guide](https://denext.dev/docs/security).
 
@@ -689,9 +776,10 @@ Details and caveats: [the Next migration guide](https://denext.dev/docs/migratin
 ## Ecosystem packages (first-party JSR)
 
 `@denext/photon`, `@denext/avif`, `@denext/og`, `@denext/pages-router`,
-`@denext/htmx`, `@denext/effect`, `@denext/openapi`, `@denext/graphql`, `@denext/react-router` — published
-independently. All zero-npm except the two deliberate npm bridges (`@denext/effect` →
-`npm:effect`, `@denext/graphql` → `npm:graphql-yoga`), which a consumer opts into. (The
+`@denext/htmx`, `@denext/effect`, `@denext/openapi`, `@denext/graphql`, `@denext/react-router`,
+`@denext/content-collections`, `@denext/backend` — published independently. All zero-npm
+except the two deliberate npm bridges (`@denext/effect` → `npm:effect`, `@denext/graphql` →
+`npm:graphql-yoga`), which a consumer opts into. (The
 cache uses Deno's built-in `node:sqlite`.)
 
 ## End-to-end typed API surface
@@ -830,8 +918,8 @@ cache uses Deno's built-in `node:sqlite`.)
   plugin-contributed verbs). Verbs: `create`/`init`
   (`--template default|minimal`), `generate` (sixteen kinds: `page`, `route`,
   `layout`, `loading`, `error`, `not-found`, `component`, `api`, `action`,
-  `middleware`, `task`, `test`, `docker`, `migration` (a timestamped SQL file + a
-  `node:sqlite` runner task), `seed`, `ci` (a GitHub Actions workflow); the engine takes
+  `middleware`, `job`, `test`, `docker`, `migration` (a timestamped SQL file + a
+  `node:sqlite` runner job), `seed`, `ci` (a GitHub Actions workflow); the engine takes
   `force`/`dryRun`),
   `ui` (below), `commands` (list this project's own verbs; `--json`),
   `routes` (the app's pages and API routes with methods, params and files, as a table or
@@ -875,7 +963,9 @@ cache uses Deno's built-in `node:sqlite`.)
   regenerate-with-diff plus an **in-place `docker-compose.yml` editor** (a line
   splice checked by re-parsing, so comments and untouched lines stay byte for
   byte), a nine-step setup wizard for a fresh clone, and a runner for the
-  project's own verbs with a typed input per declared flag. Server-rendered
+  project's own verbs with a typed input per declared flag, and a Database section for a
+  project on Postgres (tables, rows, policies, migrations, storage, auth users; see
+  [Backend](#backend-opt-in-plugin-denextbackend)). Server-rendered
   components built with `h()` — **zero bundler and full progressive enhancement**
   (every action works with JavaScript off) behind a six-layer local security
   model: loopback-only bind, a DNS-rebinding / `Sec-Fetch-Site` host gate, a
@@ -1081,6 +1171,20 @@ is in [the CVE-defense guide](https://denext.dev/docs/security).
 - **Forwarded headers untrusted by default** — `X-Forwarded-Proto`/`-Host`
   ignored unless the deployment opts into `trustForwardedHeaders` (or sets
   `canonicalOrigin`). — `src/server/absolute-url.ts:4-56`.
+- **One rule for per-address limits** — `clientIpForLimits()` is the address a
+  quota or connection cap keys on: the socket peer, or the trusted proxy's last
+  `x-forwarded-for` hop, and `undefined` when the peer is a loopback, private,
+  link-local or unique-local address and the proxy is not trusted (behind an
+  undeclared reverse proxy every visitor shares its address, so one limit would
+  be site-wide). `{ bucket: true }` answers the limit bucket: an IPv6 address
+  collapsed to its `/64` (rotating inside one allocation mints no fresh
+  budget), an IPv4-mapped address as its IPv4. The `rateLimit()` API
+  middleware's default key, Live's per-address connection cap
+  (`live.limits.maxConnectionsPerIp`, default 64, a `429` past it) and
+  `@denext/backend` realtime's signed-out quota follow it, each warning once
+  when it switches itself off. — `clientIpForLimits` in
+  `src/server/request-context.ts`, `limitAddrOf` / `ipBucket` in
+  `src/server/remote-addr.ts`, `connectionsFull` in `src/server/live.ts`.
 - **Open-redirect neutralization** — `safeRedirectLocation` collapses
   protocol-relative `//host` and backslash `/\host` to a single-slash path for
   all config-driven redirects, the middleware `redirectResponse()` helper, auth

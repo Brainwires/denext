@@ -1,26 +1,26 @@
-// The TaskHistoryStore contract, run against every store: the default SQLite file
-// (tests/task-history-store.test.ts), Postgres through the node:sqlite-backed fake client (same
+// The JobHistoryStore contract, run against every store: the default SQLite file
+// (tests/job-history-store.test.ts), Postgres through the node:sqlite-backed fake client (same
 // file) and Postgres on a real server (tests/postgres-integration.test.ts). Each case gets a
 // FRESH store from `make()`, so no case sees another's rows.
 
 import { assert, assertEquals } from "@std/assert";
-import type { TaskHistoryStore } from "../../src/server/task-history.ts";
-import type { TaskRunRecord } from "../../src/server/tasks.ts";
+import type { JobHistoryStore } from "../../src/server/job-history.ts";
+import type { JobRunRecord } from "../../src/server/jobs.ts";
 
 /** A fresh store for one case, and how to dispose of it. */
 export interface FreshStore {
   /** The store under test (built with `maxRuns: 1000`). */
-  store: TaskHistoryStore;
+  store: JobHistoryStore;
   /** Close it and remove whatever it left behind. */
   dispose(): Promise<void>;
 }
 
 /** A run, with the boring fields filled in. */
-function run(over: Partial<TaskRunRecord> & { name: string }): TaskRunRecord {
+function run(over: Partial<JobRunRecord> & { name: string }): JobRunRecord {
   return { trigger: "schedule", startedAt: Date.now(), durationMs: 5, ok: true, ...over };
 }
 
-type Case = (store: TaskHistoryStore) => Promise<void>;
+type Case = (store: JobHistoryStore) => Promise<void>;
 
 const CASES: Record<string, Case> = {
   "what was recorded is what comes back, newest first": async (store) => {
@@ -31,16 +31,16 @@ const CASES: Record<string, Case> = {
     const history = await store.read();
     assert(history.available, history.reason ?? "");
     assertEquals(history.windowDays, 7);
-    assertEquals(history.tasks.map((t) => t.task), ["digest", "cleanup"]);
-    const cleanup = history.tasks.find((t) => t.task === "cleanup")!;
+    assertEquals(history.jobs.map((t) => t.job), ["digest", "cleanup"]);
+    const cleanup = history.jobs.find((t) => t.job === "cleanup")!;
     assertEquals(cleanup.lastOk, false, "the last run, not a summary");
     assertEquals([cleanup.successes, cleanup.failures, cleanup.retries], [1, 1, 0]);
     assertEquals(cleanup.lastRunAt, t0 - 2000);
-    const digest = history.tasks.find((t) => t.task === "digest")!;
+    const digest = history.jobs.find((t) => t.job === "digest")!;
     assertEquals([digest.lastOk, digest.lastDurationMs], [true, 9]);
-    assertEquals(history.recent.map((r) => r.task), ["digest", "cleanup", "cleanup"]);
+    assertEquals(history.recent.map((r) => r.job), ["digest", "cleanup", "cleanup"]);
     assertEquals(history.recent[1], {
-      task: "cleanup",
+      job: "cleanup",
       trigger: "schedule",
       startedAt: t0 - 2000,
       durationMs: 5,
@@ -61,7 +61,7 @@ const CASES: Record<string, Case> = {
     );
     await store.record(run({ name: "sync", startedAt: t0 + 2, ok: true, attempt: 3 }));
     const history = await store.read();
-    const sync = history.tasks.find((t) => t.task === "sync")!;
+    const sync = history.jobs.find((t) => t.job === "sync")!;
     assertEquals([sync.successes, sync.failures, sync.retries], [1, 0, 2]);
     assertEquals(history.recent.map((r) => [r.attempt, r.willRetry, r.ok]), [
       [3, false, true],
@@ -74,14 +74,14 @@ const CASES: Record<string, Case> = {
     await store.record(run({ name: "old", startedAt: now - 10 * 86_400_000 }));
     for (let i = 0; i < 5; i++) await store.record(run({ name: "new", startedAt: now - i * 1000 }));
     const week = await store.read();
-    assertEquals(week.tasks.map((t) => t.task), ["new"], "the old run is outside 7 days");
+    assertEquals(week.jobs.map((t) => t.job), ["new"], "the old run is outside 7 days");
     assertEquals(week.recent.length, 6, "the feed still shows it");
     const month = await store.read({ windowDays: 30, recentLimit: 2 });
     assertEquals(month.windowDays, 30);
-    assertEquals(month.tasks.map((t) => t.task).sort(), ["new", "old"]);
+    assertEquals(month.jobs.map((t) => t.job).sort(), ["new", "old"]);
     assertEquals(month.recent.map((r) => r.startedAt), [now, now - 1000]);
   },
-  "listRuns is one task's runs, newest first, limited": async (store) => {
+  "listRuns is one job's runs, newest first, limited": async (store) => {
     const t0 = Date.now() - 60_000;
     for (let i = 0; i < 4; i++) await store.record(run({ name: "a", startedAt: t0 + i }));
     await store.record(run({ name: "b", startedAt: t0 + 10 }));
@@ -98,7 +98,7 @@ const CASES: Record<string, Case> = {
     assertEquals((await store.listRuns("b")).length, 1);
     assertEquals(await store.listRuns("nobody"), []);
   },
-  "prune caps every task on its own, and drops runs past retention": async (store) => {
+  "prune caps every job on its own, and drops runs past retention": async (store) => {
     const now = Date.now();
     for (let i = 0; i < 12; i++) await store.record(run({ name: "noisy", startedAt: now - i }));
     await store.record(run({ name: "quiet", startedAt: now - 100 }));
@@ -111,7 +111,7 @@ const CASES: Record<string, Case> = {
       now - 3,
       now - 4,
     ], "the newest five kept");
-    assertEquals((await store.listRuns("quiet")).length, 1, "a quiet task keeps its run");
+    assertEquals((await store.listRuns("quiet")).length, 1, "a quiet job keeps its run");
     assertEquals(await store.listRuns("ancient"), [], "past retention");
   },
   "clear removes every run; the store keeps recording": async (store) => {
@@ -119,7 +119,7 @@ const CASES: Record<string, Case> = {
     await store.record(run({ name: "digest", ok: false, detail: "boom" }));
     assertEquals(await store.clear(), { cleared: true });
     const after = await store.read();
-    assertEquals([after.available, after.tasks, after.recent], [true, [], []]);
+    assertEquals([after.available, after.jobs, after.recent], [true, [], []]);
     await store.record(run({ name: "cleanup" }));
     assertEquals((await store.read()).recent.length, 1);
   },
@@ -136,7 +136,7 @@ const CASES: Record<string, Case> = {
  * @param t The test context.
  * @param make Builds a fresh store (with `maxRuns: 1000`).
  */
-export async function taskHistorySuite(
+export async function jobHistorySuite(
   t: Deno.TestContext,
   make: () => Promise<FreshStore>,
 ): Promise<void> {

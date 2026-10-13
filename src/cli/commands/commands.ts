@@ -17,6 +17,12 @@
 // delay the listing nor keep the process alive. Discovery is budgeted for the same reason, and
 // a budget or a broken config degrades into `timedOut` / `error` — data, not a failure — so the
 // listing (and the exit code) is the same shape for every caller.
+//
+// The Deno verbs the CLI forwards (src/cli/deno-verbs.ts) are NOT in the listing or its cache:
+// they are one fixed list for the pinned Deno, the same in every project, while this listing is
+// what THIS project and denext contribute — what `denext ui` offers Run buttons for and what the
+// cache fingerprints against the project's files. Help and completions add Deno's verbs
+// themselves.
 
 import {
   type CommandContext,
@@ -155,6 +161,10 @@ function printHuman(listing: CommandListing, dir: string, timeoutMs: number): vo
     `\nBuilt-in commands (${listing.core.length}): ${
       listing.core.map((info) => info.name).sort().join(", ")
     }`,
+  );
+  console.log(
+    "\nAny other Deno command runs on denext's Deno toolchain (`denext compile`, `denext x`, …;" +
+      " listed by `denext --help`).",
   );
   console.log("\nRun `denext <command> --help` for a command's options.\n");
 }

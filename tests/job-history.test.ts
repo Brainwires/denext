@@ -1,4 +1,4 @@
-// The task run-history store: what it records, what it prunes, and — above all — that a broken
+// The job run-history store: what it records, what it prunes, and — above all — that a broken
 // store never breaks a run.
 //
 // Two shapes of test. Projections and pruning need a REAL database, because `:memory:` is
@@ -11,15 +11,11 @@
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { openSqliteFile, type SqliteDb, type SqlValue } from "../src/server/sqlite-cache.ts";
-import type { TaskRunRecord } from "../src/server/tasks.ts";
-import {
-  clearTaskHistory,
-  readTaskHistory,
-  taskHistoryRecorder,
-} from "../src/server/task-history.ts";
+import type { JobRunRecord } from "../src/server/jobs.ts";
+import { clearJobHistory, jobHistoryRecorder, readJobHistory } from "../src/server/job-history.ts";
 
 /** A run, with the boring fields filled in. */
-function run(over: Partial<TaskRunRecord> & { name: string }): TaskRunRecord {
+function run(over: Partial<JobRunRecord> & { name: string }): JobRunRecord {
   return { trigger: "schedule", startedAt: Date.now(), durationMs: 5, ok: true, ...over };
 }
 
@@ -48,28 +44,28 @@ function stub(mode: "open-throws" | "exec-throws"): {
 }
 
 Deno.test("what was recorded is what comes back", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
-  const path = join(dir, "tasks.db");
+  const dir = await Deno.makeTempDir({ prefix: "denext_job_history_" });
+  const path = join(dir, "jobs.db");
   try {
-    const store = taskHistoryRecorder({ path });
+    const store = jobHistoryRecorder({ path });
     const t0 = Date.now();
     store.record(run({ name: "cleanup", startedAt: t0 - 3000, durationMs: 412, ok: true }));
     store.record(run({ name: "cleanup", startedAt: t0 - 2000, ok: false, detail: "boom" }));
     store.record(run({ name: "digest", startedAt: t0 - 1000, durationMs: 9, ok: true }));
     store.close();
 
-    const history = readTaskHistory({ path });
+    const history = readJobHistory({ path });
     assert(history.available, history.reason ?? "");
-    assertEquals(history.tasks.length, 2);
+    assertEquals(history.jobs.length, 2);
 
-    const cleanup = history.tasks.find((t) => t.task === "cleanup")!;
+    const cleanup = history.jobs.find((t) => t.job === "cleanup")!;
     // Last status is the most recent run, not a summary of all of them.
     assertEquals(cleanup.lastOk, false);
     assertEquals(cleanup.successes, 1);
     assertEquals(cleanup.failures, 1);
 
     // The feed is newest first, and carries the detail.
-    assertEquals(history.recent.map((r) => r.task), ["digest", "cleanup", "cleanup"]);
+    assertEquals(history.recent.map((r) => r.job), ["digest", "cleanup", "cleanup"]);
     assertEquals(history.recent[1].detail, "boom");
     assertEquals(history.recent[1].ok, false);
   } finally {
@@ -77,56 +73,56 @@ Deno.test("what was recorded is what comes back", async () => {
   }
 });
 
-Deno.test("a quiet task's history is never evicted by a noisy one", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
-  const path = join(dir, "tasks.db");
+Deno.test("a quiet job's history is never evicted by a noisy one", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_job_history_" });
+  const path = join(dir, "jobs.db");
   try {
-    const store = taskHistoryRecorder({ path, maxRuns: 10 });
-    store.record(run({ name: "daily" })); // the quiet task, recorded once
-    // The noisy task crosses the prune threshold. A GLOBAL cap would evict `daily` here and
-    // silently corrupt its counts; a per-task cap cannot.
+    const store = jobHistoryRecorder({ path, maxRuns: 10 });
+    store.record(run({ name: "daily" })); // the quiet job, recorded once
+    // The noisy job crosses the prune threshold. A GLOBAL cap would evict `daily` here and
+    // silently corrupt its counts; a per-job cap cannot.
     for (let i = 0; i < 250; i++) store.record(run({ name: "noisy" }));
     store.close();
 
-    const history = readTaskHistory({ path });
+    const history = readJobHistory({ path });
     assert(history.available, history.reason ?? "");
-    const daily = history.tasks.find((t) => t.task === "daily");
-    assert(daily, "the quiet task still has history");
+    const daily = history.jobs.find((t) => t.job === "daily");
+    assert(daily, "the quiet job still has history");
     assertEquals(daily.successes, 1);
     // The cap is enforced by an amortised prune, not on every insert, so it is deliberately not
     // a hard ceiling between prunes: 250 inserts prune once at 200 (down to 10) and the rest
-    // accumulate. What matters is that pruning happened at all — and that the quiet task,
+    // accumulate. What matters is that pruning happened at all — and that the quiet job,
     // under its cap, kept every row.
-    const noisy = history.tasks.find((t) => t.task === "noisy")!;
-    assert(noisy.successes < 250, `the noisy task was pruned, got ${noisy.successes}`);
+    const noisy = history.jobs.find((t) => t.job === "noisy")!;
+    assert(noisy.successes < 250, `the noisy job was pruned, got ${noisy.successes}`);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-/** Seed a database the way an earlier process would have left it: `n` rows for `task`. */
-function seed(path: string, task: string, n: number): void {
-  const store = taskHistoryRecorder({ path, maxRuns: 100_000 });
+/** Seed a database the way an earlier process would have left it: `n` rows for `job`. */
+function seed(path: string, job: string, n: number): void {
+  const store = jobHistoryRecorder({ path, maxRuns: 100_000 });
   const t0 = Date.now() - n * 1000;
-  for (let i = 0; i < n; i++) store.record(run({ name: task, startedAt: t0 + i * 1000 }));
+  for (let i = 0; i < n; i++) store.record(run({ name: job, startedAt: t0 + i * 1000 }));
   store.close();
 }
 
 Deno.test("a fresh process prunes on its first insert, not after 200 of them", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
-  const path = join(dir, "tasks.db");
+  const dir = await Deno.makeTempDir({ prefix: "denext_job_history_" });
+  const path = join(dir, "jobs.db");
   try {
-    // What system cron leaves behind: `denext task backup` once a night, one row per process,
+    // What system cron leaves behind: `denext job backup` once a night, one row per process,
     // and no process ever lived long enough to prune. The file is far over the cap.
     seed(path, "backup", 40);
     // The next one-shot process writes exactly one row — and must prune what it found.
-    const store = taskHistoryRecorder({ path, maxRuns: 10 });
+    const store = jobHistoryRecorder({ path, maxRuns: 10 });
     store.record(run({ name: "backup" }));
     store.close();
 
-    const history = readTaskHistory({ path });
+    const history = readJobHistory({ path });
     assert(history.available, history.reason ?? "");
-    const backup = history.tasks.find((t) => t.task === "backup")!;
+    const backup = history.jobs.find((t) => t.job === "backup")!;
     assertEquals(backup.successes, 10, "capped to maxRuns on the first insert");
     // And the newest rows are the ones kept: the run just recorded is still the last one.
     assert(backup.lastRunAt >= Date.now() - 5000, "the newest run survived the prune");
@@ -135,21 +131,21 @@ Deno.test("a fresh process prunes on its first insert, not after 200 of them", a
   }
 });
 
-Deno.test("the per-task cap applies to every task, not only the one that triggered the prune", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
-  const path = join(dir, "tasks.db");
+Deno.test("the per-job cap applies to every job, not only the one that triggered the prune", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_job_history_" });
+  const path = join(dir, "jobs.db");
   try {
     seed(path, "backup", 30);
     seed(path, "digest", 25);
-    // A run of a THIRD task triggers the prune; the other two are over the cap and must both
+    // A run of a THIRD job triggers the prune; the other two are over the cap and must both
     // come down to it, since neither will ever be the trigger in a one-shot process.
-    const store = taskHistoryRecorder({ path, maxRuns: 10 });
+    const store = jobHistoryRecorder({ path, maxRuns: 10 });
     store.record(run({ name: "cleanup" }));
     store.close();
 
-    const history = readTaskHistory({ path });
+    const history = readJobHistory({ path });
     assert(history.available, history.reason ?? "");
-    const counts = Object.fromEntries(history.tasks.map((t) => [t.task, t.successes]));
+    const counts = Object.fromEntries(history.jobs.map((t) => [t.job, t.successes]));
     assertEquals(counts, { cleanup: 1, backup: 10, digest: 10 });
   } finally {
     await Deno.remove(dir, { recursive: true });
@@ -159,11 +155,11 @@ Deno.test("the per-task cap applies to every task, not only the one that trigger
 Deno.test("the database is created owner-only, and stamped with a schema version", {
   ignore: Deno.build.os === "windows",
 }, async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
-  const path = join(dir, "tasks.db");
+  const dir = await Deno.makeTempDir({ prefix: "denext_job_history_" });
+  const path = join(dir, "jobs.db");
   try {
-    const store = taskHistoryRecorder({ path });
-    store.record(run({ name: "cleanup", detail: "the output is the task's, not every user's" }));
+    const store = jobHistoryRecorder({ path });
+    store.record(run({ name: "cleanup", detail: "the output is the job's, not every user's" }));
     // The main file and the WAL siblings SQLite derives from its mode: none readable by others.
     // Checked while the writer is open — closing it checkpoints and removes the siblings.
     for (const suffix of ["", "-wal", "-shm"]) {
@@ -185,12 +181,12 @@ Deno.test("the database is created owner-only, and stamped with a schema version
 });
 
 Deno.test("reading a history that never existed creates nothing, not even the directory", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
+  const dir = await Deno.makeTempDir({ prefix: "denext_job_history_" });
   try {
     // The UI renders the Cron page for a project that never recorded a run. That read must not
     // leave a `.denext/` behind in the project.
     const outDir = join(dir, ".denext");
-    const history = readTaskHistory({ path: join(outDir, "tasks.db") });
+    const history = readJobHistory({ path: join(outDir, "jobs.db") });
     assertEquals(history.available, false);
     assertEquals(history.reason, "no history recorded yet");
     assertEquals(await present(outDir), false, "a reader creates no directory");
@@ -201,7 +197,7 @@ Deno.test("reading a history that never existed creates nothing, not even the di
 
 Deno.test("a store that cannot open gives up once, and never throws", () => {
   const s = stub("open-throws");
-  const store = taskHistoryRecorder({ path: "/nowhere/tasks.db", openDb: s.open });
+  const store = jobHistoryRecorder({ path: "/nowhere/jobs.db", openDb: s.open });
   for (let i = 0; i < 5; i++) store.record(run({ name: "cleanup" }));
   // The latch: one failed open, then it stops trying for the life of the process.
   assertEquals(s.opens(), 1);
@@ -212,20 +208,20 @@ Deno.test("a store that cannot write gives up after a few tries, and never throw
   const s = stub("exec-throws");
   // The schema DDL itself throws, so this latches on the open path rather than the write path —
   // either way the caller sees nothing.
-  const store = taskHistoryRecorder({ path: "/nowhere/tasks.db", openDb: s.open });
+  const store = jobHistoryRecorder({ path: "/nowhere/jobs.db", openDb: s.open });
   for (let i = 0; i < 10; i++) store.record(run({ name: "cleanup" }));
   assertEquals(s.opens(), 1);
   store.close();
 });
 
 Deno.test("a genuinely impossible path latches, with no stub involved", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
+  const dir = await Deno.makeTempDir({ prefix: "denext_job_history_" });
   // The PARENT is a file, so mkdir and open both fail for real — exercising node:sqlite rather
   // than a mock, on every platform.
   const blocker = join(dir, "blocker");
   await Deno.writeTextFile(blocker, "not a directory");
   try {
-    const store = taskHistoryRecorder({ path: join(blocker, "tasks.db") });
+    const store = jobHistoryRecorder({ path: join(blocker, "jobs.db") });
     store.record(run({ name: "cleanup" })); // must not throw
     store.close();
   } finally {
@@ -234,15 +230,15 @@ Deno.test("a genuinely impossible path latches, with no stub involved", async ()
 });
 
 Deno.test("no database yet is an ordinary answer, not an error message", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
+  const dir = await Deno.makeTempDir({ prefix: "denext_job_history_" });
   try {
-    const history = readTaskHistory({ path: join(dir, "tasks.db") });
+    const history = readJobHistory({ path: join(dir, "jobs.db") });
     assertEquals(history.available, false);
     // node:sqlite reports a missing file as "unable to open database file: <absolute path>".
     // The panel must say the ordinary thing instead, and must not put a filesystem path on screen.
     assertEquals(history.reason, "no history recorded yet");
     assert(!(history.reason ?? "").includes(dir), "no filesystem path reaches the reason");
-    assertEquals(history.tasks, []);
+    assertEquals(history.jobs, []);
     assertEquals(history.recent, []);
   } finally {
     await Deno.remove(dir, { recursive: true });
@@ -250,18 +246,18 @@ Deno.test("no database yet is an ordinary answer, not an error message", async (
 });
 
 Deno.test("an enabled store with nothing recorded is distinguishable from a missing one", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
-  const path = join(dir, "tasks.db");
+  const dir = await Deno.makeTempDir({ prefix: "denext_job_history_" });
+  const path = join(dir, "jobs.db");
   try {
     // Opening the writer creates the file and the schema without recording anything.
-    const store = taskHistoryRecorder({ path });
+    const store = jobHistoryRecorder({ path });
     // Outside the 7-day window, inside the 14-day retention (which now runs on the first insert).
     store.record(run({ name: "cleanup", startedAt: Date.now() - 10 * 86_400_000 }));
     store.close();
     // The row is outside the window: readable, but nothing to show.
-    const history = readTaskHistory({ path });
+    const history = readJobHistory({ path });
     assertEquals(history.available, true, "the database is readable");
-    assertEquals(history.tasks, [], "and simply has nothing inside the window");
+    assertEquals(history.jobs, [], "and simply has nothing inside the window");
     assertEquals(history.recent.length, 1, "while the feed still shows it");
   } finally {
     await Deno.remove(dir, { recursive: true });
@@ -279,32 +275,32 @@ async function present(path: string): Promise<boolean> {
 }
 
 Deno.test("clearing removes every run and keeps the database itself", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
-  const path = join(dir, "tasks.db");
+  const dir = await Deno.makeTempDir({ prefix: "denext_job_history_" });
+  const path = join(dir, "jobs.db");
   try {
-    const store = taskHistoryRecorder({ path });
+    const store = jobHistoryRecorder({ path });
     store.record(run({ name: "cleanup" }));
     store.record(run({ name: "digest", ok: false, detail: "boom" }));
     store.close();
 
-    assertEquals(clearTaskHistory({ path }).cleared, true);
+    assertEquals(clearJobHistory({ path }).cleared, true);
 
     // A DELETE, not an unlink: the app process may hold this file open with live -wal/-shm
     // siblings, and removing it out from under that handle is the failure mode this avoids.
     assert(await present(path), "the database survives being cleared");
-    const after = readTaskHistory({ path });
+    const after = readJobHistory({ path });
     assertEquals(after.available, true, "still readable");
     assertEquals(after.recent, []);
-    assertEquals(after.tasks, []);
+    assertEquals(after.jobs, []);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
 Deno.test("clearing a history that never existed is an ordinary answer", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
+  const dir = await Deno.makeTempDir({ prefix: "denext_job_history_" });
   try {
-    const done = clearTaskHistory({ path: join(dir, "tasks.db") });
+    const done = clearJobHistory({ path: join(dir, "jobs.db") });
     assertEquals(done.cleared, false);
     // Not a raw SQLite string with a filesystem path in it.
     assertEquals(done.reason, "no history recorded yet");
@@ -314,21 +310,21 @@ Deno.test("clearing a history that never existed is an ordinary answer", async (
 });
 
 Deno.test("clearing refuses a `runs` that is a view, so a planted trigger never runs", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
-  const path = join(dir, "tasks.db");
+  const dir = await Deno.makeTempDir({ prefix: "denext_job_history_" });
+  const path = join(dir, "jobs.db");
   try {
     // A database file someone else wrote: `runs` is a VIEW whose INSTEAD OF DELETE trigger does
     // something of its own. `DELETE FROM runs` would run that trigger; the clear must not.
     const db = openSqliteFile(path);
-    db.exec("CREATE TABLE real_runs (id INTEGER PRIMARY KEY, task TEXT)");
+    db.exec("CREATE TABLE real_runs (id INTEGER PRIMARY KEY, job TEXT)");
     db.exec("CREATE TABLE evidence (hit INTEGER)");
-    db.exec("CREATE VIEW runs AS SELECT id, task FROM real_runs");
+    db.exec("CREATE VIEW runs AS SELECT id, job FROM real_runs");
     db.exec(
       "CREATE TRIGGER planted INSTEAD OF DELETE ON runs BEGIN INSERT INTO evidence VALUES (1); END",
     );
     db.close();
 
-    const done = clearTaskHistory({ path });
+    const done = clearJobHistory({ path });
     assertEquals(done.cleared, false);
     assertEquals(done.reason, "runs is a view, not a table — not cleared");
     const check = openSqliteFile(path, { readOnly: true });
@@ -341,16 +337,16 @@ Deno.test("clearing refuses a `runs` that is a view, so a planted trigger never 
 
 Deno.test("a store that cannot be opened is reported, never thrown", () => {
   const s = stub("open-throws");
-  const done = clearTaskHistory({ path: "/nowhere/tasks.db", openDb: s.open });
+  const done = clearJobHistory({ path: "/nowhere/jobs.db", openDb: s.open });
   assertEquals(done.cleared, false);
   assert((done.reason ?? "").length > 0, "it says why");
 });
 
 Deno.test("retries: each attempt is a row; a retried failure is not counted as a failure", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
-  const path = join(dir, "tasks.db");
+  const dir = await Deno.makeTempDir({ prefix: "denext_job_history_" });
+  const path = join(dir, "jobs.db");
   try {
-    const store = taskHistoryRecorder({ path });
+    const store = jobHistoryRecorder({ path });
     const t0 = Date.now() - 10_000;
     store.record(run({ name: "sync", startedAt: t0, ok: false, attempt: 1, willRetry: true }));
     store.record(run({ name: "sync", startedAt: t0 + 1, ok: false, attempt: 2, willRetry: true }));
@@ -358,51 +354,51 @@ Deno.test("retries: each attempt is a row; a retried failure is not counted as a
     store.record(run({ name: "plain", startedAt: t0 + 3, ok: false }));
     store.close();
 
-    const history = readTaskHistory({ path });
+    const history = readJobHistory({ path });
     assert(history.available, history.reason ?? "");
-    const sync = history.tasks.find((t) => t.task === "sync")!;
+    const sync = history.jobs.find((t) => t.job === "sync")!;
     assertEquals([sync.successes, sync.failures, sync.retries], [1, 0, 2]);
-    const plain = history.tasks.find((t) => t.task === "plain")!;
+    const plain = history.jobs.find((t) => t.job === "plain")!;
     assertEquals([plain.successes, plain.failures, plain.retries], [0, 1, 0]);
-    const feed = history.recent.filter((r) => r.task === "sync");
+    const feed = history.recent.filter((r) => r.job === "sync");
     assertEquals(feed.map((r) => [r.attempt, r.willRetry, r.ok]), [
       [3, false, true],
       [2, true, false],
       [1, true, false],
     ]);
-    assertEquals(history.recent.find((r) => r.task === "plain")?.attempt, 1);
+    assertEquals(history.recent.find((r) => r.job === "plain")?.attempt, 1);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
 Deno.test("retries: a version-1 file is read as-is and migrated by the next writer", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
-  const path = join(dir, "tasks.db");
+  const dir = await Deno.makeTempDir({ prefix: "denext_job_history_" });
+  const path = join(dir, "jobs.db");
   try {
     // The schema an earlier denext created (no retry columns, user_version 1).
     const { DatabaseSync } = await import("node:sqlite");
     const old = new DatabaseSync(path);
     old.exec(
-      "CREATE TABLE runs (id INTEGER PRIMARY KEY AUTOINCREMENT, task TEXT NOT NULL, " +
+      "CREATE TABLE runs (id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, " +
         "trigger TEXT NOT NULL, started_at INTEGER NOT NULL, duration_ms INTEGER NOT NULL, " +
         "ok INTEGER NOT NULL, detail TEXT); PRAGMA user_version = 1;",
     );
-    old.prepare("INSERT INTO runs (task, trigger, started_at, duration_ms, ok) VALUES (?,?,?,?,?)")
+    old.prepare("INSERT INTO runs (job, trigger, started_at, duration_ms, ok) VALUES (?,?,?,?,?)")
       .run("legacy", "schedule", Date.now() - 5000, 3, 0);
     old.close();
 
-    const before = readTaskHistory({ path });
+    const before = readJobHistory({ path });
     assert(before.available, before.reason ?? "");
-    assertEquals(before.tasks[0].failures, 1);
-    assertEquals(before.tasks[0].retries, 0);
+    assertEquals(before.jobs[0].failures, 1);
+    assertEquals(before.jobs[0].retries, 0);
     assertEquals(before.recent[0].attempt, 1);
 
-    const store = taskHistoryRecorder({ path });
+    const store = jobHistoryRecorder({ path });
     store.record(run({ name: "legacy", ok: true, attempt: 2, willRetry: false }));
     store.close();
-    const after = readTaskHistory({ path });
-    assertEquals(after.tasks[0].retries, 1);
+    const after = readJobHistory({ path });
+    assertEquals(after.jobs[0].retries, 1);
     const raw = new DatabaseSync(path, { readOnly: true });
     try {
       const row = raw.prepare("PRAGMA user_version").get() as { user_version: number };

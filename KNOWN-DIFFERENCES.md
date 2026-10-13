@@ -1,6 +1,7 @@
 # denext — Known differences
 
-Where denext **deliberately** behaves differently from React or Next.js. Each entry
+Where denext **deliberately** behaves differently from what it is compatible with — React, Next.js,
+React Native and Supabase. Each entry
 is an observable behavior, documented so a port knows what to expect — not a gap
 waiting to be closed. A surface that is missing, throwing, or wrong is a
 _limitation_ and lives in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); an
@@ -229,6 +230,23 @@ internal design choice with no observable difference lives in
   carries the engine's inline `height: 100%`: a `style` height, or a class with a max height, sizes it, where
   the real DOM build's element has no inline height. It applies to apps on npm React (the
   esbuild build path); a denext-native app uses `VirtualList` directly.
+
+## Supabase and `@denext/backend`
+
+Where `@denext/backend` deliberately departs from Supabase. See
+[Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
+
+- **No table is granted by default.** Supabase grants every table in `public` to `anon` and
+  `authenticated`; denext's roles start with no privileges, so a table is private until a
+  migration grants it (or sets `alter default privileges`, Supabase's default).
+- **Auto-REST serves only what row-level security covers.** PostgREST serves any granted table or
+  view; `backend({ rest })` with the default `tables: "*"` serves RLS-enabled tables and views
+  created `with (security_invoker = true)`, skips a table with RLS off and an ordinary view (it
+  reads as its owner), and lists what it skipped in a startup warning. Naming a relation in
+  `rest.tables` serves it as is. A full count (`Prefer: count=exact`) is for signed-in callers by
+  default (`rest.exactCount`).
+- **There is no service-role key.** The unscoped connection is `db.service()` (and a bucket's
+  `{ service: true }`) in server code; nothing the browser holds can bypass the policies.
 
 ## Security posture — safe defaults
 

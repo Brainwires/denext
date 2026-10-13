@@ -78,6 +78,16 @@ const REMOVED_EXPERIMENTAL_KEYS: ReadonlyMap<string, string> = new Map([
   ["nodeResolve", "nodeResolve"],
 ]);
 
+/**
+ * Top-level keys denext renamed, mapped to the key that replaces each. Setting one is a
+ * validation ERROR naming the new key — never a silently dropped field and never an alias.
+ * denext 4.0 renamed background/scheduled "tasks" to "jobs" (`denext task` is Deno's now).
+ */
+const REMOVED_CONFIG_KEYS: ReadonlyMap<string, string> = new Map([
+  ["tasks", "jobs"],
+  ["scheduledTasks", "scheduledJobs"],
+]);
+
 /** The warning for a graduated `experimental.<key>`, pointing at its top-level home. */
 function movedKeyMessage(name: string, key: string, to: string, honored: boolean): string {
   const status = honored ? "is still honored for now but has moved" : "is no longer honored";
@@ -119,6 +129,7 @@ function warnUnknownExperimentalKeys(experimental: unknown, name: string): void 
 export function warnUnknownConfigKeys(config: object, name = "denext.config"): void {
   for (const key of Object.keys(config)) {
     if (KNOWN_CONFIG_KEYS.includes(key)) continue;
+    if (REMOVED_CONFIG_KEYS.has(key)) continue; // a validation error, not a warning
     console.warn(unknownKeyMessage(name, key, didYouMean(key)));
   }
   warnUnknownExperimentalKeys((config as { experimental?: unknown }).experimental, name);
@@ -130,6 +141,24 @@ export function validateRemovedExperimental(experimental: unknown, fail: Fail): 
   for (const [key, to] of REMOVED_EXPERIMENTAL_KEYS) {
     if (Object.hasOwn(experimental, key)) {
       fail(`experimental.${key}`, `was removed in denext 3.0 — set top-level \`${to}\` instead`);
+    }
+  }
+}
+
+/**
+ * A renamed top-level key ({@linkcode REMOVED_CONFIG_KEYS}) fails, naming the key that replaced
+ * it. Checked on the config as authored — the loader's field whitelist would drop it otherwise.
+ *
+ * @param config The raw config object (a default export, or a module's named exports).
+ * @param fail The field-scoped failure.
+ */
+export function validateRemovedConfigKeys(config: object, fail: Fail): void {
+  for (const [key, to] of REMOVED_CONFIG_KEYS) {
+    if (Object.hasOwn(config, key)) {
+      fail(
+        key,
+        `was renamed in denext 4.0 — use \`${to}\` instead (background work is "jobs" now)`,
+      );
     }
   }
 }

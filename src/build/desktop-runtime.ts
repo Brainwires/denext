@@ -26,9 +26,10 @@
 
 import { acquireCacheLock } from "./project-locks.ts";
 import { basename, dirname, fromFileUrl, join } from "@std/path";
-import { createHash } from "node:crypto";
 import { extractArchive, type ExtractedFile } from "./safe-extract.ts";
+import { readJsonFile, sha256File, streamHashed, sweepLeftovers } from "./verified-download.ts";
 import { readJson } from "./json-edit.ts";
+import { denoReleaseVersion } from "./deno-version.ts";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
 
 /** A runtime backend (`deno desktop --backend`). */
@@ -181,19 +182,8 @@ function pinnedArtifact(
   );
 }
 
-async function sha256File(path: string): Promise<string> {
-  const hash = createHash("sha256");
-  const f = await Deno.open(path, { read: true });
-  for await (const chunk of f.readable) hash.update(chunk);
-  return hash.digest("hex");
-}
-
-async function readMarker(dir: string): Promise<RuntimeMarker | null> {
-  try {
-    return JSON.parse(await Deno.readTextFile(join(dir, RUNTIME_MARKER))) as RuntimeMarker;
-  } catch {
-    return null;
-  }
+function readMarker(dir: string): Promise<RuntimeMarker | null> {
+  return readJsonFile<RuntimeMarker>(join(dir, RUNTIME_MARKER));
 }
 
 /** Whether the marker names exactly this pin's archive and records at least one file. */
@@ -265,44 +255,28 @@ async function openDownload(
   );
 }
 
-/** Raised (and never wrapped) when a download is refused for its size or hash. */
-class RefusedDownload extends Error {}
-
 /**
  * Stream `body` into the new file `dest`, hashing it and refusing it as soon as it outgrows
  * `maxSize`. Returns the byte count and SHA-256.
  */
-async function streamToFile(
+function streamToFile(
   body: ReadableStream<Uint8Array>,
   dest: string,
   maxSize: number,
   what: string,
 ): Promise<{ size: number; sha256: string }> {
-  const hash = createHash("sha256");
-  let size = 0;
-  const file = await Deno.open(dest, { write: true, createNew: true });
-  try {
-    for await (const chunk of body) {
-      size += chunk.byteLength;
-      if (size > maxSize) {
-        throw new RefusedDownload(
-          `denext: refusing the Deno Desktop runtime ${what}: the download is larger than its ` +
-            `pinned ${maxSize} bytes${DOWNLOAD_HINT}`,
-        );
-      }
-      hash.update(chunk);
-      for (let off = 0; off < chunk.byteLength;) off += await file.write(chunk.subarray(off));
-    }
-  } catch (err) {
-    if (err instanceof RefusedDownload) throw err;
-    throw new DesktopRuntimeDownloadError(
-      `denext: the Deno Desktop runtime download was interrupted (${what}, ${size} of ` +
-        `${maxSize} bytes): ${errText(err)}${DOWNLOAD_HINT}`,
-    );
-  } finally {
-    file.close();
-  }
-  return { size, sha256: hash.digest("hex") };
+  return streamHashed(body, dest, maxSize, {
+    tooLarge: () =>
+      new Error(
+        `denext: refusing the Deno Desktop runtime ${what}: the download is larger than its ` +
+          `pinned ${maxSize} bytes${DOWNLOAD_HINT}`,
+      ),
+    interrupted: (size, err) =>
+      new DesktopRuntimeDownloadError(
+        `denext: the Deno Desktop runtime download was interrupted (${what}, ${size} of ` +
+          `${maxSize} bytes): ${errText(err)}${DOWNLOAD_HINT}`,
+      ),
+  });
 }
 
 /** Download `artifact` to `dest`, refusing anything but exactly its pinned size and SHA-256. */
@@ -547,19 +521,6 @@ async function rehashTree(root: string, rel: string, files: Record<string, Extra
     }
   };
   await walk(rel);
-}
-
-/** Remove `.tmp-*` / `.stale-*` leftovers older than a day (crashed or raced runs). */
-async function sweepLeftovers(versionDir: string): Promise<void> {
-  const cutoff = Date.now() - 24 * 3600_000;
-  for await (const e of Deno.readDir(versionDir)) {
-    if (!e.isDirectory || !/^\.(tmp|stale)-/.test(e.name)) continue;
-    const path = join(versionDir, e.name);
-    const mtime = (await Deno.stat(path).catch(() => null))?.mtime?.getTime();
-    if (mtime !== undefined && mtime < cutoff) {
-      await Deno.remove(path, { recursive: true }).catch(() => {});
-    }
-  }
 }
 
 /** What the cache lock's Blocking line names. */
@@ -1129,7 +1090,7 @@ export async function resolveDesktopRuntimeEnv(
   }
   const deno = options.deno ?? "deno";
   const found = await (options.denoVersion ?? denoCliVersion)(deno);
-  if (found !== pin.deno) {
+  if (denoReleaseVersion(found) !== pin.deno) {
     if (options.onDenoMismatch === "stock") return stockForMismatch(found, pin, deno, log);
     throw new Error(denoVersionMismatchMessage(found, pin, deno));
   }
@@ -1260,7 +1221,7 @@ export async function desktopRuntimeStatus(
   } catch (err) {
     problem = errText(err);
   }
-  const denoOk = found === pin.deno;
+  const denoOk = found !== null && denoReleaseVersion(found) === pin.deno;
   const denoText = denoOk
     ? `deno ${found} ✓`
     : `deno ${found ?? "not found"} ✗ — needs ${pin.deno}: deno upgrade --version ${pin.deno}`;

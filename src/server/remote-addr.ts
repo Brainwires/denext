@@ -74,24 +74,120 @@ export function clientAddrOf(request: Request, trustForwardedHeaders: boolean): 
 }
 
 /**
- * The address to key a **per-address limit** on (a connection cap, a signed-out quota): the client
- * address {@link clientAddrOf} answers — unless that is the socket peer (no trusted forwarded hop)
- * and the peer is a loopback, private, link-local or unique-local address
- * ({@link isLocalAddress}). Such a peer is most likely a reverse proxy the app does not trust, so
- * every visitor would share its address and its limit; the limit is skipped instead
- * (`undefined`). A directly connected public peer, and a trusted proxy's hop, keep it.
+ * How per-address limits pick their address beyond proxy trust — the app's
+ * `rateLimitHeader` / `rateLimitLocalAddresses` (or `DENEXT_RATE_LIMIT_HEADER` /
+ * `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`), resolved once by {@link resolveLimitPolicy}.
+ */
+export interface LimitAddrPolicy {
+  /**
+   * A lower-cased header a fronting proxy sets to the client address (`cf-connecting-ip`,
+   * `fly-client-ip`, `x-real-ip`), keyed on in preference to everything else. Absent: none.
+   */
+  header?: string;
+  /** Count a loopback/private socket peer by its own address instead of skipping the limit. */
+  localAddresses?: boolean;
+}
+
+/**
+ * The {@link LimitAddrPolicy} for the app's settings: the header trimmed and lower-cased (an empty
+ * one is none), the local-addresses switch as a boolean.
+ *
+ * @param settings The app's `rateLimitHeader` / `rateLimitLocalAddresses`.
+ * @returns The policy {@link limitAddrOf} takes.
+ */
+export function resolveLimitPolicy(
+  settings: { rateLimitHeader?: string; rateLimitLocalAddresses?: boolean },
+): LimitAddrPolicy {
+  const header = settings.rateLimitHeader?.trim().toLowerCase();
+  return {
+    ...(header ? { header } : {}),
+    ...(settings.rateLimitLocalAddresses === true ? { localAddresses: true } : {}),
+  };
+}
+
+/**
+ * The address to key a **per-address limit** on (a connection cap, a signed-out quota):
+ *
+ * 1. the value of {@link LimitAddrPolicy.header} when the app names one and the request carries
+ *    an IP address in it (its LAST comma-separated value — the one the nearest proxy wrote), counted
+ *    as it is, loopback/private or not (the operator vouched for the header);
+ * 2. else the client address {@link clientAddrOf} answers — unless that is the socket peer (no
+ *    trusted forwarded hop) and the peer is a loopback, private, link-local or unique-local address
+ *    ({@link isLocalAddress}) while {@link LimitAddrPolicy.localAddresses} is off. Such a peer is
+ *    most likely a reverse proxy the app does not trust, so every visitor would share its address
+ *    and its limit; the limit is skipped instead (`undefined`).
+ *
+ * A request without the named header (or with a value that is not an IP address) falls back to
+ * step 2 — never to "no limit" — and a warning says so once per process (not for an in-process
+ * request with no recorded socket peer): either the request reached the server without passing the
+ * proxy that sets the header, or the proxy does not set it.
  *
  * @param request The incoming request (or a Live connection's synthetic one).
  * @param trustForwardedHeaders Whether the app trusts its fronting proxy.
+ * @param policy The app's header / local-address settings (default: neither).
  * @returns The address to limit on, or `undefined` when per-address limits do not apply.
  */
-export function limitAddrOf(request: Request, trustForwardedHeaders: boolean): string | undefined {
+export function limitAddrOf(
+  request: Request,
+  trustForwardedHeaders: boolean,
+  policy: LimitAddrPolicy = {},
+): string | undefined {
   const resolved = limitAddrs.get(request);
   if (resolved !== undefined) return resolved ?? undefined;
+  const peer = remoteAddrOf(request);
+  if (policy.header) {
+    const named = headerAddr(request, policy.header);
+    if (named) return named;
+    // An in-process request (no recorded peer: a handler called directly) is no proxy bypass.
+    if (peer !== undefined) warnMissingLimitHeaderOnce(policy.header);
+  }
   const hop = trustForwardedHeaders ? lastForwardedHop(request) : undefined;
   if (hop) return hop;
-  const peer = remoteAddrOf(request);
-  return peer === undefined || isLocalAddress(peer) ? undefined : peer;
+  if (peer === undefined) return undefined;
+  return policy.localAddresses || !isLocalAddress(peer) ? peer : undefined;
+}
+
+/**
+ * The IP address in `header` of `request`: its last non-empty comma-separated value (a proxy that
+ * appends rather than overwrites puts its own last; anything before it came from the client),
+ * unbracketed — or `undefined` when the header is absent or that value is not an IPv4 / IPv6
+ * literal.
+ */
+function headerAddr(request: Request, header: string): string | undefined {
+  const last = request.headers.get(header)?.split(",").map((v) => v.trim()).filter(Boolean).at(-1);
+  const addr = last?.replace(/^\[|\]$/g, "");
+  return addr !== undefined && isIpLiteral(addr) ? addr : undefined;
+}
+
+/** Whether `addr` is a dotted IPv4 address or an IPv6 literal (optionally with a zone id). */
+function isIpLiteral(addr: string): boolean {
+  if (addr.includes(":")) return parseIPv6Groups(addr) !== null;
+  const octets = addr.split(".");
+  return octets.length === 4 && octets.every((o) => /^\d{1,3}$/.test(o) && Number(o) <= 255);
+}
+
+/** Whether {@link warnMissingLimitHeaderOnce} has logged (once per process). */
+let warnedMissingLimitHeader = false;
+
+/**
+ * Tell the operator once that a request lacked the configured limit header (or carried no IP
+ * address in it), so its limits fell back to the socket peer / trusted hop.
+ */
+function warnMissingLimitHeaderOnce(header: string): void {
+  if (warnedMissingLimitHeader) return;
+  warnedMissingLimitHeader = true;
+  console.warn(
+    `denext: a request carried no IP address in \`${header}\` (rateLimitHeader / ` +
+      "DENEXT_RATE_LIMIT_HEADER), so its per-address limits key on the trusted x-forwarded-for " +
+      "hop or the socket peer instead (a loopback/private peer stays unlimited unless " +
+      "rateLimitLocalAddresses is on). Either the request reached the server without passing " +
+      "the proxy, or the proxy does not set that header.",
+  );
+}
+
+/** Forget the once-per-process missing-header warning (tests). */
+export function resetLimitHeaderWarningForTesting(): void {
+  warnedMissingLimitHeader = false;
 }
 
 /** Copy the remembered peer of `from` onto `to` (a Request rebuilt from it). */
@@ -129,7 +225,8 @@ function parseIPv6Groups(input: string): number[] | null {
  *
  * An IPv4-mapped IPv6 address (`::ffff:198.51.100.7`, `::ffff:c633:6407`) is the IPv4 address it
  * carries — on a dual-stack listener every IPv4 client is reported that way, and their shared /64
- * would be one bucket for all of them.
+ * would be one bucket for all of them. So is a NAT64 address (`64:ff9b::198.51.100.7`) and an
+ * IPv4-compatible one (`::198.51.100.7`), for the same reason.
  *
  * An address that parses as neither is lower-cased and returned unchanged (it is already
  * whatever the socket peer or the trusted proxy said). The Live hub's per-address connection cap,
@@ -145,12 +242,27 @@ export function ipBucket(ip: string): string {
   if (!groups) return trimmed.toLowerCase();
   // An IPv4-mapped address (a dual-stack listener's IPv4 client) is that IPv4 client: its /64
   // would be one bucket for every IPv4 visitor.
-  if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
+  if (embedsIPv4(groups)) {
     return `${groups[6] >> 8}.${groups[6] & 255}.${groups[7] >> 8}.${groups[7] & 255}`;
   }
   // The /64 prefix: the four high hextets, hex, with the host half zeroed.
   return `${groups.slice(0, 4).map((g) => g.toString(16)).join(":")}::/64`;
 }
+
+/**
+ * Whether an IPv6 address is an IPv4 client in IPv6 form, whose /64 would be one bucket for every
+ * such client: IPv4-mapped (`::ffff:0:0/96`, a dual-stack listener's IPv4 peer), the NAT64
+ * well-known prefix (`64:ff9b::/96`, RFC 6052 — a NAT64 gateway's IPv4 destination) and the
+ * deprecated IPv4-compatible form (`::a.b.c.d`, except `::` and `::1`).
+ */
+function embedsIPv4(g: number[]): boolean {
+  const prefix = g.slice(0, 6).join(":");
+  if (prefix === "0:0:0:0:0:65535" || prefix === NAT64_PREFIX) return true;
+  return prefix === "0:0:0:0:0:0" && (g[6] !== 0 || g[7] > 1); // IPv4-compatible, not :: / ::1
+}
+
+/** The first six hextets of the NAT64 well-known prefix `64:ff9b::/96`, as {@link embedsIPv4} joins them. */
+const NAT64_PREFIX = "100:65435:0:0:0:0";
 
 /** One `:`-separated run of hextets (a trailing dotted IPv4 counts as two), or `null`. */
 function parseHextets(part: string): number[] | null {

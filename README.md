@@ -203,9 +203,18 @@ optimization; OG images. → [Databases](https://denext.dev/docs/database) ·
 [Data & caching](https://denext.dev/docs/data) ·
 [Content collections](https://denext.dev/docs/content-collections)
 
-**Background work.** `defineTask` in `tasks/<name>.ts`, scheduled with cron expressions
-(`Deno.cron` where the platform has it), run on demand with `runTask()` or `denext task`, with
-run history. → [Tasks](https://denext.dev/docs/tasks)
+**Backend.** The opt-in `@denext/backend` plugin puts backend services inside the app: storage on
+S3, R2, MinIO or the filesystem (buckets with per-bucket rules, signed URLs, image transforms),
+Postgres scoped by Supabase-compatible row-level security (`db()` runs each query as the request's
+user), realtime changes from your tables (`useTableChanges`), and a PostgREST-style REST API with a
+typed `from()` client. Postgres itself is first-party in core: a client on `Deno.SQL`, Postgres
+stores for auth, sessions, rate limits, the cache and job history, and SQL migrations; `denext ui`
+browses the database. → [Backend](https://denext.dev/docs/backend) ·
+[Coming from Supabase](https://denext.dev/docs/coming-from-supabase)
+
+**Background work.** `defineJob` in `jobs/<name>.ts`, scheduled with cron expressions
+(`Deno.cron` where the platform has it), run on demand with `runJob()` or `denext job`, with
+run history. → [Jobs](https://denext.dev/docs/jobs)
 
 **Production.** Graceful drain, per-request timeouts, concurrency ceilings, body caps, gzip and
 brotli, CORS, a security-header set, SSRF-safe fetch and image optimization, CSRF-defended
@@ -216,13 +225,13 @@ and self-hosting. → [Deployment](https://denext.dev/docs/deploy) ·
 
 **Extensible.** A plugin hooks six seams (routes, requests, build, prepare-time codegen, teardown,
 CLI verbs); the first-party plugins are the Pages Router, React Router v7, htmx, OpenAPI, GraphQL,
-content collections and an Effect bridge. A project adds its own CLI verbs in `denext.config.ts`.
+content collections, the backend and an Effect bridge. A project adds its own CLI verbs in `denext.config.ts`.
 → [Plugins](https://denext.dev/docs/plugins)
 
 ## Developer experience
 
 One CLI covers the lifecycle: `dev` with per-module HMR and Fast Refresh, `build`, `export`,
-`start`, `generate` (routes, components, actions, tasks, tests, Docker), `test`, `lint`, `fmt`,
+`start`, `generate` (routes, components, actions, jobs, tests, Docker), `test`, `lint`, `fmt`,
 `check`, `add`, `plugin`, `patch` (patch-package for npm dependencies and for denext itself),
 `desktop`, `mobile`, `ota` and `completions`. A dev-time overlay reports server errors and type
 errors; the DevTools panel shows the live component tree and why a component re-rendered.
@@ -270,6 +279,10 @@ pass and keeps your source intact:
   [Native SDK recipes](https://denext.dev/docs/native-sdk-recipes)
 - **Vite, CRA and any React SPA**: `mode: "spa"` hosts a client-only app on the same runtime,
   with the same desktop and mobile packaging. → [SPA mode](https://denext.dev/docs/spa)
+
+Coming from Supabase? The database carries over: your schema, SQL functions and row-level
+security policies run unchanged on `@denext/backend` (the same roles and `auth.*` functions), and
+the guide moves users and files. → [Coming from Supabase](https://denext.dev/docs/coming-from-supabase)
 
 `npm:` and `jsr:` libraries work as usual, and `denext patch` records a reviewable patch for an
 npm package or for denext itself. The honest edges are kept in one place: [Known limitations](./KNOWN-LIMITATIONS.md) and
@@ -350,7 +363,7 @@ in the [API reference](https://denext.dev/docs/api); every config key in
 **Build** — [Typed API](https://denext.dev/docs/typed-api) ·
 [Server Actions](https://denext.dev/docs/server-actions) · [Live](https://denext.dev/docs/live) ·
 [Auth](https://denext.dev/docs/auth) · [Databases](https://denext.dev/docs/database) ·
-[Tasks](https://denext.dev/docs/tasks) · [Content collections](https://denext.dev/docs/content-collections)
+[Backend](https://denext.dev/docs/backend) · [Jobs](https://denext.dev/docs/jobs) · [Content collections](https://denext.dev/docs/content-collections)
 · [Testing](https://denext.dev/docs/testing)
 
 **Ship** — [Deployment](https://denext.dev/docs/deploy) · [Desktop apps](https://denext.dev/docs/desktop)

@@ -4,6 +4,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { generateArtifact } from "../src/build/generate.ts";
+import { denoReleaseVersion } from "../src/build/deno-version.ts";
 
 async function project(srcLayout = false): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_gen_" });
@@ -158,7 +159,7 @@ Deno.test("loading/error/not-found land under app/ (root when no path given)", a
   }
 });
 
-Deno.test("middleware lands beside app/; task lands under tasks/", async () => {
+Deno.test("middleware lands beside app/; job lands under jobs/", async () => {
   const rootDir = await project();
   try {
     assertEquals((await generateArtifact(rootDir, "middleware", "")).written, [
@@ -167,11 +168,11 @@ Deno.test("middleware lands beside app/; task lands under tasks/", async () => {
     const mw = await Deno.readTextFile(join(rootDir, "middleware.ts"));
     assert(mw.includes("export function middleware(") && mw.includes("config"), mw);
 
-    assertEquals((await generateArtifact(rootDir, "task", "cleanup")).written, [
-      join(rootDir, "tasks/cleanup.ts"),
+    assertEquals((await generateArtifact(rootDir, "job", "cleanup")).written, [
+      join(rootDir, "jobs/cleanup.ts"),
     ]);
-    const task = await Deno.readTextFile(join(rootDir, "tasks/cleanup.ts"));
-    assert(task.includes("defineTask(") && task.includes("denext task cleanup"), task);
+    const job = await Deno.readTextFile(join(rootDir, "jobs/cleanup.ts"));
+    assert(job.includes("defineJob(") && job.includes("denext job cleanup"), job);
   } finally {
     await Deno.remove(rootDir, { recursive: true });
   }
@@ -203,7 +204,10 @@ Deno.test("generate docker writes root Dockerfile + compose + .dockerignore (ser
     // Server image: builds and runs the production server; base image is pinned.
     assert(dockerfile.includes("RUN deno task build"), dockerfile);
     assert(dockerfile.includes(`CMD ["deno", "task", "start"]`), dockerfile);
-    assert(dockerfile.includes(`FROM denoland/deno:${Deno.version.deno}`), dockerfile);
+    assert(
+      dockerfile.includes(`FROM denoland/deno:${denoReleaseVersion(Deno.version.deno)}`),
+      dockerfile,
+    );
     const compose = await Deno.readTextFile(join(dir, "docker-compose.yml"));
     assert(compose.includes("build: .") && compose.includes(`"3000:3000"`), compose);
   } finally {

@@ -14,7 +14,7 @@ import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 import type { SegmentConfig } from "./segment-config.ts";
 import type { CorsPolicy } from "./cors.ts";
 import { currentCacheScope } from "./cache-scope.ts";
-import { clientAddrOf, ipBucket, limitAddrOf } from "./remote-addr.ts";
+import { clientAddrOf, ipBucket, limitAddrOf, type LimitAddrPolicy } from "./remote-addr.ts";
 
 /**
  * Reading request-specific data (`cookies()`/`headers()`/`connection()`) inside a
@@ -169,6 +169,13 @@ export interface RequestContext {
    * socket peer is used.
    */
   trustForwardedHeaders?: boolean;
+  /**
+   * How per-address limits pick their address beyond {@linkcode RequestContext.trustForwardedHeaders}
+   * — the app's `rateLimitHeader` / `rateLimitLocalAddresses`. Read by
+   * {@linkcode clientIpForLimits}, `rateLimit()` and `denextAuth`'s per-IP budgets; set by
+   * `createApp`. Unset: neither (a direct handler call in a test). `header` is lower-cased.
+   */
+  limitPolicy?: { header?: string; localAddresses?: boolean };
   /**
    * The app-level CORS policy (`config.cors`), set by `createApp`. The native `denextAuth`
    * endpoints read it to answer an app WebView's origin; `null`/absent means no CORS.
@@ -441,6 +448,8 @@ export interface RequestContextTrust {
    * sub-requests (which derive their id from the parent's) pass `true`.
    */
   trustRequestId?: boolean;
+  /** The app's per-address limit policy, recorded for {@linkcode clientIpForLimits}. */
+  limitPolicy?: LimitAddrPolicy;
 }
 
 /** Create a fresh context for a request. */
@@ -468,6 +477,7 @@ export function createRequestContext(
     ...(trust.trustForwardedHeaders !== undefined
       ? { trustForwardedHeaders: trust.trustForwardedHeaders }
       : {}),
+    ...(trust.limitPolicy !== undefined ? { limitPolicy: trust.limitPolicy } : {}),
   };
 }
 
@@ -516,7 +526,8 @@ export function connection(): Promise<void> {
  * When the app trusts a fronting proxy ({@linkcode AppConfig.trustForwardedHeaders} /
  * `DENEXT_TRUST_PROXY=1`), the last hop of `x-forwarded-for` is returned; otherwise the
  * socket peer the server saw. Never read `x-forwarded-for` yourself without that flag — any
- * client can set it.
+ * client can set it. {@linkcode AppConfig.rateLimitHeader} does not change it: that header names
+ * the address per-address limits key on ({@linkcode clientIpForLimits}), nothing more.
  *
  * Reading it makes the render **dynamic** (per-request), exactly like {@linkcode headers}:
  * a page that branches on the client IP cannot be statically cached. Use it in a route
@@ -541,6 +552,14 @@ export function clientIp(): string | undefined {
  * `{ bucket: true }`, as their limit bucket (an IPv6 address's `/64`), which is what a limit
  * should key on.
  *
+ * Two app settings widen it (the model is Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`):
+ * {@linkcode AppConfig.rateLimitHeader} (`DENEXT_RATE_LIMIT_HEADER`) names a header the proxy sets
+ * to the client address (`cf-connecting-ip`, `fly-client-ip`, `x-real-ip`) — its last value is the
+ * answer whenever it holds an IP address, local or not; a request without it falls back to the
+ * rule above. {@linkcode AppConfig.rateLimitLocalAddresses}
+ * (`DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`) answers a loopback/private socket peer as itself instead
+ * of `undefined` — for a host where those peers are real clients (a LAN, a VPN).
+ *
  * Throws outside a request context and makes the render dynamic, exactly like
  * {@linkcode clientIp}.
  *
@@ -554,7 +573,7 @@ export function clientIp(): string | undefined {
  */
 export function clientIpForLimits(options: { bucket?: boolean } = {}): string | undefined {
   const ctx = clientAddressContext("clientIpForLimits");
-  const ip = ctx && limitAddrOf(ctx.request, ctx.trustForwardedHeaders === true);
+  const ip = ctx && limitAddrOf(ctx.request, ctx.trustForwardedHeaders === true, ctx.limitPolicy);
   return ip !== undefined && options.bucket ? ipBucket(ip) : ip;
 }
 
@@ -663,6 +682,33 @@ export function withoutRequestContext<T>(fn: () => T): T {
 /** The current request context, or undefined if none is active. */
 export function currentContext(): RequestContext | undefined {
   return storage.getStore();
+}
+
+/**
+ * Whether a forwarded header (`x-forwarded-for`) may be believed for the current request: `own`
+ * when the caller sets one (a middleware's or `denextAuth`'s own `trustForwardedHeaders`), else
+ * the app-level {@linkcode AppConfig.trustForwardedHeaders} / `DENEXT_TRUST_PROXY=1` the request
+ * context carries (the setting {@linkcode clientIp}, {@linkcode clientIpForLimits} and Live use),
+ * else `false` (outside a request). The one decision point, so the per-address limiters and
+ * `clientIp()` agree on who the client is unless a caller deliberately overrides it.
+ *
+ * @param own The caller's own setting, when it has one.
+ * @returns The effective trust decision.
+ */
+export function trustsForwardedHeaders(own?: boolean): boolean {
+  return own ?? currentContext()?.trustForwardedHeaders ?? false;
+}
+
+/**
+ * The app's per-address limit policy (`rateLimitHeader` / `rateLimitLocalAddresses`) the current
+ * request context carries — what `rateLimit()` and `denextAuth`'s per-IP budgets pass to
+ * `limitAddrOf` so they key on the address {@linkcode clientIpForLimits} answers. `undefined`
+ * outside a request.
+ *
+ * @returns The policy, or `undefined`.
+ */
+export function currentLimitPolicy(): LimitAddrPolicy | undefined {
+  return currentContext()?.limitPolicy;
 }
 
 // Bridge for client-safe modules (e.g. the `react` compat shim's request-scoped

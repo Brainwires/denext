@@ -157,17 +157,17 @@ assertEquals(bad, { ok: false, error: "bad", fieldErrors: { title: "Title is req
         (render the form, <code>submit</code> it), which is also the progressive-enhancement proof.
       </p>
 
-      <h2 id="tasks">Running a task</h2>
+      <h2 id="jobs">Running a job</h2>
       <p>
         <code>createTestApp</code> does not scan{" "}
-        <code>tasks/</code>; register the module you want and run it. <code>runTask</code>{" "}
+        <code>jobs/</code>; register the module you want and run it. <code>runJob</code>{" "}
         returns the handler's value.
       </p>
       <Code lang="ts">
-        {`import { registerTask, runTask } from "denext/server";
+        {`import { registerJob, runJob } from "denext/server";
 
-registerTask("cleanup", (await import("../tasks/cleanup.ts")).default);
-assertEquals(await runTask("cleanup", { dry: true }), "cleaned 0 rows (dry run)");`}
+registerJob("cleanup", (await import("../jobs/cleanup.ts")).default);
+assertEquals(await runJob("cleanup", { dry: true }), "cleaned 0 rows (dry run)");`}
       </Code>
 
       <h2 id="environment">Environment and a throwaway database</h2>
@@ -287,7 +287,12 @@ jobs:
         is the conformance gate (every route rendered, a well-formed document asserted) and{" "}
         <code>denext audit --strict</code> fails the build if runtime source imports npm — see{" "}
         <a href="/docs/doctor-audit">Doctor &amp; audit</a>. Add <code>--coverage</code>{" "}
-        to the test step and <code>deno coverage</code> after it for a report.
+        to the test step and <code>deno coverage</code> after it for a report. A plain{" "}
+        <code>deno task</code> runs the <code>deno test</code>{" "}
+        inside it on stock Deno; tests that use the toolchain&apos;s Vitest/Jest compatibility or
+        {" "}
+        <code>Deno.SQL</code> run with <code>denext task check</code> instead (see{" "}
+        <a href="/docs/toolchain">the toolchain</a>).
       </p>
 
       <h2 id="browser-tests">Browser tests with astral</h2>

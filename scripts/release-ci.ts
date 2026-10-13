@@ -1,7 +1,8 @@
 // The release's CI gate: a version is tagged only from a commit that ci.yml's heavy jobs passed on.
-// A push to `development` runs only the fast jobs (integration, next-compat and coverage stay on
-// pull requests, `main` and a manual dispatch), so `deno task release` asks GitHub for the ci.yml
-// runs on HEAD and refuses unless the newest one that ran those jobs has every required job green.
+// A push to `development` runs only the fast jobs (integration, next-compat, coverage and
+// backend-integration stay on pull requests, `main` and a manual dispatch), so `deno task release`
+// asks GitHub for the ci.yml runs on HEAD and refuses unless the newest one that ran those jobs
+// has every required job green.
 // On `development` that run is a dispatch: `gh workflow run ci.yml --ref development`.
 
 /** The ci.yml jobs a release needs green on the commit it is cut from. */
@@ -10,12 +11,13 @@ export const RELEASE_CI_JOBS: readonly string[] = [
   "integration",
   "next-compat",
   "coverage",
+  "backend-integration",
   "ios-export-router",
   "windows-resolve",
 ];
 
 /** The jobs a push to `development` skips: a run that skipped them can't vouch for a release. */
-const HEAVY_JOBS = ["integration", "next-compat", "coverage"];
+const HEAVY_JOBS = ["integration", "next-compat", "coverage", "backend-integration"];
 
 /** One ci.yml run, as `gh run list --json` gives it. */
 export interface CiRun {

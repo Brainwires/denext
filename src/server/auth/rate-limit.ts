@@ -25,16 +25,19 @@
  *
  * **Client identity.** Every per-IP key goes through {@linkcode clientIpBucket}: IPv4 as
  * given, IPv6 normalised and bucketed by /64 (see there for why). And the two per-IP
- * budgets are **skipped entirely** for a request that arrived from a private/loopback peer
- * carrying `x-forwarded-for` while `trustForwardedHeaders` is off
- * ({@linkcode proxiedWithoutTrust}) — behind such a proxy every user would otherwise share
- * one bucket, which turns the limiter into an app-wide outage rather than a defence.
+ * budgets are **skipped entirely** for a request from a loopback/private peer with no trusted
+ * `x-forwarded-for` hop ({@linkcode proxiedWithoutTrust}, the limit-address rule of
+ * `rateLimit()` and `clientIpForLimits()`) — behind such a proxy every user would otherwise
+ * share one bucket, which turns the limiter into an app-wide outage rather than a defence.
+ * The app's `rateLimitHeader` / `rateLimitLocalAddresses` (the per-address limit policy every
+ * limiter shares) change both: the header's address keys every per-IP budget whenever a request
+ * carries one, and a local peer is counted by its own address instead of skipped.
  *
  * @module
  */
 
-import { clientAddrOf, ipBucket, isLocalAddress, remoteAddrOf } from "../remote-addr.ts";
-import { currentContext } from "../request-context.ts";
+import { clientAddrOf, ipBucket, limitAddrOf, remoteAddrOf } from "../remote-addr.ts";
+import { currentLimitPolicy, trustsForwardedHeaders } from "../request-context.ts";
 
 /** One key's open failure window. */
 
@@ -277,11 +280,15 @@ export interface RateLimitKeyOptions {
 /**
  * The client IP: the socket peer denext's server loop recorded; behind a trusted proxy the
  * last `x-forwarded-for` hop (the one the proxy appended). Never the first hop — that is
- * whatever the client sent — so a per-request forged header can't dodge the limiter.
- * `"unknown"` only when neither is available (an embedder calling the handler directly).
+ * whatever the client sent — so a per-request forged header can't dodge the limiter. When the
+ * app names a `rateLimitHeader`, the address in it comes first (the limit address,
+ * {@linkcode limitAddrOf}, which otherwise equals the client address whenever it is defined).
+ * `"unknown"` only when none is available (an embedder calling the handler directly).
  */
 function resolveClientIp(request: Request, options: RateLimitKeyOptions): string {
-  return clientAddrOf(request, options.trustForwardedHeaders === true) ?? "unknown";
+  const trust = options.trustForwardedHeaders === true;
+  return limitAddrOf(request, trust, currentLimitPolicy()) ?? clientAddrOf(request, trust) ??
+    "unknown";
 }
 
 /**
@@ -408,7 +415,7 @@ export interface RateLimitConfig {
  * @returns The effective trust decision.
  */
 export function authTrustsProxy(config: { trustForwardedHeaders?: boolean }): boolean {
-  return config.trustForwardedHeaders ?? currentContext()?.trustForwardedHeaders ?? false;
+  return trustsForwardedHeaders(config.trustForwardedHeaders);
 }
 
 /** The limiters one auth config drives; `null` where `rateLimit: false` disabled them. */
@@ -626,33 +633,43 @@ export async function settleAttempt(limiter: RateLimiter | null, keys: AttemptKe
 let warnedUntrustedProxy = false;
 
 /**
- * Whether this request reached denext through a **reverse proxy the app has not declared**
- * — the socket peer is a private/loopback address and the request carries
- * `x-forwarded-for`, while `trustForwardedHeaders` is off.
+ * Whether this request's per-IP budgets must be skipped: it has a recorded socket peer, but no
+ * address to key a per-address limit on ({@linkcode limitAddrOf}, the rule `rateLimit()`,
+ * `clientIpForLimits()` and Live follow). That is a loopback, private, link-local or
+ * unique-local peer with no trusted `x-forwarded-for` hop naming the client: most likely a
+ * reverse proxy the app has not declared (or local development), whether or not it sets the
+ * header.
  *
  * In that shape the "client IP" every per-IP limiter would key on is the proxy, so all
  * traffic shares one bucket and the 21st sign-in start *app-wide* is a 429 for fifteen
  * minutes. The per-IP budgets are therefore skipped for such a request (the credentials
  * limiter, whose key also carries the submitted identifier, keeps working), and the
- * operator is told once how to get the limiter back.
+ * operator is told once how to get the limiter back. A request with no recorded peer (a
+ * handler called directly) keeps them, keyed `unknown`.
  *
  * @param request The incoming request.
  * @param config The app's auth config (its `trustForwardedHeaders`).
  * @returns `true` when the per-IP budgets must be skipped for this request.
  */
 export function proxiedWithoutTrust(request: Request, config: RateLimitConfig): boolean {
-  if (authTrustsProxy(config)) return false;
-  if (!request.headers.get("x-forwarded-for")) return false;
   const peer = remoteAddrOf(request);
-  if (!peer || !isLocalAddress(peer)) return false;
+  if (
+    peer === undefined ||
+    limitAddrOf(request, authTrustsProxy(config), currentLimitPolicy()) !== undefined
+  ) {
+    return false;
+  }
   if (!warnedUntrustedProxy) {
     warnedUntrustedProxy = true;
     console.warn(
-      "denextAuth: requests arrive from a local peer carrying `x-forwarded-for`, but " +
-        "`trustForwardedHeaders` is not set — every client would share ONE per-IP " +
-        "rate-limit bucket, so the per-IP budgets are disabled. Set " +
-        "`trustForwardedHeaders: true` (only if your proxy overwrites the header) or " +
-        "give `rateLimit.keyGenerator`/`rateLimit.signin` a key that suits your proxy.",
+      `denextAuth: requests arrive from a loopback/private address (${peer}), a reverse ` +
+        "proxy or local development, with no trusted `x-forwarded-for` hop, so every client " +
+        "would share ONE per-IP rate-limit bucket: the per-IP budgets are off for them. Behind " +
+        "a proxy that overwrites the header, set `trustForwardedHeaders: true` (the app's, or " +
+        "denextAuth's own) or `DENEXT_TRUST_PROXY=1`; behind one that sets a client-address " +
+        "header, name it in the app's `rateLimitHeader`; to limit these peers by their own " +
+        "address, set `rateLimitLocalAddresses: true`; or give " +
+        "`rateLimit.keyGenerator`/`rateLimit.signin` a key that suits your proxy.",
     );
   }
   return true;

@@ -48,7 +48,13 @@ import { ID_PATH_PROP } from "../jsx/tree-id.ts";
 import { setLiveInvalidateHook } from "./cache.ts";
 import { getServerAction, isLiveReadable } from "../runtime/server-action.ts";
 import { createRequestContext, runWithContext } from "./request-context.ts";
-import { clientAddrOf, ipBucket, limitAddrOf, setClientAddr } from "./remote-addr.ts";
+import {
+  clientAddrOf,
+  ipBucket,
+  limitAddrOf,
+  type LimitAddrPolicy,
+  setClientAddr,
+} from "./remote-addr.ts";
 import { inRootContext } from "./root-context.ts";
 import {
   LIVE_REF_ID,
@@ -149,6 +155,8 @@ let originAllowed: (req: Request) => boolean = () => false;
 let policy: LiveConfig = {};
 /** Whether the app trusts its proxy's `x-forwarded-for` (resolves a connection's client address). */
 let trustForwardedHeaders = false;
+/** The app's per-address limit policy (`rateLimitHeader` / `rateLimitLocalAddresses`). */
+let limitPolicy: LimitAddrPolicy = {};
 /**
  * Open connections per client address bucket (an IPv6 address counts as its /64, as the auth
  * rate limiter does), for {@link LiveLimits.maxConnectionsPerIp}.
@@ -246,17 +254,21 @@ function renderDeadlineMs(): number {
  * @param opts.trustForwardedHeaders Whether the app trusts its proxy's `x-forwarded-for` — the
  *   app's own `trustForwardedHeaders` — so a connection's client address is what `clientIp()`
  *   answers in the upgrade request.
+ * @param opts.limitPolicy The app's `rateLimitHeader` / `rateLimitLocalAddresses`, so the
+ *   per-address cap keys on what `clientIpForLimits()` answers in the upgrade request.
  */
 export function installLiveHub(opts: {
   appHandler: (req: Request) => Promise<Response>;
   originAllowed: (req: Request) => boolean;
   config?: LiveConfig;
   trustForwardedHeaders?: boolean;
+  limitPolicy?: LimitAddrPolicy;
 }): void {
   appHandler = opts.appHandler;
   originAllowed = opts.originAllowed;
   policy = opts.config ?? {};
   trustForwardedHeaders = opts.trustForwardedHeaders === true;
+  limitPolicy = opts.limitPolicy ?? {};
   limits = sanitizeLimits(policy.limits);
   warnedNoPolicy = false;
   setLiveInvalidateHook(invalidateTags);
@@ -297,6 +309,7 @@ export function uninstallLiveHub(): void {
   appHandler = null;
   policy = {};
   trustForwardedHeaders = false;
+  limitPolicy = {};
   limits = DEFAULT_LIMITS;
   for (const conn of connections) {
     // `close()` triggers `onclose` → `dropConnection` (which clears this too), but that
@@ -456,7 +469,7 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
   const ip = clientAddrOf(request, trustForwardedHeaders);
   // The address the per-address cap keys on: none when the peer is a loopback/private address
   // and the proxy is not trusted — every visitor would share it, so the cap would be site-wide.
-  const limitIp = limitAddrOf(request, trustForwardedHeaders);
+  const limitIp = limitAddrOf(request, trustForwardedHeaders, limitPolicy);
   if (ip !== undefined && limitIp === undefined) warnProxyPeerOnce(ip);
   // Total and per-address connection caps (DoS guard): refuse before upgrading rather than
   // accept and immediately close, so a flood can't churn upgrades.
@@ -517,7 +530,9 @@ function warnProxyPeerOnce(peer: string): void {
       "proxy, or local development — so per-address limits (live.limits.maxConnectionsPerIp, " +
       "@denext/backend realtime's signed-out quota) are off for them. Behind a proxy that sets " +
       "x-forwarded-for, set `trustForwardedHeaders: true` (or DENEXT_TRUST_PROXY=1) to key them " +
-      "on each client's address.",
+      "on each client's address; behind one that sets a client-address header, name it in " +
+      "`rateLimitHeader`; to limit these peers by their own address, set " +
+      "`rateLimitLocalAddresses: true`.",
   );
 }
 
@@ -529,7 +544,8 @@ function warnPerIpRefusalOnce(bucket: string): void {
     `denext: refused a Live connection from ${bucket}: it already holds ` +
       `${limits.maxConnectionsPerIp} (live.limits.maxConnectionsPerIp). If many visitors ` +
       "legitimately share that address (a NAT, a proxy), raise the limit; behind your own " +
-      "proxy set `trustForwardedHeaders: true` (or DENEXT_TRUST_PROXY=1).",
+      "proxy set `trustForwardedHeaders: true` (or DENEXT_TRUST_PROXY=1), or name the header it " +
+      "writes the client address into in `rateLimitHeader`.",
   );
 }
 

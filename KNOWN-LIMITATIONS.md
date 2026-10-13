@@ -91,6 +91,35 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `native.refreshReuseInterval` is set; Apple token revocation needs `native.apple.clientSecret`.
 - **`cors` covers route handlers and the native auth endpoints only**, not pages, Server Actions,
   the batch endpoint or Live; middleware must let `OPTIONS` under `/auth` through.
+- **No phone / SMS sign-in, anonymous sign-in or SAML SSO** (generic `oidc()` covers OIDC
+  identity providers).
+
+### Backend (`@denext/backend`)
+
+- **Not hosted, and not supabase-js compatible.** There is no `createClient(url, anonKey)` drop-in;
+  client calls are rewritten. Backups, pooling and upgrades are the Postgres provider's job, and
+  `denext ui`'s Database section is a local, loopback tool (no shared console, logs or metrics).
+- **The built-in Postgres client is `Deno.SQL`, part of denext's Deno runtime.** On stock Deno pass
+  `postgres: { sql: fromPostgresJs(postgres(url)) }` (the npm `postgres` package); without a client
+  `db()` and realtime throw `code: "unsupported"`.
+- **Auto-REST is a subset of PostgREST:** no embedded resources (joins), aliases, casts or JSON
+  paths in `select`; no `or` / `and` groups; no upserts (`on_conflict`); no `/rpc/<function>`
+  (call it with `db()` in a route handler); no CSV bodies. The routes are not in the
+  `@denext/openapi` document, and the plugin does not rate-limit them (guard them in
+  `middleware.ts`).
+- **Realtime is LISTEN/NOTIFY, not logical replication.** The trigger sends only the key, so every
+  change costs a re-read per identity and filter; `TRUNCATE` sends nothing; very high write
+  volumes serialize on commit; and a change sent while the listener reconnects is lost (every
+  subscriber is told to re-read). A delete, or an update out of view, reaches only a subscription
+  that tracked the key — at most `maxTrackedKeys` (default 10 000) per subscription. Subscriptions
+  are capped per identity and per instance; behind a reverse proxy without
+  `trustForwardedHeaders`, signed-out visitors are counted per Live connection, not per address.
+- **Storage rules are TypeScript, not SQL** (a bucket's `authorize`, no `storage` schema to join
+  against), and uploads are presigned (multipart on S3), not TUS resumable uploads. An S3 upload
+  whose client skips the completion call was checked by nobody: record the keys completion
+  returned, and give the bucket lifecycle rules for unrecorded objects and incomplete multipart
+  uploads. Image transforms take PNG, JPEG, GIF and WebP sources up to 25 MiB, at the configured
+  `images` sizes and qualities only.
 
 ### Tooling
 
@@ -187,6 +216,13 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   views are stand-ins; `react-native-webview` is an `<iframe>`.
 - **`LayoutAnimation` animates positions, not sizes**, takes the next DOM change as the commit,
   and skips pages over 3,000 elements. Snap props are CSS scroll snap.
+- **`adjustsFontSizeToFit` shrinks the outer `Text` only** (a nested `Text` with its own
+  `fontSize` keeps it) and needs a box to overflow (`numberOfLines` or a fixed size). The
+  `android_ripple` of `Pressable` is drawn in the Android shell; `TouchableNativeFeedback`'s
+  `background` ripple is not. `ellipsizeMode="head"` / `"middle"` work on one plain-text line
+  only, and `onTextLayout`'s font metrics are estimated from the font size. An iOS
+  `pageSheet` / `formSheet` modal has no swipe-down to dismiss. `Image`'s `crossOrigin` /
+  `referrerPolicy` do nothing, and `fadeDuration` fades only when set.
 - **`reactNative` requires `mode: "spa"`.** Fast Refresh reloads on a new dependency import, an
   added or removed route or a lockfile change. Resolution variants (`@2x`) are picked at load.
 - **Can't (no WebView or browser API):** `expo-gl` on a worklet / UI runtime

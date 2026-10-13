@@ -1,20 +1,20 @@
-// Scheduled/background tasks — the runtime core (registry, `defineTask`, `runTask`, and the
-// scheduler). Server-only. A task is a named unit of work a project defines in `tasks/<name>.ts`
-// (`export default defineTask({ handler })`); it runs on a cron schedule (declared per-task or in
-// `denext.config.ts`'s `scheduledTasks`) and/or on demand (`runTask(name)` from app code, or
-// `denext task <name>` from the CLI). Scheduling uses the platform's managed `Deno.cron` when it
+// Scheduled/background jobs — the runtime core (registry, `defineJob`, `runJob`, and the
+// scheduler). Server-only. A job is a named unit of work a project defines in `jobs/<name>.ts`
+// (`export default defineJob({ handler })`); it runs on a cron schedule (declared per-job or in
+// `denext.config.ts`'s `scheduledJobs`) and/or on demand (`runJob(name)` from app code, or
+// `denext job <name>` from the CLI). Scheduling uses the platform's managed `Deno.cron` when it
 // is available (Deno Deploy, or a self-host started with `--unstable-cron`) and falls back to a
-// dependency-free minute-tick scheduler otherwise. File discovery lives in `./task-loader.ts` so
-// this module — which user task files import `defineTask` from — stays lean.
+// dependency-free minute-tick scheduler otherwise. File discovery lives in `./job-loader.ts` so
+// this module — which user job files import `defineJob` from — stays lean.
 
 import { cronError, type CronExpr, cronMatches, parseCron, toDenoCron } from "../runtime/cron.ts";
 import { detachedFromRequest } from "../runtime/root-context-bridge.ts";
 
-/** Context passed to a task's handler. */
-export interface TaskContext {
-  /** The task's name (its path under `tasks/`, e.g. `cleanup` or `reports/daily`). */
+/** Context passed to a job's handler. */
+export interface JobContext {
+  /** The job's name (its path under `jobs/`, e.g. `cleanup` or `reports/daily`). */
   readonly name: string;
-  /** Payload from an on-demand run (`runTask(name, payload)` / `denext task <name> --payload`). */
+  /** Payload from an on-demand run (`runJob(name, payload)` / `denext job <name> --payload`). */
   readonly payload?: unknown;
   /** How this run was triggered. */
   readonly trigger: "schedule" | "manual";
@@ -28,7 +28,7 @@ export interface TaskContext {
  * How long to wait before a retry: a number is a fixed delay in ms; the object form picks a
  * strategy (default `"exponential"`: `delayMs`, then twice that, … capped at `maxDelayMs`).
  */
-export type TaskBackoff = number | {
+export type JobBackoff = number | {
   /** `"fixed"` waits `delayMs` every time; `"exponential"` doubles it per retry. */
   strategy?: "fixed" | "exponential";
   /** The first retry's delay in ms (default 1000). */
@@ -37,39 +37,39 @@ export type TaskBackoff = number | {
   maxDelayMs?: number;
 };
 
-/** A task's retry policy ({@linkcode TaskDefinition.retry}). */
-export interface TaskRetry {
+/** A job's retry policy ({@linkcode JobDefinition.retry}). */
+export interface JobRetry {
   /**
    * How many times a failed run is retried (`3` → up to four runs in all). A whole number,
    * 0 to 100.
    */
   attempts: number;
   /** The wait before each retry (default exponential from 1 s, capped at 5 min). */
-  backoff?: TaskBackoff;
+  backoff?: JobBackoff;
 }
 
-/** A task definition passed to {@linkcode defineTask}. */
-export interface TaskDefinition<R = unknown> {
-  /** The work to run. May be async; its resolved value is returned by {@linkcode runTask}. */
-  handler: (ctx: TaskContext) => R | Promise<R>;
-  /** Cron schedule(s) for this task, in addition to any `scheduledTasks` config entry. */
+/** A job definition passed to {@linkcode defineJob}. */
+export interface JobDefinition<R = unknown> {
+  /** The work to run. May be async; its resolved value is returned by {@linkcode runJob}. */
+  handler: (ctx: JobContext) => R | Promise<R>;
+  /** Cron schedule(s) for this job, in addition to any `scheduledJobs` config entry. */
   schedule?: string | string[];
-  /** One-line description (shown by `denext task --list`). */
+  /** One-line description (shown by `denext job --list`). */
   description?: string;
   /**
    * Retry a failed run: the handler runs again after the backoff, up to `attempts` more times,
    * and the run settles with the last attempt's outcome. Every attempt is one row in the run
-   * history (`tasks.history`). A scheduled run that is still retrying counts as running, so the
+   * history (`jobs.history`). A scheduled run that is still retrying counts as running, so the
    * next matching minute does not start a second copy. A retry wait ends early, with the last
    * error, when the run's signal aborts (shutdown).
    */
-  retry?: TaskRetry;
+  retry?: JobRetry;
 }
 
-/** A task descriptor. Returned by {@linkcode defineTask}; the shape a `tasks/` file default-exports. */
-export interface Task<R = unknown> extends TaskDefinition<R> {
-  /** Brand: distinguishes a `defineTask(...)` result from a plain object (see {@linkcode isTask}). */
-  readonly __denextTask: true;
+/** A job descriptor. Returned by {@linkcode defineJob}; the shape a `jobs/` file default-exports. */
+export interface Job<R = unknown> extends JobDefinition<R> {
+  /** Brand: distinguishes a `defineJob(...)` result from a plain object (see {@linkcode isJob}). */
+  readonly __denextJob: true;
 }
 
 /** Normalize `undefined | string | string[]` into a string array. */
@@ -78,20 +78,20 @@ function schedulesOf(schedule: string | string[] | undefined): string[] {
 }
 
 /**
- * Define a scheduled/background task. Validates any declared `schedule` up front (throws on a
- * malformed cron expression). Place the result as the default export of a `tasks/<name>.ts` file,
- * or register it programmatically with {@linkcode registerTask}.
+ * Define a scheduled/background job. Validates any declared `schedule` up front (throws on a
+ * malformed cron expression). Place the result as the default export of a `jobs/<name>.ts` file,
+ * or register it programmatically with {@linkcode registerJob}.
  */
-export function defineTask<R>(def: TaskDefinition<R>): Task<R> {
+export function defineJob<R>(def: JobDefinition<R>): Job<R> {
   for (const s of schedulesOf(def.schedule)) {
     const err = cronError(s);
-    if (err) throw new Error(`defineTask: ${err}`);
+    if (err) throw new Error(`defineJob: ${err}`);
   }
   if (def.retry !== undefined) retryPolicy(def.retry); // validate up front
-  return { ...def, __denextTask: true };
+  return { ...def, __denextJob: true };
 }
 
-/** The most retries a task may ask for. */
+/** The most retries a job may ask for. */
 const MAX_RETRIES = 100;
 /** Default first retry delay, ms. */
 const DEFAULT_RETRY_DELAY = 1000;
@@ -111,18 +111,18 @@ function isDelay(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n) && n >= 0;
 }
 
-/** Throw a `defineTask: retry.…` error. */
+/** Throw a `defineJob: retry.…` error. */
 function retryError(why: string): never {
-  throw new Error(`defineTask: retry.${why}`);
+  throw new Error(`defineJob: retry.${why}`);
 }
 
 /**
- * Validate a {@link TaskRetry} into a policy, or throw.
+ * Validate a {@link JobRetry} into a policy, or throw.
  *
- * @param retry The task's `retry` option.
+ * @param retry The job's `retry` option.
  * @returns The policy.
  */
-function retryPolicy(retry: TaskRetry): RetryPolicy {
+function retryPolicy(retry: JobRetry): RetryPolicy {
   if (typeof retry !== "object" || retry === null) retryError("must be { attempts, backoff? }");
   const { attempts } = retry;
   if (!Number.isInteger(attempts) || attempts < 0 || attempts > MAX_RETRIES) {
@@ -131,8 +131,8 @@ function retryPolicy(retry: TaskRetry): RetryPolicy {
   return { retries: attempts, delay: backoffDelay(retry.backoff) };
 }
 
-/** The wait before retry `n` (1-based) for a {@link TaskBackoff}, validated. */
-function backoffDelay(backoff: TaskBackoff | undefined): (retry: number) => number {
+/** The wait before retry `n` (1-based) for a {@link JobBackoff}, validated. */
+function backoffDelay(backoff: JobBackoff | undefined): (retry: number) => number {
   if (typeof backoff === "number") {
     if (!isDelay(backoff)) retryError("backoff must be a delay in ms (>= 0)");
     return () => Math.min(backoff, MAX_TIMER_DELAY);
@@ -153,46 +153,46 @@ function backoffDelay(backoff: TaskBackoff | undefined): (retry: number) => numb
     : (n) => Math.min(delayMs * 2 ** (n - 1), cap);
 }
 
-/** True if `value` came from {@linkcode defineTask}. */
-export function isTask(value: unknown): value is Task {
+/** True if `value` came from {@linkcode defineJob}. */
+export function isJob(value: unknown): value is Job {
   return typeof value === "object" && value !== null &&
-    (value as { __denextTask?: unknown }).__denextTask === true;
+    (value as { __denextJob?: unknown }).__denextJob === true;
 }
 
 // ---- Registry --------------------------------------------------------------
 
-const registry = new Map<string, Task>();
+const registry = new Map<string, Job>();
 
-/** Register (or replace) a task by name — used by the `tasks/` loader and by app code. */
-export function registerTask(name: string, task: Task): void {
-  registry.set(name, task);
+/** Register (or replace) a job by name — used by the `jobs/` loader and by app code. */
+export function registerJob(name: string, job: Job): void {
+  registry.set(name, job);
 }
 
-/** The registered task for `name`, or undefined. */
-export function getTask(name: string): Task | undefined {
+/** The registered job for `name`, or undefined. */
+export function getJob(name: string): Job | undefined {
   return registry.get(name);
 }
 
-/** Every registered task name, sorted. */
-export function taskNames(): string[] {
+/** Every registered job name, sorted. */
+export function jobNames(): string[] {
   return [...registry.keys()].sort();
 }
 
 /** Clear the registry (test isolation; a dev-server re-discovery). */
-export function clearTasks(): void {
+export function clearJobs(): void {
   registry.clear();
 }
 
 // ---- Run history seam ------------------------------------------------------
 //
-// Off by default, and "off" means the ORIGINAL code path: with no recorder installed, `runTask`
+// Off by default, and "off" means the ORIGINAL code path: with no recorder installed, `runJob`
 // runs exactly the line it always did — no timing calls, no extra promise link, nothing an
-// upgraded app can observe. `bootScheduledTasks` installs one only when the project's config asks
-// for it, which is why this is a seam here rather than a decision `runTask` makes.
+// upgraded app can observe. `bootScheduledJobs` installs one only when the project's config asks
+// for it, which is why this is a seam here rather than a decision `runJob` makes.
 
 /** One completed run, as the recorder receives it. */
-export interface TaskRunRecord {
-  /** The task's registered name. */
+export interface JobRunRecord {
+  /** The job's registered name. */
   readonly name: string;
   /** What started it. */
   readonly trigger: "schedule" | "manual";
@@ -204,27 +204,27 @@ export interface TaskRunRecord {
   readonly ok: boolean;
   /** An error's head, a string result's tail, or absent. */
   readonly detail?: string;
-  /** Which attempt this was (`1` = the first run); present only for a task with `retry`. */
+  /** Which attempt this was (`1` = the first run); present only for a job with `retry`. */
   readonly attempt?: number;
-  /** A failed attempt that will be retried; present only for a task with `retry`. */
+  /** A failed attempt that will be retried; present only for a job with `retry`. */
   readonly willRetry?: boolean;
 }
 
 /** How much of an error or a string result is kept. */
 const DETAIL_MAX = 2048;
 
-let recorder: ((record: TaskRunRecord) => void) | null = null;
+let recorder: ((record: JobRunRecord) => void) | null = null;
 
 /**
  * Install (or clear) the sink that receives one record per completed run.
  *
  * Deliberately NOT re-exported from `server/mod.ts`: re-exporting would promise apps a stable
- * extension point forever, for a feature whose whole point is to be invisible. `scheduleTasks`
- * and `clearTasks` are exported here and absent there for the same reason.
+ * extension point forever, for a feature whose whole point is to be invisible. `scheduleJobs`
+ * and `clearJobs` are exported here and absent there for the same reason.
  *
  * @param fn The sink, or `null` to record nothing.
  */
-export function setTaskRecorder(fn: ((record: TaskRunRecord) => void) | null): void {
+export function setJobRecorder(fn: ((record: JobRunRecord) => void) | null): void {
   recorder = fn;
 }
 
@@ -241,63 +241,63 @@ function outputTail(text: string): string {
   return text.length <= DETAIL_MAX ? text : text.slice(text.length - DETAIL_MAX);
 }
 
-// Aborted by {@link abortTaskRuns} (server shutdown): every run's signal follows it, so a run
-// started with no signal of its own (`runTask(name)` from a route handler) still sees shutdown.
+// Aborted by {@link abortJobRuns} (server shutdown): every run's signal follows it, so a run
+// started with no signal of its own (`runJob(name)` from a route handler) still sees shutdown.
 let shutdown = new AbortController();
 
 /**
- * Abort every in-flight task run's signal (server shutdown), then start afresh for runs that
+ * Abort every in-flight job run's signal (server shutdown), then start afresh for runs that
  * begin later (a dev server re-boot). Not re-exported from `server/mod.ts`: denext's own wiring.
  */
-export function abortTaskRuns(): void {
+export function abortJobRuns(): void {
   const current = shutdown;
   shutdown = new AbortController();
   current.abort();
 }
 
 /**
- * Run a task by name and return its handler's result. Throws if no such task is registered.
+ * Run a job by name and return its handler's result. Throws if no such job is registered.
  * Callable from app code (a route handler, an action) to trigger work on demand. The handler's
  * `signal` aborts when `opts.signal` does and when the server shuts down.
  */
-export function runTask(
+export function runJob(
   name: string,
   payload?: unknown,
   opts?: { trigger?: "schedule" | "manual"; signal?: AbortSignal },
 ): Promise<unknown> {
-  const task = registry.get(name);
-  if (!task) {
+  const job = registry.get(name);
+  if (!job) {
     return Promise.reject(
-      new Error(`runTask: no task named "${name}" (known: ${taskNames().join(", ") || "none"})`),
+      new Error(`runJob: no job named "${name}" (known: ${jobNames().join(", ") || "none"})`),
     );
   }
   const signal = opts?.signal ? AbortSignal.any([opts.signal, shutdown.signal]) : shutdown.signal;
   const trigger = opts?.trigger ?? "manual";
   // A handler that throws SYNCHRONOUSLY (a guard clause before its first await) used to throw
-  // straight out of `runTask`, despite the declared `Promise<unknown>` — so the scheduler's
+  // straight out of `runJob`, despite the declared `Promise<unknown>` — so the scheduler's
   // `.catch(onScheduledError)` never saw it, and it escaped into the timer tick. It also meant a
   // whole class of failure could never be recorded. Converting it to a rejection here makes the
   // function honour its own type.
   const run = (attempt = 1): Promise<unknown> => {
     try {
-      return Promise.resolve(task.handler({ name, payload, trigger, signal, attempt }));
+      return Promise.resolve(job.handler({ name, payload, trigger, signal, attempt }));
     } catch (err) {
       return Promise.reject(err);
     }
   };
   // No recorder and no retry — the default: the handler runs and its promise is returned.
-  if (!recorder && !task.retry) return run();
-  if (!task.retry) return recordAttempt(name, trigger, run, undefined);
+  if (!recorder && !job.retry) return run();
+  if (!job.retry) return recordAttempt(name, trigger, run, undefined);
   let policy: RetryPolicy;
   try {
-    policy = retryPolicy(task.retry); // a task registered without `defineTask` is checked here
+    policy = retryPolicy(job.retry); // a job registered without `defineJob` is checked here
   } catch (err) {
     return Promise.reject(err);
   }
   return runWithRetries(name, trigger, signal, run, policy);
 }
 
-/** Whether an attempt is tagged in the record (`undefined` for a task without `retry`). */
+/** Whether an attempt is tagged in the record (`undefined` for a job without `retry`). */
 interface AttemptTag {
   readonly attempt: number;
   /**
@@ -356,7 +356,7 @@ function recordAttempt(
 }
 
 /**
- * Run a task with its retry policy: attempt, and on failure wait the backoff and attempt again,
+ * Run a job with its retry policy: attempt, and on failure wait the backoff and attempt again,
  * until one succeeds or the retries run out (the last error is thrown). An abort of `signal`
  * stops retrying — the pending wait ends at once with the last error.
  */
@@ -400,39 +400,39 @@ function waitUnlessAborted(ms: number, signal: AbortSignal): Promise<boolean> {
 
 // ---- Scheduling ------------------------------------------------------------
 
-/** One (cron, task) pairing to schedule. */
+/** One (cron, job) pairing to schedule. */
 export interface ScheduledEntry {
   cron: string;
-  task: string;
+  job: string;
 }
 
 /**
- * The full schedule: every `scheduledTasks` config entry (`{ cron: task | task[] }`) plus every
- * registered task's own `schedule`. Deduped by (cron, task).
+ * The full schedule: every `scheduledJobs` config entry (`{ cron: job | job[] }`) plus every
+ * registered job's own `schedule`. Deduped by (cron, job).
  */
 export function collectSchedules(
   configScheduled?: Record<string, string | string[]>,
 ): ScheduledEntry[] {
   const seen = new Set<string>();
   const out: ScheduledEntry[] = [];
-  const add = (cron: string, task: string) => {
-    const key = `${task}\0${cron}`;
+  const add = (cron: string, job: string) => {
+    const key = `${job}\0${cron}`;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ cron, task });
+    out.push({ cron, job });
   };
-  for (const [cron, tasks] of Object.entries(configScheduled ?? {})) {
-    for (const task of Array.isArray(tasks) ? tasks : [tasks]) add(cron, task);
+  for (const [cron, jobs] of Object.entries(configScheduled ?? {})) {
+    for (const job of Array.isArray(jobs) ? jobs : [jobs]) add(cron, job);
   }
-  for (const [name, task] of registry) {
-    for (const cron of schedulesOf(task.schedule)) add(cron, name);
+  for (const [name, job] of registry) {
+    for (const cron of schedulesOf(job.schedule)) add(cron, name);
   }
   return out;
 }
 
 /** Log helper: a scheduled run's rejection must never crash the process. */
 function onScheduledError(name: string): (err: unknown) => void {
-  return (err) => console.error(`denext: scheduled task "${name}" failed:`, err);
+  return (err) => console.error(`denext: scheduled job "${name}" failed:`, err);
 }
 
 /** The `Deno.cron` reference when the runtime exposes it (Deno Deploy / `--unstable-cron`), else null. */
@@ -459,38 +459,38 @@ function fnv1a(text: string): string {
 }
 
 /**
- * The name one (task, cron) pairing is registered under with `Deno.cron`.
+ * The name one (job, cron) pairing is registered under with `Deno.cron`.
  *
  * `Deno.cron` refuses a name outside `[A-Za-z0-9 _-]`, longer than 64 characters, or already
- * registered — and `*`, `/` and `,` are most of a cron expression, so `task@cron` was refused
- * every time. The readable part keeps the task and expression with each run of other characters
+ * registered — and `*`, `/` and `,` are most of a cron expression, so `job@cron` was refused
+ * every time. The readable part keeps the job and expression with each run of other characters
  * folded to `_`; the fingerprint keeps two schedules that fold alike (a step and a list at the
  * same position) from colliding, and stays the same across restarts so Deno Deploy sees one cron.
  *
- * @param task The task's registered name.
+ * @param job The job's registered name.
  * @param cron The schedule as the user wrote it.
  * @returns A name `Deno.cron` accepts, unique to the pairing.
  */
-function denoCronName(task: string, cron: string): string {
-  const fingerprint = fnv1a(`${task}\0${cron}`);
-  const readable = `${task} ${cron}`.replace(/[^A-Za-z0-9 _-]+/g, "_");
+function denoCronName(job: string, cron: string): string {
+  const fingerprint = fnv1a(`${job}\0${cron}`);
+  const readable = `${job} ${cron}`.replace(/[^A-Za-z0-9 _-]+/g, "_");
   return `${readable.slice(0, DENO_CRON_NAME_MAX - fingerprint.length - 1)} ${fingerprint}`;
 }
 
 /**
  * Register every valid entry with the scheduler and return a disposer. Entries with a malformed
- * cron or an unknown task name are skipped with an error (never fatal). Uses `Deno.cron` when
+ * cron or an unknown job name are skipped with an error (never fatal). Uses `Deno.cron` when
  * available (managed, survives isolate cycling on Deno Deploy); otherwise a userland minute tick.
  */
-export function scheduleTasks(entries: ScheduledEntry[]): () => void {
+export function scheduleJobs(entries: ScheduledEntry[]): () => void {
   const valid = entries.filter((e) => {
     const err = cronError(e.cron);
     if (err) {
-      console.error(`denext: ignoring schedule for "${e.task}" — ${err}`);
+      console.error(`denext: ignoring schedule for "${e.job}" — ${err}`);
       return false;
     }
-    if (!registry.has(e.task)) {
-      console.error(`denext: scheduled task "${e.task}" is not defined (skipping its schedule)`);
+    if (!registry.has(e.job)) {
+      console.error(`denext: scheduled job "${e.job}" is not defined (skipping its schedule)`);
       return false;
     }
     return true;
@@ -503,20 +503,20 @@ export function scheduleTasks(entries: ScheduledEntry[]): () => void {
       try {
         // RETURN the promise: Deno.cron keeps the isolate alive until it settles and uses it to
         // serialize runs (no overlap). A void handler would let Deno Deploy freeze the isolate
-        // mid-task and run overlapping copies of a task that overruns its interval.
+        // mid-job and run overlapping copies of a job that overruns its interval.
         //
         // The schedule goes through `toDenoCron`: Deno.cron numbers weekdays 1-7 from Sunday and
         // rejects `0`, so a POSIX `0 0 * * 1` (Monday) handed over verbatim would fire on Sunday.
         cron(
-          denoCronName(e.task, e.cron),
+          denoCronName(e.job, e.cron),
           toDenoCron(e.cron),
           // A scheduled run belongs to no request, whatever context the runtime fires it in.
           () =>
-            detachedFromRequest(() => runTask(e.task, undefined, { trigger: "schedule" }))
-              .catch(onScheduledError(e.task)),
+            detachedFromRequest(() => runJob(e.job, undefined, { trigger: "schedule" }))
+              .catch(onScheduledError(e.job)),
         );
       } catch (err) {
-        console.error(`denext: Deno.cron rejected schedule for "${e.task}":`, err);
+        console.error(`denext: Deno.cron rejected schedule for "${e.job}":`, err);
       }
     }
     return () => {}; // Deno.cron registrations live for the process; nothing to dispose.
@@ -528,18 +528,18 @@ export function scheduleTasks(entries: ScheduledEntry[]): () => void {
  * Fallback scheduler: a self-rescheduling tick (every ~15 s, so a drifted timer still catches the
  * minute) that fires each entry once per matching minute. UTC, minute granularity — matching
  * `Deno.cron` (which schedules in UTC). Like `Deno.cron` it does NOT fire on registration and does
- * NOT overlap a task with itself. Returns a disposer that stops the tick and aborts in-flight runs.
+ * NOT overlap a job with itself. Returns a disposer that stops the tick and aborts in-flight runs.
  */
 function startUserlandScheduler(entries: ScheduledEntry[]): () => void {
-  const parsed: Array<{ task: string; expr: CronExpr; running: boolean }> = entries.map((e) => ({
-    task: e.task,
+  const parsed: Array<{ job: string; expr: CronExpr; running: boolean }> = entries.map((e) => ({
+    job: e.job,
     expr: parseCron(e.cron),
     running: false,
   }));
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   // Seed to the boot minute so a restart during a matching minute doesn't re-fire (Deno.cron
-  // never fires on registration; a crash-loop must not run a `0 3 * * *` task once per restart).
+  // never fires on registration; a crash-loop must not run a `0 3 * * *` job once per restart).
   let lastMinute = Math.floor(Date.now() / 60000);
   const tick = () => {
     const now = new Date();
@@ -554,9 +554,9 @@ function startUserlandScheduler(entries: ScheduledEntry[]): () => void {
         if (p.running) continue; // overlap guard: a still-in-flight run is not started again
         p.running = true;
         void detachedFromRequest(() =>
-          runTask(p.task, undefined, { trigger: "schedule", signal: controller.signal })
+          runJob(p.job, undefined, { trigger: "schedule", signal: controller.signal })
         )
-          .catch(onScheduledError(p.task))
+          .catch(onScheduledError(p.job))
           .finally(() => {
             p.running = false;
           });

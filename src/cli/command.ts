@@ -106,8 +106,8 @@ export interface CommandContext {
   readonly global: GlobalFlags;
   /**
    * Pass-through tokens: everything after a literal `--`, plus (for a
-   * {@linkcode CommandSpec.passthrough} command) any unrecognized flags. Forwarded
-   * verbatim to an underlying subprocess by wrapping verbs (`test`, `lint`, …).
+   * {@linkcode CommandSpec.passthrough} command) any unrecognized flags and the `--` itself.
+   * Forwarded verbatim to an underlying subprocess by wrapping verbs (`test`, `lint`, …).
    */
   readonly rest: string[];
 }
@@ -235,6 +235,11 @@ export type ParseOutcome =
     readonly kind: "error";
     readonly message: string;
     readonly suggestion?: string;
+    /**
+     * Set when the error is an unknown verb: that verb and its index in the argv, so the CLI can
+     * hand the invocation to Deno (`denext compile …`, `denext main.ts`) before reporting it.
+     */
+    readonly unknownVerb?: { readonly name: string; readonly index: number };
   };
 
 /** Coerce a raw string to a flag's declared type, or throw a usage error. */
@@ -312,8 +317,13 @@ export class CommandRegistry {
    * sit before the verb. `--help`/`-h` and `--version`/`-v` are recognized before and after
    * the verb; a help flag BEFORE the verb never runs it: `denext --help build` is build's
    * help, and a leading token that is not a verb (`denext --help ./app`) is top-level help.
+   *
+   * @param argv The CLI arguments.
+   * @param extraVerbs Names the CLI dispatches outside the registry (the Deno verbs it
+   *   forwards), offered as did-you-mean suggestions for an unknown verb.
+   * @returns What to do.
    */
-  parse(argv: string[]): ParseOutcome {
+  parse(argv: string[], extraVerbs: readonly string[] = []): ParseOutcome {
     const at = verbIndex(argv);
     if (at < 0) return bareOutcome(argv);
     const verb = argv[at];
@@ -327,11 +337,12 @@ export class CommandRegistry {
     }
     const command = this.get(verb);
     if (!command) {
-      const near = suggest(verb, this.names());
+      const near = suggest(verb, [...this.names(), ...extraVerbs]);
       return {
         kind: "error",
         message: `unknown command "${verb}"`,
         suggestion: near ? `denext ${near}` : undefined,
+        unknownVerb: { name: verb, index: at },
       };
     }
     // The command's argv is every token but the verb — leading global flags included.
@@ -347,9 +358,15 @@ export class CommandRegistry {
    *
    * @param version The version to print.
    * @param project The project's own verbs, when any are known.
+   * @param denoVerbs The Deno verbs the CLI forwards to its Deno toolchain; any name the
+   *   registry or `project` already has is left out (it is not forwarded).
    * @returns The help text.
    */
-  formatHelp(version: string, project: readonly ProjectVerb[] = []): string {
+  formatHelp(
+    version: string,
+    project: readonly ProjectVerb[] = [],
+    denoVerbs: readonly string[] = [],
+  ): string {
     const visible = this.#canonical.filter((c) => !c.hidden);
     // Every label and summary passes through `plainText`: a project's verbs (registered by a
     // plugin, or read back from the cache) are its own text, and the terminal is the sink.
@@ -365,9 +382,11 @@ export class CommandRegistry {
     const table = (list: { label: string; summary: string }[]) =>
       list.map((row) => `${row.label.padEnd(width)}${row.summary}`).join("\n");
     const projectSection = own.length === 0 ? "" : `\n\nProject commands:\n${table(own)}`;
+    const claimed = new Set(project.map((verb) => verb.name));
+    const deno = denoVerbs.filter((name) => this.get(name) === undefined && !claimed.has(name));
     return `denext ${version} — write it once, ship it everywhere: web, iOS, Android and desktop\n\n` +
       `Usage: denext <command> [options]\n\n` +
-      `Commands:\n${table(builtIns)}${projectSection}\n\n` +
+      `Commands:\n${table(builtIns)}${projectSection}${denoSection(deno)}\n\n` +
       `Global options:\n${globalFlagsHelp()}\n\n` +
       `Run \`denext <command> --help\` for command-specific options.`;
   }
@@ -382,6 +401,28 @@ export class CommandRegistry {
       ...section(flagsHelp(flags), "Options:"),
     ].join("\n");
   }
+}
+
+/**
+ * Help's "Deno commands" section: the forwarded verbs as a wrapped name list (Deno's own
+ * `--help` describes each), and how to reach Deno's meaning of a verb denext keeps.
+ */
+function denoSection(names: readonly string[]): string {
+  if (names.length === 0) return "";
+  const lines: string[] = [];
+  let line = " ";
+  for (const name of names) {
+    const next = `${line} ${name}`;
+    if (next.length > 92 && line.trim() !== "") {
+      lines.push(line);
+      line = `  ${name}`;
+    } else line = next;
+  }
+  lines.push(line);
+  return "\n\nDeno commands (run on denext's Deno toolchain, as `denext deno <command>` would):\n" +
+    `${lines.join("\n")}\n` +
+    "  `denext <script.ts | URL>` is `deno run`. For Deno's own meaning of a verb denext\n" +
+    "  keeps (test, fmt, info, upgrade, desktop, …) run `denext deno <command>`.";
 }
 
 /** The left column of a top-level help row (`  denext dev`). */
@@ -427,7 +468,7 @@ const GLOBAL_VALUE_FLAGS: ReadonlySet<string> = new Set(
  * Index of the first bare token in `argv` — the verb — or -1 when there is none. The
  * separate value of a valued global flag (`--cwd <dir>`) is skipped, not taken as the verb.
  */
-function verbIndex(argv: readonly string[]): number {
+export function verbIndex(argv: readonly string[]): number {
   for (let i = 0; i < argv.length; i++) {
     if (!argv[i].startsWith("-")) return i;
     if (GLOBAL_VALUE_FLAGS.has(argv[i])) i++;
@@ -489,7 +530,7 @@ function parseCommandArgv(command: CommandSpec, rest: string[]): ParseOutcome {
     for (let i = 0; i < rest.length; i++) {
       const tok = rest[i];
       if (tok === "--") {
-        out.passthrough.push(...rest.slice(i + 1));
+        out.passthrough.push(...afterSeparator(command, rest, i));
         break;
       }
       if (isHelpFlag(tok)) return { kind: "help", command };
@@ -519,6 +560,15 @@ function parseCommandArgv(command: CommandSpec, rest: string[]): ParseOutcome {
       rest: out.passthrough,
     },
   };
+}
+
+/**
+ * The tokens a literal `--` at `i` forwards. A forwarding verb keeps the separator: after it Deno
+ * hands the rest to the script (`denext test a.test.ts -- --seed 1`), so dropping it would turn
+ * them into Deno flags.
+ */
+function afterSeparator(command: CommandSpec, rest: string[], i: number): string[] {
+  return rest.slice(command.passthrough ? i : i + 1);
 }
 
 /** One token: a long flag, a short flag, or a bare value. */

@@ -19,7 +19,11 @@ import {
   signinStartKey,
   signinStartLimiter,
 } from "../src/server/auth/rate-limit.ts";
-import { setRemoteAddr } from "../src/server/remote-addr.ts";
+import {
+  type LimitAddrPolicy,
+  resetLimitHeaderWarningForTesting,
+  setRemoteAddr,
+} from "../src/server/remote-addr.ts";
 import type { AuthConfig } from "../src/server/auth/types.ts";
 
 const ORIGIN = "https://app.test";
@@ -536,3 +540,91 @@ Deno.test("credentials: a concurrent burst can't overrun the budget — the righ
   assertEquals(statuses.filter((s) => s === 401).length, 2, "only the budget's worth is evaluated");
   assertEquals((await login(config, { email: "a@b.co", password: "pw" })).status, 429);
 });
+
+Deno.test("per-IP budgets follow the limit-address rule: a local peer without a forwarded hop is skipped too", async () => {
+  const config = signinConfig({ rateLimit: { signin: { max: 1, windowMs: 60_000 } } });
+  // A loopback/private peer that sends no x-forwarded-for (a proxy that doesn't set it, or local
+  // development) is no address to limit on either: one bucket would be every client's.
+  for (const peer of ["127.0.0.1", "10.0.0.9", "::1"]) {
+    assertEquals(await signinStatuses(config, 3, peer), [303, 303, 303], peer);
+  }
+  // Trusted but no hop: still the shared proxy's address, still skipped.
+  const trusted = signinConfig({
+    trustForwardedHeaders: true,
+    rateLimit: { signin: { max: 1, windowMs: 60_000 } },
+  });
+  assertEquals(await signinStatuses(trusted, 3, "10.0.0.9"), [303, 303, 303]);
+  // A public peer, and no peer at all (`unknown`), keep the budget.
+  assertEquals(await signinStatuses(config, 2, "198.51.100.77"), [303, 429]);
+  assertEquals(await signinStatuses(config, 2), [303, 429]);
+});
+
+/** `GET /auth/signin/github` from `peer`, under the app's per-address limit `policy`. */
+function signinWithPolicy(
+  config: AuthConfig,
+  peer: string,
+  policy: LimitAddrPolicy,
+  headers: Record<string, string> = {},
+): Promise<number | undefined> {
+  const request = new Request(`${ORIGIN}/auth/signin/github`, {
+    headers: { origin: ORIGIN, ...headers },
+  });
+  setRemoteAddr(request, { transport: "tcp", hostname: peer, port: 443 });
+  return runWithContext(
+    createRequestContext(request, undefined, { limitPolicy: policy }),
+    async () => (await handleAuthRequest(request, config))?.status,
+  );
+}
+
+Deno.test("per-IP budgets + the app's rateLimitHeader: each named client behind a loopback proxy has its own (IPv6 per /64, mapped as IPv4)", async () => {
+  const config = signinConfig({ rateLimit: { signin: { max: 1, windowMs: 60_000 } } });
+  const policy = { header: "x-real-ip" };
+  const from = (client: string) =>
+    signinWithPolicy(config, "127.0.0.1", policy, { "x-real-ip": client });
+  assertEquals([await from("198.51.100.40"), await from("198.51.100.40")], [303, 429]);
+  assertEquals(await from("198.51.100.41"), 303, "another client behind the same proxy");
+  assertEquals([await from("2001:db8:5:6::1"), await from("2001:db8:5:6::2")], [303, 429]);
+  assertEquals([await from("::ffff:198.51.100.42"), await from("198.51.100.42")], [303, 429]);
+  // A request without the header falls back to the local-peer rule: skipped, not shared.
+  resetLimitHeaderWarningForTesting();
+  const fallback = await capturingWarnings(async () => {
+    for (let i = 0; i < 3; i++) {
+      assertEquals(await signinWithPolicy(config, "127.0.0.1", policy), 303);
+    }
+  });
+  assert(fallback.some((w) => w.includes("x-real-ip")), fallback.join("\n"));
+});
+
+Deno.test("per-IP budgets + the app's rateLimitLocalAddresses: a loopback/private peer is budgeted by its own address", async () => {
+  const config = signinConfig({ rateLimit: { signin: { max: 1, windowMs: 60_000 } } });
+  const policy = { localAddresses: true };
+  assertEquals(
+    [
+      await signinWithPolicy(config, "10.0.0.9", policy),
+      await signinWithPolicy(config, "10.0.0.9", policy),
+    ],
+    [303, 429],
+  );
+  assertEquals(await signinWithPolicy(config, "10.0.0.10", policy), 303, "another LAN client");
+  // The credentials key's address (clientIpBucket) follows the limit policy too — here a header.
+  const request = new Request(`${ORIGIN}/x`, { headers: { "x-real-ip": "198.51.100.50" } });
+  setRemoteAddr(request, { transport: "tcp", hostname: "127.0.0.1", port: 443 });
+  const bucket = runWithContext(
+    createRequestContext(request, undefined, { limitPolicy: { header: "x-real-ip" } }),
+    () => clientIpBucket(request),
+  );
+  assertEquals(bucket, "198.51.100.50");
+});
+
+/** Run `fn` with `console.warn` captured; resolves with what it logged. */
+async function capturingWarnings(fn: () => Promise<void>): Promise<string[]> {
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
+  try {
+    await fn();
+  } finally {
+    console.warn = original;
+  }
+  return warnings;
+}

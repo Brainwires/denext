@@ -10,11 +10,13 @@ import { createCommand, initCommand } from "./commands/create.ts";
 import { generateCommand } from "./commands/generate.ts";
 import { fallowCommand } from "./commands/fallow.ts";
 import { taskCommand } from "./commands/task.ts";
+import { jobCommand } from "./commands/job.ts";
 import { routesCommand } from "./commands/routes.ts";
 import { checkCommand, fmtCommand, lintCommand, testCommand } from "./commands/toolchain.ts";
 import { doctorCommand, infoCommand } from "./commands/doctor.ts";
 import { addCommand, removeCommand, updateCommand } from "./commands/deps.ts";
 import { upgradeCommand } from "./commands/upgrade.ts";
+import { denoCommand, toolchainCommand } from "./commands/deno-toolchain.ts";
 import { auditCommand } from "./commands/audit.ts";
 import { analyzeCommand } from "./commands/analyze.ts";
 import { profileCommand } from "./commands/profile.ts";
@@ -36,13 +38,17 @@ export function buildRegistry(): CommandRegistry {
   reg.register(buildCommand);
   reg.register(exportCommand);
   reg.register(startCommand);
-  reg.register(taskCommand);
+  reg.register(jobCommand);
   reg.register(routesCommand);
-  // Toolchain (deno passthrough).
+  // Toolchain (deno passthrough). `task` is Deno's `deno task`.
+  reg.register(taskCommand);
   reg.register(testCommand);
   reg.register(lintCommand);
   reg.register(fmtCommand);
   reg.register(checkCommand);
+  // denext's managed Deno toolchain, and running it directly.
+  reg.register(toolchainCommand);
+  reg.register(denoCommand);
   // Dependencies.
   reg.register(addCommand);
   reg.register(removeCommand);

@@ -38,6 +38,7 @@ import {
   type DesktopRuntimeStatus,
 } from "./desktop-runtime.ts";
 import { formatDoctorFindings } from "./doctor-format.ts";
+import { denoReleaseVersion } from "./deno-version.ts";
 import {
   CEF_SIGNING_FIX,
   cefCertificateProblem,
@@ -923,7 +924,7 @@ function runtimeFindings(runtime: DoctorRuntime, linuxChecks: boolean): DesktopD
     );
   }
   if (s.mode !== "pinned") return out;
-  if (s.deno.found !== s.deno.required) {
+  if (s.deno.found === null || denoReleaseVersion(s.deno.found) !== s.deno.required) {
     add(
       "error",
       `the runtime ${s.version} needs Deno ${s.deno.required} exactly; \`deno\` is ` +

@@ -18,6 +18,7 @@ Deno.test("registry exposes every first-party verb", () => {
     "completions",
     "create",
     "db-admin", // hidden: denext ui's Database child
+    "deno",
     "desktop",
     "dev",
     "doctor",
@@ -27,6 +28,7 @@ Deno.test("registry exposes every first-party verb", () => {
     "generate",
     "info",
     "init",
+    "job",
     "lint",
     "mcp",
     "migrate",
@@ -40,6 +42,7 @@ Deno.test("registry exposes every first-party verb", () => {
     "start",
     "task",
     "test",
+    "toolchain",
     "ui",
     "update",
     "upgrade",
@@ -53,7 +56,7 @@ Deno.test("probe resolves to doctor (retired verb kept as alias)", () => {
 
 Deno.test("module-loading verbs are flagged loadsModules", () => {
   const reg = buildRegistry();
-  for (const name of ["dev", "build", "export", "start", "doctor", "analyze", "task"]) {
+  for (const name of ["dev", "build", "export", "start", "doctor", "analyze", "job"]) {
     assert(reg.get(name)?.loadsModules, `${name} should load modules`);
   }
   // Toolchain + scaffold verbs must NOT trigger the module/env re-exec gate. `commands` is

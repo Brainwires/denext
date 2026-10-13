@@ -371,13 +371,48 @@ What stays out of reach of a WebView:
 ### Text inputs
 
 react-native-web's `TextInput` is an `<input>` or a `<textarea>`, which keeps two browser
-defaults a React Native text input does not have. React Native mode drops both:
+defaults a React Native text input does not have and drops several React Native props. React
+Native mode fixes both:
 
 - **No focus ring.** The input's base style is React Native's outline, 0 wide and `solid`, so the
   browser draws no ring on focus, and an app's own `outlineWidth` / `outlineColor` (or a Tailwind
   `outline-*` class) still draws one.
 - **A one-line placeholder.** A long placeholder is cut with an ellipsis instead of wrapping, so a
   `multiline` input one line tall (a text field docked above the keyboard) does not show a clipped second line.
+- **Autofill.** `autoComplete` takes React Native's values: the ones spelled differently in HTML
+  (`"password-new"`, `"sms-otp"`, `"name-given"`, `"postal-address-region"`, `"birthdate-full"`,
+  …) become the HTML `autocomplete` token, and without `autoComplete`, iOS's `textContentType`
+  (`"oneTimeCode"`, `"emailAddress"`, `"newPassword"`, `"password"`, `"none"`, …) sets it. The
+  WebView's password manager and one-time-code autofill read that token.
+- **`submitBehavior`** (React Native 0.73's replacement for `blurOnSubmit`): `"blurAndSubmit"`,
+  `"submit"` (a `multiline` input submits on Enter, inserts no newline and keeps focus) and
+  `"newline"` (a single-line input treats it as `"blurAndSubmit"`, as React Native does).
+  Shift+Enter and an IME composition are never a submit.
+- **`onEndEditing`** runs with `nativeEvent.text` when the input loses focus, before `onBlur`.
+- **`cursorColor` / `selectionColor`.** The caret is `cursorColor`, else `selectionColor`; the
+  selection highlight is `selectionColor` at 40%, as the platforms tint theirs.
+
+### Component props
+
+React Native mode also wraps react-native-web's `Image`, `Modal`, `Pressable`, `ScrollView`,
+`Switch` and `Text` for the props it drops:
+
+| Component    | Prop                                        | What it does                                                                                                                                                                                                                                                                                             |
+| ------------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Modal`      | `onRequestClose`                            | In the Android shell a visible modal takes the back button and back gesture: `onRequestClose` runs and nothing under the modal does (the screen's `BackHandler` handlers, the router), as React Native's dialog. Escape still closes it everywhere (react-native-web's)                                  |
+| `Pressable`  | `android_ripple`                            | In the Android shell, Material's ripple from the touch point: `color` (default `rgba(0, 0, 0, 0.12)`), `radius` (default: to the farthest corner), clipped to the box and its corners unless `borderless`. iOS and a browser draw none, as React Native                                                  |
+| `ScrollView` | `bounces={false}`, `overScrollMode="never"` | `overscroll-behavior: none` on the scroll axis: no rubber band (iOS) or stretch (Android). On the web it also stops the scroll chaining to the page, which a React Native scroll view never does                                                                                                         |
+| `ScrollView` | `contentOffset`                             | The starting scroll position, applied before the first paint; a later value does not scroll                                                                                                                                                                                                              |
+| `Text`       | `adjustsFontSizeToFit`, `minimumFontScale`  | A `Text` whose content overflows its box (a `numberOfLines` clamp, or a fixed width / height) draws a smaller `fontSize` until it fits, down to `minimumFontScale` (never below 4 px); measured after each render and when its box resizes                                                               |
+| `Text`       | `ellipsizeMode`                             | `"clip"` cuts with no ellipsis. `"head"` / `"middle"` on a one-line `Text` (`numberOfLines={1}`) of plain text draw `…` at the start or in the middle, the longest cut that fits measured in the DOM; with more lines or nested elements they fall back to `"tail"`                                      |
+| `Text`       | `onTextLayout`                              | `{ nativeEvent: { lines } }`, one entry per drawn line with `text`, `x`, `y`, `width`, `height` (from the DOM) and `ascender`, `descender`, `capHeight`, `xHeight` (estimated from the font size); called when the lines change                                                                          |
+| `ScrollView` | `maintainVisibleContentPosition`            | When content above the view changes size (rows prepended, an image loading), the first child at or after `minIndexForVisible` in view stays where it was; within `autoscrollToTopThreshold` of the start it scrolls to the start instead. The browser's own scroll anchoring is turned off for the view  |
+| `ScrollView` | `contentInset`                              | Extra scrollable space before and after the content on the scroll axis (added to the content container's margins)                                                                                                                                                                                        |
+| `ScrollView` | `automaticallyAdjustKeyboardInsets`         | While the keyboard covers the bottom of a vertical scroll view, that height is added after the content so its end scrolls above the keyboard (none where the WebView resizes)                                                                                                                            |
+| `Image`      | `src`, `srcSet`, `alt`, `width`, `height`   | React Native 0.71's web-style props: the `srcSet` candidate for this screen (`x` descriptors by pixel ratio, `w` descriptors by the drawn width), `src` as the 1x; `alt` is the accessibility label; `width` / `height` size the image under its `style`. A `source` array is picked the same way        |
+| `Image`      | `loadingIndicatorSource`, `fadeDuration`    | The loading source is drawn until the image loads; in the Android shell `fadeDuration` fades the image in once loaded (only when set; React Native's default 300 ms fade is not applied). `crossOrigin` / `referrerPolicy` are accepted and do nothing (the browser fetches the image with its defaults) |
+| `Switch`     | `ios_backgroundColor`, `onChange`           | The off track's colour (not in the Android shell; an explicit `trackColor.false` wins); `onChange` gets `{ nativeEvent: { value } }` before `onValueChange`                                                                                                                                              |
+| `Modal`      | `backdropColor`, `presentationStyle`        | The opaque modal's background (react-native-web's is white). In the iOS shell `"pageSheet"` / `"formSheet"` draw a sheet with rounded top corners below the status bar over the dimmed screen, with no swipe-down to dismiss; other styles and platforms are the full-screen modal                       |
 
 ### Scroll snapping
 

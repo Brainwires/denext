@@ -199,6 +199,8 @@ function featureNotes(on: (key: string) => boolean): string[] {
 export const createCommand: CommandSpec = {
   name: "create",
   summary: "Scaffold a new app",
+  usage: "Scaffolds a denext app. Deno's `deno create` (a project from a template):\n" +
+    "`denext deno create`.",
   flags: SCAFFOLD_FLAGS,
   positionals: [{ name: "dir", help: "New app directory", required: true }],
   run: (ctx) => runCreate(ctx, "create"),
@@ -207,6 +209,8 @@ export const createCommand: CommandSpec = {
 export const initCommand: CommandSpec = {
   name: "init",
   summary: "Scaffold into the current directory",
+  usage: "Scaffolds a denext app into an existing directory. Deno's `deno init`:\n" +
+    "`denext deno init`.",
   flags: SCAFFOLD_FLAGS,
   positionals: [{ name: "dir", help: "Existing directory (default: .)" }],
   run: (ctx) => runCreate(ctx, "init"),

@@ -79,9 +79,18 @@ function fakeRunner(
   return { run, calls };
 }
 
-/** Capture options on darwin with a fake runner. */
+/**
+ * Capture options on darwin with a fake runner and a frozen clock: with the real one, a millisecond
+ * that ticks between the deadline and the first shell hands it `timeoutMs - 1` (a test that wants
+ * time to pass passes its own `now`).
+ */
 function opts(extra: Partial<LoginShellCaptureOptions>): LoginShellCaptureOptions {
-  return { os: "darwin", env: { SHELL: "/bin/zsh", PATH: "/usr/bin:/bin" }, ...extra };
+  return {
+    os: "darwin",
+    env: { SHELL: "/bin/zsh", PATH: "/usr/bin:/bin" },
+    now: () => 0,
+    ...extra,
+  };
 }
 
 // ── the command and its output ───────────────────────────────────────────────────────────────
@@ -460,12 +469,72 @@ Deno.test("packaging: loginShellEnv bakes --allow-run for the OS's shells (none 
 
 const POSIX = Deno.build.os !== "windows";
 
+/** Whether `path` exists. */
+async function exists(path: string): Promise<boolean> {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** SIGKILL the pid `pidFile` names, if it names one (a grandchild still writing gets 1 s). */
+async function killPidFile(pidFile: string): Promise<void> {
+  for (let i = 0; i < 20; i++) {
+    const pid = Number((await Deno.readTextFile(pidFile).catch(() => "")).trim());
+    if (pid > 0) {
+      try {
+        Deno.kill(pid, "SIGKILL");
+      } catch { /* already gone */ }
+      return;
+    }
+    if (!(await exists(pidFile))) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+Deno.test({
+  name: "denoLoginShellRunner: a timeout before the shell has even started is still a timeout",
+  ignore: !POSIX,
+  fn: async () => {
+    // The kill lands while the shell is still starting (the race that once made the hung-shell
+    // test read a pid file its shell never got to write): a timeout, promptly, nothing thrown.
+    const dir = await Deno.makeTempDir({ prefix: "denext-login-shell-" });
+    try {
+      const pidFile = join(dir, "bg.pid");
+      const hang = join(dir, "hang.sh");
+      await Deno.writeTextFile(hang, `#!/bin/sh\necho $$ > '${pidFile}'\nexec sleep 30\n`);
+      await Deno.chmod(hang, 0o755);
+      const started = Date.now();
+      assertEquals(await denoLoginShellRunner(hang, [], { PATH: "/usr/bin:/bin" }, 1), {
+        kind: "timeout",
+      });
+      assert(Date.now() - started < 5000);
+      // The shell itself was SIGKILLed: whatever pid it got to write is gone.
+      const pid = Number((await Deno.readTextFile(pidFile).catch(() => "")).trim());
+      if (pid > 0) {
+        let alive = true;
+        try {
+          Deno.kill(pid, "SIGCONT");
+        } catch {
+          alive = false;
+        }
+        assert(!alive, "the timed-out shell is still running");
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
 Deno.test({
   name:
     "denoLoginShellRunner: an exit with its output, a missing shell, and a hung shell killed at the timeout",
   ignore: !POSIX,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext-login-shell-" });
+    const pidFiles: string[] = [];
     try {
       const ok = await denoLoginShellRunner("/bin/sh", [
         "-c",
@@ -476,26 +545,35 @@ Deno.test({
       assertEquals(ok, { kind: "exit", code: 3, stdout: "hi\n" });
       const missing = await denoLoginShellRunner(join(dir, "nope"), [], {}, 1000);
       assertEquals(missing.kind, "error");
-      // A shell whose rc file never returns (and a grandchild holding stdout open).
-      const hang = join(dir, "hang.sh");
-      const pidFile = join(dir, "bg.pid");
-      await Deno.writeTextFile(
-        hang,
-        `#!/bin/sh\nprintf 'partial'\nsleep 30 &\necho $! > '${pidFile}'\nexec sleep 30\n`,
-      );
-      await Deno.chmod(hang, 0o755);
-      const started = Date.now();
-      const timedOut = await denoLoginShellRunner(hang, [], { PATH: "/usr/bin:/bin" }, 300);
-      assertEquals(timedOut, { kind: "timeout" });
-      assert(Date.now() - started < 5000, "the timeout did not wait for the grandchild");
-      // The orphaned `sleep 30 &` is killed so the test leaves nothing behind.
-      const bg = Number((await Deno.readTextFile(pidFile)).trim());
-      if (bg > 0) {
-        try {
-          Deno.kill(bg, "SIGKILL");
-        } catch { /* already gone */ }
+      // A shell whose rc file never returns, with a grandchild holding stdout open. The runner's
+      // clock starts at spawn and a shell takes tens of ms to start (far more on a loaded host), so
+      // the kill can land before the shell forks: retry with a longer budget until a grandchild
+      // existed at the kill. The grandchild writes its own pid, so one that was forked is always
+      // found (and killed) afterwards, whenever the shell died.
+      let heldOpen = false;
+      for (const budget of [300, 1000, 3000, 8000]) {
+        const pidFile = join(dir, `bg-${budget}.pid`);
+        pidFiles.push(pidFile);
+        const hang = join(dir, `hang-${budget}.sh`);
+        await Deno.writeTextFile(
+          hang,
+          `#!/bin/sh\nprintf 'partial'\n/bin/sh -c 'echo $$ > "$0"; exec sleep 30' '${pidFile}' &\n` +
+            `while [ ! -s '${pidFile}' ]; do sleep 0.01; done\nexec sleep 30\n`,
+        );
+        await Deno.chmod(hang, 0o755);
+        const started = Date.now();
+        const timedOut = await denoLoginShellRunner(hang, [], { PATH: "/usr/bin:/bin" }, budget);
+        assertEquals(timedOut, { kind: "timeout" });
+        assert(Date.now() - started < budget + 5000, "the timeout did not wait for the grandchild");
+        if (await exists(pidFile)) {
+          heldOpen = true;
+          break;
+        }
       }
+      assert(heldOpen, "no attempt got as far as forking the grandchild");
     } finally {
+      // Kill every grandchild a killed shell forked, so the test leaves nothing behind.
+      for (const pidFile of pidFiles) await killPidFile(pidFile);
       await Deno.remove(dir, { recursive: true });
     }
   },

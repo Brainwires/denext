@@ -388,7 +388,9 @@ attack surface, so each ships with its own invariant:
   rather than collapsing every visitor into one bucket — which would have been
   an app-wide outage on the 21st sign-in. Setting `canonicalOrigin` without
   `trustForwardedHeaders` (on `denextAuth` or, inherited, on the app) warns once
-  for the same reason.
+  for the same reason. The app's `rateLimitHeader` and `rateLimitLocalAddresses`
+  opt back in deliberately; a request missing the named header falls back to the
+  socket peer rather than going unlimited.
 - **A revoked session cannot be resurrected by a refresh in flight.** Sliding
   expiry rewrites a store-backed session through `SessionStore.update` —
   write-only-if-present — rather than `create`, which is an upsert: a session

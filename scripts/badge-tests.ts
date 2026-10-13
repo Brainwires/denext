@@ -4,7 +4,8 @@
 //   deno task badge:tests --check   # exit 1 if the committed JSON is stale
 //
 // The count is the number of `Deno.test(...)` declarations across the whole
-// `tests/` tree — a deterministic, source-derived figure (no test run needed), so
+// `tests/` tree, plus the `it(...)` / `test(...)` cases of its Vitest files (`*.vitest.ts`, run on
+// denext's Deno toolchain by scripts/test-run.ts) — a deterministic, source-derived figure (no test run needed), so
 // the `--check` gate behaves like `deno fmt --check`: fast and never flaky. CI's
 // actual test jobs are what prove those tests pass; this badge just reports how
 // many there are, and the freshness check keeps the number honest.
@@ -21,6 +22,17 @@ const TESTS_DIR = `${REPO_ROOT}tests`;
 const BADGE_PATH = `${REPO_ROOT}.github/badges/tests.json`;
 
 const TEST_RE = /\bDeno\.test\s*\(/g;
+/** A Vitest case, one per line: `it(` / `test(` at the start of a (possibly indented) line. */
+const VITEST_RE = /^\s*(?:it|test)\s*\(/gm;
+
+/** The test cases one file declares (`path` decides which kind). */
+function countIn(path: string, source: string): number {
+  const re = path.endsWith(".vitest.ts") ? VITEST_RE : TEST_RE;
+  return source.match(re)?.length ?? 0;
+}
+
+/** Whether `path` is a test file the badge counts. */
+const isTestFile = (path: string) => /\.(?:test|vitest)\.ts$/.test(path);
 
 /** Run git in the repo and return stdout (throws on failure). */
 async function git(args: string[]): Promise<string> {
@@ -29,24 +41,24 @@ async function git(args: string[]): Promise<string> {
   return new TextDecoder().decode(out.stdout);
 }
 
-/** Count `Deno.test(...)` in the staged (index) copies of tests/**\/*.test.ts. */
+/** Count the tests in the staged (index) copies of tests/**\/*.{test,vitest}.ts. */
 async function countStagedTests(): Promise<number> {
   const files = (await git(["ls-files", "-z", "--", "tests"])).split("\0")
-    .filter((f) => f.endsWith(".test.ts"));
+    .filter(isTestFile);
   let total = 0;
   for (const f of files) {
-    total += (await git(["show", `:${f}`])).match(TEST_RE)?.length ?? 0;
+    total += countIn(f, await git(["show", `:${f}`]));
   }
   return total;
 }
 
-/** Count `Deno.test(...)` declarations across every *.test.ts under tests/ in the working tree. */
+/** Count the tests in every *.test.ts / *.vitest.ts under tests/ in the working tree. */
 async function countWorkingTreeTests(): Promise<number> {
   let total = 0;
   for await (
-    const entry of walk(TESTS_DIR, { exts: [".ts"], match: [/\.test\.ts$/] })
+    const entry of walk(TESTS_DIR, { exts: [".ts"], match: [/\.(?:test|vitest)\.ts$/] })
   ) {
-    total += (await Deno.readTextFile(entry.path)).match(TEST_RE)?.length ?? 0;
+    total += countIn(entry.path, await Deno.readTextFile(entry.path));
   }
   return total;
 }

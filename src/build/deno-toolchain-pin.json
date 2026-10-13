@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "version": "2.9.7-denext.15",
+  "tag": "denext-runtime-v2.9.7-denext.15",
+  "repository": "https://github.com/Brainwires/deno",
+  "deno": "2.9.7",
+  "targets": {
+    "darwin-aarch64": {
+      "file": "deno-cli-2.9.7-denext.15-aarch64-apple-darwin.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v2.9.7-denext.15/deno-cli-2.9.7-denext.15-aarch64-apple-darwin.zip",
+      "sha256": "6cafb7bce88ecd768806cc548d7c5dd817925b43acea9240f2b321516b0b6f8a",
+      "size": 46316714,
+      "format": "zip"
+    },
+    "darwin-x86_64": {
+      "file": "deno-cli-2.9.7-denext.15-x86_64-apple-darwin.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v2.9.7-denext.15/deno-cli-2.9.7-denext.15-x86_64-apple-darwin.zip",
+      "sha256": "6316c3bb034ec0fb24c0e89afcd8ed9be887d8898ddbc124d84fb9b0c241d485",
+      "size": 50345378,
+      "format": "zip"
+    },
+    "linux-aarch64": {
+      "file": "deno-cli-2.9.7-denext.15-aarch64-unknown-linux-gnu.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v2.9.7-denext.15/deno-cli-2.9.7-denext.15-aarch64-unknown-linux-gnu.zip",
+      "sha256": "3b322c2fb9e8a36354aa45bf9fe7027795070b5e8f3d67ed7d965e34b17d1cb6",
+      "size": 78582899,
+      "format": "zip"
+    },
+    "linux-x86_64": {
+      "file": "deno-cli-2.9.7-denext.15-x86_64-unknown-linux-gnu.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v2.9.7-denext.15/deno-cli-2.9.7-denext.15-x86_64-unknown-linux-gnu.zip",
+      "sha256": "2bf1c7af80c63bad582c0e72129cbf2cfc6a6e84e7bb4bf485a51f41be971146",
+      "size": 78391390,
+      "format": "zip"
+    },
+    "windows-x86_64": {
+      "file": "deno-cli-2.9.7-denext.15-x86_64-pc-windows-msvc.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v2.9.7-denext.15/deno-cli-2.9.7-denext.15-x86_64-pc-windows-msvc.zip",
+      "sha256": "d4cd34263215e136fef202af7cf5dc69fd9e185f2bf9fef30122dc3c13658b0e",
+      "size": 41502205,
+      "format": "zip"
+    }
+  }
+}

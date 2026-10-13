@@ -1,20 +1,34 @@
 // React Native mode's small react-native-web patches and Metro's image-density resolution,
 // as one esbuild plugin (registered by reactNativeBundleOptions in ./react-native.ts):
 //
-//   - `ScrollView` is wrapped by `withScrollSnap` (denext/react-native): snapToInterval,
-//     snapToOffsets, snapToAlignment, snapToStart / snapToEnd, decelerationRate and
-//     disableIntervalMomentum become CSS scroll snap (react-native-web implements only
-//     pagingEnabled).
-//   - `Text` is wrapped by `withFontScaling`, `PixelRatio` by `withFontScaleRatio`, and
-//     `Dimensions`' `fontScale` reads `reactNativeFontScale()`: the OS text size (Dynamic Type,
-//     Android's font scale) reaches allowFontScaling / maxFontSizeMultiplier,
-//     PixelRatio.getFontScale() and useWindowDimensions().fontScale (react-native-web reports 1).
+//   - `ScrollView` is wrapped by `withScrollViewProps` (denext/react-native, over
+//     `withScrollSnap`): snapToInterval, snapToOffsets, snapToAlignment, snapToStart /
+//     snapToEnd, decelerationRate and disableIntervalMomentum become CSS scroll snap
+//     (react-native-web implements only pagingEnabled); `bounces={false}` /
+//     `overScrollMode="never"` become `overscroll-behavior: none` on the scroll axis, and
+//     `contentOffset` is the starting position.
+//   - `Pressable` is wrapped by `withPressableRipple`: `android_ripple` draws Material's ripple
+//     in the Android shell (react-native-web ignores it).
+//   - `Modal` is wrapped by `withModalBackHandler`: in the Android shell a visible modal takes
+//     the back button and back gesture for `onRequestClose` (react-native-web closes on Escape
+//     only).
+//   - `Text` is wrapped by `withTextProps` (`withFontScaling` over `withTextFit`), `PixelRatio`
+//     by `withFontScaleRatio`, and `Dimensions`' `fontScale` reads `reactNativeFontScale()`: the
+//     OS text size (Dynamic Type, Android's font scale) reaches allowFontScaling /
+//     maxFontSizeMultiplier, PixelRatio.getFontScale() and useWindowDimensions().fontScale
+//     (react-native-web reports 1), and `adjustsFontSizeToFit` / `minimumFontScale` shrink an
+//     overflowing `Text` until it fits.
 //   - `TextInput` is wrapped by `withTextInputDefaults`: no browser focus ring (React Native's
-//     outline is 0 wide unless the app styles one) and a one-line placeholder (no wrapping in a
-//     line-tall multiline input).
-//   - `Image` is passed through `withImageStatics`: the `resolveAssetSource`,
+//     outline is 0 wide unless the app styles one), a one-line placeholder (no wrapping in a
+//     line-tall multiline input), and the React Native props react-native-web drops
+//     (`autoComplete` / `textContentType` as HTML autocomplete tokens, `submitBehavior`,
+//     `onEndEditing`, `cursorColor` / `selectionColor`).
+//   - `Image` is wrapped by `withImageProps` (over `withImageStatics`): the `resolveAssetSource`,
 //     `getSizeWithHeaders`, `prefetchWithMetadata` and `abortPrefetch` statics react-native-web
-//     lacks. `PixelRatio` gains React Native's no-op `startDetecting`.
+//     lacks, React Native 0.71's `src` / `srcSet` / `alt` / `width` / `height`, a `source`
+//     array, `loadingIndicatorSource` and (Android shell) `fadeDuration`. `PixelRatio` gains
+//     React Native's no-op `startDetecting`.
+//   - `Switch` is wrapped by `withSwitchProps`: `ios_backgroundColor` and `onChange`.
 //   - `AppRegistry` is passed through `withAppRegistry` (with react-native-web's `View`):
 //     sections, `getRunnable` / `getRegistry`, `setSurfaceProps`, `setRootViewStyleProvider`
 //     and the headless-task registry.
@@ -40,18 +54,21 @@ const OVERLAY = "denext/react-native";
 /** The react-native-web modules whose default export is wrapped, and the wrapper. */
 const WRAPPED: Readonly<Record<string, string>> = {
   AppRegistry: "withAppRegistry",
-  Image: "withImageStatics",
+  Image: "withImageProps",
   LayoutAnimation: "withLayoutAnimationStatics",
   LogBox: "withLogBoxStatics",
-  ScrollView: "withScrollSnap",
+  Modal: "withModalBackHandler",
+  Pressable: "withPressableRipple",
+  ScrollView: "withScrollViewProps",
   StyleSheet: "withStyleSheetStatics",
-  Text: "withFontScaling",
+  Switch: "withSwitchProps",
+  Text: "withTextProps",
   TextInput: "withTextInputDefaults",
   PixelRatio: "withFontScaleRatio",
 };
 
 /** The wrapped modules whose wrapper also takes react-native-web's `View` (`../View`). */
-const WRAPPED_WITH_VIEW: ReadonlySet<string> = new Set(["AppRegistry"]);
+const WRAPPED_WITH_VIEW: ReadonlySet<string> = new Set(["AppRegistry", "Modal"]);
 
 /** A wrapped module, ES or CommonJS build: group 1 is `cjs/`, group 2 the name. */
 const WRAPPED_MODULE = new RegExp(
@@ -225,7 +242,7 @@ export function imageScaleModule(variants: ReadonlyArray<readonly [number, strin
 }
 
 /**
- * The esbuild plugin: react-native-web's `AppRegistry` / `Image` / `ScrollView` / `StyleSheet` /
+ * The esbuild plugin: react-native-web's `AppRegistry` / `Image` / `Modal` / `Pressable` / `ScrollView` / `StyleSheet` /
  * `Text` / `PixelRatio` / `Dimensions` patches and the `@2x` / `@3x` image resolution (see the module docs).
  *
  * @returns The plugin.

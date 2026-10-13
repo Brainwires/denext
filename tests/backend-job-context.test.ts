@@ -1,7 +1,7 @@
-// A scheduled task must never run inside a request that happened to come before it. Deno hands
-// the async context of the code that first `import()`s a module to the next task the runtime
+// A scheduled job must never run inside a request that happened to come before it. Deno hands
+// the async context of the code that first `import()`s a module to the next job the runtime
 // starts on its own, so a request that first loaded the image codec (an image transform on
-// download) used to leave its request visible to the next test here — and a task calling the
+// download) used to leave its request visible to the next test here — and a job calling the
 // storage server API would then run the bucket's `authorize` with that old request's session
 // instead of the out-of-request path (which refuses anything but a service handle). This file is its own isolate on purpose: the codec
 // must be loaded for the first time by the request below.
@@ -10,13 +10,13 @@ import { assertEquals } from "@std/assert";
 import { backendApp } from "./_backend-app.ts";
 import { storage } from "../packages/backend/server.ts";
 import { currentContext } from "../src/server/request-context.ts";
-import { clearTasks, defineTask, registerTask, scheduleTasks } from "../src/server/tasks.ts";
+import { clearJobs, defineJob, registerJob, scheduleJobs } from "../src/server/jobs.ts";
 import { samplePng } from "./fixtures/sample-image.ts";
 
 const authorizeCalls: unknown[] = [];
 let app: Awaited<ReturnType<typeof backendApp>> | undefined;
 
-Deno.test("backend task context: a request loads the image codec for the first time", async () => {
+Deno.test("backend job context: a request loads the image codec for the first time", async () => {
   app = await backendApp({
     buckets: {
       img: { public: true, mime: ["image/png"], authorize: () => true },
@@ -41,14 +41,14 @@ Deno.test("backend task context: a request loads the image codec for the first t
   await sized.body?.cancel();
 });
 
-Deno.test("backend task context: a scheduled task afterwards runs with no request", async () => {
+Deno.test("backend job context: a scheduled job afterwards runs with no request", async () => {
   try {
     assertEquals(currentContext(), undefined, "no request context leaked into this test");
-    clearTasks();
+    clearJobs();
     let sawContext: unknown = "unset";
-    registerTask(
+    registerJob(
       "vault-report",
-      defineTask({
+      defineJob({
         handler: async () => {
           sawContext = currentContext();
           // A plain handle has no session to authorize out of a request: refused — never
@@ -69,7 +69,7 @@ Deno.test("backend task context: a scheduled task afterwards runs with no reques
       fired.push(handler);
     };
     try {
-      scheduleTasks([{ cron: "0 3 * * *", task: "vault-report" }]);
+      scheduleJobs([{ cron: "0 3 * * *", job: "vault-report" }]);
     } finally {
       if (had) denoAny.cron = prev;
       else delete denoAny.cron;
@@ -81,7 +81,7 @@ Deno.test("backend task context: a scheduled task afterwards runs with no reques
     assertEquals(sawContext, undefined);
     assertEquals(authorizeCalls, []);
   } finally {
-    clearTasks();
+    clearJobs();
     await app?.close();
   }
 });

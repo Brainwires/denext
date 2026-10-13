@@ -464,15 +464,15 @@ More: [/docs/live](/docs/live).
 
 **Why it happens.** Next.js has no scheduler of its own.
 
-**What denext does.** A task in `tasks/<name>.ts` with `defineTask` runs on a cron schedule (`Deno.cron` where available, else a built-in scheduler that never overlaps a running instance), on demand with `runTask()` or `denext task <name>`, with optional run history.
+**What denext does.** A job in `jobs/<name>.ts` with `defineJob` runs on a cron schedule (`Deno.cron` where available, else a built-in scheduler that never overlaps a running instance), on demand with `runJob()` or `denext job <name>`, with optional run history.
 
 **Evidence.**
 
-- [`tests/tasks.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/tasks.test.ts): "scheduleTasks uses Deno.cron when available and hands it the schedule"
-- [`tests/tasks.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/tasks.test.ts): "userland scheduler: never on registration, once per matching minute, never overlapping, aborted on dispose"
-- [`tests/cli-task-history.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/cli-task-history.test.ts): "a manual CLI run is recorded, exactly like a scheduled one"
+- [`tests/jobs.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/jobs.test.ts): "scheduleJobs uses Deno.cron when available and hands it the schedule"
+- [`tests/jobs-timers.vitest.ts`](https://github.com/Brainwires/denext/blob/main/tests/jobs-timers.vitest.ts): "never fires on registration, once per matching minute, never overlapping, aborted on dispose"
+- [`tests/cli-job-history.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/cli-job-history.test.ts): "a manual CLI run is recorded, exactly like a scheduled one"
 
-More: [/docs/tasks](/docs/tasks).
+More: [/docs/jobs](/docs/jobs).
 
 ### A self-hosted data cache that survives restarts
 

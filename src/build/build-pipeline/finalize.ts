@@ -90,6 +90,12 @@ function envBuildId(): string | undefined {
   }
 }
 
+/** The boundary `manifest.json` records: the Flight one, else the crawl's (null: no page). */
+function recordedBoundary(ctx: BuildContext) {
+  const boundary = ctx.boundary ?? ctx.crawledBoundary;
+  return boundary ? serializeBoundary(boundary, ctx.projectDir) : null;
+}
+
 /** The `manifest.json` document the prod server reads. */
 function buildManifestFor(
   ctx: BuildContext,
@@ -108,8 +114,9 @@ function buildManifestFor(
     flight: ctx.hasFlight,
     boundaryRoutes: ctx.boundaryRoutes.map((p) => p.routePath),
     // The client/server boundary the build crawled, so the prod server can skip re-crawling
-    // the import graph at startup (paths relative to the project dir).
-    boundary: ctx.boundary ? serializeBoundary(ctx.boundary, ctx.projectDir) : null,
+    // the import graph at startup (paths relative to the project dir) — recorded for an app
+    // with no Flight route too, whose start would otherwise spawn `deno info`.
+    boundary: recordedBoundary(ctx),
     // Routes that ship no client JS (pure server-rendered HTML). The prod server reads
     // this to skip both the hydration <script> and the missing-bundle check.
     staticRoutes: ctx.staticRoutes,
@@ -126,8 +133,9 @@ function buildManifestFor(
     // Self-hosted Google fonts: Google stylesheet URL → local `@font-face` CSS. The prod
     // server installs this so those fonts render from `/_denext/fonts`.
     fonts,
-    // The server render's platform-file redirects and module copies (./server-copies.ts), so
-    // `denext start` walks and writes nothing. Absent for a next-compat build.
+    // The server render's platform-file redirects and module copies (./server-copies.ts), the
+    // stylesheet imports pointed at their shims, so `denext start` walks and writes nothing and
+    // needs no CSS import map. Absent for a next-compat build.
     ...(serverCopies ? { serverCopies } : {}),
   };
 }
@@ -193,7 +201,10 @@ export async function finalizeBuild(
 ): Promise<void> {
   const publicEnvKeys = await timed("publicEnvKeys", () => collectPublicEnvKeys(ctx.clientDir));
   const fonts = await timed("selfHostPageFonts", () => selfHostPageFonts(ctx));
-  const serverCopies = await timed("serverCopies", () => buildServerCopies(ctx.paths, ctx.compat));
+  const serverCopies = await timed(
+    "serverCopies",
+    () => buildServerCopies(ctx.paths, ctx.compat, ctx.css?.importMap),
+  );
   await timed(
     "swapAndWriteManifest",
     () => swapAndWriteManifest(ctx, buildManifestFor(ctx, publicEnvKeys, fonts, serverCopies)),

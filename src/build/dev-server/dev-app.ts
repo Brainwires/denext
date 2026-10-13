@@ -9,6 +9,7 @@ import { applyPlugins, getPluginRequestHandler, runPluginPrepareSteps } from "..
 import { withBuildDirLock } from "../project-locks.ts";
 import { resolveDefaultCacheStore } from "../../server/cache.ts";
 import { installLiveHub } from "../../server/live.ts";
+import { resolveLimitPolicy } from "../../server/remote-addr.ts";
 import {
   type HeaderRule,
   type RedirectRule,
@@ -24,7 +25,7 @@ import {
   runRegister,
   setNextRuntimeEnv,
 } from "../../server/instrumentation.ts";
-import { bootScheduledTasks } from "../../server/task-loader.ts";
+import { bootScheduledJobs } from "../../server/job-loader.ts";
 import { clientEntryFor, getMiddleware, styleHrefsFor } from "./bundles.ts";
 import { devOriginAllowed } from "./dev-endpoints.ts";
 import { devActionScope, devBoundaryFor, getManifest } from "./manifest.ts";
@@ -60,11 +61,11 @@ function startInstrumentation(st: DevState, onLoaded: () => void): void {
     st.instrumentation = await loadInstrumentation(st.paths.instrumentationPath);
     onLoaded();
     await runRegister(st.instrumentation);
-    // Discover tasks/ and register cron schedules (dev uses the userland tick unless the dev
+    // Discover jobs/ and register cron schedules (dev uses the userland tick unless the dev
     // server was started with --unstable-cron). The scheduler lives for the dev-server process;
     // `startInstrumentation` runs once per process (no in-process reboot), so the disposer is
     // intentionally not retained.
-    await bootScheduledTasks(st.paths.projectDir, st.paths.config ?? undefined, st.paths.outDir);
+    await bootScheduledJobs(st.paths.projectDir, st.paths.config ?? undefined, st.paths.outDir);
     // Plugin prepare steps (codegen the app imports — e.g. content-collections types + store):
     // set plugins up once (idempotent; the first getManifest is a no-op then) and run them so the
     // generated inputs exist before the first request. A no-op when no plugin registered one.
@@ -136,6 +137,7 @@ export function createDevApp(st: DevState): RequestHandler {
     originAllowed: (req) => devOriginAllowed(req, new URL(req.url), st.allowedDevOrigins),
     config: resolveLive(paths.config),
     trustForwardedHeaders: appConfig.trustForwardedHeaders,
+    limitPolicy: resolveLimitPolicy(appConfig),
   });
   return appHandler;
 }
