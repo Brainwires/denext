@@ -1820,9 +1820,11 @@ and the GET an emailed link opens — implicit fragment or PKCE `?code=`), `rese
 (`scope=local | others | global`), `authorize` (OAuth through the providers you configured; their
 callback stays `{basePath}/callback/:provider`), `user/identities/authorize` and identity
 unlinking, `factors` (TOTP and phone: enroll, challenge, verify, unenroll; `aal2` after a verified
-factor), `settings`, `sso` (SAML 2.0, below), and the admin API — `admin/users` (paginated list,
-create, read, update incl. `ban_duration`, delete), `invite`, `admin/generate_link` and
-`admin/users/:id/factors`. Errors are GoTrue's `{ code, error_code, msg }`, so `supabase-js` raises
+factor), `settings`, `sso` (SAML 2.0, below), `token?grant_type=web3` (Web3 sign-in, below), the
+OAuth 2.1 server (`oauth/*`, `user/oauth/grants`, below), and the admin API — `admin/users`
+(paginated list, create, read, update incl. `ban_duration`, delete), `invite`,
+`admin/generate_link`, `admin/users/:id/factors`, `admin/oauth/clients` and
+`admin/custom-providers`. Errors are GoTrue's `{ code, error_code, msg }`, so `supabase-js` raises
 `AuthApiError` with the same `code`s.
 
 Users gain Supabase's fields on every adapter: `phone`, `userMetadata` / `appMetadata` (free-form
@@ -1855,6 +1857,8 @@ The `/auth/v1` options (`backend({ supabase: { auth } })`):
 | `manualLinking`                    | `true`            | Allow `linkIdentity()`                                                    |
 | `mfa`                              | TOTP              | `{ phone: true }` adds SMS factors; `maxFactors` (10)                     |
 | `saml`                             | none              | SAML SSO: `providers`, `entityId`, `signingKey`, `encryptionKey` (below)  |
+| `oauthServer`                      | off               | `{ authorizationPath?, codeExpiry? }` — the OAuth 2.1 server, below       |
+| `web3`                             | off               | `{ ethereum?: { chainIds?, domains? }, solana?: { domains? }, maxAge? }`  |
 
 ### SAML single sign-on
 
@@ -1951,6 +1955,60 @@ signature when it has one). Without an encryption key an `EncryptedAssertion` is
 (`sp.encryptionKey`), `buildAuthnRequest` (signed with `sp.signingKey`), `buildLogoutRequest`,
 `buildLogoutResponse`, `peekLogoutMessage`, `verifyLogoutRequest` and `verifyLogoutResponse`.
 
+### OAuth 2.1 server
+
+With `oauthServer: {}` your app is an authorization server other apps (an MCP client, a partner's
+web app, a CLI) sign your users in with — Supabase's "OAuth 2.1 server". Register a client with the
+secret key (`supabase.auth.admin.oauth.createClient({ client_name, redirect_uris })`; also
+`listClients`, `getClient`, `updateClient`, `deleteClient`, `regenerateClientSecret`). The client
+sends the user to `/auth/v1/oauth/authorize` (`response_type=code`, `client_id`, `redirect_uri`,
+`scope`, `state`, `code_challenge`, `code_challenge_method=S256`, optional `nonce`); denext sends
+them on to your consent page, `{siteUrl}{authorizationPath}?authorization_id=…` (default
+`/oauth/consent`), which you build with the user's own session:
+
+```ts
+// the consent page (signed in as the user)
+const { data } = await supabase.auth.oauth.getAuthorizationDetails(authorizationId);
+if ("redirect_url" in data) location.assign(data.redirect_url); // already granted
+else {
+  // show data.client.name, data.scope … then:
+  await supabase.auth.oauth.approveAuthorization(authorizationId); // or denyAuthorization
+}
+```
+
+The client exchanges the code at `POST /auth/v1/oauth/token` (`grant_type=authorization_code`, the
+`code_verifier`, client authentication by its registered `token_endpoint_auth_method`:
+`client_secret_basic`, `client_secret_post`, or `none` for a public client) and gets an access
+token — a Supabase JWT with `client_id` and `scope` claims, so RLS can tell a third party's request
+from the user's own — a refresh token (`grant_type=refresh_token`) and, with the `openid` scope, an
+id_token. `GET /auth/v1/oauth/userinfo` answers within the scopes (`openid`, `email`, `profile`,
+`phone`), and `/auth/v1/.well-known/oauth-authorization-server` (and `openid-configuration`)
+describes the server. Users see and revoke their grants with `supabase.auth.oauth.listGrants()` /
+`revokeGrant({ clientId })`.
+
+### Stored providers (`custom:`)
+
+`supabase.auth.admin.customProviders.createProvider({ provider_type, identifier: "custom:acme",
+name, client_id, client_secret, … })` stores an OAuth 2.0 provider (`authorization_url`,
+`token_url`, `userinfo_url`) or an OIDC one (`issuer`; its discovery document is fetched and checked
+when you save it, or give `authorization_url` + `token_url` + `jwks_uri`), with `scopes`,
+`authorization_params`, `attribute_mapping` (`{ sub, email, email_verified, name, picture }` →
+the provider's claim names) and `enabled` / `email_optional`; list, get, update and delete it the
+same way. `signInWithOAuth({ provider: "custom:acme" })` then signs in through it, exactly like a
+configured provider; register `https://<your app>/auth/v1/callback` as its redirect URI.
+`acceptable_client_ids`, `custom_claims_allowlist`, `pkce_enabled` and `skip_nonce_check` are stored
+and returned but not applied: PKCE and the nonce are always used and checked.
+
+### Web3 sign-in
+
+`web3: { ethereum: {}, solana: {} }` turns on `supabase.auth.signInWithWeb3({ chain, wallet })`:
+the wallet signs a Sign-In with Ethereum (EIP-4361) or Sign-In with Solana message, and the user
+whose `web3:ethereum` / `web3:solana` identity is that address is signed in (created on first
+sign-in unless `disableSignup`). Ethereum signatures are verified by recovering the signer
+(secp256k1 and Keccak-256 in denext's own TypeScript; Web Crypto has neither), Solana's with Web
+Crypto's Ed25519. `ethereum.chainIds` restricts the `Chain ID`, `domains` allows message domains
+besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At` may be.
+
 ### Threat notes
 
 - **Keys.** The secret key and the legacy `service_role` JWT bypass row-level security and the
@@ -1991,6 +2049,33 @@ signature when it has one). Without an encryption key an `EncryptedAssertion` is
   adapter so every replica shares the check.
 - **SAML metadata URLs** are fetched SSRF-safely (HTTPS, host-pinned, private addresses refused);
   the metadata's own signature is not checked, so register only URLs of the IdP you trust.
+- **OAuth 2.1 server.** A `redirect_uri` must equal a registered one (a loopback `http:` one may
+  differ only in its port); an unknown client or redirect is answered with an error, never a
+  redirect. PKCE S256 is required of every client. An authorization request is bound to the first
+  signed-in user who opens it and settles once; its code is stored as a hash, single-use and
+  short-lived (`codeExpiry`, 120 seconds), and presenting a used code again revokes the tokens it
+  was exchanged for. Client secrets are 256 random bits stored as a SHA-256, shown only on create
+  and regenerate. Refresh tokens are the same rotating families as first-party sessions (reuse
+  revokes the family) and refresh only for their own client — never at `/token`. Revoking a grant,
+  or deleting a client, revokes every session the client holds at once. A client's access token
+  carries `client_id`: it reads `GET /user` and userinfo, but cannot change the password, factors
+  or identities, list grants or answer a consent request. It is accepted by `auth()`, `db()` and
+  auto-REST like the user's own, so write RLS policies on `auth.jwt() ->> 'client_id'` where a
+  third party should see less.
+- **Stored providers.** The client secret is sealed (AES-256-GCM under a key derived from the auth
+  secret) and never returned. Discovery, token, userinfo and JWKS calls go through the same
+  SSRF-safe, host-pinned fetch as configured providers, and endpoints must be `https:`. A stored
+  provider's flow carries the same signed transaction, `state`, PKCE and OIDC `nonce`.
+- **Web3.** A signature counts only for a message naming this app: its domain is the app's host
+  (or in `domains`), its `URI` the site URL or an allowed redirect URL, `Version` 1, a configured
+  `Chain ID`, `Issued At` neither in the future (30 s of skew) nor older than `maxAge`,
+  `Expiration Time` / `Not Before` honored. The nonce — or the whole message when it has none — is
+  claimed once in the adapter, so a captured signature can't be replayed. Ethereum signatures with
+  a high `s` (EIP-2) or a recovery id other than 27 / 28 are refused, and a mixed-case address
+  must carry its EIP-55 checksum. The app's host is the site URL's: set `siteUrl` or the auth
+  `canonicalOrigin` in production, or it is the request's own `Host`. Wallet phishing is out of
+  scope: a user who signs a message for another site's domain is refused here, but the wallet is
+  what shows them the domain.
 
 ## Security notes
 

@@ -11,6 +11,8 @@ import {
 } from "@std/assert";
 import type { AuthAdapter } from "../src/server/auth/adapter.ts";
 import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
+import type { AuthConfig } from "../src/server/auth/types.ts";
+import { OAUTH_FLOWS } from "./_supabase-auth-flows-oauth.ts";
 import {
   memoryStorage,
   ORIGIN,
@@ -39,7 +41,7 @@ function lastCode(app: SupabaseAuthApp): string {
   return email.token;
 }
 
-const FLOWS: Array<[string, Step, GoTrueOptions?]> = [
+const FLOWS: Array<[string, Step, GoTrueOptions?, Partial<AuthConfig>?]> = [
   ["settings, health and the API-key gate", async (app) => {
     const res = await app.fetch(`${ORIGIN}/auth/v1/settings`, {
       headers: { apikey: app.publishableKey },
@@ -645,9 +647,9 @@ export async function runFlows(
   adapter: () => AuthAdapter | Promise<AuthAdapter>,
   cleanup?: () => Promise<void>,
 ): Promise<void> {
-  for (const [name, step, auth] of FLOWS) {
+  for (const [name, step, auth, authConfig] of [...FLOWS, ...OAUTH_FLOWS]) {
     await t.step(name, async () => {
-      const app = await supabaseAuthApp({ adapter: await adapter(), auth });
+      const app = await supabaseAuthApp({ adapter: await adapter(), auth, authConfig });
       try {
         await step(app);
       } finally {

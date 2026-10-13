@@ -183,9 +183,10 @@ browser, and `db()` reads it on the server. Providers and the adapter are config
 
 Or keep your client code: with `backend({ supabase })` the stock supabase-js `supabase.auth.*`
 calls above work unchanged against `/auth/v1` — password, OTP / magic link, phone, anonymous,
-OAuth with your `denextAuth()` providers, MFA, SAML SSO (with Single Logout, encrypted assertions
-and the `admin/sso/providers` API) and the admin API — over the same users
-the cookie sign-in uses. See [Supabase clients](/docs/auth#supabase-clients-auth-v1).
+OAuth with your `denextAuth()` providers or stored `custom:` providers, Web3 (`signInWithWeb3`),
+MFA, SAML SSO (with Single Logout, encrypted assertions and the `admin/sso/providers` API), the
+OAuth 2.1 server (`supabase.auth.oauth.*`, `admin.oauth.*`) and the admin API — over the same
+users the cookie sign-in uses. See [Supabase clients](/docs/auth#supabase-clients-auth-v1).
 
 ### Storage: upload and signed URLs
 

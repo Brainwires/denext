@@ -25,6 +25,9 @@ import { setGoTrueOAuthCallback } from "../routes-oauth.ts";
 import * as ssoRoutes from "./routes-sso.ts";
 import * as ssoAdminRoutes from "./routes-sso-admin.ts";
 import { slo } from "./routes-slo.ts";
+import * as clientRoutes from "./routes-oauth-clients.ts";
+import * as oauthServerRoutes from "./routes-oauth-server.ts";
+import * as customProviderRoutes from "./custom-providers.ts";
 
 /** How one route is reached. */
 interface Route {
@@ -34,6 +37,48 @@ interface Route {
   /** Who may call it: a client (`apikey`), nobody special (a browser navigation), the admin. */
   access: "apikey" | "open" | "admin";
 }
+
+/** Route shorthand. */
+const route = (
+  method: string,
+  pattern: string,
+  handler: Route["handler"],
+  access: Route["access"],
+): Route => ({ method, pattern, handler, access });
+
+/** The OAuth 2.1 server, its client admin API, and the stored-provider admin API. */
+const OAUTH_SERVER_ROUTES: Route[] = [
+  route("GET", "/oauth/authorize", oauthServerRoutes.oauthAuthorize, "open"),
+  route("POST", "/oauth/token", oauthServerRoutes.oauthToken, "open"),
+  route("GET", "/oauth/userinfo", oauthServerRoutes.userinfo, "open"),
+  route("GET", "/.well-known/oauth-authorization-server", oauthServerRoutes.oauthMetadata, "open"),
+  route("GET", "/.well-known/openid-configuration", oauthServerRoutes.oauthMetadata, "open"),
+  route("GET", "/oauth/authorizations/:id", oauthServerRoutes.getAuthorization, "apikey"),
+  route("POST", "/oauth/authorizations/:id/consent", oauthServerRoutes.consent, "apikey"),
+  route("GET", "/user/oauth/grants", oauthServerRoutes.listGrants, "apikey"),
+  route("DELETE", "/user/oauth/grants", oauthServerRoutes.revokeGrant, "apikey"),
+  route("GET", "/admin/oauth/clients", clientRoutes.listClients, "admin"),
+  route("POST", "/admin/oauth/clients", clientRoutes.createClient, "admin"),
+  route("GET", "/admin/oauth/clients/:id", clientRoutes.getClient, "admin"),
+  route("PUT", "/admin/oauth/clients/:id", clientRoutes.updateClient, "admin"),
+  route("DELETE", "/admin/oauth/clients/:id", clientRoutes.deleteClient, "admin"),
+  route(
+    "POST",
+    "/admin/oauth/clients/:id/regenerate_secret",
+    clientRoutes.regenerateSecret,
+    "admin",
+  ),
+  route("GET", "/admin/custom-providers", customProviderRoutes.listProviders, "admin"),
+  route("POST", "/admin/custom-providers", customProviderRoutes.createProvider, "admin"),
+  route("GET", "/admin/custom-providers/:identifier", customProviderRoutes.getProvider, "admin"),
+  route("PUT", "/admin/custom-providers/:identifier", customProviderRoutes.updateProvider, "admin"),
+  route(
+    "DELETE",
+    "/admin/custom-providers/:identifier",
+    customProviderRoutes.deleteProvider,
+    "admin",
+  ),
+];
 
 const ROUTES: Route[] = [
   { method: "GET", pattern: "/health", handler: health, access: "open" },
@@ -241,6 +286,14 @@ const ROUTES: Route[] = [
     handler: ssoAdminRoutes.remove,
     access: "admin",
   },
+  // A stored (`custom:`) provider's redirect back.
+  {
+    method: "GET",
+    pattern: "/callback",
+    handler: oauthRoutes.storedProviderCallback,
+    access: "open",
+  },
+  ...OAUTH_SERVER_ROUTES,
 ];
 
 function health(): Response {

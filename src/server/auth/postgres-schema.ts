@@ -14,6 +14,7 @@ import {
 } from "../postgres.ts";
 import { migratePostgres, type Migration } from "../postgres-migrate.ts";
 import { inRootContext } from "../root-context.ts";
+import { oauthServerPostgresSql } from "./sql-adapter-oauth-server.ts";
 
 /** The tracking table of the auth migrations. */
 const AUTH_MIGRATIONS_TABLE = "auth_migrations";
@@ -131,6 +132,11 @@ CREATE TABLE IF NOT EXISTS ${p}auth_saml_message_ids (
   id TEXT PRIMARY KEY, expires_at BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS auth_saml_message_ids_expiry ON ${p}auth_saml_message_ids (expires_at);
 `,
+  }, {
+    // The /auth/v1 OAuth 2.1 server (clients, authorizations, consents, the session families a
+    // client holds), stored OAuth / OIDC providers and Web3 sign-in nonces.
+    name: "0005_auth_oauth_server",
+    sql: oauthServerPostgresSql(p),
   }];
 }
 

@@ -67,6 +67,7 @@ import {
   startSession,
 } from "./session.ts";
 import { promoteAnonymous } from "./routes-user.ts";
+import { web3Grant } from "./routes-web3.ts";
 import { userJson } from "./user.ts";
 
 /** Whether an email still needs confirming before sign-in. */
@@ -253,6 +254,8 @@ export async function token(ctx: GoTrueContext): Promise<Response> {
       return ok(await pkceGrant(ctx, body));
     case "id_token":
       return ok(await idTokenGrant(ctx, body));
+    case "web3":
+      return ok(await web3Grant(ctx, body));
     default:
       throw new GoTrueError(400, "validation_failed", "unsupported_grant_type");
   }

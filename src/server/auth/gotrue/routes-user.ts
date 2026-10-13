@@ -37,7 +37,7 @@ import { identitiesOf, userJson } from "./user.ts";
 
 /** `GET /user`. */
 export async function getUser(ctx: GoTrueContext): Promise<Response> {
-  const { user } = await requireUser(ctx);
+  const { user } = await requireUser(ctx, { allowOAuthClient: true });
   return ok(await userJson(ctx.adapter, user, { factors: await factorsJson(ctx.config, user.id) }));
 }
 

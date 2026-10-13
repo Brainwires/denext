@@ -591,6 +591,18 @@ export type {
   VerificationTokenRecord,
   VerificationTokenRef,
 } from "./auth/adapter.ts";
+export type {
+  CustomProviderAdapter,
+  CustomProviderRecord,
+  OAuthAuthorizationExpect,
+  OAuthAuthorizationPatch,
+  OAuthAuthorizationRecord,
+  OAuthClientRecord,
+  OAuthConsentRecord,
+  OAuthServerAdapter,
+  OAuthSessionLink,
+  Web3NonceAdapter,
+} from "./auth/adapter-oauth-server.ts";
 // Brute-force protection for the credentials endpoint (`AuthConfig.rateLimit`).
 export { inMemoryRateLimitStore } from "./auth/rate-limit.ts";
 export type {
@@ -646,11 +658,13 @@ export type {
   GoTrueAccessTokenHookInput,
   GoTrueCaptchaOptions,
   GoTrueHooks,
+  GoTrueOAuthServerOptions,
   GoTrueOptions,
   GoTrueSamlOptions,
   GoTrueSamlProvider,
   GoTrueSendEmailPayload,
   GoTrueSmsMessage,
+  GoTrueWeb3Options,
 } from "./auth/gotrue/options.ts";
 export type { InMemorySessionStoreOptions, SessionStore } from "./auth/session-store.ts";
 export { sqliteSessionStore } from "./auth/sqlite-session-store.ts";

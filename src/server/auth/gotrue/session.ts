@@ -78,6 +78,16 @@ interface GoTrueSnapshot {
    * cookie session still owing its second factor.
    */
   pending?: true;
+  /** A session issued to an OAuth client (`/oauth/token`): the client and the granted scopes. */
+  oauth?: OAuthGrantRef;
+}
+
+/** The OAuth client a session was issued to, and the scopes it may use. */
+export interface OAuthGrantRef {
+  /** The client id. */
+  clientId: string;
+  /** The granted scopes, space-separated. */
+  scope: string;
 }
 
 /** Everything the session functions need. */
@@ -100,6 +110,8 @@ export interface GoTrueSessionJson {
   expires_at: number;
   refresh_token: string;
   user: Record<string, unknown>;
+  /** The granted scopes, for a session issued to an OAuth client. */
+  scope?: string;
 }
 
 const now = (): number => Math.floor(Date.now() / 1000);
@@ -199,6 +211,8 @@ async function mintAccessToken(
     aal: snapshot.aal,
     session_id: family.id,
     is_anonymous: user.isAnonymous === true,
+    // An OAuth client's token says whose it is and what it may do; the hook can't change that.
+    ...(snapshot.oauth ? { client_id: snapshot.oauth.clientId, scope: snapshot.oauth.scope } : {}),
   };
   let claims: Record<string, unknown> = {
     iss: ctx.issuer,
@@ -258,6 +272,7 @@ async function sessionJson(
     user: await userJson(ctx.config.adapter!, user, {
       factors: await factorsJson(ctx.config, user.id),
     }),
+    ...(snapshot.oauth ? { scope: snapshot.oauth.scope } : {}),
   };
 }
 
@@ -305,6 +320,7 @@ export async function ssoOriginOf(
  * @param user The user.
  * @param amr How they authenticated.
  * @param sso The SAML origin, for a SAML sign-in (kept for Single Logout).
+ * @param oauth For a session issued to an OAuth client: the client and the granted scopes.
  * @returns The session response.
  * @throws {GoTrueError} `user_banned` for a banned user.
  */
@@ -313,8 +329,9 @@ export function startSession(
   user: AdapterUser,
   amr: AmrEntry,
   sso?: SsoSessionInfo,
+  oauth?: OAuthGrantRef,
 ): Promise<GoTrueSessionJson> {
-  return startSessionWithAal(ctx, user, amr, "aal1", sso);
+  return startSessionWithAal(ctx, user, amr, "aal1", sso, oauth);
 }
 
 /**
@@ -326,6 +343,8 @@ export function startSession(
  * @param amr How they authenticated.
  * @param aal The level the sign-in reached.
  * @param sso The SAML origin, for a SAML sign-in (kept for Single Logout).
+ * @param oauth For a session issued to an OAuth client: the client and the granted scopes. It
+ *   never owes a second factor — the consent it was issued on needed a complete session.
  * @returns The session response.
  * @throws {GoTrueError} `user_banned` for a banned user.
  */
@@ -335,12 +354,13 @@ export async function startSessionWithAal(
   amr: AmrEntry,
   aal: "aal1" | "aal2",
   sso?: SsoSessionInfo,
+  oauth?: OAuthGrantRef,
 ): Promise<GoTrueSessionJson> {
   if (isBanned(user)) throw new GoTrueError(400, "user_banned", "User is banned");
   const at = now();
   const adapter = ctx.config.adapter!;
   const updated = await adapter.updateUser({ id: user.id, lastSignInAt: at });
-  const owed = aal === "aal1" && await mfaPendingFor(ctx.config, toAuthUser(updated));
+  const owed = aal === "aal1" && !oauth && await mfaPendingFor(ctx.config, toAuthUser(updated));
   const snapshot: GoTrueSnapshot = {
     gotrue: 1,
     user: { id: user.id },
@@ -349,6 +369,7 @@ export async function startSessionWithAal(
     aal,
     ...(owed ? { pending: true as const } : {}),
     ...(sso && { sso }),
+    ...(oauth ? { oauth } : {}),
   };
   const family: NativeSessionRecord = {
     id: crypto.randomUUID(),
@@ -411,13 +432,16 @@ const notFound = () =>
  *
  * @param ctx The session context.
  * @param presented The refresh token.
+ * @param clientId The OAuth client refreshing (`/oauth/token`); without one only a first-party
+ *   session refreshes, so an OAuth client's refresh token never works at `/token`.
  * @returns The new session.
- * @throws {GoTrueError} `refresh_token_not_found` (unknown, forged, revoked, expired) or
- *   `refresh_token_already_used` (a replay — the session is revoked).
+ * @throws {GoTrueError} `refresh_token_not_found` (unknown, forged, revoked, expired, another
+ *   client's) or `refresh_token_already_used` (a replay — the session is revoked).
  */
 export async function refreshSession(
   ctx: SessionContext,
   presented: string,
+  clientId?: string,
 ): Promise<GoTrueSessionJson> {
   const match = REFRESH_RE.exec(presented);
   if (!match) throw notFound();
@@ -427,6 +451,7 @@ export async function refreshSession(
   const family = await families.getNativeSession(familyId);
   const snapshot = family && parseSnapshot(family.session);
   if (!family || !snapshot || generation > family.generation) throw notFound();
+  if (snapshot.oauth?.clientId !== clientId) throw notFound();
   const genuine = await hmacVerify(
     refreshInput(family, generation),
     mac,

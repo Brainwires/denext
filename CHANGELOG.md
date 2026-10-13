@@ -81,6 +81,24 @@ and this project adheres to
   factor alone never adds a factor of its own. A repeated `/auth/v1` sign-up for an unconfirmed
   address keeps the account's password only when it is the same one; a different one clears it
   (the newest confirmation goes to the owner, who sets a password after confirming).
+- **`/auth/v1`: the OAuth 2.1 server, stored providers and Web3 sign-in.** `oauthServer: {}` makes
+  the app an authorization server: `supabase.auth.admin.oauth.*` registers clients (secrets shown
+  once, stored hashed), `/oauth/authorize` sends the user to your consent page, which answers with
+  `supabase.auth.oauth.getAuthorizationDetails` / `approveAuthorization` / `denyAuthorization`,
+  and `/oauth/token` issues access tokens carrying `client_id` and `scope`, rotating refresh
+  tokens and (with `openid`) an id_token — exact redirect matching, PKCE S256 required,
+  single-use hashed codes whose replay revokes their tokens, consent recorded per user and client,
+  `listGrants` / `revokeGrant` (revoking ends the client's tokens), userinfo and
+  `.well-known/oauth-authorization-server`. `supabase.auth.admin.customProviders.*` stores OAuth
+  2.0 / OIDC providers (secret sealed at rest, OIDC discovery checked when saved) that
+  `signInWithOAuth({ provider: "custom:<name>" })` signs in through, via `/auth/v1/callback`.
+  `web3: { ethereum?, solana? }` turns on `signInWithWeb3`: Sign-In with Ethereum (secp256k1
+  recovery and Keccak-256 in denext's own TypeScript; low-s, EIP-55) and Sign-In with Solana
+  (Ed25519), with the message's domain, URI, chain id and time window checked and its nonce
+  claimed once. New optional adapter groups (OAuth clients / authorizations / consents, stored
+  providers, Web3 nonces) on the in-memory, SQLite and Postgres adapters (Postgres migration
+  `0005_auth_oauth_server`). Tested with `@supabase/supabase-js` on the in-memory adapter and on
+  Postgres.
 - **Auth adapters keep Supabase's user fields.** `AdapterUser` gains `phone`, `phoneVerified`,
   `userMetadata`, `appMetadata`, `isAnonymous`, `createdAt`, `updatedAt`, `lastSignInAt` and
   `bannedUntil`; `AdapterAccount` gains `identityId`, `identityData`, `email` and timestamps; new

@@ -47,6 +47,7 @@ import type {
 import { pageWindow } from "./adapter-rows.ts";
 import { emailKey } from "./email-key.ts";
 import { constantTimeEqualHex } from "./hash.ts";
+import { memoryOAuthServerGroups } from "./memory-adapter-oauth-server.ts";
 import { inMemorySessionStore, type SessionStore } from "./session-store.ts";
 import { type MemorySsoGroup, memorySsoGroup } from "./memory-sso.ts";
 
@@ -692,6 +693,12 @@ function closeState(state: MemoryState): void {
  */
 export function inMemoryAuthAdapter(options: InMemoryAuthAdapterOptions = {}): AuthAdapter {
   const state = createState(options);
+  // The /auth/v1 OAuth server, stored providers and Web3 nonces.
+  const { forgetOAuthUser, clearOAuthServer, ...oauthServer } = memoryOAuthServerGroups(
+    options.maxUsers ?? DEFAULT_MAX_ENTRIES,
+    state.now,
+  );
+  const { deleteUser } = deletionMethods(state);
   return {
     ...userMethods(state),
     ...accountMethods(state),
@@ -700,14 +707,21 @@ export function inMemoryAuthAdapter(options: InMemoryAuthAdapterOptions = {}): A
     ...apiTokenMethods(state),
     ...mfaMethods(state),
     ...nativeMethods(state),
-    ...deletionMethods(state),
+    async deleteUser(id) {
+      forgetOAuthUser(id);
+      await deleteUser!(id);
+    },
     // Passkeys: credential records + single-use challenges.
     ...passkeyMethods(state),
     // The /auth/v1 MFA factors.
     ...factorMethods(state),
     // The /auth/v1 SAML SSO providers, session origins and message ids.
     ...state.sso.methods,
+    ...oauthServer,
     sessions: state.sessions,
-    close: () => closeState(state),
+    close: () => {
+      clearOAuthServer();
+      closeState(state);
+    },
   };
 }

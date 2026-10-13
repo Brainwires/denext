@@ -41,7 +41,9 @@ import {
 } from "../routes-shared.ts";
 import { isOAuthProvider, type OAuthProvider } from "../types.ts";
 import { linkIdentity as storeIdentity } from "./accounts.ts";
+import { isStoredProvider, storedProvider } from "./custom-providers.ts";
 import {
+  GOTRUE_PREFIX,
   type GoTrueContext,
   nowSeconds,
   ok,
@@ -71,6 +73,28 @@ function stateHash(state: string): Promise<string> {
   return sha256Hex(`gotrue-oauth:${state}`);
 }
 
+/**
+ * Where the provider sends the browser back: denext's `{basePath}/callback/:provider` for a
+ * configured provider, `/auth/v1/callback` (GoTrue's own) for a stored one.
+ */
+function redirectUriFor(route: AuthRouteContext, provider: OAuthProvider): string {
+  return isStoredProvider(provider)
+    ? absoluteUrl(route.request, `${GOTRUE_PREFIX}/callback`, {
+      canonicalOrigin: route.config.canonicalOrigin,
+    })
+    : callbackUri(route, provider.id);
+}
+
+/** A configured OAuth provider, or a stored `custom:` one. */
+async function oauthProviderOf(
+  ctx: GoTrueContext,
+  providerId: string,
+): Promise<OAuthProvider | undefined> {
+  const configured = findProvider(ctx.config, providerId);
+  if (configured) return isOAuthProvider(configured) ? configured : undefined;
+  return providerId.startsWith("custom:") ? await storedProvider(ctx, providerId) : undefined;
+}
+
 /** Start a provider round-trip for `/authorize` or a link. */
 async function start(
   ctx: GoTrueContext,
@@ -79,8 +103,8 @@ async function start(
   await spendIp(ctx, signinStartLimiter(ctx.config), "authorize");
   const params = ctx.url.searchParams;
   const providerId = params.get("provider") ?? "";
-  const provider = findProvider(ctx.config, providerId);
-  if (!provider || !isOAuthProvider(provider)) {
+  const provider = await oauthProviderOf(ctx, providerId);
+  if (!provider) {
     throw new GoTrueError(
       400,
       "validation_failed",
@@ -95,7 +119,10 @@ async function start(
   const route = routeContext(ctx, provider.id);
   const endpoints = await endpointsFor(route, provider);
   const pkce = await generatePkce();
-  const state = randomToken();
+  // A stored provider's callback is the shared `/auth/v1/callback`: its state names it.
+  const state = isStoredProvider(provider)
+    ? `${provider.id.slice("custom:".length)}.${randomToken()}`
+    : randomToken();
   const nonce = provider.type === "oidc" ? randomToken() : undefined;
   const tx: Transaction = {
     provider: provider.id,
@@ -124,7 +151,7 @@ async function start(
     url: buildAuthorizationUrl({
       authorizationUrl: endpoints.authorizationUrl,
       clientId: provider.clientId,
-      redirectUri: callbackUri(route, provider.id),
+      redirectUri: redirectUriFor(route, provider),
       scope: scopes.join(" "),
       state,
       codeChallenge: pkce.challenge,
@@ -267,7 +294,7 @@ export function gotrueOAuthCallback(deps: GoTrueCallbackDeps) {
       const result = await fetchOAuthProfile(ctx, provider, {
         code,
         tx: flow,
-        redirectUri: callbackUri(ctx, provider.id),
+        redirectUri: redirectUriFor(ctx, provider),
         callbackParams,
       });
       if (!result.profile.id) throw new Error("provider profile had no id");
@@ -415,4 +442,28 @@ async function signInUser(
     userMetadata: { ...link.identityData, ...(user.userMetadata ?? {}) },
     updatedAt: nowSeconds(),
   });
+}
+
+/**
+ * `GET /callback` — a stored (`custom:`) provider's redirect back: the state names the provider,
+ * and the flow finishes exactly as a configured provider's does.
+ *
+ * @param ctx The context.
+ * @returns The redirect to `redirect_to` (tokens, a code, or an error).
+ */
+export async function storedProviderCallback(ctx: GoTrueContext): Promise<Response> {
+  const params = ctx.url.searchParams;
+  const name = (params.get("state") ?? "").split(".")[0];
+  const provider = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/.test(name)
+    ? await storedProvider(ctx, `custom:${name}`)
+    : undefined;
+  const handled = provider
+    ? await gotrueOAuthCallback({ session: () => ctx.session })(
+      routeContext(ctx, provider.id),
+      provider,
+      params,
+    )
+    : null;
+  return handled ??
+    refuse(ctx.siteUrl, false, "bad_oauth_state", "OAuth callback with invalid state");
 }

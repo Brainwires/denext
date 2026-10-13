@@ -127,11 +127,19 @@ export interface CallerUser {
 /**
  * The calling user: a valid access token whose session is live and whose user exists.
  *
+ * An access token issued to an OAuth client (it carries `client_id`) acts for the user only
+ * where `allowOAuthClient` says so: a third-party app must not change the user's password,
+ * factors or identities, approve its own consent, or list the user's grants.
+ *
  * @param ctx The context.
+ * @param options `allowOAuthClient` — accept an OAuth client's token (`GET /user`, userinfo).
  * @returns The caller.
  * @throws {GoTrueError} `no_authorization` / `bad_jwt` / `session_not_found` / `user_not_found`.
  */
-export async function requireUser(ctx: GoTrueContext): Promise<CallerUser> {
+export async function requireUser(
+  ctx: GoTrueContext,
+  options: { allowOAuthClient?: boolean } = {},
+): Promise<CallerUser> {
   const token = bearerOf(ctx.request);
   if (!token || !looksLikeJwt(token)) throw fail.noAuthorization();
   let claims: SupabaseJwtClaims;
@@ -148,6 +156,9 @@ export async function requireUser(ctx: GoTrueContext): Promise<CallerUser> {
     throw fail.badJwt(error instanceof SupabaseKeyError ? error.message : undefined);
   }
   if (claims.role !== "authenticated") throw fail.badJwt("invalid JWT: not a user token");
+  if (claims.client_id !== undefined && !options.allowOAuthClient) {
+    throw fail.badJwt("invalid JWT: an OAuth client's token cannot call this endpoint");
+  }
   const user = await ctx.adapter.getUser(claims.sub!);
   if (!user) {
     throw new GoTrueError(403, "user_not_found", "User from sub claim in JWT does not exist");

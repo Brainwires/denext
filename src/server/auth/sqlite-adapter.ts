@@ -46,6 +46,11 @@ import type {
 } from "./adapter.ts";
 import type { SsoMethods } from "./memory-sso.ts";
 import { emailKey } from "./email-key.ts";
+import {
+  OAUTH_SERVER_SQLITE_TABLES,
+  OAUTH_SERVER_USER_TABLES,
+  sqlOAuthServerGroups,
+} from "./sql-adapter-oauth-server.ts";
 import { sqliteSessionStore } from "./sqlite-session-store.ts";
 import {
   ACCOUNT_MAP,
@@ -328,6 +333,8 @@ const SCHEMA: TableSpec[] = [
         "ON auth_passkey_challenges (expires_at)",
     }],
   },
+  // The /auth/v1 OAuth server, stored providers and Web3 nonces.
+  ...OAUTH_SERVER_SQLITE_TABLES,
 ];
 
 /** The SAML SSO tables of `/auth/v1`: providers, their domains, session origins, message ids. */
@@ -1135,6 +1142,7 @@ const USER_TABLES = [
   "auth_native_sessions",
   "auth_passkeys",
   "auth_sso_sessions",
+  ...OAUTH_SERVER_USER_TABLES,
 ];
 
 /**
@@ -1248,6 +1256,11 @@ export function sqliteAuthAdapter(options: SqliteAuthAdapterOptions = {}): AuthA
     ...nativeMethods(state),
     ...passkeyMethods(state),
     ...ssoMethods(state),
+    ...sqlOAuthServerGroups({
+      rows: (sql, params) => Promise.resolve(state.db().query(sql, params as SqlValue[])),
+      table: (name) => name,
+      now: state.now,
+    }),
     async deleteUser(id) {
       deleteUserRows(state, id);
       await sessions.deleteByUser(id);

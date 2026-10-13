@@ -157,6 +157,14 @@ export interface GoTrueOptions {
   idTokenProviders?: { google?: NativeIdTokenProviderConfig; apple?: NativeIdTokenProviderConfig };
   /** SAML 2.0 single sign-on (`signInWithSSO`, the SSO admin API, Single Logout). */
   saml?: GoTrueSamlOptions;
+  /**
+   * The OAuth 2.1 authorization server (`supabase.auth.admin.oauth.*`, `supabase.auth.oauth.*`,
+   * `/oauth/authorize`, `/oauth/token`): other apps sign your users in and act for them with
+   * their consent. Off unless set.
+   */
+  oauthServer?: GoTrueOAuthServerOptions;
+  /** Web3 sign-in (`signInWithWeb3`): off unless a chain is configured. */
+  web3?: GoTrueWeb3Options;
 }
 
 /** The `/auth/v1` SAML 2.0 options. */
@@ -185,4 +193,35 @@ export interface GoTrueSamlOptions {
   encryptionKey?: SamlPrivateKey;
   /** The X.509 certificate (PEM) of {@linkcode encryptionKey}, published `use="encryption"`. */
   encryptionCertificate?: string;
+}
+
+/** {@linkcode GoTrueOptions.oauthServer}. */
+export interface GoTrueOAuthServerOptions {
+  /**
+   * The app's consent page — a path below the site URL or an absolute URL. `/oauth/authorize`
+   * sends the user there with `?authorization_id=…`; the page calls
+   * `supabase.auth.oauth.getAuthorizationDetails()` and `approveAuthorization()` /
+   * `denyAuthorization()`. Default `/oauth/consent`.
+   */
+  authorizationPath?: string;
+  /** Seconds an authorization code stays redeemable (default 120, at most 600). */
+  codeExpiry?: number;
+}
+
+/** {@linkcode GoTrueOptions.web3}. */
+export interface GoTrueWeb3Options {
+  /** Sign-In with Ethereum (EIP-4361). */
+  ethereum?: {
+    /** The EIP-155 chain ids a message may name (default: any). */
+    chainIds?: number[];
+    /** Hosts a message's domain may name besides the app's own. */
+    domains?: string[];
+  };
+  /** Sign-In with Solana. */
+  solana?: {
+    /** Hosts a message's domain may name besides the app's own. */
+    domains?: string[];
+  };
+  /** Seconds a signed message stays acceptable after its `Issued At` (default 600). */
+  maxAge?: number;
 }

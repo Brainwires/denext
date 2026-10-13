@@ -50,6 +50,12 @@ import {
 import { emailKey } from "./email-key.ts";
 import { type AuthDb, authDb, type PostgresAuthStoreOptions } from "./postgres-schema.ts";
 import { pgSessionStore } from "./postgres-session-store.ts";
+import {
+  numberPlaceholders,
+  OAUTH_SERVER_USER_TABLES,
+  type SqlOAuthServerGroups,
+  sqlOAuthServerGroups,
+} from "./sql-adapter-oauth-server.ts";
 import { type SqlClient, type SqlRow, toNumber } from "../postgres.ts";
 
 /** Options for {@linkcode postgresAuthAdapter}. */
@@ -483,6 +489,7 @@ const USER_TABLES = [
   "auth_passkeys",
   "auth_sessions",
   "auth_sso_sessions",
+  ...OAUTH_SERVER_USER_TABLES,
 ];
 
 /**
@@ -690,6 +697,15 @@ function ssoMethods(db: Pg): SsoMethods {
   };
 }
 
+/** The `/auth/v1` OAuth server, stored providers and Web3 nonces (shared SQL). */
+function oauthServerMethods(db: Pg): SqlOAuthServerGroups {
+  return sqlOAuthServerGroups({
+    rows: (text, params) => db.rows(numberPlaceholders(text), params),
+    table: db.t,
+    now: db.now,
+  });
+}
+
 /** Every method group, in the order the contract lists them. */
 const GROUPS = [
   userMethods,
@@ -700,6 +716,7 @@ const GROUPS = [
   nativeMethods,
   passkeyMethods,
   ssoMethods,
+  oauthServerMethods,
 ];
 
 /**

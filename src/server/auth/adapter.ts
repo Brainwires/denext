@@ -15,11 +15,17 @@
  *   and gates the feature that needs it (verification tokens gate email verification /
  *   password reset / magic links, `getCredential`/`setCredential` gate first-party
  *   password storage, the api-token group gates bearer tokens, the MFA group gates TOTP,
- *   the passkey group gates WebAuthn).
+ *   the passkey group gates WebAuthn, and the groups in `./adapter-oauth-server.ts` gate the
+ *   `/auth/v1` OAuth 2.1 server, stored providers and Web3 sign-in).
  *
  * @module
  */
 
+import type {
+  CustomProviderAdapter,
+  OAuthServerAdapter,
+  Web3NonceAdapter,
+} from "./adapter-oauth-server.ts";
 import type { SessionStore } from "./session-store.ts";
 
 /** A value an adapter may return directly or as a promise. */
@@ -390,7 +396,7 @@ export interface VerificationTokenRef {
  * {@linkcode AuthAdapter.updatePasskey} (compare-and-swap on the counter). A non-atomic
  * implementation turns each of them into a replay window.
  */
-export interface AuthAdapter {
+export interface AuthAdapter extends OAuthServerAdapter, CustomProviderAdapter, Web3NonceAdapter {
   // ---- users (required) ----------------------------------------------------
 
   /**

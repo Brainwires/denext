@@ -14,6 +14,7 @@ import type {
   VerificationTokenRef,
 } from "../../src/server/auth/adapter.ts";
 import type { AuthSession } from "../../src/server/auth/types.ts";
+import { OAUTH_SERVER_CASES } from "./auth-adapter-contract-oauth-server.ts";
 
 /** One contract case: exercise a fresh adapter, throw to fail. */
 type Case = (adapter: AuthAdapter) => Promise<void>;
@@ -932,4 +933,5 @@ export async function adapterContract(
   await runCases(t, make, PROFILE_CASES);
   await runCases(t, make, SSO_CASES);
   await runCases(t, make, LIFECYCLE_CASES);
+  await runCases(t, make, OAUTH_SERVER_CASES);
 }
