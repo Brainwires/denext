@@ -32,6 +32,7 @@ import { migratePostgres } from "../src/server/postgres-migrate.ts";
 import { rlsMigrations } from "../packages/backend/src/rls.ts";
 import { realtimeMigrations } from "../packages/backend/src/realtime-sql.ts";
 import { postgresEnvironment } from "./helpers/postgres-env.ts";
+import { type ClientSocket, RealtimeClient } from "../packages/backend/src/realtime-client.ts";
 import { cookieFor, settle, until } from "./helpers/realtime-harness.ts";
 
 const URL_ = Deno.env.get("DENEXT_TEST_POSTGRES_URL") || undefined;
@@ -94,6 +95,15 @@ const DDL = `
     using (realtime.topic() = 'private-' || auth.uid()::text or realtime.topic() = 'logs');
   create policy "own topic write" on realtime.messages for insert to authenticated
     with check (realtime.topic() = 'private-' || auth.uid()::text);
+  -- Opted in the Supabase way: by the publication, not realtime({ tables }).
+  create table pubnotes (id int primary key, body text not null);
+  grant select on pubnotes to anon, authenticated;
+  create schema app;
+  grant usage on schema app to anon, authenticated;
+  create table app.things (id int primary key, label text not null);
+  alter table app.things replica identity full;
+  grant select on app.things to anon, authenticated;
+  alter publication supabase_realtime add table pubnotes, app.things;
 `;
 
 /** A replica process. */
@@ -105,14 +115,17 @@ interface Replica {
   kill(): Promise<void>;
 }
 
-async function replica(url: string): Promise<Replica> {
+async function replica(
+  url: string,
+  realtime: Record<string, unknown> = REALTIME,
+): Promise<Replica> {
   const script = new URL("./helpers/realtime-replica.ts", import.meta.url).pathname;
   const config = new URL("../deno.json", import.meta.url).pathname;
   const child = new Deno.Command(Deno.execPath(), {
     args: ["run", "-A", "--config", config, script],
     env: {
       REPLICA_DB_URL: url,
-      REPLICA_REALTIME: JSON.stringify(REALTIME),
+      REPLICA_REALTIME: JSON.stringify(realtime),
       REPLICA_SUPABASE: JSON.stringify(KEYS_CONFIG),
     },
     stdin: "piped",
@@ -228,7 +241,9 @@ Deno.test({
       // The realtime schema now (the policies below are on realtime.messages); the tables'
       // triggers come with the replicas' own migration, once the tables exist.
       await migratePostgres(env.app, {
-        migrations: realtimeMigrations(REALTIME as never).slice(0, 5),
+        migrations: realtimeMigrations(REALTIME as never).filter((m) =>
+          !m.name.startsWith("backend_realtime_t_")
+        ),
         table: "backend_migrations",
       });
       await env.app.unsafe(DDL).simple!();
@@ -299,7 +314,7 @@ Deno.test({
         await env.app.unsafe("delete from notes where id = $1", [id]);
         await until(() => seenA.length === 3, 10_000, "the delete");
         assertEquals(seenA[2].eventType, "DELETE");
-        assertEquals(seenA[2].old, { id });
+        assertEquals(seenA[2].old, { id: Number(id) });
         assertEquals(seenB.length, 1, "B: INSERTs only");
 
         // TRUNCATE reaches a subscriber who could see rows of the table (A has one again).
@@ -528,6 +543,151 @@ Deno.test({
         },
       );
 
+      await t.step("the supabase_realtime publication opts tables in, live", async () => {
+        const c = make(r1.origin);
+        const got: Change[] = [];
+        await subscribed(
+          c.channel("published")
+            .on(
+              "postgres_changes",
+              { event: "*", schema: "public", table: "pubnotes" },
+              (p) => got.push(p as unknown as Change),
+            )
+            .on(
+              "postgres_changes",
+              { event: "*", schema: "app", table: "things" },
+              (p) => got.push(p as unknown as Change),
+            ),
+        );
+        await env.app.unsafe("insert into pubnotes values (1, 'x')");
+        await env.app.unsafe("insert into app.things values (1, 'a')");
+        await env.app.unsafe("update app.things set label = 'b' where id = 1");
+        await until(() => got.length === 3, 10_000, "the publication's changes");
+        // In order within a table; two tables' bursts may interleave either way.
+        assertEquals(got.map((p) => `${p.schema}.${p.table}:${p.eventType}`).sort(), [
+          "app.things:INSERT",
+          "app.things:UPDATE",
+          "public.pubnotes:INSERT",
+        ]);
+        const things = got.filter((p) => p.table === "things");
+        assertEquals(
+          things[1].old,
+          { id: 1, label: "a" },
+          "REPLICA IDENTITY FULL, no RLS: the old row",
+        );
+
+        // Added while the app runs: picked up by the next read of the publication.
+        await env.app.unsafe(
+          "create table late (id int primary key); grant select on late to anon, authenticated; " +
+            "alter publication supabase_realtime add table late",
+        ).simple!();
+        await settle(11_000);
+        const late: Change[] = [];
+        await subscribed(
+          make(r2.origin).channel("late")
+            .on(
+              "postgres_changes",
+              { event: "INSERT", schema: "public", table: "late" },
+              (p) => late.push(p as unknown as Change),
+            ),
+        );
+        await env.app.unsafe("insert into late values (7)");
+        await until(() => late.length === 1, 10_000, "the late table's insert");
+        assertEquals(late[0].new, { id: 7 });
+      });
+
+      await t.step("broadcast replay and replication_ready on a private channel", async () => {
+        const tokenA = await accessToken(A);
+        const a = make(r1.origin, { token: () => Promise.resolve(tokenA) });
+        await a.realtime.setAuth(tokenA);
+        const since = Date.now() - 500;
+        const sender = a.channel(`private-${A}`, {
+          config: { private: true, broadcast: { self: true, ack: true } },
+        });
+        await subscribed(sender);
+        assertEquals(
+          await sender.send({ type: "broadcast", event: "r1", payload: { n: 1 } }),
+          "ok",
+        );
+        assertEquals(
+          await sender.send({ type: "broadcast", event: "r2", payload: { n: 2 } }),
+          "ok",
+        );
+        const b = make(r2.origin, { token: () => Promise.resolve(tokenA) });
+        await b.realtime.setAuth(tokenA);
+        const replayed: Array<{ event: string; payload: unknown; meta?: Record<string, unknown> }> =
+          [];
+        const system: Array<Record<string, unknown>> = [];
+        const late = b.channel(`private-${A}`, {
+          config: {
+            private: true,
+            broadcast: { replay: { since, limit: 10 }, replication_ready: true },
+          },
+        })
+          .on("broadcast", { event: "*" }, (m) => replayed.push(m as never))
+          .on("system", {}, (p) => system.push(p));
+        await subscribed(late);
+        await until(() => replayed.length >= 2, 10_000, "the replay");
+        assertEquals(replayed.map((m) => m.event), ["r1", "r2"]);
+        assert(replayed.every((m) => m.meta?.replayed === true && typeof m.meta?.id === "string"));
+        await until(
+          () => system.some((p) => p.message === "Replication connection established"),
+          10_000,
+          "replication_ready",
+        );
+      });
+
+      await t.step(
+        "denext's own client: broadcast and presence with supabase-js, across replicas",
+        async () => {
+          const url = `${r1.origin.replace("http", "ws")}/realtime/v1/websocket?vsn=2.0.0`;
+          // Same origin (no Origin header here), so no key: the session cookie is the identity.
+          const native = new RealtimeClient(
+            url,
+            (u) =>
+              new WebSocket(
+                u,
+                { headers: { cookie: cookieB } } as never,
+              ) as unknown as ClientSocket,
+          );
+          try {
+            const room = native.acquire("native-room");
+            const got: Array<{ event: string; payload: unknown }> = [];
+            room.onBroadcast((m) => got.push(m));
+            await until(
+              () => room.status === "joined",
+              10_000,
+              "the native join",
+            );
+            assertEquals(await room.track({ who: "native" }), "ok");
+            const s = make(r2.origin);
+            const sGot: Array<{ payload: unknown }> = [];
+            const sRoom = s.channel("native-room", {
+              config: { presence: { key: "sb", enabled: true } },
+            })
+              .on("broadcast", { event: "*" }, (m) => sGot.push(m as never));
+            await subscribed(sRoom);
+            await until(
+              () =>
+                Object.values(sRoom.presenceState<{ who?: string }>()).some((list) =>
+                  list.some((p) => p.who === "native")
+                ),
+              10_000,
+              "supabase-js sees the native presence",
+            );
+            await sRoom.send({ type: "broadcast", event: "hi", payload: { from: "sb" } });
+            await until(() => got.some((m) => m.event === "hi"), 10_000, "native receives");
+            assertEquals(await room.send("yo", { from: "native" }), "ok");
+            await until(() => sGot.length === 1, 10_000, "supabase-js receives");
+            await sRoom.track({ who: "sb" });
+            await until(() => "sb" in room.presenceState(), 10_000, "native sees supabase-js");
+            native.release(room);
+          } finally {
+            native.close();
+          }
+        },
+      );
+
       await t.step("a replica's clean stop announces its presences' leaves", async () => {
         const p = make(r1.origin);
         const q = make(r2.origin);
@@ -555,6 +715,98 @@ Deno.test({
         // No teardown ran: the survivor's sweep removes q once its instance stops heartbeating.
         await until(() => !Object.keys(cp.presenceState()).includes("q"), 60_000, "q swept");
       });
+    } finally {
+      for (const c of clients) await c.removeAllChannels().catch(() => {});
+      for (const r of replicas) await r.stop();
+      await env.drop();
+    }
+  },
+});
+
+// The same, read from the WAL (`source: "logical"`): needs a server with wal_level = logical
+// (`DENEXT_TEST_POSTGRES_LOGICAL=1` says it has one; CI sets it after enabling it).
+const LOGICAL = Deno.env.get("DENEXT_TEST_POSTGRES_LOGICAL") === "1";
+const logicalReason = reason ?? (LOGICAL ? undefined : "set DENEXT_TEST_POSTGRES_LOGICAL=1");
+
+Deno.test({
+  name: `supabase-js realtime from logical decoding (pgoutput), two replicas${
+    logicalReason ? ` (skipped: ${logicalReason})` : ""
+  }`,
+  ignore: logicalReason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    const clients: SupabaseClient[] = [];
+    const replicas: Replica[] = [];
+    const realtime = { ...REALTIME, source: "logical", logical: { pollMs: 20 } };
+    try {
+      await env.admin.unsafe(`alter role ${new URL(env.url).username} replication`);
+      await migratePostgres(env.app, { migrations: rlsMigrations(), table: "backend_migrations" });
+      await migratePostgres(env.app, {
+        migrations: realtimeMigrations(realtime as never).filter((m) =>
+          !m.name.startsWith("backend_realtime_t_")
+        ),
+        table: "backend_migrations",
+      });
+      await env.app.unsafe(DDL).simple!();
+      replicas.push(await replica(env.url, realtime), await replica(env.url, realtime));
+      const [r1, r2] = replicas;
+      const tokenA = await accessToken(A);
+      const a = createClient(r1.origin, ANON_KEY, { accessToken: () => Promise.resolve(tokenA) });
+      const b = client(r2.origin);
+      clients.push(a, b);
+      await a.realtime.setAuth(tokenA);
+      const seenA: Change[] = [];
+      const seenB: Change[] = [];
+      await subscribed(
+        a.channel("wal-a").on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "notes" },
+          (p) => seenA.push(p as unknown as Change),
+        ),
+      );
+      await subscribed(
+        b.channel("wal-b")
+          .on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "notes" },
+            (p) => seenB.push(p as unknown as Change),
+          )
+          .on(
+            "postgres_changes",
+            { event: "*", schema: "app", table: "things" },
+            (p) => seenB.push(p as unknown as Change),
+          ),
+      );
+      const before = Date.now();
+      const [{ id }] = await env.app.unsafe<{ id: number }>(
+        "insert into notes (owner, body) values ($1, 'from the WAL') returning id",
+        [A],
+      );
+      // One statement at a time: a row inserted and deleted within one burst (16 ms) is never
+      // shown — it cannot be checked against the subscriber's policies once it is gone.
+      await until(() => seenA.length === 1, 10_000, "the insert");
+      await env.app.unsafe("update notes set body = 'edited' where id = $1", [id]);
+      await until(() => seenA.length === 2, 10_000, "the update");
+      await env.app.unsafe("delete from notes where id = $1", [id]);
+      await until(() => seenA.length === 3, 10_000, "the delete");
+      assertEquals(seenA.map((p) => p.eventType), ["INSERT", "UPDATE", "DELETE"]);
+      assertEquals(seenA[0].new.body, "from the WAL");
+      assertEquals(seenA[2].old, { id: Number(id) });
+      const committed = Date.parse(String(seenA[0].commit_timestamp));
+      assert(committed >= before - 5_000 && committed <= Date.now(), "the WAL's commit time");
+      // The publication's tables come through the same slot; REPLICA IDENTITY FULL: the old row.
+      await env.app.unsafe("insert into app.things values (5, 'x')");
+      await env.app.unsafe("update app.things set label = 'y' where id = 5");
+      await until(() => seenB.length === 2, 10_000, "B's app.things changes");
+      assertEquals(seenB[1].old, { id: 5, label: "x" });
+      assertEquals(seenB.filter((p) => p.table === "notes"), [], "B's policies see no note");
+      // No trigger runs on the write path.
+      const triggers = await env.app.unsafe(
+        "select tgname from pg_trigger where tgname like 'denext_realtime%' and tgenabled <> 'D'",
+      );
+      assertEquals(triggers.length, 0);
     } finally {
       for (const c of clients) await c.removeAllChannels().catch(() => {});
       for (const r of replicas) await r.stop();

@@ -123,6 +123,50 @@ export function decodeFrame(vsn: Vsn, data: string | ArrayBuffer | Uint8Array): 
   }
 }
 
+/** Decode a kind-4 binary frame (a server's user broadcast) into a `broadcast` message. */
+function decodeUserBroadcast(bytes: Uint8Array): PhxMessage | null {
+  if (bytes.byteLength < 5) return null;
+  const [, topicLen, eventLen, metaLen, encoding] = bytes;
+  const start = 5;
+  const end = start + topicLen + eventLen + metaLen;
+  if (end > bytes.byteLength) return null;
+  const topic = decoder.decode(bytes.subarray(start, start + topicLen));
+  const event = decoder.decode(bytes.subarray(start + topicLen, start + topicLen + eventLen));
+  const meta = metaLen > 0
+    ? JSON.parse(decoder.decode(bytes.subarray(start + topicLen + eventLen, end)))
+    : undefined;
+  const body = bytes.slice(end);
+  const payload = encoding === ENCODING_JSON ? JSON.parse(decoder.decode(body)) : body;
+  return {
+    joinRef: null,
+    ref: null,
+    topic,
+    event: "broadcast",
+    payload: { type: "broadcast", event, payload, ...(meta ? { meta } : {}) },
+  };
+}
+
+/**
+ * Decode one frame from the server (the client side of {@linkcode encodeMessage} and
+ * {@linkcode encodeBroadcast}).
+ *
+ * @param vsn The socket's serializer version.
+ * @param data A text frame, or a binary kind-4 broadcast (vsn 2.0.0).
+ * @returns The message, or `null` when it is malformed.
+ */
+export function decodeServerFrame(
+  vsn: Vsn,
+  data: string | ArrayBuffer | Uint8Array,
+): PhxMessage | null {
+  if (typeof data === "string") return decodeFrame(vsn, data);
+  try {
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    return bytes[0] === KIND_USER_BROADCAST ? decodeUserBroadcast(bytes) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Encode one message for a client (JSON text).
  *
@@ -158,6 +202,7 @@ export function encodeMessage(vsn: Vsn, message: PhxMessage): string {
  * @param topic The full topic (`realtime:<name>`).
  * @param event The user's event name.
  * @param payload The user's payload: JSON-able, or a `Uint8Array`.
+ * @param meta Supabase's `meta` (`{ id }` of a stored message, `replayed: true` on replay).
  * @returns The frame, or `null` when it cannot be sent on this version.
  */
 export function encodeBroadcast(
@@ -165,25 +210,30 @@ export function encodeBroadcast(
   topic: string,
   event: string,
   payload: BroadcastPayload,
+  meta?: Record<string, unknown>,
 ): string | Uint8Array | null {
   const binary = payload instanceof Uint8Array;
   const topicBytes = encoder.encode(topic);
   const eventBytes = encoder.encode(event);
-  if (vsn === "2.0.0" && topicBytes.byteLength <= 255 && eventBytes.byteLength <= 255) {
+  const metaBytes = meta ? encoder.encode(JSON.stringify(meta)) : new Uint8Array(0);
+  if (
+    vsn === "2.0.0" && topicBytes.byteLength <= 255 && eventBytes.byteLength <= 255 &&
+    metaBytes.byteLength <= 255
+  ) {
     const body = binary ? payload : encoder.encode(JSON.stringify(payload ?? null));
-    const frame = new Uint8Array(
-      5 + topicBytes.byteLength + eventBytes.byteLength + body.byteLength,
-    );
+    const head = 5 + topicBytes.byteLength + eventBytes.byteLength + metaBytes.byteLength;
+    const frame = new Uint8Array(head + body.byteLength);
     frame.set([
       KIND_USER_BROADCAST,
       topicBytes.byteLength,
       eventBytes.byteLength,
-      0,
+      metaBytes.byteLength,
       binary ? ENCODING_BINARY : ENCODING_JSON,
     ]);
     frame.set(topicBytes, 5);
     frame.set(eventBytes, 5 + topicBytes.byteLength);
-    frame.set(body, 5 + topicBytes.byteLength + eventBytes.byteLength);
+    frame.set(metaBytes, 5 + topicBytes.byteLength + eventBytes.byteLength);
+    frame.set(body, head);
     return frame;
   }
   if (binary) return null;
@@ -192,8 +242,49 @@ export function encodeBroadcast(
     ref: null,
     topic,
     event: "broadcast",
-    payload: { type: "broadcast", event, payload },
+    payload: { type: "broadcast", event, payload, ...(meta ? { meta } : {}) },
   });
+}
+/**
+ * Encode a client's user broadcast as the binary kind-3 frame (vsn 2.0.0) — what
+ * `@supabase/realtime-js` sends, and the only way raw bytes travel from a client.
+ *
+ * @param joinRef The channel's join reference.
+ * @param ref This push's reference.
+ * @param topic The full topic (`realtime:<name>`).
+ * @param event The user's event name.
+ * @param payload The bytes, or a JSON-able value.
+ * @returns The frame.
+ * @throws {RangeError} When a reference, the topic or the event is over 255 bytes.
+ */
+export function encodeBroadcastPush(
+  joinRef: string,
+  ref: string,
+  topic: string,
+  event: string,
+  payload: unknown,
+): Uint8Array {
+  const parts = [joinRef, ref, topic, event].map((part) => encoder.encode(part));
+  if (parts.some((part) => part.byteLength > 255)) {
+    throw new RangeError("realtime: a reference, topic or event over 255 bytes");
+  }
+  const binary = payload instanceof Uint8Array;
+  const body = binary ? payload : encoder.encode(JSON.stringify(payload ?? null));
+  const head = 7 + parts.reduce((n, part) => n + part.byteLength, 0);
+  const frame = new Uint8Array(head + body.byteLength);
+  frame.set([
+    KIND_USER_BROADCAST_PUSH,
+    ...parts.map((part) => part.byteLength),
+    0,
+    binary ? ENCODING_BINARY : ENCODING_JSON,
+  ]);
+  let offset = 7;
+  for (const part of parts) {
+    frame.set(part, offset);
+    offset += part.byteLength;
+  }
+  frame.set(body, head);
+  return frame;
 }
 
 /** A `phx_reply`. */

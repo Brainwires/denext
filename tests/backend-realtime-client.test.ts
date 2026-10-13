@@ -13,6 +13,7 @@ import { applyTableChanges, useTableChanges } from "../packages/backend/client.t
 import type { TableChangesState } from "../packages/backend/client.ts";
 import {
   decodeSubscriptionKey,
+  qualifiedTableName,
   REALTIME_CHANNEL_ID,
 } from "../packages/backend/src/realtime-shared.ts";
 import { fromPostgresJs, type PostgresJsLike } from "../src/server/postgres.ts";
@@ -297,4 +298,33 @@ Deno.test("fromPostgresJs maps reserve(): queries on the reserved connection, re
     begin: () => Promise.resolve(),
   }) as unknown as PostgresJsLike);
   assertEquals(without.reserve, undefined);
+});
+
+Deno.test("useTableChanges: `schema` subscribes `schema.table`; keys accept it, not deeper", () => {
+  assertEquals(qualifiedTableName("notes"), "notes");
+  assertEquals(qualifiedTableName("notes", "public"), "notes");
+  assertEquals(qualifiedTableName("things", "app"), "app.things");
+  const nonce = "abcdefghijklmnopqrstuv";
+  assertEquals(decodeSubscriptionKey(`app.things|${nonce}`), { table: "app.things", nonce });
+  assertEquals(decodeSubscriptionKey(`a.b.c|${nonce}`), null);
+  assertEquals(decodeSubscriptionKey(`.things|${nonce}`), null);
+  withFakeSocket(() => {
+    const { doc, container } = makeDom();
+    setDocument(doc as Any);
+    function App() {
+      useTableChanges("things", { schema: "app" });
+      useTableChanges("notes", { schema: "public" });
+      return h("span", null, "x");
+    }
+    const root = createRoot(container as Any);
+    root.render(h(App, null));
+    flushSync();
+    const ws = FakeWS.instances.at(-1)!;
+    ws.open();
+    const tables = ws.sent.filter((s) => s.includes("channel-subscribe")).map((s) =>
+      decodeSubscriptionKey(JSON.parse(s).key)!.table
+    );
+    assertEquals(tables.sort(), ["app.things", "notes"]);
+    root.unmount();
+  });
 });

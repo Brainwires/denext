@@ -37,6 +37,7 @@
 // reserved connection, checked once per burst) revalidates; the lock goes with its connection,
 // so when the owner stops or dies the next instance to see a burst takes it over.
 
+import { inRoot } from "./root-context.ts";
 import {
   clientIpForLimits,
   createChannel,
@@ -52,6 +53,7 @@ import {
   decodeSubscriptionKey,
   type ParsedFilter,
   parseFilter,
+  qualifiedTableName,
   REALTIME_CHANNEL_ID,
   REALTIME_NOTIFY_CHANNEL,
   type TableChange,
@@ -60,12 +62,19 @@ import {
   type TableFilter,
 } from "./realtime-shared.ts";
 import {
+  dropTriggersSql,
+  PUBLICATION_TABLES_SQL,
+  type PublicationRow,
+  publicationTable,
   realtimeMigrations,
   type RealtimeOptions,
   type ResolvedRealtime,
   type ResolvedTable,
   resolveRealtime,
+  tableTrigger,
+  triggerArgs,
 } from "./realtime-sql.ts";
+import { LogicalSource } from "./realtime-logical.ts";
 
 /** A change as the database reported it — keys only, before any re-read. */
 export interface TableChangeEvent {
@@ -157,8 +166,14 @@ function merge(
   op: Pending["op"],
   event: TableNotification,
 ): Pending {
+  const step: Step = { op };
+  if (event.oldKey !== undefined) step.oldKey = event.oldKey;
+  if (event.ts !== undefined) step.ts = event.ts;
+  if (event.old) step.old = event.old;
+  else if (event.oldOverflow) step.oldOverflow = true;
   const merged: Pending = {
     op: previous?.op === "insert" && op === "update" ? "insert" : op,
+    steps: [...(previous?.steps ?? []), step].slice(-MAX_STEPS),
   };
   const oldKey = previous?.oldKey ?? event.oldKey;
   if (oldKey !== undefined && op !== "delete") merged.oldKey = oldKey;
@@ -180,7 +195,18 @@ interface Pending {
   old?: Record<string, unknown>;
   /** The old row was too large to carry. */
   oldOverflow?: true;
+  /**
+   * Every change to the key in the burst, in commit order (the last {@linkcode MAX_STEPS}):
+   * a `raw` audience is sent each of them, as Supabase sends each WAL change.
+   */
+  steps: Step[];
 }
+
+/** One change to a key, as a `raw` audience is sent it. */
+type Step = Omit<Pending, "steps">;
+
+/** Changes to one key kept per burst for `raw` audiences. */
+const MAX_STEPS = 64;
 
 /** Counters, for tests and diagnostics. */
 export interface RealtimeStats {
@@ -214,6 +240,10 @@ const FRAME_BYTES = 12_000;
 export const RAW_FRAME_BYTES = 1024 * 1024;
 /** How long an audience with no subscriber is kept (a reconnect resumes it). */
 const IDLE_GRACE_MS = 15_000;
+/** How often the publication's tables are read again. */
+const PUBLICATION_POLL_MS = 10_000;
+/** The publication `source: "logical"` keeps the configured tables in. */
+const DENEXT_PUBLICATION = "denext_realtime";
 /** Group re-reads run at once. */
 const REREAD_CONCURRENCY = 4;
 /** Subscribe-time seed queries run at once (more wait their turn). */
@@ -270,14 +300,6 @@ export const REVALIDATE_OWNER_SQL = "select case when exists (select 1 from pg_l
 /** A reserved connection, as `SqlClient.reserve` hands it out. */
 type Reserved = SqlClient & { release(): void | Promise<void> };
 
-type RootBridge = { __denextInRootContext?: <R>(fn: () => R) => R };
-
-/** Run `fn` in the root async context (see src/server/root-context.ts). */
-function inRoot<T>(fn: () => T): T {
-  const run = (globalThis as RootBridge).__denextInRootContext;
-  return run ? run(fn) : fn();
-}
-
 /** The realtime engine of one server instance. */
 export class RealtimeEngine {
   readonly config: ResolvedRealtime;
@@ -312,6 +334,12 @@ export class RealtimeEngine {
   #flushAgain = false;
   /** Each table's catalog, read once (by table name). */
   #types = new Map<string, Promise<Catalog>>();
+  /** The logical-decoding source, when `source: "logical"`. */
+  #logical: LogicalSource | null = null;
+  /** The publication re-read timer, and the re-read in flight. */
+  #publicationTimer: ReturnType<typeof setInterval> | null = null;
+  #discovering: Promise<void> | null = null;
+  #warnedTables = new Set<string>();
   /** Seed queries running, and those waiting for a turn. */
   #seeding = 0;
   #seedWaiters: Array<() => void> = [];
@@ -340,9 +368,36 @@ export class RealtimeEngine {
     return sql;
   }
 
+  /**
+   * A realtime table by the name it is subscribed under: the configured name, `table` (in
+   * `public`), or `schema.table`.
+   *
+   * @param name The name.
+   * @returns The table, or `undefined`.
+   */
+  lookup(name: string): ResolvedTable | undefined {
+    const direct = this.config.tables.get(name);
+    if (direct) return direct;
+    const dot = name.indexOf(".");
+    const schema = dot < 0 ? "public" : name.slice(0, dot);
+    const table = dot < 0 ? name : name.slice(dot + 1);
+    for (const t of this.config.tables.values()) {
+      if (t.table === table && (t.schema ?? "public") === schema) return t;
+    }
+    return undefined;
+  }
+
+  /** The table, after the publication was read if it is not known yet. */
+  async #resolve(name: string): Promise<ResolvedTable | undefined> {
+    const known = this.lookup(name);
+    if (known || !this.config.publication) return known;
+    await this.start();
+    return this.lookup(name);
+  }
+
   /** The table's resolved options, or a TypeError naming the configured tables. */
   table(name: string): ResolvedTable {
-    const table = this.config.tables.get(name);
+    const table = this.lookup(name);
     if (!table) {
       throw new TypeError(
         `realtime: table ${JSON.stringify(name)} is not in realtime({ tables }) ` +
@@ -355,13 +410,19 @@ export class RealtimeEngine {
   /** Apply the trigger migrations once (a failure is retried on the next call). */
   #migrate(sql: SqlClient): Promise<void> {
     if (!this.config.migrate) return Promise.resolve();
-    const migrations: Migration[] = realtimeMigrations({
+    const configured = [...this.config.tables.values()].filter((t) => !t.fromPublication);
+    const all: Migration[] = realtimeMigrations({
       tables: Object.fromEntries(
-        [...this.config.tables.values()].map((
+        configured.map((
           t,
         ) => [t.name, { events: t.events, key: t.key, schema: t.schema, old: t.old }]),
       ),
+      publication: this.config.publication ?? false,
     });
+    // The logical source needs no triggers.
+    const migrations = this.config.source === "logical"
+      ? all.filter((m) => !m.name.startsWith("backend_realtime_t_"))
+      : all;
     // The `anon` / `authenticated` roles first: the realtime schema grants to them. (An engine
     // built on its own client, with no `backend({ postgres })` installed, migrates that client.)
     this.#migrated ??= inRoot(() =>
@@ -392,6 +453,10 @@ export class RealtimeEngine {
     }
     this.#listening = inRoot(async () => {
       await this.#migrate(sql);
+      await this.#discover(sql);
+      await this.#toggleTriggers(sql);
+      this.#armDiscovery();
+      if (this.config.source === "logical") return await this.#startLogical(sql);
       const listener = await sql.listen!(
         REALTIME_NOTIFY_CHANNEL,
         (payload) => inRoot(() => this.receive(payload)),
@@ -406,12 +471,166 @@ export class RealtimeEngine {
     return this.#listening;
   }
 
+  /** Re-read the publication every {@linkcode PUBLICATION_POLL_MS} (once). */
+  #armDiscovery(): void {
+    if (!this.config.publication || this.#publicationTimer !== null || this.#stopped) return;
+    this.#publicationTimer = inRoot(() =>
+      setInterval(() => {
+        this.#discover(this.#client()).catch((error) =>
+          console.error("[@denext/backend] realtime: reading the publication failed", error)
+        );
+      }, PUBLICATION_POLL_MS)
+    );
+    Deno.unrefTimer?.(this.#publicationTimer as unknown as number);
+  }
+
+  /**
+   * Read the publication's tables: new ones join the registry (with their triggers, under the
+   * notify source), dropped ones leave it (and lose their triggers). Single-flight.
+   */
+  #discover(sql: SqlClient): Promise<void> {
+    if (!this.config.publication) return Promise.resolve();
+    this.#discovering ??= this.#discoverOnce(sql).finally(() => {
+      this.#discovering = null;
+    });
+    return this.#discovering;
+  }
+
+  async #discoverOnce(sql: SqlClient): Promise<void> {
+    const rows = await sql.unsafe<PublicationRow>(PUBLICATION_TABLES_SQL, [
+      this.config.publication,
+    ]);
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const table = this.#publicationTableOf(row);
+      if (!table) continue;
+      seen.add(table.name);
+      const known = this.config.tables.get(table.name);
+      if (known && sameTable(known, table)) continue;
+      if (this.config.source === "notify" && !(await this.#ensureTriggers(sql, table))) continue;
+      this.config.tables.set(table.name, table);
+      this.#types.delete(table.name);
+    }
+    for (const [name, table] of this.config.tables) {
+      if (!table.fromPublication || seen.has(name)) continue;
+      this.config.tables.delete(name);
+      if (this.config.source === "notify") await runStatements(sql, dropTriggersSql(table));
+    }
+  }
+
+  /** A publication row as a table — `null` (warned once) when it cannot be one or is configured. */
+  #publicationTableOf(row: PublicationRow): ResolvedTable | null {
+    const table = publicationTable(row);
+    if (typeof table === "string") {
+      this.#warnTable(table);
+      return null;
+    }
+    const configured = this.lookup(table.name);
+    return configured && !configured.fromPublication ? null : table;
+  }
+
+  /**
+   * Create a publication table's triggers unless they are there with the same arguments; `false`
+   * (warned once) when they cannot be (the app's role does not own the table).
+   */
+  async #ensureTriggers(sql: SqlClient, table: ResolvedTable): Promise<boolean> {
+    try {
+      await this.#installTriggers(sql, table);
+      return true;
+    } catch (error) {
+      this.#warnTable(`${table.name}: cannot install its trigger (${(error as Error).message})`);
+      return false;
+    }
+  }
+
+  #warnTable(message: string): void {
+    if (this.#warnedTables.has(message)) return;
+    this.#warnedTables.add(message);
+    console.warn(`[@denext/backend] realtime: skipping publication table ${message}`);
+  }
+
+  async #installTriggers(sql: SqlClient, table: ResolvedTable): Promise<void> {
+    const rows = await sql.unsafe<{ name: string; args: string }>(
+      "select tgname::text as name, encode(tgargs, 'escape') as args from pg_trigger " +
+        "where tgrelid = $1::regclass and tgname in ('denext_realtime', 'denext_realtime_truncate')",
+      [table.qualified],
+    );
+    const expected = triggerArgs(table).map((arg) => `${arg}\\000`).join("");
+    const row = rows.find((r) => r.name === "denext_realtime");
+    if (row?.args === expected && rows.length === 2) return;
+    await runStatements(sql, tableTrigger(table));
+  }
+
+  /**
+   * Turn the triggers of every realtime table on (notify source) or off (logical source: the WAL
+   * carries the changes, and a trigger's NOTIFY would only cost commits).
+   */
+  async #toggleTriggers(sql: SqlClient): Promise<void> {
+    const want = this.config.source === "notify" ? "O" : "D";
+    const rows = await sql.unsafe<{ rel: string; name: string; enabled: string }>(
+      "select tgrelid::regclass::text as rel, tgname::text as name, tgenabled::text as enabled " +
+        "from pg_trigger where tgname in ('denext_realtime', 'denext_realtime_truncate')",
+    );
+    const ours = new Set(
+      [...this.config.tables.values()].map((t) => t.qualified.replaceAll('"', "")),
+    );
+    for (const row of rows) {
+      const rel = String(row.rel).replaceAll('"', "");
+      const mine = ours.has(rel) || ours.has(`public.${rel}`);
+      if (!mine || String(row.enabled) === want) continue;
+      const verb = want === "O" ? "ENABLE" : "DISABLE";
+      try {
+        await sql.unsafe(`ALTER TABLE ${row.rel} ${verb} TRIGGER ${row.name}`);
+      } catch (error) {
+        console.warn(
+          `[@denext/backend] realtime: cannot ${verb.toLowerCase()} the trigger on ${row.rel}: ` +
+            (error as Error).message,
+        );
+      }
+    }
+  }
+
+  /** `source: "logical"`: keep the configured tables in `denext_realtime`, then open the slot. */
+  async #startLogical(sql: SqlClient): Promise<void> {
+    const configured = [...this.config.tables.values()].filter((t) => !t.fromPublication);
+    if (configured.length > 0) {
+      const list = configured.map((t) => t.qualified).join(", ");
+      await sql.unsafe(
+        `DO $do$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_publication WHERE pubname = ` +
+          `'${DENEXT_PUBLICATION}') THEN CREATE PUBLICATION ${DENEXT_PUBLICATION}; END IF; ` +
+          `EXCEPTION WHEN duplicate_object THEN NULL; END $do$`,
+      );
+      await sql.unsafe(`ALTER PUBLICATION ${DENEXT_PUBLICATION} SET TABLE ${list}`);
+    }
+    const publications = [
+      ...(configured.length > 0 ? [DENEXT_PUBLICATION] : []),
+      ...(this.config.publication ? [this.config.publication] : []),
+    ];
+    const source = new LogicalSource({
+      client: this.#client,
+      publications: () => publications,
+      tableOf: (schema, table) => this.lookup(`${schema}.${table}`) ?? null,
+      emit: (event) => this.ingest(event),
+      resync: () => this.#resyncAll(),
+      pollMs: this.config.logical.pollMs,
+      maxChanges: this.config.logical.maxChanges,
+    });
+    await source.start();
+    if (this.#stopped) return void await source.stop();
+    this.#logical = source;
+  }
+
+  /** Every table: changes may have been missed. */
+  #resyncAll(): void {
+    for (const name of this.config.tables.keys()) this.#resyncTables.add(name);
+    this.#schedule();
+  }
+
   /** The listener subscribed — again, after a lost connection: changes may have been missed. */
   #onListen(): void {
     this.stats.listens++;
     if (this.stats.listens === 1) return;
-    for (const name of this.config.tables.keys()) this.#resyncTables.add(name);
-    this.#schedule();
+    this.#resyncAll();
   }
 
   /**
@@ -422,7 +641,16 @@ export class RealtimeEngine {
   receive(payload: string): void {
     this.stats.notifications++;
     const event = parseNotification(payload);
-    if (!event || !this.config.tables.has(event.table)) return;
+    if (event) this.ingest(event);
+  }
+
+  /**
+   * Take one change (a parsed notification, or one the logical source decoded).
+   *
+   * @param event The change.
+   */
+  ingest(event: TableNotification): void {
+    if (!this.config.tables.has(event.table)) return;
     if (event.op === "truncate") {
       // Changes earlier in the burst are moot (the rows are gone); later ones follow it.
       const dropped = this.#pending.get(event.table)?.size ?? 0;
@@ -833,9 +1061,10 @@ export class RealtimeEngine {
    */
   async authorize(key: string, peer = ""): Promise<boolean> {
     const parts = decodeSubscriptionKey(key);
-    const table = parts && this.config.tables.get(parts.table);
-    if (!parts || !table) return false;
+    if (!parts) return false;
     try {
+      const table = await this.#resolve(parts.table);
+      if (!table) return false;
       const scope = await resolveScope();
       const owner = scope.role === "anon" ? `anon:${peer}` : identityOf(scope);
       const existing = this.#audiences.get(key);
@@ -962,7 +1191,8 @@ export class RealtimeEngine {
     table: string,
     options: TableChangesOptions,
   ): Promise<() => void> {
-    const resolved = this.table(table);
+    const name = options.schema ? qualifiedTableName(table, options.schema) : table;
+    const resolved = (await this.#resolve(name)) ?? this.table(name);
     const filter = parseFilter(options.filter);
     const scope = await resolveScope(options.as);
     const key = `server|${crypto.randomUUID()}`;
@@ -1058,7 +1288,11 @@ export class RealtimeEngine {
     this.#audiences.clear();
     this.#hooks.clear();
     this.#pending.clear();
+    if (this.#publicationTimer !== null) clearInterval(this.#publicationTimer);
+    this.#publicationTimer = null;
     await this.#listening?.catch(() => {});
+    await this.#logical?.stop();
+    this.#logical = null;
     const listener = this.#listener;
     this.#listener = null;
     await listener?.unlisten().catch(() => {});
@@ -1078,8 +1312,10 @@ export interface RealtimeBinding {
 export interface TableChangesOptions {
   /** Who to read rows as (default: the current request's user, or anon outside a request). */
   as?: Exclude<DbIdentity, "service">;
-  /** A one-column equality filter: `{ list_id: 42 }` or `"list_id=eq.42"`. */
+  /** A one-column filter: `{ list_id: 42 }`, `{ n: { gte: 3 } }`, `"list_id=eq.42"`. */
   filter?: TableFilter;
+  /** The table's schema (default `public`), for a table outside it. */
+  schema?: string;
   /** Called with each frame: the changes this identity may see, or `resync`. */
   onChange: (frame: TableChangesFrame) => void;
 }
@@ -1089,6 +1325,19 @@ function identityOf(scope: RlsScope): string {
   if (scope.role === "anon") return "anon";
   const claims = JSON.parse(scope.claims) as { sub?: unknown };
   return `authenticated:${String(claims.sub)}`;
+}
+
+/** Whether a re-read of the publication changed nothing about a table. */
+function sameTable(a: ResolvedTable, b: ResolvedTable): boolean {
+  return a.key === b.key && a.old === b.old && a.qualified === b.qualified;
+}
+
+/** Run a script of statements (`;` + newline separated) in one transaction. */
+async function runStatements(sql: SqlClient, script: string): Promise<void> {
+  const statements = script.split(/;\s*\n/).map((s) => s.trim().replace(/;$/, "")).filter(Boolean);
+  await sql.begin(async (tx) => {
+    for (const statement of statements) await tx.unsafe(statement);
+  });
 }
 
 /** Audiences that see exactly the same rows share a re-read. */
@@ -1272,17 +1521,20 @@ function rawChanges(
 ): TableChange[] {
   const out: TableChange[] = [];
   for (const [key, change] of changes) {
-    const row = change.op === "delete" ? undefined : rows.get(key);
-    const sent = row === undefined
-      ? rawGone(audience.tracked, key, change)
-      : rawVisible(audience.tracked, key, change, row as Record<string, unknown>, maxTracked);
-    if (sent && (audience.events?.has(change.op) ?? true)) out.push(sent);
+    // The row as it is now (re-read once per burst): every step of the key is judged by it.
+    const row = change.op === "delete" ? undefined : rows.get(key) as Record<string, unknown>;
+    for (const step of change.steps) {
+      const sent = step.op === "delete" || row === undefined
+        ? rawGone(audience.tracked, key, step)
+        : rawVisible(audience.tracked, key, step, row, maxTracked);
+      if (sent && (audience.events?.has(step.op) ?? true)) out.push(sent);
+    }
   }
   return out;
 }
 
 /** What a raw change carries besides the row: when, and the old row. */
-function rawExtra(change: Pending): Record<string, unknown> {
+function rawExtra(change: Step): Record<string, unknown> {
   return {
     ...(change.ts === undefined ? {} : { ts: change.ts }),
     ...(change.old ? { old: change.old } : {}),
@@ -1294,7 +1546,7 @@ function rawExtra(change: Pending): Record<string, unknown> {
  * A row the subscriber cannot see now: untracked; a DELETE is sent when they could see it before
  * (it was tracked), an update out of their view is not.
  */
-function rawGone(tracked: Set<string>, key: string, change: Pending): TableChange | null {
+function rawGone(tracked: Set<string>, key: string, change: Step): TableChange | null {
   const known = tracked.delete(key) ||
     (change.oldKey !== undefined && tracked.delete(change.oldKey));
   return known && change.op === "delete"
@@ -1306,7 +1558,7 @@ function rawGone(tracked: Set<string>, key: string, change: Pending): TableChang
 function rawVisible(
   tracked: Set<string>,
   key: string,
-  change: Pending,
+  change: Step,
   row: Record<string, unknown>,
   maxTracked: number,
 ): TableChange {

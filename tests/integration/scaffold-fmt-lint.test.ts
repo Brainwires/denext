@@ -53,7 +53,10 @@ async function deno(args: string[], cwd: string): Promise<{ ok: boolean; output:
     env: { NO_COLOR: "1" },
   }).output();
   const text = new TextDecoder();
-  return { ok: r.success, output: text.decode(r.stdout) + text.decode(r.stderr) };
+  // The exit code and signal too: a run killed from outside (a loaded CI host, a timeout) prints
+  // nothing of its own, and the failure should say so rather than look like a lint finding.
+  const status = `[exit ${r.code}${r.signal ? `, signal ${r.signal}` : ""}]`;
+  return { ok: r.success, output: `${text.decode(r.stdout)}${text.decode(r.stderr)}\n${status}` };
 }
 
 /** Point the scaffold's lint plugin at this checkout's copy (the scaffold pins the JSR one). */

@@ -112,6 +112,7 @@ export { storageMigrations } from "./src/storage-meta-pg.ts";
 export type { StorageIdentity, StorageRole } from "./src/storage-identity.ts";
 export { realtime, realtimeMigrations, realtimeSetupSql } from "./src/realtime-sql.ts";
 export type {
+  RealtimeLogicalOptions,
   RealtimeOptions,
   RealtimeRevalidateOptions,
   RealtimeSocketOptions,

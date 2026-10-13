@@ -694,6 +694,7 @@ export function NoteList({ initial }: { initial: Note[] }) {
 | `filter`   | One column and one operator of Supabase's `eq neq lt lte gt gte in`: `{ list_id: 42 }`, `{ priority: { gte: 3 } }`, `{ status: { in: ["open", "blocked"] } }`, or `"list_id=eq.42"`, `"status=in.(open,blocked)"`. Applied in SQL, after the policies. |
 | `events`   | The kinds of change to apply and report (default all): `["insert", "update", "delete", "truncate"]`.                                                                                                                                                   |
 | `key`      | The rows' key column, as configured for the table (default `"id"`).                                                                                                                                                                                    |
+| `schema`   | The table's schema, for a table outside `public` (one the publication lists, or a configured table with a `schema`).                                                                                                                                   |
 | `onChange` | Called with each batch: `{ op: "insert" \| "update", key, row }`, `{ op: "update", key, oldKey, row }` when the key changed, `{ op: "delete", key }`, `{ op: "truncate" }`; `update` and `delete` carry `old` for a table configured `old: "full"`.    |
 | `onResync` | Called when changes may have been missed: re-read and pass the rows as `initial`.                                                                                                                                                                      |
 | `enabled`  | `false` keeps the hook idle.                                                                                                                                                                                                                           |
@@ -820,9 +821,17 @@ supabase
   .subscribe();
 ```
 
-**postgres_changes.** A binding's `schema` and `table` select among the tables in
-`realtime({ tables })` (`*` or no table: all of them in the schema; a table's schema is `public`
-unless configured); `event` is `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE` or `*`; `filter` takes one
+**Which tables.** Supabase's way works: `alter publication supabase_realtime add table notes` opts a
+table in (the publication is created, empty, if it does not exist — so a Supabase migration that
+alters it runs unchanged). The publication is read when realtime starts and every 10 seconds after,
+so a table added or dropped while the app runs follows; under the notify source each such table
+gets its triggers then (and loses them when it leaves). It needs a one-column primary key (its
+key), and its old row follows Supabase: the whole row with `REPLICA IDENTITY FULL` and no row-level
+security, else the key. `realtime({ tables })` still works, alongside — a table named in both is
+the configured one — and `publication: false` turns the publication off (or names another one).
+
+**postgres_changes.** A binding's `schema` and `table` select among those tables (`*` or no table:
+all of them in the schema; a configured table's schema is `public` unless set); `event` is `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE` or `*`; `filter` takes one
 column and one of `eq neq lt lte gt gte in` (`"status=in.(open,blocked)"`, up to 100 values), on a
 single table. The payload has Supabase's shape — `schema`, `table`, `commit_timestamp`,
 `eventType`, `new`, `old`, `errors`, typed through `columns` — and, as in Supabase under row-level
@@ -837,10 +846,17 @@ security:
   `old: "full"` on the table it holds the whole old row, when it fitted the notification (else the
   key, and `errors: ["Error 413: Payload Too Large"]`). A row too large to deliver (1 MiB) arrives as
   its key with the same error;
-- `TRUNCATE` reaches subscribers who could see rows of the table.
+- `TRUNCATE` reaches subscribers who could see rows of the table;
+- every change to a row within one burst (changes 16 ms apart are one) is sent, in commit order,
+  with the row as it is after the burst — so `new` of an INSERT followed by an UPDATE in the same
+  burst is the updated row. A row inserted and deleted within one burst is sent to nobody (except
+  the DELETE, to a subscriber who could already see it): once it is gone there is nothing to check
+  against the subscriber's policies.
 
-Changes made while the server's listener was reconnecting arrive as a `system` message with
-`status: "error"` on the channel: re-read.
+A joined channel gets Supabase's `system` messages: `Subscribed to PostgreSQL` once its bindings
+are live, `Replication connection established` when it asked for `config.broadcast.replication_ready`
+(the change stream is up before any join is answered), and `status: "error"` when changes may have
+been missed (the listener reconnected): re-read.
 
 **Broadcast.** `channel.send({ type: "broadcast", event, payload })` reaches every subscriber of the
 topic on every server instance sharing the database; `config.broadcast.self` decides whether the
@@ -863,9 +879,13 @@ create trigger notes_broadcast after insert or update or delete on notes
 ```
 
 and from server code `broadcast(topic, event, payload, { private? })` from
-`@denext/backend/server`. A broadcast is one `pg_notify` on `denext_realtime_bus`; one too large for
-a notification (over about 7.5 KB) is stored in `realtime.messages` and sent by id. Stored messages
-are deleted after a day.
+`@denext/backend/server`. A public broadcast is one `pg_notify` on `denext_realtime_bus` (one too
+large for a notification, over about 7.5 KB, is stored in `realtime.messages` and sent by id). A
+private channel's broadcasts — from clients, REST, the server or SQL — are stored in
+`realtime.messages`, as Supabase stores them, and carry `meta: { id }`; a private channel that joins
+with `config.broadcast.replay: { since, limit }` gets the stored ones since `since` (epoch
+milliseconds; at most 25, Supabase's limit) first, each with `meta: { replayed: true, id }`.
+Stored messages are deleted after 3 days.
 
 **Presence.** `track()`, `untrack()` and the `sync`, `join` and `leave` events work across
 instances: presences are rows in `realtime.denext_presences`, owned by the instance holding the
@@ -911,26 +931,90 @@ that closes the socket), and `maxPayloadBytes` (256 KiB per broadcast or presenc
 that stops reading (8 MiB of unsent output) or stops heartbeating (75 s) is closed. Each binding
 counts toward `maxSubscriptionsPerIdentity`. `socket: false` turns the endpoint off.
 
+### denext's own hooks: `useBroadcast` and `useRealtimePresence`
+
+The same channels without supabase-js, from `@denext/backend/client`. They share one WebSocket per
+page to the endpoint above (same-origin, so it is the visitor's session and needs no key), reconnect
+and rejoin by themselves, and meet supabase-js clients, SQL's `realtime.send()` and the server's
+`broadcast()` on the same topics — on every server instance.
+
+```tsx
+"use client";
+import { useBroadcast, useRealtimePresence } from "@denext/backend/client";
+
+export function Room({ id, me }: { id: string; me: { id: string; name: string } }) {
+  const { last, send } = useBroadcast<{ text: string }>(`room:${id}`, { event: "message" });
+  const { peers } = useRealtimePresence(`room:${id}`, { name: me.name }, { presenceKey: me.id });
+  return (
+    <>
+      <p>{Object.keys(peers).length} here — last: {last?.payload.text}</p>
+      <button type="button" onClick={() => send("message", { text: "hi" })}>Say hi</button>
+    </>
+  );
+}
+```
+
+`useBroadcast(topic, { event?, onMessage?, private?, self?, replay?, enabled? })` returns
+`{ last, status, error, send }` — `send(event, payload)` resolves `"ok"` once the server has
+published it. `useRealtimePresence(topic, state?, { presenceKey?, private?, enabled? })` returns
+`{ peers, status, error }`: it tracks `state` (a new value re-tracks, `undefined` untracks) and lists
+everyone present by key. Hooks on one topic in a page share its channel (the first one's options
+apply). `realtimeClient()` is the page's client, and `new RealtimeClient(url)` one for another
+endpoint. These are separate from [Live](/docs/live)'s `useChannel` / `usePresence`, which keep
+their own contracts (Live presence is per server instance).
+
+### The logical-replication source
+
+By default changes come from triggers and `pg_notify` — which works on any Postgres, but every
+transaction that NOTIFYs takes the notification queue's lock at commit, so committing writers
+serialize behind it. `realtime({ source: "logical" })` reads them from the write-ahead log instead:
+each server instance creates a temporary `pgoutput` slot on a reserved connection and reads it with
+`pg_logical_slot_get_binary_changes()` every `logical.pollMs` (50 ms by default; a full batch of
+`logical.maxChanges` is followed at once), for the tables of `supabase_realtime` and of
+`denext_realtime` (which holds the configured tables). No trigger runs on the write path (existing
+ones are disabled; switching back enables them), and `commit_timestamp` is the real commit time.
+The rows are still re-read as each subscriber. It needs `wal_level = logical` (a server restart),
+the connecting role's `REPLICATION` attribute (`alter role app replication`) and a client with
+`reserve()`; a temporary slot ends with its connection, so a dead instance holds no WAL back, and a
+lost connection is reopened with a re-read signal. All instances must use the same source.
+
+Committed single-row INSERT transactions per second, on one table, against Postgres 17 (8 vCPU
+shared VM; `bench/realtime-source.ts`, 8 s per cell, no realtime as the 100 % baseline):
+
+| source           | 1 writer    | 8 writers   | 32 writers    |
+| ---------------- | ----------- | ----------- | ------------- |
+| none             | 3 821       | 13 215      | 16 196        |
+| notify (default) | 2 411 (63%) | 5 943 (45%) | 2 887 (18%)   |
+| logical          | 1 831 (48%) | 9 945 (75%) | 16 232 (100%) |
+
+With `synchronous_commit = off` the 32-writer cells were 34 614 / 13 541 (39 %) / 36 217 (105 %).
+The notify source's cost grows with concurrent writers; the logical source's does not, and its
+single-writer cell is within the noise of the shared host. Use notify for modest write rates and
+logical when many connections write realtime tables at once.
+
 ### Options
 
-| Option                        | Default | What it does                                                                                                                       |
-| ----------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `tables`                      | —       | `{ name: { events?, key?, schema?, old? } }`: the tables, their events, key column, schema and old-row mode (`"key"` or `"full"`). |
-| `revalidate`                  | `false` | `revalidateTag("table:<name>")` per burst; `{ owner: "one" }`: on one instance per database.                                       |
-| `migrate`                     | `true`  | Install the triggers on first use. `false` when a DBA runs `realtimeSetupSql(options)` instead.                                    |
-| `maxSubscribers`              | 10 000  | Subscriptions per server instance (a closed tab's is kept 15 s for a reconnect, while there is room).                              |
-| `maxSubscriptionsPerIdentity` | 64      | Subscriptions per signed-in user, or per signed-out client address (and so its distinct filters).                                  |
-| `maxTrackedKeys`              | 10 000  | Keys tracked per subscription, for deletes.                                                                                        |
-| `queryTimeoutMs`              | 5 000   | `statement_timeout` of each re-read and subscribe-time query (transaction-local).                                                  |
-| `socket`                      | `true`  | Serve `/realtime/v1/*` for supabase-js; `false` turns it off; an object sets its [limits](#supabase-realtime-supabasechannel).     |
+| Option                        | Default               | What it does                                                                                                                                                                 |
+| ----------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tables`                      | —                     | `{ name: { events?, key?, schema?, old? } }`: the tables, their events, key column, schema and old-row mode (`"key"` or `"full"`). Optional when the publication lists them. |
+| `publication`                 | `"supabase_realtime"` | Also the tables of this publication (created if missing; re-read every 10 s); `false` turns it off.                                                                          |
+| `source`                      | `"notify"`            | `"logical"`: changes from logical decoding instead of triggers and NOTIFY ([see above](#the-logical-replication-source)).                                                    |
+| `logical`                     | —                     | `{ pollMs?: 50, maxChanges?: 10000 }`: the logical source's read interval and batch.                                                                                         |
+| `revalidate`                  | `false`               | `revalidateTag("table:<name>")` per burst; `{ owner: "one" }`: on one instance per database.                                                                                 |
+| `migrate`                     | `true`                | Install the triggers on first use. `false` when a DBA runs `realtimeSetupSql(options)` instead.                                                                              |
+| `maxSubscribers`              | 10 000                | Subscriptions per server instance (a closed tab's is kept 15 s for a reconnect, while there is room).                                                                        |
+| `maxSubscriptionsPerIdentity` | 64                    | Subscriptions per signed-in user, or per signed-out client address (and so its distinct filters).                                                                            |
+| `maxTrackedKeys`              | 10 000                | Keys tracked per subscription, for deletes.                                                                                                                                  |
+| `queryTimeoutMs`              | 5 000                 | `statement_timeout` of each re-read and subscribe-time query (transaction-local).                                                                                            |
+| `socket`                      | `true`                | Serve `/realtime/v1/*` for supabase-js; `false` turns it off; an object sets its [limits](#supabase-realtime-supabasechannel).                                               |
 
 Realtime needs a Postgres client with `listen`: `Deno.SQL` (denext's [Deno toolchain](/docs/toolchain)), or the npm
 `postgres` package through `postgres: { sql: fromPostgresJs(postgres(url)) }` on stock Deno.
 Without one, `onTableChange` and `tableChanges` throw `RealtimeUnsupportedError`
 (`code: "unsupported"`), browser subscriptions are refused, and `denext dev` says so at startup.
 NOTIFY payloads are capped at 8000 bytes (why rows are re-read rather than carried, and why a full
-old row has a size limit), and notifications are delivered at commit, serialized across the
-database; for very high write volumes, logical replication is planned.
+old row has a size limit under the notify source), and notifications serialize committing writers —
+the [logical source](#the-logical-replication-source) removes both.
 
 ## Auto-REST
 

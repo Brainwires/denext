@@ -12,6 +12,24 @@
   policies; migration `backend_storage_0002`), cursor-paged `listV2`, TUS uploads authorized by a
   signed upload token (`/upload/resumable/sign`), multipart uploads streamed instead of buffered,
   anon/user bucket listings answered as Supabase does (empty), and the `denext ui` admin hooks.
+- **Realtime: the `supabase_realtime` publication** opts tables in (created if missing; re-read
+  every 10 s, so an `alter publication … add table` while the app runs follows), beside
+  `realtime({ tables })`; `publication: false` turns it off. A publication table needs a one-column
+  primary key; its old row is the whole row with `REPLICA IDENTITY FULL` and no RLS.
+- **Realtime: `source: "logical"`** reads changes from a temporary `pgoutput` slot per instance
+  (`pg_logical_slot_get_binary_changes`, `logical: { pollMs, maxChanges }`) — no triggers (they are
+  disabled), no NOTIFY serialization, real commit timestamps. Needs `wal_level = logical`, a
+  `REPLICATION` role and `reserve()`. `bench/realtime-source.ts` measures both sources.
+- **Broadcast replay and `replication_ready`.** Private-channel broadcasts are stored in
+  `realtime.messages` (3 days) with `meta: { id }`; `config.broadcast.replay: { since, limit }`
+  replays up to 25 with `meta: { replayed: true, id }`. Migration `backend_realtime_0006`.
+- **Every change of a row within a burst** reaches a `postgres_changes` subscriber, in commit
+  order (it was coalesced to the last one).
+- **`useBroadcast` / `useRealtimePresence`** (and `RealtimeClient`) in `@denext/backend/client`:
+  denext's own hooks on the same channels, one same-origin socket per page; a same-origin socket
+  may omit `apikey`.
+- **`useTableChanges` / `tableChanges` `schema` option** (keys may name `schema.table`).
+
 - **`supabase` option and `resolveIdentity()`.** `backend({ supabase: true | { publishableKey,
   secretKey, jwtSecret, signingKeys } })` installs Supabase-compatible API keys and JWT signing
   keys, serves the JWKS at `/auth/v1/.well-known/jwks.json`, and adds `denext backend keys`.

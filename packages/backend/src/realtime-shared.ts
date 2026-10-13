@@ -87,7 +87,7 @@ export interface TableChangesFrame<Row = Record<string, unknown>> {
 }
 
 /** A value a filter compares against. */
-export type FilterValue = string | number | boolean | bigint;
+export type TableFilterValue = string | number | boolean | bigint;
 
 /**
  * A one-column filter: `{ list_id: 42 }` (equality), `{ priority: { gte: 3 } }`,
@@ -95,7 +95,7 @@ export type FilterValue = string | number | boolean | bigint;
  * `"priority=gte.3"`, `"status=in.(open,blocked)"`.
  */
 export type TableFilter =
-  | Record<string, FilterValue | { [op in FilterOp]?: FilterValue | FilterValue[] }>
+  | Record<string, TableFilterValue | { [op in FilterOp]?: TableFilterValue | TableFilterValue[] }>
   | string;
 
 /** A parsed filter. */
@@ -112,6 +112,21 @@ export interface ParsedFilter {
 
 /** A plain, unquoted SQL identifier. */
 export const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/;
+
+/** A realtime table's name in a key: `table`, or `schema.table` outside `public`. */
+const TABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,62}(?:\.[A-Za-z_][A-Za-z0-9_]{0,62})?$/;
+
+/**
+ * The name a table is subscribed under: `table`, or `schema.table` for a schema other than
+ * `public`.
+ *
+ * @param table The table.
+ * @param schema Its schema (default `public`).
+ * @returns The name.
+ */
+export function qualifiedTableName(table: string, schema?: string): string {
+  return schema && schema !== "public" ? `${schema}.${table}` : table;
+}
 
 /** The longest subscription key the Live hub accepts. */
 const MAX_KEY = 128;
@@ -228,7 +243,7 @@ export function formatFilter(filter: ParsedFilter): string {
 
 /** A subscription key's parts. */
 export interface SubscriptionKey {
-  /** The table, as configured in `realtime({ tables })`. */
+  /** The table, as configured in `realtime({ tables })` (`schema.table` outside `public`). */
   table: string;
   /** The subscriber's random nonce. */
   nonce: string;
@@ -270,7 +285,7 @@ export function decodeSubscriptionKey(key: string): SubscriptionKey | null {
   const parts = key.split("|");
   if (parts.length < 2 || parts.length > 5 || parts.length === 3) return null;
   const [table, nonce] = parts;
-  if (!IDENTIFIER.test(table) || !/^[A-Za-z0-9_-]{16,43}$/.test(nonce)) return null;
+  if (!TABLE_NAME.test(table) || !/^[A-Za-z0-9_-]{16,43}$/.test(nonce)) return null;
   if (parts.length === 2) return { table, nonce };
   const filter = decodeFilter(parts.slice(2));
   return filter ? { table, nonce, filter } : null;

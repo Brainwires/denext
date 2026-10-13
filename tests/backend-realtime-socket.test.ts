@@ -6,7 +6,13 @@
 // identity helpers. The same paths against the stock supabase-js client on a real Postgres are in
 // tests/backend-supabase-realtime-integration.test.ts.
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import type { SqlClient, SqlListener } from "../src/server/postgres.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { applyPlugins, resetPlugins, runPluginTeardown } from "../src/plugin/mod.ts";
@@ -22,7 +28,9 @@ import type { ResolvedTable } from "../packages/backend/src/realtime-sql.ts";
 import { REALTIME_BUS_CHANNEL } from "../packages/backend/src/realtime-sql.ts";
 import {
   decodeFrame,
+  decodeServerFrame,
   encodeBroadcast,
+  encodeBroadcastPush,
   encodeMessage,
   parseVsn,
   type PhxMessage,
@@ -302,6 +310,7 @@ Deno.test("realtime bus: payload JSON round-trip and the wire messages", async (
     event: "big",
     payload: 1,
     exclude: "c2",
+    id: "m1",
   }]);
   assertEquals(got[2], ["p", {
     topic: "lobby",
@@ -320,6 +329,7 @@ function busClient() {
     stored: null as Record<string, unknown> | null,
     presences: [] as Array<Record<string, unknown>>,
     own: [] as Array<Record<string, unknown>>,
+    replay: [] as Array<Record<string, unknown>>,
   };
   const listeners: Array<{ fn: (p: string) => void; onlisten?: () => void }> = [];
   let unlistened = 0;
@@ -335,6 +345,7 @@ function busClient() {
       return answers.stored ? [answers.stored] : [];
     }
     if (text.startsWith("select ref, key, meta")) return answers.presences;
+    if (text.startsWith("select id::text as id, event, payload")) return answers.replay;
     if (text.startsWith("delete from realtime.denext_presences where instance")) return answers.own;
     return [];
   };
@@ -523,6 +534,7 @@ Deno.test({
 
 const NOTES: ResolvedTable = {
   name: "notes",
+  table: "notes",
   events: ["insert", "update", "delete", "truncate"],
   key: "id",
   qualified: '"notes"',
@@ -530,6 +542,7 @@ const NOTES: ResolvedTable = {
 };
 const ITEMS: ResolvedTable = {
   name: "items",
+  table: "items",
   events: ["insert"],
   key: "sku",
   schema: "app",
@@ -574,17 +587,42 @@ function memoryBus(handlers: BusHandlers) {
   const rows = new Map<string, PresenceEntry[]>();
   const log: string[] = [];
   const id = (topic: string, pr: boolean) => `${pr}:${topic}`;
-  const bus: RealtimeBus & { log: string[]; handlers: BusHandlers; fail: boolean } = {
+  const stored: Array<{ topic: string; at: number; id: string; event: string; payload: unknown }> =
+    [];
+  const bus: RealtimeBus & {
+    log: string[];
+    handlers: BusHandlers;
+    fail: boolean;
+    stored: typeof stored;
+  } = {
     log,
     handlers,
     fail: false,
+    stored,
     start: () => Promise.resolve(),
     broadcast(message) {
       if (bus.fail) return Promise.reject(new Error("bus down"));
       log.push(`broadcast ${message.topic}`);
-      handlers.broadcast(message);
+      if (message.private) {
+        const id = crypto.randomUUID();
+        stored.push({
+          topic: message.topic,
+          at: Date.now(),
+          id,
+          event: message.event,
+          payload: message.payload,
+        });
+        handlers.broadcast({ ...message, id });
+      } else {
+        handlers.broadcast(message);
+      }
       return Promise.resolve();
     },
+    replay: (topic, since, limit) =>
+      Promise.resolve(
+        stored.filter((m) => m.topic === topic && m.at >= since).slice(0, limit)
+          .map(({ id, event, payload }) => ({ id, event, payload })),
+      ),
     track(topic, pr, entry, replaces) {
       if (bus.fail) return Promise.reject(new Error("bus down"));
       log.push(`track ${topic} ${entry.key}`);
@@ -1685,4 +1723,276 @@ Deno.test("realtime identity with installed Supabase keys: tokens and API keys v
     installSupabaseKeys(undefined);
   }
   assertEquals(await apiKeyRefusal(null), null, "no keys installed: nothing to check");
+});
+
+// ── Round 2: server frames, stored broadcasts, replay, replication_ready, keyless same-origin ──
+
+Deno.test("phoenix codec: server frames decoded; a broadcast's meta in both serializers", () => {
+  const json = encodeBroadcast("2.0.0", "realtime:r", "e", { n: 1 }, { id: "m1" }) as Uint8Array;
+  assertEquals(decodeServerFrame("2.0.0", json), {
+    joinRef: null,
+    ref: null,
+    topic: "realtime:r",
+    event: "broadcast",
+    payload: { type: "broadcast", event: "e", payload: { n: 1 }, meta: { id: "m1" } },
+  });
+  const raw = encodeBroadcast("2.0.0", "realtime:r", "b", new Uint8Array([9, 8])) as Uint8Array;
+  const decoded = decodeServerFrame("2.0.0", raw.buffer as ArrayBuffer)!;
+  assertEquals([...((decoded.payload as { payload: Uint8Array }).payload)], [9, 8]);
+  assertEquals((decoded.payload as { meta?: unknown }).meta, undefined);
+  // vsn 1.0.0 carries meta in the JSON payload; text frames decode as either serializer.
+  const v1 = encodeBroadcast("1.0.0", "realtime:r", "e", 1, { replayed: true, id: "x" }) as string;
+  assertEquals(decodeServerFrame("1.0.0", v1)!.payload, {
+    type: "broadcast",
+    event: "e",
+    payload: 1,
+    meta: { replayed: true, id: "x" },
+  });
+  const v2 = encodeMessage("2.0.0", {
+    joinRef: "1",
+    ref: "2",
+    topic: "phoenix",
+    event: "phx_reply",
+    payload: {},
+  });
+  assertEquals(decodeServerFrame("2.0.0", v2)!.event, "phx_reply");
+  // Meta over 255 bytes cannot ride a binary frame: JSON instead.
+  const big = encodeBroadcast("2.0.0", "realtime:r", "e", 1, { id: "x".repeat(300) });
+  assertEquals(typeof big, "string");
+  // Malformed: another kind, a short or truncated frame, bad JSON.
+  assertEquals(decodeServerFrame("2.0.0", new Uint8Array([3, 0, 0, 0, 1])), null);
+  assertEquals(decodeServerFrame("2.0.0", new Uint8Array([4, 1])), null);
+  assertEquals(decodeServerFrame("2.0.0", new Uint8Array([4, 9, 9, 0, 1, 65])), null);
+  assertEquals(decodeServerFrame("2.0.0", new Uint8Array([4, 1, 1, 0, 1, 65, 66, 123])), null);
+});
+
+Deno.test({
+  name:
+    "realtime bus on Postgres: a private broadcast is stored (inline id or by id); replay reads",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const fake = busClient();
+    const bus = postgresBus({
+      client: () => fake.client,
+      instance: "00000000-0000-4000-8000-000000000009",
+      ready: () => Promise.resolve(),
+      handlers: {
+        broadcast: () => {},
+        presence: () => {},
+        presenceReload: () => {},
+        resync: () => {},
+      },
+    });
+    await bus.broadcast({
+      topic: "priv",
+      private: true,
+      event: "e",
+      payload: { n: 1 },
+      exclude: "c",
+    });
+    const inserts = fake.statements.filter(([t]) => t.startsWith("insert into realtime.messages"));
+    assertEquals(inserts.length, 1, "stored even though it fits a notification");
+    assertEquals(fake.notifies().at(-1), {
+      k: "b",
+      t: "priv",
+      e: "e",
+      p: { n: 1 },
+      pr: true,
+      x: "c",
+      id: "m-1",
+    });
+    await bus.broadcast({ topic: "priv", private: true, event: "big", payload: "x".repeat(9_000) });
+    assertEquals(fake.notifies().at(-1), { k: "m", id: "m-1" });
+    // A public broadcast that fits is not stored.
+    await bus.broadcast({ topic: "pub", private: false, event: "e", payload: 1 });
+    assertEquals(
+      fake.statements.filter(([t]) => t.startsWith("insert into realtime.messages")).length,
+      2,
+    );
+    fake.answers.replay = [
+      { id: "a", event: "one", payload: '{"n":1}' },
+      { id: "b", event: null, payload: { __denext_binary: "AQI=" } },
+    ];
+    const replayed = await bus.replay("priv", 1_700_000_000_000, 25);
+    assertEquals(replayed[0], { id: "a", event: "one", payload: { n: 1 } });
+    assertEquals(replayed[1].event, "");
+    assertEquals([...(replayed[1].payload as Uint8Array)], [1, 2]);
+    const [, params] = fake.statements.find(([t]) => t.startsWith("select id::text as id"))!;
+    assertEquals(params, ["priv", 1_700_000_000_000, 25]);
+    // receiveBus passes a stored message's id along.
+    const got: BusBroadcast[] = [];
+    await receiveBus(
+      JSON.stringify({ k: "b", t: "priv", e: "e", p: 1, pr: true, id: "z" }),
+      {
+        broadcast: (m) => got.push(m),
+        presence: () => {},
+        presenceReload: () => {},
+        resync: () => {},
+      },
+      () => Promise.resolve(null),
+    );
+    assertEquals(got[0].id, "z");
+  },
+});
+
+Deno.test({
+  name: "realtime hub: replay to a private channel, replication_ready, stored ids as meta",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const r = rig();
+    try {
+      const sender = r.open(userIdentity(A));
+      const joined = await sender.join("realtime:priv", { private: true });
+      assertEquals(statusOf(joined), "ok");
+      const since = Date.now() - 1;
+      for (const n of [1, 2]) {
+        sender.send(joined.joinRef, String(100 + n), "realtime:priv", "broadcast", {
+          type: "broadcast",
+          event: `e${n}`,
+          payload: { n },
+        });
+      }
+      await until(() => r.bus.stored.length === 2);
+
+      // vsn 1.0.0, limit 1, replication_ready.
+      const one = r.open(userIdentity(A), "1.0.0");
+      await one.join("realtime:priv", {
+        private: true,
+        broadcast: { replay: { since, limit: 1 }, replication_ready: true },
+      });
+      await until(() => one.socket.of("broadcast").length === 1);
+      const replayed = one.socket.of("broadcast")[0].payload as {
+        event: string;
+        meta: { replayed: boolean; id: string };
+      };
+      assertEquals([replayed.event, replayed.meta.replayed], ["e1", true]);
+      assertEquals(replayed.meta.id, r.bus.stored[0].id);
+      assert(
+        one.socket.of("system").some((m) =>
+          (m.payload as { message: string }).message === "Replication connection established"
+        ),
+      );
+
+      // vsn 2.0.0: binary frames with meta; a limit over 25 is capped.
+      for (let i = 0; i < 30; i++) {
+        r.bus.stored.push({
+          topic: "priv",
+          at: Date.now(),
+          id: `s${i}`,
+          event: "bulk",
+          payload: i,
+        });
+      }
+      const two = r.open(userIdentity(A));
+      await two.join("realtime:priv", {
+        private: true,
+        broadcast: { replay: { since, limit: 99 } },
+      });
+      const binaries = () =>
+        two.socket.sent.filter((d): d is Uint8Array => d instanceof Uint8Array).map((f) =>
+          decodeServerFrame("2.0.0", f)!.payload as {
+            event: string;
+            meta?: Record<string, unknown>;
+          }
+        );
+      await until(() => binaries().length === 25);
+      assert(binaries().every((b) => b.meta?.replayed === true));
+      // A live private broadcast carries its stored id, not `replayed`.
+      sender.send(joined.joinRef, "200", "realtime:priv", "broadcast", {
+        type: "broadcast",
+        event: "live",
+        payload: 1,
+      });
+      await until(() => binaries().length === 26);
+      assertEquals(binaries()[25].meta, { id: r.bus.stored.at(-1)!.id });
+
+      // No replay: a public channel, or a private one that may not read broadcasts.
+      const pub = r.open(userIdentity(A));
+      await pub.join("realtime:priv", { broadcast: { replay: { since } } });
+      r.permsFor = () => ({ ...PUBLIC_PERMISSIONS, readBroadcast: false });
+      const blind = r.open(userIdentity(A));
+      await blind.join("realtime:priv", { private: true, broadcast: { replay: { since } } });
+      const noLimit = r.open(userIdentity(A));
+      r.permsFor = () => PUBLIC_PERMISSIONS;
+      await noLimit.join("realtime:priv", { private: true, broadcast: { replay: { since: "x" } } });
+      await settle(30);
+      for (const c of [pub, blind, noLimit]) {
+        assertEquals(c.socket.sent.filter((d) => d instanceof Uint8Array).length, 0);
+      }
+    } finally {
+      await r.hub.stop();
+    }
+  },
+});
+
+Deno.test({
+  name: "realtime upgrade with Supabase keys: a same-origin socket may omit the apikey",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const g = await generateSupabaseKeys();
+    installSupabaseKeys(
+      await resolveSupabaseKeys({
+        publishableKey: g.publishableKey,
+        secretKey: g.secretKey,
+        signingKeys: g.signingKey,
+      }),
+    );
+    resetPlugins();
+    installPostgres(undefined);
+    await applyPlugins({
+      projectRoot: "/tmp/x",
+      appDir: "/tmp/x/app",
+      config: {
+        plugins: [backend({ postgres: { sql: fakeRealtimeClient({}), rls: { migrate: false } } })],
+      } as DenextConfig,
+      mode: "prod",
+      load,
+    });
+    const r = rig();
+    try {
+      const upgrade = (query: string, headers: Record<string, string> = {}) =>
+        upgradeSocket(
+          r.hub,
+          new Request(`${ORIGIN}/realtime/v1/websocket?vsn=1.0.0${query}`, {
+            headers: { upgrade: "websocket", host: "app.test", ...headers },
+          }),
+        );
+      // Past the key check, a plain Request cannot really be upgraded: 400 means "accepted".
+      assertEquals((await upgrade("")).status, 400, "same origin (no Origin), no key");
+      assertEquals((await upgrade("", { origin: ORIGIN })).status, 400, "same origin, no key");
+      assertEquals((await upgrade("", CROSS)).status, 401, "cross-origin needs the key");
+      assertEquals((await upgrade(`&apikey=${g.publishableKey}`, CROSS)).status, 400);
+      assertEquals(
+        (await upgrade("&apikey=sb_publishable_nope")).status,
+        401,
+        "a bad key: refused",
+      );
+    } finally {
+      installSupabaseKeys(undefined);
+      await r.hub.stop();
+      await runPluginTeardown();
+      resetPlugins();
+      installPostgres(undefined);
+    }
+  },
+});
+
+Deno.test("phoenix codec: a client's binary broadcast push round-trips through the server decoder", () => {
+  const bytes = encodeBroadcastPush("1", "2", "realtime:r", "bin", new Uint8Array([1, 2]));
+  assertEquals(decodeFrame("2.0.0", bytes), {
+    joinRef: "1",
+    ref: "2",
+    topic: "realtime:r",
+    event: "broadcast",
+    payload: { type: "broadcast", event: "bin", payload: new Uint8Array([1, 2]) },
+  });
+  const json = encodeBroadcastPush("1", "3", "realtime:r", "j", { a: 1 });
+  assertEquals((decodeFrame("2.0.0", json)!.payload as { payload: unknown }).payload, { a: 1 });
+  assertThrows(
+    () => encodeBroadcastPush("1", "2", "realtime:" + "x".repeat(260), "e", 1),
+    RangeError,
+  );
 });

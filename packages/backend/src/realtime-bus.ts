@@ -12,6 +12,7 @@
 // whichever instance next sweeps deletes its presences (atomically: `DELETE … RETURNING`, so the
 // leaves are announced once) — the next sweep after the heartbeat window.
 
+import { inRoot } from "./root-context.ts";
 import type { SqlClient, SqlListener } from "@denext/denext/server";
 import { REALTIME_BUS_CHANNEL } from "./realtime-sql.ts";
 
@@ -27,6 +28,15 @@ export interface BusBroadcast {
   payload: unknown;
   /** The sending channel's id: it is not sent its own message (`broadcast.self: false`). */
   exclude?: string;
+  /** The stored message's id (`realtime.messages.id`): a private or database broadcast. */
+  id?: string;
+}
+
+/** A stored broadcast, replayed to a joining private channel. */
+export interface StoredBroadcast {
+  id: string;
+  event: string;
+  payload: unknown;
 }
 
 /** One tracked presence. */
@@ -76,6 +86,8 @@ export interface RealtimeBus {
   untrack(topic: string, isPrivate: boolean, entries: PresenceEntry[]): Promise<void>;
   /** A topic's current presences. */
   presenceState(topic: string, isPrivate: boolean): Promise<PresenceEntry[]>;
+  /** A private topic's stored broadcasts since `since` (epoch ms), oldest first, at most `limit`. */
+  replay(topic: string, since: number, limit: number): Promise<StoredBroadcast[]>;
   /** Stop: untrack this instance's presences, UNLISTEN. */
   stop(): Promise<void>;
 }
@@ -86,8 +98,8 @@ const MAX_NOTIFY = 7900;
 const HEARTBEAT_MS = 10_000;
 /** An instance silent this long is dead: its presences are removed. */
 const DEAD_AFTER_SECONDS = 30;
-/** How long a stored (large) broadcast is kept in `realtime.messages`. */
-const RETENTION = "1 day";
+/** How long a stored broadcast is kept in `realtime.messages` (Supabase's replay window). */
+const RETENTION = "3 days";
 /** Every this many heartbeats, old stored messages are deleted. */
 const CLEANUP_EVERY = 60;
 
@@ -164,9 +176,10 @@ export async function receiveBus(
   if (value.k === "m") {
     if (typeof value.id !== "string") return;
     const stored = await fetch(value.id);
-    if (stored) handlers.broadcast({ ...stored, ...exclude });
+    if (stored) handlers.broadcast({ ...stored, ...exclude, id: value.id });
     return;
   }
+  const id = typeof value.id === "string" ? { id: value.id } : {};
   const topic = value.t;
   if (typeof topic !== "string") return;
   const isPrivate = value.pr === true;
@@ -177,6 +190,7 @@ export async function receiveBus(
       event: value.e,
       payload: payloadFromJson(value.p),
       ...exclude,
+      ...id,
     });
   } else if (value.k === "pd") {
     handlers.presence({
@@ -188,14 +202,6 @@ export async function receiveBus(
   } else if (value.k === "pr") {
     handlers.presenceReload(topic, isPrivate);
   }
-}
-
-type RootBridge = { __denextInRootContext?: <R>(fn: () => R) => R };
-
-/** Run `fn` in the root async context: the bus serves every socket, not one request. */
-function inRoot<T>(fn: () => T): T {
-  const run = (globalThis as RootBridge).__denextInRootContext;
-  return run ? run(fn) : fn();
 }
 
 /** Options for {@linkcode postgresBus}. */
@@ -342,9 +348,13 @@ export function postgresBus(options: PostgresBusOptions): RealtimeBus {
         pr: message.private,
         ...(message.exclude ? { x: message.exclude } : {}),
       };
-      const text = JSON.stringify(body);
-      if (new TextEncoder().encode(text).byteLength <= MAX_NOTIFY) {
-        await client().unsafe("select pg_notify($1, $2)", [REALTIME_BUS_CHANNEL, text]);
+      // A private topic's broadcast is stored, as Supabase stores it, so a later join can replay
+      // it; a public one only when it is too large for a notification.
+      if (!message.private && fits(body)) {
+        await client().unsafe("select pg_notify($1, $2)", [
+          REALTIME_BUS_CHANNEL,
+          JSON.stringify(body),
+        ]);
         return;
       }
       const [row] = await client().unsafe<{ id: string }>(
@@ -352,7 +362,29 @@ export function postgresBus(options: PostgresBusOptions): RealtimeBus {
           "values ($1, 'broadcast', $2, $3::jsonb, $4::boolean) returning id::text as id",
         [message.topic, message.event, JSON.stringify(body.p), String(message.private)],
       );
-      await notify({ k: "m", id: row.id, ...(message.exclude ? { x: message.exclude } : {}) });
+      const inline = { ...body, id: row.id };
+      await notify(
+        fits(inline)
+          ? inline
+          : { k: "m", id: row.id, ...(message.exclude ? { x: message.exclude } : {}) },
+      );
+    },
+
+    async replay(topic, since, limit) {
+      const rows = await client().unsafe<{ id: string; event: string | null; payload: unknown }>(
+        "select id::text as id, event, payload from realtime.messages where topic = $1 and " +
+          "private and extension = 'broadcast' and inserted_at >= " +
+          "(to_timestamp($2::float8 / 1000) at time zone current_setting('TimeZone')) " +
+          "order by inserted_at limit $3",
+        [topic, since, limit],
+      );
+      return rows.map((row) => ({
+        id: String(row.id),
+        event: String(row.event ?? ""),
+        payload: payloadFromJson(
+          typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload,
+        ),
+      }));
     },
 
     async track(topic, isPrivate, entry, replaces) {
@@ -425,6 +457,11 @@ export function postgresBus(options: PostgresBusOptions): RealtimeBus {
       } catch { /* the database is gone too: the others' sweep removes them */ }
     },
   };
+}
+
+/** Whether a bus message fits one notification. */
+function fits(body: Record<string, unknown>): boolean {
+  return new TextEncoder().encode(JSON.stringify(body)).byteLength <= MAX_NOTIFY;
 }
 
 /** A presence meta column, parsed. */

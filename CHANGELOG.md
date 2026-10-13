@@ -209,6 +209,17 @@ and this project adheres to
   channels. `useTableChanges` gains
   operator filters and an `events` option; `broadcast()` publishes from server code. See
   [Supabase Realtime](https://denext.dev/docs/backend#supabase-realtime-supabasechannel).
+- **`@denext/backend` realtime: the publication, replay, native hooks, and a logical source.**
+  Tables opt in the Supabase way too — `alter publication supabase_realtime add table …` (the
+  publication is created if missing and re-read every 10 seconds) — beside `realtime({ tables })`.
+  Private channels replay stored broadcasts (`config.broadcast.replay: { since, limit }`, with
+  `meta: { replayed, id }`), `replication_ready` gets its `system` message, and every change to a
+  row within a burst is sent, in order. `useBroadcast` and `useRealtimePresence` in
+  `@denext/backend/client` reach the same channels without supabase-js, on every instance.
+  `realtime({ source: "logical" })` reads changes from a temporary `pgoutput` slot per instance
+  instead of triggers and NOTIFY, so committing writers no longer serialize on the notification
+  queue (measured: 100 % of the no-realtime commit rate at 32 writers, against 18 % for NOTIFY).
+  `useTableChanges` / `tableChanges` take a `schema`.
 - **`captureRequestContext()` in `denext/plugin-kit`.** A plugin holding a long-lived connection
   (a WebSocket it upgraded) captures the request before upgrading and later re-enters a copy of it,
   so `auth()`, `cookies()` and `clientIpForLimits()` answer as they did for the original — how it

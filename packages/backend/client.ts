@@ -52,6 +52,30 @@ export type {
   StorageApiOptions,
 } from "./src/storage-client.ts";
 export { applyTableChanges, useTableChanges } from "./src/table-changes-client.ts";
+export {
+  RealtimeClient,
+  realtimeClient,
+  SharedChannel,
+  useBroadcast,
+  useRealtimePresence,
+} from "./src/realtime-client.ts";
+export type {
+  BroadcastListener,
+  BroadcastMessage,
+  BroadcastState,
+  ChannelMessage,
+  ClientSocket,
+  Presence,
+  PresenceListener,
+  PresenceState,
+  RealtimeChannelOptions,
+  RealtimePresenceResult,
+  RealtimeStatus,
+  SocketFactory,
+  StatusListener,
+  UseBroadcastOptions,
+  UsePresenceOptions,
+} from "./src/realtime-client.ts";
 export { from, restClient, RestClientError, rpc } from "./src/rest-client.ts";
 export type {
   ExplainOptions,
@@ -81,11 +105,11 @@ export type {
 } from "./src/table-changes-client.ts";
 export type {
   FilterOp,
-  FilterValue,
   TableChange,
   TableChangesFrame,
   TableEvent,
   TableFilter,
+  TableFilterValue,
 } from "./src/realtime-shared.ts";
 
 /** Upload progress, in bytes. */

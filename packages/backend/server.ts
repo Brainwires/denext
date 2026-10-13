@@ -44,11 +44,11 @@ export { broadcast } from "./src/realtime-socket.ts";
 export type { TableChangeEvent, TableChangesOptions } from "./src/realtime.ts";
 export type {
   FilterOp,
-  FilterValue,
   TableChange,
   TableChangesFrame,
   TableEvent,
   TableFilter,
+  TableFilterValue,
 } from "./src/realtime-shared.ts";
 export { vault, VaultError } from "./src/vault.ts";
 export type { DecryptedSecret, Vault, VaultSecret } from "./src/vault.ts";

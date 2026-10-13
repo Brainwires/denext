@@ -7,7 +7,13 @@
 // NOTIFY at commit, a terminated listener reconnecting) is in
 // tests/backend-realtime-integration.test.ts.
 
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { applyPlugins, resetPlugins, runPluginTeardown } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
@@ -31,7 +37,12 @@ import {
 } from "../packages/backend/server.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
 import { RLS_SETUP } from "../packages/backend/src/rls.ts";
-import { resolveRealtime } from "../packages/backend/src/realtime-sql.ts";
+import {
+  dropTriggersSql,
+  publicationTable,
+  resolveRealtime,
+  triggerArgs,
+} from "../packages/backend/src/realtime-sql.ts";
 import {
   installRealtime,
   parseNotification,
@@ -52,6 +63,7 @@ import {
   parseFilter,
 } from "../packages/backend/src/realtime-shared.ts";
 import { type FakeRealtimeClient, fakeRealtimeClient } from "./helpers/fake-realtime-client.ts";
+import { begin, insert, relation } from "./helpers/pgoutput.ts";
 import {
   authConfig,
   changesOf,
@@ -740,7 +752,9 @@ Deno.test("realtime: re-reads compare keys and filters in the column's type, und
     await until(() => ca.frames.length === 1);
     const { statements, parameters } = env.sql;
     // The column types are read once, by the table's (quoted) name.
-    const lookups = statements.flatMap((s, i) => /pg_attribute/.test(s) ? [parameters[i]] : []);
+    const lookups = statements.flatMap((s, i) =>
+      /from pg_attribute a .*where a\.attrelid/s.test(s) ? [parameters[i]] : []
+    );
     assertEquals(lookups, [['"notes"']]);
     const seed = statements.find((s) =>
       /^select to_jsonb\(t\."id"\) #>> '\{\}' as k from/.test(s)
@@ -845,7 +859,22 @@ Deno.test("realtime: a failed re-read becomes a resync for that group", async ()
 });
 
 Deno.test("realtime(): options are validated; backend() needs postgres for it", () => {
-  assertThrows(() => realtime({ tables: {} }), TypeError, "names no table");
+  assertThrows(() => realtime({ tables: {}, publication: false }), TypeError, "names no table");
+  // With the publication (the default) the tables may all come from it.
+  assertEquals(realtime({}).tables, undefined);
+  assertThrows(() => realtime({ publication: "bad name" }), TypeError, "publication");
+  assertThrows(
+    () => realtime({ source: "wal" as "logical" }),
+    TypeError,
+    'source must be "notify" or "logical"',
+  );
+  assertThrows(() => realtime({ logical: { pollMs: 0 } }), TypeError, "logical.pollMs");
+  assertThrows(() => realtime({ logical: { maxChanges: 1.5 } }), TypeError, "logical.maxChanges");
+  const resolved = resolveRealtime({ source: "logical", publication: "pub_x" });
+  assertEquals(
+    [resolved.source, resolved.publication, resolved.logical],
+    ["logical", "pub_x", { pollMs: 50, maxChanges: 10_000 }],
+  );
   assertThrows(
     () => realtime({ tables: { notes: {} }, maxSubscriptionsPerIdentity: 0 }),
     TypeError,
@@ -882,17 +911,29 @@ Deno.test("realtime(): options are validated; backend() needs postgres for it", 
 });
 
 Deno.test("realtimeMigrations: the trigger function (then its UTC-key replacement), then one trigger per table named by its SQL", () => {
-  const migrations = realtimeMigrations({
+  const all = realtimeMigrations({
     tables: { notes: {}, items: { key: "sku", events: ["delete", "insert"], schema: "app" } },
   });
-  assertEquals(migrations.length, 7);
-  assertEquals(migrations.slice(0, 5).map((m) => m.name), [
+  assertEquals(all.map((m) => m.name).slice(0, 7), [
     "backend_realtime_0001",
     "backend_realtime_0002",
     "backend_realtime_0003",
     "backend_realtime_0004",
     "backend_realtime_0005",
+    "backend_realtime_0006",
+    "backend_realtime_pub_supabase_realtime",
   ]);
+  // 0006: send() with the stored message's id inline; the publication, created if absent.
+  assert(all[5].sql.includes("'id', message_id"));
+  assert(all[5].sql.includes("messages_topic_idx"));
+  assert(all[6].sql.includes("CREATE PUBLICATION supabase_realtime"));
+  assert(all[6].sql.includes("WHEN insufficient_privilege"));
+  // Without the publication, the order the rest of this test indexes into.
+  const migrations = realtimeMigrations({
+    tables: { notes: {}, items: { key: "sku", events: ["delete", "insert"], schema: "app" } },
+    publication: false,
+  }).filter((m) => m.name !== "backend_realtime_0006");
+  assertEquals(migrations.length, 7);
   for (const fn of migrations.slice(0, 3)) {
     assert(fn.sql.startsWith("CREATE OR REPLACE FUNCTION denext_realtime_notify()"));
     assert(fn.sql.includes("pg_notify('denext_realtime', body)"));
@@ -924,9 +965,12 @@ Deno.test("realtimeMigrations: the trigger function (then its UTC-key replacemen
   assert(migrations[6].sql.includes("denext_realtime_notify('items', 'sku')"));
   assert(!migrations[6].sql.includes("CREATE TRIGGER denext_realtime_truncate"));
   // Another event set is another migration name (it replaces the trigger); so is `old`.
-  const changed = realtimeMigrations({ tables: { notes: { events: ["insert"] } } });
+  const noPub = { publication: false as const };
+  const changed = realtimeMigrations({ tables: { notes: { events: ["insert"] } }, ...noPub })
+    .filter((m) => m.name !== "backend_realtime_0006");
   assert(changed[5].name !== migrations[5].name);
-  const full = realtimeMigrations({ tables: { notes: { old: "full" } } });
+  const full = realtimeMigrations({ tables: { notes: { old: "full" } }, ...noPub })
+    .filter((m) => m.name !== "backend_realtime_0006");
   assert(full[5].name !== migrations[5].name);
   assert(full[5].sql.includes("denext_realtime_notify('notes', 'id', 'full')"));
   const sql = realtimeSetupSql({ tables: { notes: {} } });
@@ -1274,4 +1318,331 @@ Deno.test("realtime: operator filters narrow the re-read; a raw row over 1 MiB i
   } finally {
     await env.done();
   }
+});
+
+// ── The supabase_realtime publication, the trigger switch, the logical source, raw steps ────
+
+/** Capture the engine's 10-second publication re-read while `fn` starts it. */
+async function captureTick(fn: () => Promise<unknown>): Promise<() => void> {
+  const real = globalThis.setInterval;
+  let tick: (() => void) | undefined;
+  globalThis.setInterval = ((handler: () => void, ms?: number) => {
+    if (ms === 10_000) tick = handler;
+    return real(handler, ms);
+  }) as typeof setInterval;
+  try {
+    await fn();
+  } finally {
+    globalThis.setInterval = real;
+  }
+  assert(tick, "the publication re-read is armed");
+  return tick;
+}
+
+Deno.test({
+  name: "realtime publication: its tables join the registry, with triggers, and leave it",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const sql = fakeRealtimeClient({
+      notes: { policy: ownerOnly },
+      items: { key: "sku" },
+      pubnotes: {},
+      things: {},
+    });
+    sql.catalog.publication.push(
+      { schema: "public", table: "pubnotes", pk: "id", ident: "d", rls: false },
+      { schema: "app", table: "things", pk: "id", ident: "f", rls: false },
+      { schema: "public", table: "notes", pk: "id", ident: "f", rls: true }, // configured: wins
+      { schema: "public", table: "multi", pk: "a,b", ident: "d", rls: false },
+      { schema: "public", table: "nopk", pk: null, ident: "d", rls: false },
+      { schema: "my-schema", table: "odd", pk: "id", ident: "d", rls: false },
+    );
+    // pubnotes' triggers are there already, with the same arguments: not recreated.
+    sql.catalog.triggers.set(
+      "pubnotes",
+      new Map([
+        ["denext_realtime", { args: "pubnotes\\000id\\000", enabled: "O" }],
+        ["denext_realtime_truncate", { args: "pubnotes\\000", enabled: "O" }],
+      ]),
+    );
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (message: string) => void warnings.push(String(message));
+    const env = await setUp({}, sql);
+    try {
+      const engine = realtimeEngine();
+      const tick = await captureTick(() => engine.start());
+      const names = [...engine.config.tables.keys()].sort();
+      assertEquals(names, ["app.things", "items", "notes", "pubnotes"]);
+      assertEquals(engine.lookup("app.things")?.old, "full", "replica identity full, no RLS");
+      assertEquals(engine.lookup("pubnotes")?.old, "key");
+      assertEquals(engine.lookup("public.pubnotes")?.name, "pubnotes");
+      assertEquals(engine.lookup("things"), undefined, "not in public");
+      assertEquals(engine.lookup("notes")?.fromPublication, undefined, "the configured one");
+      assertEquals(warnings.length, 3, "multi, nopk, my-schema.odd skipped once each");
+      assert(warnings.some((w) => w.includes("one-column primary key")));
+      assert(warnings.some((w) => w.includes("plain (unquoted) identifiers")));
+      const creates = sql.statements.filter((s) => s.startsWith("CREATE TRIGGER"));
+      assertEquals(creates.length, 2, "only app.things' two triggers were made");
+      assertEquals(
+        sql.catalog.triggers.get("app.things")?.get("denext_realtime")?.args,
+        "app.things\\000id\\000full\\000",
+      );
+
+      // A subscriber of a publication table, by `schema.table`, and on the server by `schema`.
+      const ca = env.hub.conn(env.a);
+      assert((await env.hub.subscribe(ca, "app.things")).ok);
+      const served: TableChangesFrame[] = [];
+      const stop = await tableChanges("things", {
+        schema: "app",
+        as: { id: A },
+        onChange: (frame) => served.push(frame),
+      });
+      sql.tables.get("things")!.set("1", { id: 1, label: "a" });
+      sql.notify(JSON.stringify({ table: "app.things", op: "insert", key: "1", ts: Date.now() }));
+      await until(() => ca.frames.length === 1 && served.length === 1);
+      assertEquals((changesOf(ca)[0] as { row?: unknown }).row, { id: 1, label: "a" });
+      stop();
+      await assertRejects(() => tableChanges("nothing", { onChange: () => {} }), TypeError);
+
+      // The next read: things left (triggers dropped), pubnotes became REPLICA IDENTITY FULL.
+      sql.catalog.publication.splice(1, 1);
+      sql.catalog.publication[0].ident = "f";
+      warnings.length = 0;
+      tick();
+      await until(() => !engine.config.tables.has("app.things"));
+      await settle(50);
+      assertEquals(warnings, [], "a skipped table is warned about once");
+      assertEquals(sql.catalog.triggers.get("app.things")?.size ?? 0, 0);
+      assertEquals(engine.lookup("pubnotes")?.old, "full");
+      assertEquals(
+        sql.catalog.triggers.get("pubnotes")?.get("denext_realtime")?.args,
+        "pubnotes\\000id\\000full\\000",
+      );
+    } finally {
+      console.warn = warn;
+      await env.done();
+    }
+  },
+});
+
+Deno.test({
+  name: "realtime: a key naming a publication table is admitted once the publication is read",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const sql = fakeRealtimeClient({
+      notes: { policy: ownerOnly },
+      items: { key: "sku" },
+      late: {},
+    });
+    sql.catalog.publication.push({
+      schema: "public",
+      table: "late",
+      pk: "id",
+      ident: "d",
+      rls: false,
+    });
+    const env = await setUp({}, sql);
+    try {
+      const ca = env.hub.conn(env.a);
+      // Not started yet: authorize() reads the publication first.
+      assert((await env.hub.subscribe(ca, "late")).ok);
+      assert(!(await env.hub.subscribe(ca, "missing")).ok);
+    } finally {
+      await env.done();
+    }
+  },
+});
+
+Deno.test({
+  name: "realtime: the notify source turns realtime triggers on; the logical one turns them off",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
+    sql.catalog.triggers.set(
+      "notes",
+      new Map([["denext_realtime", { args: "notes\\000id\\000", enabled: "D" }]]),
+    );
+    sql.catalog.triggers.set(
+      "unrelated",
+      new Map([["denext_realtime", { args: "x\\000id\\000", enabled: "D" }]]),
+    );
+    const env = await setUp({ publication: false }, sql);
+    try {
+      await realtimeEngine().start();
+      assertEquals(sql.catalog.triggers.get("notes")!.get("denext_realtime")!.enabled, "O");
+      assertEquals(
+        sql.catalog.triggers.get("unrelated")!.get("denext_realtime")!.enabled,
+        "D",
+        "not a realtime table of this app",
+      );
+      assert(sql.statements.includes("ALTER TABLE notes ENABLE TRIGGER denext_realtime"));
+    } finally {
+      await env.done();
+    }
+  },
+});
+
+/** A reserved connection answering the slot statements, fed from `batches`. */
+function fakeSlot(sql: FakeRealtimeClient, batches: Uint8Array[][]) {
+  const statements: string[] = [];
+  const answer = (rows: unknown[]) => {
+    const p = Promise.resolve(rows);
+    return { then: p.then.bind(p), simple: () => p };
+  };
+  (sql as unknown as { reserve: () => Promise<unknown> }).reserve = () =>
+    Promise.resolve({
+      unsafe: (text: string) => {
+        statements.push(text);
+        if (text === "show wal_level") return answer([{ wal_level: "logical" }]);
+        if (text.includes("pg_logical_slot_get_binary_changes")) {
+          return answer((batches.shift() ?? []).map((data) => ({ data })));
+        }
+        return answer([]);
+      },
+      release: () => {},
+    });
+  return statements;
+}
+
+Deno.test({
+  name:
+    "realtime source logical: no trigger migrations, the denext_realtime publication, WAL events",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
+    sql.catalog.triggers.set(
+      "notes",
+      new Map([["denext_realtime", { args: "notes\\000id\\000", enabled: "O" }]]),
+    );
+    const batches: Uint8Array[][] = [];
+    const slot = fakeSlot(sql, batches);
+    const env = await setUp({ source: "logical", migrate: true, logical: { pollMs: 5 } }, sql);
+    try {
+      const ca = env.hub.conn(env.a);
+      assert((await env.hub.subscribe(ca, "notes")).ok);
+      assert(
+        !sql.statements.some((s) => s.includes("CREATE TRIGGER denext_realtime AFTER")),
+        "the logical source installs no row triggers",
+      );
+      assert(sql.statements.some((s) => s.includes("CREATE PUBLICATION denext_realtime")));
+      assert(
+        sql.statements.includes('ALTER PUBLICATION denext_realtime SET TABLE "notes", "items"'),
+      );
+      assertEquals(sql.catalog.triggers.get("notes")!.get("denext_realtime")!.enabled, "D");
+      assert(slot.some((s) => s.includes("pg_create_logical_replication_slot")));
+      assert(
+        sql.statements.every((s) => !s.startsWith("LISTEN denext_realtime\n")),
+        "no NOTIFY listener for changes",
+      );
+      // A change read from the slot reaches the subscriber, re-read under A's policies.
+      sql.tables.get("notes")!.set("7", { id: 7, owner: A, body: "from the WAL" });
+      batches.push([
+        begin(Date.now()),
+        relation(1, "public", "notes", [["id", 20], ["owner", 2950], ["body", 25]]),
+        insert(1, ["7", A, "from the WAL"]),
+      ]);
+      await until(() => ca.frames.length === 1, 5_000);
+      assertEquals((changesOf(ca)[0] as { row?: unknown }).row, {
+        id: 7,
+        owner: A,
+        body: "from the WAL",
+      });
+    } finally {
+      await env.done();
+    }
+    assert(slot.some((s) => s.includes("pg_drop_replication_slot")), "dropped on stop");
+  },
+});
+
+Deno.test("realtime raw mode: every step of a key in one burst, judged by the row as it is now", async () => {
+  const sql = fakeRealtimeClient({
+    notes: { policy: ownerOnly },
+    items: { key: "sku" },
+  });
+  const env = await setUp({ publication: false }, sql);
+  try {
+    const engine = realtimeEngine();
+    const frames: TableChangesFrame[] = [];
+    await engine.bind({
+      table: engine.table("notes"),
+      scope: rawScope(A),
+      owner: "steps",
+      events: ALL_EVENTS,
+      onFrame: (frame) => frames.push(frame),
+    });
+    const ops = () => frames.flatMap((f) => f.changes ?? []).map((c) => `${c.op}:${c.key}`);
+    // Inserted and updated in one burst: both reach the subscriber, with the row as it is now.
+    sql.insert("notes", { id: 1, owner: A, body: "a" });
+    sql.update("notes", "1", { body: "b" });
+    await until(() => ops().length === 2);
+    assertEquals(ops(), ["insert:1", "update:1"]);
+    assertEquals(
+      frames.flatMap((f) => f.changes!).map((c) => (c as { row?: { body?: string } }).row?.body),
+      [
+        "b",
+        "b",
+      ],
+    );
+    // Inserted and deleted in one burst: gone before it could be checked — nothing.
+    sql.insert("notes", { id: 2, owner: A, body: "x" });
+    sql.remove("notes", "2");
+    await settle(120);
+    assertEquals(ops().length, 2);
+    // Deleted and inserted again in one burst: the delete (it was known), then the insert.
+    sql.remove("notes", "1");
+    sql.insert("notes", { id: 1, owner: A, body: "c" });
+    await until(() => ops().length === 4);
+    assertEquals(ops().slice(2), ["delete:1", "insert:1"]);
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("publicationTable / triggerArgs / dropTriggersSql: a catalog row as a realtime table", () => {
+  assertEquals(
+    publicationTable({ schema: "public", table: "notes", pk: "id", ident: "f", rls: false }),
+    {
+      name: "notes",
+      table: "notes",
+      fromPublication: true,
+      events: ["insert", "update", "delete", "truncate"],
+      key: "id",
+      schema: "public",
+      qualified: '"public"."notes"',
+      old: "full",
+    },
+  );
+  const app = publicationTable({ schema: "app", table: "t", pk: "k", ident: "f", rls: true });
+  assert(typeof app !== "string");
+  assertEquals([app.name, app.old], ["app.t", "key"], "under RLS the old row is the key");
+  assertEquals(triggerArgs(app), ["app.t", "k"]);
+  assertEquals(triggerArgs({ ...app, old: "full" }), ["app.t", "k", "full"]);
+  assertEquals(
+    dropTriggersSql(app),
+    'DROP TRIGGER IF EXISTS denext_realtime ON "app"."t";\n' +
+      'DROP TRIGGER IF EXISTS denext_realtime_truncate ON "app"."t";',
+  );
+  assertStringIncludes(
+    publicationTable({ schema: "public", table: "x", pk: "a,b", ident: "d", rls: false }) as string,
+    "one-column primary key (has 2)",
+  );
+  assertStringIncludes(
+    publicationTable({ schema: "public", table: "x", pk: null, ident: "d", rls: false }) as string,
+    "(has none)",
+  );
+  assertStringIncludes(
+    publicationTable({
+      schema: "public",
+      table: "We ird",
+      pk: "id",
+      ident: "d",
+      rls: false,
+    }) as string,
+    "plain (unquoted) identifiers",
+  );
 });

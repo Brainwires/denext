@@ -260,6 +260,7 @@ jobs:
       DENEXT_TEST_POSTGRES_URL: postgres://postgres:pw@127.0.0.1:5432/postgres
       DENEXT_TEST_POSTGIS_URL: postgres://postgres:pw@127.0.0.1:5433/postgres
       DENEXT_TEST_POSTGRES_JS: "1" # the stock-Deno path (npm:postgres via fromPostgresJs) too
+      DENEXT_TEST_POSTGRES_LOGICAL: "1" # wal_level = logical (set below): realtime's logical source
       DENEXT_TEST_SUPABASE_JS: "1" # the stock @supabase/supabase-js client against the app
       DENEXT_TEST_S3_ENDPOINT: http://127.0.0.1:9100
       DENEXT_TEST_S3_ACCESS_KEY: dnxtest
@@ -297,6 +298,17 @@ jobs:
             sleep 1
           done
           exit 1
+
+      - name: Enable logical decoding on the Postgres service (wal_level = logical)
+        run: |
+          pg=${{ job.services.postgres.id }}
+          docker exec "$pg" psql -U postgres -c "alter system set wal_level = logical"
+          docker restart "$pg"
+          for i in $(seq 1 60); do
+            docker exec "$pg" pg_isready -U postgres && break
+            sleep 1
+          done
+          docker exec "$pg" psql -U postgres -tAc "show wal_level" | grep -qx logical
 
       - name: Backend + Postgres integration tests (real Postgres, PostGIS and MinIO)
         env:

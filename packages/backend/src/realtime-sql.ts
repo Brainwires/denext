@@ -34,8 +34,33 @@ export interface RealtimeTableOptions {
 
 /** `backend({ realtime })`: realtime changes from Postgres tables. */
 export interface RealtimeOptions {
-  /** The tables to send changes from, by name: `{ notes: { events: ["insert"], key: "id" } }`. */
-  tables: Record<string, RealtimeTableOptions>;
+  /**
+   * The tables to send changes from, by name: `{ notes: { events: ["insert"], key: "id" } }`.
+   * Optional when the {@linkcode publication} lists them.
+   */
+  tables?: Record<string, RealtimeTableOptions>;
+  /**
+   * Also send changes from the tables in this Postgres publication — Supabase's way to opt a
+   * table in (`alter publication supabase_realtime add table notes`), so Supabase migrations work
+   * unchanged. Default `"supabase_realtime"` (created, empty, if it does not exist); `false`
+   * reads only {@linkcode tables}. A table there needs a one-column primary key; its old row is
+   * the key, or the whole row when it has `REPLICA IDENTITY FULL` and no row-level security (as
+   * Supabase sends it). Re-read every 10 seconds, so a table added or dropped while the app runs
+   * follows.
+   */
+  publication?: string | false;
+  /**
+   * Where changes come from. `"notify"` (the default): a trigger per table sends the key with
+   * `pg_notify`, which works everywhere but serializes committing transactions on the
+   * notification queue. `"logical"`: logical decoding — a temporary `pgoutput` replication slot
+   * per server instance, read over a reserved connection — no triggers, no NOTIFY, commit
+   * timestamps from the WAL. It needs `wal_level = logical`, a connecting role with the
+   * `REPLICATION` attribute and a client with `reserve()` (`Deno.SQL`, or postgres.js through
+   * `fromPostgresJs`).
+   */
+  source?: "notify" | "logical";
+  /** `source: "logical"`'s tuning. */
+  logical?: RealtimeLogicalOptions;
   /**
    * Also `revalidateTag("table:<name>")` once per burst of changes, so `<Live>`, `useLive`,
    * `useApi({ tags })` and `defineSubscription({ tags })` watchers of that tag are pushed
@@ -81,6 +106,14 @@ export interface RealtimeOptions {
    * against the app. On by default; `false` turns it off; an object sets its limits.
    */
   socket?: boolean | RealtimeSocketOptions;
+}
+
+/** `realtime({ logical })`: the logical-decoding source's tuning. */
+export interface RealtimeLogicalOptions {
+  /** How often the slot is read when it was empty, in milliseconds (default 50). */
+  pollMs?: number;
+  /** Changes read per round trip (default 10 000); a full batch is followed at once. */
+  maxChanges?: number;
 }
 
 /** `realtime({ socket })`: the Supabase Realtime endpoint (`/realtime/v1/*`) and its limits. */
@@ -139,8 +172,15 @@ export interface RealtimeRevalidateOptions {
 
 /** A table's resolved options. */
 export interface ResolvedTable {
-  /** The name it is configured (and subscribed) under. */
+  /**
+   * The name it is configured (and subscribed) under: the config key, or — for a publication
+   * table — the table's name in `public`, `schema.table` elsewhere.
+   */
   name: string;
+  /** The table's own name. */
+  table: string;
+  /** It came from the publication (not `realtime({ tables })`). */
+  fromPublication?: true;
   /** The events sent. */
   events: TableEvent[];
   /** The key column. */
@@ -173,6 +213,12 @@ export interface ResolvedRealtime {
   maxTrackedKeys: number;
   /** The Supabase Realtime endpoint's limits, or `null` when it is off. */
   socket: SocketLimits | null;
+  /** The publication whose tables are read too, or `null`. */
+  publication: string | null;
+  /** Where changes come from. */
+  source: "notify" | "logical";
+  /** The logical source's tuning. */
+  logical: Required<RealtimeLogicalOptions>;
 }
 
 const EVENTS: readonly TableEvent[] = ["insert", "update", "delete", "truncate"];
@@ -223,6 +269,7 @@ function resolveTable(name: string, options: RealtimeTableOptions): ResolvedTabl
   }
   return {
     name,
+    table: name,
     events: EVENTS.filter((event) => events.includes(event)),
     key,
     ...(schema ? { schema } : {}),
@@ -240,8 +287,29 @@ function resolveTable(name: string, options: RealtimeTableOptions): ResolvedTabl
  */
 export function resolveRealtime(options: RealtimeOptions): ResolvedRealtime {
   const entries = Object.entries(options?.tables ?? {});
-  if (entries.length === 0) throw new TypeError("realtime(): `tables` names no table");
+  const publication = options?.publication === undefined
+    ? "supabase_realtime"
+    : options.publication === false
+    ? null
+    : identifier(options.publication, "publication");
+  if (entries.length === 0 && !publication) {
+    throw new TypeError("realtime(): `tables` names no table (and `publication` is off)");
+  }
+  const source = options.source ?? "notify";
+  if (source !== "notify" && source !== "logical") {
+    throw new TypeError(`realtime(): source must be "notify" or "logical"`);
+  }
   return {
+    publication,
+    source,
+    logical: {
+      pollMs: positiveOption(options.logical?.pollMs, 50, "realtime(): logical.pollMs"),
+      maxChanges: positiveOption(
+        options.logical?.maxChanges,
+        10_000,
+        "realtime(): logical.maxChanges",
+      ),
+    },
     tables: new Map(entries.map(([name, table]) => [name, resolveTable(name, table ?? {})])),
     revalidate: options.revalidate === true ||
       (typeof options.revalidate === "object" && options.revalidate !== null),
@@ -502,6 +570,30 @@ BEGIN
 END $fn$;`;
 
 /**
+ * `backend_realtime_0006`: `realtime.send()` again, now carrying the stored message's id inline
+ * (what a subscriber sees as `meta.id`, and what broadcast replay reads back).
+ */
+const SEND_WITH_ID =
+  `CREATE OR REPLACE FUNCTION realtime.send(payload jsonb, event text, topic text,
+  private boolean DEFAULT true) RETURNS void
+LANGUAGE plpgsql AS $fn$
+DECLARE
+  message_id uuid;
+  body text;
+BEGIN
+  INSERT INTO realtime.messages (payload, event, topic, private, extension)
+    VALUES ($1, $2, $3, $4, 'broadcast') RETURNING id INTO message_id;
+  body := jsonb_build_object('k', 'b', 't', $3, 'e', $2, 'p', $1, 'pr', $4, 'id', message_id)::text;
+  IF octet_length(body) > ${MAX_PAYLOAD} THEN
+    body := jsonb_build_object('k', 'm', 'id', message_id)::text;
+  END IF;
+  PERFORM pg_notify('${REALTIME_BUS_CHANNEL}', body);
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'ErrorSendingBroadcastMessage: %', SQLERRM;
+END $fn$;
+CREATE INDEX IF NOT EXISTS messages_topic_idx ON realtime.messages (topic, inserted_at);`;
+
+/**
  * `backend_realtime_0005`: presence shared by every instance on the database — one row per
  * tracked presence, owned by the instance that holds its socket, and a heartbeat per instance
  * so the presences of an instance that died are swept (and their leaves broadcast). Only the
@@ -524,8 +616,88 @@ CREATE TABLE IF NOT EXISTS realtime.denext_instances (
 );
 REVOKE ALL ON realtime.denext_presences, realtime.denext_instances FROM PUBLIC;`;
 
+/**
+ * `backend_realtime_pub_<name>`: the publication, created empty when it does not exist, so a
+ * Supabase migration's `alter publication supabase_realtime add table …` finds it. Without the
+ * privilege to create one it warns and goes on (an administrator creates it).
+ */
+function publicationSql(name: string): string {
+  return `DO $do$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_publication WHERE pubname = '${name}') THEN
+    CREATE PUBLICATION ${name};
+  END IF;
+EXCEPTION WHEN insufficient_privilege THEN
+  RAISE WARNING 'realtime: cannot create publication ${name}: %', SQLERRM;
+END $do$`;
+}
+
+/** A publication table as the catalog describes it (see `PUBLICATION_TABLES_SQL`). */
+export interface PublicationRow {
+  schema: string;
+  table: string;
+  /** The primary key's columns, comma-separated (`null`: none). */
+  pk: string | null;
+  /** `relreplident`: `d` default, `f` full, `i` index, `n` nothing. */
+  ident: string;
+  /** Row-level security is enabled. */
+  rls: boolean;
+}
+
+/** The tables of the publication `$1`, with their key, replica identity and RLS flag. */
+export const PUBLICATION_TABLES_SQL =
+  "select n.nspname::text as schema, c.relname::text as table, " +
+  "(select string_agg(a.attname::text, ',' order by a.attnum) from pg_index i join pg_attribute a " +
+  "on a.attrelid = i.indrelid and a.attnum = any(i.indkey) where i.indrelid = c.oid and " +
+  "i.indisprimary) as pk, c.relreplident::text as ident, c.relrowsecurity as rls " +
+  "from pg_publication_tables pt join pg_namespace n on n.nspname = pt.schemaname " +
+  "join pg_class c on c.relnamespace = n.oid and c.relname = pt.tablename where pt.pubname = $1";
+
+/**
+ * A publication table as a realtime table — `null` (with the reason) when it cannot be one:
+ * a name that is not a plain identifier, or a primary key that is not exactly one column.
+ *
+ * @param row The catalog row.
+ * @returns The table, or why not.
+ */
+export function publicationTable(row: PublicationRow): ResolvedTable | string {
+  const where = `${row.schema}.${row.table}`;
+  if (!IDENTIFIER.test(row.schema) || !IDENTIFIER.test(row.table)) {
+    return `${where}: only plain (unquoted) identifiers are supported`;
+  }
+  const pk = (row.pk ?? "").split(",").filter(Boolean);
+  if (pk.length !== 1 || !IDENTIFIER.test(pk[0])) {
+    return `${where}: needs a one-column primary key (has ${pk.length || "none"})`;
+  }
+  return {
+    name: row.schema === "public" ? row.table : `${row.schema}.${row.table}`,
+    table: row.table,
+    fromPublication: true,
+    events: [...EVENTS],
+    key: pk[0],
+    schema: row.schema,
+    qualified: `"${row.schema}"."${row.table}"`,
+    old: row.ident === "f" && !row.rls ? "full" : "key",
+  };
+}
+
+/**
+ * The trigger arguments of a table (what `pg_trigger.tgargs` holds, NUL-separated).
+ *
+ * @param table The table.
+ * @returns The arguments.
+ */
+export function triggerArgs(table: ResolvedTable): string[] {
+  return table.old === "full" ? [table.name, table.key, "full"] : [table.name, table.key];
+}
+
+/** The SQL that drops one table's triggers. */
+export function dropTriggersSql(table: ResolvedTable): string {
+  return `DROP TRIGGER IF EXISTS denext_realtime ON ${table.qualified};\n` +
+    `DROP TRIGGER IF EXISTS denext_realtime_truncate ON ${table.qualified};`;
+}
+
 /** The SQL that (re)creates one table's triggers: one per row, one per TRUNCATE statement. */
-function tableTrigger(table: ResolvedTable): string {
+export function tableTrigger(table: ResolvedTable): string {
   const rowEvents = table.events.filter((event) => event !== "truncate");
   const lines = [
     `DROP TRIGGER IF EXISTS denext_realtime ON ${table.qualified};`,
@@ -533,9 +705,7 @@ function tableTrigger(table: ResolvedTable): string {
   ];
   if (rowEvents.length > 0) {
     const on = rowEvents.map((event) => event.toUpperCase()).join(" OR ");
-    const args = table.old === "full"
-      ? `'${table.name}', '${table.key}', 'full'`
-      : `'${table.name}', '${table.key}'`;
+    const args = triggerArgs(table).map((arg) => `'${arg}'`).join(", ");
     lines.push(
       `CREATE TRIGGER denext_realtime AFTER ${on} ON ${table.qualified}`,
       `  FOR EACH ROW EXECUTE FUNCTION denext_realtime_notify(${args});`,
@@ -578,12 +748,20 @@ export function realtimeMigrations(options: RealtimeOptions): Migration[] {
     const sql = tableTrigger(table);
     return { name: `backend_realtime_t_${table.name}_${shortHash(sql)}`, sql };
   });
+  const publication = resolved.publication
+    ? [{
+      name: `backend_realtime_pub_${resolved.publication}`,
+      sql: publicationSql(resolved.publication),
+    }]
+    : [];
   return [
     { name: "backend_realtime_0001", sql: NOTIFY_FUNCTION },
     { name: "backend_realtime_0002", sql: NOTIFY_FUNCTION_UTC_KEYS },
     { name: "backend_realtime_0003", sql: NOTIFY_FUNCTION_OLD_ROWS },
     { name: "backend_realtime_0004", sql: REALTIME_SCHEMA },
     { name: "backend_realtime_0005", sql: PRESENCE_TABLES },
+    { name: "backend_realtime_0006", sql: SEND_WITH_ID },
+    ...publication,
     ...tables,
   ];
 }

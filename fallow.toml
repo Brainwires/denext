@@ -212,6 +212,8 @@ entry = [
   "bench/layer2-ssr/*.mjs",
   "bench/load/denext-server.ts",
   "bench/packages/*_bench.ts",
+  # The realtime sources' write-path benchmark (`deno run -A bench/realtime-source.ts`).
+  "bench/realtime-source.ts",
 ]
 
 # The docs site (site) is a satellite static-export app, not shipped framework code, and

@@ -9,6 +9,7 @@ import {
   encodeSubscriptionKey,
   newNonce,
   parseFilter,
+  qualifiedTableName,
   REALTIME_CHANNEL_ID,
   type TableChange,
   type TableChangesFrame,
@@ -34,6 +35,11 @@ export interface UseTableChangesOptions<Row> {
    * policies). A new array (a re-read after `stale`) replaces the hook's rows.
    */
   initial?: Row[];
+  /**
+   * The table's schema (default `public`): a table opted in by the publication outside `public`,
+   * or a configured table with a `schema`.
+   */
+  schema?: string;
   /** The rows' key column, as configured for the table (default `"id"`). */
   key?: string;
   /** `false` keeps the hook idle (no subscription). Default true. */
@@ -127,7 +133,7 @@ export function applyTableChanges<Row>(
  * `row`: re-read it.
  *
  * @param table A table from `realtime({ tables })`.
- * @param options `filter`, `events`, `initial`, `key`, `enabled`, `onChange`, `onResync`.
+ * @param options `filter`, `events`, `schema`, `initial`, `key`, `enabled`, `onChange`, `onResync`.
  * @returns `{ rows, changes, status, stale, error }`.
  */
 export function useTableChanges<Row = Record<string, unknown>>(
@@ -163,7 +169,7 @@ export function useTableChanges<Row = Record<string, unknown>>(
     let key: string;
     try {
       key = encodeSubscriptionKey({
-        table,
+        table: qualifiedTableName(table, options.schema),
         nonce: newNonce(),
         filter: parseFilter(options.filter),
       });
@@ -217,7 +223,7 @@ export function useTableChanges<Row = Record<string, unknown>>(
       },
     );
     // deno-lint-ignore no-explicit-any
-  }, [table, filterKey, eventsKey, enabled, column] as any);
+  }, [table, options.schema, filterKey, eventsKey, enabled, column] as any);
 
   return state;
 }

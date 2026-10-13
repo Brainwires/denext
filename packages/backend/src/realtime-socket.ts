@@ -78,6 +78,8 @@ const MAX_BINDINGS = 100;
 const REST_BODY_LIMIT = 1024 * 1024;
 /** Messages per REST call. */
 const MAX_REST_MESSAGES = 100;
+/** Messages one replay sends at most (Supabase's limit). */
+const MAX_REPLAY = 25;
 /** Supabase's error for a too-large row. */
 const TOO_LARGE = "Error 413: Payload Too Large";
 
@@ -273,7 +275,7 @@ export function tablesFor(
   const anySchema = schema === undefined || schema === null || schema === "*";
   const anyTable = table === undefined || table === null || table === "*";
   return [...tables].filter((t) =>
-    (anySchema || (t.schema ?? "public") === schema) && (anyTable || t.name === table)
+    (anySchema || (t.schema ?? "public") === schema) && (anyTable || t.table === table)
   );
 }
 
@@ -293,7 +295,7 @@ export function changeData(
   const errors = new Set<string>();
   const data: Record<string, unknown> = {
     schema: table.schema ?? "public",
-    table: table.name,
+    table: table.table,
     commit_timestamp: new Date(change.ts ?? Date.now()).toISOString(),
     type: EVENT_NAME[change.op],
     columns,
@@ -364,8 +366,13 @@ class Connection {
   }
 
   /** Send a user broadcast on a channel. */
-  broadcast(channel: Channel, event: string, payload: unknown): void {
-    const frame = encodeBroadcast(this.vsn, channel.topic, event, payload);
+  broadcast(
+    channel: Channel,
+    event: string,
+    payload: unknown,
+    meta?: Record<string, unknown>,
+  ): void {
+    const frame = encodeBroadcast(this.vsn, channel.topic, event, payload, meta);
     if (frame !== null) this.#write(frame);
   }
 
@@ -693,6 +700,35 @@ export class RealtimeHub {
     this.#armExpiry(channel);
     if (channel.presenceEnabled && (!channel.private || channel.perms.readPresence)) {
       await this.#sendPresenceState(channel);
+    }
+    await this.#afterJoin(channel, record(config.broadcast));
+  }
+
+  /**
+   * What a joined channel asked for in `config.broadcast`: `replication_ready` — a `system`
+   * message once the change stream is up (it is, before any join is answered) — and `replay` —
+   * a private channel's stored broadcasts since `since` (epoch ms), at most `limit` (25, as
+   * Supabase), each with `meta: { replayed: true, id }`.
+   */
+  async #afterJoin(channel: Channel, broadcast: Record<string, unknown>): Promise<void> {
+    if (broadcast.replication_ready === true) {
+      this.#system(channel, "system", "ok", "Replication connection established");
+    }
+    const replay = record(broadcast.replay);
+    if (!channel.private || !channel.perms.readBroadcast || typeof replay.since !== "number") {
+      return;
+    }
+    const limit = Math.min(
+      MAX_REPLAY,
+      Math.max(1, typeof replay.limit === "number" ? Math.floor(replay.limit) : MAX_REPLAY),
+    );
+    const stored = await this.#bus.replay(channel.sub, replay.since, limit);
+    for (const message of stored) {
+      if (channel.closed) return;
+      channel.conn.broadcast(channel, message.event, message.payload, {
+        replayed: true,
+        id: message.id,
+      });
     }
   }
 
@@ -1058,7 +1094,12 @@ export class RealtimeHub {
     for (const channel of this.#topics.get(this.#key(message.private, message.topic)) ?? []) {
       if (channel.closed || channel.uid === message.exclude) continue;
       if (channel.private && !channel.perms.readBroadcast) continue;
-      channel.conn.broadcast(channel, message.event, message.payload);
+      channel.conn.broadcast(
+        channel,
+        message.event,
+        message.payload,
+        message.id ? { id: message.id } : undefined,
+      );
     }
   }
 
@@ -1140,17 +1181,22 @@ async function notReady(hub: RealtimeHub): Promise<Response | null> {
 
 /**
  * Who an upgrading socket is (and how to re-read it), or the 401 refusing it: with
- * `backend({ supabase })` keys installed it must carry a valid `apikey`; a same-origin socket is
- * its session's user, any other `anon`.
+ * `backend({ supabase })` keys installed a cross-origin socket must carry a valid `apikey` (a
+ * same-origin one may omit it; one it presents must be valid); a same-origin socket is its
+ * session's user, any other `anon`.
  */
 async function socketIdentity(
   request: Request,
   url: URL,
 ): Promise<{ identity: SocketIdentity; reauth: (<T>(fn: () => T) => T) | null } | Response> {
   const unauthorized = (error: string) => new Response(JSON.stringify({ error }), { status: 401 });
-  const refusal = await apiKeyRefusal(url.searchParams.get("apikey"));
+  // A same-origin socket (denext's own hooks) may omit the key: it is the visitor's session,
+  // and the publishable key adds nothing a same-origin page does not already have.
+  const apikey = url.searchParams.get("apikey");
+  const trusted = sameOrigin(request);
+  const refusal = apikey === null && trusted ? null : await apiKeyRefusal(apikey);
   if (refusal) return unauthorized(refusal);
-  if (!sameOrigin(request)) return { identity: ANON_SOCKET_IDENTITY, reauth: null };
+  if (!trusted) return { identity: ANON_SOCKET_IDENTITY, reauth: null };
   try {
     return { identity: await sessionIdentity(), reauth: captureRequestContext() };
   } catch (error) {
