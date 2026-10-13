@@ -607,9 +607,11 @@ serializes on commit.
 
 ## Auto-REST
 
-Opt in, and the tables of one schema are served as HTTP routes in the PostgREST style, so the
-browser (or a native app) can read and write them directly — every statement run through `db()`,
-so [row-level security](#row-level-security) scopes it to the request's user, or to `anon`.
+Opt in, and the tables, views and functions of your schemas are served as HTTP routes with
+PostgREST 12's wire format, so the browser (or a native app) can read and write them directly —
+every statement run through `db()`, so [row-level security](#row-level-security) scopes it to the
+request's user, or to `anon`. The stock `@supabase/supabase-js` client works against the routes
+unchanged (`from()`, `rpc()`, `schema()`), and so does denext's own client, which has the same API.
 
 ```ts
 // denext.config.ts
@@ -627,13 +629,14 @@ export default {
 
 ```ts
 // app/notes/notes-api.ts — used from client components
-import "../../.denext/rest.ts"; // the generated row types
-import { from } from "@denext/backend/client";
+import "../../.denext/rest.ts"; // the generated types
+import { from, rpc } from "@denext/backend/client";
 
 export async function latestNotes(listId: number) {
   const { data, error, count } = await from("notes")
-    .select("id,body", { count: "exact" }) // data: { id: number; body: string }[] | null
+    .select("id, body, author:profiles(name), tags!inner(label)", { count: "exact" })
     .eq("list_id", listId)
+    .or("pinned.is.true,created_at.gt.2026-01-01")
     .order("id", { ascending: false })
     .limit(20);
   if (error) throw error; // a RestClientError: { code, status, message, details, hint }
@@ -642,43 +645,70 @@ export async function latestNotes(listId: number) {
 
 export const addNote = (listId: number, body: string) =>
   from("notes").insert({ list_id: listId, body }).select().single();
-export const editNote = (id: number, body: string) => from("notes").update({ body }).eq("id", id);
+export const saveNote = (note: { id: number; body: string }) =>
+  from("notes").upsert(note).select("id").single();
 export const removeNote = (id: number) => from("notes").delete().eq("id", id);
+export const searchNotes = (query: string) => rpc("search_notes", { query }).limit(10);
 ```
 
-The builder's shape loosely follows supabase-js's — `select`, `eq` / `neq` / `gt` / `gte` / `lt`
-/ `lte` / `like` / `ilike` / `is` / `in` / `not`, `order`, `limit`, `offset`, `range`, `single`,
-`insert` / `update` / `delete` with an optional `.select()` to get the written rows back — and
-resolves to `{ data, error, count, status }` without throwing. It is not a drop-in for supabase-js.
-`restClient({ url, headers, fetch })` makes a client with a base URL (an app on another origin, a
-native app's `Authorization: Bearer …` session); `from` uses the page's own origin and cookies.
+The builder is supabase-js's: every filter (`eq` / `neq` / `gt` / `gte` / `lt` / `lte`, `like` /
+`ilike` and their `AllOf` / `AnyOf`, `regexMatch`, `is`, `isDistinct`, `in` / `notIn`, `contains`
+/ `containedBy` / `overlaps`, the `range*` operators, `textSearch`, `match`, `not`, `or`,
+`filter`), the transforms (`select`, `order` / `limit` / `range` with `referencedTable`, `single`,
+`maybeSingle`, `csv`, `geojson`, `explain`, `rollback`, `maxAffected`, `abortSignal`,
+`throwOnError`), and `insert` / `upsert` / `update` / `delete`, resolving to
+`{ data, error, count, status, statusText }`. `restClient({ url, headers, fetch, schema })` makes
+a client with a base URL (an app on another origin, a native app's `Authorization: Bearer …`
+session); `from` and `rpc` use the page's own origin and cookies; `.schema("api")` targets another
+exposed schema.
+
+With `@supabase/supabase-js` instead, point it at the app:
+`createClient(appUrl, anyKey, { global: { fetch } })`, then `supabase.from("notes")…` and
+`supabase.rpc("fn", args)` reach these routes. Pass the generated `Database` type to
+`createClient<Database>()` for typed queries.
 
 ### Routes
 
-`GET`, `HEAD`, `POST`, `PATCH` and `DELETE` on `/rest/v1/<table>`:
+`GET`, `HEAD`, `POST`, `PATCH` and `DELETE` on `/rest/v1/<table>`; `GET`, `HEAD` and `POST` on
+`/rest/v1/rpc/<function>`:
 
-| Request                                          | What it does                                                                                                                                     |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `select=id,body`                                 | The columns to return (default `*`). Columns of this table only: embedded resources, aliases, casts and JSON paths are refused (400).            |
-| `col=eq.value`                                   | A filter: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like` / `ilike` (`*` or `%` matches any run), `is.null\|true\|false`, `in.(a,"b,c")`.          |
-| `col=not.eq.value`                               | The filter negated. Every filter is ANDed; `or=` and `and=` are not supported.                                                                   |
-| `order=col.desc.nullslast,other`                 | The order: `asc` / `desc`, `nullsfirst` / `nullslast`.                                                                                           |
-| `limit=20&offset=40`, or a `Range: 40-59` header | Paging, capped at `maxRows`. The response carries `Content-Range: 40-59/*`.                                                                      |
-| `Prefer: count=exact`                            | Count every matching row too: `Content-Range: 40-59/1234`, and `206` when the page is not all of them. Signed-in only by default (`exactCount`). |
-| `Accept: application/vnd.pgrst.object+json`      | One object instead of an array; zero or several rows are a `406` (and a write is rolled back).                                                   |
-| `POST` with an object or an array of objects     | Insert (every object with the same keys). `201`; columns left out take their default.                                                            |
-| `PATCH` with an object, plus filters             | Update the matching rows. A request without a filter is refused (`400`, `21000`).                                                                |
-| `DELETE` plus filters                            | Delete the matching rows. A request without a filter is refused.                                                                                 |
-| `Prefer: return=representation` on a write       | Answer with the written rows (`select=` shapes them); the default, `return=minimal`, answers `201` / `204` with no body.                         |
+| Request                                                     | What it does                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `select=id,body`                                            | The columns to return (default `*`). `alias:col`, `col::text` (a cast to a built-in or one of your schemas' types), `meta->a->>b` (JSON paths, named after the last key).                                                                                                                                                                                                   |
+| `select=*,author:users(name)`                               | Embed related rows through a foreign key: many-to-one (an object), one-to-many (an array), one-to-one, and many-to-many through a junction whose foreign-key columns are part of its primary key. Nested embeds go 8 levels deep.                                                                                                                                           |
+| `users!inner(name)`, `users!author_id(name)`                | `!inner` keeps only the parent rows with a match; a hint (a constraint, a foreign-key column, or the junction) picks one of several relationships. Several without a hint are a `300` (`PGRST201`) listing them.                                                                                                                                                            |
+| `...users(name)`, `comments(count)`                         | A spread merges a to-one relation's columns into the parent; `count` (when the target has no such column) is the number of related rows.                                                                                                                                                                                                                                    |
+| `users.name=eq.x`, `users.order=name`, `users.limit=2`      | Filter, order and page an embedded resource; `users=not.is.null` (or `is.null`) filters the parent on whether it has one.                                                                                                                                                                                                                                                   |
+| `col=eq.value`                                              | A filter: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like` / `ilike` (`*` or `%`), `match` / `imatch` (regular expressions), `is` (`null`, `true`, `false`, `unknown`), `isdistinct`, `in.(a,"b,c")`, `cs` / `cd` / `ov`, the range operators `sl` / `sr` / `nxl` / `nxr` / `adj`, and `fts` / `plfts` / `phfts` / `wfts` with an optional configuration (`fts(english).cat`). |
+| `col=not.eq.value`, `col=like(any).{a*,b*}`                 | A filter negated; `(any)` / `(all)` of an array for the comparisons and patterns.                                                                                                                                                                                                                                                                                           |
+| `or=(a.eq.1,and(b.gt.2,c.is.null))`                         | Logic trees, nested and negated (`not.or=`), on an embed too (`users.or=(…)`). Every filter is ANDed with them.                                                                                                                                                                                                                                                             |
+| `order=col.desc.nullslast,meta->>k`                         | The order: `asc` / `desc`, `nullsfirst` / `nullslast`, JSON paths.                                                                                                                                                                                                                                                                                                          |
+| `limit=20&offset=40`, or a `Range: 40-59` header            | Paging, capped at `maxRows`. The response carries `Content-Range: 40-59/*`.                                                                                                                                                                                                                                                                                                 |
+| `Prefer: count=exact`, `planned`, `estimated`               | Count the matching rows too: `Content-Range: 40-59/1234`, and `206` when the page is not all of them. `exact` is signed-in only by default (`exactCount`).                                                                                                                                                                                                                  |
+| `Accept: application/vnd.pgrst.object+json`                 | One object instead of an array; zero or several rows are a `406` (and a write is rolled back). `;nulls=stripped` drops null fields.                                                                                                                                                                                                                                         |
+| `Accept: text/csv`, `application/geo+json`                  | CSV, or a GeoJSON FeatureCollection (needs PostGIS; a `406` without it).                                                                                                                                                                                                                                                                                                    |
+| `POST` with an object or an array of objects                | Insert. `columns=a,b` names the keys used (a missing one is NULL, or its default with `Prefer: missing=default`); a `text/csv` or form body works too.                                                                                                                                                                                                                      |
+| `Prefer: resolution=merge-duplicates` (`ignore-duplicates`) | An upsert on the primary key, or on `on_conflict=col`.                                                                                                                                                                                                                                                                                                                      |
+| `PATCH` with an object, plus filters                        | Update the matching rows. A request without a filter is refused (`400`, `21000`), as is `limit` on a `PATCH` / `DELETE`.                                                                                                                                                                                                                                                    |
+| `DELETE` plus filters                                       | Delete the matching rows. A request without a filter is refused.                                                                                                                                                                                                                                                                                                            |
+| `Prefer: return=representation` on a write                  | Answer with the written rows (`select=` shapes them, embeds included); the default, `return=minimal`, answers `201` / `204` with no body; `return=headers-only` sets `Location`.                                                                                                                                                                                            |
+| `Prefer: tx=rollback`, `handling=strict, max-affected=N`    | Run, answer, and roll back; refuse (and roll back) a write that touched more than `N` rows. Under `handling=strict` an unknown preference is a `400`.                                                                                                                                                                                                                       |
+| `/rpc/fn` (`POST` a JSON object, or `GET` with `?arg=v`)    | Call a function the roles may EXECUTE, by its arguments' names (overloads too). A function of one unnamed `json` / `jsonb` argument (or any one json argument with `Prefer: params=single-object`) takes the whole body.                                                                                                                                                    |
+| `/rpc/fn?select=…&col=gt.1&order=…`                         | A set-returning function's rows are filtered, ordered, paged, counted and embedded like a table's; a scalar comes back as its JSON value, `void` as `204`. `GET` runs read-only, so a function that writes needs `POST`.                                                                                                                                                    |
+| `Accept-Profile: api` / `Content-Profile: api`              | Another schema of `rest.schemas` (supabase-js's `.schema("api")`); one that is not exposed is a `406`.                                                                                                                                                                                                                                                                      |
+| `Accept: application/vnd.pgrst.plan`                        | The execution plan (`+json` / `+text`, `options=analyze\|verbose\|…`), only with `explain: true`; analyzed statements are rolled back.                                                                                                                                                                                                                                      |
 
-**What is safe.** A table, column or type name is never taken from the request as text: each is
-looked up in the catalog the plugin read and only a name found there is quoted into the SQL, so an
-unknown column or operator is a `400`, never a statement. Every filter value is a `$n` parameter
-cast to its column's type, and a request body is one JSON parameter expanded by
-`json_populate_record(set)` against the table's own row type — Postgres parses every value. The
-rows come back as one JSON text built by Postgres (`json_agg`), so a `bigint` keeps its digits.
-Each request runs in a transaction that sets the role and claims, then a `statement_timeout`
-(5 seconds by default).
+**What is safe.** A schema, table, column, function, argument or type name is never taken from
+the request as text: each is looked up in the catalog the plugin read and only a name found there
+is quoted into the SQL, so an unknown column, relationship or operator is a `400`, never a
+statement. An embed follows the catalog's foreign keys, never a name from the request. Every
+filter value and every JSON-path key is a `$n` parameter cast to its column's type, and a request
+body is one JSON parameter expanded by `json_populate_recordset` against the table's own row type
+(or `json_to_record` against a function's argument types) — Postgres parses every value. The rows
+come back as one JSON text built by Postgres (`json_agg`), so a `bigint` keeps its digits. Each
+request runs in a transaction that sets the role and claims, then a `statement_timeout` (5 seconds
+by default); a read's transaction is READ ONLY. A request takes at most 64 filters, 256 select
+items and 8 levels of embedding.
 
 **The shared pool.** The routes use the app's one Postgres pool, so at most `maxConcurrent` REST
 statements run at once — half the pool's `max` by default (`Deno.SQL` and postgres.js report it;
@@ -686,7 +716,8 @@ statements run at once — half the pool's `max` by default (`Deno.SQL` and post
 `503` (`PGRST003`) with `Retry-After: 1`, leaving connections for the rest of the app. A full count
 (`Prefer: count=exact`) reads every matching row, so by default only a signed-in request may ask
 for one; an anonymous one is refused with `400` (`PGRST100`) and a hint (`exactCount: "all"`
-allows everyone, `"never"` no one).
+allows everyone, `"never"` no one). `count=planned` (the planner's estimate) is open to everyone,
+and `count=estimated` counts exactly only while the estimate is at most `maxRows`.
 
 The plugin does not rate-limit the routes itself. [`middleware.ts`](/docs/middleware) runs before
 them, so `rateLimit` from `denext/server` can guard them there:
@@ -719,16 +750,24 @@ exactly when the session comes from the token, never from the cookie.
 
 **Errors** are PostgREST-shaped JSON — `{ code, message, details, hint }` — with Postgres's
 SQLSTATE as the code where Postgres refused (`23505` → `409`, `42501` → `403`, `23502` / `22P02` →
-`400`, `57014` statement timeout → `504`), and `PGRST100` (a malformed query), `PGRST102` (a bad
-body), `PGRST103` (a range past the rows), `PGRST116` (not exactly one row), `PGRST205` (no such
-table) or `42703` (no such column) otherwise. A 5xx hides the database's message (it is logged).
+`400`, `57014` statement timeout → `504`), and PostgREST's own codes otherwise: `PGRST100` (a
+malformed query), `PGRST102` (a bad body), `PGRST103` (a range past the rows), `PGRST106` (a
+schema that is not exposed), `PGRST107` (a media type not produced), `PGRST116` (not exactly one
+row), `PGRST122` (an unknown preference under `handling=strict`), `PGRST124` (more rows than
+`max-affected`), `PGRST200` / `PGRST201` (no relationship, or several, for an embed — `300` with
+the candidates in `details`), `PGRST202` / `PGRST203` (no function, or several overloads),
+`PGRST205` (no such table) or `42703` (no such column). A 5xx hides the database's message (it is
+logged).
 
-### Which tables
+### Which tables and functions
 
 The plugin reads the catalog when the server starts (and again, under `denext dev`, when a request
-names a table it does not know): the relations of `schema` that the `anon` or `authenticated` role
-holds a privilege on — `SELECT`, `INSERT` or `UPDATE` on any column, or `DELETE`. A table with no
-grant to either role gets no route, so a table stays private until you `grant`.
+names a table or function it does not know): the relations of the exposed schemas that the `anon`
+or `authenticated` role holds a privilege on — `SELECT`, `INSERT` or `UPDATE` on any column, or
+`DELETE` — the foreign keys between them, and the functions either role may `EXECUTE`. A table
+with no grant to either role gets no route, so a table stays private until you `grant`; a function
+stays private once you `revoke execute … from public` (Postgres grants EXECUTE to everyone by
+default). A function runs as the caller unless it is `security definer`, as in Supabase.
 
 With the default `tables: "*"`, a reachable relation is served only when row-level security
 applies to the caller:
@@ -749,30 +788,36 @@ naming a table is your decision that its grants are the policy.
 ### Generated types
 
 At `denext dev` startup and `denext build`, the plugin writes `.denext/rest.ts` from the live
-catalog: each exposed table's `Row`, `Insert` (columns with a default, or nullable, optional;
-generated columns left out) and `Update` shapes, registered on `RegisteredRest` so `from("notes")`
-autocompletes table names, types filters by column, and narrows `select("id,body")` to those
-columns. Import it once. Without a database to read (no `DATABASE_URL` at build time) the plugin
-says so, keeps an earlier generated file, or writes a stub under which rows are
+catalog in the shape `supabase gen types typescript` writes: `Database`, with each exposed
+schema's `Tables` (`Row`, `Insert` — columns with a default, or nullable, optional; generated
+columns left out — `Update` and `Relationships`), `Views`, `Functions` (`Args` and `Returns`,
+overloads as a union), `Enums` and `CompositeTypes`, plus the `Tables<>`, `TablesInsert<>`,
+`TablesUpdate<>`, `Enums<>` and `CompositeTypes<>` helpers and `Constants`. Pass `Database` to
+`createClient<Database>()` from `@supabase/supabase-js`, or import the file once and denext's
+`from("notes")` autocompletes table names, types filters by column, and narrows
+`select("id,body")` to those columns. Without a database to read (no `DATABASE_URL` at build time)
+the plugin says so, keeps an earlier generated file, or writes a stub under which rows are
 `Record<string, unknown>`.
 
 ### Options
 
-| Option             | Default                       | What it does                                                                                                                                             |
-| ------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema`           | `"public"`                    | The schema whose tables are served.                                                                                                                      |
-| `tables`           | `"*"`                         | `"*"`: the reachable RLS tables and `security_invoker` views; or a list of names, served as named (a listed table the roles cannot reach gets no route). |
-| `basePath`         | `"/rest/v1"`                  | Where the routes live (app-relative; `basePath` is prepended).                                                                                           |
-| `maxRows`          | 1000                          | The most rows one read returns, whatever `limit` asks for.                                                                                               |
-| `maxBodyBytes`     | 1 MiB                         | The largest request body.                                                                                                                                |
-| `statementTimeout` | 5000                          | Each request's `statement_timeout`, in milliseconds.                                                                                                     |
-| `maxConcurrent`    | half the pool's `max`, else 5 | The most REST statements at once; past it a request waits up to 1 s, then gets `503` + `Retry-After`.                                                    |
-| `exactCount`       | `"authenticated"`             | Who may send `Prefer: count=exact`: `"authenticated"`, `"all"` or `"never"` (refused with `400`).                                                        |
+| Option             | Default                       | What it does                                                                                                                                                                          |
+| ------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schemas`          | `["public"]`                  | The schemas served, the default first; `Accept-Profile` / `Content-Profile` pick another. `schema: "api"` is a shorthand for one.                                                     |
+| `tables`           | `"*"`                         | `"*"`: the reachable RLS tables and `security_invoker` views; or a list of names (`"notes"` or `"api.notes"`), served as named (a listed table the roles cannot reach gets no route). |
+| `basePath`         | `"/rest/v1"`                  | Where the routes live (app-relative; `basePath` is prepended).                                                                                                                        |
+| `maxRows`          | 1000                          | The most rows one read (or set-returning call) returns, whatever `limit` asks for.                                                                                                    |
+| `maxBodyBytes`     | 1 MiB                         | The largest request body.                                                                                                                                                             |
+| `statementTimeout` | 5000                          | Each request's `statement_timeout`, in milliseconds.                                                                                                                                  |
+| `maxConcurrent`    | half the pool's `max`, else 5 | The most REST statements at once; past it a request waits up to 1 s, then gets `503` + `Retry-After`.                                                                                 |
+| `exactCount`       | `"authenticated"`             | Who may send `Prefer: count=exact`: `"authenticated"`, `"all"` or `"never"` (refused with `400`).                                                                                     |
+| `explain`          | `false`                       | Serve execution plans (`Accept: application/vnd.pgrst.plan`). Plans show table sizes and indexes: development only.                                                                   |
 
-Not offered: embedded resources (joins through foreign keys — read the related table with a
-second request, or write a route handler), `or` / `and` groups, upserts (`on_conflict`), RPC
-(`/rpc/<function>` — call it with `db()` in a route handler) and CSV bodies. The routes are not
-listed in the `@denext/openapi` document.
+Not offered (yet): embedding through a view (views have no foreign keys of their own, so embed
+from or into the underlying tables), ordering by an embedded column (`order=author(name)`),
+filtering the top level on an embedded column inside `or=`, `PUT` single-row upserts, aggregate
+functions (`sum()`, `avg()`, …) and computed fields / relationships. The routes are not listed in
+the `@denext/openapi` document.
 
 ## Edge Functions
 

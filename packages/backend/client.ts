@@ -27,19 +27,25 @@ import { STORAGE_PREFIX, type StorageTransform } from "./src/shared.ts";
 
 export type { StorageTransform } from "./src/shared.ts";
 export { applyTableChanges, useTableChanges } from "./src/table-changes-client.ts";
-export { from, restClient, RestClientError } from "./src/rest-client.ts";
+export { from, restClient, RestClientError, rpc } from "./src/rest-client.ts";
 export type {
+  ExplainOptions,
   RegisteredRest,
   RestClient,
   RestClientOptions,
+  RestColumnName,
+  RestCount,
+  RestFilterValue,
   RestNegatable,
   RestQuery,
+  RestReferenced,
   RestResult,
   RestTableName,
   RestTableQuery,
   RestTables,
   RestTableShape,
   RestTableShapeOf,
+  RpcOptions,
   SelectColumns,
   Selected,
 } from "./src/rest-client.ts";

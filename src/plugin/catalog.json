@@ -275,11 +275,18 @@
             "type": "object",
             "properties": {
               "schema": {
-                "description": "The schema whose tables are served (default `\"public\"`).",
+                "description": "The schema whose tables are served (default `\"public\"`); `schemas` lists several.",
                 "type": "string"
               },
+              "schemas": {
+                "description": "The schemas served, the default first (`Accept-Profile` / `Content-Profile` pick another, supabase-js's `schema(\"api\")`). Overrides `schema`.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "tables": {
-                "description": "The tables to serve, by name, or `\"*\"` (the default) for every relation of the schema that the `anon` or `authenticated` role holds a privilege on AND that enforces row-level security: a table with RLS enabled, or a view created `with (security_invoker = true)`. Tables with RLS off, ordinary (owner's-rights) views, materialized views and foreign tables are skipped — one startup warning lists them — unless named here: a list exposes exactly the named relations, whatever their RLS. A listed table those roles cannot reach gets no route either.",
+                "description": "The relations to serve, by name (`\"notes\"`, or `\"api.notes\"`), or `\"*\"` (the default) for every relation of the schemas that the `anon` or `authenticated` role holds a privilege on AND that enforces row-level security: a table with RLS enabled, or a view created `with (security_invoker = true)`. Tables with RLS off, ordinary (owner's-rights) views, materialized views and foreign tables are skipped — one startup warning lists them — unless named here: a list exposes exactly the named relations, whatever their RLS. A listed table those roles cannot reach gets no route either. Functions are served when either role may EXECUTE them.",
                 "anyOf": [
                   {
                     "type": "array",
@@ -315,12 +322,16 @@
                 "type": "number"
               },
               "exactCount": {
-                "description": "Who may ask for `Prefer: count=exact` on a read — a full count, as costly as reading every matching row: `\"authenticated\"` (the default; an anonymous request is refused with 400), `\"all\"`, or `\"never\"`.",
+                "description": "Who may ask for `Prefer: count=exact` on a read — a full count, as costly as reading every matching row: `\"authenticated\"` (the default; an anonymous request is refused with 400), `\"all\"`, or `\"never\"`. `count=planned` (the planner's estimate) is open to everyone.",
                 "enum": [
                   "all",
                   "authenticated",
                   "never"
                 ]
+              },
+              "explain": {
+                "description": "Answer `Accept: application/vnd.pgrst.plan` with the statement's execution plan (default `false`: a 406). Plans reveal table sizes and indexes; turn this on in development only.",
+                "type": "boolean"
               }
             }
           },

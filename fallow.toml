@@ -28,6 +28,7 @@ ignoreDependencies = [
   "ws", # deno.json: npm:ws@^8 — dev proxy WebSocket relay
   "jsqr", # deno.json: npm:jsqr@1.4.0 — test-only: the independent QR reader in tests/qr-code.test.ts
   "playwright-core", # deno.json: npm:playwright-core@1.63.0 — test-only: Chromium + WebKit in tests/e2e/spa-shell.e2e.test.ts
+  "@supabase/supabase-js", # deno.json: npm:@supabase/supabase-js@2.117.2 — test-only: tests/backend-rest-supabase-integration.test.ts
   # Workspace packages and examples import the published framework by its JSR name
   # (their own deno.json maps it); there is no package.json for fallow to read.
   "denext",

@@ -16,6 +16,34 @@
   default-exported handlers both work. JWT verification is on by default (`verifyJwt: false` per
   function), CORS preflights reach the function, responses stream, and `denext functions list`
   lists them.
+- **`@denext/backend`: auto-REST speaks PostgREST 12, so `@supabase/supabase-js` works
+  unchanged.** `createClient(appUrl, key)` then `from()`, `rpc()` and `schema()` reach
+  `backend({ rest })`'s routes, and denext's own client (`from`, `rpc`, `restClient`) now has the
+  same API. New on the routes: embedded resources through the catalog's foreign keys (many-to-one,
+  one-to-many, one-to-one, many-to-many through a junction, `!inner`, `!hint`, spreads, the
+  `count` shorthand, and filters / order / limit / offset / `or` on an embed, plus `rel=is.null`);
+  `or` / `and` trees, nested and negated; every operator (`match`, `imatch`, `isdistinct`, `cs`,
+  `cd`, `ov`, the range operators, `fts` / `plfts` / `phfts` / `wfts` with a configuration,
+  `(any)` / `(all)`); aliases, `::casts` and JSON paths in select, filters and order; upserts
+  (`Prefer: resolution=merge-duplicates|ignore-duplicates`, `on_conflict=`), `columns=` and
+  `missing=default`; `/rpc/<function>` over GET and POST (named arguments and overloads, a single
+  json argument, `params=single-object`, set-returning results filtered, ordered, paged, counted
+  and embedded, scalars, `void`) for the functions `anon` / `authenticated` may EXECUTE;
+  `count=planned|estimated`; CSV in and out; GeoJSON (with PostGIS); `return=headers-only`;
+  `tx=rollback`; `handling=strict` with `max-affected`; `nulls=stripped`; execution plans behind
+  the opt-in `rest.explain`; and several schemas through `rest.schemas` with `Accept-Profile` /
+  `Content-Profile`. A GET runs in a READ ONLY transaction. Every name is still looked up in the
+  catalog and every value bound; a request takes at most 64 filters, 256 select items and 8
+  levels of embedding.
+- **`@denext/backend`: `.denext/rest.ts` is `supabase gen types`-shaped.** `Database` with each
+  exposed schema's `Tables` (with `Relationships`), `Views`, `Functions`, `Enums` and
+  `CompositeTypes`, the `Tables<>` / `TablesInsert<>` / `TablesUpdate<>` / `Enums<>` helpers and
+  `Constants`, so `createClient<Database>()` type-checks; it still registers the default schema
+  for denext's `from()`.
+- **Breaking:** `readRestCatalog(sql, schemas, tables)` takes the list of schemas and returns
+  the whole catalog (`tables`, `foreignKeys`, `functions`, `enums`, …); `generateRestTypes(catalog)`
+  takes the catalog alone; the client's `range()` sends `offset` / `limit` (as supabase-js does)
+  instead of a `Range` header, and `maybeSingle()` checks the row count on the client.
 
 ## 0.3.0 - 2026-10-13
 
