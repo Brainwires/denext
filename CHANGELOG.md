@@ -62,17 +62,24 @@ and this project adheres to
   `mobile dev|build`, and a project's own verbs) now re-run themselves on denext's pinned Deno build
   (`2.9.7-denext.N`: stock Deno plus `Deno.SQL` and Vitest/Jest compatibility in `deno test`) —
   same argv, cwd, stdio, exit code and forwarded shutdown signals, with a
-  `DENEXT_TOOLCHAIN_ACTIVE` marker so it never loops. It downloads on first need into
+  `DENEXT_TOOLCHAIN_ACTIVE` marker so it never loops (only a process running the pinned version
+  stays put: a leaked marker or an older `-denext.N` build switches), the `--config` the first process was started with
+  (read from its command line on Linux and macOS) and its denials (`--deny-net`) as well as
+  its grants. It downloads on first need into
   `<DENO_DIR>/denext-deno/<version>/<platform>/`, is pinned by version and SHA-256 (checked before
   the file is extracted, made executable or renamed; a mismatch deletes it), installs atomically
   under the Cargo-style cache lock, and is re-hashed when its size or mtime changes. Nothing new to
   install, and the `deno` on PATH is never replaced. `DENEXT_DENO=stock` opts out,
-  `DENEXT_DENO=<path>` uses a given binary unverified; an unsupported platform, no network, a
-  failed download or a process without `--allow-run` falls back to stock Deno with one warning.
-  This release pins no toolchain build yet, so everything still runs on stock Deno.
+  `DENEXT_DENO=<path>` uses a given binary unverified; an unsupported platform, no network or a
+  failed download falls back to stock Deno with one warning. A process run without the grants to
+  install and start it (`--allow-run`, read/write on the cache: the least-privilege `start` task
+  `denext create` scaffolds) stays on the Deno that launched it, silently. The pinned build is
+  `2.9.7-denext.15` on macOS (arm64, x64), Linux (x64, arm64) and Windows (x64).
 - **`denext toolchain install | status | path | link | unlink`** (`status --json`, `--verify`) and
   **`denext deno <args…>`**, which runs the toolchain's `deno` with the arguments verbatim and
-  passes its exit code back. `link` writes an opt-in `~/.denext/bin/deno` (a `deno.cmd` shim on
+  passes its exit code back (`install`, `path` and `link` refuse clearly when the toolchain can't be
+  had; `status` warns when the `link` points at an older toolchain); like every forwarded verb it runs stock Deno (after one warning) when
+  the toolchain can't be had, and only a `DENEXT_DENO=<path>` that isn't a file is an error. `link` writes an opt-in `~/.denext/bin/deno` (a `deno.cmd` shim on
   Windows) and prints the `PATH` line; `unlink` removes only what `link` created.
 - `denext doctor` reports the toolchain (pinned version, cached and verified, whether the run is on
   it or why not) and names `deno.json` tasks that call `deno test` directly, which `deno task` runs
@@ -90,6 +97,9 @@ and this project adheres to
   `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`) applies the same limits to a loopback, private, link-local
   or unique-local socket peer, counted by its own address, instead of skipping it. Both default to
   today's behaviour and are validated at boot.
+- `deno task desktop:pin-runtime <tag>` also writes `src/build/deno-toolchain-pin.json` from the
+  release's `cli` section (every CLI archive cross-checked against `SHA256SUMS`, hashed and
+  `gh attestation verify`'d like the runtime archives), so one command pins both.
 
 - **React Native mode: `TextInput` takes the props react-native-web drops.** `autoComplete`'s
   React Native values (`"password-new"`, `"sms-otp"`, `"name-given"`, …) and iOS's
@@ -116,6 +126,12 @@ and this project adheres to
   `rateLimit()` skips its default key, not only for one that sends `x-forwarded-for`: a proxy that
   doesn't set the header no longer puts every client in one sign-in-start or session-read bucket.
   The credentials limiter's per-identifier key still applies there.
+- **denext pins Deno Desktop runtime 2.9.7-denext.15** (the release that also ships the toolchain's
+  CLI; `Deno.SQL` in the runtime). The minimum stays 2.9.7-denext.14.
+- **Every Deno version check accepts the toolchain's `2.9.7-denext.N`**, a semver prerelease that
+  sorts below 2.9.7: `denext desktop doctor`'s "needs Deno 2.9.7 exactly" check, the
+  `denoland/deno:<tag>` image of `denext generate docker` / `denext ui`'s Docker page and the
+  `setup-deno` version of `denext generate ci` all use the Deno release it is built from.
 - **denext requires Deno Desktop runtime 2.9.7-denext.14** (was 2.9.7-denext.9). An older runtime
   starts a sidecar's `spawnSelf` children with the runtime's launch messages on their stdout. The
   startup warning for a runtime that publishes no `DENO_DESKTOP_WS_URL` now names denext.14 as the

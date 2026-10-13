@@ -23,6 +23,7 @@ import {
   renderDockerfile,
   renderDockerignore,
 } from "../src/build/docker-template.ts";
+import { denoReleaseVersion } from "../src/build/deno-version.ts";
 
 const FILES = ["Dockerfile", "docker-compose.yml", ".dockerignore"] as const;
 
@@ -105,7 +106,7 @@ Deno.test("every rendered Docker file carries the sentinel, and options flow int
 
   // Defaults render today's files: the bare `deno task start`, port 3000, the pinned version.
   const server = renderDockerfile({ mode: "server" });
-  assertStringIncludes(server, `FROM denoland/deno:${Deno.version.deno}`);
+  assertStringIncludes(server, `FROM denoland/deno:${denoReleaseVersion(Deno.version.deno)}`);
   assertStringIncludes(server, `CMD ["deno", "task", "start"]`);
   assertStringIncludes(server, "EXPOSE 3000");
 

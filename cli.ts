@@ -21,8 +21,9 @@ import {
   maybeReexecPinned as reexecPinned,
   maybeReexecToolchain,
   runsProjectCode,
+  toolchainConfigArgs,
 } from "./src/cli/self-exec.ts";
-import { resolveDenoToolchain } from "./src/build/deno-toolchain.ts";
+import { loadDenoToolchainPin, resolveDenoToolchain } from "./src/build/deno-toolchain.ts";
 import { runDenoPassthrough } from "./src/cli/commands/deno-toolchain.ts";
 import { CONFIG_FILES, resolveProject } from "./src/build/paths.ts";
 import {
@@ -249,11 +250,28 @@ function maybeReexecPinned(dir: string): Promise<boolean> {
 /**
  * The toolchain child's permission flags: `-A` when this process holds every coarse grant (it was
  * run with `-A`, which also allows remote imports from any host — a grant Deno's permission query
- * can't name), else the coarse grants it holds ({@linkcode childPermissionFlags}).
+ * can't name), else the coarse grants it holds ({@linkcode childPermissionFlags}) plus a
+ * `--deny-<name>` for each permission this process was denied (`--deny-net`, as `denext ui
+ * --offline` starts its children): left out, the child would be asked instead of refused.
  */
 async function toolchainPermissionFlags(): Promise<string[]> {
   const flags = await childPermissionFlags();
-  return flags.length === 7 ? ["-A"] : flags;
+  if (flags.length === 7) return ["-A"];
+  const names: Deno.PermissionName[] = ["read", "write", "net", "env", "run", "sys", "ffi"];
+  for (const name of names) {
+    const state = await Deno.permissions.query({ name }).then((s) => s.state, () => "prompt");
+    if (state === "denied") flags.push(`--deny-${name}`);
+  }
+  return flags;
+}
+
+/** The pinned toolchain version, or `null` (none pinned, or an unreadable pin file override). */
+function pinnedToolchainVersion(): string | null {
+  try {
+    return loadDenoToolchainPin().version;
+  } catch {
+    return null; // resolveDenoToolchain() reports a bad DENEXT_TOOLCHAIN_PIN_FILE
+  }
 }
 
 /** The directory a verb's re-exec gates read the project from. */
@@ -273,6 +291,7 @@ function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boole
     env: (name) => Deno.env.get(name),
     setEnv: (name, value) => Deno.env.set(name, value),
     denoVersion: Deno.version.deno,
+    pinnedVersion: pinnedToolchainVersion(),
     standalone: isStandaloneBinary,
     resolve: () => resolveDenoToolchain(),
     spawn: async (deno, marker) =>
@@ -280,6 +299,7 @@ function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boole
         deno,
         [
           ...await toolchainPermissionFlags(),
+          ...await toolchainConfigArgs(),
           ...cliNpmModeArgs(gateDir(command, ctx)),
           ...minDepAgeArgs(),
         ],

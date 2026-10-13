@@ -49,6 +49,8 @@ export interface DenoToolchainPin {
    * this denext version — the toolchain then reports itself not available and stock Deno runs.
    */
   readonly version: string | null;
+  /** The release tag the pin came from (`denext-runtime-v<version>`). */
+  readonly tag?: string;
   readonly repository?: string;
   /** The Deno release the fork is built from. */
   readonly deno?: string;
@@ -121,16 +123,6 @@ export function denoToolchainTarget(
 }
 
 /**
- * Whether a `Deno.version.deno` is denext's toolchain (`2.9.7-denext.15`).
- *
- * @param version The version string.
- * @returns Whether it carries the fork's suffix.
- */
-export function isToolchainDenoVersion(version: string): boolean {
-  return /-denext\.\d+/.test(version);
-}
-
-/**
  * The pin in force: the file `DENEXT_TOOLCHAIN_PIN_FILE` names, else {@linkcode DENO_TOOLCHAIN}.
  *
  * @param env Env reader.
@@ -176,7 +168,7 @@ function pinnedArtifact(pin: DenoToolchainPin, target: string): DenoToolchainArt
   if (pin.version === null) {
     throw new DenoToolchainUnavailableError(
       "denext: denext's Deno toolchain is not available for this denext version " +
-        "(no CLI archives are pinned yet); stock Deno is used.",
+        "(no CLI archives are pinned).",
     );
   }
   const artifact = pin.targets[target];
@@ -550,7 +542,9 @@ async function pathChoice(raw: string): Promise<DenoToolchainChoice> {
  * Pick the Deno the current command should run on — denext's toolchain (downloaded and verified
  * on first use), a `DENEXT_DENO=<path>` binary, or stock Deno — and never fail: every reason to
  * stay on stock Deno comes back as a `stock` choice, with a warning to print unless it is an
- * opt-out or the toolchain simply isn't pinned for this denext version yet.
+ * opt-out, the toolchain simply isn't pinned for this denext version yet, or the process was run
+ * without the grants to install and start it (a least-privilege `start`: it runs on the Deno that
+ * launched it).
  *
  * @param options Seams; all default to the process.
  * @returns The choice.
@@ -596,12 +590,10 @@ async function pinnedObstacle(
   }
   const missing = await missingGrants(cacheRoot);
   if (missing.length === 0) return null;
-  return stockChoice(
-    `this process lacks ${missing.join(" ")}`,
-    `denext: not switching to denext's Deno toolchain ${pin.version}: this process lacks ` +
-      `${missing.join(" ")} (for ${cacheRoot}); running on stock Deno ${Deno.version.deno}. ` +
-      `Grant them, or ${OPT_OUT.replace(/^Set/, "set")}`,
-  );
+  // Silently: a process run without these grants was scoped down on purpose (the least-privilege
+  // `start` task `denext create` scaffolds), and it runs on whichever Deno launched it. A warning
+  // here would repeat on every production start with nothing for the operator to fix.
+  return stockChoice(`this process lacks ${missing.join(" ")} (for ${cacheRoot})`);
 }
 
 /** The pinned toolchain (installed and verified), or why stock Deno runs instead. */
@@ -716,10 +708,15 @@ export async function denoToolchainStatus(
   const env = options.env ?? processEnv;
   const running = options.running ?? Deno.version.deno;
   const target = options.target ?? denoToolchainTarget();
-  const active = !!env(TOOLCHAIN_ACTIVE_ENV) || isToolchainDenoVersion(running);
-  const runningText = active ? `running on it (deno ${running})` : `running on deno ${running}`;
   const mode = toolchainMode(env);
   const pin = options.pin ?? loadDenoToolchainPin(env);
+  // From the running version alone (an inherited marker or an older `-denext.N` build — a stale
+  // `toolchain link` — is not the pinned toolchain); a `DENEXT_DENO=<path>` binary has no version
+  // to check, so there the marker its own launch set ("path") counts.
+  const active = mode.mode === "path"
+    ? env(TOOLCHAIN_ACTIVE_ENV) === "path"
+    : pin.version !== null && running === pin.version;
+  const runningText = active ? `running on it (deno ${running})` : `running on deno ${running}`;
   const base = { version: pin.version, target, active, running, state: "n/a" as const };
   if (mode.mode === "stock") {
     return {
@@ -832,6 +829,39 @@ export async function linkDenoToolchain(
     await Deno.symlink(deno, link);
   }
   return { link, pathLine: pathLine(denoToolchainLinkDir(env), os) };
+}
+
+/** The binary a link {@linkcode linkDenoToolchain} made points at (`null`: none of ours). */
+async function linkedBinary(link: string, os: string, cacheRoot: string): Promise<string | null> {
+  if (!(await Deno.lstat(link).catch(() => null)) || !await isOurLink(link, os, cacheRoot)) {
+    return null;
+  }
+  if (os !== "windows") return await Deno.readLink(link);
+  const text = await Deno.readTextFile(link);
+  return /^"([^"]+)" %\*/m.exec(text)?.[1] ?? null;
+}
+
+/**
+ * Why the `deno` {@linkcode linkDenoToolchain} put on PATH is stale — it points at a toolchain
+ * other than the pinned one (an older `-denext.N` after a denext upgrade) — or `null` when there
+ * is no such link or it is current.
+ *
+ * @param options Seams, plus the pin (default: the one in force).
+ * @returns The warning, or `null`.
+ */
+export async function staleToolchainLink(
+  options: DenoToolchainLinkOptions & { readonly pin?: DenoToolchainPin } = {},
+): Promise<string | null> {
+  const env = options.env ?? processEnv;
+  const os = options.os ?? Deno.build.os;
+  const root = options.cacheRoot ?? denoToolchainCacheRoot(env);
+  const pin = options.pin ?? loadDenoToolchainPin(env);
+  const link = linkPath(env, os);
+  const target = await linkedBinary(link, os, root);
+  if (target === null || pin.version === null) return null;
+  if (target.startsWith(join(root, pin.version))) return null;
+  return `denext: ${link} points at ${target}, not the pinned toolchain ${pin.version}; ` +
+    "run `denext toolchain link` again (or `denext toolchain unlink`).";
 }
 
 /**

@@ -31,10 +31,15 @@ The commands that execute your project's code switch to the toolchain on their o
 
 When one of them starts under stock Deno, denext re-runs the same invocation under the toolchain:
 the same arguments, working directory, standard streams and exit code, with Ctrl-C and `SIGTERM`
-forwarded. Permissions carry over as whole grants: `-A` stays `-A`, and a path-scoped grant such as
+forwarded. A `--config` the first process was started with is passed on (read from its command line on
+Linux and macOS). Denied permissions stay denied (`--deny-net`), and
+grants carry over whole: `-A` stays `-A`, and a path-scoped grant such as
 `--allow-write=.denext` can't be read back, so only the whole-permission grants pass. Everything that command spawns (`deno test`, `deno bundle`,
 `deno desktop`) runs on the toolchain too. The child carries `DENEXT_TOOLCHAIN_ACTIVE=<version>`,
-so it never switches twice.
+so it never switches twice. Only the running version decides: a process whose `Deno.version.deno`
+is not the pinned build (stock Deno that inherited the marker inside `denext task`, or an older
+`-denext.N` that a `toolchain link` from before a denext upgrade still points at) switches to the
+pinned one.
 
 A compiled `denext` binary can't change its own runtime. It hands the toolchain to the processes it
 starts instead (through `DENO_BIN`, unless you set `DENO_BIN` yourself), and the project's pinned
@@ -57,7 +62,10 @@ The binary is cached beside Deno's own cache:
   unexecuted and the command continues on stock Deno with a loud warning.
 - The verified binary is renamed into place atomically, and a stamp file records its size,
   modification time and hash. Later runs trust it only while it still has that size and
-  modification time; otherwise it is re-hashed, and a missing stamp means a fresh download.
+  modification time; otherwise it is re-hashed, and a missing stamp means a fresh download. That
+  fast path is the same trust Deno gives its own module cache: whoever can write to `DENO_DIR`
+  can change what runs, so keep a shared or group-writable `DENO_DIR` to trusted users (or run
+  `denext toolchain status --verify`).
 - Two commands starting at once download it once: the second prints
   `Blocking waiting for file lock on Deno toolchain cache` and adopts the first one's binary.
 
@@ -68,12 +76,16 @@ The binary is cached beside Deno's own cache:
 | `DENEXT_DENO=stock`  | Everything runs on the Deno that started the CLI, silently.             |
 | `DENEXT_DENO=<path>` | That binary is used as the toolchain, unverified (one warning per run). |
 
-The toolchain never makes a command fail. On a platform with no pinned build, offline, behind a
-failed download, or in a process that lacks the grants to install and run it (`--allow-run`, and
-read/write on the cache directory, as in a least-privilege `start` task), the command prints one
-warning saying why and continues on stock Deno. A denext release that pins no toolchain build
-runs everything on stock Deno without a warning. Only `denext toolchain install` and `denext deno`
-fail when the toolchain can't be had, since running it is all they do.
+The toolchain never makes a command fail. On a platform with no pinned build, offline, or behind a
+failed download, the command prints one warning saying why and continues on stock Deno. A process
+that lacks the grants to install and run it (`--allow-run`, and read/write on the cache
+directory) stays on the Deno that launched it without a warning: that is the least-privilege
+`start` task `denext create` scaffolds (`deno run --allow-net --allow-read --allow-env
+--allow-write=.denext …`), so production `start` runs on whichever `deno` started it. Run `start`
+with `-A` (or add `--allow-run` and write access to the cache) to serve on the toolchain, or
+start the server with `denext deno run …`. `denext toolchain status` says which Deno a command
+runs on. Only `denext toolchain install` fails when the toolchain can't be had, since installing
+it is all it does.
 
 `DENO_BIN`, when you set it, still decides which `deno` the CLI's own child processes run.
 
@@ -104,6 +116,10 @@ instead, or write the step itself as a denext verb:
 }
 ```
 
+The Vitest/Jest layer reads environment variables (`FORCE_TTY` and the others Vitest reads), so
+a `deno test` without `-A` needs `--allow-env` too: `denext deno test --allow-env --allow-read
+…`. `denext test` runs `deno test -A` and needs nothing more.
+
 denext never rewrites the tasks in your existing `deno.json`; `denext doctor` names the tasks that
 call `deno test` directly so you can change them, or run them with `denext task`.
 
@@ -111,7 +127,7 @@ call `deno test` directly so you can change them, or run them with `denext task`
 
 A verb denext does not define itself is Deno's, run on the toolchain exactly as
 `denext deno <verb>` would — `denext compile`, `denext run`, `denext x`, `denext bench`,
-`denext serve`, … — with the arguments verbatim and the exit code and signals passed back. Unlike
+`denext serve`, … — with the arguments verbatim and the exit code and signals passed back. Like
 `denext deno`, a forwarded verb falls back to stock Deno (with the usual one warning) when the
 toolchain can't be had. A script or URL in the verb's place (`denext main.ts`,
 `denext https://example.com/x.ts`) is `deno run`. denext's built-in verbs come first, then the
@@ -131,7 +147,9 @@ denext <deno verb> <args…>     # the same for any verb denext doesn't define (
 ```
 
 `link` is the only command that puts the toolchain on your `PATH`, and only after you add the line
-it prints. Windows gets a `deno.cmd` shim. `unlink` refuses to touch a `deno` it didn't create.
+it prints. Windows gets a `deno.cmd` shim. `unlink` refuses to touch a `deno` it didn't create. After a denext
+upgrade pins a newer toolchain, `denext toolchain status` warns that the link points at the old one
+and `link` replaces it (commands switch to the pinned build either way).
 
 `denext doctor` reports the toolchain as one check: the pinned version, whether it is cached and
 verified, and whether the run is on it or on stock Deno, and why.

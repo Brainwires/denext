@@ -10,7 +10,7 @@ import { defaultEnvFiles } from "../src/server/env.ts";
 import { isAllowedRemote } from "../src/server/image-optimizer.ts";
 import { applyOutgoing } from "../src/server/response-headers.ts";
 import { actionIdFor, describeActionId } from "../src/runtime/server-action.ts";
-import { denoVersionOk, MIN_DENO_VERSION } from "../src/build/deno-version.ts";
+import { denoReleaseVersion, denoVersionOk, MIN_DENO_VERSION } from "../src/build/deno-version.ts";
 import { envAll, envGet } from "../src/runtime/env-safe.ts";
 import { devErrorPage } from "../src/build/dev-server/error-page.ts";
 import { createApp } from "../src/server/app.ts";
@@ -177,6 +177,10 @@ Deno.test("server-action ids are opaque hashes, stable, and describable in dev",
 Deno.test("Deno version floor is minor-aware", () => {
   assert(denoVersionOk("2.9.6") && denoVersionOk("3.0.0") && denoVersionOk(MIN_DENO_VERSION));
   assert(!denoVersionOk("2.8.9") && !denoVersionOk("2.1.0") && !denoVersionOk("1.46.0"));
+  // denext's toolchain (`2.9.7-denext.15`) is the release it is built from, not a prerelease.
+  assert(denoVersionOk("2.9.7-denext.15", "2.9.7"));
+  assertEquals(denoReleaseVersion("2.9.7-denext.15"), "2.9.7");
+  assertEquals(denoReleaseVersion("2.9.6"), "2.9.6");
 });
 
 Deno.test("dev 500 page renders the recorded error with its codeframe", () => {

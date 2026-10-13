@@ -12,12 +12,26 @@ import {
   ensureDenoToolchain,
   linkDenoToolchain,
   resolveDenoToolchain,
+  staleToolchainLink,
   TOOLCHAIN_ACTIVE_ENV,
   TOOLCHAIN_ENV,
   unlinkDenoToolchain,
 } from "../../build/deno-toolchain.ts";
 
-/** The binary `denext deno` / `toolchain path` run: the pinned one (installed), or a failure. */
+/**
+ * `ensureDenoToolchain()`, or a clear refusal (exit 1) when the toolchain can't be had: `install`,
+ * `path` and `link` name the toolchain itself, so there is nothing to fall back to.
+ */
+async function requireToolchain(): Promise<{ deno: string; version: string; cached: boolean }> {
+  try {
+    return await ensureDenoToolchain();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    Deno.exit(1);
+  }
+}
+
+/** The binary `toolchain path` / `link` name: the pinned one (installed), or a refusal. */
 async function toolchainBinary(): Promise<{ deno: string; marker: string }> {
   const raw = (Deno.env.get(TOOLCHAIN_ENV) ?? "").trim();
   if (raw.toLowerCase() === "stock") {
@@ -30,7 +44,7 @@ async function toolchainBinary(): Promise<{ deno: string; marker: string }> {
     if (choice.kind === "stock") Deno.exit(1);
     return { deno: choice.deno, marker: choice.version };
   }
-  const rt = await ensureDenoToolchain();
+  const rt = await requireToolchain();
   return { deno: rt.deno, marker: rt.version };
 }
 
@@ -48,26 +62,45 @@ async function forwardedBinary(): Promise<{ deno: string; marker: string }> {
 }
 
 /**
+ * The binary `denext deno` runs: the forwarded verbs' choice (stock Deno after the choice's one
+ * warning when the toolchain can't be had), except that `DENEXT_DENO=stock` says so once and a
+ * `DENEXT_DENO=<path>` that isn't a file is an error (exit 1): that binary was asked for by name.
+ */
+async function denoVerbBinary(): Promise<{ deno: string; marker: string }> {
+  const raw = (Deno.env.get(TOOLCHAIN_ENV) ?? "").trim().toLowerCase();
+  if (raw === "stock") {
+    console.error(`denext: ${TOOLCHAIN_ENV}=stock — running stock Deno.`);
+    return { deno: denoExecutable(), marker: "" };
+  }
+  const choice = await resolveDenoToolchain();
+  if (choice.warning) console.error(choice.warning);
+  if (choice.kind === "toolchain") return { deno: choice.deno, marker: choice.version };
+  if (raw !== "" && raw !== "pinned") Deno.exit(1);
+  return { deno: denoExecutable(), marker: "" };
+}
+
+/**
  * Run the toolchain's `deno` with `args` verbatim in `cwd` and exit with its code — `denext deno
  * …`, and (with `forwarded`) every Deno verb denext forwards (`denext compile …`, `denext
  * main.ts`) and `denext task`. The child's PATH starts with that same binary as `deno`
  * ({@linkcode denoPathEnv}), so a `deno` a task's script or tool spawns runs on it too.
  *
- * `denext deno` asks for the toolchain by name, so a toolchain that can't be had is an error
- * there (exit 1). A forwarded verb takes the automatic switch's choice instead, stock fallback
- * included ({@linkcode forwardedBinary}): `denext compile` works wherever `deno compile` does.
+ * Both fall back to stock Deno, with the choice's one warning, when the toolchain can't be had
+ * ({@linkcode forwardedBinary}): `denext compile` works wherever `deno compile` does. `denext
+ * deno` alone treats a `DENEXT_DENO=<path>` that isn't a file as an error ({@linkcode
+ * denoVerbBinary}).
  * Never returns.
  *
  * @param args The arguments for `deno`.
  * @param cwd The directory to run in.
- * @param forwarded Whether a Deno verb is being forwarded (stock fallback) rather than `denext deno`.
+ * @param forwarded Whether a Deno verb is being forwarded rather than `denext deno`.
  */
 export async function runDenoPassthrough(
   args: string[],
   cwd = Deno.cwd(),
   forwarded = false,
 ): Promise<never> {
-  const { deno, marker } = forwarded ? await forwardedBinary() : await toolchainBinary();
+  const { deno, marker } = forwarded ? await forwardedBinary() : await denoVerbBinary();
   return await spawnDenoAndExit(
     args,
     cwd,
@@ -100,6 +133,8 @@ async function status(ctx: CommandContext): Promise<void> {
     if (s.path) console.log(`    path  ${s.path}`);
     console.log("");
   }
+  const stale = await staleToolchainLink().catch(() => null);
+  if (stale) console.error(stale);
   if (!s.ok) Deno.exit(1);
 }
 
@@ -111,7 +146,9 @@ async function link(unlink: boolean): Promise<void> {
     return;
   }
   const { deno } = await toolchainBinary();
+  const stale = await staleToolchainLink().catch(() => null);
   const made = await linkDenoToolchain(deno);
+  if (stale) console.log(`  replaced a stale link (${stale.replace(/^denext: /, "")})`);
   console.log(`  linked ${made.link} → ${deno}\n  Put it on PATH (once):\n    ${made.pathLine}`);
 }
 
@@ -140,7 +177,7 @@ export const toolchainCommand: CommandSpec = {
     const action = ctx.positionals[0];
     if (action === "status") return await status(ctx);
     if (action === "install") {
-      const rt = await ensureDenoToolchain();
+      const rt = await requireToolchain();
       console.log(
         `  denext's Deno toolchain ${rt.version}: ${rt.deno}${rt.cached ? " (cached)" : ""}`,
       );

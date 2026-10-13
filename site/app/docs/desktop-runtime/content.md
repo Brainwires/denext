@@ -680,6 +680,40 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 - **Upstream:** [littledivy/laufey#85](https://github.com/littledivy/laufey/pull/85), "stop
   predefining `_WCHAR_T_DEFINED` for bindgen" (open).
 
+### The fork's own `deno` CLI
+
+- **What:** from `2.9.7-denext.15` each runtime release also ships the fork's own `deno` CLI, one
+  zip per platform (`deno-cli-2.9.7-denext.15-<target>.zip`, the binary at the top), listed in the
+  release's `manifest.json` (`cli`) and `SHA256SUMS` and attested like the runtime archives. Its
+  `deno --version` and `Deno.version.deno` are the release (`2.9.7-denext.15`), a semver
+  prerelease of Deno 2.9.7; denext compares the Deno release it is built from (`2.9.7`)
+  everywhere it checks a version. It is the binary [denext's Deno toolchain](/docs/toolchain)
+  pins.
+- **Why:** the CLI-side features (Vitest / Jest compatibility in `deno test`, `Deno.SQL` in
+  `deno run`) exist only in this build; the stock CLI does not have them.
+- **Layer:** the Deno CLI, a separate download from the runtime archives. `deno desktop` with it
+  packages against the same release's runtime archive as the stock 2.9.7 CLI does.
+- **Upstream:** planned for the features that would help everyone.
+
+### Vitest and Jest under `deno test`
+
+- **What:** `deno test` runs Vitest suites (`vi.mock` module mocking, Vite's resolution, CSS /
+  asset / `?raw` / `?url` imports, the jsdom / happy-dom environments, tsconfig paths) and Jest
+  projects on the Vitest layer, in the fork's own CLI (from `2.9.7-denext.15`). A run without
+  `-A` needs `--allow-env` (the layer reads `FORCE_TTY` and the other variables Vitest reads).
+- **Why:** an existing Vitest or Jest suite runs as it is, with no second test runner to install.
+- **Layer:** the Deno CLI (`deno test`).
+- **Upstream:** planned.
+
+### `Deno.SQL`
+
+- **What:** `new Deno.SQL(url | options)` / `Deno.sql`: a built-in Postgres and SQLite client with
+  `Bun.sql`'s tagged-template surface, every value sent as a parameter (from `2.9.7-denext.15`, in
+  the CLI and the desktop runtime). [`postgresClient()`](/docs/database#postgres) runs on it.
+- **Why:** a Postgres client with no npm dependency.
+- **Layer:** a Deno extension (`ext/sql`), in the CLI and `libdenort`.
+- **Upstream:** planned.
+
 ### Cargo-style concurrency locks
 
 - **What:** cross-process locks for `DENO_DIR` and Deno's build outputs, as Cargo does them: a
@@ -713,7 +747,8 @@ Each release is a tag on the Deno fork; denext pins one (`src/build/desktop-runt
 | `2.9.7-denext.11` | Chromium's sandbox for CEF on Windows, behind CEF's bootstrap (`<App>.exe` is the bootstrap, `<App>.dll` the laufey host, `<App>.runtime.dll` the runtime; see [the Windows CEF layout](#the-windows-cef-layout)). Linux notifications through the xdg-desktop-portal: D-Bus activation, so a click starts an app that quit, systemd transient user timers that post a scheduled notification while the app is closed, and launcher badges. The runtime never rewrites the process's argv in place (a D-Bus-activated app crashed), and `Deno.args` leaves out the runtime's own switches. The CEF host makes no network requests of its own (no network time, component updater, account or search-engine traffic, and on Linux no Hunspell dictionary downloads). FFI libraries load from paths relative to the app, the X11 clipboard takes large (INCR) transfers, and the webview `.deb`'s dependencies, the AppImage icon and a tray created late are fixed. laufey `00f2128` (API 45).                                                                      |
 | `2.9.7-denext.12` | Title bar preferences (`Deno.desktop.titleBarPreferences()`, followed live). The secure store in the runtime on Linux (`Deno.desktop.secureStore`: the Secret Service through libsecret, with the reason it can't answer). Linux file dialogs through xdg-desktop-portal's FileChooser, GTK's chooser where the portal has none (`platformFeatures().fileChooser`). The CEF sandbox mode on Linux as platform facts (`sandbox`, `sandboxReason`) and `requireSandbox` (exit 78 instead of running unsandboxed). `Deno.exit()` ends the app through the backend on every OS (storage is flushed); `SIGTERM` / `SIGINT` / `SIGHUP` quit a Linux CEF app cleanly; `sessionType` follows the display that is there; KDE's service cache is rebuilt after a scheme registration; WebKitGTK uses shared-memory frames on X11; the KWallet daemon matches Chromium's. Notification clicks are signed per install (`laufey-notification-key`) and size-capped; macOS CEF cookies report `cookieEncryption: "basic"` (Chromium's mock keychain). laufey `4f6f00f` (API 47). |
 | `2.9.7-denext.13` | A maintenance release (bug and security fixes). The secure store in the runtime on macOS (`Deno.desktop.secureStore`: the Keychain, written by the app's own process; a team-signed app ignores items another program planted or replaced). On Linux, `SIGTERM` / `SIGINT` / `SIGHUP` quit the WebView backend cleanly too, a quit cancels open GTK dialogs, a signal ends an app whose UI thread is stuck, and every `exit()` parks the UI thread before any exit handler runs (a WebKitGTK crash at exit on X11); the secure store follows the Secret Service to a new owner; a headless runtime launch is no longer cut off after 10 seconds, and the update helper waits for the install's processes (AppImage included). laufey `6974b61` (API 47).                                                                                                                                                                                                                                                                                                           |
-| `2.9.7-denext.14` | A maintenance release (bug fixes). A child the app starts from its own executable (a sidecar's `spawnSelf`, `child_process.fork()`) has a stdout of its own (the runtime loader's launch messages go to stderr), never applies or rolls back a staged full-app update, and, as a fork the runtime authorized, needs no `--allow-run` for the executable's path. A first-time dynamic `import()` puts the importer's async context (`AsyncLocalStorage`) back, so the next `Deno.serve` request doesn't inherit it. On Windows a passkey request whose window closes at once frees the ceremony slot. laufey `09ad1b6` (API 47). **denext requires it.** The current pin.                                                                                                                                                                                                                                                                                                                                                                                           |
+| `2.9.7-denext.14` | A maintenance release (bug fixes). A child the app starts from its own executable (a sidecar's `spawnSelf`, `child_process.fork()`) has a stdout of its own (the runtime loader's launch messages go to stderr), never applies or rolls back a staged full-app update, and, as a fork the runtime authorized, needs no `--allow-run` for the executable's path. A first-time dynamic `import()` puts the importer's async context (`AsyncLocalStorage`) back, so the next `Deno.serve` request doesn't inherit it. On Windows a passkey request whose window closes at once frees the ceremony slot. laufey `09ad1b6` (API 47). **denext requires it.**                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `2.9.7-denext.15` | The fork's own `deno` CLI ships with the release (`deno-cli-*`, one zip per platform: the binary [denext's Deno toolchain](/docs/toolchain) pins), with Vitest / Jest compatibility in `deno test` and `Deno.SQL` / `Deno.sql` (a built-in Postgres and SQLite client, in the runtime too). `deno --version` and `Deno.version.deno` name the release (`2.9.7-denext.15`). laufey `09ad1b6` (API 47). The current pin.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 denext needs `2.9.7-denext.14`. Under an older runtime a child the app starts from its own
 executable (a sidecar's `spawnSelf`) begins its stdout with the runtime loader's launch messages

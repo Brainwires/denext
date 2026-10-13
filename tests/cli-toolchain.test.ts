@@ -85,6 +85,7 @@ function deps(
     env: (k) => vars[k],
     setEnv: (k, v) => void (vars[k] = v),
     denoVersion: "2.9.6",
+    pinnedVersion: "2.9.7-denext.15",
     standalone: () => false,
     resolve: () => (seen.resolved++, Promise.resolve(choice)),
     spawn: (deno, marker) => (seen.spawned.push([deno, marker]), Promise.resolve(42)),
@@ -109,10 +110,11 @@ Deno.test("maybeReexecToolchain: re-runs the invocation under the toolchain and 
   assertEquals(seen.warned, []);
 });
 
-Deno.test("maybeReexecToolchain never loops: the marker, or a Deno that already is the toolchain", async () => {
+Deno.test("maybeReexecToolchain never loops: the marker on its own version, or the pinned Deno", async () => {
   for (
     const over of [
-      { vars: { DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.15" } },
+      { vars: { DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.15" }, denoVersion: "2.9.7-denext.15" },
+      { vars: { DENEXT_TOOLCHAIN_ACTIVE: "path" } },
       { denoVersion: "2.9.7-denext.15" },
     ]
   ) {
@@ -123,6 +125,21 @@ Deno.test("maybeReexecToolchain never loops: the marker, or a Deno that already 
   const { d, seen } = deps(TOOLCHAIN);
   assertEquals(await maybeReexecToolchain(false, d), false, "a verb that runs no project code");
   assertEquals(seen.resolved, 0);
+});
+
+Deno.test("maybeReexecToolchain: a leaked marker or a stale -denext.N build re-execs onto the pin", async () => {
+  for (
+    const over of [
+      // an absolute-path stock deno inside `denext task` inherits the marker
+      { vars: { DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.15" }, denoVersion: "2.9.6" },
+      // a `toolchain link` left on an older toolchain
+      { denoVersion: "2.9.7-denext.14" },
+    ]
+  ) {
+    const { d, seen } = deps(TOOLCHAIN, over);
+    assert(await maybeReexecToolchain(true, d));
+    assertEquals(seen.spawned, [["/cache/deno", "2.9.7-denext.15"]]);
+  }
 });
 
 Deno.test("maybeReexecToolchain: a stock choice continues in-process, after its one warning", async () => {
@@ -332,7 +349,7 @@ Deno.test({
 
 Deno.test({
   name:
-    "denext deno and toolchain install fail clearly when no toolchain is pinned; DENEXT_DENO=stock runs stock",
+    "with no toolchain pinned: toolchain install fails clearly, denext deno runs stock; DENEXT_DENO=stock / a missing path",
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext-tc-" });
     try {
@@ -342,8 +359,17 @@ Deno.test({
       const install = await cli(["toolchain", "install"], dir, env);
       assertEquals(install.code, 1);
       assertStringIncludes(install.stderr, "not available for this denext version");
+      // `denext deno` falls back to stock Deno like every forwarded verb.
       const deno = await cli(["deno", "--version"], dir, env);
-      assertEquals(deno.code, 1);
+      assertEquals(deno.code, 0, deno.stderr);
+      assertStringIncludes(deno.stdout, `deno ${Deno.version.deno}`);
+      // A DENEXT_DENO=<path> that isn't a file is still an error for `denext deno`.
+      const missing = await cli(["deno", "--version"], dir, {
+        ...env,
+        DENEXT_DENO: join(dir, "no-such-deno"),
+      });
+      assertEquals(missing.code, 1);
+      assertStringIncludes(missing.stderr, "is not a file");
       const stock = await cli(["deno", "--version"], dir, { ...env, DENEXT_DENO: "stock" });
       assertEquals(stock.code, 0, stock.stderr);
       assertStringIncludes(stock.stdout, `deno ${Deno.version.deno}`);
