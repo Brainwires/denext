@@ -21,7 +21,8 @@ const MAX_SUB_REQUEST_DEPTH = 3;
 /**
  * The parent request headers a sub-request inherits. Nothing else crosses: a client cannot
  * smuggle a header through a batch item, and a server-side self-call does not leak the
- * parent's `authorization`-unrelated framing headers.
+ * parent's `authorization`-unrelated framing headers. The app's `rateLimitHeader`, when it
+ * names one, is inherited too ({@link synthesizeSubRequest}).
  */
 const SUB_REQUEST_HEADER_ALLOWLIST = [
   "cookie",
@@ -57,22 +58,25 @@ export interface SubRequestInit {
 /**
  * Build the child `Request`: allowlisted parent headers, `accept: application/json`, the
  * batch-item marker (API only), a derived `x-request-id`, the parent's abort signal, and the
- * parent's socket peer (so rate limiters and `NextRequest.ip` see the real client).
+ * parent's socket peer (so rate limiters and `NextRequest.ip` see the real client). The header
+ * the app's `rateLimitHeader` names is copied from the parent as well (a caller's extra header
+ * can never replace it), so a batch item or a server-side self-call keys every per-address limit
+ * on the same client address as its parent — with whatever proxy trust the limiter applies.
  *
  * @param init What to synthesize.
  * @returns The child request.
  */
 export function synthesizeSubRequest(init: SubRequestInit): Request {
   const headers = new Headers();
-  for (const name of SUB_REQUEST_HEADER_ALLOWLIST) {
-    const v = init.parent.headers.get(name);
-    if (v !== null) headers.set(name, v);
-  }
+  for (const name of SUB_REQUEST_HEADER_ALLOWLIST) inheritHeader(headers, init.parent, name);
   if (init.extraHeaders) {
     for (const [k, v] of new Headers(init.extraHeaders)) {
       if (!HOP_HEADERS.has(k) && k !== BATCH_ITEM_HEADER) headers.set(k, v);
     }
   }
+  // After the caller's extras, so none can replace (or invent) the client's limit address.
+  const limitHeader = init.parentCtx.limitPolicy?.header;
+  if (limitHeader) inheritHeader(headers, init.parent, limitHeader);
   headers.set("accept", "application/json");
   headers.set(BATCH_ITEM_HEADER, "1");
   headers.set("x-request-id", `${init.parentCtx.requestId}${init.idSuffix}`);
@@ -85,6 +89,13 @@ export function synthesizeSubRequest(init: SubRequestInit): Request {
   });
   copyRemoteAddr(init.parent, request);
   return request;
+}
+
+/** Set `name` on `headers` to the parent's value, or remove it when the parent has none. */
+function inheritHeader(headers: Headers, parent: Request, name: string): void {
+  const v = parent.headers.get(name);
+  if (v !== null) headers.set(name, v);
+  else headers.delete(name);
 }
 
 /** Framing headers a caller may not set on a synthesized request. */

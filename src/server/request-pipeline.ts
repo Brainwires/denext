@@ -122,7 +122,9 @@ function stripBasePath(state: RequestState): void {
   url.pathname = stripped;
   state.url = url;
   state.pathname = stripped;
-  state.request = new Request(url.toString(), state.request);
+  const rebuilt = new Request(url.toString(), state.request);
+  copyRemoteAddr(state.request, rebuilt); // keep the socket peer (clientIp, per-address limits)
+  state.request = rebuilt;
 }
 
 /**
@@ -197,7 +199,11 @@ async function runMiddleware(state: RequestState): Promise<Response | null> {
 
 /** Rebuild the routed request from a runner outcome that did not supply one. */
 function applyOutcomeToRequest(state: RequestState, outcome: MiddlewareOutcome): void {
-  if (outcome.type === "rewrite") state.request = new Request(outcome.url, state.request);
+  if (outcome.type === "rewrite") {
+    const rewritten = new Request(outcome.url, state.request);
+    copyRemoteAddr(state.request, rewritten);
+    state.request = rewritten;
+  }
   if (outcome.type !== "response" && outcome.requestHeaders) {
     const rebuilt = new Request(state.request, { headers: outcome.requestHeaders });
     copyRemoteAddr(state.request, rebuilt);

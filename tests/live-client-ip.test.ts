@@ -24,6 +24,7 @@ import {
   runWithContext,
 } from "../src/server/request-context.ts";
 import {
+  ipBucket,
   isLocalAddress,
   limitAddrOf,
   type LimitAddrPolicy,
@@ -516,4 +517,27 @@ Deno.test("live maxConnectionsPerIp + rateLimitLocalAddresses: the loopback peer
     uninstallLiveHub();
     await server.shutdown();
   }
+});
+
+Deno.test("ipBucket: NAT64 (64:ff9b::/96) and IPv4-compatible addresses bucket by their embedded IPv4", () => {
+  assertEquals(ipBucket("64:ff9b::198.51.100.7"), "198.51.100.7");
+  assertEquals(ipBucket("64:ff9b::c633:6407"), "198.51.100.7");
+  assertEquals(ipBucket("64:FF9B:0:0:0:0:c633:6408"), "198.51.100.8", "another NAT64 client");
+  assertEquals(ipBucket("::198.51.100.7"), "198.51.100.7");
+  assertEquals(ipBucket("::ffff:198.51.100.7"), "198.51.100.7");
+  // Not embedded IPv4: the unspecified and loopback addresses, a NAT64 local-use /48, plain v6.
+  assertEquals(ipBucket("::1"), "0:0:0:0::/64");
+  assertEquals(ipBucket("::"), "0:0:0:0::/64");
+  assertEquals(ipBucket("64:ff9b:1::c633:6407"), "64:ff9b:1:0::/64");
+  assertEquals(ipBucket("2001:db8::c633:6407"), "2001:db8:0:0::/64");
+});
+
+Deno.test("limitAddrOf + rateLimitHeader: no warning for an in-process request with no recorded peer", async () => {
+  resetLimitHeaderWarningForTesting();
+  const warnings = await capturingWarnings(() => {
+    assertEquals(limitAddrOf(new Request("http://app.test/"), false, CF), undefined);
+    return Promise.resolve();
+  });
+  assertEquals(warnings, []);
+  resetLimitHeaderWarningForTesting();
 });

@@ -118,8 +118,9 @@ export function resolveLimitPolicy(
  *    and its limit; the limit is skipped instead (`undefined`).
  *
  * A request without the named header (or with a value that is not an IP address) falls back to
- * step 2 — never to "no limit" — and a warning says so once per process: such a request did not
- * come through the proxy that sets it, so its own socket peer is the best client identity.
+ * step 2 — never to "no limit" — and a warning says so once per process (not for an in-process
+ * request with no recorded socket peer): either the request reached the server without passing the
+ * proxy that sets the header, or the proxy does not set it.
  *
  * @param request The incoming request (or a Live connection's synthetic one).
  * @param trustForwardedHeaders Whether the app trusts its fronting proxy.
@@ -133,14 +134,15 @@ export function limitAddrOf(
 ): string | undefined {
   const resolved = limitAddrs.get(request);
   if (resolved !== undefined) return resolved ?? undefined;
+  const peer = remoteAddrOf(request);
   if (policy.header) {
     const named = headerAddr(request, policy.header);
     if (named) return named;
-    warnMissingLimitHeaderOnce(policy.header);
+    // An in-process request (no recorded peer: a handler called directly) is no proxy bypass.
+    if (peer !== undefined) warnMissingLimitHeaderOnce(policy.header);
   }
   const hop = trustForwardedHeaders ? lastForwardedHop(request) : undefined;
   if (hop) return hop;
-  const peer = remoteAddrOf(request);
   if (peer === undefined) return undefined;
   return policy.localAddresses || !isLocalAddress(peer) ? peer : undefined;
 }
@@ -175,10 +177,11 @@ function warnMissingLimitHeaderOnce(header: string): void {
   if (warnedMissingLimitHeader) return;
   warnedMissingLimitHeader = true;
   console.warn(
-    `denext: a request carried no client address in \`${header}\` (rateLimitHeader / ` +
-      "DENEXT_RATE_LIMIT_HEADER), so its per-address limits key on the socket peer (or the " +
-      "trusted x-forwarded-for hop) instead. Expected only for a request that bypassed the proxy " +
-      "that sets it; if every request lacks it, the proxy does not set that header.",
+    `denext: a request carried no IP address in \`${header}\` (rateLimitHeader / ` +
+      "DENEXT_RATE_LIMIT_HEADER), so its per-address limits key on the trusted x-forwarded-for " +
+      "hop or the socket peer instead (a loopback/private peer stays unlimited unless " +
+      "rateLimitLocalAddresses is on). Either the request reached the server without passing " +
+      "the proxy, or the proxy does not set that header.",
   );
 }
 
@@ -222,7 +225,8 @@ function parseIPv6Groups(input: string): number[] | null {
  *
  * An IPv4-mapped IPv6 address (`::ffff:198.51.100.7`, `::ffff:c633:6407`) is the IPv4 address it
  * carries — on a dual-stack listener every IPv4 client is reported that way, and their shared /64
- * would be one bucket for all of them.
+ * would be one bucket for all of them. So is a NAT64 address (`64:ff9b::198.51.100.7`) and an
+ * IPv4-compatible one (`::198.51.100.7`), for the same reason.
  *
  * An address that parses as neither is lower-cased and returned unchanged (it is already
  * whatever the socket peer or the trusted proxy said). The Live hub's per-address connection cap,
@@ -238,12 +242,27 @@ export function ipBucket(ip: string): string {
   if (!groups) return trimmed.toLowerCase();
   // An IPv4-mapped address (a dual-stack listener's IPv4 client) is that IPv4 client: its /64
   // would be one bucket for every IPv4 visitor.
-  if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
+  if (embedsIPv4(groups)) {
     return `${groups[6] >> 8}.${groups[6] & 255}.${groups[7] >> 8}.${groups[7] & 255}`;
   }
   // The /64 prefix: the four high hextets, hex, with the host half zeroed.
   return `${groups.slice(0, 4).map((g) => g.toString(16)).join(":")}::/64`;
 }
+
+/**
+ * Whether an IPv6 address is an IPv4 client in IPv6 form, whose /64 would be one bucket for every
+ * such client: IPv4-mapped (`::ffff:0:0/96`, a dual-stack listener's IPv4 peer), the NAT64
+ * well-known prefix (`64:ff9b::/96`, RFC 6052 — a NAT64 gateway's IPv4 destination) and the
+ * deprecated IPv4-compatible form (`::a.b.c.d`, except `::` and `::1`).
+ */
+function embedsIPv4(g: number[]): boolean {
+  const prefix = g.slice(0, 6).join(":");
+  if (prefix === "0:0:0:0:0:65535" || prefix === NAT64_PREFIX) return true;
+  return prefix === "0:0:0:0:0:0" && (g[6] !== 0 || g[7] > 1); // IPv4-compatible, not :: / ::1
+}
+
+/** The first six hextets of the NAT64 well-known prefix `64:ff9b::/96`, as {@link embedsIPv4} joins them. */
+const NAT64_PREFIX = "100:65435:0:0:0:0";
 
 /** One `:`-separated run of hextets (a trailing dotted IPv4 counts as two), or `null`. */
 function parseHextets(part: string): number[] | null {

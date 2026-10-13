@@ -2,7 +2,7 @@
 // createApp derives once (`AppRuntime`) and the mutable per-request routing state
 // (`RequestState`), plus `finalize`, which every response leaves through.
 
-import type { LimitAddrPolicy } from "./remote-addr.ts";
+import { copyRemoteAddr, type LimitAddrPolicy } from "./remote-addr.ts";
 import type { AppConfig, RequestHandler } from "./app-config.ts";
 import type { RequestContext } from "./request-context.ts";
 import type { CorsPolicy } from "./cors.ts";
@@ -86,7 +86,9 @@ export interface RequestState {
 export function retarget(state: RequestState, url: URL): void {
   state.url = url;
   state.pathname = url.pathname;
-  state.request = new Request(url.toString(), state.request);
+  const rebuilt = new Request(url.toString(), state.request);
+  copyRemoteAddr(state.request, rebuilt); // keep the socket peer (clientIp, per-address limits)
+  state.request = rebuilt;
 }
 
 /** Queue a header for the response (config header rules, middleware headers). */
