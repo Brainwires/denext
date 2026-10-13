@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<?pi-before data?>
+<!-- comment before -->
+<a:root xmlns:a="urn:a" xmlns:b="urn:b" xmlns="urn:default" xmlns:unused="urn:unused" b:z="2"
+  a:y="1" plain='x &lt; y &amp; "z"' tab="a&#9;b&#10;c&#13;d">
+  <child attr="v" other = 'w'>text &amp; &lt;more&gt; &#13; ]&gt;<![CDATA[ <cdata> & ]]></child>
+  <b:leaf />
+  <inner xmlns="" xmlns:c="urn:c">
+    <c:deep c:at="q">
+      <none />
+    </c:deep>
+    <!-- in -->
+    <?pi inner?>
+  </inner>
+  <a:same xmlns:a="urn:a">
+    <x xmlns="urn:default">é 𝔄</x>
+  </a:same>
+</a:root>
+<!-- comment after -->

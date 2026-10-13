@@ -28,6 +28,19 @@ and this project adheres to
   page has the same switches, checked as detected.
 - **`denext generate --dry-run` and `--force`** for every kind. An existing file is still never
   overwritten without `--force`; for `docker` the command prints the diff of each file it skipped.
+- **SAML 2.0 Service Provider primitives in `denext/server`.** `parseIdpMetadata`,
+  `spMetadataXml`, `buildAuthnRequest` (HTTP-Redirect binding) and `verifySamlResponse`
+  (HTTP-POST binding), with `inMemorySamlReplayCache` and a `SamlError` carrying stable `code`s.
+  Verification runs on denext's own strict XML parser (any DOCTYPE or entity declaration is
+  refused; size and depth are capped) and Exclusive XML Canonicalization with
+  `InclusiveNamespaces`, accepts only RSA-SHA256/512 and ECDSA-SHA256 signatures over
+  SHA-256/512 digests with the enveloped-signature + exc-c14n transforms, trusts only the
+  configured IdP certificates (never a KeyInfo), and reads claims only from the element whose
+  signature verified: duplicate IDs, a second Assertion anywhere in the document, a Reference
+  that does not name the signature's parent, comments or markup inside NameID / Issuer /
+  Audience / attribute values, encrypted assertions, replays and every Destination, Recipient,
+  Audience, Issuer, InResponseTo and validity-window mismatch are refused. Zero npm; WebCrypto
+  only. The primitives mount no routes.
 
 ### Changed
 

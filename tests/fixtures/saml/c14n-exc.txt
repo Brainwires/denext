@@ -1,0 +1,9 @@
+<?pi-before data?>
+<!-- comment before -->
+<a:root xmlns:a="urn:a" xmlns:b="urn:b" plain="x &lt; y &amp; &quot;z&quot;" tab="a&#x9;b&#xA;c&#xD;d" a:y="1" b:z="2">
+  <child xmlns="urn:default" attr="v" other="w">text &amp; &lt;more&gt; &#xD; ]&gt; &lt;cdata&gt; &amp; </child>
+  <b:leaf></b:leaf>
+  <inner><c:deep xmlns:c="urn:c" c:at="q"><none></none></c:deep><!-- in --><?pi inner?></inner>
+  <a:same><x xmlns="urn:default">é 𝔄</x></a:same>
+</a:root>
+<!-- comment after -->

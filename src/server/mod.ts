@@ -613,6 +613,24 @@ export { postgresSessionStore } from "./auth/postgres-session-store.ts";
 export type { PostgresSessionStoreOptions } from "./auth/postgres-session-store.ts";
 export { postgresRateLimitStore } from "./auth/postgres-rate-limit.ts";
 export type { PostgresRateLimitStoreOptions } from "./auth/postgres-rate-limit.ts";
+// SAML 2.0 Service Provider primitives (IdP metadata, AuthnRequest, Response verification).
+export {
+  buildAuthnRequest,
+  inMemorySamlReplayCache,
+  parseIdpMetadata,
+  SamlError,
+  spMetadataXml,
+  verifySamlResponse,
+} from "./auth/saml/mod.ts";
+export type {
+  BuildAuthnRequestOptions,
+  SamlErrorCode,
+  SamlIdpConfig,
+  SamlReplayCache,
+  SamlSpConfig,
+  VerifiedSamlAssertion,
+  VerifySamlResponseOptions,
+} from "./auth/saml/mod.ts";
 // Email verification + password reset — what `{basePath}/verify` and `/reset` run, callable
 // from your own Server Actions too.
 export {
