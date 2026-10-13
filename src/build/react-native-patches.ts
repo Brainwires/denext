@@ -23,9 +23,12 @@
 //     line-tall multiline input), and the React Native props react-native-web drops
 //     (`autoComplete` / `textContentType` as HTML autocomplete tokens, `submitBehavior`,
 //     `onEndEditing`, `cursorColor` / `selectionColor`).
-//   - `Image` is passed through `withImageStatics`: the `resolveAssetSource`,
+//   - `Image` is wrapped by `withImageProps` (over `withImageStatics`): the `resolveAssetSource`,
 //     `getSizeWithHeaders`, `prefetchWithMetadata` and `abortPrefetch` statics react-native-web
-//     lacks. `PixelRatio` gains React Native's no-op `startDetecting`.
+//     lacks, React Native 0.71's `src` / `srcSet` / `alt` / `width` / `height`, a `source`
+//     array, `loadingIndicatorSource` and (Android shell) `fadeDuration`. `PixelRatio` gains
+//     React Native's no-op `startDetecting`.
+//   - `Switch` is wrapped by `withSwitchProps`: `ios_backgroundColor` and `onChange`.
 //   - `AppRegistry` is passed through `withAppRegistry` (with react-native-web's `View`):
 //     sections, `getRunnable` / `getRegistry`, `setSurfaceProps`, `setRootViewStyleProvider`
 //     and the headless-task registry.
@@ -51,20 +54,21 @@ const OVERLAY = "denext/react-native";
 /** The react-native-web modules whose default export is wrapped, and the wrapper. */
 const WRAPPED: Readonly<Record<string, string>> = {
   AppRegistry: "withAppRegistry",
-  Image: "withImageStatics",
+  Image: "withImageProps",
   LayoutAnimation: "withLayoutAnimationStatics",
   LogBox: "withLogBoxStatics",
   Modal: "withModalBackHandler",
   Pressable: "withPressableRipple",
   ScrollView: "withScrollViewProps",
   StyleSheet: "withStyleSheetStatics",
+  Switch: "withSwitchProps",
   Text: "withTextProps",
   TextInput: "withTextInputDefaults",
   PixelRatio: "withFontScaleRatio",
 };
 
 /** The wrapped modules whose wrapper also takes react-native-web's `View` (`../View`). */
-const WRAPPED_WITH_VIEW: ReadonlySet<string> = new Set(["AppRegistry"]);
+const WRAPPED_WITH_VIEW: ReadonlySet<string> = new Set(["AppRegistry", "Modal"]);
 
 /** A wrapped module, ES or CommonJS build: group 1 is `cjs/`, group 2 the name. */
 const WRAPPED_MODULE = new RegExp(

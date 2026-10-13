@@ -103,6 +103,13 @@ and this project adheres to
   ripple from the touch point; `ScrollView`'s `bounces={false}` / `overScrollMode="never"` turn the
   overscroll effect off and `contentOffset` sets the starting position; `Text`'s
   `adjustsFontSizeToFit` / `minimumFontScale` shrink an overflowing text until it fits.
+- **React Native mode: more component props.** `Text`'s `ellipsizeMode` (`"clip"`, and `"head"` /
+  `"middle"` on one line) and `onTextLayout` (the drawn lines); `ScrollView`'s
+  `maintainVisibleContentPosition` (`minIndexForVisible`, `autoscrollToTopThreshold`),
+  `contentInset` and `automaticallyAdjustKeyboardInsets`; `Image`'s React Native 0.71 `src` /
+  `srcSet` / `alt` / `width` / `height`, a `source` array, `loadingIndicatorSource` and (Android
+  shell) `fadeDuration`; `Switch`'s `ios_backgroundColor` and `onChange`; `Modal`'s
+  `backdropColor` and, in the iOS shell, `presentationStyle="pageSheet"` / `"formSheet"`.
 
 ### Changed
 

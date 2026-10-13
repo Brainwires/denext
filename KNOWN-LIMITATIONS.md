@@ -219,7 +219,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **`adjustsFontSizeToFit` shrinks the outer `Text` only** (a nested `Text` with its own
   `fontSize` keeps it) and needs a box to overflow (`numberOfLines` or a fixed size). The
   `android_ripple` of `Pressable` is drawn in the Android shell; `TouchableNativeFeedback`'s
-  `background` ripple is not.
+  `background` ripple is not. `ellipsizeMode="head"` / `"middle"` work on one plain-text line
+  only, and `onTextLayout`'s font metrics are estimated from the font size. An iOS
+  `pageSheet` / `formSheet` modal has no swipe-down to dismiss. `Image`'s `crossOrigin` /
+  `referrerPolicy` do nothing, and `fadeDuration` fades only when set.
 - **`reactNative` requires `mode: "spa"`.** Fast Refresh reloads on a new dependency import, an
   added or removed route or a lockfile change. Resolution variants (`@2x`) are picked at load.
 - **Can't (no WebView or browser API):** `expo-gl` on a worklet / UI runtime

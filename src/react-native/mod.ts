@@ -53,6 +53,7 @@ export {
 export { I18nManager } from "./i18n-manager.ts";
 export { reactNativeFontScale, withFontScaleRatio, withFontScaling } from "./font-scaling.ts";
 export { pickImageScale, resolveAssetSource, withImageStatics } from "./image-scale.ts";
+export { withImageProps } from "./image-props.ts";
 export { createKeyboardAvoidingView, Keyboard } from "./keyboard.ts";
 export { createInputAccessoryView } from "./input-accessory-view.ts";
 export { Linking } from "./linking.ts";
@@ -69,6 +70,7 @@ export { createNativeSafeAreaProvider, createSafeAreaView } from "./safe-area.ts
 export { withScrollSnap } from "./scroll-snap.ts";
 export { withScrollViewProps } from "./scroll-view.ts";
 export { StatusBar } from "./status-bar.ts";
+export { withSwitchProps } from "./switch.ts";
 export { withTextInputDefaults } from "./text-input.ts";
 export { withTextProps } from "./text-fit.ts";
 export { processStyleAttributes, withStyleSheetStatics } from "./style-attributes.ts";

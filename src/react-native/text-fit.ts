@@ -15,9 +15,10 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeType } from "../jsx/types.ts";
-import { useCallback, useLayoutEffect, useRef, useState } from "../runtime/hooks.ts";
+import { useState } from "../runtime/hooks.ts";
 import { flattenStyle, withFontScaling } from "./font-scaling.ts";
-import { setRef } from "./internal.ts";
+import { useMeasuredNode } from "./measured-node.ts";
+import { withTextLayout } from "./text-layout.ts";
 
 /** React Native's default text size (react-native-web's `Text` draws 14px). */
 const DEFAULT_FONT_SIZE = 14;
@@ -82,11 +83,6 @@ interface FitTextProps {
   readonly [prop: string]: unknown;
 }
 
-/** The `ResizeObserver` constructor, where the page has one. */
-function resizeObserver(): typeof ResizeObserver | undefined {
-  return (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
-}
-
 /**
  * react-native-web's `Text` with `adjustsFontSizeToFit` / `minimumFontScale` (see the module
  * docs). A `Text` without `adjustsFontSizeToFit` renders exactly as before.
@@ -98,29 +94,12 @@ function withTextFit(Text: VNodeType): VNodeType {
   function FitText(props: FitTextProps): VNode {
     const { adjustsFontSizeToFit: fit, minimumFontScale, ...rest } = props;
     const [scale, setScale] = useState(1);
-    const node = useRef<FitElement | null>(null);
-    const userRef = props.ref;
-    const ref = useCallback((el: FitElement | null) => {
-      node.current = el;
-      setRef(userRef, el);
-    }, [userRef]);
     const size = flattenStyle(props.style).fontSize;
     const base = typeof size === "number" ? size : DEFAULT_FONT_SIZE;
-    const measure = useRef(() => {});
-    measure.current = () => {
-      const el = node.current;
-      if (!fit || !el) return;
+    const { ref } = useMeasuredNode<FitElement>(!!fit, props.ref, (el) => {
       const next = fitFontScale(el, base, minimumFontScale ?? 0);
       setScale((s) => (Math.abs(s - next) < 0.005 ? s : next));
-    };
-    useLayoutEffect(() => measure.current());
-    useLayoutEffect(() => {
-      const RO = resizeObserver();
-      if (!fit || !RO || !node.current) return;
-      const ro = new RO(() => measure.current());
-      ro.observe(node.current as unknown as Element);
-      return () => ro.disconnect();
-    }, [fit]);
+    });
     if (!fit) return h(Text, rest);
     return h(Text, {
       ...rest,
@@ -132,13 +111,13 @@ function withTextFit(Text: VNodeType): VNodeType {
 }
 
 /**
- * react-native-web's `Text` with React Native's font scaling ({@linkcode withFontScaling}) and
- * `adjustsFontSizeToFit` ({@linkcode withTextFit}): the wrapper React Native mode's build
- * applies.
+ * react-native-web's `Text` with React Native's font scaling ({@linkcode withFontScaling}),
+ * `adjustsFontSizeToFit` ({@linkcode withTextFit}) and `ellipsizeMode` / `onTextLayout`
+ * ({@linkcode withTextLayout}): the wrapper React Native mode's build applies.
  *
  * @param Text react-native-web's `Text`.
  * @returns The wrapped `Text`.
  */
 export function withTextProps(Text: VNodeType): VNodeType {
-  return withFontScaling(withTextFit(Text));
+  return withFontScaling(withTextFit(withTextLayout(Text)));
 }
