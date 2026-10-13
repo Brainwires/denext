@@ -141,6 +141,10 @@
                     },
                     "authorize": {
                       "description": "Decide one operation for the current request. Runs whenever a storage call is made inside a request (the plugin's endpoints, and the server API called from a route handler, Server Action or page); a call outside any request (a job, a script) is trusted and skips it. Absent, every operation is denied — except downloads from a public bucket."
+                    },
+                    "versioned": {
+                      "description": "Object versioning, as Supabase Storage has it: `true` keeps every overwritten or deleted object as a noncurrent version (a delete leaves a delete marker); `false` suspends it (history is kept, new writes replace). Omitted: off (`DISABLED`), or whatever the bucket's row says once it has been turned on.",
+                      "type": "boolean"
                     }
                   }
                 }
