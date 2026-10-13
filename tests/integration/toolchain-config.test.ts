@@ -6,6 +6,9 @@
 // dependency" in the child. Here the app's import map points the `jsr:` CLI specifier at this
 // checkout's `cli.ts` (a local script, which discovers the CHECKOUT's config instead — the same
 // mismatch), and the toolchain is a wrapper around this Deno, so the whole path runs for real.
+// The pin is replaced by one this Deno is not: when the suite itself runs on the pinned toolchain
+// (`denext task test`, or a `deno` that is the toolchain on PATH), the CLI is already where it
+// would re-exec to and stays in-process — the path under test would never run.
 
 import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, isAbsolute, join, toFileUrl } from "@std/path";
@@ -53,6 +56,16 @@ async function scaffold(dir: string): Promise<void> {
   await write("app/page.tsx", "export default function Home() {\n  return <h1>hi</h1>;\n}\n");
 }
 
+/** A pin naming a toolchain version this Deno is not, so the CLI re-execs whatever it runs on. */
+async function foreignPin(dir: string): Promise<string> {
+  const path = join(dir, "toolchain-pin.json");
+  await Deno.writeTextFile(
+    path,
+    JSON.stringify({ schema: 1, version: `0.0.0-not-${Deno.version.deno}`, targets: {} }),
+  );
+  return path;
+}
+
 /** A toolchain stand-in: records its argv, then runs this Deno with it. */
 async function toolchainWrapper(dir: string): Promise<{ path: string; log: string }> {
   const path = join(dir, "deno-toolchain");
@@ -80,7 +93,12 @@ Deno.test({
       const out = await new Deno.Command(Deno.execPath(), {
         args: ["task", "build"],
         cwd: app,
-        env: { DENEXT_DENO: w.path, DENEXT_TOOLCHAIN_ACTIVE: "", NO_COLOR: "1" },
+        env: {
+          DENEXT_DENO: w.path,
+          DENEXT_TOOLCHAIN_ACTIVE: "",
+          DENEXT_TOOLCHAIN_PIN_FILE: await foreignPin(tmp),
+          NO_COLOR: "1",
+        },
         stdout: "piped",
         stderr: "piped",
       }).output();

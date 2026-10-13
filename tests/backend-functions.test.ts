@@ -313,31 +313,42 @@ Deno.test({
   sanitizeOps: false,
   async fn() {
     const app = await functionsApp({
+      // `?until=S/A` answers once the function has seen S requests start and A of them aborted
+      // (a long poll inside the worker), so the test waits on the events themselves, not a clock.
       "functions/wait.ts": `
 let started = 0;
 let aborted = 0;
+const waiters = [];
+const changed = () => { for (const wake of waiters.splice(0)) wake(); };
+const state = () => started + "/" + aborted;
 Deno.serve(async (req) => {
-  if (new URL(req.url).searchParams.has("count")) return new Response(started + "/" + aborted);
+  const params = new URL(req.url).searchParams;
+  if (params.has("count")) return new Response(state());
+  const until = params.get("until");
+  if (until !== null) {
+    const [s, a] = until.split("/").map(Number);
+    while (started < s || aborted < a) await new Promise((wake) => waiters.push(wake));
+    return new Response(state());
+  }
   started++;
-  await new Promise((resolve) => req.signal.addEventListener("abort", () => { aborted++; resolve(null); }));
+  changed();
+  await new Promise((resolve) =>
+    req.signal.addEventListener("abort", () => { aborted++; changed(); resolve(null); })
+  );
   return new Response("done");
 });`,
-    }, { functions: { verifyJwt: false } });
+    }, { functions: { verifyJwt: false, timeoutMs: 60_000 } });
     try {
       const count = async () => await (await app.call("/functions/v1/wait?count")).text();
-      const until = async (want: string) => {
-        for (let i = 0; i < 200 && await count() !== want; i++) {
-          await new Promise((r) => setTimeout(r, 25));
-        }
-        assertEquals(await count(), want);
-      };
+      const until = async (want: string) =>
+        assertEquals(await (await app.call(`/functions/v1/wait?until=${want}`)).text(), want);
       const controller = new AbortController();
       const pending = app.call("/functions/v1/wait", { signal: controller.signal });
       await until("1/0"); // the function is running
       controller.abort();
       const res = await pending.catch(() => null);
       if (res) await res.body?.cancel().catch(() => {});
-      await until("1/1");
+      await until("1/1"); // the abort reached the function's `req.signal`
       // A request already aborted never reaches the function.
       const gone = new AbortController();
       gone.abort();
