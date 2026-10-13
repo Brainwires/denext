@@ -6,7 +6,7 @@
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { commandCwd, spawnDenoAndExit } from "../shared.ts";
 import { denoExecutable } from "../../build/bundle.ts";
-import { denoPathEnv } from "../deno-path.ts";
+import { forwardedDeno } from "../deno-path.ts";
 import {
   denoToolchainStatus,
   ensureDenoToolchain,
@@ -49,47 +49,13 @@ async function toolchainBinary(): Promise<{ deno: string; marker: string }> {
 }
 
 /**
- * The binary a forwarded Deno verb runs on — the automatic switch's choice: denext's toolchain,
- * a `DENEXT_DENO=<path>` binary, or stock Deno (after the choice's one warning) whenever the
- * toolchain can't be had. Never fails.
- */
-async function forwardedBinary(): Promise<{ deno: string; marker: string }> {
-  const choice = await resolveDenoToolchain();
-  if (choice.warning) console.error(choice.warning);
-  return choice.kind === "toolchain"
-    ? { deno: choice.deno, marker: choice.version }
-    : { deno: denoExecutable(), marker: "" };
-}
-
-/**
- * The binary `denext deno` runs: the forwarded verbs' choice (stock Deno after the choice's one
- * warning when the toolchain can't be had), except that `DENEXT_DENO=stock` says so once and a
- * `DENEXT_DENO=<path>` that isn't a file is an error (exit 1): that binary was asked for by name.
- */
-async function denoVerbBinary(): Promise<{ deno: string; marker: string }> {
-  const raw = (Deno.env.get(TOOLCHAIN_ENV) ?? "").trim().toLowerCase();
-  if (raw === "stock") {
-    console.error(`denext: ${TOOLCHAIN_ENV}=stock — running stock Deno.`);
-    return { deno: denoExecutable(), marker: "" };
-  }
-  const choice = await resolveDenoToolchain();
-  if (choice.warning) console.error(choice.warning);
-  if (choice.kind === "toolchain") return { deno: choice.deno, marker: choice.version };
-  if (raw !== "" && raw !== "pinned") Deno.exit(1);
-  return { deno: denoExecutable(), marker: "" };
-}
-
-/**
  * Run the toolchain's `deno` with `args` verbatim in `cwd` and exit with its code — `denext deno
  * …`, and (with `forwarded`) every Deno verb denext forwards (`denext compile …`, `denext
- * main.ts`) and `denext task`. The child's PATH starts with that same binary as `deno`
- * ({@linkcode denoPathEnv}), so a `deno` a task's script or tool spawns runs on it too.
- *
- * Both fall back to stock Deno, with the choice's one warning, when the toolchain can't be had
- * ({@linkcode forwardedBinary}): `denext compile` works wherever `deno compile` does. `denext
- * deno` alone treats a `DENEXT_DENO=<path>` that isn't a file as an error ({@linkcode
- * denoVerbBinary}).
- * Never returns.
+ * main.ts`) and `denext task`. Both take {@linkcode forwardedDeno}'s choice (its PATH rule and the
+ * toolchain marker included), falling back to stock Deno with the choice's one warning when the
+ * toolchain can't be had: `denext compile` works wherever `deno compile` does. `denext deno` also
+ * says `DENEXT_DENO=stock` once, and treats a `DENEXT_DENO=<path>` that isn't a file as an error
+ * (exit 1): that binary was asked for by name. Never returns.
  *
  * @param args The arguments for `deno`.
  * @param cwd The directory to run in.
@@ -100,13 +66,15 @@ export async function runDenoPassthrough(
   cwd = Deno.cwd(),
   forwarded = false,
 ): Promise<never> {
-  const { deno, marker } = forwarded ? await forwardedBinary() : await denoVerbBinary();
-  return await spawnDenoAndExit(
-    args,
-    cwd,
-    { ...await denoPathEnv(deno), ...(marker ? { [TOOLCHAIN_ACTIVE_ENV]: marker } : {}) },
-    deno,
-  );
+  const raw = (Deno.env.get(TOOLCHAIN_ENV) ?? "").trim().toLowerCase();
+  if (!forwarded && raw === "stock") {
+    console.error(`denext: ${TOOLCHAIN_ENV}=stock — running stock Deno.`);
+  }
+  const chosen = await forwardedDeno();
+  if (chosen.warning) console.error(chosen.warning);
+  const onToolchain = TOOLCHAIN_ACTIVE_ENV in chosen.env;
+  if (!forwarded && !onToolchain && raw !== "" && raw !== "stock" && raw !== "pinned") Deno.exit(1);
+  return await spawnDenoAndExit(args, cwd, chosen.env, chosen.deno);
 }
 
 /** `denext deno …` (the CLI intercepts a leading `deno` verb so every flag passes verbatim). */
