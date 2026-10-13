@@ -1,6 +1,8 @@
 // @denext/backend storage against a REAL S3-compatible store (MinIO, R2, AWS): presigned PUT
 // then GET, the store refusing a body that breaks the signed headers, multipart from the client,
-// list paging with awkward keys, head and delete. Opt-in — it needs a throwaway bucket:
+// list paging with awkward keys, head and delete, a bucket's `authorize` deciding per denextAuth
+// session and op (the sign route and the server API), `{ service: true }` outside a request, and
+// an image transform the app serves from the store's original. Opt-in — it needs a throwaway bucket:
 //
 //   docker run --rm -d --name dnx-minio -p 127.0.0.1:9100:9000 \
 //     -e MINIO_ROOT_USER=dnxtest -e MINIO_ROOT_PASSWORD=dnxtest-secret minio/minio server /data
@@ -12,12 +14,18 @@
 // skipped, so CI stays green with no store; tests/backend-s3.test.ts covers the same flows
 // against an in-memory S3.
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { backendApp, ORIGIN } from "./_backend-app.ts";
-import { s3 } from "../packages/backend/mod.ts";
+import { s3, StorageError } from "../packages/backend/mod.ts";
 import { storage } from "../packages/backend/server.ts";
 import { uploadFile } from "../packages/backend/client.ts";
 import { sha256Hex, signRequest } from "../packages/backend/src/sigv4.ts";
+import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import { denextAuth } from "../src/server/auth/mod.ts";
+import { credentials } from "../src/server/auth/providers.ts";
+import { issueAuthSession } from "../src/server/auth/session.ts";
+import type { AuthConfig } from "../src/server/auth/types.ts";
+import { samplePng } from "./fixtures/sample-image.ts";
 
 const env = (name: string) => Deno.env.get(name) || undefined;
 const ENDPOINT = env("DENEXT_TEST_S3_ENDPOINT");
@@ -207,6 +215,116 @@ Deno.test({
     assertEquals((await bucket.list("list/")).objects, []);
     assertEquals(await bucket.head("list/a b.txt"), null);
   } finally {
+    await a.close();
+  }
+});
+
+Deno.test({
+  name: "minio: authorize decides per session and op; outside a request only service; transforms",
+  ignore,
+}, async () => {
+  await ensureBucket();
+  const authConfig: AuthConfig = {
+    secret: "minio-auth-secret-at-least-32-characters",
+    canonicalOrigin: ORIGIN,
+    providers: [credentials({ authorize: () => null })],
+  };
+  const name = `${RUN}-own`;
+  const a = await backendApp(
+    {
+      driver: s3({ endpoint: ENDPOINT, region: REGION, bucket: BUCKET, credentials: CREDENTIALS }),
+      buckets: {
+        [name]: {
+          mime: ["image/png", "text/plain"],
+          authorize: ({ session, op, key }) =>
+            !!session && key.startsWith(`${session.user.id}/`) && op !== "delete",
+        },
+      },
+    },
+    { plugins: [denextAuth(authConfig)] },
+  );
+  const service = storage.bucket(name, { service: true });
+  try {
+    const issuing = createRequestContext(new Request(`${ORIGIN}/`));
+    await runWithContext(
+      issuing,
+      () => issueAuthSession(authConfig, { id: "u1", email: "u1@x.test" }, "credentials"),
+    );
+    const cookie = issuing.outgoingHeaders.getSetCookie().find((c) =>
+      c.startsWith("__Host-denext_auth=")
+    )!.split(";")[0];
+    const plan = (key: string) => ({
+      op: "upload",
+      bucket: name,
+      key,
+      contentType: "text/plain",
+      size: 5,
+    });
+
+    // The sign route: signed out, or someone else's key, is refused; the user's own is signed,
+    // the store takes the PUT, and the completion is verified against the store.
+    for (const [body, init] of [[plan("u1/a.txt"), {}], [plan("u2/a.txt"), { cookie }]] as const) {
+      const refused = await a.sign(body, init);
+      assertEquals([refused.status, (await refused.json()).error.code], [403, "forbidden"]);
+    }
+    const signed = await (await a.sign(plan("u1/a.txt"), { cookie })).json();
+    const put = await fetch(signed.upload.url, {
+      method: "PUT",
+      headers: signed.upload.headers,
+      body: new TextEncoder().encode("hello"),
+    });
+    assertEquals(put.status, 200, await put.text());
+    const done = await a.sign({ op: "complete", token: signed.upload.token }, { cookie });
+    assertEquals((await done.json()).object.size, 5);
+
+    // The server API in that user's request runs authorize: own keys read and list, a delete
+    // (denied for every key) and another user's key are refused.
+    const asU1 = <T>(fn: () => Promise<T>) =>
+      runWithContext(
+        createRequestContext(new Request(`${ORIGIN}/api/x`, { headers: { cookie } })),
+        fn,
+      );
+    await service.upload("u2/b.txt", "theirs", { contentType: "text/plain" });
+    const mine = await asU1(() => storage.bucket(name).download("u1/a.txt"));
+    assertEquals(await new Response(mine!.body).text(), "hello");
+    assertEquals(
+      (await asU1(() => storage.bucket(name).list("u1/"))).objects.map((o) => o.key),
+      ["u1/a.txt"],
+    );
+    const refusals: Array<[string, () => Promise<unknown>]> = [
+      ["download", () => storage.bucket(name).download("u2/b.txt")],
+      ["delete", () => storage.bucket(name).remove("u1/a.txt")],
+    ];
+    for (const [what, run] of refusals) {
+      const error = await assertRejects(() => asU1(run), StorageError);
+      assertEquals([error.code, error.message.startsWith(what)], ["forbidden", true]);
+    }
+
+    // Outside a request there is no session: only a service handle works.
+    const outside = await assertRejects(
+      () => storage.bucket(name).head("u1/a.txt"),
+      StorageError,
+      "{ service: true }",
+    );
+    assertEquals(outside.code, "forbidden");
+    assertEquals((await service.head("u1/a.txt"))?.size, 5);
+
+    // A transformed download is served by the app, which reads the original from the store.
+    await service.upload("u1/logo.png", samplePng());
+    const url = await service.createSignedUrl("u1/logo.png", { transform: { width: 32 } });
+    assert(url.startsWith("/_denext/storage/o/"), url);
+    const sized = await a.call(url);
+    assertEquals([sized.status, sized.headers.get("content-type")], [200, "image/webp"]);
+    assertEquals(new TextDecoder().decode((await sized.bytes()).subarray(8, 12)), "WEBP");
+    const widened = await a.call(url.replace("w=32", "w=64"));
+    assertEquals(widened.status, 403, "the transform is part of the signature");
+    await widened.body?.cancel();
+    // The untransformed URL goes straight to the store.
+    const direct = await service.createSignedUrl("u1/logo.png");
+    assert(direct.startsWith(new URL(ENDPOINT!).origin), direct);
+    assertEquals((await (await fetch(direct)).bytes()).byteLength, samplePng().byteLength);
+  } finally {
+    await service.remove(["u1/a.txt", "u2/b.txt", "u1/logo.png"]).catch(() => {});
     await a.close();
   }
 });

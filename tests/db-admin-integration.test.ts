@@ -1,8 +1,9 @@
 // `denext ui` → Database against a REAL Postgres: the `db-admin` child's operations on a
 // database the app role owns — keyset paging that visits every row exactly once (by key, and by
 // a nullable sort column in both directions), a filter, the "as user" preview under real
-// row-level security (the @denext/backend roles and `auth.uid()` policies), row writes previewed
-// and then run, `READ ONLY` and the statement timeout enforced by the server, policies,
+// row-level security (the @denext/backend roles and `auth.uid()` policies; legacy claim settings
+// left on the login role are blanked, so they never override the previewed user), row writes
+// previewed and then run, `READ ONLY` and the statement timeout enforced by the server, policies,
 // migrations (status, apply, a changed file), denext auth's users (sessions, MFA, revoke,
 // delete) — and the real `denext db-admin` child end to end, its connection password masked.
 //
@@ -292,6 +293,39 @@ Deno.test({
       ]);
       assert(policies.tables.every((t) => t.kind === "table"));
     } finally {
+      await env.drop();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    `db-admin on a real Postgres: "Read as" blanks legacy claim settings left on the login role${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  async fn() {
+    const env = await environment();
+    const role = new URL(env.url).username;
+    let sql: SqlClient | undefined;
+    try {
+      await seed(env.app);
+      // A default on the login role reaches every new connection: Supabase's auth.* helpers read
+      // these legacy per-claim settings BEFORE request.jwt.claims.
+      await env.admin.unsafe(`ALTER ROLE ${role} SET request.jwt.claim.sub = '${B}'`);
+      await env.admin.unsafe(`ALTER ROLE ${role} SET request.jwt.claim.role = 'service_role'`);
+      await env.admin.unsafe(`ALTER ROLE ${role} SET request.jwt.claim.email = 'b@evil.test'`);
+      sql = new SQL!(env.url);
+      const [raw] = await sql`select auth.uid()::text as uid, auth.role() as role`;
+      assertEquals(raw, { uid: B, role: "service_role" }, "the settings are in effect");
+
+      const asActor = async (actor: DbActor) =>
+        (await ask<"rows">(sql!, { op: "rows", schema: "public", table: "notes", actor })).rows;
+      const asA = await asActor({ kind: "user", id: A });
+      assertEquals(asA.length, 50, "a full page");
+      assert(asA.every((r) => r.owner === A), "previewing A shows A's rows, never B's");
+      assertEquals(await asActor({ kind: "anon" }), [], "anon is not B either");
+    } finally {
+      await sql?.close();
       await env.drop();
     }
   },

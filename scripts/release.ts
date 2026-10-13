@@ -11,7 +11,8 @@
 //
 // Order of operations:
 //   0. CI: the newest ci.yml run on HEAD that ran the heavy jobs (integration, next-compat,
-//      coverage — a push to `development` skips them; dispatch ci.yml) is green, else ABORT
+//      coverage, backend-integration — a push to `development` skips them; dispatch ci.yml) is
+//      green, else ABORT
 //      (scripts/release-ci.ts)
 //   1. bump the version pins (scripts/bump-version.ts)
 //   2. roll CHANGELOG.md  [Unreleased] → [<version>] - <today>  (fresh [Unreleased] on top)
@@ -398,8 +399,8 @@ async function checkPreconditions(tag: string, branch: string): Promise<void> {
 }
 
 /**
- * Step 0: the ci.yml jobs a push skips (integration, next-compat, coverage) passed on HEAD
- * (scripts/release-ci.ts). A real run aborts otherwise; `--dry` reports and goes on.
+ * Step 0: the ci.yml jobs a push skips (integration, next-compat, coverage, backend-integration)
+ * passed on HEAD (scripts/release-ci.ts). A real run aborts otherwise; `--dry` reports and goes on.
  */
 async function checkCi(branch: string, dry: boolean): Promise<void> {
   const sha = await capture("git", "rev-parse", "HEAD");

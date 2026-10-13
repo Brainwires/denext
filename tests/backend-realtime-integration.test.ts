@@ -5,7 +5,9 @@
 // listener reconnecting after `pg_terminate_backend`, and notifications handled in the root
 // context, a timestamp key read back as the notification spells it, a timestamptz key matched
 // across a writer and a reader in different TimeZones — and that the re-read and seed
-// queries are index scans on an integer, a uuid and a timestamp key (EXPLAIN). The app connects as a non-superuser role that owns its database.
+// queries are index scans on an integer, a uuid and a timestamp key (EXPLAIN); subscriptions are
+// capped per identity, and flushes stay single-flight while a slow policy holds a re-read. The app
+// connects as a non-superuser role that owns its database.
 //
 // Opt-in, on denext's Deno runtime (the built-in `Deno.SQL`), with a superuser URL:
 //
@@ -35,7 +37,7 @@ import {
   rereadQuery,
   seedQuery,
 } from "../packages/backend/src/realtime.ts";
-import { resolveRealtime } from "../packages/backend/src/realtime-sql.ts";
+import { type RealtimeOptions, resolveRealtime } from "../packages/backend/src/realtime-sql.ts";
 import { postgresEnvironment } from "./helpers/postgres-env.ts";
 import {
   authConfig,
@@ -81,6 +83,7 @@ async function install(
   app: SqlClient,
   tables: Record<string, { key?: string }> = { notes: {} },
   ddl = NOTES,
+  options: Omit<RealtimeOptions, "tables"> = {},
 ): Promise<Harness> {
   resetPlugins();
   resetChannels();
@@ -92,7 +95,7 @@ async function install(
     config: {
       plugins: [
         denextAuth(authConfig),
-        backend({ postgres: { sql: app }, realtime: { tables } }),
+        backend({ postgres: { sql: app }, realtime: { ...options, tables } }),
       ],
     } as DenextConfig,
     mode: "prod",
@@ -587,6 +590,100 @@ Deno.test({
         assertEquals(reread, [...trigger].sort(), `${type}: a re-read finds and spells every key`);
       }
     } finally {
+      await env.drop();
+    }
+  },
+});
+
+/** Notes whose read policy sleeps, so every seed and re-read takes ~300 ms on the server. */
+const SLOW_NOTES = `
+  create table notes (id bigserial primary key, owner uuid not null, body text not null);
+  alter table notes enable row level security;
+  create policy "read own, slowly" on notes for select
+    using (auth.uid() = owner and (select true from pg_sleep(0.3)));
+  grant select on notes to authenticated;
+  grant select on notes to anon;
+`;
+
+Deno.test({
+  name:
+    `realtime on a real Postgres: subscriptions are capped per identity; deliveries go on${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    let hub: Harness | undefined;
+    try {
+      hub = await install(env.app, { notes: {} }, NOTES, { maxSubscriptionsPerIdentity: 2 });
+      const cookieA = await cookieFor(A);
+      // A, in two tabs: two subscriptions, and the third is refused.
+      const [tab1, tab2] = [hub.conn(cookieA), hub.conn(cookieA)];
+      assert((await hub.subscribe(tab1, "notes", { subId: "1" })).ok);
+      assert((await hub.subscribe(tab2, "notes", { subId: "2", filter: { owner: A } })).ok);
+      assertEquals((await hub.subscribe(tab2, "notes", { subId: "3" })).ok, false);
+      assertEquals(tab2.errors, ["deny"]);
+      // B's quota is B's own; a signed-out connection has one of its own too.
+      const cb = hub.conn(await cookieFor(B));
+      assert((await hub.subscribe(cb, "notes")).ok, "B is not counted against A");
+      const anon = hub.conn();
+      assert((await hub.subscribe(anon, "notes", { subId: "1" })).ok);
+      assert((await hub.subscribe(anon, "notes", { subId: "2" })).ok);
+      assertEquals((await hub.subscribe(anon, "notes", { subId: "3" })).ok, false);
+      assertEquals(realtimeEngine().size, 5);
+
+      // The admitted subscriptions still get A's rows (and only them), the refused one nothing.
+      const [{ id }] = await db({ as: { id: A } })<{ id: string }>`
+        insert into notes (owner, body) values (${A}, 'capped') returning id::text as id`;
+      await until(() => changesOf(tab1).length === 1 && changesOf(tab2).length === 1, 5_000);
+      await settle(150);
+      for (const conn of [tab1, tab2]) {
+        assertEquals(changesOf(conn).map((c) => [c.op, c.key]), [["insert", id]]);
+      }
+      assertEquals([changesOf(cb), changesOf(anon)], [[], []], "RLS hides A's row");
+    } finally {
+      await uninstall(hub);
+      await env.drop();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    `realtime on a real Postgres: flushes are single-flight — a burst during a slow re-read waits${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    let hub: Harness | undefined;
+    try {
+      hub = await install(env.app, { notes: {} }, SLOW_NOTES);
+      const ca = hub.conn(await cookieFor(A));
+      assert((await hub.subscribe(ca, "notes")).ok);
+      const engine = realtimeEngine();
+      const before = { ...engine.stats };
+      const insert = (body: string) =>
+        db.service()`insert into notes (owner, body) values (${A}, ${body})`;
+      await insert("first");
+      // Its flush has started (the counter moves first), and its re-read sleeps on the server…
+      await until(() => engine.stats.flushes === before.flushes + 1, 5_000, "the first flush");
+      // …while two more bursts arrive, each past the coalescing window of the one before.
+      await insert("second");
+      await settle(40);
+      await insert("third");
+      await until(() => changesOf(ca).length === 3, 10_000, "all three");
+      await settle(400);
+      assertEquals(changesOf(ca).map((c) => c.op === "insert" ? c.row?.body : c.op), [
+        "first",
+        "second",
+        "third",
+      ]);
+      assertEquals(engine.stats.notifications - before.notifications, 3);
+      assertEquals(engine.stats.flushes - before.flushes, 2, "the later bursts went out together");
+      assertEquals(engine.stats.rereads - before.rereads, 2, "one re-read per flush");
+    } finally {
+      await uninstall(hub);
       await env.drop();
     }
   },

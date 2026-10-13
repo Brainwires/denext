@@ -2,7 +2,8 @@
 // `notes` table (`using (auth.uid() = owner)`), enforced per user, for anon, and bypassed by the
 // service client; `with check` refusing a row for someone else; nothing left on the pool's
 // connections after 200 interleaved queries of two users; a thrown error rolling back; nested
-// transactions; and the request path (a denextAuth session → `auth.uid()`).
+// transactions; the request path (a denextAuth session → `auth.uid()`); and, inside a request,
+// `db({ as })` and `db.service()` outranking the session.
 //
 // The app connects as a NON-superuser role (a superuser can SET ROLE to anything, which would
 // hide a missing grant), created for the run with CREATEROLE in a database of its own; both are
@@ -351,6 +352,46 @@ Deno.test({
       resetPlugins();
       installPostgres(undefined);
       await sql.close();
+      await env.drop();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    `RLS on a real Postgres: inside a request, db({ as }) and db.service() outrank the session${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  async fn() {
+    const env = await environment();
+    try {
+      await install(env.app, [denextAuth(authConfig)]);
+      await db()`select 1`;
+      await notesTable();
+      await db.service()`insert into notes (owner, body) values (${A}, 'a'), (${B}, 'b')`;
+      const cookieB = await cookieFor(B, "b@x.test");
+      const bodies = (rows: Note[]) => rows.map((r) => r.body).sort();
+      const [asSession, asA, asAnon, asService] = await inRequest(cookieB, () =>
+        Promise.all([
+          db()<Note>`select body from notes`,
+          db({ as: { id: A } })<Note>`select body from notes`,
+          db({ as: "anon" })<Note>`select body from notes`,
+          db.service()<Note>`select body from notes`,
+        ]));
+      assertEquals(bodies(asSession), ["b"], "the request's session");
+      assertEquals(bodies(asA), ["a"], "an explicit identity wins over the session");
+      assertEquals(asAnon, [], "an explicit anon too");
+      assertEquals(bodies(asService), ["a", "b"], "the service client bypasses RLS");
+      // A write as the explicit identity is checked against it, not the session.
+      const denied = await assertRejects(() =>
+        inRequest(cookieB, () =>
+          db({ as: { id: A } })`insert into notes (owner, body)
+          values (${B}, 'as A, for B')`)
+      );
+      assertEquals((denied as { code?: string }).code, "42501");
+    } finally {
+      resetPlugins();
+      installPostgres(undefined);
       await env.drop();
     }
   },
