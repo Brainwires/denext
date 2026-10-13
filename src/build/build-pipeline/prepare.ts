@@ -126,6 +126,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     staticRoutes: [],
     clientRoutes: [],
     boundary: null,
+    crawledBoundary: null,
     serverModules: new Map(),
     usesLive: false,
     classRuntime,

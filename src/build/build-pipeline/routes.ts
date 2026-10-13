@@ -149,6 +149,7 @@ export async function computeBoundary(ctx: BuildContext): Promise<void> {
     npm: ctx.compat ? npmBoundaryByImporter : undefined,
   });
   ctx.serverModules = boundary.server;
+  ctx.crawledBoundary = boundary;
   if (!ctx.hasFlight) return;
   ctx.boundary = boundary;
   ctx.usesLive = await appImportsLive(

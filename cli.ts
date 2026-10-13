@@ -34,6 +34,7 @@ import {
 } from "./src/build/css.ts";
 import { guardRestore, healLeakedCssShims, signalExitCode } from "./src/build/css-config-guard.ts";
 import { tailwindPaths } from "./src/build/tailwind.ts";
+import { buildServesCss } from "./src/build/server-copies.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs } from "./src/build/bundle.ts";
 import {
   configAnchorsResolution,
@@ -390,6 +391,20 @@ async function maybeReexecForModules(dir: string): Promise<boolean> {
 }
 
 /**
+ * Whether `denext start` serves the project in `dir` without the CSS import map, and so without
+ * {@linkcode maybeReexecForCss} — which rebuilds the stylesheets (Tailwind spawns its binary) and
+ * spawns a second `deno`, neither of which a least-privilege `start` (no `--allow-run`) may do. A
+ * SPA's server imports none of the app's modules; a native App Router build's server copies point
+ * every stylesheet import at its shim (`buildServesCss`). Anything else (a next-compat or older
+ * build, a moved project) keeps the re-exec.
+ */
+async function startServesCss(dir: string): Promise<boolean> {
+  const paths = await resolveProject(dir);
+  if (paths.config?.mode === "spa") return true;
+  return await buildServesCss(paths.projectDir, paths.outDir);
+}
+
+/**
  * For a module-loading verb, load `.env` then apply the CSS/module re-exec gate.
  * Returns `true` if the process re-exec'd (the caller should stop). A no-op for
  * verbs that don't load user modules.
@@ -401,7 +416,10 @@ async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<bo
   await loadEnv({ dir, mode: envTierFor(command) });
   // `dev` builds unminified CSS; the other module verbs minify (matching 1.x).
   // `doctor` reports leaked css-shim entries instead of silently healing them.
-  if (await maybeReexecForCss(dir, command.name !== "dev", command.name !== "doctor")) return true;
+  const cssGate = command.name !== "start" || !(await startServesCss(dir));
+  if (cssGate && await maybeReexecForCss(dir, command.name !== "dev", command.name !== "doctor")) {
+    return true;
+  }
   if (await maybeReexecForModules(dir)) return true;
   return false;
 }

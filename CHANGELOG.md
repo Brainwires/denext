@@ -153,6 +153,13 @@ and this project adheres to
 
 - The Deno Desktop runtime's Deno version check accepts denext's Deno toolchain
   (`2.9.7-denext.N` is Deno 2.9.7).
+- **`denext create`'s least-privilege `deno task start` serves the built app.** It failed with
+  `NotCapable: Requires run access` on every scaffolded app: `denext start` rebuilt the
+  stylesheets and re-ran itself under a CSS import map (a second `deno`), and an app with no
+  Flight route re-crawled its import graph with a `deno info` child. The build now points every
+  server module's stylesheet import at its shim in the server copies and records the crawled
+  boundary, so `start` spawns nothing and needs no `--allow-run` (a SPA's `start` skips the CSS
+  step too). A next-compat build, or a project moved since its build, still takes the old path.
 - **Per-address limits key on the same client through a basePath, a config rewrite and a custom
   middleware runner's rewrite.** The request rebuilt for the new URL lost the recorded socket peer, so
   `rateLimit()`'s default key put every client of such a route in one `unknown` bucket and
