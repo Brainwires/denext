@@ -8,6 +8,13 @@
 import { isAbsolute, relative, resolve } from "@std/path";
 import { realPathOfNearestSync, within } from "../ui/security.ts";
 import { GENERATE_KINDS, generateArtifact, type GenerateKind } from "../build/generate.ts";
+import {
+  dockerPortAndTag,
+  type DockerRequest,
+  STACK_FEATURE_HELP,
+  STACK_FEATURES,
+  type StackOverrides,
+} from "../build/docker-detect.ts";
 import { collectDoctorReport, doctorReportMarkdown } from "../cli/commands/doctor.ts";
 import { runCodemod } from "../build/codemod.ts";
 import { collectRoutes, formatRouteListText } from "../build/route-list.ts";
@@ -71,6 +78,62 @@ const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : 
  * from {@link GENERATE_KINDS} so the enum can never drift from what the generator supports.
  */
 const GENERATE_KIND_LIST = GENERATE_KINDS.join("|");
+
+/** The `denext_generate` parameters for kind `docker` — `denext generate docker`'s flags. */
+const DOCKER_SCHEMA: Record<string, Record<string, unknown>> = {
+  ...Object.fromEntries(STACK_FEATURES.map((f) => [f, {
+    type: "boolean",
+    description: `docker only (--${f} / --no-${f}): ${STACK_FEATURE_HELP[f]}. true adds it, ` +
+      "false leaves it out, omitted follows the detection.",
+  }])),
+  stack: {
+    type: "boolean",
+    description: "docker only (--stack): every service the project needs, and Postgres regardless.",
+  },
+  exposeDb: {
+    type: "boolean",
+    description: "docker only (--expose-db): publish Postgres on 127.0.0.1:5432 (off: only the " +
+      "app reaches it).",
+  },
+  dev: {
+    type: "boolean",
+    description: "docker only (--dev): also write compose.dev.yml (denext dev on a bind mount).",
+  },
+  port: {
+    type: "integer",
+    minimum: 1,
+    maximum: 65535,
+    description: "docker only (--port): the port the app listens on (default 3000).",
+  },
+  denoTag: {
+    type: "string",
+    description: "docker only (--deno-tag): the denoland/deno image tag (default: this Deno's " +
+      "version).",
+  },
+};
+
+/**
+ * The {@linkcode DockerRequest} a `denext_generate` call asks for (the `name` stays the target).
+ *
+ * @param args The tool arguments.
+ * @returns The request.
+ * @throws When `port` or `denoTag` is invalid.
+ */
+export function dockerRequestOf(args: Record<string, unknown>): DockerRequest {
+  const overrides: StackOverrides = {};
+  for (const f of STACK_FEATURES) {
+    if (typeof args[f] === "boolean") overrides[f] = args[f] as boolean;
+  }
+  const { port, tag } = dockerPortAndTag(args.port, args.denoTag);
+  return {
+    overrides,
+    all: args.stack === true,
+    ...(port !== undefined ? { port } : {}),
+    ...(tag !== undefined ? { denoTag: tag } : {}),
+    exposeDb: args.exposeDb === true,
+    dev: args.dev === true,
+  };
+}
 
 /**
  * The directory every tool's `dir` is confined to once the stdio server arms it (the project
@@ -247,16 +310,22 @@ export const TOOLS: readonly Tool[] = [
         dir: { type: "string", description: "Project directory (default: current directory)." },
         force: { type: "boolean", description: "Overwrite files that already exist." },
         dryRun: { type: "boolean", description: "Plan only: print what would be written." },
+        ...DOCKER_SCHEMA,
       },
       required: ["kind"],
     },
     run: async (args) => {
       const dryRun = args.dryRun === true;
+      const kind = str(args.kind) as GenerateKind;
       const { written, skipped, preview } = await generateArtifact(
         projectDir(args.dir),
-        str(args.kind) as GenerateKind,
+        kind,
         str(args.name),
-        { force: args.force === true, dryRun },
+        {
+          force: args.force === true,
+          dryRun,
+          ...(kind === "docker" ? { docker: dockerRequestOf(args) } : {}),
+        },
       );
       const lines = [
         ...written.map((p) => `${dryRun ? "~ would write:" : "+"} ${p}`),

@@ -14,11 +14,42 @@ import { isStack, type StackOptions } from "./docker-stack.ts";
 import { detectDockerMode, type DockerOptions } from "./docker-template.ts";
 import { usesPostgres } from "./generate-ops.ts";
 
+/**
+ * A requested app port (a whole number, 1–65535) and `denoland/deno` image tag (an image-tag-safe
+ * string), validated — the rule behind `denext generate docker --port / --deno-tag` and the MCP
+ * `denext_generate` tool's `port` / `denoTag`.
+ *
+ * @param port The port as given (`undefined`: not set).
+ * @param tag The tag as given (`undefined`: not set).
+ * @returns The validated values (absent when not set).
+ * @throws When either is invalid.
+ */
+export function dockerPortAndTag(port: unknown, tag: unknown): { port?: number; tag?: string } {
+  const n = port === undefined ? undefined : Number(port);
+  if (n !== undefined && !(Number.isInteger(n) && n >= 1 && n <= 65535)) {
+    throw new Error(`invalid --port "${port}" (expected a whole number between 1 and 65535)`);
+  }
+  const t = tag === undefined ? undefined : String(tag);
+  if (t !== undefined && !/^[\w.\-]+$/.test(t)) {
+    throw new Error(`invalid --deno-tag "${t}" (letters, digits, dot, dash and underscore only)`);
+  }
+  return { port: n, tag: t };
+}
+
 /** The stack services a flag (or a detection) switches on and off. */
 export const STACK_FEATURES = ["postgres", "pgvector", "storage", "migrate"] as const;
 
 /** One of {@linkcode STACK_FEATURES}. */
 export type StackFeature = typeof STACK_FEATURES[number];
+
+/** What each stack switch adds — the `--help` of `denext generate docker` and the MCP tool's. */
+export const STACK_FEATURE_HELP: Readonly<Record<StackFeature, string>> = {
+  postgres: "Postgres 17 service + DATABASE_URL (detected: @denext/backend / a Postgres URL)",
+  pgvector: "Use the pgvector/pgvector:pg17 image (detected: the vector extension in migrations/)",
+  storage: "MinIO S3 store + a one-shot bucket bootstrap (detected: an s3() storage driver)",
+  migrate: "One-shot `denext job migrate` service the app waits for (detected: migrations/ + " +
+    "jobs/migrate.ts)",
+};
 
 /** What detection found, with the reason behind every service it switched on. */
 export interface StackDetection {

@@ -6,9 +6,11 @@
 import { join, relative } from "@std/path";
 import type { CommandContext, FlagSpec } from "../command.ts";
 import {
+  dockerPortAndTag,
   type DockerRequest,
   type ResolvedDocker,
   resolveDocker,
+  STACK_FEATURE_HELP,
   STACK_FEATURES,
   type StackOverrides,
 } from "../../build/docker-detect.ts";
@@ -20,19 +22,10 @@ import {
 } from "../../build/generate.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 
-/** What each stack switch adds, for `--help`. */
-const FEATURE_HELP: Record<typeof STACK_FEATURES[number], string> = {
-  postgres: "Postgres 17 service + DATABASE_URL (detected: @denext/backend / a Postgres URL)",
-  pgvector: "Use the pgvector/pgvector:pg17 image (detected: the vector extension in migrations/)",
-  storage: "MinIO S3 store + a one-shot bucket bootstrap (detected: an s3() storage driver)",
-  migrate: "One-shot `denext job migrate` service the app waits for (detected: migrations/ + " +
-    "jobs/migrate.ts)",
-};
-
 /** The docker-only flags (`--postgres` / `--no-postgres`, …, `--stack`, `--port`, …). */
 export const DOCKER_FLAGS: readonly FlagSpec[] = [
   ...STACK_FEATURES.flatMap((f): FlagSpec[] => [
-    { name: f, type: "boolean", help: `docker: ${FEATURE_HELP[f]}` },
+    { name: f, type: "boolean", help: `docker: ${STACK_FEATURE_HELP[f]}` },
     { name: `no-${f}`, type: "boolean", help: `docker: leave the ${f} service out` },
   ]),
   {
@@ -80,7 +73,7 @@ export function usesDockerFlags(flags: CommandContext["flags"]): boolean {
  */
 function dockerRequest(ctx: CommandContext, target: string): DockerRequest {
   const flags = ctx.flags;
-  const { port, tag } = portAndTag(flags);
+  const { port, tag } = dockerPortAndTag(flags.port, flags["deno-tag"]);
   return {
     target,
     overrides: overridesOf(flags),
@@ -102,19 +95,6 @@ function overridesOf(flags: CommandContext["flags"]): StackOverrides {
     if (on || off) overrides[f] = on;
   }
   return overrides;
-}
-
-/** `--port` (1–65535) and `--deno-tag` (an image-tag-safe string), validated. */
-function portAndTag(flags: CommandContext["flags"]): { port?: number; tag?: string } {
-  const port = flags.port === undefined ? undefined : Number(flags.port);
-  if (port !== undefined && !(Number.isInteger(port) && port >= 1 && port <= 65535)) {
-    throw new Error(`invalid --port "${flags.port}" (expected a whole number between 1 and 65535)`);
-  }
-  const tag = flags["deno-tag"] === undefined ? undefined : String(flags["deno-tag"]);
-  if (tag !== undefined && !/^[\w.\-]+$/.test(tag)) {
-    throw new Error(`invalid --deno-tag "${tag}" (letters, digits, dot, dash and underscore only)`);
-  }
-  return { port, tag };
 }
 
 /**

@@ -57,6 +57,60 @@
           "type": "boolean",
           "description": "Plan only: print what would be written.",
           "required": false
+        },
+        {
+          "name": "postgres",
+          "type": "boolean",
+          "description": "docker only (--postgres / --no-postgres): Postgres 17 service + DATABASE_URL (detected: @denext/backend / a Postgres URL). true adds it, false leaves it out, omitted follows the detection.",
+          "required": false
+        },
+        {
+          "name": "pgvector",
+          "type": "boolean",
+          "description": "docker only (--pgvector / --no-pgvector): Use the pgvector/pgvector:pg17 image (detected: the vector extension in migrations/). true adds it, false leaves it out, omitted follows the detection.",
+          "required": false
+        },
+        {
+          "name": "storage",
+          "type": "boolean",
+          "description": "docker only (--storage / --no-storage): MinIO S3 store + a one-shot bucket bootstrap (detected: an s3() storage driver). true adds it, false leaves it out, omitted follows the detection.",
+          "required": false
+        },
+        {
+          "name": "migrate",
+          "type": "boolean",
+          "description": "docker only (--migrate / --no-migrate): One-shot `denext job migrate` service the app waits for (detected: migrations/ + jobs/migrate.ts). true adds it, false leaves it out, omitted follows the detection.",
+          "required": false
+        },
+        {
+          "name": "stack",
+          "type": "boolean",
+          "description": "docker only (--stack): every service the project needs, and Postgres regardless.",
+          "required": false
+        },
+        {
+          "name": "exposeDb",
+          "type": "boolean",
+          "description": "docker only (--expose-db): publish Postgres on 127.0.0.1:5432 (off: only the app reaches it).",
+          "required": false
+        },
+        {
+          "name": "dev",
+          "type": "boolean",
+          "description": "docker only (--dev): also write compose.dev.yml (denext dev on a bind mount).",
+          "required": false
+        },
+        {
+          "name": "port",
+          "type": "integer",
+          "description": "docker only (--port): the port the app listens on (default 3000).",
+          "required": false
+        },
+        {
+          "name": "denoTag",
+          "type": "string",
+          "description": "docker only (--deno-tag): the denoland/deno image tag (default: this Deno's version).",
+          "required": false
         }
       ]
     },

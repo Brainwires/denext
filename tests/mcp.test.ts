@@ -9,7 +9,7 @@ import { checkSnippet } from "../src/mcp/check.ts";
 import { readPackageFile } from "../src/mcp/package-file.ts";
 import { IMPORT_RULES, lookupImport } from "../src/mcp/next-denext-map.ts";
 import { dispatch } from "../src/mcp/server.ts";
-import { runTool, TOOLS } from "../src/mcp/tools.ts";
+import { dockerRequestOf, runTool, TOOLS } from "../src/mcp/tools.ts";
 import { GENERATE_KINDS } from "../src/build/generate.ts";
 import {
   browserLogEvent,
@@ -186,6 +186,88 @@ Deno.test("runTool: generate dryRun prints the plan and its contents, writing no
     assertStringIncludes(res.content[0].text, "would write:");
     assertStringIncludes(res.content[0].text, "function DashboardPage(");
     assertEquals(await exists(`${dir}/app/dashboard/page.tsx`), false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("denext_generate exposes every `generate docker` flag, described", () => {
+  const tool = TOOLS.find((t) => t.name === "denext_generate")!;
+  const props = tool.inputSchema.properties as Record<
+    string,
+    { type: string; description: string }
+  >;
+  const flags: Record<string, [string, string]> = {
+    postgres: ["boolean", "--postgres"],
+    pgvector: ["boolean", "--pgvector"],
+    storage: ["boolean", "--storage"],
+    migrate: ["boolean", "--migrate"],
+    stack: ["boolean", "--stack"],
+    exposeDb: ["boolean", "--expose-db"],
+    dev: ["boolean", "--dev"],
+    port: ["integer", "--port"],
+    denoTag: ["string", "--deno-tag"],
+  };
+  for (const [name, [type, flag]] of Object.entries(flags)) {
+    assertEquals(props[name]?.type, type, name);
+    assertStringIncludes(props[name].description, flag);
+    assertStringIncludes(props[name].description, "docker only");
+  }
+});
+
+Deno.test("dockerRequestOf: the tool arguments become the same request the flags make", () => {
+  assertEquals(dockerRequestOf({}), { overrides: {}, all: false, exposeDb: false, dev: false });
+  assertEquals(
+    dockerRequestOf({
+      postgres: true,
+      storage: false,
+      pgvector: "yes", // not a boolean: detection decides
+      stack: true,
+      exposeDb: true,
+      dev: true,
+      port: 8080,
+      denoTag: "2.9.7",
+    }),
+    {
+      overrides: { postgres: true, storage: false },
+      all: true,
+      port: 8080,
+      denoTag: "2.9.7",
+      exposeDb: true,
+      dev: true,
+    },
+  );
+});
+
+Deno.test("runTool: generate docker takes the stack switches and refuses a bad port", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-mcp-gen-docker-" });
+  try {
+    await Deno.writeTextFile(`${dir}/deno.json`, "{}");
+    await Deno.mkdir(`${dir}/app`, { recursive: true });
+    const res = await runTool("denext_generate", {
+      kind: "docker",
+      dir,
+      dryRun: true,
+      postgres: true,
+      exposeDb: true,
+      dev: true,
+      port: 8080,
+    });
+    assert(!res.isError, res.content[0].text);
+    const text = res.content[0].text;
+    assertStringIncludes(text, "postgres:17");
+    assertStringIncludes(text, "127.0.0.1:");
+    assertStringIncludes(text, "compose.dev.yml");
+    assertStringIncludes(text, "8080");
+    assertEquals(await exists(`${dir}/Dockerfile`), false, "a dry run writes nothing");
+    const plain = await runTool("denext_generate", { kind: "docker", dir, dryRun: true });
+    assert(!plain.content[0].text.includes("compose.dev.yml"), "off unless asked");
+    const bad = await runTool("denext_generate", { kind: "docker", dir, port: 70000 });
+    assertEquals(bad.isError, true);
+    assertStringIncludes(bad.content[0].text, "invalid --port");
+    const tag = await runTool("denext_generate", { kind: "docker", dir, denoTag: "x; rm" });
+    assertEquals(tag.isError, true);
+    assertStringIncludes(tag.content[0].text, "invalid --deno-tag");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
