@@ -55,7 +55,9 @@ and this project adheres to
   (`--all`), `--expose-db`, `--dev` (a `compose.dev.yml` overlay running `denext dev` on a bind
   mount), `--port`, `--deno-tag`; the command reports what it detected and why. With Postgres or
   `@denext/backend` the image runs on denext's Deno toolchain (`Deno.SQL`). The `denext ui` Docker
-  page has the same switches, checked as detected.
+  page has the same switches, checked as detected, and the MCP `denext_generate` tool takes them
+  as `postgres`, `pgvector`, `storage`, `migrate` (`false` for a `--no-` form), `stack`,
+  `exposeDb`, `dev`, `port` and `denoTag`.
 - **`denext generate --dry-run` and `--force`** for every kind. An existing file is still never
   overwritten without `--force`; for `docker` the command prints the diff of each file it skipped.
 - **SAML 2.0 Service Provider primitives in `denext/server`.** `parseIdpMetadata`,
@@ -122,6 +124,15 @@ and this project adheres to
 
 ### Fixed
 
+- **The toolchain re-exec reads the project's `deno.json`.** A project task that runs the CLI from
+  JSR (`deno run -A jsr:@denext/denext@<v>/cli build`) found the project's config from the working
+  directory, but the copy it re-ran on denext's Deno toolchain started from the module's https URL,
+  which discovers no config, so a `denext.config.ts` import that only the import map names failed
+  with `Import "…" not a dependency`. The child now resolves the config its parent resolved: an
+  explicit `--config`, none after `--no-config`, else the file the parent's own discovery found (a
+  workspace member's included), together with the parent's `--lock`, `--import-map`,
+  `--node-modules-dir`, `--vendor`, `--frozen` and `--min-dep-age` flags. A compiled
+  executable's pinned-denext child and `denext ui`'s verb runs follow the same rule.
 - **A fresh `denext create` project is `deno fmt`- and `deno lint`-clean.** Every template and
   feature (`--template minimal`, `--tailwind`, `--src-dir`, `--desktop`, `--capacitor`, `--fallow`,
   `--mcp`, …) writes its README, pages, stylesheet, `AGENTS.md` and packaging / coverage scripts

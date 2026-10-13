@@ -20,6 +20,7 @@ import {
   isStandaloneBinary,
   maybeReexecPinned as reexecPinned,
   maybeReexecToolchain,
+  mergeRunFlags,
   pinnedConfigArgs,
   toolchainApplies,
   toolchainConfigArgs,
@@ -310,9 +311,13 @@ function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boole
         deno,
         [
           ...await toolchainPermissionFlags(),
-          ...await toolchainConfigArgs(),
-          ...cliNpmModeArgs(gateDir(command, ctx)),
-          ...minDepAgeArgs(),
+          // The config and resolution flags this process resolved with: started on `jsr:` (a
+          // `deno task`), it found the project's deno.json from the working directory, but the
+          // child runs the https URL that resolved to, which discovers no config at all.
+          ...mergeRunFlags(
+            [...cliNpmModeArgs(gateDir(command, ctx)), ...minDepAgeArgs()],
+            await toolchainConfigArgs(entrypointArg(import.meta.url)),
+          ),
         ],
         entrypointArg(import.meta.url),
         { DENEXT_TOOLCHAIN_ACTIVE: marker },

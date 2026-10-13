@@ -7,7 +7,7 @@
 // become a command.
 
 import { denoExecutable, frameworkFileUrl } from "../build/bundle.ts";
-import { isStandaloneBinary, pinnedDenextCli } from "../cli/self-exec.ts";
+import { isStandaloneBinary, nearestConfig, pinnedDenextCli } from "../cli/self-exec.ts";
 import { cliNpmModeArgs } from "../build/pnpm-workspace.ts";
 import { VERSION } from "../../mod.ts";
 
@@ -83,7 +83,8 @@ export interface CliInvocationOptions {
  * one.
  *
  * @param options See {@linkcode CliInvocationOptions}.
- * @returns `["run", "-A", "<cli module>"]` (with `--node-modules-dir=none` after `-A` when `dir`
+ * @returns `["run", "-A", "<cli module>"]` (with the project's `--config` after `-A` for a remote
+ *   CLI module, `--node-modules-dir=none` after that when `dir`
  *   is in a pnpm workspace, then `--deny-net --cached-only` when offline, then `--deny-run` when
  *   `denyRun` too), to be spread before the verb and its flags.
  */
@@ -93,7 +94,31 @@ export function cliInvocation(options: CliInvocationOptions = {}): string[] {
   // In a pnpm workspace, keep the CLI's own npm imports off the pnpm tree: Deno would otherwise
   // rewrite the workspace's root package.json (see ../build/pnpm-workspace.ts).
   const npm = cliNpmModeArgs(options.dir);
-  return ["run", "-A", ...npm, ...offline, ...denyRun, cliModule(options.dir)];
+  const module = cliModule(options.dir);
+  return [
+    "run",
+    "-A",
+    ...cliConfigArgs(module, options.dir),
+    ...npm,
+    ...offline,
+    ...denyRun,
+    module,
+  ];
+}
+
+/**
+ * The `--config` a CLI child needs to read the project's config: a remote CLI module discovers
+ * none (an https URL) or the WORKING directory's (`jsr:`), which need not be the project. A local
+ * checkout's `cli.ts` keeps discovering its own, as the process that spawned it did.
+ *
+ * @param module The child's CLI module ({@linkcode cliModule}).
+ * @param dir The project the child acts on, when known.
+ * @returns `["--config", <the project's deno.json>]`, or `[]`.
+ */
+export function cliConfigArgs(module: string, dir: string | undefined): string[] {
+  if (dir === undefined || module.startsWith("file:")) return [];
+  const config = nearestConfig(dir);
+  return config === null ? [] : ["--config", config];
 }
 
 /**
