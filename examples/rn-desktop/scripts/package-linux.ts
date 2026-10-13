@@ -87,7 +87,10 @@ const LABELS: Record<string, string> = { x86_64: "x64", arm64: "arm64" };
 const OS = "linux";
 
 /** Build a Linux bundle directory for `arch` at dist/<name>-<label> (PNG icon). */
-async function buildBundle(name: string, arch: "x86_64" | "arm64"): Promise<string> {
+async function buildBundle(
+  name: string,
+  arch: "x86_64" | "arm64",
+): Promise<string> {
   return await buildDesktopBundle(import.meta.url, OS, {
     target: TARGETS[arch],
     out: `dist/${name}-${LABELS[arch]}`,
@@ -140,7 +143,11 @@ async function installers(
   const pkg = { meta, bundleDir: dir, exe: `${name}-${LABELS[arch]}`, arch };
   // A version Debian / RPM can't express skips a default .deb with a warning (an asked-for one fails).
   const versionOk = (format: "deb" | "rpm") =>
-    desktopToolGate(desktopVersionProblem(format, meta.version), `.${format}`, plan.explicit);
+    desktopToolGate(
+      desktopVersionProblem(format, meta.version),
+      `.${format}`,
+      plan.explicit,
+    );
   for (const format of plan.formats) {
     if (format === "tar.gz") out.push(await tarball(name, arch, dir));
     if (format === "deb" && versionOk("deb")) {
@@ -153,7 +160,8 @@ async function installers(
       out.push(await buildDesktopRpm({ ...pkg, out: `${base}.rpm` }));
     }
     if (
-      format === "appimage" && await desktopRequireTool("appimagetool", "AppImage", plan.explicit)
+      format === "appimage" &&
+      await desktopRequireTool("appimagetool", "AppImage", plan.explicit)
     ) {
       out.push(await appImage(name, arch, dir));
     }
@@ -168,7 +176,11 @@ async function main(): Promise<void> {
   });
   // --format, else desktop.installers.linux in denext.config.ts, else tar.gz + deb; the
   // .deno-desktop/app.json sync, the package metadata (name, version, deep links), the export.
-  const { name, plan, meta } = await prepareDesktopPackage(import.meta.url, OS, opts);
+  const { name, plan, meta } = await prepareDesktopPackage(
+    import.meta.url,
+    OS,
+    opts,
+  );
 
   const artifacts: string[] = [];
   for (const arch of desktopPackageArches(opts.arch)) {

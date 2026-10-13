@@ -253,7 +253,10 @@ async function sign(
           `checked against ${profileIdentifier} (desktop.app.identifier)`,
       );
     }
-    await Deno.copyFile(provisioningProfile, `${app}/Contents/embedded.provisionprofile`);
+    await Deno.copyFile(
+      provisioningProfile,
+      `${app}/Contents/embedded.provisionprofile`,
+    );
   }
   // Nested Mach-O (dylibs/helpers) first; then the bundle, which signs the main
   // executable and applies the entitlements.
@@ -266,7 +269,10 @@ async function sign(
     explicit?: string,
   ): Promise<string[]> => {
     if (!identity || !defaults) return ["--preserve-metadata=entitlements"];
-    const file = await macosSigningEntitlements(defaults, { explicit, current });
+    const file = await macosSigningEntitlements(defaults, {
+      explicit,
+      current,
+    });
     written.push(file);
     return ["--entitlements", file];
   };
@@ -276,7 +282,8 @@ async function sign(
       // deno desktop signs every Mach-O in Contents/MacOS (the runtime dylib) with the bundle id
       // as its identifier, as it does the main executable; codesign would otherwise name it after
       // the file. A helper app's executable signs its bundle, whose entitlements must survive.
-      const besideMain = file.startsWith(macosDir) && !file.slice(macosDir.length).includes("/");
+      const besideMain = file.startsWith(macosDir) &&
+        !file.slice(macosDir.length).includes("/");
       const ident = besideMain ? ["--identifier", bundleId] : [];
       await run([
         "codesign",
@@ -341,7 +348,9 @@ async function treeBytes(path: string): Promise<number> {
   const info = await Deno.lstat(path);
   if (!info.isDirectory) return info.size;
   let total = 0;
-  for await (const e of Deno.readDir(path)) total += await treeBytes(`${path}/${e.name}`);
+  for await (const e of Deno.readDir(path)) {
+    total += await treeBytes(`${path}/${e.name}`);
+  }
   return total;
 }
 
@@ -431,7 +440,8 @@ async function signingFromEnv(): Promise<Signing> {
   const mac = await desktopMacosSigning(import.meta.url, {
     identity,
     entitlements: Deno.env.get("DENEXT_ENTITLEMENTS") || undefined,
-    provisioningProfile: Deno.env.get("DENEXT_PROVISIONING_PROFILE") || undefined,
+    provisioningProfile: Deno.env.get("DENEXT_PROVISIONING_PROFILE") ||
+      undefined,
   });
   return {
     identity,
@@ -507,7 +517,13 @@ async function finishArtifacts(
   for (const app of artifacts) {
     if (s.identity || opts.arch === "universal" || resealNeeded) {
       console.log(`Re-signing ${app} with identity "${s.identity ?? "-"}"`);
-      await sign(app, s.identity, s.entitlements, s.provisioningProfile, s.profileIdentifier);
+      await sign(
+        app,
+        s.identity,
+        s.entitlements,
+        s.provisioningProfile,
+        s.profileIdentifier,
+      );
     }
     if (s.notaryProfile && s.identity) await notarize(app, s.notaryProfile);
     if (formats.includes("dmg")) installers.push(await makeDmg(app));
@@ -548,7 +564,9 @@ async function main(): Promise<void> {
     opts.add,
   );
   // The export resolves the macOS target's platform files (`.macos`, `.desktop`).
-  if (opts.export) await run(["deno", "task", "export"], desktopExportEnv("darwin"));
+  if (opts.export) {
+    await run(["deno", "task", "export"], desktopExportEnv("darwin"));
+  }
   // .deno-desktop/app.json (the app origin + identifier), its deno.json compile.include, and the
   // config's desktop.app name / identifier mirrored into deno.json, where deno desktop reads them.
   // After the export: `denext desktop package` keeps a backup of deno.json while this script runs,

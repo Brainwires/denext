@@ -12,6 +12,7 @@ import { CAPACITOR_BUILD_IGNORES, CAPACITOR_VERSION } from "./capacitor-pins.ts"
 import { VERSION } from "../../mod.ts";
 import { reactCompatImportMap } from "./react-specifiers.ts";
 import { FALLOW_GITIGNORE, fallowFiles, fallowTasks } from "./fallow-template.ts";
+import { markdownTable, wrapProse } from "./scaffold-markdown.ts";
 import {
   MCP_AGENTS_SECTION,
   MCP_README_ROWS,
@@ -87,64 +88,83 @@ export interface ScaffoldOptions {
 /** The scaffolded project's README: what the tasks do, where routes live, where to read more. */
 function readme(opts: ScaffoldOptions, appBase: string): string {
   const name = basename(opts.dir) || "my-app";
+  const rows: (readonly string[])[] = [
+    ["`denext task dev`", "Dev server with per-module HMR at http://localhost:3000"],
+    ["`denext task build`", "Production build into `.denext/`"],
+    ["`denext task start`", "Serve the production build (least-privilege permissions)"],
+    ["`denext task test`", "Run the tests on denext's Deno toolchain (Vitest/Jest compat)"],
+  ];
+  if (opts.desktop || opts.capacitor) {
+    rows.push(["`denext task export`", "Static export into `out/` (the native shells ship this)"]);
+  }
+  if (opts.fallow) rows.push(...FALLOW_README_ROWS);
+  if (opts.mcp) rows.push(...MCP_README_ROWS);
+  const item = (text: string) => wrapProse(text, "- ", "  ");
+  const where = [
+    item(
+      `\`${appBase}/page.tsx\`, \`${appBase}/layout.tsx\` — routes are files, exactly like the ` +
+        "Next.js App Router (`app/blog/[slug]/page.tsx`, `app/api/x/route.ts`, `loading.tsx`, " +
+        "`error.tsx`, `middleware.ts`). They are Server Components: they can be `async`, read " +
+        "the database directly, and ship no JavaScript.",
+    ),
+    opts.template === "minimal" ? "" : item(
+      `\`${appBase}/counter.tsx\` — a \`"use client"\` island: the one file that ships to the ` +
+        "browser. Hooks and event handlers live in files like this one; the page passes it " +
+        "serialisable props (and Server Actions).",
+    ),
+    item(
+      "`denext.config.ts` — redirects, rewrites, headers, images, i18n, CSP, `cacheComponents`.",
+    ),
+    item(
+      "Imports come from `denext` (hooks, `Link`, `Image`, `redirect`), `denext/server` " +
+        "(`cookies`, `headers`, `getSession`, caching) and `denext/client`.",
+    ),
+    opts.vscode === false ? "" : item(
+      "`.vscode/` — turns on the Deno language server (and recommends the Deno extension), so " +
+        "the editor resolves `denext` exactly as `deno check` does.",
+    ),
+  ].join("");
   return `# ${name}
 
-A [denext](https://denext.dev) app — write it once, ship it to the web, iOS,
-Android and the desktop.
-
+${
+    wrapProse(
+      "A [denext](https://denext.dev) app — write it once, ship it to the web, iOS, Android and " +
+        "the desktop.",
+    )
+  }
 ## Tasks
 
-| Command             | What it does                                                  |
-| ------------------- | ------------------------------------------------------------- |
-| \`denext task dev\`   | Dev server with per-module HMR at http://localhost:3000       |
-| \`denext task build\` | Production build into \`.denext/\`                              |
-| \`denext task start\` | Serve the production build (least-privilege permissions)      |
-| \`denext task test\`  | Run the tests on denext's Deno toolchain (Vitest/Jest compat) |
+${markdownTable(["Command", "What it does"], rows)}
 ${
-    opts.desktop || opts.capacitor
-      ? "| `denext task export` | Static export into `out/` (the native shells ship this) |\n"
-      : ""
-  }${opts.fallow ? FALLOW_README_ROWS : ""}${opts.mcp ? MCP_README_ROWS : ""}
-\`denext task\` runs a task on denext's own Deno toolchain, so the
-[\`denext\` command](https://denext.dev/docs/getting-started) is all you need. With Deno
-installed, \`deno task <name>\` runs the same task. The first \`dev\`/\`build\` downloads the
-framework from JSR (a few seconds); later runs are cached.
-
+    wrapProse(
+      "`denext task` runs a task on denext's own Deno toolchain, so the " +
+        "[`denext` command](https://denext.dev/docs/getting-started) is all you need. With Deno " +
+        "installed, `deno task <name>` runs the same task. The first `dev`/`build` downloads the " +
+        "framework from JSR (a few seconds); later runs are cached.",
+    )
+  }
 ## Where things live
 
-- \`${appBase}/page.tsx\`, \`${appBase}/layout.tsx\` — routes are files, exactly like the
-  Next.js App Router (\`app/blog/[slug]/page.tsx\`, \`app/api/x/route.ts\`, \`loading.tsx\`,
-  \`error.tsx\`, \`middleware.ts\`). They are Server Components: they can be \`async\`, read
-  the database directly, and ship no JavaScript.
-${
-    opts.template === "minimal"
-      ? ""
-      : `- \`${appBase}/counter.tsx\` — a \`"use client"\` island: the one file that ships to the
-  browser. Hooks and event handlers live in files like this one; the page passes it
-  serialisable props (and Server Actions).
-`
-  }- \`denext.config.ts\` — redirects, rewrites, headers, images, i18n, CSP, \`cacheComponents\`.
-- Imports come from \`denext\` (hooks, \`Link\`, \`Image\`, \`redirect\`), \`denext/server\`
-  (\`cookies\`, \`headers\`, \`getSession\`, caching) and \`denext/client\`.
-${
-    opts.vscode === false
-      ? ""
-      : `- \`.vscode/\` — turns on the Deno language server (and recommends the Deno extension), so
-  the editor resolves \`denext\` exactly as \`deno check\` does.
-`
-  }
+${where}
 ## Learn more
 
-- Guide + API: https://denext.dev/docs
-- Ask an agent: \`denext mcp\` exposes the docs and route tools over MCP.
-- \`denext doctor\` checks the toolchain; \`denext generate page|component|route|test\` scaffolds.
-`;
+${item("Guide + API: https://denext.dev/docs")}${
+    item("Ask an agent: `denext mcp` exposes the docs and route tools over MCP.")
+  }${
+    item(
+      "`denext doctor` checks the toolchain; `denext generate page|component|route|test` scaffolds.",
+    )
+  }`;
 }
 
 /** The README task rows `--fallow` adds. */
-const FALLOW_README_ROWS =
-  "| `denext task fallow:audit` | fallow's changed-code gate (dead code, duplication, complexity) |\n" +
-  "| `denext task hooks:install` | Run that gate before every `git commit` (`.githooks/pre-commit`) |\n";
+const FALLOW_README_ROWS: readonly (readonly [string, string])[] = [
+  ["`denext task fallow:audit`", "fallow's changed-code gate (dead code, duplication, complexity)"],
+  [
+    "`denext task hooks:install`",
+    "Run that gate before every `git commit` (`.githooks/pre-commit`)",
+  ],
+];
 
 /** A generated file: repo-relative path + contents. */
 export interface ScaffoldFile {
@@ -364,7 +384,7 @@ icons in this folder, then reference them from the \`desktop\` block in
 }
 \`\`\`
 
-- **macOS** \`app.icns\`  ·  **Windows** \`app.ico\`  ·  **Linux** \`app.png\` (512×512+)
+- **macOS** \`app.icns\` · **Windows** \`app.ico\` · **Linux** \`app.png\` (512×512+)
 `;
 }
 
@@ -457,7 +477,9 @@ export default function Home(_props: PageProps) {
   return (
     <section${sectionCls}>
       <h1${h1Cls}>Hello from denext 👋</h1>
-      <p>This page is a Server Component; the button below is a client island.</p>
+      <p>
+        This page is a Server Component; the button below is a client island.
+      </p>
       <Counter />
     </section>
   );
@@ -471,7 +493,14 @@ export default function Home(_props: PageProps) {
  */
 function counter(opts: ScaffoldOptions): string {
   const tw = opts.tailwind;
-  const buttonCls = tw ? ' class="mt-4 rounded bg-black px-4 py-2 text-white"' : "";
+  // Written the way `deno fmt` lays it out: the Tailwind classes push the tag past 80 columns.
+  const buttonOpen = tw
+    ? `<button
+        class="mt-4 rounded bg-black px-4 py-2 text-white"
+        type="button"
+        onClick={() => setCount((c) => c + 1)}
+      >`
+    : `<button type="button" onClick={() => setCount((c) => c + 1)}>`;
   // A dynamic class expression driven by the hydrated flag.
   const statusExpr = tw
     ? `{hydrated ? "text-green-600" : "text-gray-500"}`
@@ -497,7 +526,7 @@ export function Counter() {
           {hydrated ? "hydrated ✅" : "server-rendered (not yet hydrated)"}
         </span>
       </p>
-      <button${buttonCls} type="button" onClick={() => setCount((c) => c + 1)}>
+      ${buttonOpen}
         Clicked {count} {count === 1 ? "time" : "times"}
       </button>
     </div>
@@ -506,13 +535,30 @@ export function Counter() {
 `;
 }
 
-const GLOBAL_CSS_PLAIN = `:root { font-family: system-ui, sans-serif; }
-.app { min-height: 100vh; }
-.topbar { padding: 1rem; border-bottom: 1px solid #eee; }
-.brand { font-weight: 700; text-decoration: none; color: inherit; }
-.content { padding: 1rem; }
-.on { color: #16a34a; }
-.off { color: #6b7280; }
+const GLOBAL_CSS_PLAIN = `:root {
+  font-family: system-ui, sans-serif;
+}
+.app {
+  min-height: 100vh;
+}
+.topbar {
+  padding: 1rem;
+  border-bottom: 1px solid #eee;
+}
+.brand {
+  font-weight: 700;
+  text-decoration: none;
+  color: inherit;
+}
+.content {
+  padding: 1rem;
+}
+.on {
+  color: #16a34a;
+}
+.off {
+  color: #6b7280;
+}
 `;
 
 const TAILWIND_INPUT = `@import "tailwindcss";\n`;
@@ -1038,7 +1084,10 @@ async function sign(
           \`checked against \${profileIdentifier} (desktop.app.identifier)\`,
       );
     }
-    await Deno.copyFile(provisioningProfile, \`\${app}/Contents/embedded.provisionprofile\`);
+    await Deno.copyFile(
+      provisioningProfile,
+      \`\${app}/Contents/embedded.provisionprofile\`,
+    );
   }
   // Nested Mach-O (dylibs/helpers) first; then the bundle, which signs the main
   // executable and applies the entitlements.
@@ -1051,7 +1100,10 @@ async function sign(
     explicit?: string,
   ): Promise<string[]> => {
     if (!identity || !defaults) return ["--preserve-metadata=entitlements"];
-    const file = await macosSigningEntitlements(defaults, { explicit, current });
+    const file = await macosSigningEntitlements(defaults, {
+      explicit,
+      current,
+    });
     written.push(file);
     return ["--entitlements", file];
   };
@@ -1061,7 +1113,8 @@ async function sign(
       // deno desktop signs every Mach-O in Contents/MacOS (the runtime dylib) with the bundle id
       // as its identifier, as it does the main executable; codesign would otherwise name it after
       // the file. A helper app's executable signs its bundle, whose entitlements must survive.
-      const besideMain = file.startsWith(macosDir) && !file.slice(macosDir.length).includes("/");
+      const besideMain = file.startsWith(macosDir) &&
+        !file.slice(macosDir.length).includes("/");
       const ident = besideMain ? ["--identifier", bundleId] : [];
       await run([
         "codesign",
@@ -1126,7 +1179,9 @@ async function treeBytes(path: string): Promise<number> {
   const info = await Deno.lstat(path);
   if (!info.isDirectory) return info.size;
   let total = 0;
-  for await (const e of Deno.readDir(path)) total += await treeBytes(\`\${path}/\${e.name}\`);
+  for await (const e of Deno.readDir(path)) {
+    total += await treeBytes(\`\${path}/\${e.name}\`);
+  }
   return total;
 }
 
@@ -1216,7 +1271,8 @@ async function signingFromEnv(): Promise<Signing> {
   const mac = await desktopMacosSigning(import.meta.url, {
     identity,
     entitlements: Deno.env.get("DENEXT_ENTITLEMENTS") || undefined,
-    provisioningProfile: Deno.env.get("DENEXT_PROVISIONING_PROFILE") || undefined,
+    provisioningProfile: Deno.env.get("DENEXT_PROVISIONING_PROFILE") ||
+      undefined,
   });
   return {
     identity,
@@ -1292,7 +1348,13 @@ async function finishArtifacts(
   for (const app of artifacts) {
     if (s.identity || opts.arch === "universal" || resealNeeded) {
       console.log(\`Re-signing \${app} with identity "\${s.identity ?? "-"}"\`);
-      await sign(app, s.identity, s.entitlements, s.provisioningProfile, s.profileIdentifier);
+      await sign(
+        app,
+        s.identity,
+        s.entitlements,
+        s.provisioningProfile,
+        s.profileIdentifier,
+      );
     }
     if (s.notaryProfile && s.identity) await notarize(app, s.notaryProfile);
     if (formats.includes("dmg")) installers.push(await makeDmg(app));
@@ -1333,7 +1395,9 @@ async function main(): Promise<void> {
     opts.add,
   );
   // The export resolves the macOS target's platform files (\`.macos\`, \`.desktop\`).
-  if (opts.export) await run(["deno", "task", "export"], desktopExportEnv("darwin"));
+  if (opts.export) {
+    await run(["deno", "task", "export"], desktopExportEnv("darwin"));
+  }
   // .deno-desktop/app.json (the app origin + identifier), its deno.json compile.include, and the
   // config's desktop.app name / identifier mirrored into deno.json, where deno desktop reads them.
   // After the export: \`denext desktop package\` keeps a backup of deno.json while this script runs,
@@ -1450,7 +1514,10 @@ const LABELS: Record<string, string> = { x86_64: "x64", arm64: "arm64" };
 const OS = "linux";
 
 /** Build a Linux bundle directory for \`arch\` at dist/<name>-<label> (PNG icon). */
-async function buildBundle(name: string, arch: "x86_64" | "arm64"): Promise<string> {
+async function buildBundle(
+  name: string,
+  arch: "x86_64" | "arm64",
+): Promise<string> {
   return await buildDesktopBundle(import.meta.url, OS, {
     target: TARGETS[arch],
     out: \`dist/\${name}-\${LABELS[arch]}\`,
@@ -1503,7 +1570,11 @@ async function installers(
   const pkg = { meta, bundleDir: dir, exe: \`\${name}-\${LABELS[arch]}\`, arch };
   // A version Debian / RPM can't express skips a default .deb with a warning (an asked-for one fails).
   const versionOk = (format: "deb" | "rpm") =>
-    desktopToolGate(desktopVersionProblem(format, meta.version), \`.\${format}\`, plan.explicit);
+    desktopToolGate(
+      desktopVersionProblem(format, meta.version),
+      \`.\${format}\`,
+      plan.explicit,
+    );
   for (const format of plan.formats) {
     if (format === "tar.gz") out.push(await tarball(name, arch, dir));
     if (format === "deb" && versionOk("deb")) {
@@ -1516,7 +1587,8 @@ async function installers(
       out.push(await buildDesktopRpm({ ...pkg, out: \`\${base}.rpm\` }));
     }
     if (
-      format === "appimage" && await desktopRequireTool("appimagetool", "AppImage", plan.explicit)
+      format === "appimage" &&
+      await desktopRequireTool("appimagetool", "AppImage", plan.explicit)
     ) {
       out.push(await appImage(name, arch, dir));
     }
@@ -1531,7 +1603,11 @@ async function main(): Promise<void> {
   });
   // --format, else desktop.installers.linux in denext.config.ts, else tar.gz + deb; the
   // .deno-desktop/app.json sync, the package metadata (name, version, deep links), the export.
-  const { name, plan, meta } = await prepareDesktopPackage(import.meta.url, OS, opts);
+  const { name, plan, meta } = await prepareDesktopPackage(
+    import.meta.url,
+    OS,
+    opts,
+  );
 
   const artifacts: string[] = [];
   for (const arch of desktopPackageArches(opts.arch)) {
@@ -1660,7 +1736,10 @@ const hostArch = Deno.build.arch === "aarch64" ? "arm64" : "x86_64";
 const OS = "windows";
 
 /** Build a Windows bundle directory for \`arch\` at dist/<name>-<label> (.ico icon). */
-async function buildBundle(name: string, arch: "x86_64" | "arm64"): Promise<string> {
+async function buildBundle(
+  name: string,
+  arch: "x86_64" | "arm64",
+): Promise<string> {
   return await buildDesktopBundle(import.meta.url, OS, {
     target: TARGETS[arch],
     out: \`dist/\${name}-\${LABELS[arch]}\`,
@@ -1678,7 +1757,11 @@ async function sign(files: string[]): Promise<boolean> {
  * CEF's DLLs, any .node), found by its header: the runtime refuses an update of a signed app
  * unless each one carries the running app's signature. A signed CEF app must be trusted here:
  * CEF's bootstrap verifies the executable's signature at launch and dies when it is not. */
-async function signBundle(dir: string, exe: string, backend: string): Promise<void> {
+async function signBundle(
+  dir: string,
+  exe: string,
+  backend: string,
+): Promise<void> {
   if (await sign(await desktopPeFiles(dir)) && backend === "cef") {
     await desktopCheckCefSignature(\`\${dir}/\${exe}\`);
   }
@@ -1695,7 +1778,9 @@ async function msi(
   explicit: boolean,
 ): Promise<string | null> {
   const what = \`.msi for \${arch} (the .zip is built instead)\`;
-  if (!desktopToolGate(await desktopMsiProblem(meta.version), what, explicit)) return null;
+  if (!desktopToolGate(await desktopMsiProblem(meta.version), what, explicit)) {
+    return null;
+  }
   const out = \`dist/\${name}-\${LABELS[arch]}.msi\`;
   const exe = \`\${name}-\${LABELS[arch]}.exe\`;
   return await desktopOptionalInstaller(what, explicit, async () => {
@@ -1775,7 +1860,9 @@ async function packageArch(
 ): Promise<{ out: string[]; vcBundled: boolean }> {
   const dir = await buildBundle(name, arch);
   const vcBundled = await bundleVcRuntime(dir, arch);
-  if (signing) await signBundle(dir, \`\${name}-\${LABELS[arch]}.exe\`, meta.backend);
+  if (signing) {
+    await signBundle(dir, \`\${name}-\${LABELS[arch]}.exe\`, meta.backend);
+  }
   const out = [dir];
   const built = plan.formats.includes("msi")
     ? await msi(name, arch, dir, meta, plan.explicit)
@@ -1784,12 +1871,16 @@ async function packageArch(
   if (built) out.push(built);
   // A default .msi that could not be built falls back to the .zip.
   const msiSkipped = plan.formats.includes("msi") && !built;
-  if (plan.formats.includes("zip") || msiSkipped) out.push(await zipBundle(name, arch, dir));
+  if (plan.formats.includes("zip") || msiSkipped) {
+    out.push(await zipBundle(name, arch, dir));
+  }
   return { out, vcBundled };
 }
 
 async function main(): Promise<void> {
-  const opts = parseDesktopPackageArgs(Deno.args, { arches: ["host", "x86_64", "arm64", "both"] });
+  const opts = parseDesktopPackageArgs(Deno.args, {
+    arches: ["host", "x86_64", "arm64", "both"],
+  });
   // --format, else desktop.installers.windows in denext.config.ts, else an .msi; the
   // .deno-desktop/app.json sync, the package metadata (name, version, deep links), the export.
   const prepared = await prepareDesktopPackage(import.meta.url, OS, opts);
@@ -1798,7 +1889,12 @@ async function main(): Promise<void> {
   const artifacts: string[] = [];
   const noVcRuntime: string[] = [];
   for (const arch of desktopPackageArches(opts.arch)) {
-    const { out, vcBundled } = await packageArch(name, arch, opts.sign, prepared);
+    const { out, vcBundled } = await packageArch(
+      name,
+      arch,
+      opts.sign,
+      prepared,
+    );
     artifacts.push(...out);
     if (!vcBundled) noVcRuntime.push(arch);
   }
@@ -1807,7 +1903,9 @@ async function main(): Promise<void> {
   for (const a of artifacts) console.log("  " + a);
   // What the target needs: WebView2 for a webview build (a CEF build ships Chromium), and the
   // VC++ redistributable for an arch whose runtime could not be bundled.
-  console.log("\\n  " + desktopWindowsTargetNote(prepared.meta.backend, noVcRuntime));
+  console.log(
+    "\\n  " + desktopWindowsTargetNote(prepared.meta.backend, noVcRuntime),
+  );
 }
 
 if (import.meta.main) await main();

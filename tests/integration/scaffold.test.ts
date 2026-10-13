@@ -278,7 +278,7 @@ Deno.test("scaffoldFiles: the macOS script says deno desktop's ad-hoc pass is a 
   const resign = src.indexOf(
     'console.log(`Re-signing ${app} with identity "${s.identity ?? "-"}"`);',
   );
-  assert(resign > 0 && resign < src.indexOf("await sign(app, s.identity"), "logged before sign()");
+  assert(resign > 0 && resign < src.indexOf("await sign(\n        app,"), "logged before sign()");
 });
 
 /** What the generated script's sign() ran, and each `--entitlements` plist's text by target. */

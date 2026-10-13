@@ -8,6 +8,18 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **A fresh `denext create` project is `deno fmt`- and `deno lint`-clean.** Every template and
+  feature (`--template minimal`, `--tailwind`, `--src-dir`, `--desktop`, `--capacitor`, `--fallow`,
+  `--mcp`, …) writes its README, pages, stylesheet, `AGENTS.md` and packaging / coverage scripts
+  the way `deno fmt`'s defaults lay them out, so `deno fmt --check` changes nothing. A test
+  scaffolds each combination and runs both.
+- **`denext toolchain status` under the compiled executable** no longer says it is "running on
+  deno 2.9.7" (the Deno embedded in the executable, which runs only the CLI itself): it says
+  denext runs every command on the toolchain, or on the `deno` on `PATH` with
+  `DENEXT_DENO=stock`, and that a missing toolchain downloads on the first denext command.
+
 ## [4.0.0-rc.2] - 2026-10-13
 
 ### Changed

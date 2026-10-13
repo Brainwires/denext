@@ -413,9 +413,10 @@ Deno.test("scaffold: the macOS script embeds the checked profile and signs with 
   assertStringIncludes(mac, "await desktopMacosSigning(import.meta.url, {");
   assertStringIncludes(mac, 'Deno.env.get("DENEXT_PROVISIONING_PROFILE")');
   assertStringIncludes(mac, "`${app}/Contents/embedded.provisionprofile`");
+  // Whitespace-blind: the scaffold writes the call the way `deno fmt` wraps it at 80 columns.
   assertStringIncludes(
-    mac,
-    "await sign(app, s.identity, s.entitlements, s.provisioningProfile, s.profileIdentifier);",
+    mac.replace(/\s+/g, ""),
+    "awaitsign(app,s.identity,s.entitlements,s.provisioningProfile,s.profileIdentifier,);",
   );
 });
 

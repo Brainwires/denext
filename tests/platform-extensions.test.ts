@@ -642,7 +642,11 @@ Deno.test("wiring: mobile build exports with its platform, desktop package with 
   assertStringIncludes(mac, `run(["deno", "task", "export"], desktopExportEnv("darwin"))`);
   for (const os of ["linux", "windows"]) {
     const script = scripts.find((f) => f.path === `scripts/package-${os}.ts`)!.content;
-    assertStringIncludes(script, "prepareDesktopPackage(import.meta.url, OS, opts)");
+    // Whitespace-blind: `deno fmt` wraps the Linux call's arguments at 80 columns.
+    assertStringIncludes(
+      script.replace(/\s+/g, ""),
+      "prepareDesktopPackage(import.meta.url,OS,opts",
+    );
     assert(!script.includes(`run(["deno", "task", "export"]`), `${os} runs the export itself`);
   }
 });

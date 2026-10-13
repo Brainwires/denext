@@ -105,7 +105,10 @@ const hostArch = Deno.build.arch === "aarch64" ? "arm64" : "x86_64";
 const OS = "windows";
 
 /** Build a Windows bundle directory for `arch` at dist/<name>-<label> (.ico icon). */
-async function buildBundle(name: string, arch: "x86_64" | "arm64"): Promise<string> {
+async function buildBundle(
+  name: string,
+  arch: "x86_64" | "arm64",
+): Promise<string> {
   return await buildDesktopBundle(import.meta.url, OS, {
     target: TARGETS[arch],
     out: `dist/${name}-${LABELS[arch]}`,
@@ -123,7 +126,11 @@ async function sign(files: string[]): Promise<boolean> {
  * CEF's DLLs, any .node), found by its header: the runtime refuses an update of a signed app
  * unless each one carries the running app's signature. A signed CEF app must be trusted here:
  * CEF's bootstrap verifies the executable's signature at launch and dies when it is not. */
-async function signBundle(dir: string, exe: string, backend: string): Promise<void> {
+async function signBundle(
+  dir: string,
+  exe: string,
+  backend: string,
+): Promise<void> {
   if (await sign(await desktopPeFiles(dir)) && backend === "cef") {
     await desktopCheckCefSignature(`${dir}/${exe}`);
   }
@@ -140,7 +147,9 @@ async function msi(
   explicit: boolean,
 ): Promise<string | null> {
   const what = `.msi for ${arch} (the .zip is built instead)`;
-  if (!desktopToolGate(await desktopMsiProblem(meta.version), what, explicit)) return null;
+  if (!desktopToolGate(await desktopMsiProblem(meta.version), what, explicit)) {
+    return null;
+  }
   const out = `dist/${name}-${LABELS[arch]}.msi`;
   const exe = `${name}-${LABELS[arch]}.exe`;
   return await desktopOptionalInstaller(what, explicit, async () => {
@@ -220,7 +229,9 @@ async function packageArch(
 ): Promise<{ out: string[]; vcBundled: boolean }> {
   const dir = await buildBundle(name, arch);
   const vcBundled = await bundleVcRuntime(dir, arch);
-  if (signing) await signBundle(dir, `${name}-${LABELS[arch]}.exe`, meta.backend);
+  if (signing) {
+    await signBundle(dir, `${name}-${LABELS[arch]}.exe`, meta.backend);
+  }
   const out = [dir];
   const built = plan.formats.includes("msi")
     ? await msi(name, arch, dir, meta, plan.explicit)
@@ -229,12 +240,16 @@ async function packageArch(
   if (built) out.push(built);
   // A default .msi that could not be built falls back to the .zip.
   const msiSkipped = plan.formats.includes("msi") && !built;
-  if (plan.formats.includes("zip") || msiSkipped) out.push(await zipBundle(name, arch, dir));
+  if (plan.formats.includes("zip") || msiSkipped) {
+    out.push(await zipBundle(name, arch, dir));
+  }
   return { out, vcBundled };
 }
 
 async function main(): Promise<void> {
-  const opts = parseDesktopPackageArgs(Deno.args, { arches: ["host", "x86_64", "arm64", "both"] });
+  const opts = parseDesktopPackageArgs(Deno.args, {
+    arches: ["host", "x86_64", "arm64", "both"],
+  });
   // --format, else desktop.installers.windows in denext.config.ts, else an .msi; the
   // .deno-desktop/app.json sync, the package metadata (name, version, deep links), the export.
   const prepared = await prepareDesktopPackage(import.meta.url, OS, opts);
@@ -243,7 +258,12 @@ async function main(): Promise<void> {
   const artifacts: string[] = [];
   const noVcRuntime: string[] = [];
   for (const arch of desktopPackageArches(opts.arch)) {
-    const { out, vcBundled } = await packageArch(name, arch, opts.sign, prepared);
+    const { out, vcBundled } = await packageArch(
+      name,
+      arch,
+      opts.sign,
+      prepared,
+    );
     artifacts.push(...out);
     if (!vcBundled) noVcRuntime.push(arch);
   }
@@ -252,7 +272,9 @@ async function main(): Promise<void> {
   for (const a of artifacts) console.log("  " + a);
   // What the target needs: WebView2 for a webview build (a CEF build ships Chromium), and the
   // VC++ redistributable for an arch whose runtime could not be bundled.
-  console.log("\n  " + desktopWindowsTargetNote(prepared.meta.backend, noVcRuntime));
+  console.log(
+    "\n  " + desktopWindowsTargetNote(prepared.meta.backend, noVcRuntime),
+  );
 }
 
 if (import.meta.main) await main();
