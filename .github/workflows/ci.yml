@@ -210,7 +210,7 @@ jobs:
         run: deno task test:coverage
 
   # @denext/backend and denext's Postgres stores against REAL services: Postgres (17, the major
-  # Supabase runs) as a service container and MinIO (S3) started beside it. The suites connect as
+  # Supabase runs) and MinIO (S3) as service containers. The suites connect as
   # the superuser only to create a throwaway NON-superuser app role + database per case; RLS's
   # `anon` / `authenticated` roles and `auth.*` come from the backend's own migration, realtime
   # uses plain LISTEN/NOTIFY (no wal settings), and the S3 suite creates its bucket. They need
@@ -233,6 +233,15 @@ jobs:
           --health-interval 2s
           --health-timeout 5s
           --health-retries 30
+      minio:
+        # MinIO publishes no public images any more (minio/minio and quay.io/minio refuse
+        # pulls); Bitnami's legacy build is the same server, and its entrypoint serves /data.
+        image: bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20
+        env:
+          MINIO_ROOT_USER: dnxtest
+          MINIO_ROOT_PASSWORD: dnxtest-secret
+        ports:
+          - 9100:9000
     env:
       DENEXT_TEST_POSTGRES_URL: postgres://postgres:pw@127.0.0.1:5432/postgres
       DENEXT_TEST_POSTGRES_JS: "1" # the stock-Deno path (npm:postgres via fromPostgresJs) too
@@ -245,15 +254,6 @@ jobs:
       DENEXT_DENO_SHA256: 2bf1c7af80c63bad582c0e72129cbf2cfc6a6e84e7bb4bf485a51f41be971146
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-
-      - name: Start MinIO
-        # Not a service container: MinIO needs `server /data` as its command, which a service
-        # cannot pass. Pinned by digest (RELEASE.2025-09-07T16-13-09Z).
-        run: |
-          docker run -d --name minio -p 127.0.0.1:9100:9000 \
-            -e MINIO_ROOT_USER=dnxtest -e MINIO_ROOT_PASSWORD=dnxtest-secret \
-            minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
-            server /data
 
       - name: Set up denext's Deno toolchain
         run: |
@@ -280,7 +280,6 @@ jobs:
             curl -fsS http://127.0.0.1:9100/minio/health/live && exit 0
             sleep 1
           done
-          docker logs minio
           exit 1
 
       - name: Backend + Postgres integration tests (real Postgres and MinIO)
