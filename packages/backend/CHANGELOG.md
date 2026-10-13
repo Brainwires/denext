@@ -12,6 +12,11 @@
   policies; migration `backend_storage_0002`), cursor-paged `listV2`, TUS uploads authorized by a
   signed upload token (`/upload/resumable/sign`), multipart uploads streamed instead of buffered,
   anon/user bucket listings answered as Supabase does (empty), and the `denext ui` admin hooks.
+- **SAML SSO admin API, Single Logout and encrypted assertions.** `supabase.auth.saml` takes
+  `signingKey` / `signingCertificate` (signed AuthnRequests, Single Logout at
+  `/auth/v1/sso/saml/slo`) and `encryptionKey` / `encryptionCertificate` (`EncryptedAssertion`), and
+  `providers` is optional: identity providers can be stored through
+  `/auth/v1/admin/sso/providers` (`backendAuthAdapter()` keeps them in Postgres).
 - **Realtime: the `supabase_realtime` publication** opts tables in (created if missing; re-read
   every 10 s, so an `alter publication … add table` while the app runs follows), beside
   `realtime({ tables })`; `publication: false` turns it off. A publication table needs a one-column

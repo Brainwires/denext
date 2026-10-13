@@ -12,7 +12,14 @@
 
 import { excC14n } from "./c14n.ts";
 import { SamlError } from "./errors.ts";
-import { attr, childElements, isNcName, type XmlDocument, type XmlElement } from "./xml.ts";
+import {
+  attr,
+  childElements,
+  elementOnlyChildren,
+  isNcName,
+  type XmlDocument,
+  type XmlElement,
+} from "./xml.ts";
 import { type CertificateKey, certificateKey, decodeBase64 } from "./x509.ts";
 
 /** The XML-DSig namespace. */
@@ -21,8 +28,11 @@ const EXC_C14N = "http://www.w3.org/2001/10/xml-exc-c14n#";
 const EXC_C14N_COMMENTS = "http://www.w3.org/2001/10/xml-exc-c14n#WithComments";
 const ENVELOPED = "http://www.w3.org/2000/09/xmldsig#enveloped-signature";
 
-interface SignatureAlgorithm {
+/** A signature algorithm: the key family and the hash. */
+export interface SignatureAlgorithm {
+  /** The key family. */
   kind: CertificateKey["kind"];
+  /** The hash. */
   hash: "SHA-256" | "SHA-512";
 }
 
@@ -74,12 +84,7 @@ export function indexIds(doc: XmlDocument): Map<string, XmlElement> {
  * structure element has element-only content).
  */
 function structure(el: XmlElement): XmlElement[] {
-  const out: XmlElement[] = [];
-  for (const c of el.children) {
-    if (c.type === "element") out.push(c);
-    else if (c.type === "text" && c.value.trim()) badSignature(`text inside <${el.qname}>`);
-  }
-  return out;
+  return elementOnlyChildren(el, badSignature);
 }
 
 function isDs(el: XmlElement | undefined, local: string): el is XmlElement {
@@ -152,7 +157,17 @@ function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
 
 const encoder = new TextEncoder();
 
-async function verifyWithCertificates(
+/**
+ * Whether `signature` over `data` verifies with any configured certificate whose key fits the
+ * algorithm (also the HTTP-Redirect binding's query signature).
+ *
+ * @param algorithm The key family and hash.
+ * @param data The signed octets.
+ * @param signature The signature (RSA PKCS #1 v1.5, or ECDSA as r || s).
+ * @param certificates The configured certificates.
+ * @throws {SamlError} `bad_certificate` for a configured key that cannot be imported.
+ */
+export async function verifyWithCertificates(
   algorithm: SignatureAlgorithm,
   data: Uint8Array<ArrayBuffer>,
   signature: Uint8Array<ArrayBuffer>,

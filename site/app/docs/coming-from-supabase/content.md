@@ -183,7 +183,8 @@ browser, and `db()` reads it on the server. Providers and the adapter are config
 
 Or keep your client code: with `backend({ supabase })` the stock supabase-js `supabase.auth.*`
 calls above work unchanged against `/auth/v1` — password, OTP / magic link, phone, anonymous,
-OAuth with your `denextAuth()` providers, MFA, SAML SSO and the admin API — over the same users
+OAuth with your `denextAuth()` providers, MFA, SAML SSO (with Single Logout, encrypted assertions
+and the `admin/sso/providers` API) and the admin API — over the same users
 the cookie sign-in uses. See [Supabase clients](/docs/auth#supabase-clients-auth-v1).
 
 ### Storage: upload and signed URLs
@@ -406,7 +407,9 @@ What does not move:
 - **Sessions and refresh tokens.** Everyone signs in once more.
 - **TOTP factors and passkeys.** Users enroll again; passkeys are also bound to the site's domain.
 - **Phone / SMS sign-in, anonymous users and SAML SSO** — denext auth has no equivalent (see
-  below); move those users to email or OAuth sign-in first.
+  below); move those users to email or OAuth sign-in first. (Under `backend({ supabase })`,
+  `/auth/v1` serves SAML SSO: register each identity provider again with
+  `POST /auth/v1/admin/sso/providers`, and users link their SSO identity on their next sign-in.)
 
 A one-off script, run against both databases (`npm:postgres` makes it work on any Deno):
 

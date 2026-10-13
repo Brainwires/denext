@@ -47,6 +47,7 @@ import type {
 import { pageWindow } from "./adapter-rows.ts";
 import { emailKey } from "./email-key.ts";
 import { inMemorySessionStore, type SessionStore } from "./session-store.ts";
+import { type MemorySsoGroup, memorySsoGroup } from "./memory-sso.ts";
 
 /** Options for {@linkcode inMemoryAuthAdapter}. */
 export interface InMemoryAuthAdapterOptions {
@@ -140,6 +141,8 @@ interface MemoryState {
   passkeyChallenges: Table<PasskeyChallengeRecord>;
   /** The store `sessions` exposes. */
   sessions: SessionStore;
+  /** SAML SSO providers, session origins and message ids. */
+  sso: MemorySsoGroup;
   /** Epoch seconds. */
   now: () => number;
   /** Serialise an async critical section per key. */
@@ -169,6 +172,7 @@ function createState(options: InMemoryAuthAdapterOptions): MemoryState {
     passkeys: table<PasskeyRecord>(max),
     passkeyChallenges: table<PasskeyChallengeRecord>(max),
     sessions: inMemorySessionStore(),
+    sso: memorySsoGroup(max, options.now ?? (() => Math.floor(Date.now() / 1000))),
     now: options.now ?? (() => Math.floor(Date.now() / 1000)),
     lock<T>(key: string, run: () => Promise<T>): Promise<T> {
       // Chain onto whatever is already queued for this key (settled either way), so two
@@ -552,6 +556,7 @@ function deleteUserRows(state: MemoryState, id: string): void {
   );
   dropWhere(state.nativeSessions, (session) => session.userId === id);
   dropWhere(state.passkeys, (passkey) => passkey.userId === id);
+  state.sso.dropUser(id);
 }
 
 /** The `/auth/v1` MFA factors. */
@@ -662,6 +667,7 @@ function closeState(state: MemoryState): void {
   state.nativeSessions.rows.clear();
   state.passkeys.rows.clear();
   state.passkeyChallenges.rows.clear();
+  state.sso.clear();
   state.sessions.close?.();
 }
 
@@ -694,6 +700,8 @@ export function inMemoryAuthAdapter(options: InMemoryAuthAdapterOptions = {}): A
     ...passkeyMethods(state),
     // The /auth/v1 MFA factors.
     ...factorMethods(state),
+    // The /auth/v1 SAML SSO providers, session origins and message ids.
+    ...state.sso.methods,
     sessions: state.sessions,
     close: () => closeState(state),
   };

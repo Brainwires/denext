@@ -21,7 +21,8 @@
  * @module
  */
 
-import type { AdapterUser, AuthAdapter } from "./adapter.ts";
+import type { AdapterUser, AuthAdapter, SsoProviderRecord, SsoProviderWrite } from "./adapter.ts";
+import type { SsoMethods } from "./memory-sso.ts";
 import {
   ACCOUNT_MAP,
   API_TOKEN_MAP,
@@ -38,9 +39,12 @@ import {
   PASSKEY_MAP,
   patchUser,
   spendBackupCode,
+  SSO_PROVIDER_MAP,
+  SSO_SESSION_MAP,
   toRow,
   USER_MAP,
   VERIFICATION_MAP,
+  withDomains,
   withUserId,
 } from "./adapter-rows.ts";
 import { emailKey } from "./email-key.ts";
@@ -478,6 +482,7 @@ const USER_TABLES = [
   "auth_native_sessions",
   "auth_passkeys",
   "auth_sessions",
+  "auth_sso_sessions",
 ];
 
 /**
@@ -543,6 +548,148 @@ function factorMethods(
   };
 }
 
+/** Providers by a WHERE clause (`$n` parameters), with their domains. */
+async function ssoProviders(
+  db: Pg,
+  where: string,
+  params: unknown[],
+): Promise<SsoProviderRecord[]> {
+  const rows = await db.records(
+    SSO_PROVIDER_MAP,
+    `SELECT * FROM ${db.t("auth_sso_providers")} ${where} ORDER BY created_at, id`,
+    params,
+  );
+  if (!rows.length) return [];
+  const domains = await db.rows(
+    `SELECT domain, provider_id FROM ${db.t("auth_sso_domains")} WHERE provider_id IN (${
+      placeholders(rows.length)
+    })`,
+    rows.map((r) => r.id),
+  );
+  return withDomains(rows, domains);
+}
+
+/** Why `record` cannot be written over the rows of other providers, or `ok`. */
+async function ssoConflict(
+  run: (text: string, params: unknown[]) => Promise<unknown[]>,
+  db: Pg,
+  record: SsoProviderRecord,
+): Promise<SsoProviderWrite> {
+  const entity = await run(
+    `SELECT id FROM ${db.t("auth_sso_providers")} WHERE entity_id = $1 AND id <> $2`,
+    [record.entityId, record.id],
+  );
+  if (entity.length) return "entity_id_exists";
+  if (!record.domains.length) return "ok";
+  const list = record.domains.map((_, i) => `$${i + 2}`).join(", ");
+  const domains = await run(
+    `SELECT domain FROM ${
+      db.t("auth_sso_domains")
+    } WHERE provider_id <> $1 AND domain IN (${list})`,
+    [record.id, ...record.domains],
+  );
+  return domains.length ? "domain_exists" : "ok";
+}
+
+/**
+ * Create or replace a provider and its domains in one transaction. The unique indexes are the
+ * final word on a race: a violation rolls the transaction back and is re-classified.
+ */
+async function saveSsoProvider(
+  db: Pg,
+  record: SsoProviderRecord,
+  mustExist: boolean,
+): Promise<SsoProviderWrite> {
+  let verdict: SsoProviderWrite = "ok";
+  const providers = db.t("auth_sso_providers");
+  const domains = db.t("auth_sso_domains");
+  try {
+    await db.begin(async (tx) => {
+      const run = async (text: string, params: unknown[]) => [...await tx.unsafe(text, params)];
+      const exists = (await run(`SELECT id FROM ${providers} WHERE id = $1`, [
+        record.id,
+      ])).length === 1;
+      verdict = exists !== mustExist
+        ? (mustExist ? "not_found" : "entity_id_exists")
+        : await ssoConflict(run, db, record);
+      if (verdict !== "ok") return;
+      const row = toRow(SSO_PROVIDER_MAP, record);
+      const columns = Object.keys(row);
+      await run(
+        `INSERT INTO ${providers} (${columns.join(", ")}) VALUES (${
+          placeholders(columns.length)
+        }) ON CONFLICT (id) DO UPDATE SET ${
+          columns.filter((c) => c !== "id").map((c) => `${c} = EXCLUDED.${c}`).join(", ")
+        }`,
+        Object.values(row),
+      );
+      await run(`DELETE FROM ${domains} WHERE provider_id = $1`, [record.id]);
+      for (const domain of record.domains) {
+        await run(`INSERT INTO ${domains} (domain, provider_id) VALUES ($1, $2)`, [
+          domain,
+          record.id,
+        ]);
+      }
+    });
+  } catch (error) {
+    const after = await ssoConflict((t, p) => db.rows(t, p), db, record);
+    if (after === "ok") throw error;
+    return after;
+  }
+  return verdict;
+}
+
+/** The `/auth/v1` SAML SSO group. */
+function ssoMethods(db: Pg): SsoMethods {
+  const sessions = db.t("auth_sso_sessions");
+  const ids = db.t("auth_saml_message_ids");
+  return {
+    createSsoProvider: (record) => saveSsoProvider(db, record, false),
+    updateSsoProvider: (record) => saveSsoProvider(db, record, true),
+    getSsoProvider: async (id) => (await ssoProviders(db, "WHERE id = $1", [id]))[0],
+    getSsoProviderByEntityId: async (entityId) =>
+      (await ssoProviders(db, "WHERE entity_id = $1", [entityId]))[0],
+    getSsoProviderByDomain: async (domain) =>
+      (await ssoProviders(
+        db,
+        `WHERE id = (SELECT provider_id FROM ${db.t("auth_sso_domains")} WHERE domain = $1)`,
+        [domain],
+      ))[0],
+    listSsoProviders: () => ssoProviders(db, "", []),
+    async deleteSsoProvider(id) {
+      let removed = false;
+      await db.begin(async (tx) => {
+        await tx.unsafe(`DELETE FROM ${db.t("auth_sso_domains")} WHERE provider_id = $1`, [id]);
+        await tx.unsafe(`DELETE FROM ${sessions} WHERE provider_id = $1`, [id]);
+        const rows = await tx.unsafe(
+          `DELETE FROM ${db.t("auth_sso_providers")} WHERE id = $1 RETURNING id`,
+          [id],
+        );
+        removed = [...rows].length === 1;
+      });
+      return removed;
+    },
+    async createSsoSession(record) {
+      await db.run(`DELETE FROM ${sessions} WHERE expires_at <= $1`, [db.now()]);
+      await db.upsert("auth_sso_sessions", toRow(SSO_SESSION_MAP, record), ["session_id"]);
+    },
+    listSsoSessions: (providerId, nameId) =>
+      db.records(
+        SSO_SESSION_MAP,
+        `SELECT * FROM ${sessions} WHERE provider_id = $1 AND name_id = $2 AND expires_at > $3`,
+        [providerId, nameId, db.now()],
+      ),
+    async claimSamlMessageId(id, expiresAt) {
+      await db.run(`DELETE FROM ${ids} WHERE expires_at <= $1`, [db.now()]);
+      return await db.one(
+        `INSERT INTO ${ids} (id, expires_at) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING ` +
+          "RETURNING id",
+        [id, expiresAt],
+      );
+    },
+  };
+}
+
 /** Every method group, in the order the contract lists them. */
 const GROUPS = [
   userMethods,
@@ -552,6 +699,7 @@ const GROUPS = [
   factorMethods,
   nativeMethods,
   passkeyMethods,
+  ssoMethods,
 ];
 
 /**

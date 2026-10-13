@@ -7,6 +7,7 @@
  */
 
 import type { AdapterUser } from "../adapter.ts";
+import type { SamlPrivateKey } from "../saml/config.ts";
 import type { NativeIdTokenProviderConfig } from "../types.ts";
 
 /** What {@linkcode GoTrueOptions.sendSms} delivers. */
@@ -154,6 +155,34 @@ export interface GoTrueOptions {
    * be issued to (default: the auth config's `native.google` / `native.apple`).
    */
   idTokenProviders?: { google?: NativeIdTokenProviderConfig; apple?: NativeIdTokenProviderConfig };
-  /** SAML 2.0 identity providers for `signInWithSSO`. */
-  saml?: { providers: GoTrueSamlProvider[]; entityId?: string };
+  /** SAML 2.0 single sign-on (`signInWithSSO`, the SSO admin API, Single Logout). */
+  saml?: GoTrueSamlOptions;
+}
+
+/** The `/auth/v1` SAML 2.0 options. */
+export interface GoTrueSamlOptions {
+  /**
+   * Identity providers declared in config (read-only to the admin API). Providers can also be
+   * stored through `POST /auth/v1/admin/sso/providers`; both kinds work side by side, and an
+   * entity id or domain belongs to one provider only.
+   */
+  providers?: GoTrueSamlProvider[];
+  /** This service provider's entity id (default: the metadata URL). */
+  entityId?: string;
+  /**
+   * The SP signing key — a PKCS #8 PEM or an RSA private JWK (RSA-SHA256). It signs
+   * AuthnRequests and Single Logout messages, and turns Single Logout on (the SP metadata then
+   * advertises `/auth/v1/sso/saml/slo`). Requires {@linkcode signingCertificate}.
+   */
+  signingKey?: SamlPrivateKey;
+  /** The X.509 certificate (PEM) of {@linkcode signingKey}, published in the SP metadata. */
+  signingCertificate?: string;
+  /**
+   * The SP decryption key — a PKCS #8 PEM or an RSA private JWK: IdPs may then encrypt
+   * assertions to this SP (RSA-OAEP key transport; AES-GCM or AES-CBC content). Requires
+   * {@linkcode encryptionCertificate}.
+   */
+  encryptionKey?: SamlPrivateKey;
+  /** The X.509 certificate (PEM) of {@linkcode encryptionKey}, published `use="encryption"`. */
+  encryptionCertificate?: string;
 }

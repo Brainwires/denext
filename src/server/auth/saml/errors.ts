@@ -25,8 +25,18 @@ export type SamlErrorCode =
   | "signature_wrapping"
   /** The document holds more than one Assertion element anywhere. */
   | "multiple_assertions"
-  /** The Response carries an EncryptedAssertion / EncryptedID, which is not supported. */
+  /**
+   * The message carries an EncryptedAssertion but no SP decryption key is configured, or it
+   * carries an EncryptedID (never supported).
+   */
   | "encrypted_assertion_unsupported"
+  /**
+   * An encrypted assertion could not be decrypted into one well-formed, verified Assertion.
+   * Every failure from key unwrapping to the decrypted Assertion's own signature answers with
+   * this one code when the ciphertext is not covered by a verified Response signature, so the
+   * refusal is no decryption (padding / format) oracle.
+   */
+  | "decryption_failed"
   /** The Response's top-level StatusCode is not `…:status:Success`. */
   | "status_not_success"
   /** The Response's Destination is not this SP's ACS URL. */
@@ -54,7 +64,14 @@ export type SamlErrorCode =
   /** A configured certificate cannot be parsed or carries an unsupported key type. */
   | "bad_certificate"
   /** IdP metadata is missing the entity id, the redirect SSO endpoint or a signing certificate. */
-  | "bad_metadata";
+  | "bad_metadata"
+  /** A configured SP private key (or its certificate) cannot be used. */
+  | "bad_key"
+  /**
+   * An HTTP binding is malformed: a duplicated or missing query / form parameter, an XML
+   * signature inside an HTTP-Redirect message, or a message too large once inflated.
+   */
+  | "bad_binding";
 
 /**
  * A refused SAML message or bad SAML configuration. `code` is a stable machine code

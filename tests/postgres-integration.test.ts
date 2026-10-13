@@ -114,7 +114,11 @@ for (const driver of ["Deno.SQL", "npm:postgres"] as const) {
         // Two first uses at once on separate connections: the advisory lock lets one migrate.
         await Promise.all([one.getUser("x"), two.getUser("x")]);
         const status = await postgresMigrationStatus(a, { schema, table: "auth_migrations" });
-        assertEquals(status.unknown, ["0001_auth_tables", "0002_auth_user_profile"]);
+        assertEquals(status.unknown, [
+          "0001_auth_tables",
+          "0002_auth_user_profile",
+          "0004_auth_sso_providers",
+        ]);
         for (let round = 0; round < 10; round++) {
           const ref = {
             identifier: "race@x.test",

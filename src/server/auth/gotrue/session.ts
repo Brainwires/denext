@@ -44,6 +44,18 @@ export interface AmrEntry {
   provider?: string;
 }
 
+/** The SAML origin of a session: what Single Logout needs to name it to the IdP and back. */
+export interface SsoSessionInfo {
+  /** The SSO provider id. */
+  providerId: string;
+  /** The assertion's NameID. */
+  nameId: string;
+  /** Its Format, when given. */
+  nameIdFormat?: string;
+  /** The AuthnStatement's SessionIndex, when given. */
+  sessionIndex?: string;
+}
+
 /** What a family stores about its session. */
 interface GoTrueSnapshot {
   /** Marks a `/auth/v1` family. */
@@ -56,6 +68,8 @@ interface GoTrueSnapshot {
   amr: AmrEntry[];
   /** `aal2` once a second factor was verified in this session. */
   aal: "aal1" | "aal2";
+  /** The SAML origin, for a session a SAML assertion started. */
+  sso?: SsoSessionInfo;
 }
 
 /** Everything the session functions need. */
@@ -239,6 +253,42 @@ async function sessionJson(
   };
 }
 
+/** How long the SAML origin of a session is kept for Single Logout, seconds. */
+const SSO_SESSION_RECORD_TTL = 400 * 86_400;
+
+/** Remember a SAML session's family for IdP-initiated Single Logout (when the adapter can). */
+async function recordSso(
+  config: AuthConfig,
+  family: NativeSessionRecord,
+  sso: SsoSessionInfo | undefined,
+): Promise<void> {
+  const adapter = config.adapter;
+  if (!sso || typeof adapter?.createSsoSession !== "function") return;
+  await adapter.createSsoSession({
+    sessionId: family.id,
+    providerId: sso.providerId,
+    nameId: sso.nameId,
+    ...(sso.sessionIndex !== undefined && { sessionIndex: sso.sessionIndex }),
+    userId: family.userId,
+    expiresAt: family.createdAt + SSO_SESSION_RECORD_TTL,
+  });
+}
+
+/**
+ * The SAML origin of a session family, when a SAML assertion started it.
+ *
+ * @param config The auth config.
+ * @param familyId The family (`session_id`).
+ * @returns The SAML origin, or `undefined`.
+ */
+export async function ssoOriginOf(
+  config: AuthConfig,
+  familyId: string,
+): Promise<SsoSessionInfo | undefined> {
+  const family = await familiesOf(config).getNativeSession(familyId);
+  return family ? parseSnapshot(family.session)?.sso : undefined;
+}
+
 /**
  * Start a session for a user who just authenticated: a new family, its first token pair. Stamps
  * `lastSignInAt` on the user.
@@ -246,6 +296,7 @@ async function sessionJson(
  * @param ctx The session context.
  * @param user The user.
  * @param amr How they authenticated.
+ * @param sso The SAML origin, for a SAML sign-in (kept for Single Logout).
  * @returns The session response.
  * @throws {GoTrueError} `user_banned` for a banned user.
  */
@@ -253,6 +304,7 @@ export async function startSession(
   ctx: SessionContext,
   user: AdapterUser,
   amr: AmrEntry,
+  sso?: SsoSessionInfo,
 ): Promise<GoTrueSessionJson> {
   if (isBanned(user)) throw new GoTrueError(400, "user_banned", "User is banned");
   const at = now();
@@ -264,6 +316,7 @@ export async function startSession(
     provider: amr.provider ?? (amr.method === "oauth" ? "oauth" : amr.method),
     amr: [amr],
     aal: "aal1",
+    ...(sso && { sso }),
   };
   const family: NativeSessionRecord = {
     id: crypto.randomUUID(),
@@ -275,6 +328,7 @@ export async function startSession(
     expiresAt: at + familyLifetime(ctx.config),
   };
   await familiesOf(ctx.config).createNativeSession(family);
+  await recordSso(ctx.config, family, sso);
   return await sessionJson(ctx, updated, family, snapshot, at);
 }
 
@@ -313,6 +367,7 @@ export async function stepUpSession(
     expiresAt: Math.max(live.family.expiresAt, at + 60),
   };
   await families.createNativeSession(family);
+  await recordSso(ctx.config, family, snapshot.sso);
   await families.revokeNativeSession(live.family.id);
   return await sessionJson(ctx, user, family, snapshot, at);
 }

@@ -231,7 +231,9 @@ function findById(root: XmlElement, id: string): XmlElement {
   const stack = [root];
   while (stack.length) {
     const el = stack.pop()!;
-    const signable = el.local === "Assertion" || el.local === "Response";
+    const signable = ["Assertion", "Response", "LogoutRequest", "LogoutResponse"].includes(
+      el.local,
+    );
     if (signable && el.attrs.some((a) => a.local === "ID" && a.value === id)) return el;
     for (const c of el.children) if (c.type === "element") stack.push(c);
   }

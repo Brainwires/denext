@@ -37,7 +37,14 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { SqliteDb, SqlValue } from "../sqlite-cache.ts";
-import type { AdapterUser, AuthAdapter, MfaRecord } from "./adapter.ts";
+import type {
+  AdapterUser,
+  AuthAdapter,
+  MfaRecord,
+  SsoProviderRecord,
+  SsoProviderWrite,
+} from "./adapter.ts";
+import type { SsoMethods } from "./memory-sso.ts";
 import { emailKey } from "./email-key.ts";
 import { sqliteSessionStore } from "./sqlite-session-store.ts";
 import {
@@ -56,9 +63,12 @@ import {
   PASSKEY_MAP,
   patchUser,
   spendBackupCode,
+  SSO_PROVIDER_MAP,
+  SSO_SESSION_MAP,
   toRow as sharedToRow,
   USER_MAP,
   VERIFICATION_MAP,
+  withDomains,
   withUserId,
 } from "./adapter-rows.ts";
 
@@ -320,6 +330,64 @@ const SCHEMA: TableSpec[] = [
   },
 ];
 
+/** The SAML SSO tables of `/auth/v1`: providers, their domains, session origins, message ids. */
+const SSO_SCHEMA: TableSpec[] = [
+  {
+    name: "auth_sso_providers",
+    columns: [
+      ["id", "TEXT PRIMARY KEY"],
+      ["entity_id", "TEXT NOT NULL"],
+      ["metadata_xml", "TEXT NOT NULL"],
+      ["metadata_url", "TEXT"],
+      ["attribute_mapping", "TEXT"],
+      ["name_id_format", "TEXT"],
+      ["created_at", "INTEGER"],
+      ["updated_at", "INTEGER"],
+    ],
+    indexes: [{
+      sql: "CREATE UNIQUE INDEX IF NOT EXISTS auth_sso_providers_entity " +
+        "ON auth_sso_providers (entity_id)",
+    }],
+  },
+  {
+    name: "auth_sso_domains",
+    columns: [["domain", "TEXT PRIMARY KEY"], ["provider_id", "TEXT NOT NULL"]],
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_sso_domains_provider ON auth_sso_domains (provider_id)",
+    }],
+  },
+  {
+    name: "auth_sso_sessions",
+    columns: [
+      ["session_id", "TEXT PRIMARY KEY"],
+      ["provider_id", "TEXT NOT NULL"],
+      ["name_id", "TEXT NOT NULL"],
+      ["session_index", "TEXT"],
+      ["user_id", "TEXT NOT NULL"],
+      ["expires_at", "INTEGER NOT NULL"],
+    ],
+    indexes: [
+      {
+        sql: "CREATE INDEX IF NOT EXISTS auth_sso_sessions_name " +
+          "ON auth_sso_sessions (provider_id, name_id)",
+      },
+      { sql: "CREATE INDEX IF NOT EXISTS auth_sso_sessions_user ON auth_sso_sessions (user_id)" },
+      {
+        sql:
+          "CREATE INDEX IF NOT EXISTS auth_sso_sessions_expiry ON auth_sso_sessions (expires_at)",
+      },
+    ],
+  },
+  {
+    name: "auth_saml_message_ids",
+    columns: [["id", "TEXT PRIMARY KEY"], ["expires_at", "INTEGER NOT NULL"]],
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_saml_message_ids_expiry " +
+        "ON auth_saml_message_ids (expires_at)",
+    }],
+  },
+];
+
 /** Open node:sqlite at `path` behind the {@link SqliteDb} interface this adapter drives. */
 function openNodeSqlite(path: string): SqliteDb {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -392,7 +460,7 @@ function initSchema(db: SqliteDb): void {
     // failing at once with "database is locked", even when WAL is refused.
     db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL");
   } catch { /* a handle that refuses pragmas keeps its defaults */ }
-  for (const spec of SCHEMA) reconcileTable(db, spec);
+  for (const spec of [...SCHEMA, ...SSO_SCHEMA]) reconcileTable(db, spec);
   rekeyInternationalisedEmails(db);
 }
 
@@ -939,6 +1007,122 @@ function passkeyMethods(
   };
 }
 
+/** Run `fn` in one IMMEDIATE transaction (rolled back when it throws). */
+function transaction<T>(db: SqliteDb, fn: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const out = fn();
+    db.exec("COMMIT");
+    return out;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch { /* the failed statement may already have ended the transaction */ }
+    throw error;
+  }
+}
+
+/** Providers by a WHERE clause, with their domains. */
+function ssoProviders(db: SqliteDb, where: string, params: SqlValue[]): SsoProviderRecord[] {
+  const rows = db.query<Record<string, SqlValue>>(
+    `SELECT * FROM auth_sso_providers ${where} ORDER BY created_at, id`,
+    params,
+  ).map((row) => fromRow(SSO_PROVIDER_MAP, row));
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.id);
+  const domains = db.query<Record<string, SqlValue>>(
+    `SELECT domain, provider_id FROM auth_sso_domains WHERE provider_id IN (${
+      ids.map(() => "?").join(", ")
+    })`,
+    ids,
+  );
+  return withDomains(rows, domains);
+}
+
+/** Why `record` cannot be written over the rows of other providers, or `ok`. */
+function ssoConflict(db: SqliteDb, record: SsoProviderRecord): SsoProviderWrite {
+  if (
+    one(db, "SELECT id FROM auth_sso_providers WHERE entity_id = ? AND id <> ?", [
+      record.entityId,
+      record.id,
+    ])
+  ) return "entity_id_exists";
+  for (const domain of record.domains) {
+    if (
+      one(db, "SELECT domain FROM auth_sso_domains WHERE domain = ? AND provider_id <> ?", [
+        domain,
+        record.id,
+      ])
+    ) return "domain_exists";
+  }
+  return "ok";
+}
+
+/** Write a provider row and replace its domains (inside a transaction). */
+function writeSsoProvider(db: SqliteDb, record: SsoProviderRecord): void {
+  put(db, "auth_sso_providers", toRow(SSO_PROVIDER_MAP, record));
+  db.exec("DELETE FROM auth_sso_domains WHERE provider_id = ?", [record.id]);
+  for (const domain of record.domains) {
+    db.exec("INSERT INTO auth_sso_domains (domain, provider_id) VALUES (?, ?)", [
+      domain,
+      record.id,
+    ]);
+  }
+}
+
+/** The `/auth/v1` SAML SSO group. */
+function ssoMethods(state: SqliteState): SsoMethods {
+  const save = (record: SsoProviderRecord, mustExist: boolean): SsoProviderWrite =>
+    transaction(state.db(), () => {
+      const db = state.db();
+      const exists = !!one(db, "SELECT id FROM auth_sso_providers WHERE id = ?", [record.id]);
+      if (exists !== mustExist) return mustExist ? "not_found" : "entity_id_exists";
+      const verdict = ssoConflict(db, record);
+      if (verdict === "ok") writeSsoProvider(db, record);
+      return verdict;
+    });
+  return {
+    createSsoProvider: (record) => save(record, false),
+    updateSsoProvider: (record) => save(record, true),
+    getSsoProvider: (id) => ssoProviders(state.db(), "WHERE id = ?", [id])[0],
+    getSsoProviderByEntityId: (entityId) =>
+      ssoProviders(state.db(), "WHERE entity_id = ?", [entityId])[0],
+    getSsoProviderByDomain: (domain) =>
+      ssoProviders(
+        state.db(),
+        "WHERE id = (SELECT provider_id FROM auth_sso_domains WHERE domain = ?)",
+        [domain],
+      )[0],
+    listSsoProviders: () => ssoProviders(state.db(), "", []),
+    deleteSsoProvider: (id) =>
+      transaction(state.db(), () => {
+        const db = state.db();
+        db.exec("DELETE FROM auth_sso_domains WHERE provider_id = ?", [id]);
+        db.exec("DELETE FROM auth_sso_sessions WHERE provider_id = ?", [id]);
+        return db.query("DELETE FROM auth_sso_providers WHERE id = ? RETURNING id", [id])
+          .length === 1;
+      }),
+    createSsoSession(record) {
+      state.db().exec("DELETE FROM auth_sso_sessions WHERE expires_at <= ?", [state.now()]);
+      put(state.db(), "auth_sso_sessions", toRow(SSO_SESSION_MAP, record));
+    },
+    listSsoSessions: (providerId, nameId) =>
+      state.db().query<Record<string, SqlValue>>(
+        "SELECT * FROM auth_sso_sessions WHERE provider_id = ? AND name_id = ? AND expires_at > ?",
+        [providerId, nameId, state.now()],
+      ).map((row) => fromRow(SSO_SESSION_MAP, row)),
+    claimSamlMessageId(id, expiresAt) {
+      const db = state.db();
+      db.exec("DELETE FROM auth_saml_message_ids WHERE expires_at <= ?", [state.now()]);
+      return db.query(
+        "INSERT INTO auth_saml_message_ids (id, expires_at) VALUES (?, ?) " +
+          "ON CONFLICT(id) DO NOTHING RETURNING id",
+        [id, expiresAt],
+      ).length === 1;
+    },
+  };
+}
+
 export { NATIVE_SESSION_RETENTION };
 
 /** The tables keyed by `user_id` that a user's deletion clears. */
@@ -950,6 +1134,7 @@ const USER_TABLES = [
   "auth_mfa_factors",
   "auth_native_sessions",
   "auth_passkeys",
+  "auth_sso_sessions",
 ];
 
 /**
@@ -1062,6 +1247,7 @@ export function sqliteAuthAdapter(options: SqliteAuthAdapterOptions = {}): AuthA
     ...factorMethods(state),
     ...nativeMethods(state),
     ...passkeyMethods(state),
+    ...ssoMethods(state),
     async deleteUser(id) {
       deleteUserRows(state, id);
       await sessions.deleteByUser(id);

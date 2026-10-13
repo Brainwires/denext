@@ -133,14 +133,14 @@ class Parser {
   private pos = 0;
   private readonly elements: XmlElement[] = [];
 
-  constructor(private readonly s: string) {}
+  constructor(private readonly s: string, private readonly context: XmlElement | null) {}
 
   parse(): XmlDocument {
     const s = this.s;
     if (s.startsWith("<?xml") && /^<\?xml[\s?]/.test(s)) this.xmlDecl();
     this.misc();
     if (s[this.pos] !== "<") fail("missing document element");
-    const root = this.element(null, 1);
+    const root = this.element(this.context, 1);
     this.misc();
     if (this.pos !== s.length) fail("content after the document element");
     return { root, elements: this.elements };
@@ -413,13 +413,48 @@ export function lookupNamespace(el: XmlElement | null, prefix: string): string |
   return prefix === "" ? "" : undefined;
 }
 
+/** Options for {@link parseXml}. */
+export interface ParseXmlOptions {
+  /**
+   * Namespace declarations in scope around the document (`[prefix, uri]`, `""` = default):
+   * the context a decrypted XML Encryption `Element` is parsed in. The document element's
+   * `parent` is then a detached element carrying them (never part of `elements`).
+   */
+  inScope?: [string, string][];
+}
+
+/** The namespace declarations in scope at `el` (nearest first wins), as `[prefix, uri]`. */
+export function inScopeNamespaces(el: XmlElement): [string, string][] {
+  const out = new Map<string, string>();
+  for (let e: XmlElement | null = el; e; e = e.parent) {
+    for (const [p, uri] of e.nsDecls) if (!out.has(p)) out.set(p, uri);
+  }
+  return [...out];
+}
+
+function contextElement(inScope: [string, string][] | undefined): XmlElement | null {
+  if (!inScope?.length) return null;
+  return {
+    type: "element",
+    qname: "#context",
+    prefix: "",
+    local: "#context",
+    ns: "",
+    attrs: [],
+    nsDecls: inScope.map(([p, uri]) => [p, uri]),
+    children: [],
+    parent: null,
+  };
+}
+
 /**
  * Parse a UTF-8 SAML document strictly.
  *
  * @param input The document, as decoded text or as UTF-8 bytes.
+ * @param options The namespace context to parse in (decrypted content).
  * @throws {SamlError} `malformed_xml` or `doctype_forbidden`.
  */
-export function parseXml(input: string | Uint8Array): XmlDocument {
+export function parseXml(input: string | Uint8Array, options: ParseXmlOptions = {}): XmlDocument {
   let text: string;
   if (typeof input === "string") {
     text = input;
@@ -437,7 +472,27 @@ export function parseXml(input: string | Uint8Array): XmlDocument {
   // XML 1.0 §2.11: every CR LF and lone CR becomes LF before parsing.
   text = text.replace(/\r\n?/g, "\n");
   if (ILLEGAL_CHAR.test(text)) fail("illegal character in the document");
-  return new Parser(text).parse();
+  return new Parser(text, contextElement(options.inScope)).parse();
+}
+
+/**
+ * The element children of an element whose content model is element-only, refusing any
+ * non-whitespace text between them (comments and PIs are skipped).
+ *
+ * @param el The element.
+ * @param fail Throws the refusal for stray text.
+ * @returns The child elements, in order.
+ */
+export function elementOnlyChildren(
+  el: XmlElement,
+  fail: (message: string) => never,
+): XmlElement[] {
+  const out: XmlElement[] = [];
+  for (const c of el.children) {
+    if (c.type === "element") out.push(c);
+    else if (c.type === "text" && c.value.trim()) fail(`text inside <${el.qname}>`);
+  }
+  return out;
 }
 
 /** The child elements of `el` with namespace `ns` and local name `local`. */

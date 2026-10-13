@@ -284,6 +284,75 @@ export interface NativeGrantRecord {
   data?: string;
 }
 
+/**
+ * How a SAML attribute maps to a user field — GoTrue's `attribute_mapping.keys[field]`: the
+ * value of the attribute `name` (or the first of `names` present), else `default`; `array`
+ * keeps every value.
+ */
+export interface SsoAttributeMappingKey {
+  /** The SAML Attribute `Name`. */
+  name?: string;
+  /** Candidate Attribute names, first present wins. */
+  names?: string[];
+  /** The value when no candidate attribute is present. */
+  default?: unknown;
+  /** Keep every value of the attribute (an array) instead of the first. */
+  array?: boolean;
+}
+
+/** GoTrue's SAML `attribute_mapping`. */
+export interface SsoAttributeMapping {
+  /** User field → how it is read from the assertion's attributes. */
+  keys?: Record<string, SsoAttributeMappingKey>;
+}
+
+/**
+ * A stored SAML 2.0 identity provider of the `/auth/v1` SSO admin API
+ * (`/admin/sso/providers`). The entity id is unique across providers, and so is every domain.
+ */
+export interface SsoProviderRecord {
+  /** The provider id (a UUID). */
+  id: string;
+  /** The IdP's entity id (from its metadata) — unique. */
+  entityId: string;
+  /** The IdP metadata XML (the last fetched copy, for a `metadataUrl` provider). */
+  metadataXml: string;
+  /** Where the metadata is fetched from (HTTPS), when it was registered by URL. */
+  metadataUrl?: string;
+  /** How assertion attributes map to user metadata. */
+  attributeMapping?: SsoAttributeMapping;
+  /** The NameID format to request. */
+  nameIdFormat?: string;
+  /** Email domains routed to this provider, lower-case — each unique across providers. */
+  domains: string[];
+  /** Creation time, epoch seconds. */
+  createdAt: number;
+  /** Last change, epoch seconds. */
+  updatedAt: number;
+}
+
+/** What a create / update of an {@linkcode SsoProviderRecord} came to. */
+export type SsoProviderWrite = "ok" | "not_found" | "entity_id_exists" | "domain_exists";
+
+/**
+ * An `/auth/v1` session that a SAML assertion started — what an IdP-initiated LogoutRequest
+ * (NameID + SessionIndex) is resolved to.
+ */
+export interface SsoSessionRecord {
+  /** The session family id ({@linkcode NativeSessionRecord.id}). */
+  sessionId: string;
+  /** The SSO provider id. */
+  providerId: string;
+  /** The assertion's NameID. */
+  nameId: string;
+  /** The AuthnStatement's SessionIndex, when given. */
+  sessionIndex?: string;
+  /** The user. */
+  userId: string;
+  /** When the record may be dropped (the session family's expiry), epoch seconds. */
+  expiresAt: number;
+}
+
 /** Identifies one linked provider account. */
 export interface AdapterAccountRef {
   /** The denext provider id. */
@@ -758,6 +827,91 @@ export interface AuthAdapter {
    * @returns The consumed record, or `undefined`.
    */
   usePasskeyChallenge?(hash: string): MaybePromise<PasskeyChallengeRecord | undefined>;
+
+  // ---- SAML SSO providers and sessions of the /auth/v1 API (optional) -------
+
+  /**
+   * Store a new SSO provider and its domains, **atomically** refusing a duplicate entity id or
+   * a domain another provider holds (optional; the group gates `/auth/v1/admin/sso/providers`).
+   *
+   * @param record The provider (domains lower-case).
+   * @returns `ok`, `entity_id_exists` or `domain_exists` (nothing stored then).
+   */
+  createSsoProvider?(record: SsoProviderRecord): MaybePromise<SsoProviderWrite>;
+
+  /**
+   * Replace a stored provider (and its domains) by id, with the same uniqueness rules.
+   *
+   * @param record The provider as it should now be.
+   * @returns `ok`, `not_found`, `entity_id_exists` or `domain_exists` (nothing changed then).
+   */
+  updateSsoProvider?(record: SsoProviderRecord): MaybePromise<SsoProviderWrite>;
+
+  /**
+   * A provider by id.
+   *
+   * @param id The provider id.
+   * @returns The record, or `undefined`.
+   */
+  getSsoProvider?(id: string): MaybePromise<SsoProviderRecord | undefined>;
+
+  /**
+   * The provider with this entity id.
+   *
+   * @param entityId The IdP entity id.
+   * @returns The record, or `undefined`.
+   */
+  getSsoProviderByEntityId?(entityId: string): MaybePromise<SsoProviderRecord | undefined>;
+
+  /**
+   * The provider a domain routes to.
+   *
+   * @param domain The email domain (lower-case).
+   * @returns The record, or `undefined`.
+   */
+  getSsoProviderByDomain?(domain: string): MaybePromise<SsoProviderRecord | undefined>;
+
+  /**
+   * Every stored provider, oldest first.
+   *
+   * @returns The records.
+   */
+  listSsoProviders?(): MaybePromise<SsoProviderRecord[]>;
+
+  /**
+   * Remove a provider, its domains and its SSO session records.
+   *
+   * @param id The provider id.
+   * @returns `true` when a provider was removed.
+   */
+  deleteSsoProvider?(id: string): MaybePromise<boolean>;
+
+  /**
+   * Record the SSO origin of a session family (and drop expired records).
+   *
+   * @param record The session's provider, NameID and SessionIndex.
+   */
+  createSsoSession?(record: SsoSessionRecord): MaybePromise<void>;
+
+  /**
+   * The unexpired session records of one NameID at one provider.
+   *
+   * @param providerId The provider id.
+   * @param nameId The NameID.
+   * @returns The records.
+   */
+  listSsoSessions?(providerId: string, nameId: string): MaybePromise<SsoSessionRecord[]>;
+
+  /**
+   * **Atomically** claim a SAML message id (an assertion or logout message ID, namespaced by
+   * the caller): `true` the first time, `false` for every later claim while it is kept. Kept at
+   * least until `expiresAt` (epoch seconds) — the replay cache every replica shares.
+   *
+   * @param id The id.
+   * @param expiresAt Until when it must be remembered.
+   * @returns Whether this call claimed it.
+   */
+  claimSamlMessageId?(id: string, expiresAt: number): MaybePromise<boolean>;
 
   // ---- account deletion (optional) -----------------------------------------
 

@@ -738,6 +738,117 @@ const PROFILE_CASES: Record<string, Case> = {
   },
 };
 
+/** A stored SAML provider record. */
+const ssoProvider = (id: string, entityId: string, domains: string[]) => ({
+  id,
+  entityId,
+  metadataXml: `<md:EntityDescriptor entityID="${entityId}"/>`,
+  domains,
+  createdAt: at(-10),
+  updatedAt: at(-10),
+});
+
+const SSO_CASES: Record<string, Case> = {
+  "SSO providers: create, read by id / entity id / domain, list, update, delete": async (
+    adapter,
+  ) => {
+    const a = {
+      ...ssoProvider("p1", "https://idp-a", ["a.test", "b.test"]),
+      metadataUrl: "https://idp-a/metadata",
+      attributeMapping: { keys: { email: { name: "mail" }, groups: { name: "g", array: true } } },
+      nameIdFormat: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+    };
+    assertEquals(await adapter.createSsoProvider!(a), "ok");
+    assertEquals(await adapter.createSsoProvider!(ssoProvider("p2", "https://idp-b", [])), "ok");
+    assertEquals(await adapter.getSsoProvider!("p1"), a);
+    assertEquals((await adapter.getSsoProviderByEntityId!("https://idp-b"))?.id, "p2");
+    assertEquals((await adapter.getSsoProviderByDomain!("b.test"))?.id, "p1");
+    assertEquals(await adapter.getSsoProviderByDomain!("c.test"), undefined);
+    assertEquals(await adapter.getSsoProvider!("nope"), undefined);
+    assertEquals((await adapter.listSsoProviders!()).map((p) => p.id), ["p1", "p2"]);
+    const moved = { ...a, domains: ["c.test"], updatedAt: at(0) };
+    assertEquals(await adapter.updateSsoProvider!(moved), "ok");
+    assertEquals(await adapter.getSsoProviderByDomain!("a.test"), undefined);
+    assertEquals((await adapter.getSsoProvider!("p1"))?.domains, ["c.test"]);
+    assertEquals(
+      await adapter.updateSsoProvider!(ssoProvider("nope", "https://x", [])),
+      "not_found",
+    );
+    assertEquals(await adapter.deleteSsoProvider!("p1"), true);
+    assertEquals(await adapter.deleteSsoProvider!("p1"), false);
+    assertEquals(await adapter.getSsoProviderByDomain!("c.test"), undefined);
+    assertEquals((await adapter.listSsoProviders!()).map((p) => p.id), ["p2"]);
+  },
+  "SSO providers: entity ids and domains are unique across providers": async (adapter) => {
+    assertEquals(
+      await adapter.createSsoProvider!(ssoProvider("p1", "https://idp", ["a.test"])),
+      "ok",
+    );
+    assertEquals(
+      await adapter.createSsoProvider!(ssoProvider("p2", "https://idp", ["z.test"])),
+      "entity_id_exists",
+    );
+    assertEquals(
+      await adapter.createSsoProvider!(ssoProvider("p3", "https://other", ["z.test", "a.test"])),
+      "domain_exists",
+    );
+    // Nothing of a refused create is stored.
+    assertEquals(await adapter.getSsoProviderByDomain!("z.test"), undefined);
+    assertEquals(await adapter.createSsoProvider!(ssoProvider("p4", "https://four", [])), "ok");
+    assertEquals(
+      await adapter.updateSsoProvider!(ssoProvider("p4", "https://idp", [])),
+      "entity_id_exists",
+    );
+    assertEquals(
+      await adapter.updateSsoProvider!(ssoProvider("p4", "https://four", ["a.test"])),
+      "domain_exists",
+    );
+    assertEquals((await adapter.getSsoProvider!("p4"))?.domains, []);
+    // A provider keeps (and re-saves) its own domains.
+    assertEquals(
+      await adapter.updateSsoProvider!(ssoProvider("p1", "https://idp", ["a.test", "b.test"])),
+      "ok",
+    );
+  },
+  "SSO sessions: recorded, listed by NameID, dropped with the provider and the user": async (
+    adapter,
+  ) => {
+    await adapter.createSsoProvider!(ssoProvider("p1", "https://idp", []));
+    const user = await adapter.createUser({ email: "s@x.test" });
+    const record = (sessionId: string, nameId: string, expiresAt = at(3600)) => ({
+      sessionId,
+      providerId: "p1",
+      nameId,
+      sessionIndex: `_${sessionId}`,
+      userId: user.id,
+      expiresAt,
+    });
+    await adapter.createSsoSession!(record("f1", "alice"));
+    await adapter.createSsoSession!(record("f2", "alice"));
+    await adapter.createSsoSession!(record("f3", "bob"));
+    await adapter.createSsoSession!(record("f4", "alice", at(-1)));
+    const alice = await adapter.listSsoSessions!("p1", "alice");
+    assertEquals(alice.map((s) => s.sessionId).sort(), ["f1", "f2"]);
+    assertEquals(alice.find((s) => s.sessionId === "f1"), record("f1", "alice"));
+    assertEquals(await adapter.listSsoSessions!("p2", "alice"), []);
+    await adapter.deleteUser!(user.id);
+    assertEquals(await adapter.listSsoSessions!("p1", "alice"), []);
+    await adapter.createSsoSession!(record("f5", "carol"));
+    await adapter.deleteSsoProvider!("p1");
+    assertEquals(await adapter.listSsoSessions!("p1", "carol"), []);
+  },
+  "claimSamlMessageId claims an id once until it expires": async (adapter) => {
+    assertEquals(await adapter.claimSamlMessageId!("m1", at(60)), true);
+    assertEquals(await adapter.claimSamlMessageId!("m1", at(60)), false);
+    assertEquals(await adapter.claimSamlMessageId!("m2", at(60)), true);
+    assertEquals(await adapter.claimSamlMessageId!("old", at(-5)), true);
+    // An expired claim is reclaimed by the next write, so the id can be claimed again.
+    assertEquals(await adapter.claimSamlMessageId!("m3", at(60)), true);
+    assertEquals(await adapter.claimSamlMessageId!("old", at(60)), true);
+    assertEquals(await adapter.claimSamlMessageId!("m1", at(60)), false);
+  },
+};
+
 const LIFECYCLE_CASES: Record<string, Case> = {
   "close() is idempotent": async (adapter) => {
     await adapter.createUser({ email: "ada@x.test" });
@@ -770,8 +881,8 @@ async function runCases(
 /**
  * Run the shared {@link ../../src/server/auth/adapter.ts | AuthAdapter} contract against
  * one implementation: users, accounts, verification tokens, credentials, API tokens, MFA
- * (including the consume-once guarantees), native app sessions + `deleteUser`, the
- * `sessions` store, and `close()`.
+ * (including the consume-once guarantees), native app sessions + `deleteUser`, SAML SSO
+ * providers / sessions / message ids, the `sessions` store, and `close()`.
  *
  * denext's own adapters implement every optional group, so a missing method fails the
  * suite rather than skipping the case.
@@ -794,5 +905,6 @@ export async function adapterContract(
   await runCases(t, make, NATIVE_CASES);
   await runCases(t, make, SESSION_CASES);
   await runCases(t, make, PROFILE_CASES);
+  await runCases(t, make, SSO_CASES);
   await runCases(t, make, LIFECYCLE_CASES);
 }

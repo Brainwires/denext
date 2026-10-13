@@ -109,6 +109,28 @@ CREATE TABLE IF NOT EXISTS ${p}auth_mfa_factors (
   last_step BIGINT, last_challenged_at BIGINT);
 CREATE INDEX IF NOT EXISTS auth_mfa_factors_user ON ${p}auth_mfa_factors (user_id);
 `,
+  }, {
+    // SAML SSO of /auth/v1: stored providers, their domains, the SSO origin of sessions (for
+    // IdP-initiated Single Logout) and the SAML message ids every replica's replay check shares.
+    name: "0004_auth_sso_providers",
+    sql: `
+CREATE TABLE IF NOT EXISTS ${p}auth_sso_providers (
+  id TEXT PRIMARY KEY, entity_id TEXT NOT NULL, metadata_xml TEXT NOT NULL, metadata_url TEXT,
+  attribute_mapping TEXT, name_id_format TEXT, created_at BIGINT, updated_at BIGINT);
+CREATE UNIQUE INDEX IF NOT EXISTS auth_sso_providers_entity ON ${p}auth_sso_providers (entity_id);
+CREATE TABLE IF NOT EXISTS ${p}auth_sso_domains (
+  domain TEXT PRIMARY KEY, provider_id TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS auth_sso_domains_provider ON ${p}auth_sso_domains (provider_id);
+CREATE TABLE IF NOT EXISTS ${p}auth_sso_sessions (
+  session_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, name_id TEXT NOT NULL,
+  session_index TEXT, user_id TEXT NOT NULL, expires_at BIGINT NOT NULL);
+CREATE INDEX IF NOT EXISTS auth_sso_sessions_name ON ${p}auth_sso_sessions (provider_id, name_id);
+CREATE INDEX IF NOT EXISTS auth_sso_sessions_user ON ${p}auth_sso_sessions (user_id);
+CREATE INDEX IF NOT EXISTS auth_sso_sessions_expiry ON ${p}auth_sso_sessions (expires_at);
+CREATE TABLE IF NOT EXISTS ${p}auth_saml_message_ids (
+  id TEXT PRIMARY KEY, expires_at BIGINT NOT NULL);
+CREATE INDEX IF NOT EXISTS auth_saml_message_ids_expiry ON ${p}auth_saml_message_ids (expires_at);
+`,
   }];
 }
 

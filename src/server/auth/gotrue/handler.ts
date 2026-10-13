@@ -22,6 +22,8 @@ import * as adminRoutes from "./routes-admin.ts";
 import * as oauthRoutes from "./routes-oauth.ts";
 import { setGoTrueOAuthCallback } from "../routes-oauth.ts";
 import * as ssoRoutes from "./routes-sso.ts";
+import * as ssoAdminRoutes from "./routes-sso-admin.ts";
+import { slo } from "./routes-slo.ts";
 
 /** How one route is reached. */
 interface Route {
@@ -127,6 +129,38 @@ const ROUTES: Route[] = [
   { method: "POST", pattern: "/sso", handler: ssoRoutes.start, access: "apikey" },
   { method: "GET", pattern: "/sso/saml/metadata", handler: ssoRoutes.metadata, access: "open" },
   { method: "POST", pattern: "/sso/saml/acs", handler: ssoRoutes.acs, access: "open" },
+  { method: "GET", pattern: "/sso/saml/slo", handler: slo, access: "open" },
+  { method: "POST", pattern: "/sso/saml/slo", handler: slo, access: "open" },
+  {
+    method: "GET",
+    pattern: "/admin/sso/providers",
+    handler: ssoAdminRoutes.list,
+    access: "admin",
+  },
+  {
+    method: "POST",
+    pattern: "/admin/sso/providers",
+    handler: ssoAdminRoutes.create,
+    access: "admin",
+  },
+  {
+    method: "GET",
+    pattern: "/admin/sso/providers/:id",
+    handler: ssoAdminRoutes.get,
+    access: "admin",
+  },
+  {
+    method: "PUT",
+    pattern: "/admin/sso/providers/:id",
+    handler: ssoAdminRoutes.update,
+    access: "admin",
+  },
+  {
+    method: "DELETE",
+    pattern: "/admin/sso/providers/:id",
+    handler: ssoAdminRoutes.remove,
+    access: "admin",
+  },
 ];
 
 function health(): Response {

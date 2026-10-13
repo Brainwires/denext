@@ -795,3 +795,78 @@ Deno.test("saml: inMemorySamlReplayCache prunes expired ids", () => {
 Deno.test("saml: an unusable configured certificate is a configuration error", async () => {
   await refused(await signedAssertion(), "bad_certificate", { idp: idpFor("not a certificate") });
 });
+
+// --- c14n tricks ---------------------------------------------------------------------------
+
+Deno.test("saml c14n: equivalent serializations verify; meaning-changing ones are refused", async () => {
+  const s = await signedAssertion();
+  // Attribute order, whitespace inside tags, and redundant re-declarations are c14n no-ops.
+  await verify(
+    s.replace(
+      `<saml:Assertion ID="_assert1" Version="2.0"`,
+      `<saml:Assertion  Version="2.0"\n   ID="_assert1"`,
+    ),
+  );
+  await verify(
+    s.replace(
+      "<saml:Subject>",
+      `<saml:Subject xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns="">`,
+    ),
+  );
+  // An unused namespace or an xml:* attribute OUTSIDE the signed element does not reach it
+  // (exclusive c14n: neither is inherited) …
+  await verify(
+    s.replace("<samlp:Response ", `<samlp:Response xmlns:junk="urn:junk" xml:lang="fr" `),
+  );
+  // … but the same inside it changes the signed bytes.
+  await refused(
+    s.replace(`<saml:Assertion ID`, `<saml:Assertion xml:lang="fr" ID`),
+    "bad_signature",
+  );
+  await refused(
+    s.replace("<saml:Subject>", `<saml:Subject xml:space="preserve">`),
+    "bad_signature",
+  );
+  // Re-binding the prefix the signed content uses to another namespace.
+  await refused(
+    s.replace("<saml:NameID ", `<saml:NameID xmlns:saml="urn:evil" `).replace(
+      "</saml:NameID>",
+      "</saml:NameID>",
+    ),
+    "bad_signature",
+  );
+  // A default namespace that an unprefixed child would pick up.
+  await refused(
+    s.replace("</saml:Subject>", `<Extra xmlns="urn:evil"/></saml:Subject>`),
+    "bad_signature",
+  );
+  // Whitespace inside a value is content.
+  await refused(s.replace(">alice@example.com<", "> alice@example.com<"), "bad_signature");
+});
+
+Deno.test("saml c14n: InclusiveNamespaces pulls an outer binding into the signed bytes", async () => {
+  const typed = responseXml({
+    assertionTail:
+      `<saml:AttributeStatement><saml:Attribute Name="t"><saml:AttributeValue xsi:type="xs:string">v</saml:AttributeValue></saml:Attribute></saml:AttributeStatement>`,
+  }).replace(
+    "<samlp:Response ",
+    `<samlp:Response xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" `,
+  );
+  const signed = await sign(typed, "_assert1", { key: rsa, prefixList: "xs xsi" });
+  await verify(signed);
+  // Re-binding `xs` on the (unsigned) Response changes what xsi:type="xs:string" means: the
+  // PrefixList renders xs at the signed apex, so the digest no longer matches.
+  await refused(
+    signed.replace(
+      `xmlns:xs="http://www.w3.org/2001/XMLSchema"`,
+      `xmlns:xs="urn:evil:types"`,
+    ),
+    "bad_signature",
+  );
+  // A prefix the list names but that is not in scope is simply not rendered.
+  const notInScope = await sign(responseXml(), "_assert1", {
+    key: rsa,
+    prefixList: "nope #default",
+  });
+  await verify(notInScope);
+});

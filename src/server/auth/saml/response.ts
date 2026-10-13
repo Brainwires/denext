@@ -7,24 +7,34 @@
 
 import { decodeBase64 } from "./x509.ts";
 import { directSignature, indexIds, verifyEnvelopedSignature } from "./dsig.ts";
-import { SamlError, type SamlErrorCode } from "./errors.ts";
+import { SamlError } from "./errors.ts";
 import {
   attr,
   childElements,
+  inScopeNamespaces,
   MAX_XML_BYTES,
   parseXml,
   type XmlDocument,
   type XmlElement,
 } from "./xml.ts";
 import type { SamlIdpConfig, SamlSpConfig } from "./config.ts";
+import {
+  checkIssuer,
+  checkWindow,
+  type Clock,
+  malformed,
+  parseTime,
+  refuse,
+  SAML_NS,
+  SAMLP_NS,
+  single,
+  STATUS_SUCCESS,
+  statusOf,
+  textOnly,
+} from "./common.ts";
+import { decryptAssertion, readEncryptedAssertion } from "./xmlenc.ts";
 
-/** The SAML 2.0 assertion namespace. */
-const SAML_NS = "urn:oasis:names:tc:SAML:2.0:assertion";
-/** The SAML 2.0 protocol namespace. */
-const SAMLP_NS = "urn:oasis:names:tc:SAML:2.0:protocol";
-const STATUS_SUCCESS = "urn:oasis:names:tc:SAML:2.0:status:Success";
 const BEARER = "urn:oasis:names:tc:SAML:2.0:cm:bearer";
-const ENTITY_FORMAT = "urn:oasis:names:tc:SAML:2.0:nameid-format:entity";
 
 /**
  * Where assertion IDs are remembered so each is accepted once. Back it with something every
@@ -74,6 +84,8 @@ export interface VerifiedSamlAssertion {
   notOnOrAfter: number;
   /** The InResponseTo the assertion answers, when it answers an AuthnRequest. */
   inResponseTo?: string;
+  /** Whether the Assertion arrived encrypted (an EncryptedAssertion). */
+  encrypted?: boolean;
 }
 
 /** Options for {@link verifySamlResponse}. */
@@ -82,7 +94,10 @@ export interface VerifySamlResponseOptions {
   samlResponse: string;
   /** The trusted IdP: its entity id and signing certificates. */
   idp: SamlIdpConfig;
-  /** This SP: its entity id (the Audience) and ACS URL (Destination / Recipient). */
+  /**
+   * This SP: its entity id (the Audience) and ACS URL (Destination / Recipient), and its
+   * `encryptionKey` when IdPs encrypt assertions to it.
+   */
   sp: SamlSpConfig;
   /**
    * The AuthnRequest ID this Response must answer.
@@ -108,83 +123,6 @@ export interface VerifySamlResponseOptions {
   now?: number;
   /** Clock skew tolerated on every time check, in seconds. Default 60. */
   clockSkewSeconds?: number;
-}
-
-function refuse(code: SamlErrorCode, message: string): never {
-  throw new SamlError(code, message);
-}
-
-function malformed(message: string): never {
-  throw new SamlError("malformed_response", message);
-}
-
-/** The single child `ns:local` of `el`; `required` refuses its absence. */
-function single(el: XmlElement, ns: string, local: string, required: true): XmlElement;
-function single(el: XmlElement, ns: string, local: string, required: false): XmlElement | undefined;
-function single(el: XmlElement, ns: string, local: string, required: boolean) {
-  const found = childElements(el, ns, local);
-  if (found.length > 1) malformed(`<${el.local}> holds ${found.length} <${local}> elements`);
-  if (required && !found.length) malformed(`<${el.local}> is missing <${local}>`);
-  return found[0];
-}
-
-/**
- * The text of an element that must hold only text. A comment or child element inside it
- * is refused: text split around a comment is how NameID truncation attacks
- * (CVE-2017-11427 and kin) smuggle `user@evil.com<!---->.good.com` past a signature.
- */
-function textOnly(el: XmlElement): string {
-  let text = "";
-  for (const c of el.children) {
-    if (c.type !== "text") refuse("unexpected_markup", `markup inside <${el.local}>`);
-    text += c.value;
-  }
-  return text.trim();
-}
-
-const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-]00:00)?$/;
-
-/** An `xs:dateTime` in UTC, as epoch milliseconds. */
-function parseTime(el: XmlElement, name: string): number | undefined {
-  const raw = attr(el, name);
-  if (raw === undefined) return undefined;
-  const m = DATE_TIME.exec(raw.trim());
-  if (!m) malformed(`bad ${name} "${raw}"`);
-  const [year, month, day, hour, minute, second] = m.slice(1, 7).map(Number);
-  const ms = Date.UTC(year, month - 1, day, hour, minute, second);
-  const check = new Date(ms);
-  if (
-    check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day || hour > 23 ||
-    minute > 59 || second > 59
-  ) {
-    malformed(`bad ${name} "${raw}"`);
-  }
-  return ms + (m[7] ? Math.floor(Number(`0${m[7]}`) * 1000) : 0);
-}
-
-function checkIssuer(el: XmlElement | undefined, idp: SamlIdpConfig, where: string): string {
-  if (!el) return "";
-  const format = attr(el, "Format");
-  if (format !== undefined && format !== ENTITY_FORMAT) {
-    refuse("bad_issuer", `${where} Issuer has Format ${format}`);
-  }
-  const issuer = textOnly(el);
-  if (issuer !== idp.entityId) refuse("bad_issuer", `${where} Issuer is not the configured IdP`);
-  return issuer;
-}
-
-interface Clock {
-  now: number;
-  skew: number;
-}
-
-function checkWindow(clock: Clock, notBefore?: number, notOnOrAfter?: number): void {
-  if (notBefore !== undefined && clock.now + clock.skew < notBefore) {
-    refuse("not_yet_valid", "the assertion is not valid yet");
-  }
-  if (notOnOrAfter !== undefined && clock.now - clock.skew >= notOnOrAfter) {
-    refuse("expired", "the assertion has expired");
-  }
 }
 
 interface Confirmation {
@@ -300,29 +238,39 @@ function decodeField(samlResponse: string): Uint8Array {
 
 /** The Response's top-level status must be Success. */
 function checkStatus(response: XmlElement): void {
-  const status = single(response, SAMLP_NS, "Status", true);
-  const code = single(status, SAMLP_NS, "StatusCode", true);
-  if (attr(code, "Value") !== STATUS_SUCCESS) {
-    refuse("status_not_success", `status ${attr(code, "Value") ?? "(none)"}`);
-  }
+  const status = statusOf(response);
+  if (status !== STATUS_SUCCESS) refuse("status_not_success", `status ${status || "(none)"}`);
 }
 
-/** Exactly one plaintext Assertion in the whole document, a direct child of the Response. */
-function soleAssertion(elements: XmlElement[], response: XmlElement): XmlElement {
-  const assertions: XmlElement[] = [];
+/** The one assertion of a Response: plaintext, or an EncryptedAssertion still to open. */
+type Located = { encrypted: false; el: XmlElement } | { encrypted: true; el: XmlElement };
+
+/**
+ * Exactly one Assertion or EncryptedAssertion in the whole document, a direct child of the
+ * Response; never an EncryptedID; an EncryptedAssertion only when a decryption key is set.
+ */
+function soleAssertion(
+  elements: XmlElement[],
+  response: XmlElement,
+  canDecrypt: boolean,
+): Located {
+  const found: Located[] = [];
   for (const el of elements) {
     if (el.ns !== SAML_NS) continue;
-    if (el.local === "EncryptedAssertion" || el.local === "EncryptedID") {
+    if (el.local === "EncryptedID" || (el.local === "EncryptedAssertion" && !canDecrypt)) {
       refuse("encrypted_assertion_unsupported", `<${el.local}> is not supported`);
     }
-    if (el.local === "Assertion") assertions.push(el);
+    if (el.local === "Assertion") found.push({ encrypted: false, el });
+    if (el.local === "EncryptedAssertion") found.push({ encrypted: true, el });
   }
-  if (assertions.length > 1) {
-    refuse("multiple_assertions", `the document holds ${assertions.length} assertions`);
+  if (found.length > 1) {
+    refuse("multiple_assertions", `the document holds ${found.length} assertions`);
   }
-  const [assertion] = assertions;
+  const [assertion] = found;
   if (!assertion) malformed("the Response holds no Assertion");
-  if (assertion.parent !== response) malformed("the Assertion is not a child of the Response");
+  if (assertion.el.parent !== response) {
+    malformed("the Assertion is not a child of the Response");
+  }
   return assertion;
 }
 
@@ -330,13 +278,15 @@ function soleAssertion(elements: XmlElement[], response: XmlElement): XmlElement
  * Verify an HTTP-POST-binding SAML 2.0 Response and return its Assertion's claims.
  *
  * Checks, in order: well-formed strict XML (no DOCTYPE); a samlp:Response root with status
- * Success; no encrypted assertion and exactly one Assertion in the whole document, a direct
- * child of the Response; unique IDs; every signature present on the Response or Assertion
- * verifies with a configured certificate, and at least one is present (the Assertion's when
- * `requireSignedAssertion`); Destination; Issuers; a bearer SubjectConfirmation for this
- * ACS URL; Conditions and AudienceRestriction; the AuthnStatement session window;
- * InResponseTo; and finally the replay cache. Claims are read only from the verified
- * element objects.
+ * Success; no EncryptedID and exactly one Assertion or EncryptedAssertion in the whole document,
+ * a direct child of the Response; unique IDs; the Response signature, when present, BEFORE
+ * anything is decrypted (so it covers the cipher text); an EncryptedAssertion decrypted with
+ * `sp.encryptionKey` and its content parsed by the same strict parser (no DOCTYPE, exactly one
+ * Assertion, IDs unique across the outer document and the decrypted one); every signature
+ * present verifies with a configured certificate and at least one is present (the Assertion's
+ * when `requireSignedAssertion`); Destination; Issuers; a bearer SubjectConfirmation for this
+ * ACS URL; Conditions and AudienceRestriction; the AuthnStatement session window; InResponseTo;
+ * and finally the replay cache. Claims are read only from the verified element objects.
  *
  * @throws {SamlError} With a stable `code` naming the first failed check.
  */
@@ -354,8 +304,8 @@ export async function verifySamlResponse(
   }
   if (attr(response, "Version") !== "2.0") malformed("the Response is not SAML 2.0");
   checkStatus(response);
-  const assertion = soleAssertion(doc.elements, response);
-  const responseSigned = await verifySignatures(doc, response, assertion, options);
+  const located = soleAssertion(doc.elements, response, !!options.sp.encryptionKey);
+  const { assertion, responseSigned } = await verifySignatures(doc, response, located, options);
   checkEnvelope(response, responseSigned, options);
   const claims = readAssertion(assertion, options, clock);
   const inResponseTo = answeredRequest(response, responseSigned, claims.confirmation);
@@ -377,38 +327,115 @@ export async function verifySamlResponse(
   if (claims.nameIdFormat !== undefined) result.nameIdFormat = claims.nameIdFormat;
   if (claims.sessionIndex !== undefined) result.sessionIndex = claims.sessionIndex;
   if (inResponseTo !== undefined) result.inResponseTo = inResponseTo;
+  if (located.encrypted) result.encrypted = true;
   return result;
 }
 
 /**
  * Verify every signature present on the Response and on its Assertion (each must verify),
  * and require at least one — the Assertion's when `requireSignedAssertion`. A Response
- * signature vouches for the Assertion because `soleAssertion` made it a direct child.
+ * signature vouches for the Assertion (or the EncryptedAssertion's cipher text) because
+ * `soleAssertion` made it a direct child; it is verified before anything is decrypted.
  *
- * @returns Whether the Response itself is signed.
+ * @returns The (decrypted, when it was encrypted) Assertion and whether the Response is signed.
  */
 async function verifySignatures(
   doc: XmlDocument,
   response: XmlElement,
-  assertion: XmlElement,
+  located: Located,
   options: VerifySamlResponseOptions,
-): Promise<boolean> {
+): Promise<{ assertion: XmlElement; responseSigned: boolean }> {
   const ids = indexIds(doc);
   const certificates = options.idp.certificates;
   const responseSignature = directSignature(response);
   if (responseSignature) {
     await verifyEnvelopedSignature(ids, response, responseSignature, certificates);
   }
-  const assertionSignature = directSignature(assertion);
-  if (assertionSignature) {
-    await verifyEnvelopedSignature(ids, assertion, assertionSignature, certificates);
-  } else if (options.requireSignedAssertion) {
+  const responseSigned = responseSignature !== undefined;
+  if (located.encrypted) {
+    const assertion = await openEncrypted(doc, located.el, responseSigned, options);
+    return { assertion, responseSigned };
+  }
+  const assertionSigned = await verifyAssertionSignature(ids, located.el, options);
+  requireSignature(responseSigned, assertionSigned, options);
+  return { assertion: located.el, responseSigned };
+}
+
+/** Verify the Assertion's own signature when it has one. @returns Whether it is signed. */
+async function verifyAssertionSignature(
+  ids: Map<string, XmlElement>,
+  assertion: XmlElement,
+  options: VerifySamlResponseOptions,
+): Promise<boolean> {
+  const signature = directSignature(assertion);
+  if (!signature) return false;
+  await verifyEnvelopedSignature(ids, assertion, signature, options.idp.certificates);
+  return true;
+}
+
+/** At least one signature, and the Assertion's when `requireSignedAssertion`. */
+function requireSignature(
+  responseSigned: boolean,
+  assertionSigned: boolean,
+  options: VerifySamlResponseOptions,
+): void {
+  if (!assertionSigned && options.requireSignedAssertion) {
     refuse("unsigned", "the Assertion is not signed");
   }
-  if (!responseSignature && !assertionSignature) {
+  if (!responseSigned && !assertionSigned) {
     refuse("unsigned", "neither Response nor Assertion is signed");
   }
-  return responseSignature !== undefined;
+}
+
+/**
+ * Decrypt an EncryptedAssertion and verify what it holds exactly as a plaintext Assertion.
+ *
+ * When the Response signature does not cover the cipher text (the Response is unsigned), the
+ * cipher text is attacker-malleable (AES-CBC) or attacker-made (anyone can encrypt to the SP's
+ * public key), so every refusal from the key unwrap to the decrypted Assertion's signature is
+ * the one `decryption_failed`: the answer is no decryption, padding or well-formedness oracle.
+ */
+async function openEncrypted(
+  doc: XmlDocument,
+  container: XmlElement,
+  responseSigned: boolean,
+  options: VerifySamlResponseOptions,
+): Promise<XmlElement> {
+  const parts = readEncryptedAssertion(container);
+  const open = async () => {
+    const bytes = await decryptAssertion(parts, options.sp.encryptionKey!);
+    const inner = parseXml(bytes, { inScope: inScopeNamespaces(container) });
+    const assertion = decryptedAssertion(inner);
+    const ids = indexIds({ root: doc.root, elements: [...doc.elements, ...inner.elements] });
+    const signed = await verifyAssertionSignature(ids, assertion, options);
+    requireSignature(responseSigned, signed, options);
+    return assertion;
+  };
+  if (responseSigned) return await open();
+  try {
+    return await open();
+  } catch (error) {
+    if (error instanceof SamlError && error.code === "bad_key") throw error;
+    throw new SamlError("decryption_failed", "the encrypted assertion could not be opened");
+  }
+}
+
+/** The decrypted content must be one saml:Assertion holding no other (encrypted) assertion. */
+function decryptedAssertion(inner: XmlDocument): XmlElement {
+  const root = inner.root;
+  if (root.ns !== SAML_NS || root.local !== "Assertion") {
+    malformed("the EncryptedAssertion does not hold an Assertion");
+  }
+  for (const el of inner.elements) {
+    if (el === root || el.ns !== SAML_NS) continue;
+    if (el.local === "Assertion" || el.local === "EncryptedAssertion") {
+      refuse("multiple_assertions", "the decrypted Assertion holds another assertion");
+    }
+    if (el.local === "EncryptedID") {
+      refuse("encrypted_assertion_unsupported", "<EncryptedID> is not supported");
+    }
+  }
+  return root;
 }
 
 /** Destination (required on a signed Response) and the Response Issuer, when present. */

@@ -18,6 +18,11 @@ import {
   supabaseAuthApp,
   totpCode,
 } from "./_supabase-auth-app.ts";
+import { ACS, requestIdOf, testIdp } from "./_saml-idp.ts";
+import { spKey } from "./_saml-enc-helpers.ts";
+
+const ssoIdp = await testIdp();
+const ssoSigning = await spKey();
 
 type Step = (app: SupabaseAuthApp) => Promise<void>;
 
@@ -527,6 +532,64 @@ const FLOWS: Array<[string, Step, GoTrueOptions?]> = [
     },
   ],
 
+  ["SAML SSO: a stored provider, signInWithSSO, and signOut with Single Logout", async (app) => {
+    // auth-js 2.117.2 has no `auth.admin.sso`: the provider is created over raw HTTP.
+    const created = await app.fetch(`${ORIGIN}/auth/v1/admin/sso/providers`, {
+      method: "POST",
+      headers: {
+        apikey: app.secretKey,
+        authorization: `Bearer ${app.secretKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        type: "saml",
+        metadata_xml: ssoIdp.metadataXml(),
+        domains: ["sso.test"],
+        attribute_mapping: { keys: { name: { name: "displayName" } } },
+      }),
+    });
+    assertEquals(created.status, 201);
+    const client = app.client();
+    const { data, error } = await client.auth.signInWithSSO({
+      domain: "sso.test",
+      options: { redirectTo: `${ORIGIN}/in`, skipBrowserRedirect: true },
+    });
+    assertEquals(error, null);
+    const landing = await app.fetch(ACS, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        SAMLResponse: await ssoIdp.response({
+          inResponseTo: await requestIdOf(data.url),
+          nameId: "sam@sso.test",
+          sessionIndex: "_sso1",
+          attributes: { displayName: ["Sam"] },
+        }),
+        RelayState: new URL(data.url).searchParams.get("RelayState")!,
+      }),
+      redirect: "manual",
+    });
+    const fragment = new URLSearchParams(new URL(landing.headers.get("location")!).hash.slice(1));
+    const set = await client.auth.setSession({
+      access_token: fragment.get("access_token")!,
+      refresh_token: fragment.get("refresh_token")!,
+    });
+    assertEquals(set.error, null);
+    assertEquals(set.data.user.email, "sam@sso.test");
+    assertEquals(set.data.user.user_metadata.name, "Sam");
+    assertEquals(claimsOf(fragment.get("access_token")!).amr, [
+      {
+        method: "sso/saml",
+        timestamp: claimsOf(fragment.get("access_token")!).iat,
+        provider: `sso:${(await created.json()).id}`,
+      },
+    ]);
+    // signOut on an SSO session: the server answers the IdP URL; supabase-js is fine with it.
+    const out = await client.auth.signOut();
+    assertEquals(out.error, null);
+    const after = await client.auth.getUser(fragment.get("access_token")!);
+    assertNotEquals(after.error, null);
+  }, { saml: { signingKey: ssoSigning.pem, signingCertificate: ssoSigning.certificate } }],
   ["custom access token hook and captcha", async (app) => {
     await app.admin().auth.admin.createUser({
       email: "hook@example.com",

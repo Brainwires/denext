@@ -14,6 +14,8 @@ import type {
   NativeSessionRecord,
   PasskeyChallengeRecord,
   PasskeyRecord,
+  SsoProviderRecord,
+  SsoSessionRecord,
   VerificationTokenRecord,
 } from "./adapter.ts";
 import { toNumber } from "../postgres.ts";
@@ -358,4 +360,46 @@ export function factorPatchColumns(patch: object): Array<[column: string, value:
     if (value !== undefined) out.push([column, value]);
   }
   return out;
+}
+
+/** An SSO provider row (its domains live in `auth_sso_domains`). */
+export const SSO_PROVIDER_MAP: FieldMap<SsoProviderRecord> = {
+  id: ["id", TEXT],
+  entityId: ["entity_id", TEXT],
+  metadataXml: ["metadata_xml", TEXT],
+  metadataUrl: ["metadata_url", TEXT],
+  attributeMapping: ["attribute_mapping", OBJECT],
+  nameIdFormat: ["name_id_format", TEXT],
+  createdAt: ["created_at", INT],
+  updatedAt: ["updated_at", INT],
+};
+
+/** An SSO session row. */
+export const SSO_SESSION_MAP: FieldMap<SsoSessionRecord> = {
+  sessionId: ["session_id", TEXT],
+  providerId: ["provider_id", TEXT],
+  nameId: ["name_id", TEXT],
+  sessionIndex: ["session_index", TEXT],
+  userId: ["user_id", TEXT],
+  expiresAt: ["expires_at", INT],
+};
+
+/**
+ * Attach each provider's domains (rows of `auth_sso_domains`, sorted) to the provider rows.
+ *
+ * @param providers The provider rows, as records without domains.
+ * @param domains Every `{ domain, provider_id }` row that may belong to them.
+ * @returns The full records.
+ */
+export function withDomains(
+  providers: Omit<SsoProviderRecord, "domains">[],
+  domains: Record<string, unknown>[],
+): SsoProviderRecord[] {
+  const byProvider = new Map<string, string[]>();
+  for (const row of domains) {
+    const list = byProvider.get(String(row.provider_id)) ?? [];
+    list.push(String(row.domain));
+    byProvider.set(String(row.provider_id), list);
+  }
+  return providers.map((p) => ({ ...p, domains: (byProvider.get(p.id) ?? []).sort() }));
 }

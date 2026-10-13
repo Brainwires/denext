@@ -1805,21 +1805,102 @@ The `/auth/v1` options (`backend({ supabase: { auth } })`):
 | `requireReauthentication`          | `false`           | A password change needs a `reauthenticate()` nonce                        |
 | `manualLinking`                    | `true`            | Allow `linkIdentity()`                                                    |
 | `mfa`                              | TOTP              | `{ phone: true }` adds SMS factors; `maxFactors` (10)                     |
-| `saml`                             | none              | `{ providers: [{ id, domains, metadataXml, attributeMapping }] }`         |
+| `saml`                             | none              | SAML SSO: `providers`, `entityId`, `signingKey`, `encryptionKey` (below)  |
 
 ### SAML single sign-on
 
-`saml.providers` lists identity providers by their metadata XML;
-`signInWithSSO({ domain })` or `({ providerId })` starts an SP-initiated login, the IdP posts to
-`/auth/v1/sso/saml/acs`, and this service provider's metadata is at `/auth/v1/sso/saml/metadata`
-(the entity id unless `saml.entityId` says otherwise). Responses are verified by denext's own SAML
-code: a strict XML parser (no DOCTYPE or entities), exclusive c14n, RSA-SHA256/512 or ECDSA-SHA256
-signatures only, keys only from the metadata's certificates, claims read only from the element
-whose signature verified (signature-wrapping, duplicate IDs, a second assertion, comment
-injection are refused), audience, recipient, destination, validity window and `InResponseTo`
-checked. IdP-initiated logins are refused: the `RelayState` names a single-use record of the
-request being answered. A user's SSO identity is `sso:<id>`; an existing account is reused only on
-one of the provider's `domains`.
+With `saml` set, `signInWithSSO({ domain })` or `({ providerId })` starts an SP-initiated login,
+the IdP posts to `/auth/v1/sso/saml/acs`, and this service provider's metadata is at
+`/auth/v1/sso/saml/metadata` (the entity id unless `saml.entityId` says otherwise). Identity
+providers come from two places that work side by side: `saml.providers` in config
+(`[{ id, domains, metadataXml, attributeMapping }]`, read-only), and the providers stored through
+the SSO admin API below. An entity id, and every domain, belongs to one provider only.
+
+```ts
+backend({
+  supabase: {
+    auth: {
+      saml: {
+        providers: [{ id: "acme", domains: ["acme.com"], metadataXml: ACME_METADATA }],
+        // Optional: sign AuthnRequests and turn Single Logout on (RSA, RSA-SHA256).
+        signingKey: Deno.env.get("SAML_SP_SIGNING_KEY"), // PKCS #8 PEM, or an RSA private JWK
+        signingCertificate: Deno.env.get("SAML_SP_SIGNING_CERT"), // its X.509 certificate (PEM)
+        // Optional: let IdPs encrypt assertions to this SP.
+        encryptionKey: Deno.env.get("SAML_SP_ENCRYPTION_KEY"),
+        encryptionCertificate: Deno.env.get("SAML_SP_ENCRYPTION_CERT"),
+      },
+    },
+  },
+});
+```
+
+Each key is checked against its certificate on first use, and both certificates are published in
+the SP metadata (`use="signing"` / `use="encryption"`, with the encryption algorithms accepted).
+Generate a pair with `openssl req -x509 -newkey rsa:2048 -nodes -keyout sp.key -out sp.crt`; keep
+the keys server-side (they are secrets) and give IdP administrators the metadata URL.
+
+Responses are verified by denext's own SAML code: a strict XML parser (no DOCTYPE or entities),
+exclusive c14n, RSA-SHA256/512 or ECDSA-SHA256 signatures only, keys only from the metadata's
+certificates, claims read only from the element whose signature verified (signature-wrapping,
+duplicate IDs, a second assertion, comment injection are refused), audience, recipient,
+destination, validity window and `InResponseTo` checked, and each assertion ID accepted once
+(remembered in the adapter, so every replica shares it). IdP-initiated logins are refused: the
+`RelayState` names a single-use record of the request being answered. A user's SSO identity is
+`sso:<id>`; an existing account is reused only on one of the provider's `domains`.
+
+**The SSO admin API** (GoTrue's `/admin/sso/providers`; service role only, so server-side):
+
+| Request                           | Body / answer                                                                                      |
+| --------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `GET /admin/sso/providers`        | `{ items: SSOProvider[] }`                                                                         |
+| `POST /admin/sso/providers`       | `{ type: "saml", metadata_xml \| metadata_url, domains, attribute_mapping, name_id_format }` → 201 |
+| `GET /admin/sso/providers/:id`    | the `SSOProvider`                                                                                  |
+| `PUT /admin/sso/providers/:id`    | any of the create fields; the metadata must keep its entity id                                     |
+| `DELETE /admin/sso/providers/:id` | the removed `SSOProvider` (its domains and session records go with it)                             |
+
+An `SSOProvider` is `{ id, saml: { entity_id, metadata_xml, metadata_url?, attribute_mapping,
+name_id_format? }, domains: [{ domain }], created_at, updated_at }`. `attribute_mapping` is
+GoTrue's `{ keys: { field: { name | names, default?, array? } } }`: the first named attribute
+present (every value with `array`), else `default`, lands in `user_metadata.field`. Errors are
+GoTrue's: `saml_idp_already_exists` (422), `sso_domain_already_exists`, `saml_entity_id_mismatch`,
+`saml_metadata_fetch_failed`, `validation_failed`, `sso_provider_not_found` (404). A
+`metadata_url` must be HTTPS; it is fetched with `safeFetch` pinned to that host (private
+addresses refused, 256 KiB, 10 s), and fetched again when the stored copy is a day old — a
+failed fetch, or a document for another entity id, keeps the stored copy. (`http://localhost` is
+accepted only under `dangerouslyAllowInsecureProviders`.) The adapter's SSO group stores them:
+`inMemoryAuthAdapter`, `sqliteAuthAdapter` and `postgresAuthAdapter` (migration
+`0004_auth_sso_providers`) implement it. supabase-js 2.117 has no `auth.admin.sso` client; call
+the endpoints with the secret key.
+
+**Single Logout** is on when `saml.signingKey` is set, and the SP metadata then advertises
+`/auth/v1/sso/saml/slo` (HTTP-Redirect and HTTP-POST):
+
+- _SP-initiated._ `POST /logout` (supabase-js `signOut()`) for a session a SAML assertion started
+  ends it at once, as always, and answers `200 { url }` instead of `204`: the IdP's
+  SingleLogoutService URL with a LogoutRequest signed over the HTTP-Redirect binding for that
+  session's NameID and SessionIndex. Send the browser there (`?redirect_to=` on `/logout` names
+  where it lands afterwards); the IdP's signed LogoutResponse comes back to `/sso/saml/slo` and is
+  checked against the request it answers (single-use `RelayState`, `InResponseTo`). A
+  `scope=others` logout, a non-SAML session, or an IdP without a SingleLogoutService stays `204`.
+- _IdP-initiated._ A LogoutRequest at `/sso/saml/slo` (HTTP-Redirect: the query signature over
+  `SAMLRequest`, `RelayState`, `SigAlg` as received; HTTP-POST: an enveloped XML signature through
+  the same strict verifier as a Response) must be signed by the IdP, name this SP's SLO URL as its
+  Destination, be fresh (`IssueInstant` within five minutes, `NotOnOrAfter`) and new (its ID is
+  claimed once). It ends every session that NameID started — only those whose SessionIndex it
+  names, when it names any — and is answered with a signed LogoutResponse.
+
+**Encrypted assertions.** With `saml.encryptionKey` an `EncryptedAssertion` is accepted: key
+transport RSA-OAEP (`xmlenc#rsa-oaep-mgf1p`, `xmlenc11#rsa-oaep` with SHA-1 or SHA-256), content
+AES-128/256-GCM (`xmlenc11`) or AES-128/256-CBC (`xmlenc`); anything else is
+`unsupported_algorithm`. A Response signature is verified before anything is decrypted, so it
+covers the cipher text; the decrypted Assertion then goes through exactly the checks a plaintext
+one does (the strict parser, one assertion, IDs unique across the whole document, its own
+signature when it has one). Without an encryption key an `EncryptedAssertion` is refused
+(`encrypted_assertion_unsupported`), as is an `EncryptedID` always.
+
+`denext/server` exports the primitives underneath for your own endpoints: `verifySamlResponse`
+(`sp.encryptionKey`), `buildAuthnRequest` (signed with `sp.signingKey`), `buildLogoutRequest`,
+`buildLogoutResponse`, `peekLogoutMessage`, `verifyLogoutRequest` and `verifyLogoutResponse`.
 
 ### Threat notes
 
@@ -1846,6 +1927,21 @@ one of the provider's `domains`.
   falls back to the site URL.
 - **MFA.** Factor secrets are sealed under the auth secret; a challenge is single-use and lives five
   minutes; a TOTP step is never accepted twice; removing a verified factor needs `aal2`.
+- **SAML encryption is not integrity.** Anyone holding the SP's public encryption certificate can
+  encrypt an assertion to it, so a decrypted Assertion is trusted only through a signature: the
+  Response's (checked over the cipher text before decrypting) or the Assertion's own. AES-CBC is
+  malleable; when no Response signature covers the cipher text, every refusal from the key unwrap
+  to the decrypted Assertion's signature is the one `decryption_failed` (and the ACS answers every
+  refusal with the same redirect), so a forged cipher text learns nothing about padding or
+  well-formedness. Prefer IdPs that sign the Response, and AES-GCM.
+- **SAML keys and Single Logout.** The SP signing and encryption keys are secrets; rotate one by
+  publishing the new certificate in the metadata first. Single Logout ends denext's sessions
+  immediately and only asks the IdP to end its own — a user who never reaches the IdP's SLO page
+  keeps their IdP session. A logout message is refused unless signed by the IdP's metadata
+  certificate, and a replayed one is refused; its ID, like an assertion ID, is remembered in the
+  adapter so every replica shares the check.
+- **SAML metadata URLs** are fetched SSRF-safely (HTTPS, host-pinned, private addresses refused);
+  the metadata's own signature is not checked, so register only URLs of the IdP you trust.
 
 ## Security notes
 

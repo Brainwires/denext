@@ -58,6 +58,7 @@ import {
   VERIFY_KINDS,
 } from "./otp.ts";
 import { createFlowCode, readChallenge, redeemFlowCode } from "./pkce.ts";
+import { spLogoutUrl } from "./routes-slo.ts";
 import {
   type AmrEntry,
   familiesOf,
@@ -94,7 +95,7 @@ export function settings(ctx: GoTrueContext): Response {
     email: true,
     phone: canSendSms(ctx),
     anonymous_users: ctx.options.anonymousUsers === true,
-    saml: !!ctx.options.saml?.providers.length,
+    saml: !!ctx.options.saml,
   };
   for (const provider of ctx.config.providers) {
     if (isOAuthProvider(provider)) external[provider.id] = true;
@@ -106,7 +107,7 @@ export function settings(ctx: GoTrueContext): Response {
     phone_autoconfirm: ctx.options.phoneAutoconfirm === true,
     sms_provider: canSendSms(ctx) ? "custom" : "",
     mfa_enabled: true,
-    saml_enabled: !!ctx.options.saml?.providers.length,
+    saml_enabled: !!ctx.options.saml,
   });
 }
 
@@ -321,7 +322,7 @@ async function pkceGrant(
     }
     await linkIdentity(ctx, user, state.link);
   }
-  const session = await startSession(ctx.session, user, state.amr);
+  const session = await startSession(ctx.session, user, state.amr, state.sso);
   return {
     ...session,
     ...(state.providerToken ? { provider_token: state.providerToken } : {}),
@@ -750,11 +751,18 @@ export async function recover(ctx: GoTrueContext): Promise<Response> {
 
 // ── logout ───────────────────────────────────────────────────────────────────
 
-/** `POST /logout?scope=global|local|others`. */
+/**
+ * `POST /logout?scope=global|local|others`. A `local` / `global` logout of a session a SAML
+ * assertion started answers `200 { url }` when SAML Single Logout is on: the session is
+ * already ended, and the URL tells the IdP (see `routes-slo.ts`).
+ */
 export async function logout(ctx: GoTrueContext): Promise<Response> {
   const caller = await requireUser(ctx);
   const scope = ctx.url.searchParams.get("scope") ?? "local";
   const families = familiesOf(ctx.config);
+  const slo = scope !== "others" && caller.sessionId
+    ? await spLogoutUrl(ctx, caller.sessionId)
+    : undefined;
   if (scope === "global") {
     await families.revokeNativeSessionsByUser(caller.user.id);
   } else if (scope === "others") {
@@ -764,5 +772,6 @@ export async function logout(ctx: GoTrueContext): Promise<Response> {
   } else {
     throw fail.validation("Unsupported logout scope");
   }
+  if (slo) return ok({ url: slo });
   return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
 }

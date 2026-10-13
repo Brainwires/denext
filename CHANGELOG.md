@@ -31,6 +31,31 @@ and this project adheres to
   `requireReauthentication`, `manualLinking`, `mfa`, `saml`, `idTokenProviders`. Errors are
   GoTrue's `{ code, error_code, msg }`. Tested with `@supabase/supabase-js` on the in-memory
   adapter and on Postgres.
+- **SAML SSO: stored providers, Single Logout and encrypted assertions for `/auth/v1`.** The SSO
+  admin API (`GET/POST /auth/v1/admin/sso/providers`, `GET/PUT/DELETE …/:id`, service role only,
+  GoTrue's `SSOProvider` shape and error codes) stores identity providers next to the
+  config-declared `saml.providers` — by `metadata_xml` or an HTTPS `metadata_url` (fetched with
+  `safeFetch` pinned to its host, refreshed when a day old), with GoTrue's `attribute_mapping` and
+  `name_id_format`; entity ids and domains are unique across all providers. `saml.signingKey` +
+  `signingCertificate` (PKCS #8 PEM or RSA JWK, RSA-SHA256) sign AuthnRequests and turn on Single
+  Logout: `POST /logout` for a SAML session answers `200 { url }` with a signed LogoutRequest for
+  the IdP, and `/auth/v1/sso/saml/slo` verifies the IdP's LogoutResponse, or an IdP-initiated
+  LogoutRequest (HTTP-Redirect query signature or HTTP-POST XML signature; Destination, Issuer,
+  freshness, InResponseTo, replay) that ends the sessions its NameID / SessionIndex name and is
+  answered with a signed LogoutResponse. `saml.encryptionKey` + `encryptionCertificate` accept
+  `EncryptedAssertion`s (RSA-OAEP with SHA-1 / SHA-256; AES-128/256-GCM or -CBC): a Response
+  signature is verified before decrypting, the decrypted Assertion is held to every plaintext rule,
+  and without a signature over the cipher text every refusal is the one `decryption_failed` (no
+  padding or format oracle). The SP metadata publishes both certificates and the SLO endpoint.
+  Assertion and logout message IDs are now remembered in the adapter, shared by every replica. New
+  adapter group `createSsoProvider` / `updateSsoProvider` / `getSsoProvider` /
+  `getSsoProviderByEntityId` / `getSsoProviderByDomain` / `listSsoProviders` /
+  `deleteSsoProvider` / `createSsoSession` / `listSsoSessions` / `claimSamlMessageId`, in the
+  in-memory, SQLite and Postgres adapters (Postgres migration `0004_auth_sso_providers`). The
+  primitives gain `buildLogoutRequest`, `buildLogoutResponse`, `peekLogoutMessage`,
+  `verifyLogoutRequest`, `verifyLogoutResponse`, `SamlSpConfig.signingKey` / `encryptionKey` and
+  the codes `decryption_failed`, `bad_key` and `bad_binding`. Golden encrypted, signed and logout
+  fixtures come from xmlsec1 and `openssl`.
 - **Auth adapters keep Supabase's user fields.** `AdapterUser` gains `phone`, `phoneVerified`,
   `userMetadata`, `appMetadata`, `isAnonymous`, `createdAt`, `updatedAt`, `lastSignInAt` and
   `bannedUntil`; `AdapterAccount` gains `identityId`, `identityData`, `email` and timestamps; new

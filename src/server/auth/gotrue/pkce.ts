@@ -13,7 +13,7 @@ import { base64UrlEncode } from "../oauth.ts";
 import { nativeAdapterOf } from "../native.ts";
 import type { GoTrueContext } from "./context.ts";
 import { fail, GoTrueError } from "./errors.ts";
-import type { AmrEntry } from "./session.ts";
+import type { AmrEntry, SsoSessionInfo } from "./session.ts";
 
 /** How long an auth code stays redeemable, seconds. */
 const CODE_TTL = 300;
@@ -40,6 +40,8 @@ export interface FlowState {
     email?: string;
     type?: "oauth" | "oidc";
   };
+  /** A SAML sign-in: its origin, kept with the session for Single Logout. */
+  sso?: SsoSessionInfo;
 }
 
 /**

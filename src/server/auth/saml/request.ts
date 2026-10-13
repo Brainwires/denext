@@ -4,12 +4,13 @@
  * @module
  */
 
+import { redirectUrl } from "./binding.ts";
 import type { SamlIdpConfig, SamlSpConfig } from "./config.ts";
 import { DEFAULT_NAME_ID_FORMAT, escapeXml } from "./metadata.ts";
 
 /** Options for {@link buildAuthnRequest}. */
 export interface BuildAuthnRequestOptions {
-  /** This SP. */
+  /** This SP (with a `signingKey`, the request is signed over the binding, RSA-SHA256). */
   sp: SamlSpConfig;
   /** The IdP the request goes to (its `ssoUrl`). */
   idp: SamlIdpConfig;
@@ -23,16 +24,10 @@ export interface BuildAuthnRequestOptions {
   forceAuthn?: boolean;
 }
 
-/** DEFLATE (raw, no zlib header) — an AuthnRequest compresses to well under 64 KiB. */
-async function deflateRaw(text: string): Promise<Uint8Array> {
-  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("deflate-raw"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
 /**
  * Build an AuthnRequest and the IdP URL that carries it (HTTP-Redirect binding: the XML is
- * DEFLATE-compressed, base64-encoded and URL-encoded into `SAMLRequest`). The request is
- * unsigned and names this SP's HTTP-POST ACS URL. Remember the returned `id` (with the
+ * DEFLATE-compressed, base64-encoded and URL-encoded into `SAMLRequest`). The request names
+ * this SP's HTTP-POST ACS URL, and is signed (`SigAlg` + `Signature`) when `sp.signingKey` is set. Remember the returned `id` (with the
  * RelayState) and pass it as `expectedInResponseTo` when the Response arrives.
  *
  * @returns `id`, the request ID (`_` + 40 hex digits), and `url`, where to redirect the browser.
@@ -54,8 +49,11 @@ export async function buildAuthnRequest(
     `><saml:Issuer>${escapeXml(sp.entityId)}</saml:Issuer>` +
     `<samlp:NameIDPolicy Format="${escapeXml(format)}" AllowCreate="true"/>` +
     `</samlp:AuthnRequest>`;
-  const url = new URL(idp.ssoUrl);
-  url.searchParams.append("SAMLRequest", btoa(String.fromCharCode(...await deflateRaw(xml))));
-  if (options.relayState !== undefined) url.searchParams.append("RelayState", options.relayState);
-  return { id, url: url.toString() };
+  const url = await redirectUrl(idp.ssoUrl, {
+    param: "SAMLRequest",
+    xml,
+    relayState: options.relayState,
+    signingKey: sp.signingKey,
+  });
+  return { id, url };
 }
