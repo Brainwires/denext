@@ -686,6 +686,17 @@ a 3.x app to 4.0 involves. This section is the record.
 
 ### Security
 
+- **A forged `Host` can no longer reach a cached page's metadata URLs (web cache poisoning).**
+  Without `canonicalOrigin`, the `og:image` an `opengraph-image` file adds and the automatic
+  hreflang / canonical links took their origin from the request's `Host` (or a trusted
+  `X-Forwarded-Host`). Absolute metadata URLs now resolve against `canonicalOrigin` (or
+  `DENEXT_CANONICAL_ORIGIN`), else the page's `metadataBase`, as in Next.js. Without either,
+  a page the ISR cache may store (`revalidate`, `force-static`) keeps `og:image` relative and
+  omits hreflang / canonical, where before the page was turned dynamic. A per-request page
+  still uses the request's origin and is sent `no-store`. A `generateSitemaps` sitemap index
+  built on a `Host`-derived origin is now sent `private, no-store` too. Production logs one
+  warning when no stable origin is configured.
+
 Hardening of the new `/auth/v1` API (unreleased) and the user store it shares with `denextAuth()`:
 
 - **No password set before an address was proven survives its first proof.** A magic link, an

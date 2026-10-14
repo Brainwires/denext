@@ -421,6 +421,15 @@ A client can spoof `Host`, so for a fixed public origin set `canonicalOrigin` â€
 it overrides the header and is the robust choice for canonical and `og:image`
 URLs.
 
+Generated metadata URLs (the `og:image` an `opengraph-image` file adds, automatic hreflang and
+canonical links) go further: they resolve against `canonicalOrigin`, else the page's
+`metadataBase`, and never take the request's origin in a page that may be cached. A client
+controls `Host`, so an origin read from it and stored by the ISR cache or a CDN would be served
+to every later visitor (web cache poisoning). Without either setting, a cacheable page
+(`revalidate`, `force-static`) keeps `og:image` relative and omits hreflang / canonical; a
+per-request page uses the request's origin and is sent `no-store`, as is a `generateSitemaps`
+sitemap index built on it. Production logs one warning when neither is set.
+
 ### Per-address limits behind a proxy
 
 Every per-address limit â€” `rateLimit()`'s default key, `denextAuth`'s per-IP

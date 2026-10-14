@@ -1933,7 +1933,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `serializeSitemap(entries: Sitemap): string` — Serialize sitemap entries to an XML urlset document.
 - `serializeSitemapIndex(items: SitemapIndexEntry[]): string` — Serialize a sitemap index (<sitemapindex>) pointing at child sitemaps.
 - `serve(options: ServeOptions): Deno.HttpServer` — Create an app and serve it over HTTP via Deno.serve.
-- `serveMetadataFile(manifest: RouteManifest, pathname: string, load: ModuleLoader, origin?: string): Promise<Response | null>` — Serve a metadata file if pathname matches one of the conventions and the corresponding file exists in the manifest; otherwise return null.
+- `serveMetadataFile(manifest: RouteManifest, pathname: string, load: ModuleLoader, origin?: string, originFromRequest?: boolean): Promise<Response | null>` — Serve a metadata file if pathname matches one of the conventions and the corresponding file exists in the manifest; otherwise return null.
 - `interface ServeOptions` — Options for serve: app configuration plus HTTP listen settings.
 - `serverAction<A, R>(id: string, handler: (...args: A) => R | Promise<R>): ServerActionRef<A, R>` — Define a server action. Give it a **stable, explicit id** (unique per app) so the client stub and the server handler agree across the boundary.
 - `interface ServerActionRef<A, R>` — A reference to a server action: callable, and tagged with its stable id.

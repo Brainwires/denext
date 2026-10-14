@@ -21,7 +21,7 @@ import {
 } from "./document.ts";
 import { type CspSetting, resolveStreamingCsp } from "./csp.ts";
 import { resumePageHolesFlightStream, resumePageHolesStream } from "./render-page.ts";
-import { absoluteUrl } from "./absolute-url.ts";
+import { absoluteUrl, stableBaseUrl, warnNoStableOrigin } from "./absolute-url.ts";
 import { augmentMetadataConventions } from "./augment-metadata.ts";
 import { publicEnv, restrictPublicEnv } from "../runtime/public-env.ts";
 import { originOptions, reportRequestError } from "./app-config.ts";
@@ -146,21 +146,43 @@ export async function reportBoundaryErrors(
  * Auto-populate og:image (from a dynamic opengraph-image route) + icon / apple-icon /
  * twitter-image links from the file conventions when the page didn't declare its own.
  * Applied to whichever path serves the page (buffered, streamed shell, or Flight shell)
- * so the metadata is identical regardless of how the document is delivered. The
- * og:image branch may mark the render dynamic: a Host-derived URL is not part of the
- * cache key, whereas a pinned canonical origin is stable and stays cacheable.
+ * so the metadata is identical regardless of how the document is delivered.
+ *
+ * SECURITY (cache poisoning): absolute URLs resolve against a STABLE base first —
+ * `canonicalOrigin`, else the page's `metadataBase` (Next.js parity). Without one, a
+ * document a shared cache may store (`sharedCache`: an ISR / `force-static` render that
+ * has not read a dynamic API) gets NO request-derived origin: og:image stays relative and
+ * hreflang / canonical are skipped, with a one-time production warning. Only a per-request
+ * document derives the origin from the request (`Host`, or `X-Forwarded-Host` under
+ * `trustForwardedHeaders`), and doing so marks the render dynamic → `no-store`.
+ *
+ * @param pr The page request.
+ * @param metadata The rendered page's metadata (mutated).
+ * @param sharedCache Whether this document may be stored in the ISR cache / sent public.
  */
-export function augmentPageMetadata(pr: PageRequest, metadata: Metadata): void {
+export function augmentPageMetadata(
+  pr: PageRequest,
+  metadata: Metadata,
+  sharedCache: boolean,
+): void {
   const { config } = pr.state.app;
   const { request, ctx } = pr.state;
+  let hostDerived = false;
   augmentMetadataConventions(metadata, {
     manifest: pr.manifest,
     route: pr.page.route,
     i18n: config.i18n,
     localeInfo: pr.localeInfo,
-    absolutize: (path) => absoluteUrl(request, path, originOptions(config)),
-    onHostDerived: config.canonicalOrigin ? undefined : () => {
-      ctx.usedDynamicApi = true;
+    absolutize: (path) => {
+      const stable = stableBaseUrl(path, config.canonicalOrigin, metadata.metadataBase);
+      if (stable) return stable;
+      warnNoStableOrigin("page metadata (og:image / hreflang / canonical)");
+      if (sharedCache && !ctx.usedDynamicApi) return null;
+      hostDerived = true;
+      return absoluteUrl(request, path, originOptions(config));
+    },
+    onHostDerived: () => {
+      if (hostDerived) ctx.usedDynamicApi = true;
     },
   });
 }

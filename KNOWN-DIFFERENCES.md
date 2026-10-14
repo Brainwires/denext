@@ -277,6 +277,13 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
 - **Strict CSP by default** blocks external `<script>`/stylesheet/`<img>` until
   opted in per route (`csp: "strict" | "off" | {…}`; a route's `csp` export
   overrides). Applies to buffered **and** streamed/PPR responses.
+- **Metadata URLs without `metadataBase` are never built on `localhost` or the `Host`
+  header in a cacheable page.** Next.js resolves file-convention metadata (`opengraph-image`'s
+  `og:image`) against `metadataBase` and falls back to `http://localhost:<port>` (or
+  `VERCEL_URL`). denext uses `canonicalOrigin`, then `metadataBase`; with neither, a page that
+  may be cached (ISR, `force-static`, a static export) keeps `og:image` relative and omits
+  hreflang / canonical, and a per-request page uses the request's origin and is sent `no-store`.
+  Set `canonicalOrigin` or `metadataBase` for absolute URLs everywhere.
 - **HSTS is host-only by default** (no `includeSubDomains`/`preload`) so it
   can't brick non-HTTPS sibling subdomains. Strengthen via `hsts`, or
   `hsts: false`.

@@ -295,6 +295,7 @@ async function serveMetadata(
     state.pathname,
     config.load,
     requestOrigin(state.request, originOptions(config)),
+    !config.canonicalOrigin, // Host-derived ⇒ the sitemap index is sent no-store
   );
   return metaFile ? finalize(state, metaFile) : null;
 }

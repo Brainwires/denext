@@ -12481,7 +12481,7 @@
           "name": "serveMetadataFile",
           "slug": "serveMetadataFile",
           "kind": "function",
-          "signature": "serveMetadataFile(manifest: RouteManifest, pathname: string, load: ModuleLoader, origin?: string): Promise<Response | null>",
+          "signature": "serveMetadataFile(manifest: RouteManifest, pathname: string, load: ModuleLoader, origin?: string, originFromRequest?: boolean): Promise<Response | null>",
           "doc": "Serve a metadata file if pathname matches one of the conventions and the corresponding file exists in the manifest; otherwise return null.",
           "docFull": "Serve a metadata file if `pathname` matches one of the conventions and the\ncorresponding file exists in the manifest; otherwise return null.",
           "params": [
@@ -12496,6 +12496,14 @@
             {
               "name": "load",
               "doc": "The module loader (for the code-based conventions)."
+            },
+            {
+              "name": "origin",
+              "doc": "The origin a sitemap index's absolute <loc>s are built on."
+            },
+            {
+              "name": "originFromRequest",
+              "doc": "origin came from the request's Host / forwarded headers (no canonicalOrigin): a response built on it is per-request, so it is sent no-store and never reaches a shared cache (web cache poisoning)."
             }
           ],
           "returns": "A Response, or null when this request is not a metadata file.",
