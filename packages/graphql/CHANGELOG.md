@@ -31,6 +31,15 @@ Requires the denext release after 4.0.0 (`tapChannelAuthorized` in `@denext/dene
   `revoke(key, { peerId })`. `websocket: { connectionInitTimeoutMs, maxSubscriptions }` (3000 ms;
   32 operations per socket); `websocket: false` turns it off. Messages over `maxBodyBytes` close
   the socket.
+- **Connection caps for both subscription transports** (`maxConnections`, `maxConnectionsPerIp`),
+  mirroring the Live socket's: every open WebSocket and every streamed (SSE / multipart) response
+  holds a slot, refused with `429` before the upgrade or the response past a cap. The per-address
+  cap keys on `clientIpForLimits({ bucket: true })` as Live does (a trusted proxy's hop or the
+  `rateLimitHeader` address, an IPv6 client's /64; a loopback/private peer behind an untrusted
+  proxy counts only against the total unless `rateLimitLocalAddresses`). Defaults: the app's
+  `live.limits.maxConnections` / `maxConnectionsPerIp`, else Live's 10 000 / 64. A slot is
+  released however the connection ends — a client close or disconnect, a protocol error, the
+  `connection_init` timeout, a completed or failed stream, a schema reload ending it.
 - **The schema reloads in `denext dev`.** `schema` takes the module path that exports it
   (`schema: "./app/graphql/schema.ts"`; its `schema` or default export, a schema or a factory). An
   edit to a file under that module's directory (or the `watch` globs) loads the schema again for

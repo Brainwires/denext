@@ -17,7 +17,12 @@ import {
   inMemoryChannelTransport,
   setChannelTransport,
 } from "../src/runtime/channel.ts";
-import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import {
+  createRequestContext,
+  type RequestContextTrust,
+  runWithContext,
+} from "../src/server/request-context.ts";
+import { setRemoteAddr } from "../src/server/remote-addr.ts";
 import { createSchema, fromChannel, graphql } from "../packages/graphql/mod.ts";
 
 type Msg = { text: string };
@@ -82,6 +87,8 @@ async function serve(
   options: Partial<Parameters<typeof graphql>[0]> = {},
   mode: "dev" | "prod" = "prod",
   load: ModuleLoader = noopLoad,
+  trust: RequestContextTrust = {},
+  appConfig: Partial<DenextConfig> = {},
 ) {
   resetPlugins();
   setChannelTransport(inMemoryChannelTransport());
@@ -98,15 +105,21 @@ async function serve(
           ...options,
         }),
       ],
+      ...appConfig,
     } as DenextConfig,
     mode,
     load,
   });
   const handle = getPluginRequestHandler()!;
+  // As denext's own server loop: the socket peer recorded, the app's proxy trust / limit policy.
+  const inContext = (req: Request, peer: string) => {
+    setRemoteAddr(req, { transport: "tcp", hostname: peer, port: 1 });
+    return runWithContext(createRequestContext(req, undefined, trust), () => handle(req));
+  };
   const server = Deno.serve(
     { port: 0, hostname: "127.0.0.1", onListen() {} },
-    async (req) =>
-      (await runWithContext(createRequestContext(req), () => handle(req))) ??
+    async (req, info) =>
+      (await inContext(req, info.remoteAddr.hostname)) ??
         new Response("not found", { status: 404 }),
   );
   const origin = `http://127.0.0.1:${server.addr.port}`;
@@ -114,6 +127,7 @@ async function serve(
     origin,
     url: `ws://127.0.0.1:${server.addr.port}/graphql`,
     handle,
+    inContext,
     close: async () => {
       await server.shutdown();
       resetPlugins();
@@ -419,6 +433,227 @@ Deno.test("graphql dev: a schema-module edit reloads the schema; in-flight subsc
     assertEquals((await liveNext).done, true);
   } finally {
     await c.dispose();
+    await srv.close();
+  }
+});
+
+// ── Connection caps (WebSocket + streamed responses), as Live's maxConnections / PerIp ──
+
+/** A synthetic upgrade from `peer` through the server's context: 429 when refused, else 400
+ * (a synthetic request can't really upgrade — reaching the upgrade means the slot was free). */
+function upgradeStatus(
+  srv: Awaited<ReturnType<typeof serve>>,
+  peer: string,
+  headers: Record<string, string> = {},
+): Promise<number> {
+  const req = new Request(`${srv.origin}/graphql`, {
+    headers: {
+      host: new URL(srv.origin).host,
+      origin: srv.origin,
+      upgrade: "websocket",
+      connection: "upgrade",
+      "sec-websocket-protocol": "graphql-transport-ws",
+      ...headers,
+    },
+  });
+  return Promise.resolve(srv.inContext(req, peer)).then((r) => r!.status);
+}
+
+/** Poll until `fn` answers `want` (a slot is released asynchronously, on the close event). */
+async function eventually(fn: () => Promise<number>, want: number): Promise<number> {
+  let got = await fn();
+  for (let i = 0; i < 100 && got !== want; i++) {
+    await tick(10);
+    got = await fn();
+  }
+  return got;
+}
+
+const LOCAL = { limitPolicy: { localAddresses: true } };
+
+Deno.test("graphql limits: the total cap refuses a WebSocket with 429 before the upgrade; a client close frees it", async () => {
+  const srv = await serve({ maxConnections: 1 });
+  try {
+    const a = await rawSocket(srv.url, srv.origin);
+    a.send({ type: "connection_init" });
+    assertEquals(await upgradeStatus(srv, "203.0.113.1"), 429);
+    a.ws.close();
+    await a.closed;
+    assertEquals(await eventually(() => upgradeStatus(srv, "203.0.113.1"), 400), 400);
+  } finally {
+    await srv.close();
+  }
+});
+
+Deno.test("graphql limits: the per-address cap keys on clientIpForLimits (local peers only when counted)", async () => {
+  // Untrusted loopback peers: no per-address cap (they would all be one proxy's address).
+  const open = await serve({ maxConnectionsPerIp: 1 });
+  try {
+    const a = await rawSocket(open.url, open.origin);
+    assertEquals(await upgradeStatus(open, "127.0.0.1"), 400);
+    a.ws.close();
+    await a.closed;
+  } finally {
+    await open.close();
+  }
+  // `rateLimitLocalAddresses`: the loopback peer is counted as itself; another address is not.
+  const local = await serve({ maxConnectionsPerIp: 1 }, "prod", noopLoad, LOCAL);
+  try {
+    const a = await rawSocket(local.url, local.origin);
+    assertEquals(await upgradeStatus(local, "127.0.0.1"), 429);
+    assertEquals(await upgradeStatus(local, "10.0.0.9"), 400);
+    a.ws.close();
+    await a.closed;
+    assertEquals(await eventually(() => upgradeStatus(local, "127.0.0.1"), 400), 400);
+  } finally {
+    await local.close();
+  }
+  // `rateLimitHeader` behind a trusted proxy: the header's address is the client.
+  const proxied = await serve({ maxConnectionsPerIp: 1 }, "prod", noopLoad, {
+    trustForwardedHeaders: true,
+    limitPolicy: { header: "cf-connecting-ip" },
+  });
+  try {
+    const ws = new WebSocket(proxied.url, {
+      protocols: ["graphql-transport-ws"],
+      headers: { origin: proxied.origin, "cf-connecting-ip": "198.51.100.7" },
+    } as unknown as string[]);
+    const closed = new Promise((r) => ws.addEventListener("close", r));
+    await new Promise((r) => ws.addEventListener("open", r));
+    const as = (ip: string) => upgradeStatus(proxied, "127.0.0.1", { "cf-connecting-ip": ip });
+    assertEquals(await as("198.51.100.7"), 429);
+    assertEquals(await as("198.51.100.8"), 400);
+    ws.close();
+    await closed;
+  } finally {
+    await proxied.close();
+  }
+});
+
+Deno.test("graphql limits: the init timeout and a protocol error release the WebSocket's slot", async () => {
+  const srv = await serve(
+    { maxConnections: 1, websocket: { connectionInitTimeoutMs: 50 } },
+    "prod",
+    noopLoad,
+  );
+  try {
+    const idle = await rawSocket(srv.url, srv.origin);
+    assertEquals(await upgradeStatus(srv, "203.0.113.1"), 429);
+    assertEquals((await idle.closed).code, 4408);
+    assertEquals(await eventually(() => upgradeStatus(srv, "203.0.113.1"), 400), 400);
+
+    const junk = await rawSocket(srv.url, srv.origin);
+    assertEquals(await upgradeStatus(srv, "203.0.113.1"), 429);
+    junk.send({ nope: true });
+    assertEquals((await junk.closed).code, 4400);
+    assertEquals(await eventually(() => upgradeStatus(srv, "203.0.113.1"), 400), 400);
+  } finally {
+    await srv.close();
+  }
+});
+
+Deno.test("graphql limits: a streamed (SSE) subscription holds a slot until cancelled, completed or failed; plain queries don't", async () => {
+  const srv = await serve({ maxConnections: 1 });
+  const sse = (query: string) => fetch(post(srv.origin, query, { accept: "text/event-stream" }));
+  const sseStatus = async () => {
+    const res = await sse("{ hello }");
+    await res.body?.cancel();
+    return res.status;
+  };
+  try {
+    attached = Promise.withResolvers();
+    const live = await sse('subscription { room(name: "sse") { text } }');
+    const reader = live.body!.getReader();
+    const read = reader.read();
+    await attached.promise;
+    const refused = await sse('subscription { room(name: "other") { text } }');
+    assertEquals(refused.status, 429);
+    await refused.body?.cancel();
+    // A plain JSON query takes no slot.
+    assertEquals((await fetch(post(srv.origin, "{ hello }"))).status, 200);
+    // Cancelled by the client → freed.
+    await reader.cancel();
+    void read.catch(() => {});
+    assertEquals(await eventually(sseStatus, 200), 200);
+
+    // Completed by the server (a revoke ends the subscription) → freed.
+    attached = Promise.withResolvers();
+    const revoked = await sse('subscription { room(name: "rv") { text } }');
+    const rr = revoked.body!.getReader();
+    const first = rr.read();
+    await attached.promise;
+    assertEquals((await sse("{ hello }")).status, 429);
+    rooms.revoke("rv");
+    await first;
+    while (!(await rr.read()).done) { /* drain to the end */ }
+    assertEquals(await eventually(sseStatus, 200), 200);
+
+    // Failed (a refused subscription is an error result) → freed.
+    const failed = await sse('subscription { inbox(user: "nobody") { text } }');
+    assertStringIncludes(await failed.text(), "FORBIDDEN");
+    assertEquals(await eventually(sseStatus, 200), 200);
+  } finally {
+    await srv.close();
+  }
+});
+
+Deno.test("graphql limits: a dev schema reload ends the old streams and frees their slots", async () => {
+  let loads = 0;
+  const load = (() => {
+    loads++;
+    return Promise.resolve({ schema: loads === 1 ? schema : schemaFor("reloaded") });
+  }) as unknown as ModuleLoader;
+  const srv = await serve({ schema: "./graphql/schema.ts", maxConnections: 1 }, "dev", load);
+  const prepare = { projectRoot: "/tmp/proj", appDir: "/tmp/proj/app", outDir: "/x", config: {} };
+  try {
+    attached = Promise.withResolvers();
+    const live = await fetch(
+      post(srv.origin, 'subscription { room(name: "reload") { text } }', {
+        accept: "text/event-stream",
+      }),
+    );
+    const reader = live.body!.getReader();
+    const first = reader.read();
+    await attached.promise;
+    assert(await runMatchingPrepareSteps(prepare, ["/tmp/proj/graphql/schema.ts"]));
+    // The next request reloads (a plain query: no slot needed) and ends the old stream.
+    assertEquals(
+      (await (await fetch(post(srv.origin, "{ hello }"))).json()).data.hello,
+      "reloaded",
+    );
+    await first;
+    while (!(await reader.read()).done) { /* the old stream completes */ }
+    const again = async () => {
+      const res = await fetch(post(srv.origin, "{ hello }", { accept: "text/event-stream" }));
+      await res.body?.cancel();
+      return res.status;
+    };
+    assertEquals(await eventually(again, 200), 200);
+  } finally {
+    await srv.close();
+  }
+});
+
+Deno.test("graphql limits: the caps default to the app's live.limits, else Live's defaults", async () => {
+  const { resolveCaps } = await import("../packages/graphql/limits.ts");
+  assertEquals(resolveCaps({}, undefined), { maxConnections: 10_000, maxConnectionsPerIp: 64 });
+  assertEquals(resolveCaps({}, { maxConnections: 50, maxConnectionsPerIp: 5 }), {
+    maxConnections: 50,
+    maxConnectionsPerIp: 5,
+  });
+  assertEquals(
+    resolveCaps({ maxConnectionsPerIp: 2 }, { maxConnectionsPerIp: 5 }).maxConnectionsPerIp,
+    2,
+  );
+  assertEquals(resolveCaps({ maxConnections: -1 }, undefined).maxConnections, 10_000);
+  // Through the plugin: live.limits.maxConnections applies to the GraphQL socket too.
+  const srv = await serve({}, "prod", noopLoad, {}, { live: { limits: { maxConnections: 1 } } });
+  try {
+    const a = await rawSocket(srv.url, srv.origin);
+    assertEquals(await upgradeStatus(srv, "203.0.113.1"), 429);
+    a.ws.close();
+    await a.closed;
+  } finally {
     await srv.close();
   }
 });

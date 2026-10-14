@@ -53,6 +53,11 @@ and this project adheres to
   apply). The handshake needs the app's own `Origin` (or an allowed one), as Live's does in
   production; identity is the upgrade's cookies / `Authorization` or a `connection_init` token;
   `websocket: { connectionInitTimeoutMs, maxSubscriptions }` bounds a socket.
+- **`@denext/graphql` 0.4.0: connection caps for subscriptions.** Open WebSockets and streamed
+  (SSE / multipart) responses count against `maxConnections` and a per-address
+  `maxConnectionsPerIp` keyed on `clientIpForLimits()` as Live's are (defaults: the app's
+  `live.limits`, else 10 000 / 64); past a cap the request is a `429` before the upgrade or the
+  response, and a slot is freed on every close path.
 - **`@denext/graphql` 0.4.0: the schema reloads in `denext dev`.** `schema` takes the module path
   that exports it; an edit beside it (or under the `watch` globs) loads the schema again for the
   next request, and subscriptions on the old schema complete.

@@ -184,6 +184,21 @@ subscribe: (_root, { user }, ctx) => fromChannel(inbox, \`user:\${user}\`, { sig
         </li>
       </ul>
 
+      <h2>Connection caps</h2>
+      <p>
+        Every open WebSocket and every streamed (SSE / multipart) response holds a slot, as a Live
+        socket does: <code>maxConnections</code> across all clients and{" "}
+        <code>maxConnectionsPerIp</code> per client address, refused with <code>429</code>{" "}
+        before the upgrade or the response. The address is{" "}
+        <code>clientIpForLimits()</code>'s, so a trusted proxy's hop or your{" "}
+        <code>rateLimitHeader</code>{" "}
+        counts, and a loopback/private peer behind an untrusted proxy only counts against the total.
+        Defaults: the app's{" "}
+        <code>live.limits</code>, else Live's 10 000 / 64. A slot is freed however the connection
+        ends — a close, a disconnect, a protocol error, the <code>connection_init</code>{" "}
+        timeout, a completed stream or a schema reload.
+      </p>
+
       <h2>Schema reload in dev</h2>
       <p>
         With <code>schema</code> given as a module path, an edit to a script or{" "}

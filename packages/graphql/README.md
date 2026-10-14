@@ -151,6 +151,22 @@ the depth and cost limits, introspection blocking and error masking apply to eve
   socket back-pressures its subscriptions, which drop their oldest payloads past the buffer cap.
 - `websocket: false` turns the transport off (SSE stays).
 
+## Connection caps
+
+Every open WebSocket and every streamed (SSE / multipart) response holds a connection slot, as a
+Live socket does: `maxConnections` across all clients and `maxConnectionsPerIp` per client
+address. Past either, the request is refused with `429` before the upgrade or the response (a
+plain JSON query takes no slot). The per-address cap keys on `clientIpForLimits({ bucket: true
+})`, exactly as Live's does: a trusted proxy's last hop or your `rateLimitHeader` address, an IPv6
+client's /64, and no per-address cap for a loopback/private peer behind an untrusted proxy (every
+visitor would share the proxy's address — set `trustForwardedHeaders`, `rateLimitHeader` or
+`rateLimitLocalAddresses`). The defaults are the app's `live.limits.maxConnections` /
+`maxConnectionsPerIp`, else Live's own 10 000 / 64 — the budget denext already applies to a
+long-lived push connection: a page rarely holds more than a couple, and 64 still leaves room for
+a NAT or an office behind one address. A slot is freed however the connection ends: a client
+close or disconnect, a protocol error, the `connection_init` timeout, a stream that completes or
+fails, a dev schema reload ending it.
+
 ## Schema reload in `denext dev`
 
 With `schema` given as a module path, an edit to a script or `.graphql` file in that module's
@@ -161,19 +177,21 @@ object or factory imported into `denext.config.ts` still needs a restart.
 
 ## Options
 
-| Option        | Default          | What                                                                               |
-| ------------- | ---------------- | ---------------------------------------------------------------------------------- |
-| `schema`      | required         | A module path (reloads in dev), a `GraphQLSchema`, or a factory resolved once      |
-| `path`        | `/graphql`       | Mount point (prefixed with `basePath`)                                             |
-| `graphiql`    | dev only         | Serve GraphiQL on a browser `GET`                                                  |
-| `context`     | `{}`             | `({ request, signal }) => object` — your resolvers' context                        |
-| `maxDepth`    | `12`             | Reject a query nested deeper than this; `false` disables it                        |
-| `maxCost`     | `false` (off)    | Reject a query over this estimated cost (the multiplicative-fan-out guard); opt-in |
-| `costOptions` | —                | Tune `maxCost`: `fieldCost`, `listMultiplierArgs`, `defaultMultiplier`             |
-| `yoga`        | —                | Passthrough: `plugins`, `maskedErrors`, `cors`, `batching`, `logging`              |
-| `outFile`     | `schema.graphql` | The SDL `denext build` writes into the output dir; `false` skips it                |
-| `websocket`   | `{}` (on)        | GraphQL over WebSocket: `connectionInitTimeoutMs`, `maxSubscriptions`; `false` off |
-| `watch`       | schema's dir     | Dev: globs whose edit reloads a module-path `schema`                               |
+| Option                | Default                | What                                                                               |
+| --------------------- | ---------------------- | ---------------------------------------------------------------------------------- |
+| `schema`              | required               | A module path (reloads in dev), a `GraphQLSchema`, or a factory resolved once      |
+| `path`                | `/graphql`             | Mount point (prefixed with `basePath`)                                             |
+| `graphiql`            | dev only               | Serve GraphiQL on a browser `GET`                                                  |
+| `context`             | `{}`                   | `({ request, signal }) => object` — your resolvers' context                        |
+| `maxDepth`            | `12`                   | Reject a query nested deeper than this; `false` disables it                        |
+| `maxCost`             | `false` (off)          | Reject a query over this estimated cost (the multiplicative-fan-out guard); opt-in |
+| `costOptions`         | —                      | Tune `maxCost`: `fieldCost`, `listMultiplierArgs`, `defaultMultiplier`             |
+| `yoga`                | —                      | Passthrough: `plugins`, `maskedErrors`, `cors`, `batching`, `logging`              |
+| `outFile`             | `schema.graphql`       | The SDL `denext build` writes into the output dir; `false` skips it                |
+| `websocket`           | `{}` (on)              | GraphQL over WebSocket: `connectionInitTimeoutMs`, `maxSubscriptions`; `false` off |
+| `watch`               | schema's dir           | Dev: globs whose edit reloads a module-path `schema`                               |
+| `maxConnections`      | `live.limits` / 10 000 | Open WebSockets + streamed responses, all clients; past it `429`                   |
+| `maxConnectionsPerIp` | `live.limits` / 64     | The same, per client address (`clientIpForLimits`)                                 |
 
 ## CI
 

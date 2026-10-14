@@ -49,9 +49,11 @@ import {
   type YogaServerOptions,
 } from "graphql-yoga";
 import { createGraphqlCommand, sdlFromIntrospection } from "./command.ts";
+import { createConnectionLimiter, releaseWhenDone, resolveCaps, wantsStream } from "./limits.ts";
 import {
   acceptGraphqlWs,
   type EnvelopedLike,
+  type GraphqlWsDeps,
   isWebSocketUpgrade,
   operationOf,
 } from "./websocket.ts";
@@ -201,6 +203,20 @@ export interface GraphqlOptions {
   /** Max request body in bytes (default 1 MiB, like a route handler; over → 413). */
   maxBodyBytes?: number;
   /**
+   * Open subscription connections — WebSockets plus streamed (SSE / multipart) responses —
+   * across every client; past it a new one is refused with `429` before the upgrade or the
+   * response. Default: the app's `live.limits.maxConnections`, else 10 000 (Live's default).
+   */
+  maxConnections?: number;
+  /**
+   * Open subscription connections from one client address, keyed as Live keys its own:
+   * `clientIpForLimits({ bucket: true })` — a trusted proxy's hop or the `rateLimitHeader`
+   * address, an IPv6 client's /64, and no per-address cap for a loopback/private peer behind an
+   * untrusted proxy (`rateLimitLocalAddresses` counts those). Default: the app's
+   * `live.limits.maxConnectionsPerIp`, else 64 (Live's default).
+   */
+  maxConnectionsPerIp?: number;
+  /**
    * Reject a query nested deeper than this many selection levels — a cheap guard against the
    * DoS where a small deeply-nested query over a cyclic type relation exhausts CPU/memory
    * (the body cap allows thousands of levels). Default 12; `false` disables it. Raise it for a
@@ -270,17 +286,20 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
   return {
     name: "@denext/graphql",
     setup(ctx: PluginContext) {
-      // The pipeline strips `basePath` before the plugin seam, so the path is app-relative.
-      const path = options.path ?? "/graphql";
-      const dev = ctx.mode === "dev";
-      const graphiql = options.graphiql ?? dev;
-      const introspection = options.introspection ?? dev;
-      const maxBodyBytes = options.maxBodyBytes ?? 1024 * 1024;
-      const sameOrigin = options.requireSameOrigin ?? true;
+      const {
+        path,
+        dev,
+        graphiql,
+        introspection,
+        maxBodyBytes,
+        sameOrigin,
+        maxDepth,
+        maxCost,
+      } = settingsOf(options, ctx);
       const originOptions = { allowedOrigins: options.allowedOrigins };
-      const maxDepth = options.maxDepth ?? 12;
-      const maxCost = options.maxCost ?? false;
-      const ws = options.websocket === false ? false : options.websocket ?? {};
+      // One budget for both long-lived transports (WebSocket, streamed responses).
+      const caps = resolveCaps(options, ctx.config.live?.limits);
+      const connections = createConnectionLimiter(() => caps);
       const upgradeOptions = {
         allowedOrigins: options.allowedOrigins,
         desktopAppOrigin: ctx.config.desktop?.app?.origin,
@@ -324,43 +343,46 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
         }, { watch: options.watch ?? defaultSchemaWatch(options.schema) });
       }
 
-      ctx.addRequestHandler(async (request) => {
-        if (new URL(request.url).pathname !== path) return null;
-        if (stale) reload();
-        if (ws !== false && isWebSocketUpgrade(request)) {
-          // Live's production handshake rule: a browser `Origin` is required and must be the
-          // app's own (or an allowed one) — a WebSocket handshake is not covered by CORS.
-          if (
-            sameOrigin && !(request.headers.has("origin") && verifyOrigin(request, upgradeOptions))
-          ) {
-            return new Response("forbidden", { status: 403 });
-          }
-          return acceptGraphqlWs(request, {
-            getEnveloped: async (init) =>
-              ((await getYoga()) as unknown as {
-                getEnveloped(init: Record<string, unknown>): EnvelopedLike;
-              }).getEnveloped(init),
-            connectionInitTimeoutMs: ws.connectionInitTimeoutMs ?? 3000,
-            maxOperations: ws.maxSubscriptions ?? 32,
-            maxMessageBytes: maxBodyBytes,
-          });
-        }
+      const wsDeps = socketDeps(options.websocket, {
+        getYoga: () => getYoga(),
+        maxBodyBytes,
+        acquire: () => connections.acquire(),
+      });
+      /** A WebSocket upgrade: Live's production handshake rule, then the `graphql-ws` socket. */
+      const upgrade = (request: Request, deps: GraphqlWsDeps): Response => {
+        // A browser `Origin` is required and must be the app's own (or an allowed one) — a
+        // WebSocket handshake is not covered by CORS.
+        const originOk = request.headers.has("origin") && verifyOrigin(request, upgradeOptions);
+        if (sameOrigin && !originOk) return new Response("forbidden", { status: 403 });
+        return acceptGraphqlWs(request, deps);
+      };
+      /** An HTTP request through Yoga; a streamed response holds a connection slot until it ends. */
+      const serveHttp = async (request: Request): Promise<Response> => {
         const mutating = request.method !== "GET" && request.method !== "HEAD";
         if (mutating && sameOrigin && !verifyOrigin(request, originOptions)) {
           return new Response("forbidden", { status: 403 });
         }
         const bounded = mutating ? await capBody(request, maxBodyBytes) : request;
         if (bounded instanceof Response) return bounded;
-        const yoga = await getYoga();
-        const raw: unknown = await yoga.fetch(bounded);
-        // Yoga's Response may come from its own fetch ponyfill; hand the pipeline a native one.
-        if (raw instanceof Response) return raw;
-        const res = raw as Response;
-        return new Response(res.body, {
-          status: res.status,
-          statusText: res.statusText,
-          headers: res.headers,
-        });
+        // SSE / multipart (a subscription) is refused before Yoga runs when the caps are reached.
+        const release = wantsStream(bounded) ? connections.acquire() : null;
+        if (release instanceof Response) return release;
+        let raw: unknown;
+        try {
+          raw = await (await getYoga()).fetch(bounded);
+        } catch (err) {
+          release?.();
+          throw err;
+        }
+        if (release) return releaseWhenDone(raw as Response, release);
+        return nativeResponse(raw);
+      };
+
+      ctx.addRequestHandler((request) => {
+        if (new URL(request.url).pathname !== path) return null;
+        if (stale) reload();
+        if (wsDeps && isWebSocketUpgrade(request)) return upgrade(request, wsDeps);
+        return serveHttp(request);
       });
 
       // The SDL (build step + CLI) comes from an introspection round-trip through a private
@@ -405,6 +427,55 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
       ctx.addCommand(createGraphqlCommand(() => getSdl()));
     },
   };
+}
+
+/** The options with their defaults (dev turns GraphiQL and introspection on). */
+function settingsOf(options: GraphqlOptions, ctx: PluginContext) {
+  const dev = ctx.mode === "dev";
+  return {
+    // The pipeline strips `basePath` before the plugin seam, so the path is app-relative.
+    path: options.path ?? "/graphql",
+    dev,
+    graphiql: options.graphiql ?? dev,
+    introspection: options.introspection ?? dev,
+    maxBodyBytes: options.maxBodyBytes ?? 1024 * 1024,
+    sameOrigin: options.requireSameOrigin ?? true,
+    maxDepth: options.maxDepth ?? 12,
+    maxCost: options.maxCost ?? false,
+  };
+}
+
+/** The WebSocket transport's dependencies, or `null` when `websocket: false`. */
+function socketDeps(
+  websocket: WebSocketOptions | false | undefined,
+  from: {
+    getYoga: () => Promise<unknown>;
+    maxBodyBytes: number;
+    acquire: GraphqlWsDeps["acquire"];
+  },
+): GraphqlWsDeps | null {
+  if (websocket === false) return null;
+  return {
+    getEnveloped: async (init) =>
+      ((await from.getYoga()) as {
+        getEnveloped(init: Record<string, unknown>): EnvelopedLike;
+      }).getEnveloped(init),
+    connectionInitTimeoutMs: websocket?.connectionInitTimeoutMs ?? 3000,
+    maxOperations: websocket?.maxSubscriptions ?? 32,
+    maxMessageBytes: from.maxBodyBytes,
+    acquire: from.acquire,
+  };
+}
+
+/** Yoga's Response may come from its own fetch ponyfill; hand the pipeline a native one. */
+function nativeResponse(raw: unknown): Response {
+  if (raw instanceof Response) return raw;
+  const res = raw as Response;
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  });
 }
 
 async function resolveSchema(source: SchemaSource, ctx: PluginContext): Promise<GraphQLSchema> {

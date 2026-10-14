@@ -34,7 +34,9 @@
         "yoga",
         "outFile",
         "websocket",
-        "watch"
+        "watch",
+        "maxConnections",
+        "maxConnectionsPerIp"
       ]
     }
   },
@@ -44,6 +46,7 @@
       "subscriptions.ts",
       "websocket.ts",
       "peer.ts",
+      "limits.ts",
       "command.ts",
       "README.md",
       "CHANGELOG.md",

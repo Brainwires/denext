@@ -762,7 +762,9 @@
         "yoga",
         "outFile",
         "websocket",
-        "watch"
+        "watch",
+        "maxConnections",
+        "maxConnectionsPerIp"
       ],
       "title": "@denext/graphql",
       "blurb": "A GraphQL endpoint for a denext app, as a plugin. It mounts a GraphQL Yoga server at /graphql, bridges subscriptions onto denext channels (the app's push primitive — no second event bus), serves them…",
@@ -789,6 +791,14 @@
           },
           "maxBodyBytes": {
             "description": "Max request body in bytes (default 1 MiB, like a route handler; over → 413).",
+            "type": "number"
+          },
+          "maxConnections": {
+            "description": "Open subscription connections — WebSockets plus streamed (SSE / multipart) responses — across every client; past it a new one is refused with `429` before the upgrade or the response. Default: the app's `live.limits.maxConnections`, else 10 000 (Live's default).",
+            "type": "number"
+          },
+          "maxConnectionsPerIp": {
+            "description": "Open subscription connections from one client address, keyed as Live keys its own: `clientIpForLimits({ bucket: true })` — a trusted proxy's hop or the `rateLimitHeader` address, an IPv6 client's /64, and no per-address cap for a loopback/private peer behind an untrusted proxy (`rateLimitLocalAddresses` counts those). Default: the app's `live.limits.maxConnectionsPerIp`, else 64 (Live's default).",
             "type": "number"
           },
           "maxDepth": {

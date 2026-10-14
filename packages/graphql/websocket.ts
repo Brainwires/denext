@@ -43,6 +43,11 @@ export interface GraphqlWsDeps {
   maxOperations: number;
   /** A message larger than this many UTF-16 units closes the socket (4400). */
   maxMessageBytes: number;
+  /**
+   * Take a connection slot (the total / per-address caps): a release, or the refusal to answer
+   * instead of upgrading. Released once, on whichever close comes first.
+   */
+  acquire(): (() => void) | Response;
 }
 
 /** Does this request ask for a WebSocket upgrade? */
@@ -78,13 +83,16 @@ export function acceptGraphqlWs(request: Request, deps: GraphqlWsDeps): Response
     if (!HANDSHAKE_HEADERS.test(name)) headers.append(name, value);
   }
   const runAsUpgrade = captureRequestContext();
+  const release = deps.acquire();
+  if (release instanceof Response) return release;
   let upgrade: { socket: WebSocket; response: Response };
   try {
     upgrade = Deno.upgradeWebSocket(request, { protocol: GRAPHQL_WS_PROTOCOL });
   } catch {
+    release();
     return new Response("upgrade failed", { status: 400 });
   }
-  serve(upgrade.socket, { url, headers, runAs: runAsUpgrade }, deps);
+  serve(upgrade.socket, { url, headers, runAs: runAsUpgrade }, deps, release);
   return upgrade.response;
 }
 
@@ -112,7 +120,12 @@ interface ClientMessage {
   payload?: unknown;
 }
 
-function serve(socket: WebSocket, initial: Identity, deps: GraphqlWsDeps): void {
+function serve(
+  socket: WebSocket,
+  initial: Identity,
+  deps: GraphqlWsDeps,
+  release: () => void,
+): void {
   const peerId = crypto.randomUUID();
   const ops = new Map<string, Operation>();
   let identity = initial;
@@ -126,6 +139,7 @@ function serve(socket: WebSocket, initial: Identity, deps: GraphqlWsDeps): void 
   const close = (code: number, reason: string) => {
     if (closed) return;
     closed = true;
+    release(); // the server is done with it; the slot need not wait for the closing handshake
     try {
       socket.close(code, reason);
     } catch { /* already closing */ }
@@ -141,9 +155,10 @@ function serve(socket: WebSocket, initial: Identity, deps: GraphqlWsDeps): void 
   };
   socket.onclose = () => {
     closed = true;
+    release();
     stopAll();
   };
-  socket.onerror = () => {};
+  socket.onerror = () => release();
 
   const onInit = (payload: unknown) => {
     if (initReceived) return close(4429, "Too many initialisation requests");
