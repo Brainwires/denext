@@ -40,8 +40,8 @@ The database side carries over as SQL: your tables, functions and row-level secu
   upgrades are your Postgres provider's job.
 - **One user store, two ways in.** `/auth/v1` serves the users `denextAuth()` keeps, so a cookie
   session from denext's own sign-in and a supabase-js token session are the same user; server
-  code reads either with `auth()`. You supply the mailer and SMS sender (`sendVerificationRequest`,
-  `sendSms`).
+  code reads either with `auth()`. Mail goes out through `GOTRUE_SMTP_*` (or `smtpMailer()` /
+  your own `sendVerificationRequest`); you supply the SMS sender (`sendSms`).
 - **Least exposure by default.** Auto-REST serves only tables with RLS on (and `security_invoker`
   views) unless you name others; Edge Functions verify the caller unless `verifyJwt: false`;
   webhooks reach only targets configured in the app; the vault key never lives in the database
@@ -185,8 +185,8 @@ const userId = session?.user.id;
 
 The session is a cookie on your own origin, so there is no access token to store or refresh in the
 browser, and `db()` reads it on the server. Providers and the adapter are configured once in
-`denextAuth({ … })`; Supabase sends auth mail for you, denext calls your
-`sendVerificationRequest`. See [Auth](/docs/auth).
+`denextAuth({ … })`; auth mail goes through your `sendVerificationRequest` — `smtpMailer({ host,
+user, pass, from })` is one. See [Auth](/docs/auth).
 
 Or keep your client code: with `backend({ supabase })` the stock supabase-js `supabase.auth.*`
 calls above work unchanged against `/auth/v1` — password, OTP / magic link, phone, anonymous,
@@ -586,8 +586,10 @@ denext covers the app-backend half of Supabase; some of the platform is not ther
   console, no logs explorer and no usage metrics.
 - **Not hosted at all.** Backups, point-in-time recovery, connection pooling and database upgrades
   are your Postgres provider's job.
-- **No built-in mailer or SMS sender.** `/auth/v1` sends through your `sendVerificationRequest`
-  (or the `sendEmail` hook) and your `sendSms`.
+- **No built-in SMS sender, and no hosted mail service.** `/auth/v1` mails through the `sendEmail`
+  hook, your `sendVerificationRequest`, or your SMTP server (`GOTRUE_SMTP_*`, TLS required), and
+  texts through your `sendSms`. Mail templates take GoTrue's simple placeholders, not every Go
+  template action.
 - **Realtime: a row is re-read per subscriber.** Each change is re-read under the subscriber's
   policies (never carried past them), so a row inserted and deleted within one 16 ms burst reaches
   no one, and `new` is the row as it is after the burst. The default notify source serializes

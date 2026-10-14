@@ -1,7 +1,7 @@
 /**
  * **Email verification** and **password reset** — the two flows built on
  * {@link ./verification.ts | verification tokens} and the app's `sendVerificationRequest`
- * (denext ships no mailer).
+ * (`smtpMailer()`, or the app's own).
  *
  * The properties both flows keep:
  * - **No existence oracle.** Asking for a reset link for an unknown address resolves
@@ -212,9 +212,9 @@ function requireMailer(config: AuthConfig, fn: string): SendVerificationRequest 
   const mailer = mailerOf(config);
   if (mailer) return mailer;
   throw new Error(
-    `${fn}: denext ships no mailer — pass \`sendVerificationRequest\` (or \`hooks.sendEmail\`) ` +
-      "to denextAuth (it receives { identifier, url, token, purpose, expiresAt } for every " +
-      "outbound token).",
+    `${fn}: no mailer — pass \`sendVerificationRequest\` (\`smtpMailer({ host, user, pass, ` +
+      "from })`, or a function receiving { identifier, url, token, purpose, expiresAt } for " +
+      "every outbound token) or `hooks.sendEmail` to denextAuth.",
   );
 }
 

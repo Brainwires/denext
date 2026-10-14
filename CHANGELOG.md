@@ -26,6 +26,22 @@ and this project adheres to
 
 ### Added
 
+- **`smtpMailer({ host, port, secure, user, pass, from })` (`denext/server`): an SMTP client with
+  no npm dependency, usable as `sendVerificationRequest`.** It runs on `Deno.connect` /
+  `Deno.connectTls` / `Deno.startTls`. TLS is required: port 465 (or `secure`) is implicit TLS,
+  any other port must offer STARTTLS and the upgrade must succeed, and bytes sent before the
+  handshake abort the send. Plaintext needs `insecure: true` and a loopback host. It
+  authenticates with AUTH PLAIN or LOGIN and opens one connection per message. Every step has a
+  timeout (`timeoutMs`, 10 s). A CR or LF in any header value is refused, as is a recipient
+  that isn't one plain address. Non-ASCII subjects and names are RFC 2047-encoded, and the body
+  is quoted-printable with dot-stuffing. `render` shapes each purpose's mail;
+  `mailer.send({ to, subject, text, html? })` sends anything else.
+- **`/auth/v1` sends mail over SMTP from Supabase Auth's settings.** With neither `hooks.sendEmail`
+  nor `sendVerificationRequest`, it reads `GOTRUE_SMTP_HOST`, `_PORT`, `_USER`, `_PASS`,
+  `_ADMIN_EMAIL` and `_SENDER_NAME`, plus `GOTRUE_MAILER_SUBJECTS_*` and `GOTRUE_MAILER_TEMPLATES_*`
+  (template URLs with GoTrue's placeholders, HTML-escaped). The `supabase.auth.smtp` option sets
+  the same in code. `denext generate docker --stack` lists the variables in `.env.example`.
+
 - **Operating the self-hosted stack: `denext stack health | passwd | roll | backup | restore`, and
   filtered `logs`.** `health` lists every service's compose health check and the app's
   `/_denext/health` checks as a table (`--json`, `--watch [seconds]`) and exits 1 when anything

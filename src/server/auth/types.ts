@@ -695,9 +695,9 @@ export interface VerificationRequestParams {
 }
 
 /**
- * Deliver a verification token. denext ships **no mailer** — email verification,
- * password reset, magic links and one-time codes all call this, and the flows that need
- * it refuse to start when it is absent.
+ * Deliver a verification token — `smtpMailer({ … })` is one; email verification, password
+ * reset, magic links and one-time codes all call this, and the flows that need it refuse to
+ * start when it is absent.
  */
 export type SendVerificationRequest = (
   params: VerificationRequestParams,
@@ -1057,7 +1057,8 @@ export interface AuthConfig {
   hasher?: Hasher;
   /**
    * Deliver a verification token (email verification, password reset, magic link, OTP).
-   * denext ships no mailer; the flows that need one refuse to start without this.
+   * `smtpMailer({ host, user, pass, from })` sends them over SMTP (TLS required); the flows
+   * that need one refuse to start without this (or `hooks.sendEmail`).
    */
   sendVerificationRequest?: SendVerificationRequest;
   /**

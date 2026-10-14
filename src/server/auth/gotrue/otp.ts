@@ -19,6 +19,12 @@ import { base64UrlDecode, base64UrlEncode } from "../oauth.ts";
 import { resolveAuthOptions } from "../options.ts";
 import { emitAuthEvent } from "../events.ts";
 import { GOTRUE_PREFIX, type GoTrueContext, nowSeconds } from "./context.ts";
+import {
+  type GoTrueSmtpOptions,
+  type GoTrueSmtpSender,
+  goTrueSmtpSender,
+  processGoTrueSmtp,
+} from "./smtp-mail.ts";
 import { GoTrueError } from "./errors.ts";
 import { userJson } from "./user.ts";
 
@@ -226,6 +232,19 @@ export function verifyLink(
   return url.href;
 }
 
+/** One SMTP sender per `smtp` options object (built on first use, so a bad setting fails loudly). */
+const smtpSenders = new WeakMap<GoTrueSmtpOptions, GoTrueSmtpSender>();
+
+/** The SMTP sender for `options`. */
+function smtpSenderOf(ctx: GoTrueContext, options: GoTrueSmtpOptions): GoTrueSmtpSender {
+  let sender = smtpSenders.get(options);
+  if (!sender) {
+    sender = goTrueSmtpSender(options, resolveAuthOptions(ctx.config).logger);
+    smtpSenders.set(options, sender);
+  }
+  return sender;
+}
+
 /** The `sendVerificationRequest` purpose an email action maps to. */
 function purposeOf(action: string): "email" | "reset" | "magic" | "otp" {
   if (action === "recovery") return "reset";
@@ -234,24 +253,49 @@ function purposeOf(action: string): "email" | "reset" | "magic" | "otp" {
   return "email";
 }
 
+/** What {@linkcode sendAuthEmail} is handed. */
+interface AuthEmailInput {
+  email: string;
+  action: string;
+  issued: IssuedOtp;
+  redirectTo: string;
+  user?: AdapterUser;
+}
+
+/**
+ * Send over SMTP: the `/auth/v1` `smtp` options, else Supabase Auth's `GOTRUE_SMTP_*` settings.
+ *
+ * @throws {Error} When neither is configured.
+ */
+async function sendOverSmtp(ctx: GoTrueContext, input: AuthEmailInput, link: string) {
+  const smtp = ctx.options.smtp ?? processGoTrueSmtp();
+  if (!smtp) {
+    throw new Error(
+      "no email delivery: set sendVerificationRequest, hooks.sendEmail or GOTRUE_SMTP_*",
+    );
+  }
+  await smtpSenderOf(ctx, smtp).send({
+    action: input.action,
+    to: input.email,
+    confirmationUrl: link,
+    token: input.issued.otp,
+    tokenHash: input.issued.tokenHash,
+    siteUrl: ctx.siteUrl,
+    redirectTo: input.redirectTo,
+    email: input.user?.email ?? input.email,
+    ...(input.action === "email_change" ? { newEmail: input.email } : {}),
+  });
+}
+
 /**
  * Deliver an auth email: the `sendEmail` hook when configured, else the auth config's
- * `sendVerificationRequest`.
+ * `sendVerificationRequest`, else the `/auth/v1` SMTP settings (`GOTRUE_SMTP_*`).
  *
  * @param ctx The context.
  * @param input The address, action, code and link target.
  * @throws {GoTrueError} When no delivery is configured, or it fails.
  */
-export async function sendAuthEmail(
-  ctx: GoTrueContext,
-  input: {
-    email: string;
-    action: string;
-    issued: IssuedOtp;
-    redirectTo: string;
-    user?: AdapterUser;
-  },
-): Promise<void> {
+export async function sendAuthEmail(ctx: GoTrueContext, input: AuthEmailInput): Promise<void> {
   const link = verifyLink(ctx, input.issued.tokenHash, input.action, input.redirectTo);
   const hook = ctx.options.hooks?.sendEmail;
   try {
@@ -276,7 +320,7 @@ export async function sendAuthEmail(
         expiresAt: input.issued.expiresAt,
       });
     } else {
-      throw new Error("no email delivery: set sendVerificationRequest or hooks.sendEmail");
+      await sendOverSmtp(ctx, input, link);
     }
   } catch (error) {
     resolveAuthOptions(ctx.config).logger.error("/auth/v1: sending an email failed", error);

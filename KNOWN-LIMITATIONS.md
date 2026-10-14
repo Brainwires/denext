@@ -73,8 +73,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### First-party auth (`denextAuth`)
 
-- **No mailer:** emailed tokens go through your `sendVerificationRequest`, handed over after the
-  response, so delivery is best-effort where the platform freezes the isolate.
+- **Mail delivery is best-effort:** emailed tokens go to `sendVerificationRequest` (`smtpMailer()`
+  or your own) after the response, so delivery can be cut short where the platform freezes the
+  isolate.
 - **`sqliteAuthAdapter` is single-node and additive-only** (no renames or drops).
 - **Stateless cookie sessions can't be ended early** by a password reset, a pre-account-hijacking
   eviction, a ban, an `/auth/v1` password change or account deletion; run a `sessionStore` (or

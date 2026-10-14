@@ -236,8 +236,8 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   `none` / `packed` attestation, counter clone detection, single-use browser-bound
   challenges) as a first factor or the second. A
   first email sign-in into an unverified account retires whatever was set up
-  without proof of the mailbox (pre-account hijacking). denext ships no mailer:
-  every message goes through `sendVerificationRequest`.
+  without proof of the mailbox (pre-account hijacking). Every message goes through
+  `sendVerificationRequest` — `smtpMailer()` (a zero-npm SMTP client, TLS required) or your own.
 - **`cookies()` / `headers()`** with **secure cookie defaults** (httpOnly,
   SameSite=Lax, Secure over HTTPS), plus the per-request facts from anywhere on
   the server: **`clientIp()`** (the trusted proxy's hop or the socket peer),

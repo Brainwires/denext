@@ -204,6 +204,12 @@ Deno.test("the secrets follow the features: auth, backend, storage", () => {
     "DENEXT_SECRET_KEY",
     "DENEXT_JWT_SIGNING_KEYS",
     "DENEXT_JWT_SECRET",
+    "GOTRUE_SMTP_HOST",
+    "GOTRUE_SMTP_PORT",
+    "GOTRUE_SMTP_USER",
+    "GOTRUE_SMTP_PASS",
+    "GOTRUE_SMTP_ADMIN_EMAIL",
+    "GOTRUE_SMTP_SENDER_NAME",
     "DENEXT_RATE_LIMIT_LOCAL_ADDRESSES",
   ]);
   // The vault key is required, so it is listed only when `vault` is configured.

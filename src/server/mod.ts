@@ -574,6 +574,9 @@ export type {
   PhoneProviderOptions,
   SamlProviderOptions,
 } from "./auth/providers.ts";
+// A zero-npm SMTP client for `sendVerificationRequest` (TLS required; STARTTLS or SMTPS).
+export { SmtpError, smtpMailer, SmtpMessageError } from "./auth/smtp.ts";
+export type { MailMessage, SmtpContent, SmtpMailer, SmtpMailerOptions } from "./auth/smtp.ts";
 // Password hashing for the Credentials provider (salted scrypt via node:crypto).
 export { hashPassword, verifyPassword } from "./auth/password.ts";
 export type { HashPasswordOptions } from "./auth/password.ts";
@@ -670,6 +673,8 @@ export type {
   SsoMetadataRefreshSummary,
 } from "./auth/gotrue/sso-refresh.ts";
 export type { RefreshOutcome } from "./auth/gotrue/sso-metadata.ts";
+export { goTrueSmtpFromEnv } from "./auth/gotrue/smtp-mail.ts";
+export type { GoTrueMailKind, GoTrueSmtpOptions } from "./auth/gotrue/smtp-mail.ts";
 export { GoTrueError } from "./auth/gotrue/errors.ts";
 export type { GoTrueErrorCode } from "./auth/gotrue/errors.ts";
 export type {

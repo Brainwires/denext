@@ -31,8 +31,8 @@ On top of sign-in, the plugin runs the account flows an app would otherwise hand
 [email verification and password reset](#email-verification-and-password-reset),
 [passwordless magic links and one-time codes](#passwordless-magic-links-and-one-time-codes)
 and [TOTP two-factor authentication](#two-factor-authentication-totp). All four need an
-`adapter`; the emailed ones also need your `sendVerificationRequest`, because denext ships
-no mailer.
+`adapter`; the emailed ones also need a `sendVerificationRequest` — denext's
+[`smtpMailer()`](#sending-mail-over-smtp), or your own.
 
 ## Quick start
 
@@ -759,8 +759,8 @@ construction**, instead of every login quietly answering `401`.
 
 Both flows mail a single-use link, so they need two things: an adapter with the
 verification-token group (`createVerificationToken` + `useVerificationToken`; a reset also
-needs `setCredential`), and `sendVerificationRequest` — **denext ships no mailer**. Every
-emailed token, from these flows and from the
+needs `setCredential`), and `sendVerificationRequest`: [`smtpMailer()`](#sending-mail-over-smtp)
+or a function of your own. Every emailed token, from these flows and from the
 [passwordless providers](#passwordless-magic-links-and-one-time-codes), goes through that
 one function.
 
@@ -781,6 +781,50 @@ ready-to-click link, and for a one-time code `token` is the code. Inside a reque
 mailer runs **after the response** (`after()`), so its latency can't reveal that an
 address has an account; a throw is logged — without the token or the link — and never
 surfaces, and `verificationRequested` fires only for a delivery that succeeded.
+
+### Sending mail over SMTP
+
+`smtpMailer()` from `denext/server` is a `sendVerificationRequest` that talks SMTP itself —
+no npm package, `Deno.connect` / `Deno.connectTls` / `Deno.startTls` underneath:
+
+```ts
+import { denextAuth, smtpMailer } from "denext/server";
+
+denextAuth({
+  // …
+  sendVerificationRequest: smtpMailer({
+    host: "smtp.example.com", // port 587 + STARTTLS by default
+    // port: 465,             // implicit TLS (or `secure: true`)
+    user: Deno.env.get("SMTP_USER")!,
+    pass: Deno.env.get("SMTP_PASS")!,
+    from: "Example <noreply@example.com>",
+  }),
+});
+```
+
+| Option      | Default                         | What it does                                                                                 |
+| ----------- | ------------------------------- | -------------------------------------------------------------------------------------------- |
+| `host`      | required                        | The server; its certificate must name it                                                     |
+| `port`      | `465` with `secure`, else `587` | The port                                                                                     |
+| `secure`    | `true` on port 465              | Implicit TLS from the first byte; otherwise STARTTLS, which must be offered and must succeed |
+| `user`      | none                            | AUTH PLAIN (preferred) or LOGIN, whichever the server offers; give `pass` with it            |
+| `from`      | required                        | `noreply@example.com` or `Name <noreply@example.com>`                                        |
+| `insecure`  | `false`                         | Plaintext without STARTTLS, allowed only to a loopback host (a local mail catcher)           |
+| `timeoutMs` | `10000`                         | Each step's limit: the connect, the TLS handshake, every reply and every write               |
+| `caCerts`   | system roots                    | Extra trusted CAs (PEM), for a server with a private CA                                      |
+| `render`    | an English message per purpose  | `(params) => ({ subject, text, html? })` — shape the mail for each `purpose`                 |
+
+TLS is not optional: a server that offers no STARTTLS, a STARTTLS that fails, a certificate
+that doesn't verify, or bytes the server sent after its `220` to `STARTTLS` (a reply injected
+into the plaintext phase) end the send before any credential or address goes out. Every
+message opens its own connection and closes it, so no session — and no authenticated state —
+is shared between two messages, or between tenants. Every header value is refused if it
+holds a CR or LF, the recipient must be one plain `local@domain.tld` address (a list, an
+angle bracket or an SMTP argument smuggled into it is refused), a non-ASCII subject or sender
+name is RFC 2047-encoded, and the body is quoted-printable with dot-stuffing. `mailer.send({ to,
+subject, text, html? })` sends any other message the same way. A refusal is an `SmtpError`
+(with the server's reply `code`) or an `SmtpMessageError`; neither carries the password or the
+message.
 
 The `email` block tunes every emailed token. Lifetimes are in seconds (a non-finite or
 non-positive one falls back to its default), and a link path must be a same-origin path —
@@ -2245,6 +2289,7 @@ The `/auth/v1` options (`backend({ supabase: { auth } })`):
 | `sendSms`                          | none                             | Deliver SMS codes (phone sign-up, phone OTP, phone MFA)                                                                  |
 | `captcha`                          | off                              | `{ provider: "hcaptcha" \| "turnstile", secret }` — checks `captchaToken`                                                |
 | `hooks`                            | none                             | `customAccessToken`, `sendEmail`, `sendSms` (Supabase's auth hooks)                                                      |
+| `smtp`                             | `GOTRUE_SMTP_*`                  | Send `/auth/v1`'s mail over SMTP: `smtpMailer()`'s options plus GoTrue's `subjects` and `templates` (below)              |
 | `requireReauthentication`          | `false`                          | A password change needs a `reauthenticate()` nonce                                                                       |
 | `manualLinking`                    | `true`                           | Allow `linkIdentity()`                                                                                                   |
 | `mfa`                              | TOTP                             | `{ phone: true }` adds SMS factors; `maxFactors` (10)                                                                    |
@@ -2257,6 +2302,21 @@ The `/auth/v1` options (`backend({ supabase: { auth } })`):
 options set their own (a hook set here wins over the same hook there, and any `hooks.sendSms`
 wins over a plain `sendSms`) — see
 [Captcha](#captcha) and [Hooks](#hooks).
+
+**Email delivery.** `/auth/v1` mails through `hooks.sendEmail` when set, else the auth config's
+`sendVerificationRequest`, else SMTP: the `smtp` option, or — when it is unset — Supabase Auth's
+own settings from the environment, `GOTRUE_SMTP_HOST`, `GOTRUE_SMTP_PORT`, `GOTRUE_SMTP_USER`,
+`GOTRUE_SMTP_PASS`, `GOTRUE_SMTP_ADMIN_EMAIL` (the sender) and `GOTRUE_SMTP_SENDER_NAME`, with
+`GOTRUE_MAILER_SUBJECTS_<KIND>` and `GOTRUE_MAILER_TEMPLATES_<KIND>` (`CONFIRMATION`, `INVITE`,
+`RECOVERY`, `MAGIC_LINK`, `EMAIL_CHANGE`, `REAUTHENTICATION`). The transport is
+[`smtpMailer()`](#sending-mail-over-smtp), so TLS is required (465 is implicit TLS, any other
+port must offer STARTTLS). Subjects default to GoTrue's ("Confirm Your Email", "Your Magic
+Link", …). A template is a URL of an HTML file, fetched on first use (http(s), 10 s, at most
+1 MiB) and kept for 10 minutes; it takes `{{ .ConfirmationURL }}`, `{{ .Token }}`,
+`{{ .TokenHash }}`, `{{ .SiteURL }}`, `{{ .Email }}`, `{{ .NewEmail }}` and `{{ .RedirectTo }}`,
+each HTML-escaped. A template with any other Go template action (`{{ if }}`, `{{ .Data }}`), or
+one that can't be fetched, is replaced by the built-in one and the reason logged. `denext
+generate docker --stack` lists the `GOTRUE_SMTP_*` variables in `.env.example`.
 
 ### SAML single sign-on
 
@@ -2707,8 +2767,10 @@ in its test mode (`+clerk_test` addresses verify with `424242`).
 What the first-party auth layer still does not do — the full ledger is
 [Known limitations](/docs/limitations):
 
-- **No mailer, no next-auth compatibility shim.** Every emailed token goes through your
-  `sendVerificationRequest`; a `next-auth` shim is on the roadmap.
+- **No next-auth compatibility shim.** Every emailed token goes through your
+  `sendVerificationRequest` (`smtpMailer()` or your own), handed over after the response, so
+  delivery is best-effort where the platform freezes the isolate; a `next-auth` shim is on the
+  roadmap.
 - **Passkeys: two attestation formats, three algorithms.** Only `none` and `packed` statements
   are verified — `tpm`, `android-key`, `apple` and `fido-u2f` are refused, or with
   [`attestation.mds`](#attestation-the-fido-metadata-service) and `allowUnattested` registered

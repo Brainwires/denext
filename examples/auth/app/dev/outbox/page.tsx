@@ -34,9 +34,8 @@ export default function Outbox() {
     <section class="stack">
       <h1>Dev outbox</h1>
       <p>
-        denext ships no mailer: every emailed token goes to <code>sendVerificationRequest</code>
-        {" "}
-        — here, <code>devMailer</code> in{" "}
+        Every emailed token goes to <code>sendVerificationRequest</code> — here,{" "}
+        <code>devMailer</code> in{" "}
         <code>lib/outbox.ts</code>, which keeps the message and prints its link. Newest first; a
         link works once.
       </p>

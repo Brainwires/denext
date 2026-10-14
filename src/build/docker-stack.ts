@@ -186,6 +186,56 @@ export const STACK_ENV: readonly StackEnvVar[] = [
     when: (o) => o.backend === true,
   },
   {
+    name: "GOTRUE_SMTP_HOST",
+    about: "@denext/backend supabase: the SMTP server /auth/v1 sends its emails through when " +
+      "neither hooks.sendEmail nor sendVerificationRequest is configured (Supabase Auth's " +
+      "setting). TLS is required: port 465 is implicit TLS, any other port must offer STARTTLS.",
+    example: "",
+    required: false,
+    app: true,
+    when: (o) => o.backend === true,
+  },
+  {
+    name: "GOTRUE_SMTP_PORT",
+    about: "The SMTP port: 587 (STARTTLS) or 465 (implicit TLS).",
+    example: "587",
+    required: false,
+    app: true,
+    when: (o) => o.backend === true,
+  },
+  {
+    name: "GOTRUE_SMTP_USER",
+    about: "The SMTP user (AUTH PLAIN / LOGIN).",
+    example: "",
+    required: false,
+    app: true,
+    when: (o) => o.backend === true,
+  },
+  {
+    name: "GOTRUE_SMTP_PASS",
+    about: "The SMTP password.",
+    example: "",
+    required: false,
+    app: true,
+    when: (o) => o.backend === true,
+  },
+  {
+    name: "GOTRUE_SMTP_ADMIN_EMAIL",
+    about: "The sender address of /auth/v1's emails (needed with GOTRUE_SMTP_HOST).",
+    example: "",
+    required: false,
+    app: true,
+    when: (o) => o.backend === true,
+  },
+  {
+    name: "GOTRUE_SMTP_SENDER_NAME",
+    about: "The sender's display name.",
+    example: "",
+    required: false,
+    app: true,
+    when: (o) => o.backend === true,
+  },
+  {
     name: "DENEXT_VAULT_KEY",
     about:
       "@denext/backend: encrypts the vault's secrets in Postgres (AES-256-GCM, ≥ 32 characters).",

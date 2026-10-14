@@ -578,7 +578,8 @@ With `backend({ supabase: true })` the backend also recognizes Supabase's creden
 
 The same option mounts GoTrue's `/auth/v1` over your `denextAuth()` users, so `supabase.auth.*`
 works unchanged; its options go under `supabase: { auth: { … } }` — see
-[Supabase clients](/docs/auth#supabase-clients-authv1).
+[Supabase clients](/docs/auth#supabase-clients-authv1). Its mail goes out over SMTP from
+Supabase Auth's own `GOTRUE_SMTP_*` settings when no sender is configured in code.
 
 `denext backend keys` prints a fresh set as environment variables (`--json` as JSON; `--legacy`
 adds a JWT secret and the legacy JWT keys); under `denext dev` with none configured, a set is generated once into

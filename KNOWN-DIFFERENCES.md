@@ -295,6 +295,12 @@ Where `@denext/backend` deliberately departs from Supabase. See
   and a personal OAuth login linked to it would outlive that. Okta, WorkOS, Clerk and Auth0
   Organizations enforce the same rule. Linking still works from an SSO session, so the user keeps
   the provider's tokens for API access; the linked identity only can't sign in.
+- **`/auth/v1` mail templates take GoTrue's placeholders only.** `GOTRUE_MAILER_TEMPLATES_*`
+  are fetched and rendered with `{{ .ConfirmationURL }}`, `{{ .Token }}`, `{{ .TokenHash }}`,
+  `{{ .SiteURL }}`, `{{ .Email }}`, `{{ .NewEmail }}` and `{{ .RedirectTo }}`; a template with any
+  other Go template action (`{{ if }}`, `{{ .Data }}`) gets the built-in one instead. SMTP needs
+  TLS (implicit on 465, else STARTTLS), where GoTrue falls back to plaintext when the server
+  offers no STARTTLS.
 - **`/auth/v1/verify` still redeems on GET.** denext's own `magicLink()` opens a confirmation
   page by default, but the GoTrue-compatible `GET /auth/v1/verify` link keeps Supabase's
   behaviour (the link verifies and redirects), because that is the supabase-js contract: a mail
@@ -343,8 +349,9 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
   `allowDangerousEmailAccountLinking`. The default costs a support ticket; the alternative
   costs an account takeover from any IdP that will mint a token for an unverified address.
 - **`magicLink()` / `emailOtp()` are not next-auth's Email provider.** There is no
-  nodemailer `server` option — denext ships no mailer, so you pass
-  `sendVerificationRequest` — and a one-time-code mode (`emailOtp()`) sits next to the link.
+  nodemailer `server` option — you pass `sendVerificationRequest`, e.g. `smtpMailer({ host,
+  user, pass, from })`, which refuses to send without TLS — and a one-time-code mode
+  (`emailOtp()`) sits next to the link.
   Link tokens are stored as a SHA-256 and codes as an HMAC keyed by the auth `secret`;
   `allowSignUp: false` refuses unknown addresses; a known address, an unknown one and a list
   (which sends nothing) all get the identical answer; and the redeem is

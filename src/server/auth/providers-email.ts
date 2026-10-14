@@ -5,14 +5,14 @@
  *
  * Both are plain data: the flow lives in {@link ./routes-email.ts | routes-email.ts}, on
  * `{basePath}/callback/:provider`. Either one needs `sendVerificationRequest` or
- * `hooks.sendEmail` (denext ships no mailer) and an adapter with the verification-token group plus `getUserByEmail`,
- * `createUser` and `updateUser`.
+ * `hooks.sendEmail` (`smtpMailer()`, or your own) and an adapter with the verification-token
+ * group plus `getUserByEmail`, `createUser` and `updateUser`.
  *
  * ```ts
  * denextAuth({
  *   providers: [magicLink(), emailOtp({ allowSignUp: false })],
  *   adapter: sqliteAuthAdapter({ path: "auth.db" }),
- *   sendVerificationRequest: ({ identifier, url, token, purpose }) => mailer.send(…),
+ *   sendVerificationRequest: smtpMailer({ host, user, pass, from }),
  *   secret,
  * });
  * ```
@@ -118,8 +118,8 @@ export function assertEmailProviderConfig(config: AuthConfig): void {
   if (typeof mailerOf(config) !== "function") {
     throw new Error(
       `denextAuth: the email provider "${provider.id}" needs \`sendVerificationRequest\` ` +
-        "(or `hooks.sendEmail`) — denext ships no mailer; pass a function that delivers " +
-        "{ identifier, url, token, purpose, expiresAt }.",
+        "(or `hooks.sendEmail`) — pass `smtpMailer({ host, user, pass, from })`, or a " +
+        "function that delivers { identifier, url, token, purpose, expiresAt }.",
     );
   }
   assertProviderAdapter(config, `the email provider "${provider.id}"`, REQUIRED_ADAPTER_METHODS);
