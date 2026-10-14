@@ -36,6 +36,7 @@ import { anonymousRoutes } from "./routes-anonymous.ts";
 import { emailCallbacks } from "./routes-email.ts";
 import { mfaRoutes } from "./routes-mfa.ts";
 import { nativeRoutes } from "./routes-native.ts";
+import { nativeMfaRoutes } from "./routes-native-mfa.ts";
 import { handleOAuthCallback, handleOAuthFormPost, handleSignin } from "./routes-oauth.ts";
 import { passkeyRoutes } from "./routes-passkeys.ts";
 import { phoneCallbacks } from "./routes-phone.ts";
@@ -204,6 +205,7 @@ const declaredRoutes: readonly AuthRoute[] = [
   // Native app sessions (`native` config): authorize/complete in the browser sheet, the token /
   // revoke / nonce calls, native Apple/Google id_token sign-in — plus `POST /account/delete`.
   // They answer `null` when the feature (or the adapter group behind it) isn't configured.
+  ...nativeMfaRoutes,
   ...nativeRoutes,
 ];
 

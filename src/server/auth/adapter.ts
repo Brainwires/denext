@@ -290,14 +290,15 @@ export interface NativeSessionRecord {
 }
 
 /**
- * A single-use native grant: an authorization **code** (handed to the app's redirect URI) or
- * a sign-in **nonce** (for a native id_token sign-in). Only the SHA-256 of the value is stored.
+ * A single-use native grant: an authorization **code** (handed to the app's redirect URI), a
+ * sign-in **nonce** (for a native id_token sign-in), or an **mfa** token (a native id_token
+ * sign-in that still owes its second factor). Only the SHA-256 of the value is stored.
  */
 export interface NativeGrantRecord {
   /** SHA-256 (hex) of the presented value. */
   hash: string;
   /** Which kind of grant this is. */
-  kind: "code" | "nonce";
+  kind: "code" | "nonce" | "mfa";
   /** Expiry, epoch seconds. */
   expiresAt: number;
   /** Opaque payload the flow wants back on redemption (JSON). */

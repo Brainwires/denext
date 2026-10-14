@@ -1,0 +1,369 @@
+// A native `id_token` sign-in (`POST {basePath}/native/google` | `/native/apple`) for a user with
+// a verified second factor answers a pending result — `{ mfa_required, mfa_token, expires_in,
+// factors }`, no tokens, no `signIn` event — which the app finishes at `POST /native/mfa` with a
+// TOTP, backup or SMS code. The `mfa_token` is single-use (a wrong code hands back a fresh one,
+// one attempt fewer, same expiry), short-lived (five minutes), never a bearer, and refused once
+// its user is banned or deleted.
+
+import { assert, assertEquals, assertFalse, assertMatch, assertRejects } from "@std/assert";
+import { decodeBase32 } from "@std/encoding/base32";
+import type { AuthAdapter } from "../src/server/auth/adapter.ts";
+import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import { confirmTotp, enrollTotp } from "../src/server/auth/mfa.ts";
+import { verifyNativeAccessToken } from "../src/server/auth/native.ts";
+import { base64UrlEncode } from "../src/server/auth/oauth.ts";
+import { handleAuthRequest } from "../src/server/auth/routes.ts";
+import type { AuthConfig } from "../src/server/auth/types.ts";
+import { nativeSession, NativeSessionError } from "../src/runtime/native-session.ts";
+import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+
+const ORIGIN = "https://app.test";
+const SECRET = "test-secret-value-at-least-32-chars-long";
+const GOOGLE_WEB = "web-client.apps.googleusercontent.com";
+const EMAIL = "g@x.test";
+
+const pair = await crypto.subtle.generateKey(
+  {
+    name: "RSASSA-PKCS1-v1_5",
+    modulusLength: 2048,
+    publicExponent: new Uint8Array([1, 0, 1]),
+    hash: "SHA-256",
+  },
+  true,
+  ["sign", "verify"],
+) as CryptoKeyPair;
+const publicJwk = {
+  ...(await crypto.subtle.exportKey("jwk", pair.publicKey)),
+  kid: "k1",
+  alg: "RS256",
+  use: "sig",
+};
+
+const enc = (value: unknown) => base64UrlEncode(new TextEncoder().encode(JSON.stringify(value)));
+const now = () => Math.floor(Date.now() / 1000);
+
+async function idToken(): Promise<string> {
+  const claims = {
+    iss: "https://accounts.google.com",
+    aud: GOOGLE_WEB,
+    azp: GOOGLE_WEB,
+    sub: "google-sub-1",
+    email: EMAIL,
+    email_verified: true,
+    iat: now(),
+    exp: now() + 600,
+  };
+  const input = `${enc({ alg: "RS256", kid: "k1", typ: "JWT" })}.${enc(claims)}`;
+  const sig = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    pair.privateKey,
+    new TextEncoder().encode(input),
+  );
+  return `${input}.${base64UrlEncode(new Uint8Array(sig))}`;
+}
+
+async function totpAt(secret: string, step: number): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new Uint8Array(decodeBase32(secret)),
+    { name: "HMAC", hash: "SHA-1" },
+    false,
+    ["sign"],
+  );
+  const counter = new DataView(new ArrayBuffer(8));
+  counter.setBigUint64(0, BigInt(step));
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, counter.buffer));
+  const at = mac[mac.length - 1] & 15;
+  const bin = ((mac[at] & 0x7f) << 24 | mac[at + 1] << 16 | mac[at + 2] << 8 | mac[at + 3]) >>> 0;
+  return String(bin % 1_000_000).padStart(6, "0");
+}
+
+const step = () => Math.floor(Date.now() / 30_000);
+
+let jwksCounter = 0;
+
+interface Harness {
+  config: AuthConfig;
+  adapter: AuthAdapter;
+  events: string[];
+  userId: string;
+  totp: string;
+  backupCodes: string[];
+}
+
+/** A Google-linked user with a confirmed TOTP factor. */
+async function setup(): Promise<Harness> {
+  const adapter = inMemoryAuthAdapter();
+  const events: string[] = [];
+  const config: AuthConfig = {
+    secret: SECRET,
+    canonicalOrigin: ORIGIN,
+    providers: [{ id: "credentials", type: "credentials" }],
+    adapter,
+    rateLimit: false,
+    mfa: { window: 2, backupCodes: 2 },
+    native: {
+      redirectUris: ["com.example.app://auth/callback"],
+      requireNonce: false,
+      google: { clientIds: [GOOGLE_WEB], jwksUrl: `https://google.test/${++jwksCounter}/certs` },
+      fetch: () => Promise.resolve(Response.json({ keys: [publicJwk] })),
+    },
+    events: {
+      signIn: (p) => void events.push(`signIn:${p.provider}`),
+      signInFailed: (p) => void events.push(`failed:${p.reason}`),
+    },
+  };
+  const user = await adapter.createUser({ email: EMAIL, emailVerified: 1 });
+  await adapter.linkAccount({
+    userId: user.id,
+    provider: "google",
+    providerAccountId: "google-sub-1",
+    type: "oidc",
+  });
+  const session = {
+    user: { id: user.id, email: EMAIL },
+    provider: "credentials",
+    expiresAt: now() + 3600,
+    authTime: now(),
+  };
+  const enrollment = await enrollTotp(config, session);
+  assert(enrollment.ok);
+  const confirmed = await confirmTotp(config, {
+    user: session.user,
+    code: await totpAt(enrollment.secret, step() - 2),
+  });
+  assert(confirmed.ok);
+  return {
+    config,
+    adapter,
+    events,
+    userId: user.id,
+    totp: enrollment.secret,
+    backupCodes: confirmed.backupCodes,
+  };
+}
+
+async function post(h: Harness, path: string, body: Record<string, string>): Promise<Response> {
+  const request = new Request(`${ORIGIN}/auth${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const res = await runWithContext(
+    createRequestContext(request),
+    () => handleAuthRequest(request, h.config),
+  );
+  assert(res, `${path} fell through`);
+  return res;
+}
+
+/** The id_token sign-in's pending answer. */
+async function pending(h: Harness): Promise<Record<string, unknown>> {
+  const res = await post(h, "/native/google", { id_token: await idToken() });
+  assertEquals(res.status, 200);
+  return await res.json();
+}
+
+Deno.test("an enrolled user's id_token sign-in answers a pending second factor, no tokens", async () => {
+  const h = await setup();
+  const body = await pending(h);
+  assertEquals(body.mfa_required, true);
+  assertMatch(String(body.mfa_token), /^nmf_/);
+  assert(Number(body.expires_in) > 0 && Number(body.expires_in) <= 300);
+  assertEquals((body.factors as Array<{ type: string }>).map((f) => f.type), ["totp"]);
+  assertEquals(body.access_token, undefined);
+  assertEquals(body.refresh_token, undefined);
+  assertFalse(JSON.stringify(body).includes(h.totp), "no secret in the answer");
+  assertEquals(h.events, [], "no signIn before the second factor");
+});
+
+Deno.test("the mfa_token grants nothing: not a bearer, not a refresh token", async () => {
+  const h = await setup();
+  const token = String((await pending(h)).mfa_token);
+  assertEquals(await verifyNativeAccessToken(h.config, token), null);
+  const refresh = await post(h, "/native/token", {
+    grant_type: "refresh_token",
+    refresh_token: token,
+  });
+  assertEquals(refresh.status, 400);
+  const code = await post(h, "/native/token", {
+    grant_type: "authorization_code",
+    code: token,
+    code_verifier: "x".repeat(43),
+    redirect_uri: "com.example.app://auth/callback",
+  });
+  assertEquals(code.status, 400);
+});
+
+Deno.test("a TOTP code finishes it: native tokens, the signIn event, and the token is spent", async () => {
+  const h = await setup();
+  const token = String((await pending(h)).mfa_token);
+  const res = await post(h, "/native/mfa", {
+    mfa_token: token,
+    code: await totpAt(h.totp, step()),
+  });
+  assertEquals(res.status, 200);
+  const tokens = await res.json();
+  assertMatch(tokens.access_token, /^nat_/);
+  const session = await verifyNativeAccessToken(h.config, tokens.access_token);
+  assertEquals(session?.user.id, h.userId);
+  assert(session?.amr?.includes("totp"), "the session records the second factor");
+  assertEquals(h.events, ["signIn:google"]);
+  // Single-use: the same token (with the next valid code) is refused.
+  const again = await post(h, "/native/mfa", {
+    mfa_token: token,
+    code: await totpAt(h.totp, step() + 1),
+  });
+  assertEquals(again.status, 400);
+  assertEquals((await again.json()).error, "invalid_grant");
+});
+
+Deno.test("a backup code finishes it too", async () => {
+  const h = await setup();
+  const token = String((await pending(h)).mfa_token);
+  const res = await post(h, "/native/mfa", { mfa_token: token, code: h.backupCodes[0] });
+  assertEquals(res.status, 200);
+  assertMatch((await res.json()).access_token, /^nat_/);
+});
+
+Deno.test("a wrong code spends the token, hands back a fresh one, and five wrong codes end it", async () => {
+  const h = await setup();
+  let token = String((await pending(h)).mfa_token);
+  for (let left = 4; left >= 1; left--) {
+    const res = await post(h, "/native/mfa", { mfa_token: token, code: "000000" });
+    assertEquals(res.status, 401);
+    const body = await res.json();
+    assertEquals([body.error, body.attempts_left], ["invalid_code", left]);
+    // The spent token is dead even with a right code.
+    const replay = await post(h, "/native/mfa", {
+      mfa_token: token,
+      code: await totpAt(h.totp, step()),
+    });
+    assertEquals(replay.status, 400);
+    token = body.mfa_token;
+  }
+  const last = await post(h, "/native/mfa", { mfa_token: token, code: "000000" });
+  assertEquals(last.status, 400);
+  assertEquals((await last.json()).error, "invalid_grant");
+  assert(h.events.includes("failed:invalid_mfa_code"));
+  assertFalse(h.events.includes("signIn:google"));
+});
+
+Deno.test("an expired token is refused, right code or not", async () => {
+  const h = await setup();
+  const token = String((await pending(h)).mfa_token);
+  const code = await totpAt(h.totp, step());
+  const realNow = Date.now;
+  Date.now = () => realNow() + 301_000;
+  try {
+    const res = await post(h, "/native/mfa", { mfa_token: token, code });
+    assertEquals(res.status, 400);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+Deno.test("a user banned or deleted after the id_token never finishes the sign-in", async () => {
+  const h = await setup();
+  const token = String((await pending(h)).mfa_token);
+  await h.adapter.updateUser({ id: h.userId, bannedUntil: now() + 3600 });
+  const banned = await post(h, "/native/mfa", {
+    mfa_token: token,
+    code: await totpAt(h.totp, step()),
+  });
+  assertEquals(banned.status, 400);
+
+  const h2 = await setup();
+  const token2 = String((await pending(h2)).mfa_token);
+  await h2.adapter.deleteUser!(h2.userId);
+  const gone = await post(h2, "/native/mfa", {
+    mfa_token: token2,
+    code: await totpAt(h2.totp, step()),
+  });
+  assertEquals(gone.status, 400);
+});
+
+Deno.test("an unknown or malformed token is invalid_grant; native off falls through", async () => {
+  const h = await setup();
+  for (const token of ["", "nmf_nope", "nat_x", "x".repeat(5000)]) {
+    const res = await post(h, "/native/mfa", { mfa_token: token, code: "123456" });
+    assertEquals(res.status, 400);
+  }
+  const off = { ...h, config: { ...h.config, native: undefined } };
+  const request = new Request(`${ORIGIN}/auth/native/mfa`, { method: "POST", body: "{}" });
+  const res = await runWithContext(
+    createRequestContext(request),
+    () => handleAuthRequest(request, off.config),
+  );
+  assert(!res || res.status === 404);
+});
+
+Deno.test("an SMS challenge for an unknown factor keeps the sign-in alive with a fresh token", async () => {
+  const h = await setup();
+  const token = String((await pending(h)).mfa_token);
+  const res = await post(h, "/native/mfa-challenge", { mfa_token: token, factor_id: "nope" });
+  assertEquals(res.status, 404);
+  const body = await res.json();
+  assertMatch(body.mfa_token, /^nmf_/);
+  const finish = await post(h, "/native/mfa", {
+    mfa_token: body.mfa_token,
+    code: await totpAt(h.totp, step()),
+  });
+  assertEquals(finish.status, 200);
+});
+
+// ---- the client helper -------------------------------------------------------------------------
+
+/** `nativeSession()` against the real handler (no network). */
+function clientFor(h: Harness) {
+  const store = new Map<string, string>();
+  const doFetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const request = new Request(input, init);
+    const res = await runWithContext(
+      createRequestContext(request),
+      () => handleAuthRequest(request, h.config),
+    );
+    return res ?? new Response("not found", { status: 404 });
+  };
+  return nativeSession({
+    base: ORIGIN,
+    redirectUri: "com.example.app://auth/callback",
+    fetch: doFetch as typeof fetch,
+    storage: {
+      get: (k) => Promise.resolve(store.get(k) ?? null),
+      set: (k, v) => {
+        store.set(k, v);
+        return Promise.resolve();
+      },
+      delete: (k) => {
+        store.delete(k);
+        return Promise.resolve();
+      },
+    },
+  });
+}
+
+Deno.test("nativeSession: mfa_required carries the pending sign-in; completeMfa finishes it", async () => {
+  const h = await setup();
+  const session = clientFor(h);
+  const token = await idToken();
+  const error = await assertRejects(
+    () => session.signInWithIdToken("google", { idToken: token }),
+    NativeSessionError,
+  );
+  assertEquals(error.code, "mfa_required");
+  assert(error.mfa?.token.startsWith("nmf_"));
+  assertEquals(error.mfa?.factors.map((f) => f.type), ["totp"]);
+  assertFalse(await session.signedIn());
+  // A wrong code hands back a fresh pending sign-in to retry with.
+  const wrong = await assertRejects(
+    () => session.completeMfa(error.mfa!, "000000"),
+    NativeSessionError,
+  );
+  assertEquals([wrong.code, wrong.mfa?.attemptsLeft], ["invalid_code", 4]);
+  assertEquals(wrong.mfa?.factors.map((f) => f.type), ["totp"], "the factors carry over");
+  const user = await session.completeMfa(wrong.mfa!, await totpAt(h.totp, step()));
+  assertEquals(user.id, h.userId);
+  assert(await session.signedIn());
+  assertMatch(String(await session.getToken()), /^nat_/);
+});

@@ -19,7 +19,9 @@
  * - `POST {basePath}/native/nonce` → `{ nonce, expires_in }`: a single-use nonce for the next
  *   native id_token sign-in (pass it, or its SHA-256 hex, to the native sheet).
  * - `POST {basePath}/native/apple` | `/native/google` — `{ id_token, nonce, authorization_code?,
- *   name? }`: verify the provider's id_token, create or link the account, answer the tokens.
+ *   name? }`: verify the provider's id_token, create or link the account, answer the tokens — or,
+ *   for a user with a verified second factor, `{ mfa_required, mfa_token, expires_in, factors }`,
+ *   finished at `/native/mfa` (`routes-native-mfa.ts`).
  * - `POST {basePath}/account/delete` — delete the signed-in user (cookie session, same-origin;
  *   or a native bearer). Requires a recent sign-in (`authTime` within `mfa.freshness`, five
  *   minutes at least), else `403 { error: "reauth_required" }`.
@@ -38,7 +40,14 @@ import { applyCors, corsOriginAllowed, isPreflight, preflightResponse } from "..
 import { currentContext } from "../request-context.ts";
 import { getSession, type SessionOptions } from "../session.ts";
 import { emitAuthEvent } from "./events.ts";
+import { hasVerifiedFactor, userFactors } from "./factors.ts";
 import { mfaPendingFor, recentlyAuthenticated } from "./mfa.ts";
+import {
+  issueNativeMfaToken,
+  nativeMfaExpiresIn,
+  nativeMfaFactors,
+  newNativeMfaPending,
+} from "./native-mfa.ts";
 import {
   consumeNonce,
   createAuthCode,
@@ -101,7 +110,7 @@ function corsPolicy() {
  * The origin gate of a native POST: no `Origin` (a native HTTP client — nothing ambient to
  * forge) passes; a present one must be this app or a `cors`-allowed origin; `"null"` never.
  */
-function nativeOriginAllowed(ctx: AuthRouteContext): boolean {
+export function nativeOriginAllowed(ctx: AuthRouteContext): boolean {
   const origin = ctx.request.headers.get("origin");
   if (origin === null) return true;
   if (origin === "" || origin === "null") return false;
@@ -111,7 +120,7 @@ function nativeOriginAllowed(ctx: AuthRouteContext): boolean {
 }
 
 /** Wrap a handler so its answer carries the app's CORS headers, and failures are contained. */
-function nativeRow(what: string, handler: AuthRoute["handler"]): AuthRoute["handler"] {
+export function nativeRow(what: string, handler: AuthRoute["handler"]): AuthRoute["handler"] {
   const guarded = contained(what, handler);
   return async (ctx) => {
     const res = await guarded(ctx);
@@ -145,7 +154,7 @@ function jsonStrings(text: string): Record<string, string> {
 }
 
 /** The body's string fields — JSON or a urlencoded form. Anything unusable is `{}`. */
-async function readFields(ctx: AuthRouteContext): Promise<Record<string, string>> {
+export async function readFields(ctx: AuthRouteContext): Promise<Record<string, string>> {
   const text = await bodyText(ctx.request);
   if (text === null) return {};
   const isJson = (ctx.request.headers.get("content-type") ?? "").includes("application/json");
@@ -157,12 +166,12 @@ async function readFields(ctx: AuthRouteContext): Promise<Record<string, string>
 }
 
 /** The answer every failed grant shares. */
-function invalidGrant(): Response {
+export function invalidGrant(): Response {
   return json({ error: "invalid_grant" }, 400, { pragma: "no-cache" });
 }
 
 /** The cross-origin refusal. */
-function forbidden(): Response {
+export function forbidden(): Response {
   return json({ error: "forbidden" }, 403);
 }
 
@@ -410,13 +419,45 @@ async function signInWithIdToken(
   }
   const user = await applySignInCallback(ctx.config, resolved.user, id);
   if (!user) return await refusedSignIn(ctx, id, "access_denied", 403);
-  // A native sheet can't run the second-factor step: an enrolled user signs in through the
-  // browser flow (/native/authorize), which does.
-  if (await mfaPendingFor(ctx.config, user)) return json({ error: "mfa_required" }, 403);
+  // An enrolled user gets a pending sign-in to finish with a code at /native/mfa. Under
+  // `mfa.required: "always"` a user with no factor yet enrolls in the browser
+  // (/native/authorize), which runs the enrollment.
+  if (await mfaPendingFor(ctx.config, user)) {
+    if (!(await hasVerifiedFactor(ctx.config, user.id))) {
+      return json({ error: "mfa_required" }, 403);
+    }
+    return await pendingNativeSignIn(ctx, native, user, id, resolved.isNewUser);
+  }
   const snapshot = await snapshotFor(ctx.config, user, id, ["ext"]);
   const tokens = await startNativeSession(ctx.config, native, snapshot);
   await emitAuthEvent(ctx.options, "signIn", { user, provider: id, isNewUser: resolved.isNewUser });
   return json(tokens, 200, { pragma: "no-cache" });
+}
+
+/**
+ * The answer to an id_token sign-in that owes a second factor: a single-use `mfa_token` to
+ * finish it at `/native/mfa`, and the factors it can be finished with. No session, no tokens,
+ * and no `signIn` event until the factor is proven.
+ */
+async function pendingNativeSignIn(
+  ctx: AuthRouteContext,
+  native: ResolvedNative,
+  user: AuthSession["user"],
+  provider: NativeIdTokenProvider,
+  isNewUser: boolean,
+): Promise<Response> {
+  const pending = newNativeMfaPending(user, provider, isNewUser);
+  const token = await issueNativeMfaToken(native, pending);
+  return json(
+    {
+      mfa_required: true,
+      mfa_token: token,
+      expires_in: nativeMfaExpiresIn(pending),
+      factors: nativeMfaFactors(await userFactors(ctx.config, user.id)),
+    },
+    200,
+    { pragma: "no-cache", "cache-control": "no-store" },
+  );
 }
 
 /**
