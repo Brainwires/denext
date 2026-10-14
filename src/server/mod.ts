@@ -514,6 +514,7 @@ export {
   transformImageBytes,
   type TransformImageOptions,
 } from "./image-optimizer.ts";
+export { type HealthCheck, type HealthCheckOptions, registerHealthCheck } from "./health.ts";
 export {
   safeFetch,
   SafeFetchError,

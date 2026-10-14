@@ -215,25 +215,40 @@ export function resolveRest(o: RestOptions): ResolvedRest {
 const DEV_REFRESH_MS = 2000;
 
 /**
- * The catalog, read once and shared; a failed read is retried by the next request. Under
- * `denext dev` a request for a table or function the catalog lacks re-reads it (at most every
- * 2 s), so one created while the server runs gets its route.
+ * Outside dev: how long after a read a name the catalog lacks re-reads it. A table a migration
+ * created after boot (a rolling deploy, `denext migration up` against a live app) gets its route
+ * without a restart, and a stream of requests for unknown names costs at most one catalog read
+ * per interval.
+ */
+const PROD_REFRESH_MS = 10_000;
+
+/**
+ * The catalog, read once and shared; a failed read is retried by the next request. A request
+ * for a table or function the catalog lacks re-reads it (at most every 2 s under `denext dev`,
+ * every 10 s otherwise), so one created while the server runs gets its route; a
+ * `NOTIFY pgrst, 'reload schema'` (PostgREST's signal, which `denext migration up` sends)
+ * {@linkcode invalidate}s it, so a changed table is re-read too.
  */
 export class RestCatalogCache {
   #pending: Promise<RestCatalog> | undefined;
   #readAt = 0;
   readonly #load: () => Promise<RestCatalog>;
-  readonly #dev: boolean;
+  readonly #refreshMs: number;
 
   /**
    * A cache over `load`.
    *
    * @param load Reads the catalog.
-   * @param dev Re-read on a miss (`denext dev`).
+   * @param dev `denext dev`: re-read on a miss after 2 s instead of 10 s.
    */
   constructor(load: () => Promise<RestCatalog>, dev: boolean) {
     this.#load = load;
-    this.#dev = dev;
+    this.#refreshMs = dev ? DEV_REFRESH_MS : PROD_REFRESH_MS;
+  }
+
+  /** Drop the cached catalog: the next request reads it again (a schema-reload signal). */
+  invalidate(): void {
+    this.#pending = undefined;
   }
 
   /** The catalog (read on first use). */
@@ -249,7 +264,7 @@ export class RestCatalogCache {
   }
 
   /**
-   * Look something up, re-reading the catalog once on a dev miss.
+   * Look something up, re-reading the catalog once on a miss (throttled).
    *
    * @param lookup Finds it in a catalog.
    * @returns What `lookup` found (in the re-read catalog after a miss), and that catalog.
@@ -259,7 +274,7 @@ export class RestCatalogCache {
   ): Promise<{ found: T | undefined; catalog: RestCatalog }> {
     let catalog = await this.get();
     let found = lookup(catalog);
-    if (found === undefined && this.#dev && Date.now() - this.#readAt >= DEV_REFRESH_MS) {
+    if (found === undefined && Date.now() - this.#readAt >= this.#refreshMs) {
       this.#pending = undefined;
       catalog = await this.get();
       found = lookup(catalog);
@@ -284,6 +299,56 @@ export function skippedWarning(skipped: SkippedRelation[]): string | null {
     `  Enable RLS (alter table … enable row level security) or recreate a view with ` +
     `(security_invoker = true) to serve one; or name it in rest.tables to serve it as is.`,
   ].join("\n");
+}
+
+/** PostgREST's notification channel (`db-channel`), which `denext migration up` notifies too. */
+const RELOAD_CHANNEL = "pgrst";
+
+/**
+ * Whether a `pgrst` notification asks for a schema reload: `reload schema`, or an empty payload
+ * (PostgREST reloads the schema and the config on one).
+ *
+ * @param payload The notification's payload.
+ * @returns Whether to re-read the catalog.
+ */
+export function isSchemaReload(payload: string): boolean {
+  const p = payload.trim().toLowerCase();
+  return p === "" || p === "reload schema";
+}
+
+/**
+ * Re-read the catalog on `NOTIFY pgrst, 'reload schema'` — every replica listens, so one
+ * migration run reaches them all — and after a reconnect (a notification sent while the
+ * listener was down is lost). Without `listen()` (a client that can't LISTEN) the throttled
+ * re-read on a miss still applies.
+ */
+function listenForSchemaReload(
+  ctx: PluginContext,
+  catalog: RestCatalogCache,
+  sql: SqlClient | undefined,
+): void {
+  if (!sql?.listen) return;
+  let first = true;
+  const subscription = sql.listen(
+    RELOAD_CHANNEL,
+    (payload) => {
+      if (isSchemaReload(payload)) catalog.invalidate();
+    },
+    () => {
+      if (!first) catalog.invalidate();
+      first = false;
+    },
+  );
+  subscription.catch((error) =>
+    console.warn(
+      `[@denext/backend] rest: not listening for schema reloads (${
+        (error as Error)?.message ?? error
+      }); a new table still gets its route within 10 s`,
+    )
+  );
+  ctx.addTeardown(async () => {
+    await (await subscription.catch(() => undefined))?.unlisten();
+  });
 }
 
 /**
@@ -1128,11 +1193,12 @@ function restHandler(
  * @param ctx The plugin context.
  * @param rest The resolved options.
  */
-export function setupRest(ctx: PluginContext, rest: ResolvedRest): void {
+export function setupRest(ctx: PluginContext, rest: ResolvedRest, sql?: SqlClient): void {
   const catalog = new RestCatalogCache(catalogLoader(rest), ctx.mode === "dev");
   ctx.addRequestHandler(restHandler(rest, catalog));
   ctx.addPrepareStep(({ outDir }) => writeRestTypes(outDir, rest, () => catalog.get()));
   if (ctx.mode === "dev" || ctx.mode === "prod") {
+    listenForSchemaReload(ctx, catalog, sql);
     catalog.get().catch((error) => {
       console.warn(
         `[@denext/backend] rest: could not read the catalog yet (retried on the first request): ${

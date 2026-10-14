@@ -374,5 +374,21 @@ export async function migratePostgres(
       result.applied.push(migration.name);
     }
   }
+  if (result.applied.length > 0) await notifySchemaReload(sql);
   return result;
+}
+
+/**
+ * Tell running servers the schema changed: `NOTIFY pgrst, 'reload schema'`, PostgREST's own
+ * signal, on which `@denext/backend`'s REST catalog (and a PostgREST in front of the same
+ * database) re-reads it. Best effort: a failure never fails the migration that preceded it.
+ *
+ * @param sql The client the migrations ran on.
+ */
+export async function notifySchemaReload(sql: SqlClient): Promise<void> {
+  try {
+    await sql`select pg_notify('pgrst', 'reload schema')`;
+  } catch {
+    // A client that can't notify: the servers' throttled re-read on a miss still applies.
+  }
 }

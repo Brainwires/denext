@@ -93,7 +93,9 @@ const MISSING = "set it in .env (see .env.example)";
 export const STACK_ENV: readonly StackEnvVar[] = [
   {
     name: "POSTGRES_USER",
-    about: "Postgres superuser the database is created with.",
+    about: "Postgres superuser the database is created with. Only the db-init service " +
+      "(which creates the app's role) and the database's health check use it — the app and the " +
+      "migrations connect as POSTGRES_APP_USER.",
     example: "denext",
     required: false,
     app: false,
@@ -101,7 +103,26 @@ export const STACK_ENV: readonly StackEnvVar[] = [
   },
   {
     name: "POSTGRES_PASSWORD",
-    about: "Postgres password (hex keeps it URL-safe inside DATABASE_URL).",
+    about: "The superuser's password. Postgres keeps the one the data volume was created with: " +
+      "changing it here later locks the stack out (denext stack down --volumes starts over).",
+    generate: RAND_HEX,
+    required: true,
+    app: false,
+    when: (o) => o.postgres === true,
+  },
+  {
+    name: "POSTGRES_APP_USER",
+    about: "The app's own login role: owner of the database (it creates the backend's tables " +
+      "and the anon / authenticated roles), never a superuser. db-init creates it on every start.",
+    example: "denext_app",
+    required: false,
+    app: false,
+    when: (o) => o.postgres === true,
+  },
+  {
+    name: "POSTGRES_APP_PASSWORD",
+    about: "The app role's password (hex keeps it URL-safe inside DATABASE_URL); db-init sets it " +
+      "on every start, so changing it here takes effect on the next up.",
     generate: RAND_HEX,
     required: true,
     app: false,
@@ -218,10 +239,22 @@ export const STACK_ENV: readonly StackEnvVar[] = [
     when: (o) => o.storage === true,
   },
   {
+    name: "DENEXT_RATE_LIMIT_LOCAL_ADDRESSES",
+    about: "Keep the per-IP limits (sign-in, sign-up and code budgets) on inside Docker, where " +
+      "clients arrive from a private bridge address that would otherwise skip them. Behind a " +
+      "reverse proxy also set DENEXT_TRUST_PROXY=1 (or DENEXT_RATE_LIMIT_TRUSTED_PROXIES) so " +
+      "each client gets its own budget instead of sharing the proxy's.",
+    example: "1",
+    required: false,
+    app: true,
+    when: (o) => o.auth === true || o.backend === true,
+  },
+  {
     name: "S3_PUBLIC_ENDPOINT",
     about: "The S3 endpoint BROWSERS reach the store at: presigned upload and download URLs " +
       "are signed for this host. In production a public HTTPS hostname routed to the minio " +
-      "service; empty or unset, it is http://localhost:9000 (the dev overlay's published port).",
+      "service; the default, http://localhost:9000, is the MinIO port this stack publishes on " +
+      "the machine's loopback (MINIO_PORT moves it — change both together).",
     example: "http://localhost:9000",
     required: false,
     app: true,
@@ -280,7 +313,7 @@ const APP_IMAGE = ref("APP_IMAGE:-denext-app");
 
 /** The `DATABASE_URL` the app and migrations containers get. */
 function databaseUrl(): string {
-  return `postgres://${envRef("POSTGRES_USER")}:${envRef("POSTGRES_PASSWORD")}@db:5432/${
+  return `postgres://${envRef("POSTGRES_APP_USER")}:${envRef("POSTGRES_APP_PASSWORD")}@db:5432/${
     envRef("POSTGRES_DB")
   }`;
 }
@@ -316,7 +349,10 @@ function indent(lines: readonly string[], n: number): string {
 /** The app's `depends_on:` block, in start order. */
 function appDependsOn(options: StackOptions): string[] {
   const deps: string[] = [];
-  if (options.postgres) deps.push("db:", "  condition: service_healthy");
+  if (options.postgres) {
+    deps.push("db:", "  condition: service_healthy");
+    deps.push("db-init:", "  condition: service_completed_successfully");
+  }
   if (options.storage) deps.push("minio-init:", "  condition: service_completed_successfully");
   if (options.migrate) deps.push("migrate:", "  condition: service_completed_successfully");
   return deps;
@@ -373,10 +409,50 @@ function migrateService(options: StackOptions): string {
     `        required: false`,
     ...(env.length ? [`    environment:`, indent(env, 6)] : []),
     ...(options.postgres
-      ? [`    depends_on:`, `      db:`, `        condition: service_healthy`]
+      ? [
+        `    depends_on:`,
+        `      db-init:`,
+        `        condition: service_completed_successfully`,
+      ]
       : []),
   ];
   return lines.join("\n");
+}
+
+/**
+ * The one-shot that gives the app a role of its own (as the superuser, then exits): create the
+ * login role when missing, set its password from `.env` (so a change takes effect on the next
+ * up), make it the owner of the database and its `public` schema — what the backend's own DDL
+ * needs (schemas, tables, triggers, the `anon` / `authenticated` roles via CREATEROLE) — and,
+ * with pgvector, create the extension (only a superuser may). Idempotent, so it runs on every
+ * up, an existing volume included.
+ */
+function dbInitService(options: StackOptions): string {
+  const vector = options.pgvector ? "\n        CREATE EXTENSION IF NOT EXISTS vector;" : "";
+  return `  # Creates (or updates) the app's own login role — the database's owner, never a superuser —
+  # then exits; the app and the migrations connect as it.
+  db-init:
+    image: ${options.pgvector ? PGVECTOR_IMAGE : POSTGRES_IMAGE}
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: ${envRef("POSTGRES_USER")}
+      PGPASSWORD: ${envRef("POSTGRES_PASSWORD")}
+      PGDATABASE: ${envRef("POSTGRES_DB")}
+      APP_USER: ${envRef("POSTGRES_APP_USER")}
+      APP_PASSWORD: ${envRef("POSTGRES_APP_PASSWORD")}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        psql -v ON_ERROR_STOP=1 -v u="$$APP_USER" -v p="$$APP_PASSWORD" -v d="$$PGDATABASE" <<'SQL'
+        SELECT format('CREATE ROLE %I LOGIN', :'u') WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'u') \\gexec
+        ALTER ROLE :"u" WITH LOGIN CREATEROLE NOSUPERUSER PASSWORD :'p';
+        ALTER DATABASE :"d" OWNER TO :"u";
+        ALTER SCHEMA public OWNER TO :"u";${vector}
+        SQL`;
 }
 
 /** The Postgres service. No host port unless `exposeDb` (the app reaches it as `db:5432`). */
@@ -411,6 +487,11 @@ function storageServices(options: StackOptions): string {
     environment:
       MINIO_ROOT_USER: ${envRef("MINIO_ROOT_USER")}
       MINIO_ROOT_PASSWORD: ${envRef("MINIO_ROOT_PASSWORD")}
+    # Published on this machine's loopback only, so the presigned URLs S3_PUBLIC_ENDPOINT's
+    # default signs (http://localhost:9000) work for a browser here. In production route a public
+    # HTTPS hostname to it instead and set S3_PUBLIC_ENDPOINT to that.
+    ports:
+      - "127.0.0.1:${ref("MINIO_PORT:-9000")}:9000"
     volumes:
       - storage-data:/bitnami/minio/data
     healthcheck:
@@ -459,7 +540,7 @@ export function renderStackCompose(options: StackOptions, port: number, static_:
   const services = [
     webService(options, port, static_),
     ...(options.migrate ? [migrateService(options)] : []),
-    ...(options.postgres ? [dbService(options)] : []),
+    ...(options.postgres ? [dbService(options), dbInitService(options)] : []),
     ...(options.storage ? [storageServices(options)] : []),
   ];
   return `${DOCKER_SENTINEL}.
@@ -491,10 +572,12 @@ function commentWrap(text: string): string[] {
  * One `.env.example` entry: its comments, then `NAME=value`. A required secret is left EMPTY, so
  * compose refuses to start until it is filled in — a copied placeholder can never ship.
  */
-function envBlock(v: StackEnvVar): string {
+function envBlock(v: StackEnvVar, options: StackOptions): string {
   const lines = commentWrap(`${v.about}${v.required ? " Required." : ""}`);
   if (v.generate) lines.push(`# Generate: ${v.generate}`);
-  lines.push(`${v.name}=${v.required ? "" : v.example ?? ""}`);
+  // The bucket the config names literally (`s3({ bucket })`), as the compose default is.
+  const example = v.name === "S3_BUCKET" && options.bucket ? options.bucket : v.example;
+  lines.push(`${v.name}=${v.required ? "" : example ?? ""}`);
   return lines.join("\n");
 }
 
@@ -507,7 +590,7 @@ function envBlock(v: StackEnvVar): string {
  * @returns The file's contents.
  */
 export function renderEnvExample(options: StackOptions): string {
-  const blocks = stackEnv(options).map(envBlock);
+  const blocks = stackEnv(options).map((v) => envBlock(v, options));
   return `${DOCKER_SENTINEL}.
 # Copy to .env and replace every placeholder:  cp .env.example .env
 # .env holds real secrets: keep it out of git (add \`.env\` to .gitignore) — .dockerignore
@@ -519,7 +602,7 @@ ${blocks.join("\n\n")}
 
 /**
  * `compose.dev.yml`, the development overlay: the app runs `denext dev` on a bind mount of the
- * project, and Postgres and the store are published on loopback for local tools.
+ * project, and Postgres is published on loopback for local tools (the store already is).
  *
  * @param options The services.
  * @param port The port the app listens on.
@@ -530,17 +613,12 @@ export function renderComposeDev(options: StackOptions, port: number): string {
   if (options.postgres && !options.exposeDb) {
     extra.push(`  db:\n    ports:\n      - "${DB_PORT}"`);
   }
-  if (options.storage) {
-    extra.push(
-      `  minio:\n    ports:\n      - "127.0.0.1:${ref("MINIO_PORT:-9000")}:9000"`,
-    );
-  }
   return `${DOCKER_SENTINEL}.
 # Development overlay — on top of the production file:
 #   docker compose -f docker-compose.yml -f compose.dev.yml up --build
 # The app runs \`denext dev\` against a bind mount of this directory (edits reload). The dev
-# server asks a non-loopback browser for its per-run token: open the URL it logs. Postgres and
-# the store are published on loopback (DB_PORT / MINIO_PORT in .env move them).
+# server asks a non-loopback browser for its per-run token: open the URL it logs. Postgres is
+# published on loopback here, the store in the production file (DB_PORT / MINIO_PORT move them).
 # The app runs as YOUR user so it can write the bind mount — export UID and GID first
 # (\`export UID GID=$(id -g)\`; both default to 1000); Deno's cache moves into .denext/ for it.
 services:

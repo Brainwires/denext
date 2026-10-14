@@ -56,7 +56,7 @@
  */
 
 import type { DenextPlugin, PluginContext } from "@denext/denext/server";
-import { handleGoTrueRequest, installGoTrue } from "@denext/denext/server";
+import { handleGoTrueRequest, installGoTrue, registerHealthCheck } from "@denext/denext/server";
 import { installSupabaseAuthHooks } from "./src/identity.ts";
 import { checkBucketName } from "./src/keys.ts";
 import { handleStorageRequest } from "./src/handler.ts";
@@ -350,11 +350,24 @@ function setupPostgres(
   installPostgres(slot);
   if (owned && "sql" in slot) ctx.addTeardown(() => slot.sql.close());
   if (options.realtime) setupRealtime(ctx, options.realtime, slot);
-  if (rest) setupRest(ctx, rest);
+  if (rest) setupRest(ctx, rest, "sql" in slot ? slot.sql : undefined);
   installVault(options.vault);
   installQueues(options.queues);
   installWebhooks(webhooks);
-  if (ctx.mode === "dev" || ctx.mode === "prod") startServices(ctx, options, webhooks);
+  if (ctx.mode === "dev" || ctx.mode === "prod") {
+    startServices(ctx, options, webhooks);
+    ctx.addTeardown(registerHealthCheck("database", () => databaseReachable(slot)));
+  }
+}
+
+/**
+ * `/_denext/health`'s `database` check: `select 1` on the backend's client. A client that could
+ * not be opened (no `DATABASE_URL`) is down too — every backend endpoint would fail.
+ */
+async function databaseReachable(slot: ReturnType<typeof openPostgres>["slot"]): Promise<boolean> {
+  if (!("sql" in slot)) return false;
+  await slot.sql`select 1`;
+  return true;
 }
 
 /**

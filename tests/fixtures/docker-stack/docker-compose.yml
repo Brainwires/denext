@@ -19,7 +19,7 @@ services:
         required: false
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgres://${POSTGRES_USER:-denext}:${POSTGRES_PASSWORD:?set it in .env (see .env.example)}@db:5432/${POSTGRES_DB:-denext}
+      DATABASE_URL: postgres://${POSTGRES_APP_USER:-denext_app}:${POSTGRES_APP_PASSWORD:?set it in .env (see .env.example)}@db:5432/${POSTGRES_DB:-denext}
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-denext}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set it in .env (see .env.example)}
       AWS_REGION: us-east-1
@@ -35,6 +35,7 @@ services:
       DENEXT_VAULT_KEY: ${DENEXT_VAULT_KEY:?set it in .env (see .env.example)}
       DENEXT_WEBHOOK_SECRET: ${DENEXT_WEBHOOK_SECRET:-}
       DENEXT_STORAGE_SECRET: ${DENEXT_STORAGE_SECRET:?set it in .env (see .env.example)}
+      DENEXT_RATE_LIMIT_LOCAL_ADDRESSES: ${DENEXT_RATE_LIMIT_LOCAL_ADDRESSES:-1}
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
     healthcheck:
       test: ["CMD", "deno", "eval", "fetch('http://127.0.0.1:3000/_denext/health').then((r)=>Deno.exit(r.ok?0:1)).catch(()=>Deno.exit(1))"]
@@ -45,6 +46,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully
       migrate:
@@ -60,7 +63,7 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-denext}:${POSTGRES_PASSWORD:?set it in .env (see .env.example)}@db:5432/${POSTGRES_DB:-denext}
+      DATABASE_URL: postgres://${POSTGRES_APP_USER:-denext_app}:${POSTGRES_APP_PASSWORD:?set it in .env (see .env.example)}@db:5432/${POSTGRES_DB:-denext}
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-denext}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set it in .env (see .env.example)}
       AWS_REGION: us-east-1
@@ -76,10 +79,11 @@ services:
       DENEXT_VAULT_KEY: ${DENEXT_VAULT_KEY:?set it in .env (see .env.example)}
       DENEXT_WEBHOOK_SECRET: ${DENEXT_WEBHOOK_SECRET:-}
       DENEXT_STORAGE_SECRET: ${DENEXT_STORAGE_SECRET:?set it in .env (see .env.example)}
+      DENEXT_RATE_LIMIT_LOCAL_ADDRESSES: ${DENEXT_RATE_LIMIT_LOCAL_ADDRESSES:-1}
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
     depends_on:
-      db:
-        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
 
   db:
     image: pgvector/pgvector:pg17
@@ -97,6 +101,32 @@ services:
       retries: 20
       start_period: 10s
 
+  # Creates (or updates) the app's own login role — the database's owner, never a superuser —
+  # then exits; the app and the migrations connect as it.
+  db-init:
+    image: pgvector/pgvector:pg17
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-denext}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set it in .env (see .env.example)}
+      PGDATABASE: ${POSTGRES_DB:-denext}
+      APP_USER: ${POSTGRES_APP_USER:-denext_app}
+      APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?set it in .env (see .env.example)}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        psql -v ON_ERROR_STOP=1 -v u="$$APP_USER" -v p="$$APP_PASSWORD" -v d="$$PGDATABASE" <<'SQL'
+        SELECT format('CREATE ROLE %I LOGIN', :'u') WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'u') \gexec
+        ALTER ROLE :"u" WITH LOGIN CREATEROLE NOSUPERUSER PASSWORD :'p';
+        ALTER DATABASE :"d" OWNER TO :"u";
+        ALTER SCHEMA public OWNER TO :"u";
+        CREATE EXTENSION IF NOT EXISTS vector;
+        SQL
+
   # MinIO publishes no pullable images any more; this is Bitnami's legacy build of the same
   # server (with `mc`), pinned by digest. MINIO_IMAGE in .env swaps in any MinIO-compatible image.
   minio:
@@ -105,6 +135,11 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-denext}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set it in .env (see .env.example)}
+    # Published on this machine's loopback only, so the presigned URLs S3_PUBLIC_ENDPOINT's
+    # default signs (http://localhost:9000) work for a browser here. In production route a public
+    # HTTPS hostname to it instead and set S3_PUBLIC_ENDPOINT to that.
+    ports:
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
     volumes:
       - storage-data:/bitnami/minio/data
     healthcheck:

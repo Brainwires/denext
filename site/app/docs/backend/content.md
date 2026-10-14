@@ -1239,8 +1239,15 @@ logged).
 
 ### Which tables and functions
 
-The plugin reads the catalog when the server starts (and again, under `denext dev`, when a request
-names a table or function it does not know): the relations of the exposed schemas that the `anon`
+The plugin reads the catalog when the server starts, and again when a request names a table or
+function it does not know (at most every 2 s under `denext dev`, every 10 s otherwise), so a table
+a migration creates while the server runs gets its route without a restart. A change to a table it
+already knows (a new column, a changed grant) is picked up on PostgREST's own signal,
+`NOTIFY pgrst, 'reload schema'`: every replica listens, and `denext migration up` (with the stack's
+migrations service and `migratePostgres`) sends it after applying anything. Send it yourself after
+a manual DDL change, or make Postgres send it on every one with PostgREST's event trigger
+(`create event trigger … on ddl_command_end execute procedure …` calling
+`notify pgrst, 'reload schema'`; creating it needs a superuser). The relations of the exposed schemas that the `anon`
 or `authenticated` role holds a privilege on — `SELECT`, `INSERT` or `UPDATE` on any column, or
 `DELETE` — the foreign keys between them, and the functions either role may `EXECUTE`. A table
 with no grant to either role gets no route, so a table stays private until you `grant`; a function

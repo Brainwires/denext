@@ -164,7 +164,7 @@ Deno.test("the compose file's Postgres service is commented out unless it is ask
   assertStringIncludes(on, "  db:\n    image: postgres:17-alpine");
   assertStringIncludes(
     on,
-    "      DATABASE_URL: postgres://${POSTGRES_USER:-denext}:${POSTGRES_PASSWORD:?",
+    "      DATABASE_URL: postgres://${POSTGRES_APP_USER:-denext_app}:${POSTGRES_APP_PASSWORD:?",
   );
   assert(!on.includes("5432:5432"), "the database is not published unless asked for");
   const exposed = renderCompose({ mode: "server", postgres: true, exposeDb: true });
@@ -174,7 +174,10 @@ Deno.test("the compose file's Postgres service is commented out unless it is ask
     "the database is published to loopback, not to every interface the host is on",
   );
   assertStringIncludes(off, `  #     - "127.0.0.1:5432:5432"`, "the example is bound too");
-  assertStringIncludes(on, "    depends_on:\n      db:\n        condition: service_healthy");
+  assertStringIncludes(
+    on,
+    "    depends_on:\n      db:\n        condition: service_healthy\n      db-init:\n        condition: service_completed_successfully",
+  );
   assertStringIncludes(on, "volumes:\n  db-data:");
   assert(!on.includes("# Example Postgres service"), "the example is replaced, not duplicated");
 });

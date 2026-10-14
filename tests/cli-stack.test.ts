@@ -136,7 +136,7 @@ Deno.test("stack up: writes the stack and .env when missing, compose up --wait, 
     const fake = fakeIo();
     assertEquals(await runStack(ctx(root, ["up"], { build: true }), fake.io), 0);
     assertEquals(fake.generated(), 1);
-    assertEquals(fake.calls[0], [
+    assertEquals(fake.calls.find((c) => c.includes("up")), [
       "compose",
       "-f",
       "docker-compose.yml",
@@ -220,5 +220,53 @@ Deno.test("dockerCli: runs docker, or says it is missing", async () => {
     await dockerCli(["--version"], ".", false);
   } catch (error) {
     assertStringIncludes((error as Error).message, "docker is not on PATH");
+  }
+});
+
+Deno.test("stack up: a missing .env over an existing database volume is refused, not regenerated", async () => {
+  // Re-running `stack up` after deleting .env wrote a NEW POSTGRES_PASSWORD that the existing
+  // db-data volume (initialised with the old one) refused; the app then failed every query.
+  const root = await Deno.makeTempDir({ prefix: "dnx-stack-vol-" });
+  try {
+    await Deno.writeTextFile(`${root}/docker-compose.yml`, "services: {}\n");
+    await Deno.writeTextFile(
+      `${root}/.env.example`,
+      "# Generate: openssl rand -hex 24\nPOSTGRES_PASSWORD=\n",
+    );
+    const calls: string[][] = [];
+    const errors: string[] = [];
+    const io: StackIo = {
+      docker: (args) => {
+        calls.push(args);
+        if (args.includes("config")) {
+          return Promise.resolve({
+            code: 0,
+            stdout: JSON.stringify({ name: "myapp", services: { db: {}, web: {} } }),
+            stderr: "",
+          });
+        }
+        if (args[0] === "volume") {
+          const known = args[2] === "myapp_db-data";
+          return Promise.resolve({ code: known ? 0 : 1, stdout: "", stderr: "" });
+        }
+        return Promise.resolve({ code: 0, stdout: "[]", stderr: "" });
+      },
+      generate: () => Promise.resolve(),
+      log: () => {},
+      error: (line) => void errors.push(line),
+    };
+    assertEquals(await runStack(ctx(root, ["up"]), io), 1);
+    assertStringIncludes(errors[0], "myapp_db-data");
+    assertStringIncludes(errors[0], "denext stack down --volumes");
+    assert(!calls.some((c) => c.includes("up")), "compose up never ran");
+    let wrote = true;
+    try {
+      await Deno.stat(`${root}/.env`);
+    } catch {
+      wrote = false;
+    }
+    assertEquals(wrote, false, "no new .env written");
+  } finally {
+    await Deno.remove(root, { recursive: true });
   }
 });

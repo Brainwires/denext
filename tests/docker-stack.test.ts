@@ -107,18 +107,31 @@ Deno.test("golden: the full stack's compose file, .env.example, dev overlay and 
 
 Deno.test("every long-running service has a health check; the app waits on each dependency", () => {
   const doc = compose(FULL);
-  assertEquals(Object.keys(doc.services), ["web", "migrate", "db", "minio", "minio-init"]);
+  assertEquals(Object.keys(doc.services), [
+    "web",
+    "migrate",
+    "db",
+    "db-init",
+    "minio",
+    "minio-init",
+  ]);
   for (const name of ["web", "db", "minio"]) {
     assert(doc.services[name].healthcheck?.test.length, `${name} has a health check`);
     assertEquals(doc.services[name].restart, "unless-stopped");
   }
-  for (const name of ["migrate", "minio-init"]) assertEquals(doc.services[name].restart, "no");
+  for (const name of ["migrate", "db-init", "minio-init"]) {
+    assertEquals(doc.services[name].restart, "no");
+  }
   assertEquals(doc.services.web.depends_on, {
     db: { condition: "service_healthy" },
+    "db-init": { condition: "service_completed_successfully" },
     "minio-init": { condition: "service_completed_successfully" },
     migrate: { condition: "service_completed_successfully" },
   });
-  assertEquals(doc.services.migrate.depends_on, { db: { condition: "service_healthy" } });
+  assertEquals(doc.services.migrate.depends_on, {
+    "db-init": { condition: "service_completed_successfully" },
+  });
+  assertEquals(doc.services["db-init"].depends_on, { db: { condition: "service_healthy" } });
   assertEquals(doc.services["minio-init"].depends_on, { minio: { condition: "service_healthy" } });
   assertEquals(doc.services.db.image, "pgvector/pgvector:pg17");
   assertEquals(doc.services.db.ports, undefined, "no host port for the database by default");
@@ -131,7 +144,7 @@ Deno.test("every long-running service has a health check; the app waits on each 
 
 Deno.test("Postgres alone: plain 17 image, opt-in loopback port, no storage or migrations", () => {
   const doc = compose({ mode: "server", postgres: true });
-  assertEquals(Object.keys(doc.services), ["web", "db"]);
+  assertEquals(Object.keys(doc.services), ["web", "db", "db-init"]);
   assertEquals(doc.services.db.image, "postgres:17-alpine");
   const exposed = compose({ mode: "server", postgres: true, exposeDb: true });
   assertEquals(exposed.services.db.ports, ["127.0.0.1:${DB_PORT:-5432}:5432"]);
@@ -148,7 +161,9 @@ Deno.test("STACK_ENV is the one list: .env.example comes from it, required secre
   assertEquals(vars.length, STACK_ENV.length, "the full stack needs every variable");
   const example = renderEnvExample(FULL);
   // Required secrets are written EMPTY, so a copied .env.example can never start the stack.
-  const lines = vars.map((v) => `\n${v.name}=${v.required ? "" : v.example ?? ""}\n`);
+  const lines = vars.map((v) =>
+    `\n${v.name}=${v.required ? "" : v.name === "S3_BUCKET" ? FULL.bucket : v.example ?? ""}\n`
+  );
   for (const line of lines) assertStringIncludes(example, line);
   // An optional variable with no example is written EMPTY — never the literal `undefined`
   // (which compose would hand the app as a real value, e.g. a guessable secret key).
@@ -175,13 +190,20 @@ Deno.test("STACK_ENV: the app's secrets reach the app and migrations; required o
 
 Deno.test("the secrets follow the features: auth, backend, storage", () => {
   const names = (o: StackOptions) => stackEnv(o).map((v) => v.name);
-  assertEquals(names({ postgres: true }), ["POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"]);
-  assertEquals(names({ auth: true }), ["AUTH_SECRET"]);
+  assertEquals(names({ postgres: true }), [
+    "POSTGRES_USER",
+    "POSTGRES_PASSWORD",
+    "POSTGRES_APP_USER",
+    "POSTGRES_APP_PASSWORD",
+    "POSTGRES_DB",
+  ]);
+  assertEquals(names({ auth: true }), ["AUTH_SECRET", "DENEXT_RATE_LIMIT_LOCAL_ADDRESSES"]);
   assertEquals(names({ backend: true }), [
     "DENEXT_PUBLISHABLE_KEY",
     "DENEXT_SECRET_KEY",
     "DENEXT_JWT_SIGNING_KEYS",
     "DENEXT_JWT_SECRET",
+    "DENEXT_RATE_LIMIT_LOCAL_ADDRESSES",
   ]);
   // The vault key is required, so it is listed only when `vault` is configured.
   assert(!names({ backend: true, postgres: true }).includes("DENEXT_VAULT_KEY"));
@@ -397,4 +419,51 @@ Deno.test("migrations alone: no empty environment block (compose rejects a null 
   assertEquals(doc.services.web.depends_on, {
     migrate: { condition: "service_completed_successfully" },
   });
+});
+
+/** A service's `environment` (empty when it has none). */
+function envOf(doc: ComposeDoc, service: string): Record<string, string> {
+  return doc.services[service].environment ?? {};
+}
+
+/** A service's `command`, first entry (the shell script of a `sh -c` one-shot). */
+function scriptOf(doc: ComposeDoc, service: string): string {
+  return (doc.services[service].command ?? [""])[0];
+}
+
+Deno.test("stack defaults: the app is not the superuser, per-IP limits on, presigned URLs reachable", () => {
+  // The app connected as the Postgres superuser; the stack ran with per-IP auth limits off
+  // (every client arrives from the Docker bridge); presigned URLs pointed at a MinIO port the
+  // production file never published.
+  const doc = compose(FULL);
+  const web = envOf(doc, "web");
+  const url = web.DATABASE_URL;
+  assertStringIncludes(
+    url,
+    "postgres://${POSTGRES_APP_USER:-denext_app}:${POSTGRES_APP_PASSWORD:?",
+  );
+  assert(!url.includes("POSTGRES_USER") && !url.includes("${POSTGRES_PASSWORD"), url);
+  assertEquals(envOf(doc, "migrate").DATABASE_URL, url, "migrations as the app role");
+  assertEquals(
+    envOf(doc, "db-init").PGUSER,
+    "${POSTGRES_USER:-denext}",
+    "only db-init is superuser",
+  );
+  const script = scriptOf(doc, "db-init");
+  const parts = [
+    "CREATE ROLE %I LOGIN",
+    "\\gexec",
+    `ALTER ROLE :"u" WITH LOGIN CREATEROLE NOSUPERUSER PASSWORD :'p'`,
+    `ALTER DATABASE :"d" OWNER TO :"u"`,
+    `ALTER SCHEMA public OWNER TO :"u"`,
+    "CREATE EXTENSION IF NOT EXISTS vector",
+  ];
+  for (const part of parts) assertStringIncludes(script, part);
+  const plain = scriptOf(compose({ mode: "server", postgres: true }), "db-init");
+  assert(!plain.includes("vector"), "no pgvector, no extension");
+  assertEquals(web.DENEXT_RATE_LIMIT_LOCAL_ADDRESSES, "${DENEXT_RATE_LIMIT_LOCAL_ADDRESSES:-1}");
+  assertEquals(doc.services.minio.ports, ["127.0.0.1:${MINIO_PORT:-9000}:9000"]);
+  assertEquals(web.S3_PUBLIC_ENDPOINT, "${S3_PUBLIC_ENDPOINT:-http://localhost:9000}");
+  const dev = parse(renderComposeDev(FULL, 3000)) as { services: Record<string, unknown> };
+  assertEquals(dev.services.minio, undefined, "published once, by the production file");
 });

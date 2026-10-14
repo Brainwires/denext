@@ -22,7 +22,7 @@ import {
   repairHistory,
   versionAfter,
 } from "../../server/migration-ops.ts";
-import { checksum, migratePostgres } from "../../server/postgres-migrate.ts";
+import { checksum, migratePostgres, notifySchemaReload } from "../../server/postgres-migrate.ts";
 import { isPostgresUrl, runScript, type SqlClient } from "../../server/postgres.ts";
 import { displayTarget } from "../db-admin/connection.ts";
 import type { CommandContext } from "../command.ts";
@@ -124,7 +124,12 @@ async function withHistory<T>(
       local.dir,
       local.exists,
     );
-    return await fn(history, local, target);
+    const result = await fn(history, local, target);
+    // Running servers re-read their REST catalog (PostgREST's `reload schema` signal).
+    if (target.sql && !readOnly && run.ctx.flags["dry-run"] !== true) {
+      await notifySchemaReload(target.sql);
+    }
+    return result;
   } finally {
     await target.close();
   }

@@ -99,25 +99,28 @@ cp .env.example .env              # then fill in every secret it lists
 docker compose up -d --build
 ```
 
-| Service      | Added when (detected)                                         | Flag                           | What it is                                                                                       |
-| ------------ | ------------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `web`        | always                                                        | `--port`, `--deno-tag`         | the app image; waits for every service below                                                     |
-| `db`         | `@denext/backend` in the config, or a Postgres `DATABASE_URL` | `--postgres` / `--no-postgres` | Postgres 17 (`postgres:17-alpine`), `DATABASE_URL` wired into the app, a `db-data` volume        |
-| (`db` image) | `create extension … vector` in `migrations/`                  | `--pgvector`                   | `pgvector/pgvector:pg17` instead                                                                 |
-| `minio`      | an `s3()` storage driver in `backend({ storage })`            | `--storage` / `--no-storage`   | an S3 store with a `storage-data` volume; the app gets `AWS_*` / `S3_*`                          |
-| `minio-init` | with `minio`                                                  |                                | one-shot `mc mb --ignore-existing` for the bucket (the literal `s3({ bucket })`, or `S3_BUCKET`) |
-| `migrate`    | `migrations/` and `jobs/migrate.ts`                           | `--migrate` / `--no-migrate`   | one-shot `denext job migrate` (your `migrate` task when you have one) before the app starts      |
+| Service      | Added when (detected)                                         | Flag                           | What it is                                                                                                                                                                                    |
+| ------------ | ------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `web`        | always                                                        | `--port`, `--deno-tag`         | the app image; waits for every service below                                                                                                                                                  |
+| `db`         | `@denext/backend` in the config, or a Postgres `DATABASE_URL` | `--postgres` / `--no-postgres` | Postgres 17 (`postgres:17-alpine`), `DATABASE_URL` wired into the app, a `db-data` volume                                                                                                     |
+| `db-init`    | with `db`                                                     |                                | one-shot, as the superuser: creates the app's own role (`POSTGRES_APP_USER`, the database's owner, never a superuser), sets its password from `.env`, and with pgvector creates the extension |
+| (`db` image) | `create extension … vector` in `migrations/`                  | `--pgvector`                   | `pgvector/pgvector:pg17` instead                                                                                                                                                              |
+| `minio`      | an `s3()` storage driver in `backend({ storage })`            | `--storage` / `--no-storage`   | an S3 store with a `storage-data` volume; the app gets `AWS_*` / `S3_*`                                                                                                                       |
+| `minio-init` | with `minio`                                                  |                                | one-shot `mc mb --ignore-existing` for the bucket (the literal `s3({ bucket })`, or `S3_BUCKET`)                                                                                              |
+| `migrate`    | `migrations/` and `jobs/migrate.ts`                           | `--migrate` / `--no-migrate`   | one-shot `denext job migrate` (your `migrate` task when you have one) before the app starts                                                                                                   |
 
 Every long-running service has a health check, the app's `depends_on` waits for
 `service_healthy` / `service_completed_successfully`, every service has a restart policy, and
 data lives in named volumes. The database publishes no host port: the app reaches it as
 `db:5432`. `--expose-db` publishes it on `127.0.0.1:5432` (`DB_PORT` in `.env` moves it).
+MinIO is published on `127.0.0.1:9000` (`MINIO_PORT`) so the default presigned URLs work for a
+browser on that machine.
 `--dev` also writes `compose.dev.yml`, an overlay that runs `denext dev` on a bind mount of the
-project (as your user: `export UID GID=$(id -g)` first) and publishes Postgres and MinIO on
-loopback: `docker compose -f docker-compose.yml -f compose.dev.yml up --build`. The dev server
+project (as your user: `export UID GID=$(id -g)` first) and publishes Postgres on loopback: `docker compose -f docker-compose.yml -f compose.dev.yml up --build`. The dev server
 asks a browser on another address for its per-run token, so open the URL it logs.
 
 **Secrets.** `.env.example` lists every variable the stack reads — `POSTGRES_PASSWORD`,
+`POSTGRES_APP_PASSWORD`,
 `AUTH_SECRET` (with `denextAuth`); with `@denext/backend` the Supabase keys
 `DENEXT_PUBLISHABLE_KEY`, `DENEXT_SECRET_KEY` and `DENEXT_JWT_SIGNING_KEYS` (from `denext backend
 keys`; the legacy `DENEXT_JWT_SECRET` only for HS256 keys), `DENEXT_VAULT_KEY` (required only
@@ -128,6 +131,23 @@ empty, and the compose file reads them as `${NAME:?…}`, so `docker compose` re
 until `.env` sets them; nothing is ever written with a real secret. `.dockerignore` keeps `.env`
 out of the image — keep it out of git too (the generator warns when `.gitignore` doesn't).
 
+**The database role.** The app and the `migrate` service connect as `POSTGRES_APP_USER`
+(default `denext_app`): the owner of the database and its `public` schema with `CREATEROLE` —
+what the backend's own DDL needs (its schemas, tables and triggers, and the `anon` /
+`authenticated` roles) — and never a superuser, so neither `db.service()` nor a SQL injection
+runs with superuser rights. The superuser (`POSTGRES_USER`) is used only by `db-init` and the
+database's health check. `db-init` runs on every `up`, so a changed `POSTGRES_APP_PASSWORD` takes
+effect on the next one. Realtime with `source: "logical"` also needs
+`ALTER ROLE denext_app REPLICATION` (run it as the superuser). A stack whose tables were created
+before this (owned by the superuser) has to start over (`denext stack down --volumes`) or move
+them to the app role with `ALTER TABLE … OWNER TO denext_app`.
+
+**Per-IP limits.** Inside Docker every client reaches the app from the bridge's private address,
+which per-address limits skip by default, so the stack sets
+`DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`: sign-in, sign-up and code budgets stay on. Behind a
+reverse proxy also set `DENEXT_TRUST_PROXY=1` (or `DENEXT_RATE_LIMIT_TRUSTED_PROXIES`), so each
+client gets its own budget instead of sharing the proxy's.
+
 **The runtime.** With Postgres or `@denext/backend`, the image runs on denext's Deno toolchain
 (the build already downloaded it; a layer puts it first on `PATH`), because
 `@denext/backend`'s Postgres client is `Deno.SQL`, which stock Deno does not have.
@@ -136,9 +156,10 @@ out of the image — keep it out of git too (the generator warns when `.gitignor
 `http://minio:9000`, which only the containers can resolve), and signs every URL it hands a
 browser — presigned uploads, downloads, multipart parts — for `S3_PUBLIC_ENDPOINT` instead
 (`s3({ publicEndpoint })`; SigV4 signs the host, so the URL must be signed for the name the
-browser uses). Set it to a public HTTPS hostname routed to the `minio` service in production, or
-`http://localhost:9000` with the dev overlay, which publishes MinIO's port. Left empty or unset,
-it is `http://localhost:9000`, so set it in production. MinIO no longer publishes pullable
+browser uses). Its default, `http://localhost:9000`, is the port the stack publishes MinIO on
+(loopback only), so uploads and downloads work from a browser on the machine running the stack.
+In production route a public HTTPS hostname to the `minio` service and set
+`S3_PUBLIC_ENDPOINT` to it. MinIO no longer publishes pullable
 images, so the service uses Bitnami's legacy build of the same server, pinned by digest;
 `MINIO_IMAGE` in `.env` swaps in any MinIO-compatible image that has `mc`.
 
@@ -557,13 +578,28 @@ export default { cacheKeyParams: ["page", "sort"] } satisfies DenextConfig;
 
 The production server answers a built-in liveness probe at **`/_denext/health`**
 (GET/HEAD only — other methods get a `405`), meant for load balancers and k8s
-probes. It always returns `200` — the site serves even when the cache backend is
-down, since reads degrade to live renders — and the JSON body reports cache
+probes. It returns `200` even when the cache backend is down — the site serves,
+since reads degrade to live renders — and the JSON body reports cache
 reachability so operators aren't blind to an outage:
 
 ```json
 { "status": "ok", "cache": "ok", "cacheStore": "sqlite" }
 ```
+
+A dependency the app cannot serve without registers a readiness check with
+`registerHealthCheck(name, check)` from `denext/server`; `@denext/backend` registers
+`database` (`select 1` on its Postgres client). While any check fails (or takes over 2 s) the
+probe answers **`503`** with `"status": "degraded"` and the check named — never its error, the
+probe is public — so a load balancer or the generated compose healthcheck stops routing to an
+instance that could only answer errors:
+
+```json
+{ "status": "degraded", "cache": "ok", "cacheStore": "sqlite", "checks": { "database": "down" } }
+```
+
+`denext doctor` runs the backend's checks too: its setup accepts the configuration (API keys,
+storage secret), the database answers, the backend's and the app's migrations are applied, and
+the storage driver answers.
 
 `"cache": "degraded"` means the active cache store failed its probe.
 `cacheStore` is what backs it: `"sqlite"` (the durable default), `"memory"`

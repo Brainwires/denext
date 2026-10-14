@@ -2,8 +2,8 @@
 # Development overlay — on top of the production file:
 #   docker compose -f docker-compose.yml -f compose.dev.yml up --build
 # The app runs `denext dev` against a bind mount of this directory (edits reload). The dev
-# server asks a non-loopback browser for its per-run token: open the URL it logs. Postgres and
-# the store are published on loopback (DB_PORT / MINIO_PORT in .env move them).
+# server asks a non-loopback browser for its per-run token: open the URL it logs. Postgres is
+# published on loopback here, the store in the production file (DB_PORT / MINIO_PORT move them).
 # The app runs as YOUR user so it can write the bind mount — export UID and GID first
 # (`export UID GID=$(id -g)`; both default to 1000); Deno's cache moves into .denext/ for it.
 services:
@@ -19,7 +19,3 @@ services:
   db:
     ports:
       - "127.0.0.1:${DB_PORT:-5432}:5432"
-
-  minio:
-    ports:
-      - "127.0.0.1:${MINIO_PORT:-9000}:9000"

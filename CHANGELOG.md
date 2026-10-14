@@ -52,6 +52,14 @@ a 3.x app to 4.0 involves. This section is the record.
   wildcard bind as loopback (`http://127.0.0.1:3000`). The value never comes from the request's
   headers, so server code can give it to something that outlives the request. Outside denext's
   own server loop it is `undefined`.
+- **Readiness checks in `/_denext/health`, and `denext doctor` for `@denext/backend`.**
+  `registerHealthCheck(name, check)` from `denext/server` adds a check the probe runs; while one
+  fails (or takes over 2 s) the probe answers `503` with `"status": "degraded"` and
+  `checks: { name: "down" }`. `@denext/backend` registers `database`, so an app whose database
+  is unreachable (a wrong password, a stopped server) is no longer reported healthy by the probe
+  or the generated compose healthcheck. `denext doctor` gains backend checks: the plugin's setup
+  accepts the configuration (keys, storage secret), the database answers, no backend or app
+  migration is pending, and the storage driver answers.
 - **A captcha budget in front of the verifier (`rateLimit.captcha`).** Every captcha token
   denext is about to send to hCaptcha / Turnstile — on denext's own endpoints and `/auth/v1` —
   first spends a per-client-IP budget, 30 per minute by default (`{ max, windowMs }`, or `false`
@@ -459,6 +467,17 @@ a 3.x app to 4.0 involves. This section is the record.
 
 ### Changed
 
+- **The generated Docker stack no longer runs the app as the Postgres superuser, keeps per-IP
+  limits on, and serves working presigned URLs.** A one-shot `db-init` service (as the
+  superuser) creates the app's own role, `POSTGRES_APP_USER` (`denext_app`): the database's owner
+  with `CREATEROLE`, never a superuser, its password `POSTGRES_APP_PASSWORD` set on every `up`.
+  The app and `migrate` connect as it. A stack created before keeps superuser-owned tables:
+  start over with `denext stack down --volumes`, or `ALTER TABLE … OWNER TO denext_app`. The app
+  gets `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`, so sign-in and sign-up budgets apply to clients
+  arriving from the Docker bridge. MinIO is published on `127.0.0.1:${MINIO_PORT:-9000}` by the
+  production file (the dev overlay no longer adds it), so the default
+  `S3_PUBLIC_ENDPOINT=http://localhost:9000` reaches it; `.env.example`'s `S3_BUCKET` now
+  matches the bucket the config names.
 - **`denext <script>` and Deno's verbs no longer import the project's config first.** A name no
   built-in claims used to send the CLI into `denext.config.ts` (and every plugin `setup()`), with
   the CLI's own permissions, to look for a project verb before handing `denext main.ts` or
@@ -539,6 +558,16 @@ a 3.x app to 4.0 involves. This section is the record.
 
 ### Fixed
 
+- **`@denext/backend` auto-REST picks up schema changes in production.** The catalog was read
+  once at startup outside `denext dev`, so a table created by a later migration (a rolling deploy,
+  `denext migration up` against a live app) answered `PGRST205` until a restart. A request for an
+  unknown table or function now re-reads it (at most every 10 s), and the plugin listens for
+  PostgREST's `NOTIFY pgrst, 'reload schema'` on every replica; `denext migration up` and
+  `migratePostgres` send it after applying a migration.
+- **`denext stack up` no longer regenerates the database password over existing data.** With
+  `.env` deleted after a first run, `stack up` wrote a fresh `.env` whose new `POSTGRES_PASSWORD`
+  the existing `db-data` volume did not accept, and the app failed every query. It now refuses,
+  naming the volume, and points at restoring the old `.env` or `denext stack down --volumes`.
 - **`@denext/backend` no longer sends database connection errors to clients.** With a wrong
   database password, `GET /rest/v1/<table>` answered an anonymous client with
   `password authentication failed for user "…"`. Connection-class SQLSTATEs (08, 28, 53, 57P,

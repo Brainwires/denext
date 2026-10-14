@@ -247,6 +247,55 @@ async function statusAction(ctx: CommandContext, dir: string, io: StackIo): Prom
   if (!status.secretKey) io.log("  (the secret key and passwords: --show-secrets)");
 }
 
+/**
+ * The stack's Postgres data volume when it already exists (Postgres keeps the password it was
+ * initialised with), else `undefined` — also when compose or Docker can't say.
+ */
+async function existingDbVolume(
+  ctx: CommandContext,
+  dir: string,
+  io: StackIo,
+): Promise<string | undefined> {
+  const config = await io.docker(
+    [...composeArgs(ctx), "config", "--no-interpolate", "--format", "json"],
+    dir,
+    true,
+  );
+  if (config.code !== 0) return undefined;
+  let parsed: { name?: unknown; services?: Record<string, unknown> };
+  try {
+    parsed = JSON.parse(config.stdout);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed.name !== "string" || !parsed.services?.db) return undefined;
+  const volume = `${parsed.name}_db-data`;
+  const inspect = await io.docker(["volume", "inspect", volume], dir, true);
+  return inspect.code === 0 ? volume : undefined;
+}
+
+/**
+ * Fill a missing `.env` from `.env.example` with generated secrets — unless the stack's database
+ * volume already exists (its superuser password would no longer match).
+ */
+async function writeEnvIfMissing(ctx: CommandContext, dir: string, io: StackIo): Promise<void> {
+  const envPath = join(dir, ".env");
+  if (!await exists(envPath) && await exists(join(dir, ".env.example"))) {
+    const volume = await existingDbVolume(ctx, dir, io);
+    if (volume) {
+      throw new Error(
+        `.env is missing but the database volume ${volume} already exists: a new .env would ` +
+          "generate a POSTGRES_PASSWORD that database does not accept (every query would fail " +
+          'with "password authentication failed"). Restore the .env it was created with, or ' +
+          "drop the data first: denext stack down --volumes",
+      );
+    }
+    const { text, filled } = await fillEnv(await Deno.readTextFile(join(dir, ".env.example")));
+    await Deno.writeTextFile(envPath, text, { mode: 0o600 });
+    io.log(`Wrote .env from .env.example with generated secrets (${filled.join(", ")}).`);
+  }
+}
+
 async function upAction(ctx: CommandContext, dir: string, io: StackIo): Promise<void> {
   if (!await exists(join(dir, "docker-compose.yml"))) {
     const custom = DOCKER_FLAGS.some((f) => ctx.flags[f.name] !== undefined && f.name !== "dev");
@@ -255,12 +304,7 @@ async function upAction(ctx: CommandContext, dir: string, io: StackIo): Promise<
   if (ctx.flags.dev === true && !await exists(join(dir, "compose.dev.yml"))) {
     throw new Error("--dev needs compose.dev.yml: denext generate docker --dev --force");
   }
-  const envPath = join(dir, ".env");
-  if (!await exists(envPath) && await exists(join(dir, ".env.example"))) {
-    const { text, filled } = await fillEnv(await Deno.readTextFile(join(dir, ".env.example")));
-    await Deno.writeTextFile(envPath, text, { mode: 0o600 });
-    io.log(`Wrote .env from .env.example with generated secrets (${filled.join(", ")}).`);
-  }
+  await writeEnvIfMissing(ctx, dir, io);
   const args = [...composeArgs(ctx), "up", "-d", "--wait"];
   if (ctx.flags.build === true) args.push("--build");
   const up = await io.docker(args, dir, false);
