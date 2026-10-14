@@ -8,6 +8,32 @@
 > denext **4.0** is in release candidates (`4.0.0-rc.N`) from `development`, then ships 4.x patch
 > and minor releases from there; what each one added is in the changelog.
 
+## 4.1.0: Additional Supabase features
+
+Operations commands for the self-hosted stack (`denext generate docker --stack` /
+`denext stack`). Each one edits `.env` in place, keeping its comments and layout, and offers to
+restart the affected containers (or does so at once with `--restart`).
+
+- **Change passwords:** a `denext stack passwd` changes `POSTGRES_PASSWORD` and/or the dashboard
+  password. `--generate` makes strong ones. It keeps the database's superuser and app role
+  (`POSTGRES_APP_USER`) in sync with `.env`.
+- **Roll the keys:** a `denext stack roll` regenerates the publishable and secret keys
+  (`DENEXT_PUBLISHABLE_KEY`, `DENEXT_SECRET_KEY`). `--include-secret` also regenerates the JWT
+  signing keys / `DENEXT_JWT_SECRET`, which invalidates every token already issued; say so
+  before doing it.
+- **Backup and restore:** a `denext stack backup` / `restore` for the database and storage. A
+  `--full` backup is one tar file with the roles, settings, extensions, the database dump, the
+  storage objects and a `MANIFEST.txt` that records the restore order; `restore` recognises a
+  full backup on its own.
+- **Health:** a `denext stack health` shows each service's health (the stack's health checks and
+  the app's `/_denext/health` checks), with a `--watch` mode and `--json` output.
+- **Logs with filtering:** `denext stack logs` gains filters (service, level, time window, text
+  match) on top of the per-service output it prints today.
+- **A dashboard:** a Supabase Studio-style web dashboard for the stack, behind the dashboard
+  password: tables and rows, RLS policies, auth users, storage buckets and objects, realtime,
+  functions, logs and health. Build it on the `denext ui` Database pages (schema-driven, works
+  with JavaScript off) so the local UI and the stack's dashboard are one implementation.
+
 ## Deno toolchain
 
 - **Deno's next minor:** rebase denext's patches onto it and cut a new `-denext.N`. That release
