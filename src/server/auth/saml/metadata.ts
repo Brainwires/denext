@@ -182,6 +182,7 @@ export function parseIdpMetadata(xml: string): ParsedIdpMetadata {
     .find((s) => attr(s, "Binding") === REDIRECT);
   const ssoUrl = sso && attr(sso, "Location");
   if (!ssoUrl) badMetadata("no HTTP-Redirect SingleSignOnService");
+  endpointUrl(ssoUrl, "SingleSignOnService");
   const certificates = signingCertificates(idp);
   if (!certificates.length) badMetadata("no usable signing certificate");
   const nameIdFormats = childElements(idp, MD_NS, "NameIDFormat").map(text).filter(Boolean);
@@ -195,10 +196,31 @@ export function parseIdpMetadata(xml: string): ParsedIdpMetadata {
   const slo = childElements(idp, MD_NS, "SingleLogoutService")
     .find((s) => attr(s, "Binding") === REDIRECT);
   const sloUrl = slo && attr(slo, "Location");
-  if (sloUrl) out.sloUrl = sloUrl;
+  if (sloUrl) out.sloUrl = endpointUrl(sloUrl, "SingleLogoutService");
   const sloResponseUrl = slo && attr(slo, "ResponseLocation");
-  if (sloUrl && sloResponseUrl) out.sloResponseUrl = sloResponseUrl;
+  if (sloUrl && sloResponseUrl) {
+    out.sloResponseUrl = endpointUrl(sloResponseUrl, "SingleLogoutService ResponseLocation");
+  }
   return out;
+}
+
+/**
+ * An endpoint the browser is sent to: an absolute `https:` or `http:` URL without credentials.
+ * Any other scheme (`javascript:`, `data:`, …) refuses the metadata — the URL reaches a
+ * `location.assign()` in the app's origin. Whether `http:` is acceptable is the caller's call.
+ */
+function endpointUrl(value: string, what: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    badMetadata(`${what} Location is not an absolute URL`);
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    badMetadata(`${what} Location must be an http(s) URL`);
+  }
+  if (url.username || url.password) badMetadata(`${what} Location must not carry credentials`);
+  return value;
 }
 
 /** Escape a string for an XML attribute value or text. */

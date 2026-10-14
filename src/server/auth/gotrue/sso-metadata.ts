@@ -190,6 +190,38 @@ export function checkMetadataUrl(deps: MetadataDeps, raw: string): URL {
   return url;
 }
 
+/**
+ * Refuse IdP metadata whose browser-facing endpoints (SingleSignOnService, SingleLogoutService
+ * and its ResponseLocation) are not `https:` — `http:` only for a loopback host under
+ * `dangerouslyAllowInsecureProviders` (development). Those URLs are handed to the browser
+ * (`signInWithSSO` navigates to them), so whoever controls the metadata must not be able to
+ * name a script URL or a plaintext page. (Other schemes are already refused by the parser.)
+ *
+ * @param deps The auth config.
+ * @param idp The parsed metadata.
+ * @throws {GoTrueError} 400 `validation_failed`.
+ */
+export function assertIdpEndpoints(deps: MetadataDeps, idp: ParsedIdpMetadata): void {
+  for (const raw of [idp.ssoUrl, idp.sloUrl, idp.sloResponseUrl]) {
+    if (raw === undefined) continue;
+    let url: URL | undefined;
+    try {
+      url = new URL(raw);
+    } catch {
+      url = undefined;
+    }
+    const devLoopback = url?.protocol === "http:" && LOOPBACK.has(url.hostname) &&
+      deps.config.dangerouslyAllowInsecureProviders === true;
+    if (url?.protocol !== "https:" && !devLoopback) {
+      throw new GoTrueError(
+        400,
+        "validation_failed",
+        "SAML metadata endpoints need to use HTTPS",
+      );
+    }
+  }
+}
+
 async function cappedText(response: Response): Promise<string> {
   const reader = response.body?.getReader();
   if (!reader) return "";
@@ -314,12 +346,14 @@ export function refreshProvider(
 
 /** The fetched document as the provider's new metadata, or a refusal. */
 function acceptFetched(
+  deps: MetadataDeps,
   record: SsoProviderRecord,
   xml: string,
   now: number,
 ): { next: SsoProviderRecord; changed: boolean } {
   const idp = idpFromMetadata(xml);
   if (idp.entityId !== record.entityId) throw new Error("the entity id changed");
+  assertIdpEndpoints(deps, idp);
   if (metadataExpired(idp, now)) throw new Error("the fetched metadata has expired");
   const changed = xml !== record.metadataXml;
   const base = { ...record, metadataXml: xml, updatedAt: changed ? now : record.updatedAt };
@@ -334,7 +368,7 @@ async function refetch(
   const now = metadataNow();
   try {
     const xml = await fetchMetadata(deps, checkMetadataUrl(deps, record.metadataUrl!));
-    const { next, changed } = acceptFetched(record, xml, now);
+    const { next, changed } = acceptFetched(deps, record, xml, now);
     if ((await save(next)) !== "ok") throw new Error("the provider could not be saved");
     remember(record.id, { failures: 0, notBefore: now + MIN_INTERVAL, record: next });
     return { record: next, outcome: changed ? "refreshed" : "unchanged" };

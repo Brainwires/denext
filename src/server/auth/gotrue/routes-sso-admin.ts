@@ -15,6 +15,7 @@ import { SamlError } from "../saml/errors.ts";
 import { type GoTrueContext, nowSeconds, ok, readJson, str } from "./context.ts";
 import { fail, GoTrueError } from "./errors.ts";
 import {
+  assertIdpEndpoints,
   checkMetadataUrl,
   fetchMetadata,
   idpFromMetadata,
@@ -160,6 +161,7 @@ async function readMetadata(
     throw fail.validation(`SAML metadata is invalid (${code})`);
   }
   if (metadataExpired(idp)) throw fail.validation("SAML metadata has expired (validUntil)");
+  assertIdpEndpoints(ctx, idp);
   return { xml: document, idp, ...(url ? { url } : {}) };
 }
 

@@ -28,7 +28,13 @@ import {
   type VerifiedSamlAssertion,
   verifySamlResponse,
 } from "../saml/mod.ts";
-import { createAccount, linkIdentity } from "./accounts.ts";
+import {
+  createAccount,
+  linkIdentity,
+  markIdentityVerified,
+  retireForeignPassword,
+  updateAccount,
+} from "./accounts.ts";
 import {
   checkCaptcha,
   type GoTrueContext,
@@ -356,8 +362,19 @@ function emailOf(
 }
 
 /**
- * The user an assertion signs in: its linked SSO identity, else an existing account on one of
- * the provider's own domains (the IdP is authoritative for them), else a new user.
+ * The user an assertion signs in — the SSO trust model:
+ *
+ * - An IdP speaks only for the email domains its provider was registered with. An address on
+ *   one of them becomes the account's verified email; any other address is never bound to an
+ *   account (a provider stored through the admin API — possibly a tenant's — is refused for it;
+ *   a config-declared one signs in a user with no email on the account).
+ * - Its linked SSO identity signs in the same user every time.
+ * - A first sign-in never takes over an existing account with the same email (GoTrue's rule)
+ *   unless the config-declared provider sets `linkExistingAccounts` and the address is on its
+ *   domains; else it is refused with `email_exists`. Linking to an account whose address was
+ *   never confirmed retires everything set up on it first, as any first proof of an address.
+ * - A new user is created only while sign-ups are allowed (`disableSignup`, the provider's
+ *   `allowSignUp`), with no `email` identity: the SSO identity is its only sign-in method.
  */
 async function ssoUser(
   ctx: GoTrueContext,
@@ -366,30 +383,21 @@ async function ssoUser(
 ): Promise<AdapterUser> {
   const providerId = `sso:${provider.id}`;
   const fields = mapped(provider, assertion.attributes);
-  const email = emailOf(fields, assertion);
-  const domainOwned = !!email &&
-    provider.domains.some((d) => email.endsWith(`@${d}`));
-  let user = await ctx.adapter.getUserByAccount({
+  const asserted = emailOf(fields, assertion);
+  const domainOwned = !!asserted && provider.domains.some((d) => asserted.endsWith(`@${d}`));
+  if (asserted && !domainOwned && provider.source === "stored") {
+    throw new GoTrueError(
+      403,
+      "email_address_not_authorized",
+      "The identity provider asserted an email address outside its domains",
+    );
+  }
+  const email = domainOwned ? asserted : undefined;
+  const linked = await ctx.adapter.getUserByAccount({
     provider: providerId,
     providerAccountId: assertion.nameId,
   });
-  if (!user && email) {
-    const existing = await ctx.adapter.getUserByEmail(email);
-    if (existing && !domainOwned) {
-      throw new GoTrueError(
-        422,
-        "email_exists",
-        "A user with this email address has already been registered",
-      );
-    }
-    user = existing;
-  }
-  user ??= await createAccount(ctx, {
-    email,
-    emailVerified: !!email,
-    userMetadata: { ...fields, sub: assertion.nameId },
-    appMetadata: { provider: providerId, providers: [providerId] },
-  });
+  const user = linked ?? await firstSsoUser(ctx, provider, assertion, fields, email);
   await linkIdentity(ctx, user, {
     provider: providerId,
     providerAccountId: assertion.nameId,
@@ -397,4 +405,40 @@ async function ssoUser(
     identityData: { sub: assertion.nameId, ...fields, custom_claims: assertion.attributes },
   });
   return user;
+}
+
+/** The account a provider's first sign-in for a NameID gets: a trusted link, or a new user. */
+async function firstSsoUser(
+  ctx: GoTrueContext,
+  provider: SsoProvider,
+  assertion: { nameId: string },
+  fields: Record<string, unknown>,
+  email: string | undefined,
+): Promise<AdapterUser> {
+  const existing = email ? await ctx.adapter.getUserByEmail(email) : undefined;
+  if (existing) {
+    if (!provider.linkExistingAccounts) {
+      throw new GoTrueError(
+        422,
+        "email_exists",
+        "A user with this email address has already been registered",
+      );
+    }
+    if (existing.emailVerified !== undefined) return existing;
+    // The IdP's word is the first proof of this address: what was set up without it goes.
+    await retireForeignPassword(ctx, existing, undefined);
+    await markIdentityVerified(ctx, existing, "email");
+    return await updateAccount(ctx, { id: existing.id, emailVerified: nowSeconds() });
+  }
+  if (ctx.options.disableSignup || !provider.allowSignUp) {
+    throw new GoTrueError(422, "signup_disabled", "Signups not allowed for this instance");
+  }
+  const providerId = `sso:${provider.id}`;
+  return await createAccount(ctx, {
+    email,
+    emailVerified: !!email,
+    userMetadata: { ...fields, sub: assertion.nameId },
+    appMetadata: { provider: providerId, providers: [providerId] },
+    addressIdentity: false,
+  });
 }

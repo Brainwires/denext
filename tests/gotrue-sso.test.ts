@@ -2,7 +2,7 @@
 // builds the AuthnRequest, the IdP's signed response is posted to the ACS, and the browser lands
 // on `redirect_to` with a session (implicit) or a one-time code (PKCE). Also: the SP metadata,
 // a response for another request, a replayed RelayState, an IdP-initiated response, a tampered
-// response, and the email-ownership rule for existing accounts.
+// response, and the email-domain rule for existing accounts.
 
 import { assert, assertEquals, assertExists, assertMatch, assertStringIncludes } from "@std/assert";
 import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
@@ -189,11 +189,11 @@ Deno.test("SAML SSO: unknown providers, and an existing account outside the IdP'
       "sso_provider_not_found",
     );
     assertEquals((await startSso(app, {})).status, 404);
-    await app.fetch(`${ORIGIN}/auth/v1/admin/users`, {
+    const carol = await (await app.fetch(`${ORIGIN}/auth/v1/admin/users`, {
       method: "POST",
       headers: { apikey: app.secretKey, "content-type": "application/json" },
       body: JSON.stringify({ email: "carol@other.test", email_confirm: true }),
-    });
+    })).json();
     const started = await startSso(app, { provider_id: "acme" });
     const res = await postAcs(app, {
       SAMLResponse: await samlResponse(
@@ -203,7 +203,13 @@ Deno.test("SAML SSO: unknown providers, and an existing account outside the IdP'
       ),
       RelayState: new URL(started.json.url).searchParams.get("RelayState")!,
     });
-    assertEquals(res.status, 422);
-    assert(((await res.json()).error_code as string) === "email_exists");
+    // An address outside the IdP's domains is never matched to (or bound to) an account: the
+    // assertion signs in a separate SSO user with no email, never Carol's account.
+    assertEquals(res.status, 303);
+    const token = new URLSearchParams(new URL(res.headers.get("location")!).hash.slice(1))
+      .get("access_token")!;
+    const claims = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    assert(claims.sub !== carol.id, "not the existing account");
+    assertEquals(claims.email ?? "", "");
   });
 });

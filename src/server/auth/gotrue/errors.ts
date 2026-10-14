@@ -17,6 +17,7 @@ export type GoTrueErrorCode =
   | "captcha_failed"
   | "custom_provider_not_found"
   | "email_address_invalid"
+  | "email_address_not_authorized"
   | "email_exists"
   | "email_not_confirmed"
   | "email_provider_disabled"

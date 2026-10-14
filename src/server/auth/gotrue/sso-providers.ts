@@ -19,7 +19,12 @@ import {
 import { GOTRUE_PREFIX, type GoTrueContext } from "./context.ts";
 import { GoTrueError } from "./errors.ts";
 import type { GoTrueSamlProvider } from "./options.ts";
-import { assertMetadataFresh, idpFromMetadata, refreshProvider } from "./sso-metadata.ts";
+import {
+  assertIdpEndpoints,
+  assertMetadataFresh,
+  idpFromMetadata,
+  refreshProvider,
+} from "./sso-metadata.ts";
 
 /** The adapter's SSO group. */
 export type SsoAdapter = Required<
@@ -76,6 +81,10 @@ export interface SsoProvider {
   mapping: SsoAttributeMapping;
   /** The NameID format to request. */
   nameIdFormat?: string;
+  /** Link a first sign-in to an existing account on its domains (config providers only). */
+  linkExistingAccounts: boolean;
+  /** Create new users on a first sign-in. */
+  allowSignUp: boolean;
 }
 
 /** 404 `sso_provider_not_found`. */
@@ -106,6 +115,8 @@ function fromConfig(provider: GoTrueSamlProvider): SsoProvider {
     domains: (provider.domains ?? []).map((d) => d.toLowerCase()),
     idp: idpFromMetadata(provider.metadataXml),
     mapping: { keys },
+    linkExistingAccounts: provider.linkExistingAccounts === true,
+    allowSignUp: provider.allowSignUp !== false,
   };
 }
 
@@ -116,6 +127,10 @@ function fromRecord(record: SsoProviderRecord): SsoProvider {
     domains: record.domains,
     idp: idpFromMetadata(record.metadataXml),
     mapping: record.attributeMapping ?? {},
+    // A provider registered through the admin API (possibly by a tenant) never takes over an
+    // existing account by email.
+    linkExistingAccounts: false,
+    allowSignUp: true,
   };
   if (record.nameIdFormat) out.nameIdFormat = record.nameIdFormat;
   return out;
@@ -169,6 +184,7 @@ export async function findProvider(ctx: GoTrueContext, by: ProviderLookup): Prom
     ? fromConfig(declared)
     : fromRecord((await refreshProvider(ctx, stored!, (r) => store!.updateSsoProvider(r))).record);
   assertMetadataFresh(ctx, provider.id, provider.idp);
+  assertIdpEndpoints(ctx, provider.idp);
   return provider;
 }
 

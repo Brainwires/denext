@@ -103,6 +103,21 @@ export interface GoTrueSamlProvider {
    * the email defaults to the NameID when it is an address, else to `email` / `mail`.
    */
   attributeMapping?: Record<string, string>;
+  /**
+   * Link a first SSO sign-in to an EXISTING account with the same email address (a password,
+   * magic-link or OAuth user) when the address is on one of this provider's {@linkcode domains}.
+   * Default `false`, as in GoTrue: such a sign-in is refused (`email_exists`) rather than handed
+   * the existing account. Turn it on only for an IdP you trust to speak for every address in its
+   * domains — it then signs in as every existing account there. An unconfirmed account it links
+   * to is cleared of everything set up on it first (password, factors, passkeys, tokens,
+   * sessions). Providers stored through the admin API never link.
+   */
+  linkExistingAccounts?: boolean;
+  /**
+   * Create a new user on a first SSO sign-in (default `true`; `disableSignup` turns it off for
+   * every provider). With `false` only users already linked to this provider sign in.
+   */
+  allowSignUp?: boolean;
 }
 
 /** The `/auth/v1` options. */
