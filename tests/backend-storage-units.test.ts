@@ -182,7 +182,14 @@ Deno.test("signing: secrets resolve from config, then env, then a random dev sec
 });
 
 Deno.test("signing: upload grants round-trip, and a tampered or expired one is refused", async () => {
-  const grant = { b: "docs", k: "a.txt", ct: "text/plain", max: 10, exp: nowSeconds() + 60 };
+  const grant = {
+    b: "docs",
+    k: "a.txt",
+    ct: "text/plain",
+    max: 10,
+    v: crypto.randomUUID(),
+    exp: nowSeconds() + 60,
+  };
   const token = await sealGrant(grant, [SECRET]);
   assertEquals(await openGrant(token, [SECRET]), grant);
   const [body, sig] = token.split(".");
