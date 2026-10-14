@@ -4,7 +4,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { renderMarkdown } from "../packages/content-collections/markdown.ts";
-import { bumpVersion, printBumpResult } from "../scripts/bump-version.ts";
+import { bumpVersion, docSpecifierPattern, printBumpResult } from "../scripts/bump-version.ts";
 import {
   foldedAnchorRewrites,
   foldPrereleases,
@@ -39,6 +39,35 @@ Deno.test("bumpVersion (dry) finds the current version in the target files and r
   assertStringIncludes(out, `Bumping ${result.oldVersion} → 99.0.0-test.1  (dry run)`);
   assertStringIncludes(out, "Would change");
   assertStringIncludes(out, "Reminders");
+});
+
+Deno.test("a stable bump rewrites the docs' prerelease specifiers of its own line only", () => {
+  assertEquals(docSpecifierPattern("4.0.0-rc.3"), null, "an rc bump leaves the docs alone");
+  const re = docSpecifierPattern("4.0.0")!;
+  const text = [
+    `"denext": "jsr:@denext/denext@^4.0.0-rc.1",`,
+    "deno run -A jsr:@denext/denext@^4.0.0-rc.12/cli start .",
+    "jsr:@denext/denext@^3.4.0-rc.1 and jsr:@denext/denext@^4.0.0 and jsr:@denext/denext@^14.0.0-rc.1",
+  ].join("\n");
+  assertEquals(
+    text.replace(re, "4.0.0"),
+    [
+      `"denext": "jsr:@denext/denext@^4.0.0",`,
+      "deno run -A jsr:@denext/denext@^4.0.0/cli start .",
+      "jsr:@denext/denext@^3.4.0-rc.1 and jsr:@denext/denext@^4.0.0 and jsr:@denext/denext@^14.0.0-rc.1",
+    ].join("\n"),
+  );
+});
+
+Deno.test("bumpVersion (dry) to a stable release lists the docs that teach an rc specifier", async () => {
+  const current = (await bumpVersion("99.0.0-test.1", { dry: true })).oldVersion;
+  const core = current.split("-")[0];
+  if (core === current) return; // already on a stable release: nothing to fold
+  const result = await bumpVersion(core, { dry: true });
+  assert(
+    result.changed.some((c) => c.file === "README.md" || c.file.startsWith("site/app/docs/")),
+    "the README / docs pages' rc specifiers move to the release",
+  );
 });
 
 Deno.test("rollChangelog (dry) counts the unreleased entries without touching the file", async () => {

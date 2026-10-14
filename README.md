@@ -210,7 +210,10 @@ optimization; OG images. → [Databases](https://denext.dev/docs/database) ·
 S3, R2, MinIO or the filesystem (buckets with per-bucket rules, signed URLs, image transforms),
 Postgres scoped by Supabase-compatible row-level security (`db()` runs each query as the request's
 user), realtime changes from your tables (`useTableChanges`), and a PostgREST-style REST API with a
-typed `from()` client. Postgres itself is first-party in core: a client on `Deno.SQL`, Postgres
+typed `from()` client. It also serves Supabase's APIs (`/auth/v1`, `/rest/v1`, `/storage/v1`,
+realtime, `/functions/v1`), each behind its own option, so the stock `@supabase/supabase-js`
+client works unchanged against the app; plus Vault, pgmq queues, pgvector search, database
+webhooks and `denext db` (migrations, diff, dump, lint, types). Postgres itself is first-party in core: a client on `Deno.SQL`, Postgres
 stores for auth, sessions, rate limits, the cache and job history, and SQL migrations; `denext ui`
 browses the database. → [Backend](https://denext.dev/docs/backend) ·
 [Coming from Supabase](https://denext.dev/docs/coming-from-supabase)

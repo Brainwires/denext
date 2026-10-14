@@ -323,7 +323,8 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
 ## Backend (opt-in plugin: `@denext/backend`)
 
 Backend services inside the app — no hosted service, nothing to run beside it, zero npm:
-`plugins: [backend({ storage, postgres, realtime, rest })]`, each key opt-in
+`plugins: [backend({ storage, postgres, realtime, rest, supabase, functions, vault, queues,
+webhooks })]`, each key opt-in
 (`packages/backend`). The Postgres primitives it builds on are in core (`denext/server`), so an
 app without the plugin uses them too. See [the backend guide](https://denext.dev/docs/backend)
 and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
@@ -376,13 +377,17 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   `revalidateTag("table:<name>")`, so existing `<Live>` / `useLive` / `useApi({ tags })` code
   follows the table, and `revalidate: { owner: "one" }` elects one instance per database to do
   it (a session-level advisory lock). Subscriptions are capped per identity
-  (`maxSubscriptionsPerIdentity`) and per instance (`maxSubscribers`). —
-  `packages/backend/src/realtime.ts`, `realtime-sql.ts`, `table-changes-client.ts`.
-- **Auto-REST** ⚑ — `backend({ rest: {} })` serves a schema's tables as PostgREST-style routes
-  (`GET` / `HEAD` / `POST` / `PATCH` / `DELETE` on `/rest/v1/<table>`: column selection,
-  filters and `not`, ordering, paging and `Range`, `Prefer: count=exact`, single-object
-  responses, inserts, filtered updates and deletes), every statement run through `db()` so RLS
-  scopes it. By default only RLS-enabled tables and `security_invoker` views that the `anon` /
+  (`maxSubscriptionsPerIdentity`) and per instance (`maxSubscribers`). The same option serves
+  **Supabase Realtime** at `/realtime/v1` (Phoenix channels: `postgres_changes`, broadcast,
+  presence, private channels authorized by `realtime.messages` policies), and
+  `source: "logical"` reads changes from a logical-replication slot instead of triggers. —
+  `packages/backend/src/realtime.ts`, `realtime-sql.ts`, `realtime-phoenix.ts`,
+  `realtime-logical.ts`, `table-changes-client.ts`.
+- **Auto-REST** ⚑ — `backend({ rest: {} })` serves a schema's tables in **PostgREST 12's wire
+  format** at `/rest/v1` (so supabase-js's `from()` / `rpc()` work unchanged): embedded
+  resources through foreign keys, `or` / `and` trees, every operator, aliases, casts and JSON
+  paths, upserts and `PUT`, `/rpc/<function>`, CSV, counts and the OpenAPI document — every
+  statement run through `db()` so RLS scopes it. By default only RLS-enabled tables and `security_invoker` views that the `anon` /
   `authenticated` roles were granted get a route; everything skipped is listed in a startup
   warning. Names come only from the catalog (never request text), values are typed `$n`
   parameters, each request has a `statement_timeout`, REST statements are capped at a share of
@@ -391,6 +396,23 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   and `restClient({ url })` from `@denext/backend/client`, a supabase-js-shaped builder that
   resolves to `{ data, error, count, status }` — is typed by `.denext/rest.ts`, generated from
   the live catalog at `denext dev` and `denext build`. — `packages/backend/src/rest*.ts`.
+- **Supabase's APIs** ⚑ — `backend({ supabase })` installs Supabase-style API keys (publishable =
+  `anon`, secret = `service_role`, ES256 access tokens with a JWKS) and resolves every request
+  to one identity (`resolveIdentity()`), and serves GoTrue's **`/auth/v1`** over the
+  `denextAuth()` users: password, OTP and magic links, phone, anonymous, OAuth and stored custom
+  providers, Web3, MFA (TOTP, SMS, WebAuthn), passkeys, SAML SSO, the OAuth 2.1 server and the
+  admin API. With `storage`, `/storage/v1` speaks Supabase's Storage API (TUS uploads,
+  versioning, `storage: { rls: true }` SQL policies). — `src/server/auth/gotrue/`,
+  `packages/backend/src/identity.ts`, `storage-api.ts`, `storage-tus.ts`.
+- **Edge Functions, Vault, Queues, vector search, webhooks** — `functions: {}` serves
+  `functions/<name>.ts` at `/functions/v1/<name>`, each in its own Deno Worker; `vault: {}`
+  keeps AES-256-GCM secrets in `vault.secrets`; `queues: {}` is pgmq's SQL API without the
+  extension; `vectorSearchSql()` / `matchDocuments()` over pgvector; `webhooks` delivers signed,
+  retried table-change hooks. — `packages/backend/src/functions.ts`, `vault.ts`, `queues.ts`,
+  `vector.ts`, `webhooks.ts`.
+- **`denext db`** — migrations on SQLite or Postgres (`push`, `status`, `reset`, `seed`, and the
+  Supabase CLI's history table), plus `diff`, `dump`, `pull`, `lint`, `inspect`, `test` and
+  `types` against Postgres with the plugin. — `src/cli/db/`, `packages/backend/src/db-command.ts`.
 - **The Database section of `denext ui`** — for a project on Postgres: tables with their
   columns, indexes and keys; rows (keyset-paged, editable, each write previewed as its exact SQL
   first); row-level security policies; migrations (applied, pending, edited since); the storage

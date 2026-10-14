@@ -70,7 +70,7 @@ deno install -A -g -n denext jsr:@denext/denext/cli`}
         <em>latest stable</em>{" "}
         release: release candidates are GitHub prereleases and are never "latest", so pick one with
         {" "}
-        <code>DENEXT_VERSION=v{RELEASE}-rc.1</code>{" "}
+        <code>DENEXT_VERSION=v&lt;version&gt;-rc.N</code>{" "}
         if you want it. The latest-version lookup uses GitHub's API, which allows 60 anonymous
         requests an hour per IP: with <code>GITHUB_TOKEN</code> (or{" "}
         <code>GH_TOKEN</code>) set, both installers send it on that one <code>api.github.com</code>

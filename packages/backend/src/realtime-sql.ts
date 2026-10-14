@@ -15,7 +15,7 @@ export const REALTIME_BUS_CHANNEL = "denext_realtime_bus";
 
 /** One table opted in to realtime. */
 export interface RealtimeTableOptions {
-  /** The changes to send (default all three: `["insert", "update", "delete"]`). */
+  /** The changes to send (default all four: `["insert", "update", "delete", "truncate"]`). */
   events?: TableEvent[];
   /** The key column a change is identified by (default `"id"`). */
   key?: string;

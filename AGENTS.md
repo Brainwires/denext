@@ -30,8 +30,10 @@ emit correct denext instead of Next.js.
    the `mobile:*` tasks, `spa.precompress: false` + `mobile.icon`, Capacitor 8 installed with the
    app's package manager, and review items for what it can't know (a hosted-mode env switch, a
    backend URL a phone can reach, CORS for `capacitor://localhost` / `https://localhost`).
-   `denext upgrade [--to <v>] [--dry-run | --check]` moves the `jsr:@denext/denext` pin, the
-   pinned CLI tasks and every first-party `@denext/*` package together.
+   `denext upgrade [--to <v>] [--dry-run | --check] [--allow-major] [--allow-downgrade]` moves
+   the `jsr:@denext/denext` pin, the pinned CLI tasks and every first-party `@denext/*` package
+   together (`--allow-major` also lets a package that imports no denext cross a major; an older
+   `--to` needs `--allow-downgrade`). From 3.x: https://denext.dev/docs/upgrading
 3. **File conventions are the same as Next App Router:** `app/page.tsx`,
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server
@@ -652,7 +654,8 @@ Supabase clients: `backend({ supabase: true | { auth: { … } } })` installs the
 (`DENEXT_PUBLISHABLE_KEY` / `DENEXT_SECRET_KEY`, ES256 `DENEXT_JWT_SIGNING_KEYS`, legacy
 `DENEXT_JWT_SECRET`; `denext backend keys` mints them) and serves GoTrue's `/auth/v1` over the
 `denextAuth()` users, so stock `supabase.auth.*` works (password, OTP / magic link, phone via
-`sendSms`, anonymous, OAuth, MFA, SAML SSO, admin API). `resolveIdentity()` from
+`sendSms`, anonymous, OAuth incl. stored `custom:` providers, Web3 (`web3`), MFA with TOTP / SMS /
+WebAuthn factors, passkeys, SAML SSO, the OAuth 2.1 server (`oauthServer`), admin API). `resolveIdentity()` from
 `@denext/backend/server` resolves any request (access token → secret key → denext session → anon);
 `db()` uses it.
 Edge Functions: `backend({ functions: {} })` serves `functions/<name>/index.ts` (a Supabase
@@ -896,7 +899,8 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   fields; denext's own `experimental.compiler` / `asyncContext` / `features` /
   `nodeResolve` were removed in 3.0 and are a config error.
 - **denext's Deno toolchain**: the verbs that run project code (`dev`, `build`, `export`,
-  `start`, `test`, `check`, `job`, `doctor`, `desktop run|dev|build|package`, `mobile dev|build`,
+  `start`, `test`, `check`, `job`, `analyze`, `profile`, `doctor`, `desktop run|dev|build|package`,
+  `mobile dev|build`,
   project verbs) re-run themselves on denext's pinned Deno build (`2.9.7-denext.N`: `Deno.SQL`,
   Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
   `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced. `DENEXT_DENO=stock`

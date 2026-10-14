@@ -34,8 +34,10 @@ emit correct denext instead of Next.js.
    the `mobile:*` tasks, `spa.precompress: false` + `mobile.icon`, Capacitor 8 installed with the
    app's package manager, and review items for what it can't know (a hosted-mode env switch, a
    backend URL a phone can reach, CORS for `capacitor://localhost` / `https://localhost`).
-   `denext upgrade [--to <v>] [--dry-run | --check]` moves the `jsr:@denext/denext` pin, the
-   pinned CLI tasks and every first-party `@denext/*` package together.
+   `denext upgrade [--to <v>] [--dry-run | --check] [--allow-major] [--allow-downgrade]` moves
+   the `jsr:@denext/denext` pin, the pinned CLI tasks and every first-party `@denext/*` package
+   together (`--allow-major` also lets a package that imports no denext cross a major; an older
+   `--to` needs `--allow-downgrade`). From 3.x: https://denext.dev/docs/upgrading
 3. **File conventions are the same as Next App Router:** `app/page.tsx`,
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server
@@ -656,7 +658,8 @@ Supabase clients: `backend({ supabase: true | { auth: { … } } })` installs the
 (`DENEXT_PUBLISHABLE_KEY` / `DENEXT_SECRET_KEY`, ES256 `DENEXT_JWT_SIGNING_KEYS`, legacy
 `DENEXT_JWT_SECRET`; `denext backend keys` mints them) and serves GoTrue's `/auth/v1` over the
 `denextAuth()` users, so stock `supabase.auth.*` works (password, OTP / magic link, phone via
-`sendSms`, anonymous, OAuth, MFA, SAML SSO, admin API). `resolveIdentity()` from
+`sendSms`, anonymous, OAuth incl. stored `custom:` providers, Web3 (`web3`), MFA with TOTP / SMS /
+WebAuthn factors, passkeys, SAML SSO, the OAuth 2.1 server (`oauthServer`), admin API). `resolveIdentity()` from
 `@denext/backend/server` resolves any request (access token → secret key → denext session → anon);
 `db()` uses it.
 Edge Functions: `backend({ functions: {} })` serves `functions/<name>/index.ts` (a Supabase
@@ -900,7 +903,8 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   fields; denext's own `experimental.compiler` / `asyncContext` / `features` /
   `nodeResolve` were removed in 3.0 and are a config error.
 - **denext's Deno toolchain**: the verbs that run project code (`dev`, `build`, `export`,
-  `start`, `test`, `check`, `job`, `doctor`, `desktop run|dev|build|package`, `mobile dev|build`,
+  `start`, `test`, `check`, `job`, `analyze`, `profile`, `doctor`, `desktop run|dev|build|package`,
+  `mobile dev|build`,
   project verbs) re-run themselves on denext's pinned Deno build (`2.9.7-denext.N`: `Deno.SQL`,
   Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
   `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced. `DENEXT_DENO=stock`
@@ -2537,6 +2541,109 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `sidecarStatus(name: string): Promise<SidecarStatus>` — The status of one of the app's sidecars (desktop.sidecars): its state (starting, ready, backoff, failed, …), port, attempts and how its last run ended.
 - `interface SidecarStatus` — A sidecar's status: what sidecar(name).status, sidecarStatus and onSidecarStatus report.
 
+### `denext/desktop/window`
+
+- `type CloseRequestHandler = () => boolean | void | Promise<boolean | void>` — A close-request handler: return (or resolve) false to keep the window open.
+- `closeWindow(): Promise<void>` — Close the window now, without asking the onCloseRequested handlers (the app quits: a denext desktop app has one window).
+- `interface DesktopBridgeError` — A failed desktop bridge call. Narrow with isDesktopBridgeError.
+- `type DesktopErrorCode = unavailable | forbidden | validation | timeout | too_large | bridge_error | parenthesized` — Why a desktop call failed:
+- `interface DraggableElement` — The slice of a DOM element makeWindowDraggable uses.
+- `interface DragOutItem` — A file to drag out of the window: a picked item ({ directory: { picked: handle } }, with path relative to a picked folder), or a file in the app's own folders.
+- `type DragOutResult = dropped | cancelled | failed` — What a drag-out ended with.
+- `interface DroppedFile` — One file dropped on the window.
+- `interface FileDrop` — Files dropped on the window (onFileDrop).
+- `focusWindow(): Promise<void>` — Bring the window to the front and focus it. @returns Once requested.
+- `getScreens(): Promise<WindowScreen[]>` — The connected displays, primary first.
+- `getTitleBarPreferences(): Promise<TitleBarPreferences>` — How the user set up title bars: the window buttons' side and order, the double-click action, the colour scheme and accent colour. For a page that hides the title bar (desktop.titleBar: "hidden") and draws its own; windows with the OS's frame already follow these settings. On Linux it is the desktop's own setting (Plasma's button order, GNOME's button-layout), read by the runtime from xdg-desktop-portal; makeWindowDraggable uses the double-click action.
+- `getWindowState(): Promise<WindowState>` — The window's state: maximized / minimized / fullscreen / visible, its bounds, and its display.
+- `hideWindow(): Promise<void>` — Hide the window (the app keeps running). @returns Once hidden.
+- `isDesktopBridgeError(value: unknown): value is DesktopBridgeError` — Whether value is a DesktopBridgeError.
+- `makeWindowDraggable(element: DraggableElement): () => void` — Make element a window drag region — what a page needs once the title bar is hidden (desktop.titleBar: "hidden"): pressing and dragging it moves the window, like the OS title bar, and a double click does what a double click on a title bar does for this user (TitleBarPreferences.doubleClick: maximize / restore, minimize, or nothing). Interactive children (buttons, links, inputs, [data-no-window-drag]) keep working.
+- `maximizeWindow(): Promise<void>` — Maximize the window (zoom on macOS). @returns Once requested (the OS may animate it).
+- `minimizeWindow(): Promise<void>` — Minimize the window. @returns Once requested.
+- `onCloseRequested(handler: CloseRequestHandler): () => void` — Ask before the window closes (its close button, Cmd+W / Alt+F4, or quitApp). While a handler is registered the runtime holds every close and calls the handlers; the window closes unless one returns (or resolves) false. A page that stops answering cannot keep the window open: a close requested again after 5 seconds without an answer goes through. Quitting from the macOS app menu (Cmd+Q) is not asked. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called and the window closes.
+- `onDisplayChanged(handler: (screens: WindowScreen[]) => void): () => void` — Call handler with the displays whenever one is added, removed, rearranged or rescaled.
+- `onFileDrop(handler: (drop: FileDrop) => void): () => void` — Call handler when files or folders are dropped on the window, with a READ-ONLY handle for each (the dropped item is untrusted input: the page reads it through the handle, never by path). The page still gets its own DOM dragenter / dragover / drop events (with File objects, for a hover style); this is where the native handles are. Needs denext's pinned runtime (fileDrop in windowCapabilities).
+- `onTitleBarPreferencesChange(handler: (preferences: TitleBarPreferences) => void): () => void` — Call handler with the new preferences whenever the user changes them (moves the window buttons, picks another double-click action, colour scheme or accent colour). Needs runtime 2.9.7-denext.12; earlier the handler is never called.
+- `onWindowStateChange(handler: (state: WindowState) => void): () => void` — Call handler with the window's state whenever it is maximized, unmaximized, minimized, restored, or enters or leaves fullscreen.
+- `quitApp(): Promise<boolean>` — Quit the app, like Electron's app.quit(): the onCloseRequested handlers are asked first, so a guarded close keeps it running.
+- `restoreWindow(): Promise<void>` — Bring the window back from minimized. @returns Once requested.
+- `setAlwaysOnTop(alwaysOnTop: boolean): Promise<void>` — Keep the window above other windows.
+- `setFullScreen(fullscreen: boolean): Promise<void>` — Enter or leave fullscreen.
+- `setMaximumWindowSize(width: number, height: number): Promise<void>` — Limit how large the window can get (0 = no limit on that axis).
+- `setMinimumWindowSize(width: number, height: number): Promise<void>` — Limit how small the window can get (0 = no limit on that axis).
+- `setTitleBarStyle(style: TitleBarStyle): Promise<boolean>` — Change the title bar style (macOS only): "hidden" / "hiddenInset" draw the page under a transparent title bar with the traffic lights on top — give the page a drag region (makeWindowDraggable).
+- `setWindowBackdrop(backdrop: WindowBackdrop, options?: object): Promise<boolean>` — Put a backdrop behind the page: Mica / Acrylic / tabbed Mica on Windows 11, vibrancy on macOS. It shows where the page's background is transparent; "none" removes it.
+- `setWindowBounds(bounds: Partial<WindowBounds>): Promise<void>` — Move and / or resize the frame; missing fields keep their value. To reopen a window where the user left it, save normalBounds (and maximized / fullscreen) from getWindowState, then restore them here on the next launch.
+- `setWindowButtonPosition(position: object | null): Promise<boolean>` — Move the macOS traffic lights (the close button's top-left corner, in points from the window's top-left); null puts them back.
+- `setWindowPosition(x: number, y: number): Promise<void>` — Move the window's frame (see the module docs for the units).
+- `setWindowResizable(resizable: boolean): Promise<void>` — Allow or forbid resizing by the user.
+- `setWindowSize(width: number, height: number): Promise<void>` — Resize the window's page area.
+- `setWindowTitle(title: string): Promise<void>` — Set the native window title.
+- `showWindow(): Promise<void>` — Show the window. @returns Once shown.
+- `startFileDrag(items: typeOperator, options?: object): Promise<DragOutResult>` — Drag files out of the window to another app or the desktop, as a copy. Call it while the mouse button is held: from the page's dragstart (call event.preventDefault() there) or a pointerdown followed by a move. Needs denext's pinned runtime (fileDragOut in windowCapabilities).
+- `type TitleBarButton = close | minimize | maximize | appmenu | menu | icon` — A window button, as GTK's decoration layout names them.
+- `type TitleBarDoubleClick = maximize | minimize | shade | lower | menu | none` — What a double click on a title bar does: "maximize" (toggle), "minimize", "shade" (roll up), "lower", "menu" (the window menu) or "none".
+- `interface TitleBarPreferences` — How the user set up title bars (getTitleBarPreferences), for a page that hides the title bar and draws its own: put the window buttons where the user's other windows have them, and make a double click on the drag region do what a double click on a title bar does.
+- `type TitleBarStyle = default | hidden | hiddenInset` — A title bar style: "hidden" draws the page under a transparent title bar.
+- `unmaximizeWindow(): Promise<void>` — Leave the maximized state. @returns Once requested.
+- `type VibrancyMaterial = titlebar | selection | menu | popover | sidebar | header | sheet | window | hud | fullscreen-ui | tooltip | content | under-window | under-page` — A macOS vibrancy material (NSVisualEffectMaterial, Electron's names).
+- `type WindowBackdrop = none | mica | acrylic | tabbed | vibrancy` — A backdrop behind the page, showing where the page's background is transparent: Windows 11's "mica", "acrylic", "tabbed", or macOS "vibrancy"; "none" removes it.
+- `interface WindowBounds` — A rectangle in screen coordinates (see the module docs for the units).
+- `windowCapabilities(): Promise<WindowCapabilities>` — What this OS and backend support.
+- `interface WindowCapabilities` — What this OS and backend support (Deno.desktop.windowCapabilities() plus closeGuard). A call for a feature reported false changes nothing (or rejects unsupported).
+- `interface WindowScreen` — A display.
+- `interface WindowState` — The window's state (getWindowState).
+
+### `denext/desktop/app`
+
+- `appCapabilities(): Promise<AppCapabilities>` — What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12). A fact an older runtime cannot report reads "unknown".
+- `interface AppCapabilities` — What this OS and runtime can do (appCapabilities).
+- `interface AppMenuAction` — A clickable menu item.
+- `type AppMenuItem = AppMenuAction | AppSubmenu | AppMenuRoleItem | separator` — One entry of an application, tray or Dock menu.
+- `type AppMenuRole = about | hide | hideOthers | unhide | quit | undo | redo | cut | copy | paste | selectAll | minimize | zoom | close | front | toggleFullScreen` — A standard menu item the OS draws and handles itself.
+- `interface AppMenuRoleItem` — A standard item (copy, paste, quit, …).
+- `interface AppSubmenu` — A submenu.
+- `interface AppTray` — A tray icon the page created.
+- `bounce(options?: object): Promise<void>` — Ask for the user's attention: bounce the Dock icon (macOS), flash the taskbar button (Windows), or mark the window urgent (Linux). Nothing happens while the app is focused.
+- `createTray(options: TrayOptions): Promise<AppTray>` — Add an icon to the system tray (the macOS menu bar's status items, the Windows notification area, Linux's AppIndicator area).
+- `interface DesktopBridgeError` — A failed desktop bridge call. Narrow with isDesktopBridgeError.
+- `type DesktopErrorCode = unavailable | forbidden | validation | timeout | too_large | bridge_error | parenthesized` — Why a desktop call failed:
+- `getLaunchAtLogin(): Promise<LaunchAtLoginState>` — Whether the app starts when the user logs in. Needs denext desktop add launch-at-login and denext's pinned runtime.
+- `isDesktopBridgeError(value: unknown): value is DesktopBridgeError` — Whether value is a DesktopBridgeError.
+- `type LaunchAtLoginState = enabled | disabled | requires-approval | not-supported` — Whether the app starts at login. requires-approval: registered, but the user has to allow it in the system settings (macOS Login Items, or a Windows startup entry the user turned off).
+- `listShortcuts(): Promise<string[]>` — The shortcuts this app holds, canonical, in registration order.
+- `onAppCapabilitiesChanged(handler: (capabilities: AppCapabilities) => void): () => void` — Call handler with fresh appCapabilities whenever the runtime says what the session provides may have changed (runtime 2.9.7-denext.10 and later, Linux: a tray host started or went away, as when the GNOME AppIndicator extension is enabled while the app runs). Create the tray icon again when tray turns true. Older runtimes never call it.
+- `onAppMenuItem(handler: (id: string) => void): () => void` — Call handler with the id of each application-menu item the user chooses (by click or accelerator).
+- `type PlatformUnknown = unknown` — A session fact the runtime could not report (a runtime before 2.9.7-denext.10, or no answer).
+- `interface RegisteredShortcut` — A registered shortcut (registerShortcut).
+- `registerShortcut(accelerator: string, handler: () => void): Promise<RegisteredShortcut>` — Bind a key combination system-wide: handler runs whichever app has the keyboard focus. Needs denext desktop add global-shortcuts and denext's pinned runtime.
+- `type SecretServiceState = available | locked | activatable | absent | no-session-bus | os` — The Secret Service's state, as the runtime reads it without starting or unlocking it: "os" on macOS and Windows (Keychain, DPAPI); on Linux "locked" also covers a missing default keyring and "activatable" is installed but not running.
+- `setAppMenu(menu: typeOperator): Promise<void>` — Replace the application menu: the macOS menu bar, the window's menu bar on Windows and Linux. Chosen items reach onAppMenuItem; roles are handled by the OS.
+- `setBadge(badge: string | number | null): Promise<void>` — Show a badge: on the Dock icon on macOS, and as a "(N) " prefix of the window titles on Windows. On Linux a count shows on the app's launcher where a dock reads launcher badges (runtime 2.9.7-denext.11: Ubuntu's dock, Dash to Dock, Plasma's task manager), else as the same title prefix; appCapabilities().badgeShows says which. null, "" or 0 removes it.
+- `setLaunchAtLogin(enabled: boolean): Promise<LaunchAtLoginState>` — Start the app when the user logs in (or stop): a macOS login item, a Windows Run value, a Linux XDG autostart entry. Turn it on only when the user asks.
+- `shortcutCapabilities(): Promise<ShortcutCapabilities>` — What global shortcuts can do on this OS and runtime.
+- `interface ShortcutCapabilities` — What global shortcuts can do here (shortcutCapabilities).
+- `interface TrayBounds` — Where a tray icon is on screen.
+- `type TrayIcon = Uint8Array | string` — A tray icon's image: PNG bytes, or base64 PNG.
+- `interface TrayOptions` — The settings of a tray icon (createTray).
+- `unregisterAllShortcuts(): Promise<void>` — Release every shortcut this app registered.
+- `unregisterShortcut(accelerator: string): Promise<boolean>` — Release a shortcut this app registered (any spelling of it).
+
+### `denext/desktop/clerk`
+
+- `interface ClerkBrowserSignInOptions` — Options for the hosted (browser) sign-in.
+- `interface ClerkDesktopBridge` — What installClerkDesktopBridge installed.
+- `interface ClerkDesktopBridgeOptions` — Options for installClerkDesktopBridge.
+- `interface ClerkLike` — The slice of a clerk-js Clerk instance the hosted sign-in uses (what @clerk/expo's useHostedAuth uses).
+- `interface ClerkOAuthTransport` — @clerk/electron's OAuth transport shape.
+- `interface ClerkPasskeyBridge` — @clerk/electron's passkey bridge shape (__clerk_internal_electron_passkeys).
+- `interface ClerkPasskeysAdapter` — A WebAuthn adapter clerk-js accepts (passkeys from @clerk/electron/passkeys): the shape @clerk/electron/react attaches to its instance.
+- `interface ClerkTokenCache` — @clerk/electron's token cache shape.
+- `installClerkDesktopBridge(options?: ClerkDesktopBridgeOptions): ClerkDesktopBridge | undefined` — Fill window.__clerk_internal_electron (and, with passkeys: true, window.__clerk_internal_electron_passkeys) for @clerk/electron on Deno Desktop. Call it from the app's desktop.preload, so the globals exist before the page's Clerk code reads them. Outside a Deno Desktop window it installs nothing.
+- `type PasskeyEnvelope = object | object` — A passkey result envelope.
+- `startClerkBrowserSignIn(clerk: ClerkLike, options: ClerkBrowserSignInOptions): Promise<object>` — Sign in through Clerk's hosted pages in the system browser and activate the session here: the protocol of @clerk/expo's useHostedAuth, over openAuthSession's custom-scheme flow. A fresh state and PKCE pair are made per call; the hosted-auth record is created with the S256 challenge, the callback must come back to redirectUrl with the same state, and its rotating_token_nonce is redeemed ONLY together with the verifier, which never leaves this page — so a callback intercepted by another app is useless to it.
+
 ### `denext/mobile`
 
 - `type AppFileDirectory = documents | data | cache` — The app's own folders:
@@ -2927,6 +3034,19 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `writeFile(path: string, data: string, options?: WriteFileOptions): Promise<void>` — Write a file, replacing it when it exists.
 - `interface WriteFileOptions` — Options for writeFile.
 
+### `denext/mobile/clerk`
+
+- `interface ClerkBrowserSignInOptions` — Options for the hosted (browser) sign-in.
+- `interface ClerkLike` — The slice of a clerk-js Clerk instance the hosted sign-in uses (what @clerk/expo's useHostedAuth uses).
+- `interface ClerkMobileBridge` — What installClerkMobileBridge installed.
+- `interface ClerkMobileBridgeOptions` — Options for installClerkMobileBridge.
+- `interface ClerkMobileBrowserSignInOptions` — Options for startClerkMobileBrowserSignIn.
+- `interface ClerkOAuthTransport` — @clerk/electron's OAuth transport shape.
+- `interface ClerkPasskeysAdapter` — A WebAuthn adapter clerk-js accepts (passkeys from @clerk/electron/passkeys): the shape @clerk/electron/react attaches to its instance.
+- `interface ClerkTokenCache` — @clerk/electron's token cache shape.
+- `installClerkMobileBridge(options: ClerkMobileBridgeOptions): ClerkMobileBridge | undefined` — Install Clerk's native bridge in the Capacitor shell (see the module docs). Call it once, before the page's Clerk code loads clerk-js — from instrumentation-client.ts in an App Router app, or at the top of a SPA entry. Outside the shell (the web, Deno Desktop) it installs nothing.
+- `startClerkMobileBrowserSignIn(clerk: ClerkLike, options: ClerkMobileBrowserSignInOptions): Promise<object>` — Sign in through Clerk's hosted pages in the shell's auth session and activate the session here: @clerk/expo's useHostedAuth protocol over openAuthSession, with a fresh state and S256 PKCE pair; the callback's nonce is redeemed only with the verifier, which never leaves this page. The passkey path of installClerkMobileBridge, and any method Clerk's hosted pages offer.
+
 ### `denext/updates`
 
 - `applyUpdates(config?: UpdatesConfig, onProgress?: UpdateProgressListener): Promise<UpdatesResult>` — Install every update on offer, reporting each step to onProgress: on a phone the new UI, on Deno Desktop the whole app (or, when no newer app is on offer, the UI overlay), in a browser the newer deploy. It never throws; a target that failed is listed in failures (and reported as stage: "failed").
@@ -3043,6 +3163,95 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `suggest(input: string, candidates: typeOperator): string | undefined` — The closest name in candidates to input within a small edit-distance threshold (scaled to the input length), or undefined when nothing is close — powering "did you mean" hints for both unknown verbs and unknown flags.
 - `VERB_NAME: RegExp` — A project CLI verb name: lowercase, digits and dashes, starting with a letter. The grammar denext.config.ts's commands: validation enforces (src/server/config-validate.ts), and what the help cache accepts back from disk.
 - `verbIndex(argv: typeOperator): number` — Index of the first bare token in argv — the verb — or -1 when there is none. The separate value of a valued global flag (--cwd <dir>) is skipped, not taken as the verb.
+
+### `denext/plugin-kit`
+
+- `interface ApiDefinition` — What an endpoint declares: its schemas, error codes, and per-method body cap.
+- `apiDefinitionOf(handler: unknown): ApiRouteMeta | undefined` — The definition + middleware attached to a defineApi handler, or undefined for a plain function. The seam handleApi reads (body cap, error redaction) and the accessor an OpenAPI/docs plugin uses to describe an app's endpoints.
+- `interface ApiRouteMeta` — The metadata attached to a defineApi handler (what handleApi and plugins read).
+- `interface AppCss` — Result of buildAppCss: everything needed by server + client + docs.
+- `bufferedRequest(request: Request, body: Uint8Array): Request` — Rebuild a request from already-buffered body bytes (headers/method preserved).
+- `buildAppCss(opts: object): Promise<AppCss | null>` — Build the whole project's CSS assets: scan for .css files, transform each, write a JS shim per file, and emit a merged deno config (framework + project imports normalized to absolute, plus the CSS redirects) so the module loader — and deno bundle (via CssAssets.importMap) — can resolve every .css import.
+- `buildNextCompatModules(options: BuildNextCompatModulesOptions): Promise<Map<string, string>>` — Build react→denext-rewritten SSR bundles for a set of route source modules, each RE-EXPORTING the source module's shape (default + named exports: metadata/generateMetadata/segment-config/…) rather than wrapping it in a render(). The main SSR loader (createNextCompatServerLoader) returns these instead of the raw source, so the whole route subtree — including npm React libraries imported inside it — runs on denext's single React.
+- `interface BuildNextCompatModulesOptions` — Options for buildNextCompatModules.
+- `bundleRoutes(routeEntries: Array<object>, opts: BundleOptions): Promise<MultiBundleOutput>` — Bundle several browser entries in a **single** code-split pass, so any module imported by more than one entry — chiefly the denext client runtime, which every route entry imports — is hoisted into one shared chunk they all reference (downloaded once, cached across client navigations) instead of being inlined into each entry. Contrast bundleRoute, which bundles one route in isolation and therefore cannot share a chunk with its siblings.
+- `cappedBody(request: Request, maxBytes: number): Request` — request with its body wrapped so that reading past maxBytes errors the stream (the consumer — formData(), json(), a multipart parser — then throws). For streaming consumers that cannot use readCappedBody; a declared content-length over the cap is refused up front.
+- `captureRequestContext(): (fn: () => T) => T` — Capture the current request so its session can be read again later, outside it — what a plugin holding a long-lived connection (a WebSocket it upgraded) uses to re-check who is on the other end: the returned function runs fn in a fresh request context for a copy of this request (its URL, its headers — cookies included — and its client address, with the app's proxy trust and limit policy), so auth(), cookies() and clientIpForLimits() answer as they did for the original. Capture BEFORE Deno.upgradeWebSocket, which consumes the request. Outside a request the function runs fn as it is.
+- `interface Channel<T>` — A channel on the server.
+- `interface ChannelTapHandlers<T>` — What tapChannel reports.
+- `interface CommandContext` — The parsed invocation handed to a command's CommandSpec.run.
+- `interface CommandSpec` — A first-class denext CLI verb.
+- `compareSpecificity(a: Segment[], b: Segment[]): number` — Order two patterns by specificity the way Next.js does: compare segment by segment from the left, and at the first position that differs the more specific kind wins (static > dynamic > catch-all > optional catch-all). A pattern that has run out of segments (its catch-all consumed the rest) ranks below one that still has a concrete segment there. Returns negative when a should be tried first.
+- `compileMdxSource(path: string, source: string, opts?: MdxBuildOptions): Promise<string>` — Compile one MDX/Markdown source to a JS module string (React automatic runtime, jsxImportSource: "react" → aliased to denext downstream). With no opts this is the baseline plain-MDX/CommonMark path; when the app configures mdx in denext.config.ts, its unified remark/rehype/recma plugin lists (e.g. Codehike, GFM) are forwarded verbatim to MDX's compile. Exported for unit testing the plugin wiring.
+- `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
+- `createNextCompatServerLoader(base: ModuleLoader, opts: NextCompatServerLoaderOptions): ModuleLoader` — Wrap a base ModuleLoader so route source modules that have a react→denext rewritten server bundle load from that bundle instead of source (a keyed ref resolves to the module's namespace inside the single server bundle).
+- `interface DenextConfig` — Project configuration exported from denext.config.{ts,js} (as default or named).
+- `interface DenextPlugin` — A denext plugin. Declared in denext.config.ts as plugins: [myPlugin()]; its setup runs once per process, before the first route scan.
+- `edgeFunctionSource(name: string): string` — An Edge Function in Supabase's shape, for backend({ functions }) from @denext/backend: what denext generate function <name> and denext functions new <name> write.
+- `interface EmittedAsset` — A generated file a build step publishes with PluginBuildContext.emitFile.
+- `enableFastRefresh(): void` — Install the family-identity check and hook-signature guard into the reconciler. Idempotent; called once by the dev route entry before its first render. A no-op in production (this module is never imported there).
+- `extractRouteCss(routeFiles: string[], assets: AppCss): Promise<string>` — Extract the CSS a single route needs: crawl the route's source files, keep the transformed CSS for those reachable .css files (in path order), and concatenate. Returns "" when the route pulls in no CSS.
+- `fromBase64Url(s: string): Uint8Array` — Decode URL-safe base64 (no padding) back to bytes. Shared with the Remix session compat.
+- `type GenerateBundleHook = parenthesized | object` — A generateBundle hook: a function, or Rollup's { handler } object form.
+- `hmacSign(payload: string, secret: string, domain?: unknown): Promise<string>` — HMAC-SHA256 sign payload with secret, returned URL-safe base64. domain separates the token spaces that share one secret (the denext session cookie, a Remix cookie session): a token minted for one can never verify as the other.
+- `hmacVerify(payload: string, sig: string, secrets: string[], domain?: unknown): Promise<boolean>` — Verify payload against sig for any of secrets (constant-time via subtle.verify).
+- `hydrateRoot(container: Element, vnode: VNode, options?: RootOptions): Root` — Hydrate vnode against server-rendered markup already in container.
+- `interface I18nConfig` — Internationalization configuration.
+- `matchSegments(pattern: Segment[], pathname: string): RouteParams | null` — Attempt to match a request pathname against a parsed pattern. Returns extracted params on success, or null if the pattern doesn't match.
+- `interface MdxBuildOptions` — MDX build options threaded from denext.config.ts (mdx). Mirrors the compile-time subset of the app's MDX config; typed loosely so this build module stays decoupled from the server config types. Plugin lists are unified PluggableLists.
+- `interface NextCompatServerLoaderOptions` — Options for createNextCompatServerLoader.
+- `interface OriginCheckOptions` — What verifyOrigin needs from the app config.
+- `class PageCache` — The rendered-page store for Incremental Static Regeneration. A thin façade over the active CacheStore: the prod server consults it before rendering and populates it afterward for cacheable routes. Injecting a shared store via setCacheStore makes ISR work across replicas transparently (replicas of one build share its build id).
+- `parsePattern(pattern: string): Segment[]` — Parse a route pattern like "blog/[slug]" into an ordered segment list.
+- `peelLocale(pathname: string, i18n: I18nConfig | undefined, host?: string): PeeledLocale` — Peel a leading locale segment off pathname. If the first path segment is a configured locale it is stripped and returned; otherwise the default locale is used and the pathname is returned unchanged.
+- `platformClientRedirects(projectDir: string, config: DenextConfig | null | undefined, platform?: Platform): Promise<Record<string, string>>` — The redirects that make a plugin's client bundle resolve the app's [platform-specific files](https://denext.dev/docs/platform-files) (Button.web.tsx) as the server render does: pass them to bundleRoutes' redirects (with projectDir), which follows them through relative imports and the app's import-map aliases alike. Empty when the app has no platform files or turned them off.
+- `interface PluginBuildContext` — Context passed to a PluginBuildStep.
+- `type PluginBuildStep = (context: PluginBuildContext) => void | Promise<void>` — A build-time step that emits the plugin's client bundles/assets into outDir, and publishes generated files at the site root with PluginBuildContext.emitFile. Runs at denext build and at denext export (App Router, SPA and Pages Router alike).
+- `interface PluginContext` — The seams a plugin's DenextPlugin.setup may extend.
+- `type PluginMode = dev | build | prod | export` — Where denext is running when a plugin's DenextPlugin.setup fires.
+- `interface PluginPrepareContext` — Context passed to a PluginPrepareStep (and the base of a build step's).
+- `type PluginPrepareStep = (context: PluginPrepareContext) => void | Promise<void>` — A step that prepares generated inputs (typed accessors, a data artifact) BEFORE the app is bundled or served — the seam a plugin uses to generate code the app then imports. Unlike a PluginBuildStep (which runs only at denext build / export), a prepare step runs in **both** lifecycles: once at denext build and once at denext dev startup, and again during dev whenever a file under its PrepareStepOptions.watch globs changes — so its generated output stays live as you edit. Its PluginPrepareContext is a build step's context without the emit seam: a prepare step generates inputs, not published output.
+- `type PluginRequestHandler = (request: Request) => Response | null | undefined | Promise<Response | null | undefined>` — Claim and handle a request the core router did not match. Return a Response to serve it, or null/undefined to pass (letting denext fall through to static assets and the 404). Runs AFTER App-Router page/API matching, so core routes always win.
+- `type PluginTeardown = () => void | Promise<void>` — A disposer that releases resources a plugin opened in DenextPlugin.setup (watchers, connections, timers). Registered with PluginContext.addTeardown and run — most-recently-registered first — when the server drains.
+- `interface PrepareStepOptions` — Options for PluginContext.addPrepareStep.
+- `readCappedBody(request: Request, maxBytes: number, idleMs?: number): Promise<Uint8Array | TOO_LARGE | STALLED>` — Read a request body into memory, refusing anything over maxBytes (hard-caps even a chunked body with no Content-Length) and aborting a body that stalls for longer than idleMs. Returns the bytes, TOO_LARGE, or STALLED.
+- `registerFamily(type: unknown, id: string): void` — Register a component type under a stable family id (e.g. moduleUrl#Export). Re-registering the same id with a new function ref binds that ref to the same family and marks it current — the mechanism that lets an edited module's fresh references reconcile onto existing fibers.
+- `remixCodegen` — The Remix route-module codegen denext migrate --from remix uses, as a namespace: the swc-based split of a route module into a "use client" component + a server data module (remixCodegen.analyzeModule analyzeModule) and the generated denext wrappers (remixCodegen.pageWrapperSource pageWrapperSource and siblings). A router plugin (@denext/react-router) uses it to generate the same wrappers into .denext/ for an app whose sources stay untouched.
+- `revalidatePath(path: string, _type?: layout | page): Promise<void>` — Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store.
+- `revalidateTag(tag: string, profile?: string | CacheLifeProfile): Promise<void>` — Invalidate every cached data entry and page carrying tag.
+- `type RouteParams = Record<string, string | string[]>` — Extracted dynamic route parameters, keyed by segment name. A [slug] segment yields a string; a [...rest] / [[...rest]] catch-all yields the remaining parts as a string[] (Next.js's shape — params.rest.join("/") for the path form).
+- `type RouteSynthesizer = (manifest: RouteManifest) => void | Promise<void>` — A hook run over the scanned manifest before it is returned. May add, remove, or adjust routes — the extension point behind synthesized/derived routes. May be async (e.g. a plugin scanning its own route tree off disk).
+- `interface Segment` — A single parsed route pattern segment.
+- `specificity(pattern: Segment[]): number` — Specificity score for ordering routes: more specific (static) patterns should be tried before less specific (dynamic/catch-all) ones. Higher wins. Position-blind (a sum) — prefer compareSpecificity for ordering.
+- `STALLED: Symbol` — Sentinel returned by readCappedBody when the body stalls (idle).
+- `interface TailwindConfig` — Tailwind CSS integration. When set, denext compiles input (which contains the raw @import "tailwindcss"; directives) into output using the Tailwind v4 standalone binary — which denext downloads and manages itself — before its own CSS pipeline runs. The output file is what your layout imports.
+- `tapChannel<T>(channel: Channel<T> | string, key: string, handlers: ChannelTapHandlers<T>): () => void` — Observe a channel's publishes on the SERVER: every payload published to key on any instance — through the installed transport, decoded, in seq order per instance — until the returned disposer runs. The seam a plugin uses to bridge channel pushes into another protocol (a GraphQL subscription in @denext/graphql, an SSE stream, a queue) without a second event bus. Survives setChannelTransport (re-binds to the new transport).
+- `toBase64Url(bytes: Uint8Array): string` — Encode bytes as URL-safe base64 (no padding). Shared with the Remix session compat.
+- `TOO_LARGE: Symbol` — Sentinel returned by readCappedBody when the body exceeds the cap.
+- `verifyOrigin(request: Request, options: OriginCheckOptions): boolean` — Is this request from the app's own origin (or an explicitly allowed one)?
+- `interface ViteEmittedFile` — A Rollup emitFile argument (only type: "asset" with a fileName is supported).
+- `interface ViteEmitterBuildContext` — The parts of a plugin build step's context the emitter uses (a subset of PluginBuildContext).
+- `interface ViteEmitterContext` — The plugin context (this) the hook runs with: the parts of Rollup's an emitter uses.
+- `interface ViteEmitterDenextPlugin` — The denext plugin viteEmitterPlugin returns (assignable to DenextPlugin).
+- `viteEmitterPlugin(vitePlugin: VitePluginLike): ViteEmitterDenextPlugin` — Wrap a Vite plugin whose generateBundle emits files (this.emitFile({ type: "asset", fileName, source })) as a denext plugin: the hook runs as a build step at denext build and denext export, and each file it emits is published at the site root.
+- `interface ViteEmitterSetupContext` — The setup context viteEmitterPlugin's plugin uses (a subset of PluginContext).
+- `interface VitePluginLike` — The slice of a Vite plugin viteEmitterPlugin runs.
+- `interface VNode` — A single virtual DOM node.
+- `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
+- `type VNodeChildren = VNodeChild | VNodeChild[]` — One child or an array of children, as accepted by JSX.
+- `type VNodeType = string | Component<any> | FRAGMENT` — The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker.
+- `interface VProps` — Props passed to a virtual node. children is normalized separately.
+
+### `denext/plugin-kit/vite-emitter`
+
+- `type GenerateBundleHook = parenthesized | object` — A generateBundle hook: a function, or Rollup's { handler } object form.
+- `interface ViteEmittedFile` — A Rollup emitFile argument (only type: "asset" with a fileName is supported).
+- `interface ViteEmitterBuildContext` — The parts of a plugin build step's context the emitter uses (a subset of PluginBuildContext).
+- `interface ViteEmitterContext` — The plugin context (this) the hook runs with: the parts of Rollup's an emitter uses.
+- `interface ViteEmitterDenextPlugin` — The denext plugin viteEmitterPlugin returns (assignable to DenextPlugin).
+- `viteEmitterPlugin(vitePlugin: VitePluginLike): ViteEmitterDenextPlugin` — Wrap a Vite plugin whose generateBundle emits files (this.emitFile({ type: "asset", fileName, source })) as a denext plugin: the hook runs as a build step at denext build and denext export, and each file it emits is published at the site root.
+- `interface ViteEmitterSetupContext` — The setup context viteEmitterPlugin's plugin uses (a subset of PluginContext).
+- `interface VitePluginLike` — The slice of a Vite plugin viteEmitterPlugin runs.
 
 ### `denext/expo/apple-authentication`
 
