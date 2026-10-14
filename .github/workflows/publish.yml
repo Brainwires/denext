@@ -161,8 +161,8 @@ jobs:
       matrix:
         include:
           # `smoke` is whether the runner can EXECUTE the binary it built. Every leg builds on
-          # ubuntu-latest (x86_64): `deno compile --target` cross-compiles, and the Mach-O legs
-          # come out ad-hoc signed, so no leg waits for a macOS runner. The `macos-check` job
+          # ubuntu-latest (x86_64): `deno compile --target` cross-compiles and the Mach-O legs
+          # are signed with rcodesign, so no leg waits for a macOS runner. The `macos-check` job
           # runs the released Mac binaries after the release.
           - target: x86_64-apple-darwin
             os: ubuntu-latest
@@ -222,7 +222,13 @@ jobs:
       # secrets — when they are absent the step is skipped and the artifact ships unsigned,
       # which the install script and the docs call out. Signing runs on Linux with rcodesign
       # (apple-codesign, pinned by SHA-256), so the Mac legs need no macOS runner.
-      - name: Sign and notarise (macOS)
+      # Every Mac binary is signed here, on Linux, with rcodesign (apple-codesign, pinned by
+      # SHA-256). Without the Developer ID secrets the signature is ad-hoc — what `deno compile`
+      # gives a Mac binary built on a Mac (Apple Silicon refuses to run an unsigned one, and
+      # a cross-compiled x86_64 Mach-O comes out unsigned) — and Gatekeeper still quarantines
+      # the download, which the install script strips and the docs call out. With them it is a
+      # Developer ID signature with the hardened runtime, then notarised.
+      - name: Sign (and notarise) the Mac binary
         if: contains(matrix.target, 'apple-darwin')
         env:
           APPLE_CERT: ${{ secrets.APPLE_DEVELOPER_ID_CERT }}
@@ -232,18 +238,18 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
           set -eu
-          # `secrets` is not a context a step-level `if` can read, so the guard lives here in
-          # the shell. With no Developer ID configured the job still ships a binary — unsigned,
-          # which the install script strips quarantine for and the docs call out.
-          if [ -z "${APPLE_CERT:-}" ]; then
-            echo "denext: no Developer ID secrets — shipping this binary UNSIGNED" >&2
-            exit 0
-          fi
           rcs=apple-codesign-0.29.0-x86_64-unknown-linux-musl
           curl -fsSLo rcs.tar.gz \
             "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F0.29.0/$rcs.tar.gz"
           echo "dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002  rcs.tar.gz" | sha256sum -c -
           tar xzf rcs.tar.gz && rcodesign="$PWD/$rcs/rcodesign"
+          # `secrets` is not a context a step-level `if` can read, so the guard lives here.
+          if [ -z "${APPLE_CERT:-}" ]; then
+            echo "denext: no Developer ID secrets — signing this binary ad-hoc" >&2
+            "$rcodesign" sign denext
+            rm -rf rcs.tar.gz "$rcs"
+            exit 0
+          fi
           echo "$APPLE_CERT" | base64 --decode > cert.p12
           printf '%s' "$APPLE_CERT_PASSWORD" > cert.pw
           # --for-notarization: the hardened runtime and a secure timestamp, as notarisation needs.
