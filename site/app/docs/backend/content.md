@@ -788,7 +788,8 @@ if signed-out visitors may watch it) for its rows to be readable at all.
 visitors at one client address (`clientIpForLimits({ bucket: true })`, an IPv6 address counting
 as its `/64`: one Live connection when no address is
 known, or when it is a loopback/private socket peer — a reverse proxy every visitor shares; set
-`trustForwardedHeaders` behind one, or name its client-address header in `rateLimitHeader`, to key
+`trustForwardedHeaders` behind one, or name its client-address header in `rateLimitHeader` (believed
+from `rateLimitTrustedProxies`, or a loopback/private peer under `trustForwardedHeaders`), to key
 on each visitor's address; `rateLimitLocalAddresses` counts such a peer as itself) — may hold
 `maxSubscriptionsPerIdentity` subscriptions (default 64), which also bounds
 the distinct filters (re-read groups) it adds to a burst; the instance holds `maxSubscribers`. An

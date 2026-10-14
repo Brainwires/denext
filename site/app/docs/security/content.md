@@ -391,7 +391,10 @@ attack surface, so each ships with its own invariant:
   `trustForwardedHeaders` (on `denextAuth` or, inherited, on the app) warns once
   for the same reason. The app's `rateLimitHeader` and `rateLimitLocalAddresses`
   opt back in deliberately; a request missing the named header falls back to the
-  socket peer rather than going unlimited.
+  socket peer rather than going unlimited, and the header is believed only from a
+  trusted proxy (`rateLimitTrustedProxies`, or a loopback/private peer under
+  `trustForwardedHeaders`), so a direct client can't forge a fresh bucket per
+  request.
 - **No request stream drives unlimited calls to a third party.** Every outbound
   provider call an unauthenticated request can cause spends a budget in the
   limiter store first, with no I/O to the provider: a captcha token goes to the

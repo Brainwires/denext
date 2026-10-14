@@ -306,7 +306,10 @@ inherits the app's `trustForwardedHeaders` unless it sets its own. Per-address l
 (`rateLimit()`, auth's per-IP budgets, `live.limits.maxConnectionsPerIp`, `clientIpForLimits()`)
 skip a loopback/private peer with no trusted hop; `rateLimitHeader: "cf-connecting-ip"` keys them on
 the address a proxy writes there (Supabase's `GOTRUE_RATE_LIMIT_HEADER`; a request without it falls
-back, never unlimited) and `rateLimitLocalAddresses: true` counts such a peer as itself.
+back, never unlimited), believed only from a trusted proxy — a peer in `rateLimitTrustedProxies`
+(CIDRs, e.g. Cloudflare's ranges), or with none listed a loopback/private peer under
+`trustForwardedHeaders` (any other peer is keyed as itself) — and `rateLimitLocalAddresses: true`
+counts such a peer as itself.
 
 **A project-local CLI verb (no plugin):** put it in `denext.config.ts` and run it as a verb.
 
@@ -915,8 +918,13 @@ the [plugin guide](https://denext.dev/docs/plugins) and
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
   bench`), and `denext main.ts` / `denext https://…/x.ts` is `deno run`. Precedence: denext's
-  built-in verbs, then the project's own (`commands:` / plugins; shadowing a Deno verb prints one
-  notice), then Deno's. `task` is Deno's; background work is `denext job`. `info <module>` is
+  built-in verbs, then the project's own (`commands:` / plugins), then Deno's. A script or a Deno
+  verb never imports `denext.config.ts` first (only a name that may be a project verb does); a
+  project verb may not be named `run`, `x`, `eval`, `serve`, `compile`, `install`, `uninstall`,
+  `upgrade` or `task` (refused), and one named after another Deno verb (`bench`, `doc`, …) runs
+  in its place only once `denext commands` has listed it (`.denext/commands.json`, matching the
+  current config / `deno.json` / `deno.lock`; one notice). `task` is Deno's; background work is
+  `denext job`. `info <module>` is
   Deno's info; `audit` runs denext's checks and `deno audit`. For Deno's meaning of a verb denext
   keeps (`test`, `fmt`, `upgrade`, `desktop`, `create`, `init`, `completions`): `denext deno <verb>`.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm

@@ -22,7 +22,7 @@ Deno.test("config validation admits exactly the verb names the CLI's grammar doe
     "seed",
     "warm-cache",
     "a1",
-    "x",
+    "y", // (not `x`: Deno's `x` is a reserved name — tests/cli-verb-route.test.ts)
     "seed-",
     "Seed",
     "1seed",

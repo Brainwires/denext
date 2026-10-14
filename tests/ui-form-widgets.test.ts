@@ -150,6 +150,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     canonicalOrigin: "text",
     trustForwardedHeaders: "toggle",
     rateLimitHeader: "text",
+    rateLimitTrustedProxies: "chips",
     rateLimitLocalAddresses: "toggle",
     allowedDevOrigins: "chips",
     requestTimeout: "number",

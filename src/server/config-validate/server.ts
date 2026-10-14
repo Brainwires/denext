@@ -5,6 +5,7 @@ import { type DenextConfig, isHeaderName, isOrigin } from "../config.ts";
 import { resolveCors } from "../cors.ts";
 import { ROUTE_CSP_KEYS } from "../segment-config.ts";
 import { validateAppLinks } from "../app-links.ts";
+import { parseCidr } from "../remote-addr.ts";
 import { didYouMean, unknownKeyMessage } from "./keys.ts";
 import { type Fail, num, numArray, type NumOpts } from "./shared.ts";
 
@@ -147,8 +148,10 @@ function validateCdnCacheHeaders(cdn: unknown, fail: Fail): void {
 }
 
 /**
- * `rateLimitHeader` (an HTTP header name) and `rateLimitLocalAddresses` (a boolean): a malformed
- * header name could never match a request, silently leaving every limit on the fallback address.
+ * `rateLimitHeader` (an HTTP header name), `rateLimitLocalAddresses` (a boolean) and
+ * `rateLimitTrustedProxies` (CIDR ranges): a malformed header name could never match a request,
+ * and a malformed range could never match a peer, silently leaving every limit on the fallback
+ * address.
  */
 function validateRateLimitAddress(config: DenextConfig, fail: Fail): void {
   const { rateLimitHeader, rateLimitLocalAddresses } = config;
@@ -160,6 +163,16 @@ function validateRateLimitAddress(config: DenextConfig, fail: Fail): void {
   }
   if (rateLimitLocalAddresses !== undefined && typeof rateLimitLocalAddresses !== "boolean") {
     fail("rateLimitLocalAddresses", "must be a boolean");
+  }
+  const proxies: unknown = config.rateLimitTrustedProxies;
+  if (
+    proxies !== undefined &&
+    (!Array.isArray(proxies) || proxies.some((p) => typeof p !== "string" || !parseCidr(p)))
+  ) {
+    fail(
+      "rateLimitTrustedProxies",
+      'must be an array of CIDR ranges or addresses (e.g. ["173.245.48.0/20", "10.0.0.0/8"])',
+    );
   }
 }
 

@@ -21,12 +21,16 @@ import {
 } from "../src/server/auth/rate-limit.ts";
 import {
   type LimitAddrPolicy,
+  parseCidr,
   resetLimitHeaderWarningForTesting,
   setRemoteAddr,
 } from "../src/server/remote-addr.ts";
 import type { AuthConfig } from "../src/server/auth/types.ts";
 
 const ORIGIN = "https://app.test";
+
+/** A loopback reverse proxy, listed as the trusted source of the app's limit header. */
+const LOOPBACK_PROXY = [parseCidr("127.0.0.0/8")!, parseCidr("::1")!];
 
 /** Run `body` with `Date.now` shifted by `deltaMs`. */
 async function atOffset(deltaMs: number, body: () => Promise<void> | void): Promise<void> {
@@ -578,7 +582,7 @@ function signinWithPolicy(
 
 Deno.test("per-IP budgets + the app's rateLimitHeader: each named client behind a loopback proxy has its own (IPv6 per /64, mapped as IPv4)", async () => {
   const config = signinConfig({ rateLimit: { signin: { max: 1, windowMs: 60_000 } } });
-  const policy = { header: "x-real-ip" };
+  const policy = { header: "x-real-ip", trustedProxies: LOOPBACK_PROXY };
   const from = (client: string) =>
     signinWithPolicy(config, "127.0.0.1", policy, { "x-real-ip": client });
   assertEquals([await from("198.51.100.40"), await from("198.51.100.40")], [303, 429]);
@@ -610,7 +614,9 @@ Deno.test("per-IP budgets + the app's rateLimitLocalAddresses: a loopback/privat
   const request = new Request(`${ORIGIN}/x`, { headers: { "x-real-ip": "198.51.100.50" } });
   setRemoteAddr(request, { transport: "tcp", hostname: "127.0.0.1", port: 443 });
   const bucket = runWithContext(
-    createRequestContext(request, undefined, { limitPolicy: { header: "x-real-ip" } }),
+    createRequestContext(request, undefined, {
+      limitPolicy: { header: "x-real-ip", trustedProxies: LOOPBACK_PROXY },
+    }),
     () => clientIpBucket(request),
   );
   assertEquals(bucket, "198.51.100.50");

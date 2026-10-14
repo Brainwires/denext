@@ -24,10 +24,12 @@ import {
   runWithContext,
 } from "../src/server/request-context.ts";
 import {
+  inCidrs,
   ipBucket,
   isLocalAddress,
   limitAddrOf,
   type LimitAddrPolicy,
+  parseCidr,
   resetLimitHeaderWarningForTesting,
   resolveLimitPolicy,
   setRemoteAddr,
@@ -396,13 +398,129 @@ Deno.test("clientIpForLimits({ bucket: true }): an IPv6 address's /64, IPv4 as i
 
 // --- rateLimitHeader / rateLimitLocalAddresses (Supabase Auth's GOTRUE_RATE_LIMIT_HEADER model) ---
 
-const CF = { header: "cf-connecting-ip" } satisfies LimitAddrPolicy;
+/** The proxies these tests front the app with: loopback and a private 10/8 network. */
+const PROXIES = ["127.0.0.0/8", "::1", "10.0.0.0/8"].map((cidr) => parseCidr(cidr)!);
+const CF = { header: "cf-connecting-ip", trustedProxies: PROXIES } satisfies LimitAddrPolicy;
 
-Deno.test("resolveLimitPolicy: the header trimmed and lower-cased, an empty one none; the switch only when true", () => {
-  assertEquals(resolveLimitPolicy({}), {});
-  assertEquals(resolveLimitPolicy({ rateLimitHeader: " CF-Connecting-IP " }), CF);
-  assertEquals(resolveLimitPolicy({ rateLimitHeader: "  ", rateLimitLocalAddresses: false }), {});
-  assertEquals(resolveLimitPolicy({ rateLimitLocalAddresses: true }), { localAddresses: true });
+Deno.test("resolveLimitPolicy: the header trimmed and lower-cased, an empty one none; the switch only when true", async () => {
+  resetLimitHeaderWarningForTesting();
+  await capturingWarnings(() => {
+    assertEquals(resolveLimitPolicy({}), {});
+    assertEquals(
+      resolveLimitPolicy({
+        rateLimitHeader: " CF-Connecting-IP ",
+        rateLimitTrustedProxies: ["127.0.0.0/8", "::1", "10.0.0.0/8", "not a range"],
+      }),
+      CF,
+    );
+    assertEquals(resolveLimitPolicy({ rateLimitHeader: "  ", rateLimitLocalAddresses: false }), {});
+    assertEquals(resolveLimitPolicy({ rateLimitLocalAddresses: true }), { localAddresses: true });
+    return Promise.resolve();
+  });
+  resetLimitHeaderWarningForTesting();
+});
+
+Deno.test("resolveLimitPolicy: a header with no rule to trust it is warned about once, at boot", async () => {
+  resetLimitHeaderWarningForTesting();
+  const warnings = await capturingWarnings(() => {
+    resolveLimitPolicy({ rateLimitHeader: "cf-connecting-ip" });
+    resolveLimitPolicy({ rateLimitHeader: "cf-connecting-ip" });
+    return Promise.resolve();
+  });
+  assertEquals(warnings.length, 1, warnings.join("\n"));
+  assert(warnings[0].includes("rateLimitTrustedProxies") && warnings[0].includes("ignored"));
+  resetLimitHeaderWarningForTesting();
+  const quiet = await capturingWarnings(() => {
+    resolveLimitPolicy({ rateLimitHeader: "cf-connecting-ip", trustForwardedHeaders: true });
+    resolveLimitPolicy({ rateLimitHeader: "x-real-ip", rateLimitTrustedProxies: ["10.0.0.0/8"] });
+    resolveLimitPolicy({ rateLimitLocalAddresses: true });
+    return Promise.resolve();
+  });
+  assertEquals(quiet, []);
+  resetLimitHeaderWarningForTesting();
+});
+
+Deno.test("parseCidr / inCidrs: IPv4 and IPv6 ranges, bare addresses, IPv4-mapped peers; junk refused", () => {
+  const ranges = ["173.245.48.0/20", "2400:cb00::/32", "192.0.2.7", "10.0.0.0/8"]
+    .map((cidr) => parseCidr(cidr)!);
+  for (const yes of ["173.245.48.1", "173.245.63.255", "2400:cb00:1::5", "192.0.2.7", "10.9.9.9"]) {
+    assert(inCidrs(yes, ranges), yes);
+  }
+  assert(inCidrs("::ffff:173.245.50.1", ranges), "a mapped IPv4 peer is its IPv4");
+  assert(inCidrs("[2400:cb00::1]", ranges), "bracketed");
+  for (const no of ["173.245.64.0", "192.0.2.8", "2400:cb01::1", "11.0.0.1", "::1", "junk"]) {
+    assert(!inCidrs(no, ranges), no);
+  }
+  assert(inCidrs("203.0.113.9", [parseCidr("0.0.0.0/0")!]), "a /0 matches every IPv4");
+  assert(!inCidrs("2001:db8::1", [parseCidr("0.0.0.0/0")!]), "but no IPv6");
+  for (
+    const bad of ["", "10.0.0.0/33", "::/129", "10.0.0/8", "10.0.0.0/8/1", "x/8", "10.0.0.0/-1"]
+  ) {
+    assertEquals(parseCidr(bad), null, bad);
+  }
+  assertEquals(parseCidr(" 10.1.2.3 "), { bytes: [10, 1, 2, 3], prefix: 32 });
+});
+
+Deno.test("limitAddrOf + rateLimitHeader: from a peer that is not a trusted proxy the header is ignored — warned once", async () => {
+  resetLimitHeaderWarningForTesting();
+  const forged = (peer: string, value: string, extra: Record<string, string> = {}) =>
+    upgradeFrom(peer, { "cf-connecting-ip": value, ...extra });
+  const warnings = await capturingWarnings(() => {
+    // A client that reaches the origin directly cannot pick its own bucket per request…
+    for (const value of ["203.0.113.0", "203.0.113.1", "127.0.0.1"]) {
+      assertEquals(limitAddrOf(forged("198.51.100.200", value), false, CF), "198.51.100.200");
+    }
+    // …nor beat a trusted x-forwarded-for hop with it (the audit's case: XFF trusted, header not).
+    const hop = { "x-forwarded-for": "192.0.2.1" };
+    assertEquals(limitAddrOf(forged("198.51.100.200", "203.0.113.5", hop), true, CF), "192.0.2.1");
+    // With no list, trustForwardedHeaders trusts a loopback/private peer only.
+    const bare = { header: "cf-connecting-ip" };
+    assertEquals(limitAddrOf(forged("127.0.0.1", "203.0.113.6"), true, bare), "203.0.113.6");
+    assertEquals(limitAddrOf(forged("10.0.0.2", "203.0.113.6"), true, bare), "203.0.113.6");
+    assertEquals(
+      limitAddrOf(forged("198.51.100.200", "203.0.113.6"), true, bare),
+      "198.51.100.200",
+    );
+    // And with no trust rule at all the header is never believed: a loopback peer stays skipped.
+    assertEquals(limitAddrOf(forged("127.0.0.1", "203.0.113.6"), false, bare), undefined);
+    assertEquals(
+      limitAddrOf(forged("198.51.100.200", "203.0.113.6"), false, bare),
+      "198.51.100.200",
+    );
+    return Promise.resolve();
+  });
+  const ignored = warnings.filter((w) => w.includes("not a trusted proxy"));
+  assertEquals(ignored.length, 1, warnings.join("\n"));
+  assert(ignored[0].includes("198.51.100.200") && ignored[0].includes("rateLimitTrustedProxies"));
+  resetLimitHeaderWarningForTesting();
+});
+
+Deno.test("limitAddrOf + rateLimitHeader: an in-process request (no peer) believes it only under a trust rule", async () => {
+  resetLimitHeaderWarningForTesting();
+  await capturingWarnings(() => {
+    const inProcess = () =>
+      new Request("http://app.test/", { headers: { "cf-connecting-ip": "203.0.113.7" } });
+    assertEquals(limitAddrOf(inProcess(), false, CF), "203.0.113.7", "a listed proxy");
+    assertEquals(limitAddrOf(inProcess(), true, { header: "cf-connecting-ip" }), "203.0.113.7");
+    assertEquals(limitAddrOf(inProcess(), false, { header: "cf-connecting-ip" }), undefined);
+    return Promise.resolve();
+  });
+  resetLimitHeaderWarningForTesting();
+});
+
+Deno.test("clientIpForLimits + rateLimitHeader: a direct client's forged header is not its limit address", async () => {
+  resetLimitHeaderWarningForTesting();
+  await capturingWarnings(() => {
+    const read = (peer: string) => {
+      const request = upgradeFrom(peer, { "cf-connecting-ip": "203.0.113.8" });
+      const ctx = createRequestContext(request, undefined, { limitPolicy: CF });
+      return runWithContext(ctx, () => clientIpForLimits());
+    };
+    assertEquals(read("127.0.0.1"), "203.0.113.8", "through the listed proxy");
+    assertEquals(read("198.51.100.200"), "198.51.100.200", "straight to the origin");
+    return Promise.resolve();
+  });
+  resetLimitHeaderWarningForTesting();
 });
 
 Deno.test("limitAddrOf + rateLimitHeader: the header's last IP value is the limit address — local or not, over any hop", () => {

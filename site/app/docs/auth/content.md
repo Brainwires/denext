@@ -1595,7 +1595,10 @@ Two behaviours worth knowing:
   Two app settings change that rule for every per-address limit, auth's included:
   `rateLimitHeader` (a header such as `cf-connecting-ip` that your proxy sets to the client
   address — the model is Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`) keys the budgets on that
-  address whenever a request carries one, and `rateLimitLocalAddresses: true` counts a
+  address whenever a request from a trusted proxy (`rateLimitTrustedProxies`, or a
+  loopback/private peer under `trustForwardedHeaders`) carries one — from any other peer the
+  header is ignored, so a client that reaches the origin directly can't pick a fresh bucket per
+  request — and `rateLimitLocalAddresses: true` counts a
   loopback/private peer by its own address instead of skipping it. See
   [Deploy › Per-address limits](/docs/deploy#per-address-limits-behind-a-proxy).
 - **The default store never evicts a key mid-lockout.** Past `maxKeys` it drops expired

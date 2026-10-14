@@ -199,8 +199,21 @@ A verb denext does not define itself is Deno's, run on the toolchain exactly as
 `denext deno`, a forwarded verb falls back to stock Deno (with the usual one warning) when the
 toolchain can't be had. A script or URL in the verb's place (`denext main.ts`,
 `denext https://example.com/x.ts`) is `deno run`. denext's built-in verbs come first, then the
-project's own verbs (a project verb that shadows a Deno verb prints one line saying so), then
-Deno's; the full list is in the [CLI reference](/docs/cli#deno-verbs).
+project's own verbs, then Deno's; the full list is in the [CLI reference](/docs/cli#deno-verbs).
+
+Finding a project's verbs means importing its `denext.config.ts` (and running every plugin
+`setup()`) with the CLI's own permissions, so denext does that only for a name that can be one:
+
+- A script or URL (`denext main.ts`) never imports the config: Deno runs it with Deno's own
+  permission rules, exactly as `deno run main.ts` would.
+- `run`, `x`, `eval`, `serve`, `compile`, `install`, `uninstall`, `upgrade` and `task` always mean
+  Deno's (or denext's own `upgrade`). A project verb or plugin `addCommand` with one of these
+  names is refused when it is defined.
+- Any other Deno verb (`bench`, `doc`, …) runs the project's verb of that name only when the
+  project's last `denext commands` listing (`.denext/commands.json`, fingerprinted against the
+  config, `deno.json` and `deno.lock`) names it — and prints one line saying it shadows Deno's.
+  With no listing, or a stale one, Deno's verb runs and the config is not imported; inside a
+  denext project one hint says to run `denext commands`.
 
 ## Commands
 

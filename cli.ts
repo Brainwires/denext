@@ -28,7 +28,7 @@ import {
 import { loadDenoToolchainPin, resolveDenoToolchain } from "./src/build/deno-toolchain.ts";
 import { runDenoPassthrough } from "./src/cli/commands/deno-toolchain.ts";
 import { denoPathEnv } from "./src/cli/deno-path.ts";
-import { CONFIG_FILES, resolveProject } from "./src/build/paths.ts";
+import { resolveProject } from "./src/build/paths.ts";
 import {
   buildAppCss,
   injectAppConfigRedirects,
@@ -57,10 +57,17 @@ import type { CommandContext, CommandSpec, ParseOutcome, ProjectVerb } from "./s
 import { type CommandRegistry, GLOBAL_FLAGS, verbIndex } from "./src/cli/command.ts";
 import { buildRegistry } from "./src/cli/register.ts";
 import { envTierFor, projectDir, SHUTDOWN_SIGNALS } from "./src/cli/shared.ts";
-import { firstNotice, readCommandCache } from "./src/cli/command-cache.ts";
+import { firstNotice, hasDenextConfig, readCommandCache } from "./src/cli/command-cache.ts";
 import { acquireProjectLocks } from "./src/build/project-locks.ts";
 import { denoForwardFor, denoVerbArgs, verbatimFrom } from "./src/cli/deno-forward.ts";
-import { DENO_VERBS, forwardedDenoVerbs, isDenoVerb, shadowNotice } from "./src/cli/deno-verbs.ts";
+import {
+  DENO_VERBS,
+  forwardedDenoVerbs,
+  isDenoVerb,
+  shadowNotice,
+  unlistedVerbHint,
+} from "./src/cli/deno-verbs.ts";
+import { routeUnknownVerb, type VerbRoute } from "./src/cli/verb-route.ts";
 
 /**
  * The `--allow-*` flags to give a re-exec child: mirror the parent's coarse
@@ -512,20 +519,6 @@ async function projectHelp(dir: string): Promise<ProjectHelp | null> {
     : { verbs, note: PROJECT_LISTED_NOTE };
 }
 
-/**
- * Whether `dir` holds a denext config — a file-existence probe, never an import, so
- * `denext --help` inside a project evaluates none of the project's code.
- */
-async function hasDenextConfig(dir: string): Promise<boolean> {
-  for (const name of CONFIG_FILES) {
-    try {
-      const stat = await Deno.stat(join(dir, name));
-      if (stat.isFile) return true;
-    } catch { /* not this name */ }
-  }
-  return false;
-}
-
 /** Whether a token asks for help (`--help` / `-h`). */
 function isHelpToken(token: string): boolean {
   return token === "--help" || token === "-h";
@@ -562,6 +555,11 @@ function isVersionToken(token: string): boolean {
  * (loaded on the first miss, so a plain project pays nothing), else a Deno verb or a script, which
  * runs on denext's Deno exactly as `denext deno <args…>` would (and never returns).
  *
+ * The project's config is imported only for a name that can be a project verb
+ * (`routeUnknownVerb`): a script never is, a reserved Deno verb (`run`, `x`, `compile`, …) never
+ * is, and any other Deno verb is one only when the project's cached `denext commands` listing
+ * names it — so `denext main.ts` or `denext bench` runs no project code before Deno does.
+ *
  * Discovery here runs under the DISPATCH budget, not the listing one: the verb was asked for by
  * name, so a slow config import on a loaded machine must not make it "unknown". When discovery
  * still falls short, the unknown-command error says why instead of only that it is unknown.
@@ -569,6 +567,8 @@ function isVersionToken(token: string): boolean {
 async function resolveOutcome(registry: CommandRegistry): Promise<ParseOutcome> {
   let outcome = registry.parse(Deno.args, DENO_VERB_NAMES);
   if (outcome.kind !== "error" || !outcome.unknownVerb) return outcome;
+  const route = await routeUnknownVerb(Deno.args, outcome.unknownVerb);
+  if (route.kind === "deno") return await runRouted(route);
   const loaded = await loadPluginCommands(registry, cwdFromArgs(Deno.args), {
     timeoutMs: COMMAND_DISPATCH_BUDGET_MS,
   });
@@ -580,6 +580,18 @@ async function resolveOutcome(registry: CommandRegistry): Promise<ParseOutcome> 
   return shortfall === null
     ? outcome
     : { ...outcome, message: `${outcome.message} (${shortfall})` };
+}
+
+/**
+ * Run a script or Deno verb that `routeUnknownVerb` sent to Deno, after the one-time hint when a
+ * project verb of that name could exist but is not listed yet.
+ */
+async function runRouted(route: Extract<VerbRoute, { kind: "deno" }>): Promise<never> {
+  const { forward } = route;
+  if (route.unlisted && await firstNotice(forward.cwd, `unlisted:${forward.args[0]}`)) {
+    console.error(unlistedVerbHint(forward.args[0]));
+  }
+  return await runDenoPassthrough(forward.args, forward.cwd, true);
 }
 
 /**

@@ -3,6 +3,7 @@
 
 import type { DenextConfig } from "../config.ts";
 import { VERB_NAME } from "../../cli/command.ts";
+import { isReservedDenoVerb, reservedVerbError } from "../../cli/deno-verbs.ts";
 import { validateRemovedExperimental } from "./keys.ts";
 import type { Fail } from "./shared.ts";
 
@@ -54,7 +55,10 @@ function validateFeatures(features: unknown, at: string, fail: Fail): void {
  * One `commands[i]` entry: a usable verb name, a summary to show in `denext --help`,
  * and a callable `run`. Nothing here checks for a collision with a built-in verb —
  * that is not an error: the CLI simply keeps the built-in (core wins) and skips the
- * entry, so a denext release adding a verb can never break a project's config load.
+ * entry, so a denext release adding a verb can never break a project's config load. A
+ * name (or alias) of one of Deno's code-running verbs (`run`, `x`, `eval`, `serve`,
+ * `compile`, `install`, `uninstall`, `upgrade`, `task`) IS an error: `denext <name>`
+ * must always mean Deno's there.
  */
 function validateCommand(command: unknown, index: number, seen: Set<string>, fail: Fail): void {
   const at = `commands[${index}]`;
@@ -66,6 +70,17 @@ function validateCommand(command: unknown, index: number, seen: Set<string>, fai
   // here is exactly what the cache accepts back from disk (`src/cli/command-cache.ts`).
   if (typeof name !== "string" || !VERB_NAME.test(name)) {
     fail(`${at}.name`, `must be a lowercase verb name matching ${VERB_NAME}`);
+  }
+  if (typeof name === "string" && isReservedDenoVerb(name)) {
+    fail(`${at}.name`, reservedVerbError(name));
+  }
+  const aliases = (command as { aliases?: unknown }).aliases;
+  if (Array.isArray(aliases)) {
+    aliases.forEach((alias, j) => {
+      if (typeof alias === "string" && isReservedDenoVerb(alias)) {
+        fail(`${at}.aliases[${j}]`, reservedVerbError(alias));
+      }
+    });
   }
   if (seen.has(name as string)) {
     fail(`${at}.name`, `duplicates an earlier \`commands\` entry ("${name}")`);

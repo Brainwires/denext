@@ -406,18 +406,31 @@ change that:
   warning — Supabase Auth applies no limit to such a request, which would let a
   client that reaches the server directly skip every limit by leaving the header
   out. The header names the limit key only: `clientIp()` still follows
-  `trustForwardedHeaders`. Set it only when clients cannot reach denext except
-  through a proxy that **overwrites** the header.
+  `trustForwardedHeaders`. The proxy must **overwrite** the header.
+- **`rateLimitTrustedProxies: ["173.245.48.0/20", …]`** (env
+  `DENEXT_RATE_LIMIT_TRUSTED_PROXIES`, comma-separated) — the socket peers
+  whose `rateLimitHeader` is believed. From any other peer the header is ignored
+  (one warning) and the limit keys on that peer. With none listed, a
+  loopback/private peer is trusted while `trustForwardedHeaders` is on (an nginx
+  or `cloudflared` on the same host or network); with neither set the header is
+  never believed and the server warns at boot. Supabase Auth trusts
+  `GOTRUE_RATE_LIMIT_HEADER` from anyone; denext does not, because where the
+  origin is reachable directly (a leaked origin IP, an exposed app port) a client
+  could send a fresh value on every request and get a fresh bucket each time —
+  defeating `denextAuth`'s IP-wide lockout, `rateLimit()` and the Live cap
+  silently.
 - **`rateLimitLocalAddresses: true`** (env `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`)
   — count a loopback/private socket peer by its own address instead of skipping
   it: a LAN, VPN or container-network deployment where those peers are the real
   clients.
 
 ```ts
-// denext.config.ts — behind Cloudflare
+// denext.config.ts — behind Cloudflare (its edge connects from its published ranges;
+// copy the full current list from https://www.cloudflare.com/ips/)
 export default {
   canonicalOrigin: "https://example.com",
   rateLimitHeader: "cf-connecting-ip",
+  rateLimitTrustedProxies: ["173.245.48.0/20", "103.21.244.0/22", "2400:cb00::/32" /* … */],
 } satisfies DenextConfig;
 ```
 

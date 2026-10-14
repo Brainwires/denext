@@ -21,6 +21,7 @@ import { registerRouteSynthesizer } from "../router/manifest.ts";
 import { OTA_MANIFEST_PATH, OTA_PLATFORM_PATH } from "../mobile/ota-manifest.ts";
 import { DESKTOP_PRELOAD_FILE } from "../desktop/preload.ts";
 import type { CommandSpec } from "../cli/command.ts";
+import { isReservedDenoVerb, reservedVerbError } from "../cli/deno-verbs.ts";
 import { dirname, globToRegExp, isAbsolute, join, SEPARATOR, SEPARATOR_PATTERN } from "@std/path";
 
 /** Where denext is running when a plugin's {@linkcode DenextPlugin.setup} fires. */
@@ -150,7 +151,11 @@ export interface PluginContext {
    * is discovered when the CLI encounters an unknown verb in a project whose config
    * lists this plugin, and eagerly (under a time budget) when the CLI has to
    * enumerate every verb — `denext --help`, `denext completions <shell>`. A name that
-   * collides with a built-in verb is ignored (core verbs always win). The stored spec
+   * collides with a built-in verb is ignored (core verbs always win). A name or alias
+   * of one of Deno's code-running verbs (`run`, `x`, `eval`, `serve`, `compile`,
+   * `install`, `uninstall`, `upgrade`, `task`) throws: `denext <name>` always means
+   * Deno's there. Any other Deno verb's name (`bench`, `doc`, …) is dispatched to the
+   * plugin only once `denext commands` has listed it. The stored spec
    * is a copy stamped with `source: "plugin"`, which groups it under "Project
    * commands" in the help table.
    */
@@ -241,6 +246,12 @@ export async function applyPlugins(base: ApplyPluginsBase): Promise<void> {
       // Stamped (on a copy — never mutate the plugin's own object) so the CLI can list
       // plugin verbs under "Project commands" instead of among the built-ins.
       addCommand: (command) => {
+        const reserved = [command.name, ...(command.aliases ?? [])].find(isReservedDenoVerb);
+        if (reserved !== undefined) {
+          throw new Error(
+            `denext: plugin "${plugin.name}" addCommand: ${reservedVerbError(reserved)}`,
+          );
+        }
         if (startedUnder === generation) pluginCommands.push({ ...command, source: "plugin" });
       },
       addTeardown: (teardown) => teardowns.push(teardown),

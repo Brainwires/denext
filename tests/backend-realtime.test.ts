@@ -64,6 +64,7 @@ import {
 } from "../packages/backend/src/realtime-shared.ts";
 import { type FakeRealtimeClient, fakeRealtimeClient } from "./helpers/fake-realtime-client.ts";
 import { begin, insert, relation } from "./helpers/pgoutput.ts";
+import { parseCidr } from "../src/server/remote-addr.ts";
 import {
   authConfig,
   changesOf,
@@ -75,6 +76,9 @@ import {
 } from "./helpers/realtime-harness.ts";
 
 const load = ((path: string) => import(path)) as unknown as ModuleLoader;
+
+/** A loopback reverse proxy, listed as the trusted source of the app's limit header. */
+const LOOPBACK_PROXY = [parseCidr("127.0.0.0/8")!, parseCidr("::1")!];
 const A = "0b7c3c1e-1f1a-4a57-9c39-2d0a7f1a000a";
 const B = "0b7c3c1e-1f1a-4a57-9c39-2d0a7f1a000b";
 
@@ -670,7 +674,7 @@ Deno.test("realtime: signed out, the app's rateLimitHeader / rateLimitLocalAddre
     const named = (client: string) =>
       env.hub.conn("", "127.0.0.1", {
         headers: { "cf-connecting-ip": client },
-        policy: { header: "cf-connecting-ip" },
+        policy: { header: "cf-connecting-ip", trustedProxies: LOOPBACK_PROXY },
       });
     for (
       const [first, second] of [

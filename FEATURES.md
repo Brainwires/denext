@@ -1231,7 +1231,10 @@ is in [the CVE-defense guide](https://denext.dev/docs/security).
   when it switches itself off. **`rateLimitHeader`** (`DENEXT_RATE_LIMIT_HEADER`) names the
   header the fronting proxy writes the client address to (`cf-connecting-ip`,
   `fly-client-ip`, `x-real-ip`): every per-address limit keys on it, and a request without it
-  falls back to the trusted hop or socket peer (never unlimited). A typed-API batch item and a
+  falls back to the trusted hop or socket peer (never unlimited). The header is believed only
+  from a trusted proxy — a peer in **`rateLimitTrustedProxies`** (CIDRs), or with none listed a
+  loopback/private peer under `trustForwardedHeaders` — and from any other peer the limit keys on
+  that peer (warned once; a header with no trust rule at all is warned at boot). A typed-API batch item and a
   server-side self-call inherit that header from the parent request, so the batch endpoint can't
   skip a per-route limit. **`rateLimitLocalAddresses: true`** counts a loopback or private peer
   as itself instead of skipping it. — `clientIpForLimits` in

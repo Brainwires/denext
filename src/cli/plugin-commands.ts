@@ -14,6 +14,7 @@ import { resolveProject } from "../build/paths.ts";
 import { applyPlugins, getPluginCommands, pluginGeneration } from "../plugin/mod.ts";
 import { defaultLoader } from "../server/mod.ts";
 import type { CommandRegistry, CommandSpec } from "./command.ts";
+import { isReservedDenoVerb } from "./deno-verbs.ts";
 
 /** Default wall-clock budget for discovering a project's verbs (ms). */
 export const COMMAND_LOAD_BUDGET_MS = 1500;
@@ -101,7 +102,9 @@ function registerNew(registry: CommandRegistry, specs: readonly CommandSpec[]): 
   let loaded = 0;
   for (const spec of specs) {
     const names = [spec.name, ...(spec.aliases ?? [])];
-    if (names.some((name) => registry.get(name))) continue;
+    // A reserved Deno verb is refused where it is defined; this keeps one that slipped past
+    // (a spec built some other way) from ever replacing Deno's.
+    if (names.some((name) => registry.get(name) || isReservedDenoVerb(name))) continue;
     registry.register(spec);
     loaded++;
   }

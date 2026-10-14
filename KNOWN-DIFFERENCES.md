@@ -254,6 +254,12 @@ Where `@denext/backend` deliberately departs from Supabase. See
   Auth's `GOTRUE_RATE_LIMIT_HEADER`, but where Supabase applies no limit to a request that lacks
   the header, denext keys it on the trusted hop or the socket peer (with one warning), so a
   client that reaches the server directly can't skip every limit by leaving the header out.
+- **The rate-limit header is believed only from a trusted proxy.** Supabase Auth trusts
+  `GOTRUE_RATE_LIMIT_HEADER` from any connection; denext believes `rateLimitHeader` only when the
+  socket peer is in `rateLimitTrustedProxies` (or, with none listed, is a loopback/private address
+  while `trustForwardedHeaders` is on), and otherwise keys the limit on the peer. Where the origin
+  is reachable directly, trusting it blindly would let a client send a fresh value per request and
+  get a fresh bucket each time.
 
 ## Security posture — safe defaults
 

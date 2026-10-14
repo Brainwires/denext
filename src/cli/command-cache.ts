@@ -121,6 +121,24 @@ export async function writeCommandCache(dir: string, verbs: ProjectVerb[]): Prom
   } catch { /* a listing is worth having, not worth failing for */ }
 }
 
+/**
+ * Whether `dir` holds a denext config — a file-existence probe, never an import, so a caller
+ * that only needs to know (help's project footer, the listing hint) evaluates none of the
+ * project's code.
+ *
+ * @param dir The directory to probe.
+ * @returns Whether one of the config file names is a file there.
+ */
+export async function hasDenextConfig(dir: string): Promise<boolean> {
+  for (const name of CONFIG_FILES) {
+    try {
+      const stat = await Deno.stat(join(dir, name));
+      if (stat.isFile) return true;
+    } catch { /* not this name */ }
+  }
+  return false;
+}
+
 /** The notices file's contents: which one-time notices were shown under which fingerprint. */
 interface NoticeLog {
   readonly fingerprint: string;

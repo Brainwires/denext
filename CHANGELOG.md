@@ -454,6 +454,30 @@ a 3.x app to 4.0 involves. [Upgrading to 4.0](https://denext.dev/docs/upgrading)
 
 ### Changed
 
+- **`denext <script>` and Deno's verbs no longer import the project's config first.** A name no
+  built-in claims used to send the CLI into `denext.config.ts` (and every plugin `setup()`), with
+  the CLI's own permissions, to look for a project verb before handing `denext main.ts` or
+  `denext compile …` to Deno, so a cloned project's config ran before Deno's permission prompts
+  could apply. Now a script or URL goes straight to `deno run`. A project verb may no longer be
+  named `run`, `x`, `eval`, `serve`, `compile`, `install`, `uninstall`, `upgrade` or `task`: a
+  `commands:` entry with one of these names is a config error, and `addCommand` throws. A project
+  verb named after another Deno verb (`bench`, `doc`, …) runs in place of Deno's only once
+  `denext commands` has listed it (`.denext/commands.json`, which must match the current config,
+  `deno.json` and `deno.lock`). Until then Deno's verb runs, and a denext project prints one hint
+  to run `denext commands`.
+- **`rateLimitHeader` is believed only from a trusted proxy.** Before, any client that could
+  reach the server directly could send its own `cf-connecting-ip` (or whichever header was
+  named) on every request and get a fresh limit bucket each time. That defeated `denextAuth`'s
+  per-IP and IP-wide budgets, `rateLimit()` and the Live per-address cap. The header now counts
+  only when the socket peer is in the new **`rateLimitTrustedProxies`** (CIDR ranges or addresses;
+  env `DENEXT_RATE_LIMIT_TRUSTED_PROXIES`, comma-separated) or, with none listed, is a
+  loopback/private address while `trustForwardedHeaders` is on. From any other peer the header is
+  ignored and the limit keys on that peer, with one warning. A `rateLimitHeader` with neither rule
+  set is never believed, and the server warns at boot. Typed-API batch items and server-side
+  self-calls inherit the parent's peer, so they reach the same verdict. Supabase Auth trusts
+  `GOTRUE_RATE_LIMIT_HEADER` from anyone; denext deliberately does not. To upgrade, behind
+  Cloudflare list its published ranges; behind nginx or `cloudflared` on the same host or network,
+  set `trustForwardedHeaders: true`.
 - **denext pins Deno toolchain and Deno Desktop runtime 2.9.7-denext.17** (both pins from the same
   release, hashes and attestations verified). Each toolchain download now carries esbuild 0.25.5
   beside `deno` (its version and SHA-256 pinned per platform), so builds on the toolchain use it

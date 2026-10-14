@@ -13,7 +13,10 @@ import type { ApiModule } from "../src/server/types.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { ApiMatch } from "../src/router/match.ts";
 import { inMemoryRateLimitStore } from "../src/server/auth/rate-limit.ts";
-import { setRemoteAddr } from "../src/server/remote-addr.ts";
+import { parseCidr, setRemoteAddr } from "../src/server/remote-addr.ts";
+
+/** A loopback reverse proxy, listed as the trusted source of the app's limit header. */
+const LOOPBACK_PROXY = [parseCidr("127.0.0.0/8")!, parseCidr("::1")!];
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { unauthorized } from "../src/runtime/error-boundary.ts";
 
@@ -331,7 +334,9 @@ Deno.test("rateLimit: the app's rateLimitHeader keys each named client behind a 
   const call = (client: string) => {
     const request = fromPeer("127.0.0.1", { "fly-client-ip": client });
     return runWithContext(
-      createRequestContext(request, undefined, { limitPolicy: { header: "fly-client-ip" } }),
+      createRequestContext(request, undefined, {
+        limitPolicy: { header: "fly-client-ip", trustedProxies: LOOPBACK_PROXY },
+      }),
       () => GET(request, ctx()),
     );
   };

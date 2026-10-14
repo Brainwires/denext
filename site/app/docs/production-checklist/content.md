@@ -122,7 +122,8 @@ Each line: what to set → where it is documented. Config keys go in
   private socket peer with no trusted forwarded hop (a proxy every visitor
   shares) and warns once: behind your proxy, set the app's
   `trustForwardedHeaders: true` (or `DENEXT_TRUST_PROXY=1`), name the header it
-  sets to the client address in `rateLimitHeader` (`cf-connecting-ip`), or pass a
+  sets to the client address in `rateLimitHeader` (`cf-connecting-ip`, with the
+  proxy's ranges in `rateLimitTrustedProxies`), or pass a
   `key`; `rateLimitLocalAddresses: true` limits such peers by their own address
   (a LAN deployment). An IPv6 client counts as its `/64`. →
   [Typed API](/docs/typed-api), [Auth › Rate limiting](/docs/auth#rate-limiting)
