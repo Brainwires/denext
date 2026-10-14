@@ -80,44 +80,61 @@ Deno.test("viewability: onViewableItemsChanged with RN tokens on mount, scroll a
   await screen.unmount();
 });
 
+/** A delay no other timer in the list uses, so the test can hold exactly the viewability one. */
+const SLOW_VIEW_MS = 7001;
+
 Deno.test("viewability: thresholds, waitForInteraction, minimumViewTime and callback pairs", async () => {
-  const strict: number[][] = [];
-  const loose: number[][] = [];
-  const waited: number[][] = [];
-  const slow: number[][] = [];
-  const screen = await render(list({
-    data: rows(1000),
-    getItemSize: () => 40,
-    viewportSize: 400,
-    overscan: 0,
-    viewabilityConfig: { waitForInteraction: true },
-    onViewableItemsChanged: (i) => waited.push(i.viewableItems.map((t) => t.index as number)),
-    viewabilityConfigCallbackPairs: [
-      {
-        viewabilityConfig: { itemVisiblePercentThreshold: 100 },
-        onViewableItemsChanged: (i) => strict.push(i.viewableItems.map((t) => t.index as number)),
-      },
-      {
-        viewabilityConfig: {},
-        onViewableItemsChanged: (i) => loose.push(i.viewableItems.map((t) => t.index as number)),
-      },
-      {
-        viewabilityConfig: { minimumViewTime: 30 },
-        onViewableItemsChanged: (i) => slow.push(i.viewableItems.map((t) => t.index as number)),
-      },
-    ],
-    renderItem: text,
-  }));
-  assertEquals(waited.length, 0, "waitForInteraction: nothing before the user scrolls");
-  assertEquals(slow.length, 0, "minimumViewTime: not yet");
-  await wait(60);
-  assertEquals(slow.at(-1)?.[0], 0, "minimumViewTime: reported after the delay");
-  await scrollTo(screen, 20); // row 0 half visible, row 10 half visible
-  assertEquals(waited.length, 1, "reported after the interaction");
-  assertEquals(strict.at(-1)![0], 1, "100 % threshold: the half-visible row 0 is out");
-  assertEquals(loose.at(-1)![0], 0, "no threshold: any visible pixel counts");
-  assertEquals(loose.at(-1)!.at(-1), 10);
-  await screen.unmount();
+  // The minimumViewTime timer (a unique delay) is captured and fired by the test, so a loaded
+  // machine can neither fire it early nor late: no wall-clock dependence.
+  const held: (() => void)[] = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout =
+    ((fn: () => void, ms?: number, ...rest: unknown[]) =>
+      ms === SLOW_VIEW_MS
+        ? (held.push(fn), 0)
+        : realSetTimeout(fn, ms, ...rest)) as unknown as typeof setTimeout;
+  try {
+    const strict: number[][] = [];
+    const loose: number[][] = [];
+    const waited: number[][] = [];
+    const slow: number[][] = [];
+    const screen = await render(list({
+      data: rows(1000),
+      getItemSize: () => 40,
+      viewportSize: 400,
+      overscan: 0,
+      viewabilityConfig: { waitForInteraction: true },
+      onViewableItemsChanged: (i) => waited.push(i.viewableItems.map((t) => t.index as number)),
+      viewabilityConfigCallbackPairs: [
+        {
+          viewabilityConfig: { itemVisiblePercentThreshold: 100 },
+          onViewableItemsChanged: (i) => strict.push(i.viewableItems.map((t) => t.index as number)),
+        },
+        {
+          viewabilityConfig: {},
+          onViewableItemsChanged: (i) => loose.push(i.viewableItems.map((t) => t.index as number)),
+        },
+        {
+          viewabilityConfig: { minimumViewTime: SLOW_VIEW_MS },
+          onViewableItemsChanged: (i) => slow.push(i.viewableItems.map((t) => t.index as number)),
+        },
+      ],
+      renderItem: text,
+    }));
+    assertEquals(waited.length, 0, "waitForInteraction: nothing before the user scrolls");
+    assertEquals(slow.length, 0, "minimumViewTime: not yet");
+    assertEquals(held.length > 0, true, "the report is waiting on its timer");
+    await act(() => held.splice(0).forEach((fn) => fn()));
+    assertEquals(slow.at(-1)?.[0], 0, "minimumViewTime: reported after the delay");
+    await scrollTo(screen, 20); // row 0 half visible, row 10 half visible
+    assertEquals(waited.length, 1, "reported after the interaction");
+    assertEquals(strict.at(-1)![0], 1, "100 % threshold: the half-visible row 0 is out");
+    assertEquals(loose.at(-1)![0], 0, "no threshold: any visible pixel counts");
+    assertEquals(loose.at(-1)!.at(-1), 10);
+    await screen.unmount();
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
 });
 
 Deno.test("viewability: grid rows report every item of a visible line", async () => {
