@@ -1377,6 +1377,10 @@ There is nothing to `download` or `deploy`: the functions ship inside the app, w
 | `url`          | the request origin | The app's public URL, which functions read as `SUPABASE_URL`.                                         |
 | `functions`    | `{}`               | Per function, by name: `verifyJwt`, `timeoutMs`, `env`, `permissions`.                                |
 
+A function's worker acknowledges each abort. One that does not within a second (busy in synchronous
+code, such as a `while (true) {}`) is terminated and replaced: the requests it was still serving
+get `504`, and the next call starts on a fresh worker.
+
 ## Vault
 
 `backend({ postgres: {}, vault: {} })` keeps secrets encrypted in your database, in Supabase

@@ -255,6 +255,16 @@ const WORKER_URL = new URL("./functions-worker.ts", import.meta.url);
 /** What a caller is told when the function threw or its worker died. */
 const WORKER_ERROR_MESSAGE = "Function exited due to an error (please check logs)";
 
+/** What a caller is told when the function ran past its wall-clock limit. */
+const WORKER_TIMEOUT_MESSAGE = "Function exceeded its wall-clock limit";
+
+/**
+ * How long a worker has to acknowledge an abort before it is terminated and replaced (ms). A
+ * worker stuck in synchronous code (`while (true) {}`) cannot answer, so it would otherwise keep
+ * its thread at 100 % CPU and time out every later call.
+ */
+const ABORT_GRACE_MS = 1000;
+
 /** A JSON error response, in the shape Supabase's relay answers with. */
 function relayError(status: number, code: string, message: string): Response {
   return new Response(JSON.stringify({ code, message }), {
@@ -295,6 +305,8 @@ export class FunctionHost {
   #ready: Promise<void> | undefined;
   #nextId = 1;
   readonly #pending = new Map<number, Pending>();
+  /** Aborts posted to the worker and not yet acknowledged, by request id. */
+  readonly #unacked = new Map<number, ReturnType<typeof setTimeout>>();
 
   /**
    * A host for one function.
@@ -354,27 +366,45 @@ export class FunctionHost {
     return ready;
   }
 
-  /** The worker is gone: fail what it was serving; the next call starts a new one. */
-  #die(worker: Worker): void {
+  /**
+   * The worker is gone: fail what it was serving (with `failure`); the next call starts a new
+   * one.
+   */
+  #die(
+    worker: Worker,
+    failure: [status: number, code: string, message: string] = [
+      500,
+      "WORKER_ERROR",
+      WORKER_ERROR_MESSAGE,
+    ],
+  ): void {
     if (this.#worker !== worker) return;
     this.#worker = undefined;
     this.#ready = undefined;
     worker.terminate();
+    for (const timer of this.#unacked.values()) clearTimeout(timer);
+    this.#unacked.clear();
     for (const pending of this.#pending.values()) {
-      pending.fail(500, "WORKER_ERROR", WORKER_ERROR_MESSAGE);
+      clearTimeout(pending.timer);
+      pending.fail(...failure);
     }
     this.#pending.clear();
   }
 
   #onMessage(message: WorkerMessage): void {
     if (!("id" in message)) return;
+    if (message.t === "aborted") {
+      clearTimeout(this.#unacked.get(message.id));
+      this.#unacked.delete(message.id);
+      return;
+    }
     const pending = this.#pending.get(message.id);
     if (pending) this.#handlers[message.t]?.(pending, message as never);
   }
 
   /** What each per-request message does to its request. */
   readonly #handlers: {
-    [T in Exclude<WorkerMessage["t"], "ready" | "fail">]: (
+    [T in Exclude<WorkerMessage["t"], "ready" | "fail" | "aborted">]: (
       pending: Pending,
       message: Extract<WorkerMessage, { t: T }>,
     ) => void;
@@ -432,10 +462,27 @@ export class FunctionHost {
     this.#stopIfRetired();
   }
 
+  /**
+   * Abort request `id` in the worker. A worker that does not acknowledge within the grace period
+   * is busy in synchronous code: it is terminated and replaced, and the other requests it was
+   * serving fail with a timeout.
+   */
   #abort(id: number): void {
     if (!this.#pending.has(id)) return;
     this.#finish(id);
-    this.#worker?.postMessage({ t: "abort", id } satisfies HostMessage);
+    const worker = this.#worker;
+    if (!worker) return;
+    worker.postMessage({ t: "abort", id } satisfies HostMessage);
+    this.#unacked.set(
+      id,
+      setTimeout(() => {
+        this.#unacked.delete(id);
+        console.error(
+          `[@denext/backend] function ${this.name}: the worker did not stop after an abort; replacing it`,
+        );
+        this.#die(worker, [504, "WORKER_TIMEOUT", WORKER_TIMEOUT_MESSAGE]);
+      }, ABORT_GRACE_MS),
+    );
   }
 
   /**
@@ -486,7 +533,7 @@ export class FunctionHost {
         },
       };
       pending.timer = setTimeout(() => {
-        pending.fail(504, "WORKER_TIMEOUT", "Function exceeded its wall-clock limit");
+        pending.fail(504, "WORKER_TIMEOUT", WORKER_TIMEOUT_MESSAGE);
         this.#abort(id);
       }, timeoutMs);
       this.#pending.set(id, pending);

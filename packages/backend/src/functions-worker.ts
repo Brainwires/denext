@@ -209,5 +209,6 @@ self.onmessage = (event: MessageEvent<HostMessage>) => {
   else if (message.t === "abort") {
     inflight.get(message.id)?.abort(new DOMException("the request was aborted", "AbortError"));
     inflight.delete(message.id);
+    post({ t: "aborted", id: message.id });
   }
 };

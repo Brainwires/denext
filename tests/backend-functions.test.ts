@@ -649,3 +649,80 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name:
+    "FunctionHost: a worker busy in synchronous code is replaced after a timeout; a cooperative one is kept",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const dir = await Deno.makeTempDir();
+    const spawned: Worker[] = [];
+    const terminated: Worker[] = [];
+    let acked: () => void = () => {};
+    try {
+      await Deno.writeTextFile(
+        `${dir}/spin.ts`,
+        `
+let calls = 0;
+Deno.serve(async (req) => {
+  calls++;
+  const params = new URL(req.url).searchParams;
+  if (params.has("spin")) while (true) { /* a busy loop: never yields */ }
+  if (params.has("wait")) {
+    await new Promise((resolve) => req.signal.addEventListener("abort", resolve));
+    return new Response("aborted");
+  }
+  return new Response("calls " + calls);
+});`,
+      );
+      const host = new FunctionHost("spin", `${dir}/spin.ts`, undefined, (url, options) => {
+        const worker = new Worker(url, options);
+        spawned.push(worker);
+        worker.addEventListener("message", (event) => {
+          if ((event as MessageEvent).data?.t === "aborted") acked();
+        });
+        const terminate = worker.terminate.bind(worker);
+        worker.terminate = () => {
+          terminated.push(worker);
+          terminate();
+        };
+        return worker;
+      });
+      const req = (query: string) => ({
+        url: `https://x.test/spin${query}`,
+        method: "GET",
+        headers: [] as [string, string][],
+        body: null,
+      });
+
+      // A cooperative function that times out acknowledges the abort: its worker is kept.
+      const ack = new Promise<void>((resolve) => acked = resolve);
+      const waited = await host.call(req("?wait"), {}, 100);
+      assertEquals([waited.status, (await waited.json()).code], [504, "WORKER_TIMEOUT"]);
+      await ack;
+      assertEquals(await (await host.call(req(""), {}, 5000)).text(), "calls 2");
+      assertEquals([spawned.length, terminated.length], [1, 0]);
+
+      // `while (true) {}` cannot answer: after the grace period the worker is terminated, and a
+      // request queued behind the loop fails with the timeout too.
+      const spinning = host.call(req("?spin"), {}, 100);
+      const queued = host.call(req(""), {}, 60_000);
+      const spun = await spinning;
+      assertEquals([spun.status, (await spun.json()).code], [504, "WORKER_TIMEOUT"]);
+      const behind = await queued;
+      assertEquals([behind.status, (await behind.json()).code], [504, "WORKER_TIMEOUT"]);
+      assertEquals(terminated, [spawned[0]]);
+      assert(!host.running, "the busy worker is gone");
+
+      // The next call gets a fresh worker (its module state starts over).
+      assertEquals(await (await host.call(req(""), {}, 5000)).text(), "calls 1");
+      assertEquals(spawned.length, 2);
+      host.stop();
+      assertEquals(terminated, spawned);
+    } finally {
+      for (const worker of spawned) worker.terminate();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});

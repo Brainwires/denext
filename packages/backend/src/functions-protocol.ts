@@ -39,4 +39,6 @@ export type WorkerMessage =
   }
   | { t: "chunk"; id: number; data: Uint8Array }
   | { t: "end"; id: number }
+  /** The worker received the host's `abort` for request `id` (a busy worker cannot answer). */
+  | { t: "aborted"; id: number }
   | { t: "error"; id: number; message: string };

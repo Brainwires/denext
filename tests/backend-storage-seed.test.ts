@@ -168,3 +168,72 @@ Deno.test({
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("denext storage cp -r: an object key cannot write outside the destination folder", async () => {
+  const { createStorageCommand } = await import("../packages/backend/src/storage-command.ts");
+  const { storage: store } = await import("../packages/backend/src/storage.ts");
+  const root = await Deno.makeTempDir({ prefix: "dnx-storage-escape-" });
+  const original = store.bucket;
+  let keys: string[] = [];
+  // A bucket other tooling wrote to: its keys are whatever it put there.
+  store.bucket = (() => ({
+    list: (prefix: string) =>
+      Promise.resolve({
+        objects: keys.filter((k) => k.startsWith(prefix)).map((key) => ({ key })),
+      }),
+    download: () => Promise.resolve({ body: new TextEncoder().encode("x") }),
+  })) as unknown as typeof store.bucket;
+  try {
+    await Deno.mkdir(`${root}/work`);
+    const errors: string[] = [];
+    let code = 0;
+    const command = createStorageCommand({
+      log: () => {},
+      error: (l) => errors.push(l),
+      exit: (c) => (code = c),
+    });
+    const cp = async (src: string) => {
+      code = 0;
+      await command.run(
+        {
+          positionals: ["cp", src, "out"],
+          flags: { recursive: true },
+          global: { cwd: `${root}/work` },
+          rest: [],
+        } as never,
+      );
+    };
+    for (
+      const bad of [
+        "a/../../escape.txt",
+        "../escape.txt",
+        "p/../../../escape.txt",
+        "p//escape.txt", // under prefix `p`: `/escape.txt`, an absolute path
+        "C:/escape.txt",
+        "c:escape.txt",
+        "a\\..\\..\\escape.txt",
+        "nul\0.txt",
+      ]
+    ) {
+      keys = ["good.txt", bad];
+      await cp(bad.startsWith("p/") ? "ss:///b/p" : "ss:///b");
+      assertEquals(code, 1, bad);
+      assertStringIncludes(errors.at(-1)!, "outside", bad);
+      // Refused before anything is written, inside the folder or out of it.
+      const written = [];
+      for await (const entry of Deno.readDir(root)) written.push(entry.name);
+      assertEquals(written, ["work"], bad);
+      assertEquals([...Deno.readDirSync(`${root}/work`)].length, 0, bad);
+    }
+    // Ordinary keys (dots in names included) still land inside the folder.
+    keys = ["good.txt", "sub/..x/a.txt", "sub/./b.txt"];
+    await cp("ss:///b");
+    assertEquals(code, 0);
+    assertEquals(await Deno.readTextFile(`${root}/work/out/good.txt`), "x");
+    assertEquals(await Deno.readTextFile(`${root}/work/out/sub/..x/a.txt`), "x");
+    assertEquals(await Deno.readTextFile(`${root}/work/out/sub/b.txt`), "x");
+  } finally {
+    store.bucket = original;
+    await Deno.remove(root, { recursive: true });
+  }
+});

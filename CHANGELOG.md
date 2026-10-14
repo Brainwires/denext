@@ -554,6 +554,16 @@ a 3.x app to 4.0 involves. [Upgrading to 4.0](https://denext.dev/docs/upgrading)
   `Chromium Embedded Framework` → `Versions/A/…` never matched the `/`-separated target recorded at
   install, and the install failed with "did not verify after install". The check now compares the
   targets in the recorded form.
+- **`@denext/backend`: an Edge Function stuck in synchronous code no longer takes the function
+  down.** A timeout (or a client going away) only asked the worker to abort the request, so a
+  function busy in a loop such as `while (true) {}` kept its worker at 100 % CPU and every later
+  call to it timed out. The worker now acknowledges an abort; one that does not within a second
+  is terminated and replaced, the requests it was still serving fail with `504 WORKER_TIMEOUT`,
+  and the next call starts on a fresh worker.
+- **`denext storage cp -r` keeps every download inside the destination folder.** An object key
+  written by other tooling (`a/../../x`, an absolute path, a drive letter, a backslash) could
+  place a file outside the folder being copied into. Such a key now refuses the whole copy before
+  anything is written.
 - **A generated Dockerfile on a non-default port now listens on it.** The image's `CMD` was
   `deno task start -- --port N`; `deno task` forwards the literal `--`, so `denext start` took
   `--port` as passthrough and stayed on 3000. The Dockerfile now sets `ENV PORT=N` (which

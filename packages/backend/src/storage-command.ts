@@ -8,7 +8,7 @@
 //   mv <src> <dst> [-r]              bucket → bucket
 //   rm <ss:///…>… [-r]               delete objects (-r: everything under a prefix)
 
-import { dirname, join, relative, resolve } from "@std/path";
+import { dirname, relative, resolve, SEPARATOR } from "@std/path";
 import type { CommandContext, CommandSpec } from "@denext/denext/cli/command";
 import { type CommandIo, consoleIo } from "./command-io.ts";
 import { filesUnder } from "./files.ts";
@@ -133,10 +133,39 @@ async function copyLocalUp(src: string, to: Remote, ctx: CommandContext, io: Com
   io.log(`uploaded ${src} → ss:///${target.bucket}/${target.key}`);
 }
 
+/**
+ * Where the object `rel` (a key relative to the copied prefix) lands under the folder `dst`.
+ * Object keys come from the bucket, which other tooling may have written, so a key that would
+ * land anywhere but inside `dst` (`..` segments, an absolute path, a drive letter, a backslash)
+ * is refused.
+ *
+ * @param dst The destination folder (absolute).
+ * @param rel The key below the copied prefix.
+ * @returns The local file.
+ * @throws {Error} For a key that would escape `dst`.
+ */
+function confinedPath(dst: string, rel: string): string {
+  // The prefix named one object exactly: it is written as `dst` itself (as before).
+  if (rel === "") return resolve(dst);
+  const refused = () =>
+    new Error(`refusing to download "${rel}": the key would be written outside ${dst}`);
+  if (
+    rel.includes("\\") || rel.includes("\0") || rel.startsWith("/") ||
+    /^[A-Za-z]:/.test(rel) || rel.split("/").some((segment) => segment === "..")
+  ) throw refused();
+  const root = resolve(dst);
+  const file = resolve(root, rel);
+  if (!file.startsWith(root.endsWith(SEPARATOR) ? root : root + SEPARATOR)) throw refused();
+  return file;
+}
+
 async function copyDown(from: Remote, dst: string, ctx: CommandContext, io: CommandIo) {
   if (recursive(ctx)) {
-    for (const key of await keysUnder(from)) {
-      const file = join(dst, relativeKey(from, key));
+    const keys = await keysUnder(from);
+    // Every key is checked before anything is written.
+    const files = keys.map((key) => confinedPath(dst, relativeKey(from, key)));
+    for (const [i, key] of keys.entries()) {
+      const file = files[i];
       await download({ bucket: from.bucket, key }, file);
       io.log(`downloaded ss:///${from.bucket}/${key} → ${file}`);
     }
