@@ -59,6 +59,12 @@ or an upstream. Each one's limitation entry is deleted when it ships.
   routes; AVIF image-transform sources (`@denext/avif`).
 - **Tooling:** the Markdown renderer gains nested lists, footnotes, images, indented code and
   double-backtick spans; `denext doctor` / `probeApp` report a page an `error.tsx` rendered.
+- **Deno Desktop (runtime work):** CEF on macOS keeps cookies under a real Keychain key in a
+  signed app, not Chromium's mock keychain; a share sheet (macOS `NSSharingServicePicker`,
+  Windows `DataTransferManager`); Spotlight indexing and Handoff on macOS; icons and the
+  destructive style in native context menus; `deliveredNotifications()` reads the OS's list on
+  macOS and Windows; the CEF window on Windows bypasses proxy auto-detection for its loopback
+  relay.
 - **React Native mode and lists:** `Image`'s `crossOrigin` / `referrerPolicy` and
   `fadeDuration`; LegendList's `waitForInitialLayout`, `itemsAreEqual` and start insets; an iOS
   `pageSheet` / `formSheet` modal swipes down to dismiss; `TouchableNativeFeedback`'s ripple.
