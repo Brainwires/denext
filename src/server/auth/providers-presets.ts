@@ -188,6 +188,10 @@ export interface MicrosoftEntraOptions extends OAuthClientOptions {
    * claim (`https://login.microsoftonline.com/{tid}/v2.0`, the template issuer Microsoft's
    * discovery document declares), with the signature checked against the common key set. Any
    * tenant can then sign in, so list the ones you serve in {@linkcode allowedTenants}.
+   *
+   * With any alias the account is keyed on `tid` + `oid`, and the `email` claim is used only
+   * when the optional claim `xms_edov` is `true` (add it to the app registration); otherwise the
+   * account has no email, so another tenant can't claim an address through it.
    */
   tenant: string;
   /**
@@ -261,6 +265,53 @@ function entraTenancy(
   return { issuer: `${base}/v2.0`, jwksUrl: `${base}/discovery/v2.0/keys`, discovery: true };
 }
 
+/** A claim that is `true` the way Microsoft emits booleans (JSON `true`, or the string `"true"`). */
+function claimTrue(value: unknown): boolean {
+  return value === true || value === "true";
+}
+
+/**
+ * The Entra profile for a multi-tenant alias (`common` / `organizations` / `consumers`), where
+ * the issuing tenant may be anyone's — including one an attacker creates and fills with any
+ * `email` (the "nOAuth" class):
+ *
+ * - **The account key is `tid` + `oid`** — the user's object id within the tenant the token's
+ *   issuer was checked against — never `sub` alone and never the email. A token without both is
+ *   refused (no id → the sign-in fails).
+ * - **The email counts only when Microsoft says the domain owner verified it** (the optional
+ *   claim `xms_edov === true`). Then it is the account's verified address. Otherwise it is
+ *   dropped from the profile altogether: the account is created with no email, so it can't
+ *   occupy an address, block a sign-up, or link to an account by email later. The
+ *   personal-account tenant gets the same rule (no `xms_edov`, no email).
+ */
+function entraMultiTenantProfile(input: ProfileInput): AuthUser {
+  const src = { ...input.userinfo, ...input.claims };
+  const tid = typeof src.tid === "string" ? src.tid : "";
+  const oid = typeof src.oid === "string" ? src.oid : "";
+  const verified = claimTrue(src.xms_edov) && typeof src.email === "string" && src.email !== "";
+  return {
+    id: tid && oid ? `${tid}:${oid}` : "",
+    name: src.name as string | undefined,
+    email: verified ? src.email as string : undefined,
+    emailVerified: verified ? true : undefined,
+    image: src.picture as string | undefined,
+  };
+}
+
+/**
+ * The Entra profile for a single tenant: the standard OIDC mapping (keyed on `sub`), with the
+ * email marked verified when the token carries `xms_edov === true`. The tenant is the app's own,
+ * so an unverified address is kept, unverified (it never links to an existing account).
+ */
+function entraSingleTenantProfile(input: ProfileInput): AuthUser {
+  const profile = oidcClaimProfile(input);
+  const edov = { ...input.userinfo, ...input.claims }.xms_edov;
+  return claimTrue(edov) && profile.email ? { ...profile, emailVerified: true } : profile;
+}
+
+/** The tenant aliases whose tokens may come from any tenant. */
+const ENTRA_ALIASES = new Set(["common", "organizations", "consumers"]);
+
 /**
  * Microsoft Entra ID (formerly Azure AD) — OIDC v2.0 endpoints, `id_token` verified
  * against the tenant's JWKS. A single tenant, or the multi-tenant aliases (`common`,
@@ -285,6 +336,9 @@ export function microsoftEntra(options: MicrosoftEntraOptions): OAuthProvider {
     authorizationUrl: `${base}/oauth2/v2.0/authorize`,
     tokenUrl: `${base}/oauth2/v2.0/token`,
     scopes: ["openid", "email", "profile"],
+    profile: ENTRA_ALIASES.has(tenant.toLowerCase())
+      ? entraMultiTenantProfile
+      : entraSingleTenantProfile,
   }, options);
 }
 

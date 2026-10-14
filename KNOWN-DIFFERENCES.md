@@ -325,6 +325,12 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
   `revokeSession`/`revokeAllSessions`. **Configuring an `AuthAdapter` does not change
   this** — an adapter is a persistence port (users, accounts, tokens), not a session
   mechanism; `session: { strategy: "database" }` is the switch.
+- **Multi-tenant Microsoft Entra ignores an unverified address.** Auth.js's Microsoft Entra
+  provider keys the account on `sub` and takes the token's `email`, which any tenant's admin can
+  set. With `tenant: "common" | "organizations" | "consumers"`, denext keys the account on
+  `tid` + `oid` and keeps the email only when the optional claim `xms_edov` is `true` (add it in
+  the app registration); otherwise the account has no email, so it can't occupy or link an
+  address.
 - **`denextAuth` account linking refuses unverified-email matches**, where Auth.js links
   an OAuth account to an existing user on a bare email match. denext links only when the
   provider's email is verified _and_ the local account's email is verified; anything else

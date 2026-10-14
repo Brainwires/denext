@@ -290,10 +290,29 @@ is from, and a token whose `iss` names one tenant and whose `tid` names another 
 > });
 > ```
 >
-> A token from a tenant outside the list is refused before anything else. Without the list,
-> treat the account as "someone with a Microsoft account": Entra sends no `email_verified`, so
-> its address never links to an existing account (see
-> [Account linking rules](#account-linking-rules)).
+> A token from a tenant outside the list is refused before anything else.
+
+**Which account, and which address.** Any tenant's admin can put any `email` on a user, so for
+`common`, `organizations` and `consumers` denext never trusts the address on its own (the
+"nOAuth" class):
+
+- The account is keyed on the token's **`tid` + `oid`** (the user's object id in the tenant
+  whose issuer was checked) — not on `sub` alone, and never on the email. A token without both
+  is refused.
+- The email counts only when Microsoft says the domain's owner verified it: the optional claim
+  **`xms_edov`** is `true`. Then it is the account's verified address, and it links to an
+  existing verified account like any verified provider email (see
+  [Account linking rules](#account-linking-rules)).
+- Otherwise the email is **dropped**: the account is created with no address, so it can't
+  occupy one, block the real owner's sign-up or magic link, or link to an account later. The
+  personal-account tenant (`9188040d-6c67-4c5b-b112-36a304b66dad`, `consumers` and `common`)
+  follows the same rule.
+
+To receive `xms_edov`, add it to the app registration: **Token configuration → Add optional
+claim → ID → `xms_edov`** (and `email`), or `"optionalClaims": { "idToken": [{ "name":
+"xms_edov" }, { "name": "email" }] }` in the manifest. Without it, multi-tenant sign-ins carry no
+email at all. A single `tenant` (your own directory) keeps the standard mapping on `sub`, and
+marks the email verified when `xms_edov` is `true`.
 
 ### SAML providers
 

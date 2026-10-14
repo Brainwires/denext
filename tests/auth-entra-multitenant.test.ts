@@ -17,6 +17,8 @@ import { type Jwk, verifyIdToken } from "../src/server/auth/jwt.ts";
 import { base64UrlEncode } from "../src/server/auth/oauth.ts";
 import { microsoftEntra } from "../src/server/auth/providers.ts";
 import { handleAuthRequest } from "../src/server/auth/routes.ts";
+import type { AuthAdapter } from "../src/server/auth/adapter.ts";
+import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
 import type { AuthConfig } from "../src/server/auth/types.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 
@@ -26,6 +28,7 @@ const CRED = { clientId: "cid", clientSecret: "csecret" };
 const TENANT_A = "11111111-2222-4333-8444-555555555555";
 const TENANT_B = "99999999-8888-4777-8666-555555555555";
 const MSA = "9188040d-6c67-4c5b-b112-36a304b66dad";
+const OID = "0b0b0b0b-1111-4222-8333-444444444444";
 const iss = (tid: string) => `https://login.microsoftonline.com/${tid}/v2.0`;
 
 const keyPair = await crypto.subtle.generateKey(
@@ -59,6 +62,7 @@ function claims(tid: string | undefined, issuer: string, extra: Record<string, u
     iss: issuer,
     aud: "cid",
     sub: "pairwise-sub",
+    oid: OID,
     exp: Math.floor(Date.now() / 1000) + 600,
     ...(tid === undefined ? {} : { tid }),
     ...extra,
@@ -242,8 +246,9 @@ async function login(
   }
 }
 
-function entraConfig(allowedTenants?: string[]): AuthConfig {
+function entraConfig(allowedTenants?: string[], adapter?: AuthAdapter): AuthConfig {
   return {
+    ...(adapter ? { adapter } : {}),
     secret: SECRET,
     canonicalOrigin: ORIGIN,
     dangerouslyAllowInsecureProviders: true, // route provider calls through the stubbed fetch
@@ -277,4 +282,117 @@ Deno.test("callback: a forged iss/tid mismatch, or a tenant outside allowedTenan
   );
   assertEquals(outside.session, undefined);
   assertStringIncludes(outside.location, "error=");
+});
+
+// ---- nOAuth: an attacker tenant's `email` claims nothing --------------------------------------
+
+const VICTIM = "victim@example.com";
+
+/** Sign in through `common` with an adapter; the claims' tenant, oid and extras chosen. */
+async function entraSignIn(
+  adapter: AuthAdapter,
+  tid: string,
+  extra: Record<string, unknown>,
+) {
+  return await login(
+    entraConfig(undefined, adapter),
+    (nonce) => ({ ...claims(tid, iss(tid)), nonce, ...extra }),
+  );
+}
+
+Deno.test("multi-tenant: the account is keyed on tid + oid, never sub alone or the email", async () => {
+  const p = microsoftEntra({ ...CRED, tenant: "common" });
+  const profile = p.profile({
+    tokens: {},
+    claims: { ...claims(TENANT_A, iss(TENANT_A)), email: VICTIM },
+  });
+  assertEquals(profile.id, `${TENANT_A}:${OID}`);
+  // The same sub (and oid) from another tenant is another account.
+  const other = p.profile({ tokens: {}, claims: claims(TENANT_B, iss(TENANT_B)) });
+  assertEquals(other.id, `${TENANT_B}:${OID}`);
+  // Without an oid there is no account key: the sign-in is refused.
+  const { oid: _drop, ...noOid } = claims(TENANT_A, iss(TENANT_A));
+  assertEquals(p.profile({ tokens: {}, claims: noOid }).id, "");
+  const adapter = inMemoryAuthAdapter();
+  const refused = await entraSignIn(adapter, TENANT_A, { oid: undefined });
+  assertEquals(refused.session, undefined);
+});
+
+Deno.test("an attacker tenant asserting a victim's address can't occupy it", async () => {
+  const adapter = inMemoryAuthAdapter();
+  const out = await entraSignIn(adapter, TENANT_B, { email: VICTIM, email_verified: true });
+  assert(out.session, out.location);
+  // No account holds the address: the real owner signs up (or gets a magic link) as if the
+  // attacker never came — there is nothing to evict.
+  assertEquals(await adapter.getUserByEmail(VICTIM), undefined);
+  const real = await adapter.createUser({ email: VICTIM });
+  assertEquals((await adapter.getUserByEmail(VICTIM))?.id, real.id);
+  const entra = await adapter.getUserByAccount({
+    provider: "microsoft-entra",
+    providerAccountId: `${TENANT_B}:${OID}`,
+  });
+  assert(entra && entra.id !== real.id && entra.email === undefined);
+});
+
+Deno.test("an attacker tenant can't link to (or evict) an existing account by its address", async () => {
+  for (const verifiedAt of [1, undefined]) {
+    const adapter = inMemoryAuthAdapter();
+    const victim = await adapter.createUser({ email: VICTIM, emailVerified: verifiedAt });
+    await adapter.setCredential!(victim.id, "stored-password-hash");
+    const out = await entraSignIn(adapter, TENANT_B, { email: VICTIM, xms_edov: false });
+    assert(out.session);
+    assertEquals(await adapter.listAccounts!(victim.id), [], "nothing linked to the victim");
+    assertEquals(
+      await adapter.getCredential!(victim.id),
+      "stored-password-hash",
+      "the victim's password was not retired",
+    );
+    assertEquals((await adapter.getUser(victim.id))?.emailVerified, verifiedAt);
+  }
+});
+
+Deno.test("xms_edov true: the address is verified, and links to a verified account", async () => {
+  const p = microsoftEntra({ ...CRED, tenant: "organizations", allowedTenants: [TENANT_A] });
+  const verified = p.profile({
+    tokens: {},
+    claims: { ...claims(TENANT_A, iss(TENANT_A)), email: VICTIM, xms_edov: true },
+  });
+  assertEquals([verified.email, verified.emailVerified], [VICTIM, true]);
+  // The string spelling counts; anything else does not.
+  for (const [edov, expected] of [["true", true], ["1", undefined], [1, undefined]] as const) {
+    const out = p.profile({
+      tokens: {},
+      claims: { ...claims(TENANT_A, iss(TENANT_A)), email: VICTIM, xms_edov: edov },
+    });
+    assertEquals(out.emailVerified, expected, String(edov));
+  }
+  const adapter = inMemoryAuthAdapter();
+  const owner = await adapter.createUser({ email: VICTIM, emailVerified: 1 });
+  const out = await entraSignIn(adapter, TENANT_A, { email: VICTIM, xms_edov: true });
+  assert(out.session);
+  const linked = await adapter.getUserByAccount({
+    provider: "microsoft-entra",
+    providerAccountId: `${TENANT_A}:${OID}`,
+  });
+  assertEquals(linked?.id, owner.id);
+});
+
+Deno.test("consumers: the personal-account tenant follows the same xms_edov rule", () => {
+  const p = microsoftEntra({ ...CRED, tenant: "consumers" });
+  const plain = p.profile({ tokens: {}, claims: { ...claims(MSA, iss(MSA)), email: VICTIM } });
+  assertEquals([plain.id, plain.email], [`${MSA}:${OID}`, undefined]);
+});
+
+Deno.test("a single tenant keeps sub as the key; xms_edov marks its email verified", () => {
+  const p = microsoftEntra({ ...CRED, tenant: TENANT_A });
+  const plain = p.profile({
+    tokens: {},
+    claims: { ...claims(TENANT_A, iss(TENANT_A)), email: VICTIM },
+  });
+  assertEquals([plain.id, plain.email, plain.emailVerified], ["pairwise-sub", VICTIM, undefined]);
+  const edov = p.profile({
+    tokens: {},
+    claims: { ...claims(TENANT_A, iss(TENANT_A)), email: VICTIM, xms_edov: true },
+  });
+  assertEquals(edov.emailVerified, true);
 });

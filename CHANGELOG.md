@@ -141,7 +141,12 @@ and this project adheres to
   personal accounts, and `consumers` takes the personal-account tenant's fixed issuer.
   `allowedTenants` limits which tenants may sign in — recommended, since `common` and
   `organizations` admit any tenant. Generic providers can use the same check through
-  `OAuthProvider.tenantIssuer`.
+  `OAuthProvider.tenantIssuer`. In these modes the account is keyed on `tid` + `oid` (a token
+  without both is refused), and the `email` claim — which any tenant's admin can set — is kept
+  only when the optional claim `xms_edov` (email domain owner verified) is `true`, as a verified
+  address; otherwise it is dropped, so an attacker's tenant can neither occupy a victim's
+  address nor link to their account. A single tenant keys on `sub` as before and marks its email
+  verified on `xms_edov`.
 - **A native `id_token` sign-in finishes a second factor instead of answering
   `403 mfa_required`.** For a user with a verified factor, `POST {basePath}/native/apple` |
   `/native/google` answers `{ mfa_required: true, mfa_token, expires_in, factors }` — no tokens,
