@@ -53,13 +53,16 @@ Deno.test({
         serviceSchemas: string[];
       };
       assertEquals(hooks.serviceSchemas, ["vault", "pgmq", "pgmq_public", "supabase_functions"]);
-      // Migrations applied in the background; delivery listening.
-      for (let i = 0; i < 50 && !sql.listeners.has(WEBHOOK_CHANNEL); i++) {
+      // Migrations applied in the background; delivery listening. Poll, with a deadline that
+      // only bounds a failure.
+      const deadline = Date.now() + 15_000;
+      while (!sql.listeners.has(WEBHOOK_CHANNEL) && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 10));
       }
       assert(sql.listeners.has(WEBHOOK_CHANNEL));
-      for (let i = 0; i < 50; i++) {
-        if (sql.calls.some((c) => c.text.includes("pgmq_public.send"))) break;
+      while (Date.now() < deadline) {
+        const ran = (text: string) => sql.calls.some((c) => c.text.includes(text));
+        if (ran("pgmq_public.send") && ran("supabase_functions.http_request")) break;
         await new Promise((r) => setTimeout(r, 10));
       }
       assert(sql.calls.some((c) => c.text.includes("pgmq_public.send")), "queues migrated");
@@ -102,7 +105,8 @@ Deno.test({
         })],
       } as DenextConfig;
       await applyPlugins({ projectRoot: root, appDir: `${root}/app`, config, mode: "prod", load });
-      for (let i = 0; i < 50 && warnings.length < 2; i++) {
+      const deadline = Date.now() + 15_000;
+      while (warnings.length < 2 && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 10));
       }
       assertStringIncludes(warnings.join("\n"), "queues: db unreachable");

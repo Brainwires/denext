@@ -224,7 +224,8 @@ function source(sql: SqlClient, emit: (e: LogicalEvent) => void, resync = () => 
   });
 }
 
-const until = async (done: () => boolean, ms = 3_000) => {
+// The deadline only bounds a failure (a loaded coverage run is slow), so it is generous.
+const until = async (done: () => boolean, ms = 15_000) => {
   const deadline = Date.now() + ms;
   while (!done()) {
     if (Date.now() > deadline) throw new Error("timed out");

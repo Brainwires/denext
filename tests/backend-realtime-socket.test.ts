@@ -735,7 +735,7 @@ function rig(
         async join(topic, config = {}, extra = {}) {
           const ref = String(++refs);
           send(ref, ref, topic, "phx_join", { config, ...extra });
-          await until(() => socket.replyTo(ref) !== undefined, 2_000, `join ${topic}`);
+          await until(() => socket.replyTo(ref) !== undefined, 15_000, `join ${topic}`);
           return socket.replyTo(ref)!;
         },
         close: () => handlers.close(),
@@ -1216,7 +1216,7 @@ Deno.test({
       // A token that expires while joined closes its channel when it does.
       const short = await c.join("realtime:t2", {}, { access_token: "user-short" });
       assertEquals(statusOf(short), "ok");
-      await until(() => c.socket.of("phx_close").length === 2, 2_000, "the expiry");
+      await until(() => c.socket.of("phx_close").length === 2, 15_000, "the expiry");
 
       // Another subject whose policies refuse: closed. A failing re-bind: closed.
       r.permsFor = (scope) =>

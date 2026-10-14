@@ -473,7 +473,12 @@ Deno.test({
       "upload-length": "1",
       "upload-metadata": meta("own", "s.txt"),
     })).body?.cancel();
-    await new Promise((r) => setTimeout(r, 50));
+    // The creation sweeps expired uploads in the background: wait for the row to go (the
+    // deadline only bounds a failure).
+    const deadline = Date.now() + 15_000;
+    while (await rt.meta.getResumable("f".repeat(32)) !== null && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
     assertEquals(await rt.meta.getResumable("f".repeat(32)), null);
   } finally {
     await h.close();

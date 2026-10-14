@@ -8,7 +8,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
-import { act, createTestApp, createTestClient, render } from "../src/testing/mod.ts";
+import { act, createTestApp, createTestClient, render, waitFor } from "../src/testing/mod.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 
 const REPO = new URL("../", import.meta.url);
@@ -184,10 +184,15 @@ Deno.test("docs: the tutorial's island chapter type-checks, keeps the no-JS path
       await act(() => {});
       assertStringIncludes(screen.container.innerHTML, "Adding…");
       assertStringIncludes(screen.container.innerHTML, "disabled");
-      release();
-      await new Promise((r) => setTimeout(r, 5));
-      await act(() => {});
-      assertStringIncludes(screen.container.innerHTML, "Add note");
+      // Settle the action inside act, then wait for the transition to end (a generous deadline:
+      // it only bounds a failure on a loaded runner).
+      await act(async () => {
+        release();
+        await gate;
+      });
+      await waitFor(() => assertStringIncludes(screen.container.innerHTML, "Add note"), {
+        timeout: 30_000,
+      });
     });
   } finally {
     if (prevDb === undefined) Deno.env.delete("NOTES_DB");

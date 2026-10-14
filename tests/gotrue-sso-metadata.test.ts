@@ -321,11 +321,13 @@ Deno.test("SSO metadata: refreshSsoMetadata() refreshes what is due and reports 
       assertEquals([forced.failed, forced.skipped], [1, 1]);
       assertEquals(forced.results.find((r) => r.id === a.id)?.outcome, "backoff");
       // After the window, the same document again: unchanged, its next refresh moved on.
-      setMetadataClock(() => (nowS() + 301) * 1000);
+      // One fixed instant (read once): a second ticking between two reads must not matter.
+      const later = nowS() + 301;
+      setMetadataClock(() => later * 1000);
       const again = await refreshSsoMetadata(app.config, { force: true });
       assertEquals(again.results.find((r) => r.id === a.id)?.outcome, "unchanged");
       const kept = (await adapter.getSsoProvider!(a.id))!;
-      assertEquals(kept.metadataRefreshAfter, nowS() + 301 + 86400);
+      assertEquals(kept.metadataRefreshAfter, later + 86400);
     });
   } finally {
     await server.close();

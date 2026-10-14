@@ -155,7 +155,8 @@ function client(h: RealtimeHub, identity: SocketIdentity = ANON_SOCKET_IDENTITY)
   return { c, sockets };
 }
 
-const until = async (done: () => boolean, ms = 3_000, what = "condition") => {
+// The deadline only bounds a failure (a loaded coverage run is slow), so it is generous.
+const until = async (done: () => boolean, ms = 15_000, what = "condition") => {
   const deadline = Date.now() + ms;
   while (!done()) {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
@@ -178,7 +179,7 @@ Deno.test({
       const statuses: string[] = [];
       a.onStatus((s) => statuses.push(s));
       const b = two.c.acquire("room", { self: true });
-      await until(() => a.status === "joined" && b.status === "joined", 3_000, "the joins");
+      await until(() => a.status === "joined" && b.status === "joined", 15_000, "the joins");
       const atA: unknown[] = [];
       const atB: unknown[] = [];
       a.onBroadcast((m) => atA.push(m));
@@ -187,15 +188,16 @@ Deno.test({
       assertEquals(await a.send("hi", { n: 1 }), "ok");
       await until(() => atB.length === 1);
       assertEquals(atB[0], { event: "hi", payload: { n: 1 } });
-      await new Promise((r) => setTimeout(r, 20));
-      assertEquals(atA, [], "self: false — its own echo is dropped");
       // Another sender's identical message still reaches A (only its own echo is dropped).
       await b.send("hi", { n: 1 });
-      await until(() => atA.length === 1 && atB.length === 2, 3_000, "b's own echo (self: true)");
+      await until(() => atA.length >= 1 && atB.length === 2, 15_000, "b's own echo (self: true)");
 
       // Binary.
       await b.send("bin", new Uint8Array([7, 8, 9]));
-      await until(() => atA.length === 2);
+      const events = () => atA.map((m) => (m as { event: string }).event);
+      await until(() => events().includes("bin"), 15_000, "the binary broadcast");
+      // A's socket is ordered: had its own "hi" been echoed, it would have arrived first.
+      assertEquals(events(), ["hi", "bin"], "self: false — its own echo is dropped");
       assertEquals([...((atA[1] as { payload: Uint8Array }).payload)], [7, 8, 9]);
       offB();
 
@@ -230,7 +232,7 @@ Deno.test({
       b.onPresence((state) => seen.push(state));
       assertEquals(await a.track({ status: "online" }), "error", "not joined yet: kept for later");
       await until(() => a.status === "joined" && b.status === "joined");
-      await until(() => "alice" in b.presenceState(), 3_000, "the deferred track");
+      await until(() => "alice" in b.presenceState(), 15_000, "the deferred track");
       const [alice] = b.presenceState<{ status: string }>().alice;
       assertEquals(alice.status, "online");
       assert(typeof alice.presence_ref === "string");
@@ -356,10 +358,10 @@ Deno.test({
       one.sockets[0].drop();
       assertEquals(await pending, "error");
       assertEquals(room.status, "joining");
-      await until(() => !("me" in eye.presenceState()), 3_000, "the leave");
+      await until(() => !("me" in eye.presenceState()), 15_000, "the leave");
       // Reconnected (backoff) and rejoined, presence tracked again.
       await until(() => one.sockets.length === 2 && room.status === "joined", 5_000, "rejoin");
-      await until(() => "me" in eye.presenceState(), 3_000, "re-tracked");
+      await until(() => "me" in eye.presenceState(), 15_000, "re-tracked");
     } finally {
       one.c.close();
       watcher.c.close();
@@ -420,7 +422,7 @@ Deno.test({
             flushSync();
             return done();
           },
-          3_000,
+          15_000,
           what,
         );
       };

@@ -163,7 +163,9 @@ Deno.test({
         assertEquals(archived.n, 1);
         await jobs.sendBatch([{ n: 5 }, { n: 6 }]);
         assertEquals(await jobs.purge(), 2);
-        const polled = jobs.read({ vt: 30, qty: 1, pollSeconds: 2 });
+        // A long poll that answers as soon as the message lands (the bound only ends a failure);
+        // the pause gives it a moment to start first, but the result holds either way.
+        const polled = jobs.read({ vt: 30, qty: 1, pollSeconds: 30 });
         await new Promise((r) => setTimeout(r, 200));
         await jobs.send({ n: 7 });
         assertEquals((await polled).map((m) => m.message.n), [7]);

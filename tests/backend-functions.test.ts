@@ -386,7 +386,9 @@ Deno.test({
         `Deno.serve(() => new Response("w"));`,
       );
       let text = "";
-      for (let i = 0; i < 50 && text !== "two"; i++) {
+      // The file watcher picks the edit up: poll, with a deadline that only bounds a failure.
+      const deadline = Date.now() + 30_000;
+      while (text !== "two" && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 100));
         text = await (await app.call("/functions/v1/v")).text();
       }

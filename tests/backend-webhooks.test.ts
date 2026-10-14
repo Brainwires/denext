@@ -278,28 +278,63 @@ Deno.test("deliverWebhooks: not configured is a clear error; the migration runs 
 });
 
 Deno.test("startWebhookDelivery: a pass at start, on NOTIFY and on the timer; stop ends it", async () => {
+  // Driven step by step, never by the wall clock: the pass's lease query waits on a gate the
+  // test opens, the interval's callback is captured and ticked by hand, and each check waits
+  // for the pass count it expects.
   let passes = 0;
-  const sql = scriptedSql((text) => {
-    if (text.includes("WITH due AS")) passes++;
+  const waiting: { n: number; wake: () => void }[] = [];
+  const reached = (n: number) =>
+    new Promise<void>((wake) => passes >= n ? wake() : waiting.push({ n, wake }));
+  let open!: () => void;
+  const gate = new Promise<void>((resolve) => open = resolve);
+  const sql = scriptedSql(async (text) => {
+    if (text.includes("WITH due AS")) {
+      passes++;
+      for (const w of waiting.splice(0)) passes >= w.n ? w.wake() : waiting.push(w);
+      await gate;
+    }
     return [];
   }, { withListen: true });
+  // A pass's remaining work is promise continuations only: one macrotask turn finishes it.
+  const settled = () => new Promise((r) => setTimeout(r, 0));
   installPostgres({ sql, rls: { migrate: false } });
   const config = resolveWebhooks({ pollIntervalMs: 20, migrate: false });
   installWebhooks(config);
+  let tick: (() => void) | undefined;
+  const realSetInterval = globalThis.setInterval;
+  globalThis.setInterval = ((fn: () => void) => {
+    tick = fn;
+    return 0;
+  }) as unknown as typeof setInterval;
+  let stop!: () => Promise<void>;
   try {
-    const stop = startWebhookDelivery(config);
-    await new Promise((r) => setTimeout(r, 5));
+    stop = startWebhookDelivery(config);
+  } finally {
+    globalThis.setInterval = realSetInterval;
+  }
+  try {
+    await reached(1); // the pass at start, held at the gate
+    assert(tick, "the poll timer is armed");
     assert(sql.listeners.has(WEBHOOK_CHANNEL));
-    sql.listeners.get(WEBHOOK_CHANNEL)!();
-    sql.listeners.get(WEBHOOK_CHANNEL)!(); // while one runs: coalesced into one more
-    await new Promise((r) => setTimeout(r, 70));
-    const seen = passes;
-    assert(seen >= 3, `passes: ${seen}`);
+    const notify = sql.listeners.get(WEBHOOK_CHANNEL)!;
+    notify();
+    notify(); // while one runs: coalesced into one more
+    open();
+    await reached(2);
+    await settled();
+    assertEquals(passes, 2, "two NOTIFYs during a pass: one more pass");
+    tick!();
+    await reached(3); // the timer
+    await settled();
+    assertEquals(passes, 3);
     await stop();
     assert(!sql.listeners.has(WEBHOOK_CHANNEL), "unlistened");
-    await new Promise((r) => setTimeout(r, 50));
-    assertEquals(passes, seen, "no pass after stop");
+    notify();
+    tick!();
+    await settled();
+    assertEquals(passes, 3, "no pass after stop");
   } finally {
+    open();
     installWebhooks(undefined);
     installPostgres(undefined);
   }
@@ -317,7 +352,7 @@ Deno.test("startWebhookDelivery: a failing pass is logged, not thrown", async ()
   console.warn = (line: string) => warnings.push(line);
   try {
     const stop = startWebhookDelivery(config);
-    await new Promise((r) => setTimeout(r, 20));
+    // stop() waits for the pass in flight (the one at start), so its warning is written.
     await stop();
     assertStringIncludes(warnings.join("\n"), "database down");
   } finally {
