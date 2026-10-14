@@ -473,6 +473,8 @@ export type {
   SqlRow,
 } from "./postgres.ts";
 export { migratePostgres, postgresMigrationStatus } from "./postgres-migrate.ts";
+export { migrateSqlite, sqliteMigrationStatus } from "./sqlite-migrate.ts";
+export type { SqliteMigrateOptions, SqliteMigrationDb } from "./sqlite-migrate.ts";
 export { vectorSearchSql } from "./vector-sql.ts";
 export type { VectorSearchSqlOptions } from "./vector-sql.ts";
 export type {

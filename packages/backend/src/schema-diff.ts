@@ -55,6 +55,19 @@ export interface PolicySnapshot {
   check: string | null;
 }
 
+/** A snapshot of nothing (what `db pull` compares against with no shadow database). */
+export function emptySnapshot(): SchemaSnapshot {
+  return {
+    tables: {},
+    indexes: {},
+    policies: {},
+    functions: {},
+    views: {},
+    triggers: {},
+    enums: {},
+  };
+}
+
 /** `"name"` quoted when it needs to be. */
 export function quoteIdent(name: string): string {
   return /^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`;

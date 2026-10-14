@@ -1,10 +1,10 @@
-// `denext db` (from `@denext/backend`) and the schema diff behind `denext db diff`, without a
-// server: the DDL `diffSnapshots` prints for each kind of change, the catalog reads of
-// `readSnapshot`, and each action's flow on a scripted Postgres with a fake process / file layer.
-// The whole verb runs against a real Postgres (a real shadow database included) in
-// tests/backend-platform-integration.test.ts.
+// The Postgres half of `denext db` (from `@denext/backend`'s hooks) and the schema diff behind
+// `denext db diff`, without a server: the DDL `diffSnapshots` prints for each kind of change, the
+// catalog reads of `readSnapshot`, and each action's flow (diff, pull, dump, lint, inspect, test,
+// types) on a scripted Postgres with a fake process / file layer. They run against a real
+// Postgres in tests/backend-platform-integration.test.ts and tests/db-migrations-integration.test.ts.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
   diffSnapshots,
   quoteIdent,
@@ -14,12 +14,15 @@ import {
 } from "../packages/backend/src/schema-diff.ts";
 import {
   backendMigrationsOf,
-  createDbCommand,
+  createDbHooks,
   type DbCommandIo,
-  migrationsDir,
+  installDbHooks,
 } from "../packages/backend/src/db-command.ts";
-import { installPostgres } from "../packages/backend/src/postgres.ts";
-import { scriptedSql } from "./helpers/scripted-sql.ts";
+import { type DbActionInput, schemasOf } from "../packages/backend/src/db-action.ts";
+import { formatTable, INSPECT_REPORTS } from "../packages/backend/src/db-inspect.ts";
+import { splitSql, tally } from "../packages/backend/src/db-test.ts";
+import { seedContentType } from "../packages/backend/src/storage-seed.ts";
+import { type ScriptedSql, scriptedSql } from "./helpers/scripted-sql.ts";
 
 function empty(): SchemaSnapshot {
   return {
@@ -290,206 +293,369 @@ Deno.test("readSnapshot: the catalog rows become a snapshot", async () => {
   assertEquals(Object.keys(snap.triggers), ["public.t.g"]);
 });
 
-/** A fake io: records lines, files and pg_dump calls. */
+/** A fake io: records files and pg_dump calls. */
 function fakeIo(
   options: {
     dump?: (
       args: string[],
       env: Record<string, string>,
     ) => { code: number; stdout: string; stderr: string };
-    shadow?: () => ReturnType<typeof scriptedSql>;
+    shadow?: () => ScriptedSql;
   } = {},
 ) {
-  const state = {
-    lines: [] as string[],
-    errors: [] as string[],
-    code: 0,
-    files: new Map<string, string>(),
-  };
+  const files = new Map<string, string>();
   const io: DbCommandIo = {
-    log: (l) => state.lines.push(l),
-    error: (l) => state.errors.push(l),
-    exit: (c) => (state.code = c),
     run: (_cmd, args, env) => {
       if (!options.dump) return Promise.reject(new Deno.errors.NotFound("pg_dump"));
       const out = options.dump(args, env);
       return Promise.resolve({ ...out, stdout: new TextEncoder().encode(out.stdout) });
     },
     write: (path, data) => {
-      state.files.set(path, typeof data === "string" ? data : new TextDecoder().decode(data));
+      files.set(path, typeof data === "string" ? data : new TextDecoder().decode(data));
       return Promise.resolve();
     },
     connect: () => (options.shadow ?? (() => scriptedSql(() => [])))(),
   };
-  return { io, state };
+  return { io, files };
 }
 
-async function project(files: Record<string, string> = {}): Promise<string> {
-  const root = await Deno.makeTempDir({ prefix: "dnx-db-unit-" });
-  for (const [path, text] of Object.entries(files)) {
-    const full = `${root}/${path}`;
-    await Deno.mkdir(full.slice(0, full.lastIndexOf("/")), { recursive: true });
-    await Deno.writeTextFile(full, text);
-  }
-  return root;
-}
-
-const config = (url?: string) => ({
-  url,
+const config = () => ({
   backendMigrations: () =>
     backendMigrationsOf([() => [{ name: "backend_x_0001", sql: "select 1" }]]),
   serviceSchemas: ["pgmq"],
 });
 
-function run(
-  command: ReturnType<typeof createDbCommand>,
-  root: string,
-  positionals: string[],
-  flags: Record<string, string | boolean> = {},
+/** Run one hook action; resolves the printed lines (an error rejects). */
+function action(
+  name: string,
+  sql: ScriptedSql,
+  options: {
+    io?: DbCommandIo;
+    url?: string;
+    positionals?: string[];
+    flags?: Record<string, string | boolean>;
+    json?: boolean;
+    root?: string;
+    recorded?: string[];
+  } = {},
 ) {
-  return command.run({ positionals, flags, global: { cwd: root } as never, rest: [] });
+  const lines: string[] = [];
+  const hooks = createDbHooks(config(), options.io ?? fakeIo().io);
+  const root = options.root ?? "/project";
+  const input: DbActionInput = {
+    ctx: {
+      positionals: [name, ...(options.positionals ?? [])],
+      flags: options.flags ?? {},
+      global: { cwd: root, json: options.json === true, verbose: false, quiet: false },
+      rest: [],
+    },
+    projectDir: root,
+    sql,
+    ...(options.url ? { url: options.url } : {}),
+    migrationsDir: `${root}/migrations`,
+    applyAll: () => Promise.resolve([]),
+    recordApplied: (file) => {
+      options.recorded?.push(file);
+      return Promise.resolve();
+    },
+    io: { log: (l) => lines.push(l), error: (l) => lines.push(`error: ${l}`) },
+  };
+  return hooks.actions[name](input).then(() => lines);
 }
 
-Deno.test("denext db: push, status, reset (with --yes), and unknown actions", async () => {
-  const root = await project({
-    "supabase/migrations/20260101_init.sql": "create table t (id int);",
-    "supabase/seed.sql": "insert into t values (1);",
+Deno.test("createDbHooks: the backend's migrations, schemas and actions; installDbHooks", () => {
+  const hooks = createDbHooks(config());
+  assertEquals(hooks.migrations().map((m) => m.name), ["backend_rls_0001", "backend_x_0001"]);
+  assertEquals(hooks.table, "backend_migrations");
+  assertEquals(hooks.serviceSchemas, ["pgmq"]);
+  assertEquals(Object.keys(hooks.actions).sort(), [
+    "diff",
+    "dump",
+    "inspect",
+    "lint",
+    "pull",
+    "test",
+    "types",
+  ]);
+  // Storage-only: no Postgres actions.
+  assertEquals(Object.keys(createDbHooks(config(), undefined, false).actions), []);
+  installDbHooks(hooks);
+  assertEquals((globalThis as Record<symbol, unknown>)[Symbol.for("denext.backend.db")], hooks);
+  installDbHooks(undefined);
+  assertEquals((globalThis as Record<symbol, unknown>)[Symbol.for("denext.backend.db")], undefined);
+});
+
+Deno.test("schemasOf: public by default, a list, plain identifiers only", () => {
+  const ctx = (schema?: string) => ({ flags: schema ? { schema } : {} }) as never;
+  assertEquals(schemasOf(ctx()), ["public"]);
+  assertEquals(schemasOf(ctx("public,app")), ["public", "app"]);
+  try {
+    schemasOf(ctx("bad schema"));
+    throw new Error("expected a refusal");
+  } catch (error) {
+    assertStringIncludes((error as Error).message, "plain identifier");
+  }
+});
+
+Deno.test("db diff: a shadow database, the DDL printed or written, cleaned up", async () => {
+  // The live database has a table the shadow does not.
+  const live = scriptedSql((text) =>
+    text.includes("c.relrowsecurity") ? [{ schema: "public", name: "extra", rls: false }] : []
+  );
+  const fake = fakeIo();
+  const url = "postgres://u:p@db.test:5432/app";
+  const lines = await action("diff", live, { io: fake.io, url });
+  const created = live.calls.find((c) => c.text.startsWith("CREATE DATABASE"))!.text;
+  assert(/^CREATE DATABASE denext_shadow_[0-9a-f]{12}$/.test(created), created);
+  assert(live.calls.some((c) => c.text.startsWith("DROP DATABASE IF EXISTS denext_shadow_")));
+  assertStringIncludes(lines.join("\n"), "CREATE TABLE public.extra");
+  const written = await action("diff", live, {
+    io: fake.io,
+    url,
+    flags: { file: "add_extra", schema: "public,app" },
+  });
+  const [[path, text]] = [...fake.files];
+  assert(/\/migrations\/\d{14}_add_extra\.sql$/.test(path), path);
+  assertStringIncludes(text, "-- denext db diff (public, app)");
+  assertStringIncludes(written[0], "Wrote migrations/");
+  await assertRejects(
+    () => action("diff", live, { io: fake.io, url, flags: { file: "../escape" } }),
+    TypeError,
+    "letters, digits",
+  );
+  await assertRejects(() => action("diff", live), Error, "DATABASE_URL");
+  // Identical: "No changes".
+  assertEquals(await action("diff", scriptedSql(() => []), { url }), [
+    "No changes: the database matches the migrations.",
+  ]);
+});
+
+Deno.test("db pull: the database's schema as a migration, recorded as applied", async () => {
+  const live = scriptedSql((text) =>
+    text.includes("c.relrowsecurity") ? [{ schema: "public", name: "remote", rls: false }] : []
+  );
+  const fake = fakeIo();
+  const recorded: string[] = [];
+  // No URL: against an empty schema (no shadow database).
+  const lines = await action("pull", live, { io: fake.io, recorded, positionals: ["initial"] });
+  assert(/^\d{14}_initial\.sql$/.test(recorded[0]), recorded[0]);
+  assertStringIncludes([...fake.files.values()][0], "CREATE TABLE public.remote");
+  assertStringIncludes(lines[0], "recorded as applied");
+  assert(!live.calls.some((c) => c.text.startsWith("CREATE DATABASE")));
+  // With a URL: a shadow; nothing new → nothing written.
+  const none = await action("pull", scriptedSql(() => []), { url: "postgres://db.test/app" });
+  assertEquals(none, ["No schema changes found: the migrations match the database."]);
+});
+
+Deno.test("db dump: pg_dump with the password in the environment", async () => {
+  const seen: { args: string[]; env: Record<string, string> }[] = [];
+  const fake = fakeIo({
+    dump: (args, env) => {
+      seen.push({ args, env });
+      return args.includes("--data-only")
+        ? { code: 1, stdout: "", stderr: "permission denied\n" }
+        : { code: 0, stdout: "CREATE TABLE t ();", stderr: "" };
+    },
   });
   const sql = scriptedSql(() => []);
-  installPostgres({ sql, rls: { migrate: false } });
-  try {
-    assertEquals(await migrationsDir(root), `${root}/supabase/migrations`);
-    const { io, state } = fakeIo();
-    const command = createDbCommand(config(), io);
-    assertEquals(command.name, "db");
-    await run(command, root, ["push"], { "dry-run": true });
-    assertEquals(state.lines, [
-      "  would apply backend_rls_0001",
-      "  would apply backend_x_0001",
-      "  would apply 20260101_init.sql",
-    ]);
-    state.lines.length = 0;
-    await run(command, root, ["push"]);
-    assert(state.lines.includes("  applied 20260101_init.sql"), state.lines.join("\n"));
-    assert(sql.calls.some((c) => c.text.includes("create table t")));
-    state.lines.length = 0;
-    await run(command, root, ["status"]);
-    assert(state.lines.includes("  pending  20260101_init.sql"), "the scripted db records nothing");
-    await run(command, root, ["reset"]);
-    assertEquals(state.code, 1);
-    assertStringIncludes(state.errors[0], "--yes");
-    state.lines.length = 0;
-    await run(command, root, ["reset"], { yes: true });
-    const drops = sql.calls.filter((c) => c.text.startsWith("DROP SCHEMA")).map((c) => c.text);
-    assertEquals(drops, [
-      "DROP SCHEMA IF EXISTS public CASCADE",
-      "DROP SCHEMA IF EXISTS pgmq CASCADE",
-    ]);
-    assert(sql.calls.some((c) => c.text.includes("insert into t values (1)")));
-    assertEquals(state.lines.at(-1), "The database was reset.");
-    state.code = 0;
-    await run(command, root, ["explode"]);
-    assertEquals(state.code, 1);
-    assertStringIncludes(state.errors.at(-1)!, "unknown action");
-  } finally {
-    installPostgres(undefined);
-    await Deno.remove(root, { recursive: true });
-  }
-});
-
-Deno.test("denext db push: no migrations directory, nothing pending", async () => {
-  const root = await project({ "seed.sql": "select 1;" });
-  installPostgres({ sql: scriptedSql(() => []), rls: { migrate: false } });
-  try {
-    assertEquals(await migrationsDir(root), undefined);
-    const { io, state } = fakeIo();
-    const command = createDbCommand({ ...config(), backendMigrations: () => [] }, io);
-    await run(command, root, ["push"]);
-    assertEquals(state.lines, ["The database is up to date."]);
-    await run(command, root, ["reset"], { yes: true });
-    assert(state.lines.includes("  seeded from seed.sql"));
-  } finally {
-    installPostgres(undefined);
-    await Deno.remove(root, { recursive: true });
-  }
-});
-
-Deno.test("denext db diff: a shadow database, the DDL printed or written, cleaned up", async () => {
-  const root = await project({ "migrations/0001.sql": "create table t (id int);" });
-  // The live database has a table the shadow does not.
-  const live = scriptedSql((
-    text,
-  ) => (text.includes("c.relrowsecurity")
-    ? [{ schema: "public", name: "extra", rls: false }]
-    : [])
+  const url = "postgres://app:s%40cret@db.test:5432/app";
+  assertEquals(await action("dump", sql, { io: fake.io, url }), ["CREATE TABLE t ();"]);
+  assertEquals(seen[0].env, { PGPASSWORD: "s@cret" });
+  assert(!seen[0].args.join(" ").includes("cret"), "no password on the command line");
+  assert(seen[0].args.includes("--schema-only"));
+  await action("dump", sql, { io: fake.io, url, flags: { file: "out.sql", schema: "app" } });
+  assertEquals(fake.files.get("/project/out.sql"), "CREATE TABLE t ();");
+  assert(seen[1].args.includes("app"));
+  await assertRejects(
+    () => action("dump", sql, { io: fake.io, url, flags: { "data-only": true } }),
+    Error,
+    "pg_dump failed: permission denied",
   );
-  installPostgres({ sql: live, rls: { migrate: false } });
+  await assertRejects(
+    () => action("dump", sql, { url: "postgres://db.test/app" }),
+    Error,
+    "pg_dump is not on PATH",
+  );
+  await assertRejects(() => action("dump", sql), Error, "needs the database URL");
+});
+
+Deno.test("db lint: built-in checks, plpgsql_check when installed, levels and --fail-on", async () => {
+  const sql = scriptedSql((text) => {
+    if (text.includes("extname = 'plpgsql_check'")) return [{ found: true }];
+    if (text.includes("plpgsql_check_function_tb")) {
+      return [{ object: "public.f()", level: "error", message: "column x does not exist" }];
+    }
+    if (text.includes("NOT c.relrowsecurity") && text.includes("has_table_privilege")) {
+      return [{ object: "public.open" }];
+    }
+    if (text.includes("search_path=%")) return [{ object: "public.g()" }];
+    return [];
+  });
+  await assertRejects(() => action("lint", sql), Error, "level error");
+  const lines = await action("lint", sql, { flags: { "fail-on": "none" } });
+  const out = lines.join("\n");
+  assertStringIncludes(out, "plpgsql_check");
+  assertStringIncludes(out, "rls_disabled");
+  assertStringIncludes(out, "ENABLE ROW LEVEL SECURITY");
+  assertStringIncludes(out, "function_search_path");
+  const errorsOnly = await action("lint", sql, { flags: { "fail-on": "none", level: "error" } });
+  assert(!errorsOnly.join("\n").includes("function_search_path"));
+  const json = JSON.parse(
+    (await action("lint", sql, { json: true, flags: { "fail-on": "none" } })).join("\n"),
+  );
+  assertEquals(json.plpgsqlCheck, true);
+  assertEquals(json.issues.length, 3);
+  // The schemas are bound as JSON, never interpolated.
+  const bound = sql.calls.find((c) => c.text.includes("search_path=%"))!;
+  assertEquals(bound.params, ['["public"]']);
+  await assertRejects(
+    () => action("lint", sql, { flags: { level: "loud" } }),
+    TypeError,
+    "unknown level",
+  );
+  // Nothing installed, nothing found.
+  const clean = await action("lint", scriptedSql(() => []));
+  assertEquals(clean, [
+    "(plpgsql_check is not installed: function bodies were not checked)",
+    "No issues found in public.",
+  ]);
+});
+
+Deno.test("db inspect: a report as a table or JSON, extension checks, every report", async () => {
+  const sql = scriptedSql((text) => {
+    if (text.includes("pg_extension")) return [{ found: false }];
+    if (text.includes("row_to_json")) return [{ row: JSON.stringify({ name: "t", count: 3 }) }];
+    return [];
+  });
+  assertEquals(await action("inspect", sql, { positionals: ["seq-scans"] }), [
+    "  name | count",
+    "  -----|------",
+    "  t    | 3",
+  ]);
+  assertEquals(
+    JSON.parse((await action("inspect", sql, { positionals: ["seq-scans"], json: true }))[0]),
+    [{ name: "t", count: 3 }],
+  );
+  await assertRejects(
+    () => action("inspect", sql, { positionals: ["calls"] }),
+    Error,
+    "pg_stat_statements",
+  );
+  await assertRejects(() => action("inspect", sql, { positionals: ["nope"] }), Error, "unknown");
+  await assertRejects(() => action("inspect", sql), Error, "name a report");
+  const all = (await action("inspect", sql, { positionals: ["report"] })).join("\n");
+  for (const name of Object.keys(INSPECT_REPORTS)) assertStringIncludes(all, `${name}:`);
+  assertStringIncludes(all, "(skipped: calls needs");
+  const allJson = JSON.parse(
+    (await action("inspect", sql, { positionals: ["report"], json: true })).join("\n"),
+  );
+  assertEquals(Object.keys(allJson).length, Object.keys(INSPECT_REPORTS).length);
+  assertEquals(formatTable([]), ["  (no rows)"]);
+  assertStringIncludes(
+    formatTable([{ a: null, b: { x: 1 }, c: new Date(0) }])[2],
+    '| {"x":1} | 1970-01-01T00:00:00.000Z',
+  );
+});
+
+Deno.test("splitSql: quotes, dollar bodies, comments and E-strings", () => {
+  assertEquals(
+    splitSql(`select 1; -- a; comment
+select 'a;b', "c;d"; /* x; /* nested; */ y; */ select $$ a; b $$;
+create function f() returns int language plpgsql as $body$ begin return 1; end $body$;
+select E'it\\'s; fine', $1; ; -- trailing`),
+    [
+      "select 1",
+      `select 'a;b', "c;d"`,
+      "/* x; /* nested; */ y; */ select $$ a; b $$",
+      "create function f() returns int language plpgsql as $body$ begin return 1; end $body$",
+      "select E'it\\'s; fine', $1",
+    ],
+  );
+  assertEquals(splitSql("-- only a comment\n"), []);
+  assertEquals(splitSql("select 'it''s'"), ["select 'it''s'"]);
+});
+
+Deno.test("tally: plans, passes, failures and TODO", () => {
+  assertEquals(tally("f", ["1..2", "ok 1 - a", "ok 2 - b"]).ok, true);
+  assertEquals(tally("f", ["1..3", "ok 1 - a", "ok 2 - b"]).ok, false);
+  const failed = tally("f", ["1..2", "ok 1", "not ok 2 - x", "# Failed test 2"]);
+  assertEquals([failed.passed, failed.failed, failed.ok], [1, 1, false]);
+  assertEquals(tally("f", ["not ok 1 # TODO later", "1..1"]).ok, true);
+  assertEquals(tally("f", []).ok, false, "no tests ran");
+});
+
+Deno.test("db test: pgTAP files in a rolled-back transaction, TAP collected", async () => {
+  const root = await Deno.makeTempDir({ prefix: "dnx-db-test-" });
   try {
-    const { io, state } = fakeIo();
-    const command = createDbCommand(config("postgres://u:p@db.test:5432/app"), io);
-    await run(command, root, ["diff"]);
-    const created = live.calls.find((c) => c.text.startsWith("CREATE DATABASE"))!.text;
-    assert(/^CREATE DATABASE denext_shadow_[0-9a-f]{12}$/.test(created), created);
-    assert(live.calls.some((c) => c.text.startsWith("DROP DATABASE IF EXISTS denext_shadow_")));
-    assertStringIncludes(state.lines.join("\n"), "CREATE TABLE public.extra");
-    await run(command, root, ["diff"], { file: "add_extra", schema: "public,app" });
-    const [[path, text]] = [...state.files];
-    assert(/\/migrations\/\d{14}_add_extra\.sql$/.test(path), path);
-    assertStringIncludes(text, "-- denext db diff (public, app)");
-    await run(command, root, ["diff"], { file: "../escape" });
-    assertEquals(state.code, 1);
-    await run(command, root, ["diff"], { schema: "bad schema" });
-    assertStringIncludes(state.errors.at(-1)!, "plain identifier");
-    // No URL: a clear error.
-    const noUrl = createDbCommand(config(), io);
-    await run(noUrl, root, ["diff"]);
-    assertStringIncludes(state.errors.at(-1)!, "DATABASE_URL");
+    await Deno.mkdir(`${root}/supabase/tests/nested`, { recursive: true });
+    await Deno.writeTextFile(
+      `${root}/supabase/tests/a.sql`,
+      "begin;\nselect plan(2);\nselect ok(true, 'one');\nselect ok(true, 'two');\n" +
+        "select * from finish();\nrollback;\n",
+    );
+    await Deno.writeTextFile(
+      `${root}/supabase/tests/nested/b.sql`,
+      "select plan(1);\nselect boom;",
+    );
+    const sql = scriptedSql((text) => {
+      if (text.includes("pg_available_extensions")) return [{ found: true }];
+      if (text.startsWith("select plan(")) return [{ plan: `1..${text.match(/\d+/)![0]}` }];
+      if (text.startsWith("select ok(")) {
+        return [{
+          ok: `ok ${text.includes("one") ? 1 : 2} - ${text.includes("one") ? "one" : "two"}`,
+        }];
+      }
+      if (text === "select boom") throw new Error('column "boom" does not exist');
+      return [];
+    });
+    await assertRejects(
+      () => action("test", sql, { root }),
+      Error,
+      "1 of 2 test files failed",
+    );
+    // BEGIN / ROLLBACK are the runner's; the extension is created inside its transaction.
+    assert(!sql.calls.some((c) => /^(begin|rollback)$/i.test(c.text)));
+    assert(sql.calls.some((c) => c.text === "CREATE EXTENSION IF NOT EXISTS pgtap"));
+    const one = await action("test", sql, { root, positionals: ["supabase/tests/a.sql"] });
+    assertEquals(one.at(-2), "supabase/tests/a.sql .. ok");
+    assertEquals(one.at(-1), "All tests successful (1 files).");
+    const json = JSON.parse(
+      (await action("test", sql, { root, positionals: ["supabase/tests/a.sql"], json: true }))
+        .join("\n"),
+    );
+    assertEquals(json, [{
+      file: "supabase/tests/a.sql",
+      planned: 2,
+      passed: 2,
+      failed: 0,
+      ok: true,
+    }]);
+    await assertRejects(
+      () => action("test", scriptedSql(() => [{ found: false }]), { root }),
+      Error,
+      "pgtap extension is not available",
+    );
+    await Deno.remove(`${root}/supabase`, { recursive: true });
+    await assertRejects(() => action("test", sql, { root }), Error, "no tests");
   } finally {
-    installPostgres(undefined);
     await Deno.remove(root, { recursive: true });
-  }
-  // Identical: "No changes".
-  const root2 = await project();
-  installPostgres({ sql: scriptedSql(() => []), rls: { migrate: false } });
-  try {
-    const { io, state } = fakeIo();
-    await run(createDbCommand(config("postgres://db.test/app"), io), root2, ["diff"]);
-    assertEquals(state.lines, ["No changes: the database matches the migrations."]);
-  } finally {
-    installPostgres(undefined);
-    await Deno.remove(root2, { recursive: true });
   }
 });
 
-Deno.test("denext db dump: pg_dump with the password in the environment", async () => {
-  const root = await project();
-  installPostgres({ sql: scriptedSql(() => []), rls: { migrate: false } });
-  try {
-    const seen: { args: string[]; env: Record<string, string> }[] = [];
-    const { io, state } = fakeIo({
-      dump: (args, env) => {
-        seen.push({ args, env });
-        return args.includes("--data-only")
-          ? { code: 1, stdout: "", stderr: "permission denied\n" }
-          : { code: 0, stdout: "CREATE TABLE t ();", stderr: "" };
-      },
-    });
-    const command = createDbCommand(config("postgres://app:s%40cret@db.test:5432/app"), io);
-    await run(command, root, ["dump"]);
-    assertEquals(state.lines, ["CREATE TABLE t ();"]);
-    assertEquals(seen[0].env, { PGPASSWORD: "s@cret" });
-    assert(!seen[0].args.join(" ").includes("cret"), "no password on the command line");
-    assert(seen[0].args.includes("--schema-only"));
-    await run(command, root, ["dump"], { file: `${root}/out.sql`, schema: "app" });
-    assertEquals(state.files.get(`${root}/out.sql`), "CREATE TABLE t ();");
-    assert(seen[1].args.includes("app"));
-    await run(command, root, ["dump"], { "data-only": true });
-    assertStringIncludes(state.errors.at(-1)!, "pg_dump failed: permission denied");
-    const missing = fakeIo();
-    await run(createDbCommand(config("postgres://db.test/app"), missing.io), root, ["dump"]);
-    assertStringIncludes(missing.state.errors[0], "pg_dump is not on PATH");
-  } finally {
-    installPostgres(undefined);
-    await Deno.remove(root, { recursive: true });
-  }
+Deno.test("db types: the catalog as standalone Supabase-shaped types", async () => {
+  const sql = scriptedSql(() => []);
+  const fake = fakeIo();
+  const printed = (await action("types", sql)).join("\n");
+  assertStringIncludes(printed, "export type Database = {");
+  assertStringIncludes(printed, "AUTO-GENERATED by `denext gen types`");
+  assert(!printed.includes('declare module "@denext/backend/client"'), "standalone");
+  const wrote = await action("types", sql, { io: fake.io, flags: { file: "db.types.ts" } });
+  assertEquals(wrote, ["Wrote db.types.ts"]);
+  assertStringIncludes(fake.files.get("/project/db.types.ts")!, "export type Json");
+});
+
+Deno.test("seedContentType: by extension", () => {
+  assertEquals(seedContentType("a/b.PNG"), "image/png");
+  assertEquals(seedContentType("x.json"), "application/json");
+  assertEquals(seedContentType("x.bin"), undefined);
 });

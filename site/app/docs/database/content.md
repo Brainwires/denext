@@ -349,8 +349,51 @@ history when `jobs: { history: true }` is on. Use it from a deploy step
 Kubernetes init container or a `preStart` hook — and keep the schema step out of
 the app's boot so a bad migration fails the deploy, not the first request. The
 runner needs `--allow-read` on `migrations/` and `--allow-write` on the
-database's directory, which the scaffold's `-A` tasks already grant. Down
-migrations are deliberately absent: write a new forward file.
+database's directory, which the scaffold's `-A` tasks already grant. The generated
+runner calls `migrateSqlite(db, { dir })` / `sqliteMigrationStatus(db, { dir })` from
+`denext/server`, the SQLite twins of `migratePostgres` below.
+
+### `denext migration`: up, down, list, repair
+
+The same files, from the CLI, on SQLite or Postgres, with or without `@denext/backend`. These
+are the Supabase CLI's `supabase migration` verbs. (`denext migrate`, without the "n", is the
+framework migrator from Next.js, Vite, Expo or Remix.)
+
+```sh
+denext migration new add_notes        # migrations/<stamp>_add_notes.sql, up and down sections
+denext migration list                 # local and applied versions side by side (--json)
+denext migration up                   # apply what is pending (= denext db migrate; --to <version>)
+denext migration down                 # revert the newest one (= denext db rollback; --steps 2, --to <v>)
+denext migration repair --status reverted 20261007093000   # fix the history, run no SQL
+denext migration squash               # fold the files into one
+```
+
+A file's down script is a `-- migrate:down` section (the dbmate convention) or a
+`<name>.down.sql` file beside it. `generate migration` and `migration new` write both sections:
+
+```sql
+-- migrate:up
+create table notes (id integer primary key, body text not null);
+
+-- migrate:down
+drop table notes;
+```
+
+`down` checks every migration it would revert before it runs anything. If one has no down
+script, it refuses and names it. `--force-reset --yes` then does what `supabase migration down`
+does: it resets the database and re-applies everything up to the target. `up` refuses a pending
+file older than the newest applied one unless you pass `--include-all`. The runners
+(`jobs/migrate.ts`, `migratePostgres`) apply such a file without asking.
+
+The database is the project's own. That is `@denext/backend`'s Postgres, else `DATABASE_URL`
+when it is a `postgres://` URL, else SQLite at `DB_PATH` (default `app.db`), the file
+`jobs/migrate.ts` uses. `--db-url <url | sqlite:path>` or `--linked` (after `denext db link
+--url …`) picks another. The history is `_migrations`, the same table the runners write. A
+project whose files are in `supabase/migrations/` keeps the Supabase CLI's
+`supabase_migrations.schema_migrations`, so its history carries over. `migration fetch` writes
+that history's SQL back into files. `denext db reset --yes` and `denext db seed` (`seed.sql`)
+work on both databases. The Postgres tooling (`db diff`, `pull`, `lint`, `inspect`, `test`,
+`types`) comes with [`@denext/backend`](/docs/backend#denext-db).
 
 ### Plain SQL files on Postgres
 

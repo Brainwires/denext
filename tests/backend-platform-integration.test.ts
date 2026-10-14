@@ -392,10 +392,7 @@ Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
-    const { createDbCommand, backendMigrationsOf } = await import(
-      "../packages/backend/src/db-command.ts"
-    );
-    const { queuesMigrations } = await import("../packages/backend/src/queues-sql.ts");
+    const { DB_ACTIONS } = await import("../src/cli/commands/db.ts");
     const env = await environment();
     const role = decodeURIComponent(new URL(env.url).username);
     await env.admin.unsafe(`ALTER ROLE ${role} CREATEDB`);
@@ -417,24 +414,21 @@ Deno.test({
       const lines: string[] = [];
       const errors: string[] = [];
       let code = 0;
-      const command = createDbCommand({
-        url: env.url,
-        backendMigrations: () => backendMigrationsOf([queuesMigrations]),
-        serviceSchemas: ["pgmq", "pgmq_public"],
-      }, {
-        log: (l) => lines.push(l),
-        error: (l) => errors.push(l),
-        exit: (c) => (code = c),
-        run: () => Promise.reject(new Error("unused")),
-        write: (path, data) =>
-          typeof data === "string" ? Deno.writeTextFile(path, data) : Deno.writeFile(path, data),
-        connect: (url) => new SQL!(url),
-      });
       const run = async (positionals: string[], flags: Record<string, string | boolean> = {}) => {
         lines.length = 0;
         errors.length = 0;
         code = 0;
-        await command.run({ positionals, flags, global: { cwd: root } as never, rest: [] });
+        try {
+          await DB_ACTIONS[positionals[0]]({
+            ctx: { positionals, flags, global: { cwd: root, json: false } as never, rest: [] },
+            projectDir: root,
+            io: { log: (l) => lines.push(l), error: (l) => errors.push(l) },
+            env: (name) => name === "DATABASE_URL" ? env.url : undefined,
+          });
+        } catch (error) {
+          errors.push((error as Error).message);
+          code = 1;
+        }
         return lines.join("\n");
       };
       const pushed = await run(["push"]);
@@ -442,7 +436,7 @@ Deno.test({
       assert(pushed.includes("applied 20260101000000_init.sql"), pushed);
       assertEquals(await run(["push"]), "The database is up to date.");
       const status = await run(["status"]);
-      assert(status.includes("applied  20260101000000_init.sql"), status);
+      assert(/20260101000000 \| 20260101000000 \|/.test(status), status);
       assertEquals(await run(["diff"]), "No changes: the database matches the migrations.");
       // A change made in the live database (a dashboard edit, say) shows up as DDL.
       await db.service().unsafe(`
@@ -469,7 +463,7 @@ Deno.test({
       assertEquals(code, 1);
       assert(errors[0].includes("--yes"));
       const reset = await run(["reset"], { yes: true });
-      assert(reset.includes("seeded from seed.sql"), reset);
+      assert(reset.includes("seeded from seed.sql"), reset + errors.join("\n"));
       assertEquals((await db.service()`select name, price from items`)[0], {
         name: "seeded",
         price: 0,
@@ -597,11 +591,7 @@ Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
-    const { createDbCommand, backendMigrationsOf } = await import(
-      "../packages/backend/src/db-command.ts"
-    );
-    const { vaultMigrations, vaultKeyedClient } = await import("../packages/backend/src/vault.ts");
-    const { vaultSqlMigrations } = await import("../packages/backend/src/vault-sql.ts");
+    const { DB_ACTIONS } = await import("../src/cli/commands/db.ts");
     const env = await environment();
     const root = await Deno.makeTempDir({ prefix: "dnx-vault-sql-" });
     try {
@@ -622,24 +612,16 @@ Deno.test({
       await applyPlugins({ projectRoot: root, appDir: `${root}/app`, config, mode: "build", load });
       await rlsReady();
       const lines: string[] = [];
-      const command = createDbCommand({
-        url: env.url,
-        backendMigrations: () => backendMigrationsOf([vaultMigrations, vaultSqlMigrations]),
-        serviceSchemas: ["vault"],
-        keyed: vaultKeyedClient,
-      }, {
-        log: (l) => lines.push(l),
-        error: (l) => lines.push(`error: ${l}`),
-        exit: () => {},
-        run: () => Promise.reject(new Error("unused")),
-        write: () => Promise.resolve(),
-        connect: (url) => new SQL!(url),
-      });
-      await command.run({
-        positionals: ["push"],
-        flags: {},
-        global: { cwd: root } as never,
-        rest: [],
+      await DB_ACTIONS.push({
+        ctx: {
+          positionals: ["push"],
+          flags: {},
+          global: { cwd: root, json: false } as never,
+          rest: [],
+        },
+        projectDir: root,
+        io: { log: (l) => lines.push(l), error: (l) => lines.push(`error: ${l}`) },
+        env: (name) => name === "DATABASE_URL" ? env.url : undefined,
       });
       assert(lines.some((l) => l.includes("20260101000000_secrets.sql")), lines.join("\n"));
       // Written by SQL (in the migration), read by the app.

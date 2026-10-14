@@ -104,7 +104,8 @@ import {
   webhooksMigrations,
   type WebhooksOptions,
 } from "./src/webhooks.ts";
-import { backendMigrationsOf, createDbCommand } from "./src/db-command.ts";
+import { backendMigrationsOf, createDbHooks, installDbHooks } from "./src/db-command.ts";
+import { seedBuckets } from "./src/storage-seed.ts";
 
 export { backendAuthAdapter } from "./src/postgres.ts";
 export type { BackendAuthAdapterOptions, PostgresOptions } from "./src/postgres.ts";
@@ -351,32 +352,43 @@ function setupPostgres(
   installVault(options.vault);
   installQueues(options.queues);
   installWebhooks(webhooks);
-  ctx.addCommand(dbCommandFor(options, webhooks));
   if (ctx.mode === "dev" || ctx.mode === "prod") startServices(ctx, options, webhooks);
 }
 
-/** `denext db`, over the services this config enables. */
-function dbCommandFor(
+/**
+ * The hooks `denext db` / `denext migration` read: the backend's own migrations (applied before
+ * the app's), its service schemas, and the Postgres tooling (`diff`, `lint`, `inspect`, …).
+ */
+function installDbHooksFor(
+  ctx: PluginContext,
   options: BackendOptions,
   webhooks: ReturnType<typeof resolveWebhooks> | undefined,
-) {
+): void {
   const on = { vault: !!options.vault, queues: !!options.queues, webhooks: !!webhooks };
-  return createDbCommand({
-    url: options.postgres?.url ?? env("DATABASE_URL"),
-    backendMigrations: () =>
-      backendMigrationsOf([
-        on.vault ? vaultMigrations : () => [],
-        options.vault?.sql ? vaultSqlMigrations : () => [],
-        on.queues ? queuesMigrations : () => [],
-        on.webhooks ? webhooksMigrations : () => [],
-      ]),
-    serviceSchemas: [
-      ...(on.vault ? ["vault"] : []),
-      ...(on.queues ? ["pgmq", "pgmq_public"] : []),
-      ...(on.webhooks ? ["supabase_functions"] : []),
-    ],
-    keyed: options.vault?.sql ? vaultKeyedClient : undefined,
-  });
+  const postgres = !!options.postgres;
+  installDbHooks(createDbHooks(
+    {
+      backendMigrations: () =>
+        postgres
+          ? backendMigrationsOf([
+            on.vault ? vaultMigrations : () => [],
+            options.vault?.sql ? vaultSqlMigrations : () => [],
+            on.queues ? queuesMigrations : () => [],
+            on.webhooks ? webhooksMigrations : () => [],
+          ])
+          : [],
+      serviceSchemas: [
+        ...(on.vault ? ["vault"] : []),
+        ...(on.queues ? ["pgmq", "pgmq_public"] : []),
+        ...(on.webhooks ? ["supabase_functions"] : []),
+      ],
+      keyed: options.vault?.sql ? vaultKeyedClient : undefined,
+      seedBuckets: options.storage ? seedBuckets : undefined,
+    },
+    undefined,
+    postgres,
+  ));
+  ctx.addTeardown(() => installDbHooks(undefined));
 }
 
 /**
@@ -445,6 +457,7 @@ export function backend(options: BackendOptions = {}): DenextPlugin {
     async setup(ctx: PluginContext) {
       if (options.supabase) await setupSupabase(ctx, options.supabase);
       if (options.postgres) setupPostgres(ctx, options, rest, webhooks);
+      if (options.postgres || options.storage) installDbHooksFor(ctx, options, webhooks);
       if (functions) await setupFunctionsService(ctx, functions);
       if (storageOptions && buckets) {
         await setupStorage(ctx, storageOptions, buckets, apiBase, options.postgres !== undefined);

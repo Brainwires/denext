@@ -9447,6 +9447,27 @@
           "denextOnly": true
         },
         {
+          "name": "migrateSqlite",
+          "slug": "migrateSqlite",
+          "kind": "function",
+          "signature": "migrateSqlite(db: SqliteMigrationDb, options: SqliteMigrateOptions): Promise<MigrateResult>",
+          "doc": "Apply every pending migration in dir, in file-name order.",
+          "docFull": "Apply every pending migration in `dir`, in file-name order.",
+          "params": [
+            {
+              "name": "db",
+              "doc": "The database (new DatabaseSync(path))."
+            },
+            {
+              "name": "options",
+              "doc": "The directory, the tracking table and dryRun."
+            }
+          ],
+          "returns": "What was (or, for a dry run, would be) applied.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Migration",
           "slug": "Migration",
           "kind": "interface",
@@ -12871,6 +12892,51 @@
           "docFull": "Options for {@linkcode sqliteJobHistoryStore}.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteMigrateOptions",
+          "slug": "SqliteMigrateOptions",
+          "kind": "interface",
+          "signature": "interface SqliteMigrateOptions",
+          "doc": "Options for migrateSqlite and sqliteMigrationStatus.",
+          "docFull": "Options for {@linkcode migrateSqlite} and {@linkcode sqliteMigrationStatus}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteMigrationDb",
+          "slug": "SqliteMigrationDb",
+          "kind": "interface",
+          "signature": "interface SqliteMigrationDb",
+          "doc": "The parts of node:sqlite's DatabaseSync the SQLite history uses.",
+          "docFull": "The parts of `node:sqlite`'s `DatabaseSync` the SQLite history uses.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "sqliteMigrationStatus",
+          "slug": "sqliteMigrationStatus",
+          "kind": "function",
+          "signature": "sqliteMigrationStatus(db: SqliteMigrationDb, options: Omit<SqliteMigrateOptions, dryRun>): Promise<MigrationStatus>",
+          "doc": "Which migrations in dir are applied, which are pending, and which applied ones have no file.",
+          "docFull": "Which migrations in `dir` are applied, which are pending, and which applied ones have no file.",
+          "params": [
+            {
+              "name": "db",
+              "doc": "The database."
+            },
+            {
+              "name": "options",
+              "doc": "The directory and the tracking table."
+            }
+          ],
+          "returns": "The status.",
           "examples": [],
           "denextOnly": true
         },

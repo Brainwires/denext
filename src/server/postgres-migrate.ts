@@ -18,6 +18,7 @@
  * @module
  */
 
+import { readMigrationFiles } from "./migration-files.ts";
 import { runScript, schemaPrefix, type SqlClient, sqlState } from "./postgres.ts";
 
 /** One migration: a unique, ordered name and its SQL (one or more statements). */
@@ -26,11 +27,19 @@ export interface Migration {
   name: string;
   /** The SQL to run, inside the runner's transaction. */
   sql: string;
+  /**
+   * The SQL that reverts it (a file's `-- migrate:down` section, or its `.down.sql`
+   * companion): what `denext migration down` runs. Never run by {@linkcode migratePostgres}.
+   */
+  down?: string;
 }
 
 /** Options for {@linkcode migratePostgres} and {@linkcode postgresMigrationStatus}. */
 export interface PostgresMigrateOptions {
-  /** A directory of `*.sql` files (a path or a `file:` URL), applied in file-name order. */
+  /**
+   * A directory of `*.sql` files (a path or a `file:` URL), applied in file-name order. A file's
+   * `-- migrate:down` section and a `<name>.down.sql` companion are its down script, not run here.
+   */
   dir?: string | URL;
   /** Migrations to apply, instead of (or besides) a directory. */
   migrations?: Migration[];
@@ -87,28 +96,18 @@ const OWN_TRANSACTION =
   /^\s*(?:BEGIN(?:\s+(?:WORK|TRANSACTION))?|START\s+TRANSACTION|COMMIT(?:\s+(?:WORK|TRANSACTION))?|END(?:\s+(?:WORK|TRANSACTION))?|ROLLBACK(?:\s+(?:WORK|TRANSACTION))?)\s*;/im;
 
 /** SHA-256 hex of a migration's SQL, recorded so a later edit can be reported. */
-async function checksum(text: string): Promise<string> {
+export async function checksum(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** The `*.sql` files of `dir`, as migrations in name order. */
+/** The `*.sql` files of `dir`, as migrations in name order (up scripts; down kept aside). */
 async function readDir(dir: string | URL): Promise<Migration[]> {
-  const base = typeof dir === "string" ? dir.replace(/\/?$/, "/") : dir;
-  const names: string[] = [];
-  for await (const entry of Deno.readDir(base)) {
-    if (entry.isFile && entry.name.endsWith(".sql")) names.push(entry.name);
-  }
-  names.sort();
-  const out: Migration[] = [];
-  for (const name of names) {
-    const path = typeof base === "string"
-      ? `${base}${name}`
-      // Encoded: a `#`, `?` or `%` in a file name is part of the name, not URL syntax.
-      : new URL(encodeURIComponent(name), base);
-    out.push({ name, sql: await Deno.readTextFile(path) });
-  }
-  return out;
+  return (await readMigrationFiles(dir)).map((file) => ({
+    name: file.name,
+    sql: file.up,
+    ...(file.down !== undefined ? { down: file.down } : {}),
+  }));
 }
 
 /** Every known migration, sorted by name, refusing duplicates. */
@@ -124,14 +123,14 @@ async function collect(options: PostgresMigrateOptions): Promise<Migration[]> {
 }
 
 /** The qualified tracking table, validated. */
-function trackingTable(options: PostgresMigrateOptions): string {
+export function trackingTable(options: PostgresMigrateOptions): string {
   const table = options.table ?? DEFAULT_TABLE;
   schemaPrefix(table, "migratePostgres"); // the same plain-identifier rule as a schema
   return `${schemaPrefix(options.schema, "migratePostgres")}"${table}"`;
 }
 
 /** The recorded rows, or none when the tracking table does not exist yet. */
-async function recorded(
+export async function recorded(
   sql: SqlClient,
   table: string,
 ): Promise<Map<string, { checksum: string; appliedAt: Date }>> {
@@ -200,14 +199,13 @@ const SETUP_ATTEMPTS = 3;
 /** A setup statement lost a creation race (see {@link SETUP_RACE}). */
 class SetupRace extends Error {}
 
-/** Create the schema and the tracking table, inside the locked transaction. */
-async function setUp(tx: SqlClient, table: string, schema: string | undefined): Promise<void> {
+/**
+ * Run setup DDL (`CREATE SCHEMA` / `CREATE TABLE IF NOT EXISTS` …), turning a lost creation race
+ * into {@linkcode SetupRace} so the whole transaction is retried.
+ */
+async function guardSetup(work: () => Promise<unknown>): Promise<void> {
   try {
-    if (schema) await tx.unsafe(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
-    await tx.unsafe(
-      `CREATE TABLE IF NOT EXISTS ${table} (name TEXT PRIMARY KEY, checksum TEXT NOT NULL, ` +
-        "applied_at TIMESTAMPTZ NOT NULL)",
-    );
+    await work();
   } catch (error) {
     if (SETUP_RACE.has(sqlState(error) ?? "")) throw new SetupRace("setup race", { cause: error });
     throw error;
@@ -215,40 +213,27 @@ async function setUp(tx: SqlClient, table: string, schema: string | undefined): 
 }
 
 /**
- * Apply one migration under the advisory lock, unless another runner applied it meanwhile.
+ * Run `fn` in a transaction that first takes the runner's advisory lock for `lock` (held until
+ * the transaction ends, so a second runner waits, then sees the first one's work) and runs
+ * `setup`; a setup statement that loses a creation race retries in a fresh transaction.
  *
- * @returns Whether this call applied it.
+ * @param sql The client.
+ * @param lock The lock's name (one per tracking table).
+ * @param setup Create the history's schema and table (idempotent DDL).
+ * @param fn The work.
+ * @returns What `fn` returned.
  */
-async function applyOne(
+export async function lockedMigrationTx<T>(
   sql: SqlClient,
-  migration: Migration,
-  table: string,
-  options: PostgresMigrateOptions,
-): Promise<boolean> {
-  const sum = await checksum(migration.sql);
+  lock: string,
+  setup: (tx: SqlClient) => Promise<unknown>,
+  fn: (tx: SqlClient) => Promise<T>,
+): Promise<T> {
   const attempt = () =>
     sql.begin(async (tx) => {
-      // Held until this transaction ends: a second runner waits here, then re-reads below.
-      await tx.unsafe("SELECT pg_advisory_xact_lock(hashtext($1))", [`denext:migrate:${table}`]);
-      await setUp(tx, table, options.schema);
-      const seen = await tx.unsafe(`SELECT 1 AS hit FROM ${table} WHERE name = $1`, [
-        migration.name,
-      ]);
-      if (seen.length) return false;
-      try {
-        await runScript(tx, migration.sql);
-      } catch (error) {
-        throw new Error(
-          `migration ${migration.name} failed: ${error instanceof Error ? error.message : error}`,
-          { cause: error },
-        );
-      }
-      await tx.unsafe(`INSERT INTO ${table} (name, checksum, applied_at) VALUES ($1, $2, $3)`, [
-        migration.name,
-        sum,
-        new Date(),
-      ]);
-      return true;
+      await tx.unsafe("SELECT pg_advisory_xact_lock(hashtext($1))", [`denext:migrate:${lock}`]);
+      await guardSetup(() => setup(tx));
+      return await fn(tx);
     });
   for (let n = 1;; n++) {
     try {
@@ -257,6 +242,103 @@ async function applyOne(
       if (!(error instanceof SetupRace)) throw error;
       if (n >= SETUP_ATTEMPTS) throw error.cause;
     }
+  }
+}
+
+/**
+ * Create the schema and the tracking table, inside the locked transaction.
+ *
+ * @param tx The transaction.
+ * @param table The qualified tracking table.
+ * @param schema Its schema, created when given.
+ */
+export async function setUpTrackingTable(
+  tx: SqlClient,
+  table: string,
+  schema: string | undefined,
+): Promise<void> {
+  if (schema) await tx.unsafe(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
+  await tx.unsafe(
+    `CREATE TABLE IF NOT EXISTS ${table} (name TEXT PRIMARY KEY, checksum TEXT NOT NULL, ` +
+      "applied_at TIMESTAMPTZ NOT NULL)",
+  );
+}
+
+/**
+ * Run a migration's SQL, naming the migration in the error when it fails.
+ *
+ * @param tx The transaction.
+ * @param name The migration's name.
+ * @param text Its SQL.
+ * @param direction `up`, or `down` for a rollback.
+ */
+export async function runMigrationScript(
+  tx: SqlClient,
+  name: string,
+  text: string,
+  direction: "up" | "down" = "up",
+): Promise<void> {
+  try {
+    await runScript(tx, text);
+  } catch (error) {
+    throw new Error(
+      `migration ${name}${direction === "down" ? " (down)" : ""} failed: ${
+        error instanceof Error ? error.message : error
+      }`,
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * Apply one migration under the advisory lock, unless another runner applied it meanwhile.
+ *
+ * @param sql The client.
+ * @param migration The migration.
+ * @param table The qualified tracking table.
+ * @param schema The tracking table's schema, if any.
+ * @returns Whether this call applied it.
+ */
+export async function applyPostgresMigration(
+  sql: SqlClient,
+  migration: Migration,
+  table: string,
+  schema: string | undefined,
+): Promise<boolean> {
+  const sum = await checksum(migration.sql);
+  return await lockedMigrationTx(
+    sql,
+    table,
+    (tx) => setUpTrackingTable(tx, table, schema),
+    async (tx) => {
+      const seen = await tx.unsafe(`SELECT 1 AS hit FROM ${table} WHERE name = $1`, [
+        migration.name,
+      ]);
+      if (seen.length) return false;
+      await runMigrationScript(tx, migration.name, migration.sql);
+      await tx.unsafe(`INSERT INTO ${table} (name, checksum, applied_at) VALUES ($1, $2, $3)`, [
+        migration.name,
+        sum,
+        new Date(),
+      ]);
+      return true;
+    },
+  );
+}
+
+/**
+ * Refuse a migration that ends or starts a transaction of its own.
+ *
+ * @param name The migration's name.
+ * @param text Its SQL.
+ * @throws {Error} When it has a `BEGIN` / `COMMIT` statement.
+ */
+export function assertNoOwnTransaction(name: string, text: string): void {
+  if (OWN_TRANSACTION.test(text)) {
+    throw new Error(
+      `migration ${name} manages its own transaction (BEGIN / COMMIT): remove ` +
+        "those statements — each migration already runs in a transaction of its own",
+    );
   }
 }
 
@@ -277,14 +359,7 @@ export async function migratePostgres(
   options: PostgresMigrateOptions = {},
 ): Promise<MigrateResult> {
   const known = await collect(options);
-  for (const migration of known) {
-    if (OWN_TRANSACTION.test(migration.sql)) {
-      throw new Error(
-        `migration ${migration.name} manages its own transaction (BEGIN / COMMIT): remove ` +
-          "those statements — each migration already runs in a transaction of its own",
-      );
-    }
-  }
+  for (const migration of known) assertNoOwnTransaction(migration.name, migration.sql);
   const table = trackingTable(options);
   const done = await recorded(sql, table);
   const pending = known.filter((m) => !done.has(m.name));
@@ -295,7 +370,9 @@ export async function migratePostgres(
   };
   if (result.dryRun) return result;
   for (const migration of pending) {
-    if (await applyOne(sql, migration, table, options)) result.applied.push(migration.name);
+    if (await applyPostgresMigration(sql, migration, table, options.schema)) {
+      result.applied.push(migration.name);
+    }
   }
   return result;
 }

@@ -255,7 +255,7 @@ Deno.test("generate migration: a Postgres project gets Postgres SQL", async () =
       assert((await sqlOf(sqliteEnv)).includes("datetime('now')"));
       for (const dir of [dotenv, local, config]) {
         const text = await sqlOf(dir);
-        assert(text.includes("TIMESTAMPTZ") && text.includes("no\n-- BEGIN / COMMIT"), text);
+        assert(text.includes("TIMESTAMPTZ") && text.includes("(so no BEGIN / COMMIT here)"), text);
       }
       await withEnv({ DATABASE_URL: "postgres://u@h/db" }, async () => {
         assert((await sqlOf(plain)).includes("GENERATED ALWAYS AS IDENTITY"), "from the env");
@@ -361,6 +361,27 @@ Deno.test("generate vector-search: a migration with pgvector's match_<table> rec
       () => generateArtifact(dir, "vector-search", "Bad-Name"),
       Error,
       "lowercase",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("generate migration: a Supabase project's supabase/migrations/, no runner job", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "dnx-gen-supa-" });
+  try {
+    await Deno.mkdir(join(dir, "supabase", "migrations"), { recursive: true });
+    const plan = await migrationPlan(
+      dir,
+      "add notes",
+      new Date("2026-10-07T09:30:05Z"),
+      "select 1;",
+    );
+    assertEquals(plan.map((f) => f.path), [
+      join(dir, "supabase", "migrations", "20261007093005_add_notes.sql"),
+    ]);
+    assert(
+      plan[0].contents.includes("-- migrate:up\n-- add_notes\nselect 1;\n\n-- migrate:down\n"),
     );
   } finally {
     await Deno.remove(dir, { recursive: true });

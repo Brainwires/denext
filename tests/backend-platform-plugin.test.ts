@@ -47,7 +47,12 @@ Deno.test({
       } as DenextConfig;
       await applyPlugins({ projectRoot: root, appDir: `${root}/app`, config, mode: "dev", load });
       const names = getPluginCommands().map((c) => c.name).sort();
-      assertEquals(names, ["db", "functions"]);
+      // `denext db` is core; the plugin installs its hooks for it instead.
+      assertEquals(names, ["functions"]);
+      const hooks = (globalThis as Record<symbol, unknown>)[Symbol.for("denext.backend.db")] as {
+        serviceSchemas: string[];
+      };
+      assertEquals(hooks.serviceSchemas, ["vault", "pgmq", "pgmq_public", "supabase_functions"]);
       // Migrations applied in the background; delivery listening.
       for (let i = 0; i < 50 && !sql.listeners.has(WEBHOOK_CHANNEL); i++) {
         await new Promise((r) => setTimeout(r, 10));

@@ -18,7 +18,28 @@ and this project adheres to
   endpoints, GoTrue's `over_request_rate_limit` on `/auth/v1`. A missing or oversized token is
   refused without spending. With the send budgets, no unauthenticated request stream can drive
   unlimited calls to a captcha verifier, mailer or SMS gateway.
-
+- **`denext migration` and the Supabase CLI's `db` verbs, on SQLite or Postgres.**
+  `denext migration new | list | up | down | repair | squash | fetch` and `denext db migrate`
+  (= `migration up`) / `rollback` (= `migration down`) / `status` / `push` / `reset` / `seed` /
+  `link` are now core verbs. They need no plugin and work on `node:sqlite` as well as Postgres.
+  A migration's down script is a `-- migrate:down` section or a `<name>.down.sql` file, and
+  `generate migration` writes both sections. `down` refuses a migration with no down script
+  before it runs anything; `--force-reset --yes` resets the database and re-applies up to the
+  target instead, as `supabase migration down` does. `up` takes `--to <version>`, and refuses
+  out-of-order files without `--include-all`. A project with `supabase/migrations/` keeps the
+  Supabase CLI's `supabase_migrations.schema_migrations` history, so you can switch between the
+  two CLIs in either direction. `--db-url <url | sqlite:path>` or `--linked` (after
+  `denext db link --url`, which stores the URL in `.env` and never prints it) targets another
+  database. `migrateSqlite` / `sqliteMigrationStatus` from `denext/server` are the SQLite twins of
+  `migratePostgres`, and the generated `jobs/migrate.ts` uses them.
+- **`@denext/backend`: the Postgres tooling of `denext db`.** `db pull [name]` writes what the
+  database has as a new migration and records it as applied. `db lint` runs plpgsql_check when it
+  is installed, plus built-in checks: RLS off on a table the API roles reach, policies with RLS
+  off, RLS without a policy, a mutable `search_path`, views without `security_invoker`, tables
+  with no grants. `db inspect <report>` runs the `supabase inspect db` reports (`report` runs them
+  all). `db test` runs pgTAP files from `supabase/tests/` in rolled-back transactions. `db types`
+  prints the whole-schema `Database` type in `supabase gen types` shape. `db seed` also creates
+  the config's buckets and uploads `supabase/buckets/<bucket>/**`.
 - **`denextAuth({ sendSms, captcha, hooks, anonymous })`.** SMS delivery, captcha (hCaptcha /
   Turnstile), Supabase's auth hooks (`customAccessToken`, `sendEmail`, `sendSms`) and anonymous
   sign-in are now configured once on `denextAuth()`; `/auth/v1` uses them unless
@@ -390,6 +411,13 @@ and this project adheres to
   run `pg_dump`.
 
 ### Changed
+
+- **`denext db` is a core verb.** `@denext/backend` no longer contributes it; it installs hooks
+  the core verb uses: its own migrations, its service schemas, and the Postgres actions
+  (`diff`, `dump`, `pull`, `lint`, `inspect`, `test`, `types`). `db status` prints
+  `migration list`'s table. A migration file's `-- migrate:down` section is never run by
+  `migratePostgres` or the generated runner (regenerate an older `jobs/migrate.ts` so its SQLite
+  half skips it too).
 
 - **Storage form uploads are streamed**: the file part of a multipart upload flows through the
   size cap and sniffing to the store instead of being read into memory first.

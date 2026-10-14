@@ -664,8 +664,9 @@ server-only; `vault: { sql: true }` adds `vault.create_secret()` / `vault.decryp
 inside `vault.withKey(fn)` and `denext db push`), `queues: {}` (pgmq's SQL API + `pgmq_public`, no extension; `queue(name).send/read`,
 `queueConsumer({ queue, handler })` as a job), `denext generate vector-search <table>` + `matchDocuments()` (pgvector)
 and `webhooks: { hooks: { name: { url } } }` (`supabase_functions.http_request('name')` triggers,
-delivered signed + retried) from `@denext/backend/server`; `denext db push | status | reset --yes |
-diff | dump` manages migrations (`migrations/` or `supabase/migrations/`).
+delivered signed + retried) from `@denext/backend/server`; the plugin adds the Postgres half of
+`denext db`: `diff | pull | dump | lint | inspect <report> | test` (pgTAP) `| types` (whole-schema
+`Database` type, `supabase gen types`-shaped), and applies its own migrations first on `db push`.
 
 **A database (zero-npm, server-only module):**
 
@@ -711,9 +712,15 @@ views, computed fields / relationships, aggregates (opt-in `rest.aggregates`), O
 `@supabase/supabase-js` `from()` / `rpc()` / `schema()` work against it unchanged, and so does
 `from("notes").select("id,body").eq("id", 1)` / `rpc()` from `@denext/backend/client`; the
 generated `.denext/rest.ts` is `supabase gen types`-shaped (`createClient<Database>()`).
-`denext generate migration <name>` writes `migrations/<timestamp>_<name>.sql` and a
-`jobs/migrate.ts` that applies pending ones on `node:sqlite` (`denext job migrate`; a Prisma or
-Drizzle project is pointed at its own tool); `generate seed` an idempotent `jobs/seed.ts`;
+`denext generate migration <name>` (= `denext migration new`) writes
+`migrations/<timestamp>_<name>.sql` with `-- migrate:up` / `-- migrate:down` sections and a
+`jobs/migrate.ts` runner (`migrateSqlite` / `migratePostgres`; a Prisma or Drizzle project is
+pointed at its own tool). The Supabase CLI's verbs, on SQLite or Postgres, no plugin needed:
+`denext migration list | up [--to v] | down [--steps n | --to v | --force-reset --yes] | repair
+--status applied|reverted <v> | squash | fetch`, `denext db migrate | rollback | status | push |
+reset --yes | seed | link --url <pg-url>` (`--db-url <url>` / `--linked` pick another database; a
+`supabase/migrations/` project keeps `supabase_migrations.schema_migrations`). `denext migrate`
+is the framework migrator, not these; `generate seed` an idempotent `jobs/seed.ts`;
 `generate ci` a GitHub Actions workflow; `generate docker` the Dockerfile and a compose stack
 detected from the project (`--stack`: Postgres 17, MinIO with a bucket bootstrap when the storage
 driver is `s3()`, a one-shot `denext job migrate`, `.env.example` listing every secret;

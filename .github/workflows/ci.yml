@@ -323,6 +323,7 @@ jobs:
             tests/backend-supabase-realtime-integration.test.ts \
             tests/backend-auth-integration.test.ts \
             tests/db-admin-integration.test.ts \
+            tests/db-migrations-integration.test.ts \
             tests/postgres-integration.test.ts \
             tests/backend-s3-minio.test.ts \
             tests/backend-supabase-functions.test.ts \
