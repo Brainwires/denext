@@ -278,7 +278,11 @@ Where `@denext/backend` deliberately departs from Supabase. See
   that no SAML sign-in started (at use and at refresh), refuses `GET /reauthenticate` for an SSO
   user (`422 user_sso_managed`, nothing sent; Supabase sends a nonce `PUT /user` then refuses),
   and never links a `linkExistingAccounts` provider onto another provider's SSO user
-  (`email_exists`; Supabase would create a separate account).
+  (`email_exists`; Supabase would create a separate account). The reason is offboarding: an
+  account a company's identity provider manages must lose access when the provider disables it,
+  and a personal OAuth login linked to it would outlive that. Okta, WorkOS, Clerk and Auth0
+  Organizations enforce the same rule. Linking still works from an SSO session, so the user keeps
+  the provider's tokens for API access; the linked identity only can't sign in.
 - **A magic link, one-time code or recovery link that first confirms an account retires its
   password.** Supabase keeps a password set by an earlier unconfirmed sign-up; denext keeps only
   the one the account's own sign-up confirmation proves.
