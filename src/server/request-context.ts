@@ -170,6 +170,13 @@ export interface RequestContext {
    */
   signal?: AbortSignal;
   /**
+   * This request's deadline in ms from its start, when {@linkcode setRequestTimeout} replaced
+   * the app's `requestTimeout` (`0`: none). Read by `createApp`'s timeout when it fires.
+   */
+  timeoutMs?: number;
+  /** Re-arms `createApp`'s timer for a new {@linkcode RequestContext.timeoutMs}. */
+  rearmTimeout?: () => void;
+  /**
    * Whether the app trusts `x-forwarded-for` for the client address — mirrors
    * {@linkcode AppConfig.trustForwardedHeaders}. Read by {@linkcode clientIp}; set by
    * `createApp` from the config. When unset (a direct handler call in a test), only the
@@ -647,6 +654,21 @@ export function requestId(): string {
 export function requestSignal(): AbortSignal | undefined {
   if (currentCacheScope()) return undefined;
   return currentContext()?.signal;
+}
+
+/**
+ * Give the current request a deadline of its own, replacing the app's `requestTimeout` (30 s by
+ * default) — for a surface with its own time budget: an Edge Function's `timeoutMs`, a large
+ * upload or download, a long statement. `0` removes the deadline (the work must then bound
+ * itself). Counted from the request's start; a no-op outside a request.
+ *
+ * @param ms The deadline, ms from the request's start (`0`: none).
+ */
+export function setRequestTimeout(ms: number): void {
+  const ctx = currentContext();
+  if (!ctx || !Number.isFinite(ms) || ms < 0) return;
+  ctx.timeoutMs = ms;
+  ctx.rearmTimeout?.();
 }
 
 /**

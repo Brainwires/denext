@@ -357,6 +357,7 @@ export {
   readonlyHeaders,
   requestId,
   requestSignal,
+  setRequestTimeout,
 } from "./request-context.ts";
 export type { RequestCookie } from "./request-context.ts";
 export { cappedBody, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";

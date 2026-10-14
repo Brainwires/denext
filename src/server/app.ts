@@ -135,7 +135,9 @@ function dispatch(
   // signal-aware, so the abort actually reclaims the work. `requestTimeout: 0`
   // disables; a background regen has no client deadline.
   const requestTimeout = isBackgroundRegen ? 0 : (config.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT);
-  if (requestTimeout > 0) pipeline = withRequestTimeout(pipeline, requestTimeout, controller);
+  if (requestTimeout > 0) {
+    pipeline = withRequestTimeout(pipeline, requestTimeout, controller, requestCtx);
+  }
   pipeline = pipeline.then((res) => echoRequestId(res, requestCtx.requestId));
   const secure = isSecureRequest(config, originalRequest);
   pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure, config.hsts));
@@ -297,11 +299,21 @@ function withRequestTimeout(
   pipeline: Promise<Response>,
   ms: number,
   controller: AbortController,
+  ctx: { timeoutMs?: number; rearmTimeout?: () => void },
 ): Promise<Response> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timedOut = false;
+  const startedAt = Date.now();
   const timeout = new Promise<Response>((resolve) => {
-    timer = setTimeout(() => {
+    // A handler may replace the deadline (`setRequestTimeout`): arm for what is left of the
+    // current one, or stop watching when it is `0`.
+    const arm = () => {
+      clearTimeout(timer);
+      const limit = ctx.timeoutMs ?? ms;
+      if (limit === 0 || timedOut) return;
+      timer = setTimeout(fire, Math.max(0, limit - (Date.now() - startedAt)));
+    };
+    const fire = () => {
       timedOut = true;
       controller.abort();
       resolve(
@@ -310,18 +322,26 @@ function withRequestTimeout(
           headers: { "content-type": "text/plain; charset=utf-8" },
         }),
       );
-    }, ms);
+    };
+    ctx.rearmTimeout = arm;
+    arm();
   });
   return Promise.race([pipeline, timeout]).then(
     (res) => timedOut || !res.body ? clear(res) : deadlineBody(res),
     (err) => {
-      clearTimeout(timer);
+      done();
       throw err;
     },
   );
 
-  function clear(res: Response): Response {
+  /** The deadline no longer applies: stop the timer, and a later `setRequestTimeout` too. */
+  function done(): void {
     clearTimeout(timer);
+    ctx.rearmTimeout = undefined;
+  }
+
+  function clear(res: Response): Response {
+    done();
     return res;
   }
 
@@ -334,8 +354,8 @@ function withRequestTimeout(
   function deadlineBody(res: Response): Response {
     const body = res.body!.pipeThrough(
       new TransformStream<Uint8Array, Uint8Array>({
-        flush: () => clearTimeout(timer),
-        cancel: () => clearTimeout(timer),
+        flush: done,
+        cancel: done,
       }),
     );
     return new Response(body, {

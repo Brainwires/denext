@@ -47,6 +47,9 @@ a 3.x app to 4.0 involves. This section is the record.
 
 ### Added
 
+- **`setRequestTimeout(ms)` (`denext/server`).** Replaces the app's `requestTimeout` for the
+  current request — longer, shorter, or `0` for none — counted from the request's start. For a
+  surface with a time budget of its own (a plugin's long-running endpoint, a large transfer).
 - **`localServerOrigin()` (`denext/server`).** It returns the origin on which this machine
   reaches the server that received the current request: the address it listens on, with a
   wildcard bind as loopback (`http://127.0.0.1:3000`). The value never comes from the request's
@@ -558,6 +561,12 @@ a 3.x app to 4.0 involves. This section is the record.
 
 ### Fixed
 
+- **`@denext/backend`'s surfaces are no longer cut at the app's 30 s `requestTimeout`.** An Edge
+  Function invoked for 35 s answered `503` at 30 s (its own 150 s `timeoutMs` was unreachable),
+  and a slow or large storage upload or download failed at 30 s. The backend now gives each
+  surface its own deadline: functions their `timeoutMs` plus 10 s, storage (`/storage/v1`,
+  `/_denext/storage`, TUS) an hour, auto-REST `rest.statementTimeout` plus 6 s when longer than
+  the app's. With `requestTimeout: 0` none gets one.
 - **`@denext/backend` auto-REST picks up schema changes in production.** The catalog was read
   once at startup outside `denext dev`, so a table created by a later migration (a rolling deploy,
   `denext migration up` against a live app) answered `PGRST205` until a restart. A request for an

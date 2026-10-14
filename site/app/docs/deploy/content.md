@@ -256,6 +256,13 @@ JavaScript is single-threaded, so a synchronous hot loop blocks the event loop
 until it returns. Keep render/handler code free of unbounded synchronous work,
 and rely on the edge concurrency ceiling (§1) to contain the blast radius.
 
+A surface with a time budget of its own replaces the deadline for its requests with
+`setRequestTimeout(ms)` from `denext/server` (from the request's start; `0` removes it; it may
+also shorten it). `@denext/backend` does this for its surfaces, so the app's 30 s never cuts
+them: an Edge Function gets its `timeoutMs` (150 s by default) plus 10 s, a storage upload or
+download (`/storage/v1`, `/_denext/storage`, TUS) an hour, and an auto-REST request
+`rest.statementTimeout` plus 6 s when that is longer than the app's deadline.
+
 Reach the signal from anywhere in the request with `requestSignal()` from
 `denext/server` — a route handler already has `request.signal`, but a Server
 Component or Server Action fetching data does not, and threading

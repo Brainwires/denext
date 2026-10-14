@@ -84,6 +84,7 @@ import { postgresBus } from "./src/realtime-bus.ts";
 import { channelPermissions } from "./src/realtime-authz.ts";
 import { type RealtimeOptions, resolveRealtime } from "./src/realtime-sql.ts";
 import { resolveRest, type RestOptions, setupRest } from "./src/rest.ts";
+import { deadlineHandler, surfaceDeadlines } from "./src/timeouts.ts";
 import { type FunctionsOptions, resolveFunctions, setupFunctions } from "./src/functions.ts";
 import { createFunctionsCommand } from "./src/functions-command.ts";
 import {
@@ -239,6 +240,33 @@ function resolveBuckets(
     out.set(name, { ...config, name, maxBytes, authorize: config.authorize ?? fallback });
   }
   return out;
+}
+
+/** denext's default `requestTimeout` (the deadline the backend's surfaces extend). */
+const DEFAULT_APP_TIMEOUT_MS = 30_000;
+
+/** The app's request deadline: the config's, else `DENEXT_REQUEST_TIMEOUT_MS`, else 30 s. */
+function appTimeoutMs(configured: number | undefined): number {
+  if (configured !== undefined) return configured;
+  const fromEnv = Number(env("DENEXT_REQUEST_TIMEOUT_MS"));
+  return Number.isFinite(fromEnv) && fromEnv >= 0 && env("DENEXT_REQUEST_TIMEOUT_MS")
+    ? fromEnv
+    : DEFAULT_APP_TIMEOUT_MS;
+}
+
+/** Give the backend's surfaces their own request deadlines (`denext dev` / `denext start`). */
+function setupDeadlines(
+  ctx: PluginContext,
+  surfaces: Omit<Parameters<typeof surfaceDeadlines>[0], "appTimeoutMs">,
+): void {
+  if (ctx.mode !== "dev" && ctx.mode !== "prod") return;
+  const deadlines = surfaceDeadlines({
+    ...surfaces,
+    appTimeoutMs: appTimeoutMs(ctx.config.requestTimeout),
+  });
+  if (deadlines.length > 0) {
+    ctx.addRequestHandler(deadlineHandler(deadlines, ctx.config.basePath ?? ""));
+  }
 }
 
 /** The default sqlite metadata file (no Postgres), relative to the project root. */
@@ -470,6 +498,13 @@ export function backend(options: BackendOptions = {}): DenextPlugin {
   return {
     name: "@denext/backend",
     async setup(ctx: PluginContext) {
+      // First, so it runs before the handler that answers the request.
+      setupDeadlines(ctx, {
+        functions,
+        rest,
+        storage: storageOptions !== undefined,
+        storageApiBase: apiBase,
+      });
       if (options.supabase) await setupSupabase(ctx, options.supabase);
       if (options.postgres) setupPostgres(ctx, options, rest, webhooks);
       if (options.postgres || options.storage) installDbHooksFor(ctx, options, webhooks);

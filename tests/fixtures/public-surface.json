@@ -1147,6 +1147,7 @@
     "sessionFromClaims:function",
     "setCacheStore:function",
     "setChannelTransport:function",
+    "setRequestTimeout:function",
     "signSupabaseJwt:function",
     "slack:function",
     "spMetadataXml:function",
