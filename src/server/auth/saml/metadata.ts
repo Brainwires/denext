@@ -31,6 +31,93 @@ function text(el: XmlElement): string {
   return out.trim();
 }
 
+/** An IdP's metadata, read: the IdP plus what the document says about itself. */
+export interface ParsedIdpMetadata extends SamlIdpConfig {
+  /** The NameID formats the IdP advertises. */
+  nameIdFormats: string[];
+  /**
+   * When the metadata stops being valid, epoch seconds: the earliest `validUntil` of the
+   * EntityDescriptor and an enclosing EntitiesDescriptor. Metadata past it must not be used.
+   */
+  validUntil?: number;
+  /**
+   * How long a fetched copy may be cached, seconds: the shortest `cacheDuration` of the
+   * EntityDescriptor and an enclosing EntitiesDescriptor.
+   */
+  cacheDuration?: number;
+}
+
+const DATE_TIME =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/;
+
+/** The time-zone offset of an `xs:dateTime`, minutes (`Z` = 0); out-of-range is garbage. */
+function zoneMinutes(zone: string): number {
+  if (zone === "Z") return 0;
+  const hours = Number(zone.slice(1, 3));
+  const minutes = Number(zone.slice(4, 6));
+  if (hours > 14 || minutes > 59 || (hours === 14 && minutes > 0)) badMetadata("bad time zone");
+  return (zone[0] === "-" ? -1 : 1) * (hours * 60 + minutes);
+}
+
+/**
+ * A metadata `validUntil` (`xs:dateTime` with a time zone), as epoch seconds.
+ *
+ * @param raw The attribute value.
+ * @returns Epoch seconds (fractions dropped).
+ * @throws {SamlError} `bad_metadata` for anything else.
+ */
+export function parseValidUntil(raw: string): number {
+  const m = DATE_TIME.exec(raw);
+  if (!m) badMetadata(`validUntil "${raw}" is not an xs:dateTime with a time zone`);
+  const [year, month, day, hour, minute, second] = m.slice(1, 7).map(Number);
+  const local = Date.UTC(year, month - 1, day, hour, minute, second);
+  const check = new Date(local);
+  if (
+    year < 1970 || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day ||
+    hour > 23 || minute > 59 || second > 59
+  ) {
+    badMetadata(`validUntil "${raw}" is not a valid time`);
+  }
+  return Math.floor(local / 1000) - zoneMinutes(m[8]) * 60;
+}
+
+const DURATION =
+  /^P(?:(\d{1,9})Y)?(?:(\d{1,9})M)?(?:(\d{1,9})D)?(?:T(?:(\d{1,9})H)?(?:(\d{1,9})M)?(?:(\d{1,9})(?:\.(\d{1,9}))?S)?)?$/;
+/** Seconds per unit: a year is 365 days and a month 30 (`xs:duration` has no fixed length). */
+const UNIT_SECONDS = [365 * 86400, 30 * 86400, 86400, 3600, 60, 1];
+
+/**
+ * A metadata `cacheDuration` (`xs:duration`: `PT6H`, `P1D`, `P1Y2M3DT4H5M6.5S`), as seconds.
+ * A negative duration, an empty one (`P`, `PT`) or anything else is garbage.
+ *
+ * @param raw The attribute value.
+ * @returns Whole seconds.
+ * @throws {SamlError} `bad_metadata`.
+ */
+export function parseCacheDuration(raw: string): number {
+  const m = DURATION.exec(raw);
+  if (!m || raw === "P" || raw.endsWith("T") || m.slice(1, 7).every((v) => v === undefined)) {
+    badMetadata(`cacheDuration "${raw}" is not a non-negative xs:duration`);
+  }
+  return m.slice(1, 7).reduce((sum, v, i) => sum + Number(v ?? 0) * UNIT_SECONDS[i], 0);
+}
+
+/** The earliest `validUntil` and the shortest `cacheDuration` over the given descriptors. */
+function validity(descriptors: XmlElement[]): { validUntil?: number; cacheDuration?: number } {
+  const out: { validUntil?: number; cacheDuration?: number } = {};
+  for (const el of descriptors) {
+    const until = attr(el, "validUntil");
+    if (until !== undefined) {
+      out.validUntil = Math.min(out.validUntil ?? Infinity, parseValidUntil(until));
+    }
+    const cache = attr(el, "cacheDuration");
+    if (cache !== undefined) {
+      out.cacheDuration = Math.min(out.cacheDuration ?? Infinity, parseCacheDuration(cache));
+    }
+  }
+  return out;
+}
+
 function idpDescriptor(root: XmlElement): { entity: XmlElement; idp: XmlElement } {
   let entities: XmlElement[];
   if (root.ns === MD_NS && root.local === "EntityDescriptor") entities = [root];
@@ -76,13 +163,19 @@ function signingCertificates(idp: XmlElement): string[] {
  * a URL you trust, or pin the certificate it yields.
  *
  * @param xml The metadata document.
+ * The document's own `validUntil` (an `xs:dateTime` with a time zone) and `cacheDuration` (an
+ * `xs:duration`) are read from the EntityDescriptor and an enclosing EntitiesDescriptor — the
+ * earliest `validUntil` and the shortest `cacheDuration` win; a malformed value refuses the
+ * metadata. Whether the metadata has expired is the caller's check (`validUntil`).
+ *
  * @returns The entity id, the HTTP-Redirect SSO URL, the HTTP-Redirect SingleLogoutService
  *   (when advertised), the signing certificates (bare base64 DER, those with a key type denext
- *   can verify) and the advertised NameID formats.
+ *   can verify), the advertised NameID formats, and `validUntil` / `cacheDuration` when given.
  * @throws {SamlError} `bad_metadata` (or `malformed_xml` / `doctype_forbidden`).
  */
-export function parseIdpMetadata(xml: string): SamlIdpConfig & { nameIdFormats: string[] } {
-  const { entity, idp } = idpDescriptor(parseXml(xml).root);
+export function parseIdpMetadata(xml: string): ParsedIdpMetadata {
+  const root = parseXml(xml).root;
+  const { entity, idp } = idpDescriptor(root);
   const entityId = attr(entity, "entityID");
   if (!entityId) badMetadata("EntityDescriptor has no entityID");
   const sso = childElements(idp, MD_NS, "SingleSignOnService")
@@ -92,11 +185,12 @@ export function parseIdpMetadata(xml: string): SamlIdpConfig & { nameIdFormats: 
   const certificates = signingCertificates(idp);
   if (!certificates.length) badMetadata("no usable signing certificate");
   const nameIdFormats = childElements(idp, MD_NS, "NameIDFormat").map(text).filter(Boolean);
-  const out: SamlIdpConfig & { nameIdFormats: string[] } = {
+  const out: ParsedIdpMetadata = {
     entityId,
     ssoUrl,
     certificates,
     nameIdFormats,
+    ...validity(root === entity ? [entity] : [root, entity]),
   };
   const slo = childElements(idp, MD_NS, "SingleLogoutService")
     .find((s) => attr(s, "Binding") === REDIRECT);

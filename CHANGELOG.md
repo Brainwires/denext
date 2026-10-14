@@ -44,6 +44,25 @@ and this project adheres to
   `requireReauthentication`, `manualLinking`, `mfa`, `saml`, `idTokenProviders`. Errors are
   GoTrue's `{ code, error_code, msg }`. Tested with `@supabase/supabase-js` on the in-memory
   adapter and on Postgres.
+- **SAML metadata validity, background refresh and `EncryptedID`.** IdP metadata's `validUntil`
+  and `cacheDuration` are parsed strictly (the earliest / shortest over the EntityDescriptor and
+  an enclosing EntitiesDescriptor; garbage is `bad_metadata`) and returned by `parseIdpMetadata`
+  (`ParsedIdpMetadata`). A `/auth/v1` provider — stored or config-declared — whose metadata is past
+  its `validUntil` fails closed: sign-in and IdP-initiated Single Logout answer 400
+  `saml_metadata_expired`, the ACS and an SP-initiated logout land with that `error_code`, and the
+  logger warns once per provider; the admin API refuses already-expired metadata. A stored
+  `metadata_url` is fetched again at the earliest of a day after the last fetch, its
+  `cacheDuration` and its `validUntil` (stored as `metadataValidUntil` / `metadataRefreshAfter`;
+  Postgres migration `0006_auth_sso_metadata_validity`, SQLite columns added in place); a failed
+  refresh keeps the stored copy only while it is valid. Metadata fetches are single-flight per
+  provider, at most one per five minutes, and back off after a failure (five minutes doubling to
+  an hour). `saml.metadataRefresh: { intervalSeconds }` refreshes due providers in the background
+  (unref'd, stopped at teardown), and `refreshSsoMetadata(config?, { force, jitterMs })` from
+  `denext/server` does it from a scheduled job and returns a summary. `saml:EncryptedID` is
+  accepted in an Assertion's Subject and in a LogoutRequest under the `EncryptedAssertion` rules
+  (algorithm allow-list, one EncryptedKey, strict content model, decrypted only after the covering
+  signature verified, exactly one `saml:NameID` inside, parsed strictly in the EncryptedID's
+  namespace context); without an SP decryption key it stays `encrypted_assertion_unsupported`.
 - **SAML SSO: stored providers, Single Logout and encrypted assertions for `/auth/v1`.** The SSO
   admin API (`GET/POST /auth/v1/admin/sso/providers`, `GET/PUT/DELETE …/:id`, service role only,
   GoTrue's `SSOProvider` shape and error codes) stores identity providers next to the

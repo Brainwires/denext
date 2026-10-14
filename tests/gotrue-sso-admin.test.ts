@@ -269,7 +269,8 @@ Deno.test("SSO admin: a provider registered by metadata URL, refreshed when stal
         // Age the stored copy: the next sign-in fetches again and uses the new metadata.
         const id = created.body.id;
         const record = (await adapter.getSsoProvider!(id))!;
-        await adapter.updateSsoProvider!({ ...record, updatedAt: record.updatedAt - 2 * 86_400 });
+        assertEquals(record.metadataRefreshAfter, record.updatedAt + 86_400);
+        await adapter.updateSsoProvider!({ ...record, metadataRefreshAfter: record.updatedAt - 1 });
         server.set(idp.metadataXml({ ssoUrl: "https://idp.example.org/sso-v2" }));
         assertMatch((await startSso(app, { domain: "url.test" })).json.url, /\/sso-v2\?/);
         assertEquals(server.hits, 2);
@@ -285,7 +286,7 @@ Deno.test("SSO admin: a provider registered by metadata URL, refreshed when stal
         )).body.id;
         server.set(declared.metadataXml());
         const r2 = (await adapter.getSsoProvider!(id2))!;
-        await adapter.updateSsoProvider!({ ...r2, updatedAt: r2.updatedAt - 2 * 86_400 });
+        await adapter.updateSsoProvider!({ ...r2, metadataRefreshAfter: r2.updatedAt - 1 });
         assertMatch(
           (await startSso(app, { domain: "url2.test" })).json.url,
           /^https:\/\/other-idp\.example\.net\/sso\?/,

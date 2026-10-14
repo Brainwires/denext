@@ -444,7 +444,7 @@ Deno.test("saml enc: the decrypted content goes through the strict parser", asyn
     await signedOuter((a) =>
       a.replace(/<saml:NameID[^>]*>[^<]*<\/saml:NameID>/, `<saml:EncryptedID/>`)
     ),
-    "encrypted_assertion_unsupported",
+    "malformed_response", // an EncryptedID is read by EncryptedAssertion's rules
   );
   await refused(
     await signedOuter((a) => a.replace("<saml:Issuer>", "<s:Issuer>")),

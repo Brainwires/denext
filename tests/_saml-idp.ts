@@ -5,6 +5,7 @@
 import { encode, marker, responseXml, rsaKey, sign, type TestKey } from "./_saml-helpers.ts";
 import {
   encryptAssertion,
+  encryptNameId,
   type EncryptOptions,
   logoutRequestXml,
   logoutResponseXml,
@@ -25,7 +26,9 @@ export interface TestIdp {
   key: TestKey;
   ssoUrl: string;
   sloUrl: string;
-  metadataXml(options?: { slo?: boolean; ssoUrl?: string }): string;
+  metadataXml(
+    options?: { slo?: boolean; ssoUrl?: string; validUntil?: string; cacheDuration?: string },
+  ): string;
   /** A signed SAMLResponse (base64) answering `inResponseTo`. */
   response(options: {
     inResponseTo: string | null;
@@ -34,6 +37,8 @@ export interface TestIdp {
     attributes?: Record<string, string[]>;
     encryptTo?: SpKey;
     encrypt?: EncryptOptions;
+    /** Carry the NameID in an EncryptedID to this SP key. */
+    encryptNameIdTo?: SpKey;
   }): Promise<string>;
   /** A LogoutRequest signed over the HTTP-Redirect binding (the query string). */
   logoutRequestQuery(
@@ -68,7 +73,9 @@ export async function testIdp(entityId = "https://idp.example.org/metadata"): Pr
         ? ""
         : `<md:SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="${sloUrl}"/>`;
       return `<?xml version="1.0"?>
-<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" entityID="${entityId}">
+<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" entityID="${entityId}"${
+        options.validUntil ? ` validUntil="${options.validUntil}"` : ""
+      }${options.cacheDuration ? ` cacheDuration="${options.cacheDuration}"` : ""}>
   <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
     <md:KeyDescriptor use="signing"><ds:KeyInfo><ds:X509Data><ds:X509Certificate>${key.certificate}</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor>${slo}
     <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="${
@@ -108,6 +115,13 @@ export async function testIdp(entityId = "https://idp.example.org/metadata"): Pr
         `SessionIndex="_session1"`,
         `SessionIndex="${options.sessionIndex ?? "_session1"}"`,
       );
+      if (options.encryptNameIdTo) {
+        const nameId = /<saml:NameID[^>]*>[^<]*<\/saml:NameID>/;
+        xml = xml.replace(
+          nameId,
+          await encryptNameId(xml.match(nameId)![0], options.encryptNameIdTo),
+        );
+      }
       xml = await sign(xml, id, { key });
       if (options.encryptTo) {
         const open = xml.indexOf("<saml:Assertion");

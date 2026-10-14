@@ -10,7 +10,7 @@ import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
 import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp } from "./_supabase-auth-app.ts";
 import { ACS, requestIdOf, SLO, testIdp } from "./_saml-idp.ts";
-import { inflateParam, spKey, verifySpRedirect } from "./_saml-enc-helpers.ts";
+import { encryptNameId, inflateParam, spKey, verifySpRedirect } from "./_saml-enc-helpers.ts";
 
 const idp = await testIdp();
 const signing = await spKey();
@@ -53,7 +53,7 @@ async function login(
   app: SupabaseAuthApp,
   nameId: string,
   sessionIndex: string,
-  encrypt = false,
+  encrypt: boolean | "nameId" = false,
 ): Promise<string> {
   const started = await (await app.fetch(`${ORIGIN}/auth/v1/sso`, {
     method: "POST",
@@ -68,7 +68,8 @@ async function login(
         inResponseTo: await requestIdOf(started.url),
         nameId,
         sessionIndex,
-        ...(encrypt ? { encryptTo: encryption } : {}),
+        ...(encrypt === true ? { encryptTo: encryption } : {}),
+        ...(encrypt === "nameId" ? { encryptNameIdTo: encryption } : {}),
       }),
       RelayState: new URL(started.url).searchParams.get("RelayState")!,
     }),
@@ -319,5 +320,28 @@ Deno.test("SLO: a PKCE login keeps its SAML origin for Single Logout", async () 
     )
       .then((r) => r.body?.cancel());
     assertEquals(await alive(app, session.access_token), false);
+  });
+});
+
+Deno.test("SLO: an EncryptedID signs in, and an IdP LogoutRequest's EncryptedID logs out", async () => {
+  await withSlo(async (app) => {
+    const token = await login(app, "carol@example.com", "_e1", "nameId");
+    const user = await (await app.fetch(`${ORIGIN}/auth/v1/user`, { headers: authed(app, token) }))
+      .json();
+    assertEquals(user.email, "carol@example.com");
+    const nameIdElement = await encryptNameId(
+      `<saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">carol@example.com</saml:NameID>`,
+      encryption,
+    );
+    const posted = await app.fetch(SLO, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        SAMLRequest: await idp.logoutRequestPost({ nameIdElement, sessionIndexes: ["_e1"] }),
+      }),
+      redirect: "manual",
+    });
+    assertEquals(posted.status, 303);
+    assertEquals(await alive(app, token), false);
   });
 });

@@ -28,6 +28,7 @@ import { slo } from "./routes-slo.ts";
 import * as clientRoutes from "./routes-oauth-clients.ts";
 import * as oauthServerRoutes from "./routes-oauth-server.ts";
 import * as customProviderRoutes from "./custom-providers.ts";
+import { startSsoMetadataRefresh, stopSsoMetadataRefresh } from "./sso-refresh.ts";
 
 /** How one route is reached. */
 interface Route {
@@ -477,16 +478,19 @@ export async function handleGoTrueRequest(
 
 /**
  * Mount the `/auth/v1` flows that finish outside its own paths — an OAuth callback arrives at
- * denext's `{basePath}/callback/:provider` — or remove them with `undefined`.
- * `backend({ supabase })` calls it at setup.
+ * denext's `{basePath}/callback/:provider` — and start the background SAML metadata refresh
+ * (`saml.metadataRefresh`), or remove them with `undefined`. `backend({ supabase })` calls it at
+ * setup and with `undefined` at teardown.
  *
  * @param handler The options and keys, or `undefined`.
  */
 export function installGoTrue(handler: GoTrueHandlerOptions | undefined): void {
   if (!handler) {
     setGoTrueOAuthCallback(undefined);
+    stopSsoMetadataRefresh();
     return;
   }
+  startSsoMetadataRefresh(handler.options, handler.config);
   setGoTrueOAuthCallback(oauthRoutes.gotrueOAuthCallback({
     session: (request, config) => {
       const origin = new URL(absoluteUrl(request, "/", { canonicalOrigin: config.canonicalOrigin }))

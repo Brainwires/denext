@@ -7,6 +7,10 @@
   id_token / PKCE sign-in, user updates, MFA factors, identities, SAML SSO, the admin API), so the
   stock supabase-js `supabase.auth.*` works unchanged.
 
+- **SAML metadata freshness.** `backend({ supabase: { auth: { saml: { metadataRefresh } } } })`
+  refreshes stored SAML metadata URLs in the background (stopped when the plugin tears down);
+  metadata past its `validUntil` is refused, and an `EncryptedID` NameID is accepted.
+
 - **Storage versioning, `listV2`, signed TUS, streamed forms.** Supabase-style object versioning
   (noncurrent versions, delete markers, `versionId` reads and deletes, restore by copy, lifecycle
   policies; migration `backend_storage_0002`), cursor-paged `listV2`, TUS uploads authorized by a

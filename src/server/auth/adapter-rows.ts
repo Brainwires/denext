@@ -369,6 +369,8 @@ export const SSO_PROVIDER_MAP: FieldMap<SsoProviderRecord> = {
   entityId: ["entity_id", TEXT],
   metadataXml: ["metadata_xml", TEXT],
   metadataUrl: ["metadata_url", TEXT],
+  metadataValidUntil: ["metadata_valid_until", INT],
+  metadataRefreshAfter: ["metadata_refresh_after", INT],
   attributeMapping: ["attribute_mapping", OBJECT],
   nameIdFormat: ["name_id_format", TEXT],
   createdAt: ["created_at", INT],

@@ -654,6 +654,12 @@ export { bearerTokenOf } from "./auth/bearer-header.ts";
 // The GoTrue-compatible `/auth/v1` API (`backend({ supabase })` mounts it).
 export { handleGoTrueRequest, installGoTrue } from "./auth/gotrue/handler.ts";
 export type { GoTrueHandlerOptions } from "./auth/gotrue/handler.ts";
+export { refreshSsoMetadata } from "./auth/gotrue/sso-refresh.ts";
+export type {
+  RefreshSsoMetadataOptions,
+  SsoMetadataRefreshSummary,
+} from "./auth/gotrue/sso-refresh.ts";
+export type { RefreshOutcome } from "./auth/gotrue/sso-metadata.ts";
 export { GoTrueError } from "./auth/gotrue/errors.ts";
 export type { GoTrueErrorCode } from "./auth/gotrue/errors.ts";
 export type {
@@ -698,6 +704,7 @@ export type {
   BuildAuthnRequestOptions,
   BuildLogoutRequestOptions,
   BuildLogoutResponseOptions,
+  ParsedIdpMetadata,
   PeekedLogoutMessage,
   SamlBindingInput,
   SamlErrorCode,

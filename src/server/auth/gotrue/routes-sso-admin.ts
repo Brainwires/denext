@@ -10,14 +10,19 @@
  */
 
 import type { SsoAttributeMapping, SsoAttributeMappingKey, SsoProviderRecord } from "../adapter.ts";
+import type { ParsedIdpMetadata } from "../saml/mod.ts";
 import { SamlError } from "../saml/errors.ts";
 import { type GoTrueContext, nowSeconds, ok, readJson, str } from "./context.ts";
 import { fail, GoTrueError } from "./errors.ts";
 import {
   checkMetadataUrl,
-  configProviders,
   fetchMetadata,
   idpFromMetadata,
+  metadataExpired,
+  withValidity,
+} from "./sso-metadata.ts";
+import {
+  configProviders,
   providerNotFound,
   samlOptions,
   type SsoAdapter,
@@ -123,12 +128,22 @@ function readNameIdFormat(body: Record<string, unknown>): string | undefined {
   return format;
 }
 
-/** The metadata a body names (fetched for a URL), with its entity id; `undefined` when none. */
+/** Metadata a body named: the document, its URL and the parsed IdP. */
+interface BodyMetadata {
+  xml: string;
+  url?: string;
+  idp: ParsedIdpMetadata;
+}
+
+/**
+ * The metadata a body names (fetched for a URL), parsed; `undefined` when none. Metadata past
+ * its `validUntil` is refused.
+ */
 async function readMetadata(
   ctx: GoTrueContext,
   body: Record<string, unknown>,
   required: boolean,
-): Promise<{ xml: string; url?: string; entityId: string } | undefined> {
+): Promise<BodyMetadata | undefined> {
   const xml = str(body, "metadata_xml");
   const url = str(body, "metadata_url");
   if (xml && url) throw fail.validation("Only one of metadata_xml or metadata_url needs to be set");
@@ -137,13 +152,15 @@ async function readMetadata(
     return undefined;
   }
   const document = url ? await fetchMetadata(ctx, checkMetadataUrl(ctx, url)) : xml!;
+  let idp: ParsedIdpMetadata;
   try {
-    const { entityId } = idpFromMetadata(document);
-    return { xml: document, entityId, ...(url ? { url } : {}) };
+    idp = idpFromMetadata(document);
   } catch (error) {
     const code = error instanceof SamlError ? error.code : "bad_metadata";
     throw fail.validation(`SAML metadata is invalid (${code})`);
   }
+  if (metadataExpired(idp)) throw fail.validation("SAML metadata has expired (validUntil)");
+  return { xml: document, idp, ...(url ? { url } : {}) };
 }
 
 /** A config-declared provider already holds this entity id or one of these domains. */
@@ -199,11 +216,11 @@ export async function create(ctx: GoTrueContext): Promise<Response> {
   const mapping = readMapping(body);
   const nameIdFormat = readNameIdFormat(body);
   const metadata = (await readMetadata(ctx, body, true))!;
-  checkConfigConflicts(ctx, metadata.entityId, domains);
+  checkConfigConflicts(ctx, metadata.idp.entityId, domains);
   const at = nowSeconds();
-  const record: SsoProviderRecord = {
+  let record: SsoProviderRecord = {
     id: crypto.randomUUID(),
-    entityId: metadata.entityId,
+    entityId: metadata.idp.entityId,
     metadataXml: metadata.xml,
     domains,
     createdAt: at,
@@ -212,6 +229,7 @@ export async function create(ctx: GoTrueContext): Promise<Response> {
   if (metadata.url) record.metadataUrl = metadata.url;
   if (mapping) record.attributeMapping = mapping;
   if (nameIdFormat) record.nameIdFormat = nameIdFormat;
+  record = withValidity(record, metadata.idp, at);
   written(await adapter.createSsoProvider(record), record);
   return ok(providerJson(record), 201);
 }
@@ -235,10 +253,10 @@ async function updated(
   body: Record<string, unknown>,
   record: SsoProviderRecord,
 ): Promise<SsoProviderRecord> {
-  const next: SsoProviderRecord = { ...record, updatedAt: nowSeconds() };
+  let next: SsoProviderRecord = { ...record, updatedAt: nowSeconds() };
   const metadata = await readMetadata(ctx, body, false);
   if (metadata) {
-    if (metadata.entityId !== record.entityId) {
+    if (metadata.idp.entityId !== record.entityId) {
       throw new GoTrueError(
         400,
         "saml_entity_id_mismatch",
@@ -248,6 +266,7 @@ async function updated(
     next.metadataXml = metadata.xml;
     if (metadata.url) next.metadataUrl = metadata.url;
     else delete next.metadataUrl;
+    next = withValidity(next, metadata.idp, next.updatedAt);
   }
   const domains = readDomains(body);
   if (domains) next.domains = domains;

@@ -51,6 +51,7 @@ export type GoTrueErrorCode =
   | "same_password"
   | "saml_entity_id_mismatch"
   | "saml_idp_already_exists"
+  | "saml_metadata_expired"
   | "saml_metadata_fetch_failed"
   | "saml_provider_disabled"
   | "session_not_found"

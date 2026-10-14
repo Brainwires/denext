@@ -32,7 +32,8 @@ import {
   statusOf,
   textOnly,
 } from "./common.ts";
-import { decryptAssertion, readEncryptedAssertion } from "./xmlenc.ts";
+import { decryptElement, readEncryptedElement } from "./xmlenc.ts";
+import { soleNameId } from "./encrypted-id.ts";
 
 const BEARER = "urn:oasis:names:tc:SAML:2.0:cm:bearer";
 
@@ -246,8 +247,22 @@ function checkStatus(response: XmlElement): void {
 type Located = { encrypted: false; el: XmlElement } | { encrypted: true; el: XmlElement };
 
 /**
+ * An EncryptedID is read only as the identifier of an Assertion's Subject, and only with an SP
+ * decryption key; anywhere else (a SubjectConfirmation, an attribute, the Response) it is refused.
+ */
+function checkEncryptedId(el: XmlElement, canDecrypt: boolean): void {
+  const subject = el.parent;
+  const placed = subject?.ns === SAML_NS && subject.local === "Subject" &&
+    subject.parent?.ns === SAML_NS && subject.parent.local === "Assertion";
+  if (!canDecrypt || !placed) {
+    refuse("encrypted_assertion_unsupported", "<EncryptedID> is not supported here");
+  }
+}
+
+/**
  * Exactly one Assertion or EncryptedAssertion in the whole document, a direct child of the
- * Response; never an EncryptedID; an EncryptedAssertion only when a decryption key is set.
+ * Response; an EncryptedAssertion, or an EncryptedID in the Assertion's Subject, only when a
+ * decryption key is set.
  */
 function soleAssertion(
   elements: XmlElement[],
@@ -257,7 +272,8 @@ function soleAssertion(
   const found: Located[] = [];
   for (const el of elements) {
     if (el.ns !== SAML_NS) continue;
-    if (el.local === "EncryptedID" || (el.local === "EncryptedAssertion" && !canDecrypt)) {
+    if (el.local === "EncryptedID") checkEncryptedId(el, canDecrypt);
+    if (el.local === "EncryptedAssertion" && !canDecrypt) {
       refuse("encrypted_assertion_unsupported", `<${el.local}> is not supported`);
     }
     if (el.local === "Assertion") found.push({ encrypted: false, el });
@@ -278,15 +294,17 @@ function soleAssertion(
  * Verify an HTTP-POST-binding SAML 2.0 Response and return its Assertion's claims.
  *
  * Checks, in order: well-formed strict XML (no DOCTYPE); a samlp:Response root with status
- * Success; no EncryptedID and exactly one Assertion or EncryptedAssertion in the whole document,
- * a direct child of the Response; unique IDs; the Response signature, when present, BEFORE
+ * Success; exactly one Assertion or EncryptedAssertion in the whole document, a direct child of
+ * the Response, and an EncryptedID only as its Subject's identifier; unique IDs; the Response signature, when present, BEFORE
  * anything is decrypted (so it covers the cipher text); an EncryptedAssertion decrypted with
  * `sp.encryptionKey` and its content parsed by the same strict parser (no DOCTYPE, exactly one
  * Assertion, IDs unique across the outer document and the decrypted one); every signature
  * present verifies with a configured certificate and at least one is present (the Assertion's
  * when `requireSignedAssertion`); Destination; Issuers; a bearer SubjectConfirmation for this
- * ACS URL; Conditions and AudienceRestriction; the AuthnStatement session window; InResponseTo;
- * and finally the replay cache. Claims are read only from the verified element objects.
+ * ACS URL; the Subject's one NameID or EncryptedID (decrypted only now, after the signature
+ * over it verified, by the same rules as an EncryptedAssertion); Conditions and
+ * AudienceRestriction; the AuthnStatement session window; InResponseTo; and finally the replay
+ * cache. Claims are read only from the verified element objects.
  *
  * @throws {SamlError} With a stable `code` naming the first failed check.
  */
@@ -307,7 +325,7 @@ export async function verifySamlResponse(
   const located = soleAssertion(doc.elements, response, !!options.sp.encryptionKey);
   const { assertion, responseSigned } = await verifySignatures(doc, response, located, options);
   checkEnvelope(response, responseSigned, options);
-  const claims = readAssertion(assertion, options, clock);
+  const claims = await readAssertion(assertion, options, clock);
   const inResponseTo = answeredRequest(response, responseSigned, claims.confirmation);
   checkInResponseTo(inResponseTo, options);
   const attributes = readAttributes(assertion);
@@ -401,9 +419,9 @@ async function openEncrypted(
   responseSigned: boolean,
   options: VerifySamlResponseOptions,
 ): Promise<XmlElement> {
-  const parts = readEncryptedAssertion(container);
+  const parts = readEncryptedElement(container);
   const open = async () => {
-    const bytes = await decryptAssertion(parts, options.sp.encryptionKey!);
+    const bytes = await decryptElement(parts, options.sp.encryptionKey!);
     const inner = parseXml(bytes, { inScope: inScopeNamespaces(container) });
     const assertion = decryptedAssertion(inner);
     const ids = indexIds({ root: doc.root, elements: [...doc.elements, ...inner.elements] });
@@ -431,9 +449,7 @@ function decryptedAssertion(inner: XmlDocument): XmlElement {
     if (el.local === "Assertion" || el.local === "EncryptedAssertion") {
       refuse("multiple_assertions", "the decrypted Assertion holds another assertion");
     }
-    if (el.local === "EncryptedID") {
-      refuse("encrypted_assertion_unsupported", "<EncryptedID> is not supported");
-    }
+    if (el.local === "EncryptedID") checkEncryptedId(el, true);
   }
   return root;
 }
@@ -463,11 +479,11 @@ interface AssertionClaims {
 }
 
 /** Every check on the (verified) Assertion element itself. */
-function readAssertion(
+async function readAssertion(
   assertion: XmlElement,
   options: VerifySamlResponseOptions,
   clock: Clock,
-): AssertionClaims {
+): Promise<AssertionClaims> {
   if (attr(assertion, "Version") !== "2.0") malformed("the Assertion is not SAML 2.0");
   const assertionId = attr(assertion, "ID");
   if (!assertionId) malformed("the Assertion has no ID");
@@ -477,7 +493,8 @@ function readAssertion(
   checkWindow(clock, issueInstant);
 
   const subject = single(assertion, SAML_NS, "Subject", true);
-  const nameIdEl = single(subject, SAML_NS, "NameID", true);
+  // Signatures have verified (verifySignatures requires one), so they cover an EncryptedID.
+  const nameIdEl = await soleNameId(subject, options.sp.encryptionKey, true);
   const nameId = textOnly(nameIdEl);
   if (!nameId) malformed("empty NameID");
   const confirmation = bearerConfirmation(subject, options.sp, clock);

@@ -813,6 +813,24 @@ const SSO_CASES: Record<string, Case> = {
     assertEquals(await adapter.getSsoProviderByDomain!("c.test"), undefined);
     assertEquals((await adapter.listSsoProviders!()).map((p) => p.id), ["p2"]);
   },
+  "SSO providers: the metadata validity round-trips, and is cleared by a replace": async (
+    adapter,
+  ) => {
+    const record = {
+      ...ssoProvider("pv", "https://idp-v", ["v.test"]),
+      metadataUrl: "https://idp-v/metadata",
+      metadataValidUntil: at(86_400),
+      metadataRefreshAfter: at(3600),
+    };
+    assertEquals(await adapter.createSsoProvider!(record), "ok");
+    assertEquals(await adapter.getSsoProvider!("pv"), record);
+    const next = { ...record, metadataRefreshAfter: at(7200) };
+    assertEquals(await adapter.updateSsoProvider!(next), "ok");
+    assertEquals((await adapter.listSsoProviders!()).find((p) => p.id === "pv"), next);
+    const { metadataValidUntil: _v, metadataRefreshAfter: _r, ...inline } = next;
+    assertEquals(await adapter.updateSsoProvider!(inline), "ok");
+    assertEquals(await adapter.getSsoProvider!("pv"), inline);
+  },
   "SSO providers: entity ids and domains are unique across providers": async (adapter) => {
     assertEquals(
       await adapter.createSsoProvider!(ssoProvider("p1", "https://idp", ["a.test"])),

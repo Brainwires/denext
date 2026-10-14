@@ -226,6 +226,8 @@ export interface LogoutFields {
   status: string;
   /** The signature marker (`{{sig:ID}}`) or "". */
   sig: string;
+  /** Markup in place of the `saml:NameID` element (an EncryptedID). */
+  nameIdElement?: string;
   extra: string;
 }
 
@@ -256,7 +258,8 @@ export function logoutRequestXml(over: Partial<LogoutFields> = {}): string {
     opt("Destination", f.destination)
   }${opt("NotOnOrAfter", f.notOnOrAfter)}>` +
     (f.issuer === null ? "" : `<saml:Issuer>${f.issuer}</saml:Issuer>`) + f.sig +
-    `<saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">${f.nameId}</saml:NameID>` +
+    (f.nameIdElement ??
+      `<saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">${f.nameId}</saml:NameID>`) +
     f.sessionIndexes.map((s) => `<samlp:SessionIndex>${s}</samlp:SessionIndex>`).join("") +
     f.extra + `</samlp:LogoutRequest>`;
 }
@@ -304,4 +307,16 @@ export async function verifySpRedirect(url: string, spki: Uint8Array<ArrayBuffer
     sig,
     new TextEncoder().encode(octets),
   );
+}
+
+/** A `<saml:EncryptedID>` holding `nameIdXml`, encrypted to the SP key (same options). */
+export async function encryptNameId(
+  nameIdXml: string,
+  sp: SpKey,
+  options: EncryptOptions = {},
+): Promise<string> {
+  const wrapped = await encryptAssertion(nameIdXml, sp, options);
+  return `<saml:EncryptedID>${
+    wrapped.slice("<saml:EncryptedAssertion>".length, -"</saml:EncryptedAssertion>".length)
+  }</saml:EncryptedID>`;
 }

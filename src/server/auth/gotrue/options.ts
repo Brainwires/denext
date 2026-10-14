@@ -193,6 +193,15 @@ export interface GoTrueSamlOptions {
   encryptionKey?: SamlPrivateKey;
   /** The X.509 certificate (PEM) of {@linkcode encryptionKey}, published `use="encryption"`. */
   encryptionCertificate?: string;
+  /**
+   * Refresh the metadata of stored providers registered by `metadata_url` in the background:
+   * every `intervalSeconds` (default 900, at least 60) each provider whose refresh is due (a
+   * day after the last fetch, or sooner by the metadata's `cacheDuration` / `validUntil`) is
+   * fetched again, one at a time with jitter; failures are logged, never thrown. Default `false`:
+   * a due provider is fetched again when it is next used. `refreshSsoMetadata()` from a
+   * scheduled job does the same on your own schedule.
+   */
+  metadataRefresh?: { intervalSeconds?: number } | false;
 }
 
 /** {@linkcode GoTrueOptions.oauthServer}. */

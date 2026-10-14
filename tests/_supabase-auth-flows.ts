@@ -18,6 +18,7 @@ import {
   ORIGIN,
   type SupabaseAuthApp,
   supabaseAuthApp,
+  type SupabaseClient,
   totpCode,
 } from "./_supabase-auth-app.ts";
 import { ACS, requestIdOf, testIdp } from "./_saml-idp.ts";
@@ -25,6 +26,41 @@ import { spKey } from "./_saml-enc-helpers.ts";
 
 const ssoIdp = await testIdp();
 const ssoSigning = await spKey();
+const ssoEncryption = await spKey();
+const staleIdp = await testIdp("https://stale-idp.example.net/metadata");
+
+/** signInWithSSO, the IdP's Response at the ACS, then setSession from the landing fragment. */
+async function ssoSignIn(
+  app: SupabaseAuthApp,
+  client: SupabaseClient,
+  target: { domain: string } | { providerId: string },
+  response: Omit<Parameters<typeof ssoIdp.response>[0], "inResponseTo">,
+) {
+  const { data, error } = await client.auth.signInWithSSO({
+    ...target,
+    options: { redirectTo: `${ORIGIN}/in`, skipBrowserRedirect: true },
+  });
+  assertEquals(error, null);
+  const landing = await app.fetch(ACS, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      SAMLResponse: await ssoIdp.response({
+        inResponseTo: await requestIdOf(data.url),
+        ...response,
+      }),
+      RelayState: new URL(data.url).searchParams.get("RelayState")!,
+    }),
+    redirect: "manual",
+  });
+  const fragment = new URLSearchParams(new URL(landing.headers.get("location")!).hash.slice(1));
+  const set = await client.auth.setSession({
+    access_token: fragment.get("access_token")!,
+    refresh_token: fragment.get("refresh_token")!,
+  });
+  assertEquals(set.error, null);
+  return { fragment, set };
+}
 
 type Step = (app: SupabaseAuthApp) => Promise<void>;
 
@@ -552,31 +588,11 @@ const FLOWS: Array<[string, Step, GoTrueOptions?, Partial<AuthConfig>?]> = [
     });
     assertEquals(created.status, 201);
     const client = app.client();
-    const { data, error } = await client.auth.signInWithSSO({
-      domain: "sso.test",
-      options: { redirectTo: `${ORIGIN}/in`, skipBrowserRedirect: true },
+    const { fragment, set } = await ssoSignIn(app, client, { domain: "sso.test" }, {
+      nameId: "sam@sso.test",
+      sessionIndex: "_sso1",
+      attributes: { displayName: ["Sam"] },
     });
-    assertEquals(error, null);
-    const landing = await app.fetch(ACS, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        SAMLResponse: await ssoIdp.response({
-          inResponseTo: await requestIdOf(data.url),
-          nameId: "sam@sso.test",
-          sessionIndex: "_sso1",
-          attributes: { displayName: ["Sam"] },
-        }),
-        RelayState: new URL(data.url).searchParams.get("RelayState")!,
-      }),
-      redirect: "manual",
-    });
-    const fragment = new URLSearchParams(new URL(landing.headers.get("location")!).hash.slice(1));
-    const set = await client.auth.setSession({
-      access_token: fragment.get("access_token")!,
-      refresh_token: fragment.get("refresh_token")!,
-    });
-    assertEquals(set.error, null);
     assertEquals(set.data.user.email, "sam@sso.test");
     assertEquals(set.data.user.user_metadata.name, "Sam");
     assertEquals(claimsOf(fragment.get("access_token")!).amr, [
@@ -592,6 +608,29 @@ const FLOWS: Array<[string, Step, GoTrueOptions?, Partial<AuthConfig>?]> = [
     const after = await client.auth.getUser(fragment.get("access_token")!);
     assertNotEquals(after.error, null);
   }, { saml: { signingKey: ssoSigning.pem, signingCertificate: ssoSigning.certificate } }],
+  ["SAML SSO: an EncryptedID signs in; expired metadata is an AuthApiError", async (app) => {
+    const client = app.client();
+    const expired = await client.auth.signInWithSSO({ providerId: "stale" });
+    assertEquals(expired.error?.status, 400);
+    assertEquals(expired.error?.code, "saml_metadata_expired");
+    const { set } = await ssoSignIn(app, client, { providerId: "enc" }, {
+      nameId: "enid@sso-enc.test",
+      encryptNameIdTo: ssoEncryption,
+    });
+    assertEquals(set.data.user.email, "enid@sso-enc.test");
+  }, {
+    saml: {
+      encryptionKey: ssoEncryption.pem,
+      encryptionCertificate: ssoEncryption.certificate,
+      providers: [
+        { id: "enc", domains: ["sso-enc.test"], metadataXml: ssoIdp.metadataXml() },
+        {
+          id: "stale",
+          metadataXml: staleIdp.metadataXml({ validUntil: "2020-01-01T00:00:00Z" }),
+        },
+      ],
+    },
+  }],
   ["custom access token hook and captcha", async (app) => {
     await app.admin().auth.admin.createUser({
       email: "hook@example.com",

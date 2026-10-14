@@ -13,6 +13,7 @@ export type { SamlIdpConfig, SamlPrivateKey, SamlSpConfig } from "./config.ts";
 export { SamlError } from "./errors.ts";
 export type { SamlErrorCode } from "./errors.ts";
 export { parseIdpMetadata, spMetadataXml } from "./metadata.ts";
+export type { ParsedIdpMetadata } from "./metadata.ts";
 export { buildAuthnRequest } from "./request.ts";
 export type { BuildAuthnRequestOptions } from "./request.ts";
 export { inMemorySamlReplayCache, verifySamlResponse } from "./response.ts";

@@ -26,15 +26,16 @@ export type SamlErrorCode =
   /** The document holds more than one Assertion element anywhere. */
   | "multiple_assertions"
   /**
-   * The message carries an EncryptedAssertion but no SP decryption key is configured, or it
-   * carries an EncryptedID (never supported).
+   * The message carries an EncryptedAssertion or an EncryptedID but no SP decryption key is
+   * configured, or an EncryptedID somewhere other than an Assertion's Subject or a
+   * LogoutRequest's identifier.
    */
   | "encrypted_assertion_unsupported"
   /**
-   * An encrypted assertion could not be decrypted into one well-formed, verified Assertion.
-   * Every failure from key unwrapping to the decrypted Assertion's own signature answers with
-   * this one code when the ciphertext is not covered by a verified Response signature, so the
-   * refusal is no decryption (padding / format) oracle.
+   * An EncryptedAssertion (or EncryptedID) could not be decrypted into one well-formed, verified
+   * Assertion (or NameID). Every failure from key unwrapping to the decrypted Assertion's own
+   * signature answers with this one code when the ciphertext is not covered by a verified
+   * signature, so the refusal is no decryption (padding / format) oracle.
    */
   | "decryption_failed"
   /** The Response's top-level StatusCode is not `…:status:Success`. */
@@ -63,7 +64,10 @@ export type SamlErrorCode =
   | "unsupported_algorithm"
   /** A configured certificate cannot be parsed or carries an unsupported key type. */
   | "bad_certificate"
-  /** IdP metadata is missing the entity id, the redirect SSO endpoint or a signing certificate. */
+  /**
+   * IdP metadata is missing the entity id, the redirect SSO endpoint or a signing certificate,
+   * or carries a malformed `validUntil` / `cacheDuration`.
+   */
   | "bad_metadata"
   /** A configured SP private key (or its certificate) cannot be used. */
   | "bad_key"

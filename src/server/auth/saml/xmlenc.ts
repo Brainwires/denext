@@ -1,17 +1,18 @@
 /**
- * XML Encryption for a SAML `EncryptedAssertion`, restricted to what SAML IdPs use.
+ * XML Encryption for a SAML `EncryptedAssertion` or `EncryptedID`, restricted to what SAML IdPs
+ * use.
  *
  * Allowed: key transport RSA-OAEP (`xmlenc#rsa-oaep-mgf1p` — SHA-1; `xmlenc11#rsa-oaep` — SHA-1
  * or SHA-256, its MGF1 digest equal to the OAEP digest, no OAEPparams); content AES-128/256-GCM
  * (`xmlenc11#aes*-gcm`) and AES-128/256-CBC (`xmlenc#aes*-cbc`). Exactly one EncryptedKey (in
- * the EncryptedData's KeyInfo, or a sibling of it inside the EncryptedAssertion); the cipher
+ * the EncryptedData's KeyInfo, or a sibling of it inside the EncryptedAssertion / EncryptedID); the cipher
  * text inline (`CipherValue`, never a `CipherReference`). Everything else is refused before any
  * key is touched.
  *
  * Decryption yields bytes only: the caller parses them with the strict parser and verifies them
- * exactly like a plaintext Assertion. Encryption is not integrity — anyone holding the SP's
- * public certificate can encrypt — so a decrypted Assertion is trusted only through a signature
- * (the Response's, verified BEFORE decrypting, or the Assertion's own).
+ * exactly like plaintext. Encryption is not integrity — anyone holding the SP's public
+ * certificate can encrypt — so decrypted content is trusted only through a signature verified
+ * BEFORE decrypting (the Response's or LogoutRequest's over the cipher text, or the Assertion's).
  *
  * @module
  */
@@ -50,11 +51,11 @@ const MGF_DIGESTS: Record<string, "SHA-1" | "SHA-256"> = {
   [`${XENC11_NS}mgf1sha256`]: "SHA-256",
 };
 
-/** An EncryptedAssertion, read and checked — nothing decrypted yet. */
+/** An EncryptedAssertion or EncryptedID, read and checked — nothing decrypted yet. */
 export interface EncryptedParts {
   /** The content algorithm. */
   content: ContentAlgorithm;
-  /** IV + cipher text (+ tag) of the Assertion. */
+  /** IV + cipher text (+ tag) of the element. */
   cipherText: Uint8Array<ArrayBuffer>;
   /** The RSA-OAEP digest the content key was wrapped with. */
   oaepHash: "SHA-1" | "SHA-256";
@@ -176,17 +177,18 @@ function encryptedKey(container: XmlElement, data: XmlElement): XmlElement {
 }
 
 /**
- * Read an EncryptedAssertion's structure and algorithms. Pure parsing: no key is used, so
- * its refusals depend only on the (attacker-visible) markup.
+ * Read an EncryptedAssertion's or EncryptedID's structure and algorithms (the same content
+ * model: one EncryptedData, EncryptedKeys beside it). Pure parsing: no key is used, so its
+ * refusals depend only on the (attacker-visible) markup.
  *
- * @param container The `saml:EncryptedAssertion` element.
+ * @param container The `saml:EncryptedAssertion` / `saml:EncryptedID` element.
  * @throws {SamlError} `malformed_response` or `unsupported_algorithm`.
  */
-export function readEncryptedAssertion(container: XmlElement): EncryptedParts {
+export function readEncryptedElement(container: XmlElement): EncryptedParts {
   const children = elementsOf(container);
   const data = children.filter((c) => isXenc(c, "EncryptedData"));
   const stray = children.find((c) => !isXenc(c, "EncryptedData") && !isXenc(c, "EncryptedKey"));
-  if (data.length !== 1 || stray) malformed("EncryptedAssertion must hold one EncryptedData");
+  if (data.length !== 1 || stray) malformed(`${container.local} must hold one EncryptedData`);
   checkChildren(data[0], DATA_CHILDREN);
   const type = attr(data[0], "Type");
   if (type !== undefined && type !== ELEMENT_TYPE) unsupported(`EncryptedData Type ${type}`);
@@ -205,7 +207,7 @@ export function readEncryptedAssertion(container: XmlElement): EncryptedParts {
 }
 
 function failed(): never {
-  throw new SamlError("decryption_failed", "the encrypted assertion could not be decrypted");
+  throw new SamlError("decryption_failed", "the encrypted content could not be decrypted");
 }
 
 /**
@@ -269,15 +271,15 @@ async function decryptContent(
 }
 
 /**
- * Decrypt an EncryptedAssertion's content with the SP key. Every failure — the key unwrap, the
- * content key length, a GCM tag, CBC padding — is the one `decryption_failed`.
+ * Decrypt an EncryptedAssertion's / EncryptedID's content with the SP key. Every failure — the
+ * key unwrap, the content key length, a GCM tag, CBC padding — is the one `decryption_failed`.
  *
- * @param parts From {@link readEncryptedAssertion}.
+ * @param parts From {@link readEncryptedElement}.
  * @param key The SP decryption key.
- * @returns The decrypted bytes (the serialized Assertion element).
+ * @returns The decrypted bytes (the serialized Assertion / NameID element).
  * @throws {SamlError} `decryption_failed` (or `bad_key` for an unusable configured key).
  */
-export async function decryptAssertion(
+export async function decryptElement(
   parts: EncryptedParts,
   key: SamlPrivateKey,
 ): Promise<Uint8Array> {

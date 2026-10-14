@@ -350,6 +350,8 @@ const SSO_SCHEMA: TableSpec[] = [
       ["name_id_format", "TEXT"],
       ["created_at", "INTEGER"],
       ["updated_at", "INTEGER"],
+      ["metadata_valid_until", "INTEGER"],
+      ["metadata_refresh_after", "INTEGER"],
     ],
     indexes: [{
       sql: "CREATE UNIQUE INDEX IF NOT EXISTS auth_sso_providers_entity " +

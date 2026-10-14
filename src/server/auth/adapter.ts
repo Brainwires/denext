@@ -332,6 +332,14 @@ export interface SsoProviderRecord {
   metadataXml: string;
   /** Where the metadata is fetched from (HTTPS), when it was registered by URL. */
   metadataUrl?: string;
+  /** The stored metadata's `validUntil`, epoch seconds, when it declares one. */
+  metadataValidUntil?: number;
+  /**
+   * When a {@linkcode metadataUrl} provider's metadata is next fetched, epoch seconds: the
+   * earliest of a day after the last fetch, the metadata's `cacheDuration` after it, and its
+   * `validUntil`.
+   */
+  metadataRefreshAfter?: number;
   /** How assertion attributes map to user metadata. */
   attributeMapping?: SsoAttributeMapping;
   /** The NameID format to request. */

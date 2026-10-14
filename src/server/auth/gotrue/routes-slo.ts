@@ -28,7 +28,7 @@ import {
 } from "../saml/mod.ts";
 import { type GoTrueContext, nowSeconds, ok, redirectTarget } from "./context.ts";
 import { GoTrueError } from "./errors.ts";
-import { land, landWithError, readForm, spendRelay } from "./routes-sso.ts";
+import { land, landWithError, pendingProvider, readForm, spendRelay } from "./routes-sso.ts";
 import { familiesOf, ssoOriginOf } from "./session.ts";
 import { findProvider, replayCacheOf, spOf, ssoAdapterOf } from "./sso-providers.ts";
 
@@ -122,7 +122,8 @@ async function finishSpLogout(
   peeked: PeekedLogoutMessage,
 ): Promise<Response> {
   const pending = await pendingLogout(ctx, peeked.relayState);
-  const provider = await findProvider(ctx, { id: pending.providerId });
+  const provider = await pendingProvider(ctx, pending.providerId, pending.redirectTo, false);
+  if (provider instanceof Response) return provider;
   try {
     const result = await verifyLogoutResponse({
       input,

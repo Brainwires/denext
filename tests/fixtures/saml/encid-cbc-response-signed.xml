@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_resp1" Version="2.0" IssueInstant="2026-10-13T12:00:00Z" Destination="https://sp.example.com/auth/v1/sso/saml/acs" InResponseTo="_req1">
+  <saml:Issuer>https://idp.example.org/metadata</saml:Issuer><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><ds:Reference URI="#_resp1"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>0pypAi2IaGAk/ducN7wsHskc8k8oVanR+isKgCvZNlc=</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue>cmA3f5lg+b4d6dCkTctnwmJkb1pLu0YylZczl4ogff0Co9csl0PhxXiPKYn24ujN
+3mOR9eiqgCg6S4NsKoFjkxrNuoj95SFbExNHrOiZm7Hti1F4UN2UMHPHlWrGJFd8
+SttDdYMs9SAUF4Y4hsjv2bZ7ewDoygsHBeRQ8x0HwxxhXoWfG//krAM3e+XrsgXO
+QoS+1+6WTCBr09dGYRrmxBanj/vR8XPP+LUkbzA0IpqSELzQkSoq/u6M2oP7PTpF
+gdf5MCxLVBBg64zMVTFytFDda+BnQh5pivzA3dsWWy3++YJ70xMnYBrzYnsXeS/p
+WLe5pH0QNEMggtCYwf9sQw==</ds:SignatureValue><ds:KeyInfo><ds:X509Data>
+<ds:X509Certificate>MIIDPTCCAiWgAwIBAgIUIuBQKjV8jdL2zHL31o4ACFmZ9YswDQYJKoZIhvcNAQEL
+BQAwLTErMCkGA1UEAwwiZGVuZXh0IFNBTUwgdGVzdCBJZFAgKEVuY3J5cHRlZElE
+KTAgFw0yNjEwMTQwMTA3MjRaGA8yMTI2MDkyMDAxMDcyNFowLTErMCkGA1UEAwwi
+ZGVuZXh0IFNBTUwgdGVzdCBJZFAgKEVuY3J5cHRlZElEKTCCASIwDQYJKoZIhvcN
+AQEBBQADggEPADCCAQoCggEBAKL/0tZT4Tm+aXnvU2ZK400tkciusEXWJ1lUIS+9
+w5Z6SR6vYzU5zIV/rEcpe3cH+gM0s2X7He8bQA8sX8L17drTfDiqu+svI40T/8yl
+d4DMeM8j8temFx8N9Y05X8fjEAfBoM7msaY/+sdv6GnZkz9BnptoF2U/tF0ut7A5
+VX49g0gF02CCR05CjeFo+bLwjJbCPmgoFvWMpedEcf1wHUCv5lDOv3GWB/T8Skbo
+diGqM8j/a8FNrb6XQsSXERz9q/SgMj5jMOgfJoPfonp6y06RHrRUSLjTsMD88WU/
+lG90heEU2AnG3xx3/V8xSBvLbIjQtyzocPwtOcWS3LgkrMkCAwEAAaNTMFEwHQYD
+VR0OBBYEFCNG73Xwg4miwxi8BQDeDl+CXh2cMB8GA1UdIwQYMBaAFCNG73Xwg4mi
+wxi8BQDeDl+CXh2cMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggEB
+AC55u51tJWbOWxD/PXI3IG022J/N8KiOxeDGOIyJCkyyoI45N8WnIPLtkxfFBCIc
+z8ZV7as3UovTAVDK+Oa8w+NeEHM+sQCurDV6pLyxqZPv6Jc1x4wNERYEWSpjITmG
+FFicxw61k+KeV42OiHlAExXM6ivZ5ZCRIWxKjukujs9otMSqg2ZVlYsq2xHcg5oF
+/QmHuGOKEOmIXRDMHQp07rQJvQu479Tccic70TgwWqWGlZqdAmruMcmE6LIzWd3Y
+aOrHarh6wy3X/oriJVbtwu2SWSQmz69g/lWG3IEPPIgZ88wL9MVBUihETjOltI97
+ajJsyJ+xU7ff1yoFyhSeNpU=
+</ds:X509Certificate>
+</ds:X509Data></ds:KeyInfo></ds:Signature>
+  <samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>
+  <saml:Assertion ID="_assert1" Version="2.0" IssueInstant="2026-10-13T12:00:00Z">
+    <saml:Issuer>https://idp.example.org/metadata</saml:Issuer>
+    <saml:Subject>
+      <saml:EncryptedID><xenc:EncryptedData xmlns:xenc="http://www.w3.org/2001/04/xmlenc#" Type="http://www.w3.org/2001/04/xmlenc#Element"><xenc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes128-cbc"/><ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><xenc:EncryptedKey><xenc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"><ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/></xenc:EncryptionMethod><xenc:CipherData><xenc:CipherValue>iRaplmDJCVkNiEQccZbvIZb/ALdqqZqnquLXlk7YhZJP5UHI/gezegSb062sQbJc
+9mFtwKvkjclT8+S+HJybPH5nMk7fUtzQLYwCBVn0Fg/uAWRXTzrXZX/AAX/Wb3/y
+tVULrj2+WW4OeawMAb9FFxdLUrIddPBjUSfEq1g3+hTP+AX+K6hW2ZbC+h6TiSaO
+24v7BxQNp/ZRhilve3+Vrf8c3s9yd9B4PoSQsu0qyo3J4WQnW2kERA4a73oLZwb2
+LWziw44cTaMRejsSGIAqe0IloQAsHqbb+7qssMld8SzXy5/6s2OYY2PW4kNA6mkd
+mcUILCGbXhA8nPUkRrNZ5w==</xenc:CipherValue></xenc:CipherData></xenc:EncryptedKey></ds:KeyInfo><xenc:CipherData><xenc:CipherValue>skfMoj1oo3iljPrnDAAqpHYmYK+qAOLY2B9uwaAxyLkL/orPsVtTUXn05dvh2lSQ
++UhkxPFOpz+xA0VnshThaYrtCqZ7URxQUgXyL/iWmIltMC1k8gHRfJvPn5TtZ3uE
+hKjTi7f0sfrq049UMEOvNNNMNjEScbh+wNQL9EuE2Bs=</xenc:CipherValue></xenc:CipherData></xenc:EncryptedData></saml:EncryptedID>
+      <saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+        <saml:SubjectConfirmationData InResponseTo="_req1" NotOnOrAfter="2026-10-13T12:05:00Z" Recipient="https://sp.example.com/auth/v1/sso/saml/acs"/>
+      </saml:SubjectConfirmation>
+    </saml:Subject>
+    <saml:Conditions NotBefore="2026-10-13T11:59:30Z" NotOnOrAfter="2026-10-13T12:05:00Z">
+      <saml:AudienceRestriction><saml:Audience>https://sp.example.com/auth/v1/sso/saml/metadata</saml:Audience></saml:AudienceRestriction>
+    </saml:Conditions>
+    <saml:AuthnStatement AuthnInstant="2026-10-13T12:00:00Z" SessionIndex="_session1"/>
+  </saml:Assertion>
+</samlp:Response>

@@ -28,6 +28,7 @@ import {
 import type { SamlIdpConfig, SamlSpConfig } from "./config.ts";
 import { directSignature, DS_NS, indexIds, verifyEnvelopedSignature } from "./dsig.ts";
 import { SamlError } from "./errors.ts";
+import { soleNameId } from "./encrypted-id.ts";
 import { escapeXml } from "./metadata.ts";
 import type { SamlReplayCache } from "./response.ts";
 import { attr, childElements, isNcName, MAX_XML_BYTES, parseXml, type XmlDocument } from "./xml.ts";
@@ -322,17 +323,17 @@ export interface VerifiedLogoutRequest {
  *
  * @throws {SamlError} `unsigned`, `bad_signature`, `signature_wrapping`, `bad_binding`,
  *   `malformed_response`, `bad_destination`, `bad_issuer`, `expired`, `not_yet_valid`,
- *   `unexpected_markup`, `encrypted_assertion_unsupported` (an EncryptedID) or `replay`.
+ *   `unexpected_markup`, `encrypted_assertion_unsupported` (an EncryptedID without an SP
+ *   decryption key), `decryption_failed` / `unsupported_algorithm` (an EncryptedID) or `replay`.
  */
 export async function verifyLogoutRequest(
   options: VerifyLogoutOptions,
 ): Promise<VerifiedLogoutRequest> {
   const env = await envelope(options, "LogoutRequest");
   checkWindow(env.clock, undefined, parseTime(env.root, "NotOnOrAfter"));
-  if (childElements(env.root, SAML_NS, "EncryptedID").length) {
-    refuse("encrypted_assertion_unsupported", "an EncryptedID is not supported");
-  }
-  const nameIdEl = single(env.root, SAML_NS, "NameID", true);
+  // envelope() verified the signature (the query's or the enveloped one), which covers an
+  // EncryptedID's cipher text: it is decrypted only now.
+  const nameIdEl = await soleNameId(env.root, options.sp.encryptionKey, true);
   const nameId = textOnly(nameIdEl);
   if (!nameId) malformed("empty NameID");
   const sessionIndexes = childElements(env.root, SAMLP_NS, "SessionIndex").map(textOnly);

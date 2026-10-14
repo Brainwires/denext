@@ -118,6 +118,8 @@ for (const driver of ["Deno.SQL", "npm:postgres"] as const) {
           "0001_auth_tables",
           "0002_auth_user_profile",
           "0004_auth_sso_providers",
+          "0005_auth_oauth_server",
+          "0006_auth_sso_metadata_validity",
         ]);
         for (let round = 0; round < 10; round++) {
           const ref = {

@@ -219,6 +219,30 @@ export function landWithError(
   return land(`${redirectTo.split("#")[0]}#${fail}`);
 }
 
+/**
+ * The provider a pending browser flow (login, logout) answers to — or, when its metadata has
+ * expired, the landing on `redirectTo` that reports `saml_metadata_expired`.
+ *
+ * @param ctx The context.
+ * @param providerId The provider.
+ * @param redirectTo Where the flow lands.
+ * @param pkce Whether the flow is PKCE.
+ * @returns The provider, or the error landing.
+ */
+export async function pendingProvider(
+  ctx: GoTrueContext,
+  providerId: string,
+  redirectTo: string,
+  pkce: boolean,
+): Promise<SsoProvider | Response> {
+  try {
+    return await findProvider(ctx, { id: providerId });
+  } catch (error) {
+    if (!(error instanceof GoTrueError) || error.code !== "saml_metadata_expired") throw error;
+    return landWithError(redirectTo, pkce, error.code, error.message);
+  }
+}
+
 function refused(pending: PendingLogin): Response {
   return landWithError(
     pending.redirectTo,
@@ -259,7 +283,13 @@ export async function acs(ctx: GoTrueContext): Promise<Response> {
   requireSaml(ctx);
   const form = await readForm(ctx);
   const pending = await pendingLogin(ctx, form.get("RelayState"));
-  const provider = await findProvider(ctx, { id: pending.providerId });
+  const provider = await pendingProvider(
+    ctx,
+    pending.providerId,
+    pending.redirectTo,
+    !!pending.challenge,
+  );
+  if (provider instanceof Response) return provider;
   const assertion = await verified(ctx, form, pending, provider);
   if (!assertion) return refused(pending);
   const user = await ssoUser(ctx, provider, assertion);

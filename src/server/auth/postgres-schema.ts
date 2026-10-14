@@ -137,6 +137,14 @@ CREATE INDEX IF NOT EXISTS auth_saml_message_ids_expiry ON ${p}auth_saml_message
     // client holds), stored OAuth / OIDC providers and Web3 sign-in nonces.
     name: "0005_auth_oauth_server",
     sql: oauthServerPostgresSql(p),
+  }, {
+    // The metadata validity of stored SAML providers: its validUntil and when a metadata URL
+    // is next fetched (validUntil, cacheDuration).
+    name: "0006_auth_sso_metadata_validity",
+    sql: `
+ALTER TABLE ${p}auth_sso_providers ADD COLUMN metadata_valid_until BIGINT;
+ALTER TABLE ${p}auth_sso_providers ADD COLUMN metadata_refresh_after BIGINT;
+`,
   }];
 }
 

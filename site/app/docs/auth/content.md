@@ -2003,7 +2003,7 @@ The `/auth/v1` options (`backend({ supabase: { auth } })`):
 | `requireReauthentication`          | `false`           | A password change needs a `reauthenticate()` nonce                        |
 | `manualLinking`                    | `true`            | Allow `linkIdentity()`                                                    |
 | `mfa`                              | TOTP              | `{ phone: true }` adds SMS factors; `maxFactors` (10)                     |
-| `saml`                             | none              | SAML SSO: `providers`, `entityId`, `signingKey`, `encryptionKey` (below)  |
+| `saml`                             | none              | SAML SSO: `providers`, `signingKey`, `encryptionKey`, `metadataRefresh`   |
 | `oauthServer`                      | off               | `{ authorizationPath?, codeExpiry? }` — the OAuth 2.1 server, below       |
 | `web3`                             | off               | `{ ethereum?: { chainIds?, domains? }, solana?: { domains? }, maxAge? }`  |
 
@@ -2032,6 +2032,8 @@ backend({
         // Optional: let IdPs encrypt assertions to this SP.
         encryptionKey: Deno.env.get("SAML_SP_ENCRYPTION_KEY"),
         encryptionCertificate: Deno.env.get("SAML_SP_ENCRYPTION_CERT"),
+        // Optional: refresh stored metadata URLs in the background (default: when next used).
+        metadataRefresh: { intervalSeconds: 900 },
       },
     },
   },
@@ -2069,11 +2071,51 @@ present (every value with `array`), else `default`, lands in `user_metadata.fiel
 GoTrue's: `saml_idp_already_exists` (422), `sso_domain_already_exists`, `saml_entity_id_mismatch`,
 `saml_metadata_fetch_failed`, `validation_failed`, `sso_provider_not_found` (404). A
 `metadata_url` must be HTTPS; it is fetched with `safeFetch` pinned to that host (private
-addresses refused, 256 KiB, 10 s), and fetched again when the stored copy is a day old — a
-failed fetch, or a document for another entity id, keeps the stored copy. (`http://localhost` is
-accepted only under `dangerouslyAllowInsecureProviders`.) The adapter's SSO group stores them:
-`inMemoryAuthAdapter`, `sqliteAuthAdapter` and `postgresAuthAdapter` (migration
-`0004_auth_sso_providers`) implement it. supabase-js 2.117 has no `auth.admin.sso` client; call
+addresses refused, 256 KiB, 10 s). (`http://localhost` is accepted only under
+`dangerouslyAllowInsecureProviders`.) The adapter's SSO group stores them:
+`inMemoryAuthAdapter`, `sqliteAuthAdapter` and `postgresAuthAdapter` (migrations
+`0004_auth_sso_providers`, `0006_auth_sso_metadata_validity`) implement it.
+
+**Metadata validity.** The metadata's own `validUntil` (an `xs:dateTime` with a time zone) and
+`cacheDuration` (an `xs:duration` such as `PT6H` or `P1D`) are read from the EntityDescriptor and
+an enclosing EntitiesDescriptor — the earliest `validUntil` and the shortest `cacheDuration` win;
+a malformed value refuses the metadata (`bad_metadata`, a 400 `validation_failed` from the admin
+API). A provider whose metadata is past its `validUntil` — stored, or a config-declared
+`metadataXml` — fails closed: `POST /sso` and IdP-initiated Single Logout answer 400
+`saml_metadata_expired`, the ACS and an SP-initiated logout land on `redirect_to` with
+`error_code=saml_metadata_expired`, and the logger warns once per provider. Creating or updating a
+provider with already-expired metadata is a 400 `validation_failed`. A `metadata_url` provider is
+fetched again at the earliest of a day after the last fetch, `cacheDuration` after it and
+`validUntil` (never within five minutes of the last fetch); the record keeps `metadataValidUntil`
+and that `metadataRefreshAfter` (epoch seconds; columns `metadata_valid_until`,
+`metadata_refresh_after`). A failed refresh — an unreachable URL, an invalid or expired document,
+one for another entity id — keeps the stored copy, usable only while it is within its own
+`validUntil`; fresh metadata from a later refresh (or the admin API) reopens the provider. The
+fetch is single-flight per provider and, after a failure, backs off for five minutes, doubling up
+to an hour, so a stream of sign-ins never fetches one URL more than once per window.
+
+By default a due provider is fetched when it is next used. `saml.metadataRefresh: {
+intervalSeconds }` (default 900, at least 60) refreshes every due provider in the background
+instead — one at a time, with jitter, failures logged and never thrown; the timer does not keep the
+process alive and stops when the plugin is torn down. Or run it on your own schedule from a job:
+
+```ts
+// jobs/sso-metadata.ts
+import { defineJob, refreshSsoMetadata } from "denext/server";
+
+export default defineJob({
+  description: "refresh stored SAML metadata URLs",
+  schedule: "*/30 * * * *",
+  handler: async () => {
+    const { refreshed, failed } = await refreshSsoMetadata(); // { checked, refreshed, unchanged, failed, skipped, results }
+    if (failed) console.warn(`SAML metadata: ${failed} provider(s) failed to refresh`);
+    console.info(`SAML metadata: ${refreshed} refreshed`);
+  },
+});
+```
+
+`refreshSsoMetadata(config?, { force?, jitterMs? })` uses the active `denextAuth()` config unless
+given one, and shares the fetch limiter with sign-ins. supabase-js 2.117 has no `auth.admin.sso` client; call
 the endpoints with the secret key.
 
 **Single Logout** is on when `saml.signingKey` is set, and the SP metadata then advertises
@@ -2099,8 +2141,15 @@ AES-128/256-GCM (`xmlenc11`) or AES-128/256-CBC (`xmlenc`); anything else is
 `unsupported_algorithm`. A Response signature is verified before anything is decrypted, so it
 covers the cipher text; the decrypted Assertion then goes through exactly the checks a plaintext
 one does (the strict parser, one assertion, IDs unique across the whole document, its own
-signature when it has one). Without an encryption key an `EncryptedAssertion` is refused
-(`encrypted_assertion_unsupported`), as is an `EncryptedID` always.
+signature when it has one). An `EncryptedID` — the NameID of an Assertion's Subject, or of an
+IdP's LogoutRequest — is accepted under the same rules: the same algorithms and content model
+(one EncryptedData, exactly one EncryptedKey), opened only after the signature covering it (the
+Assertion's, the Response's, the LogoutRequest's) has verified, and its decrypted content must be
+exactly one `saml:NameID`, parsed by the strict parser in the EncryptedID's namespace context
+(markup or a comment inside it is `unexpected_markup`). A Subject or LogoutRequest holding two
+identifiers, or an EncryptedID beside a NameID, is `malformed_response`; an EncryptedID anywhere
+else (a SubjectConfirmation, an attribute) is refused. Without an encryption key an
+`EncryptedAssertion` or `EncryptedID` is refused (`encrypted_assertion_unsupported`).
 
 `denext/server` exports the primitives underneath for your own endpoints: `verifySamlResponse`
 (`sp.encryptionKey`), `buildAuthnRequest` (signed with `sp.signingKey`), `buildLogoutRequest`,
@@ -2199,7 +2248,10 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   malleable; when no Response signature covers the cipher text, every refusal from the key unwrap
   to the decrypted Assertion's signature is the one `decryption_failed` (and the ACS answers every
   refusal with the same redirect), so a forged cipher text learns nothing about padding or
-  well-formedness. Prefer IdPs that sign the Response, and AES-GCM.
+  well-formedness. An `EncryptedID` is opened only after the signature covering it verified (an
+  unsigned message is refused before anything is decrypted), so a tampered cipher text is
+  `bad_signature`; were it ever reached uncovered, every refusal inside the decryption window would
+  be the same `decryption_failed`. Prefer IdPs that sign the Response, and AES-GCM.
 - **SAML keys and Single Logout.** The SP signing and encryption keys are secrets; rotate one by
   publishing the new certificate in the metadata first. Single Logout ends denext's sessions
   immediately and only asks the IdP to end its own — a user who never reaches the IdP's SLO page
@@ -2207,7 +2259,9 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   certificate, and a replayed one is refused; its ID, like an assertion ID, is remembered in the
   adapter so every replica shares the check.
 - **SAML metadata URLs** are fetched SSRF-safely (HTTPS, host-pinned, private addresses refused);
-  the metadata's own signature is not checked, so register only URLs of the IdP you trust.
+  the metadata's own signature is not checked, so register only URLs of the IdP you trust. Expired
+  metadata (`validUntil`) fails closed rather than keep trusting a certificate the IdP may have
+  retired; the fetch limiter keeps a flood of sign-ins from turning into a flood of fetches.
 - **OAuth 2.1 server.** A `redirect_uri` must equal a registered one (a loopback `http:` one may
   differ only in its port); an unknown client or redirect is answered with an error, never a
   redirect. PKCE S256 is required of every client. An authorization request is bound to the first
