@@ -141,6 +141,54 @@ function fromDbUrl(projectDir: string, dbUrl: string, readOnly: boolean): DbTarg
   );
 }
 
+/**
+ * Whether a Postgres URL names this machine: a loopback host, or a Unix socket (no host, or a
+ * `host=/path` parameter). A URL that does not parse counts as remote.
+ *
+ * @param url The postgres:// URL.
+ * @returns Whether it is local.
+ */
+export function isLoopbackPostgres(url: string): boolean {
+  // Parsed by hand: `postgres://u@/db?host=/socket` is a valid libpq URL but not a WHATWG one.
+  const match = /^postgres(?:ql)?:\/\/([^/?#]*)[^?#]*(?:\?([^#]*))?/i.exec(url.trim());
+  if (!match) return false;
+  const authority = match[1].slice(match[1].lastIndexOf("@") + 1);
+  let host: string;
+  try {
+    host = new URLSearchParams(match[2] ?? "").get("host") ??
+      decodeURIComponent(authority.replace(/^\[([^\]]*)\](?::\d*)?$|:\d*$/, "$1"));
+  } catch {
+    return false;
+  }
+  host = host.toLowerCase();
+  if (host === "" || host.startsWith("/")) return true;
+  return host === "localhost" || host.endsWith(".localhost") || host === "::1" ||
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+}
+
+/**
+ * The display name of the REMOTE database the flags target, or `undefined` for a local one:
+ * `--linked` is always remote, `--db-url` when it is a Postgres URL off this machine. (The
+ * project's own database is never treated as remote.)
+ *
+ * @param options The flags.
+ * @param env Reads the environment.
+ * @returns The masked target, or `undefined`.
+ */
+export function remoteTargetName(
+  options: TargetOptions,
+  env: EnvReader = readEnv,
+): string | undefined {
+  if (options.dbUrl) {
+    return isPostgresUrl(options.dbUrl) && !isLoopbackPostgres(options.dbUrl)
+      ? displayTarget(options.dbUrl)
+      : undefined;
+  }
+  if (!options.linked) return undefined;
+  const url = env(LINKED_URL_ENV);
+  return url ? displayTarget(url) : "the linked database";
+}
+
 /** `--linked`: the URL `denext db link` stored. */
 function fromLinked(env: EnvReader): DbTarget {
   const url = env(LINKED_URL_ENV);

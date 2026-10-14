@@ -277,7 +277,8 @@ rollback;
       const config = { plugins: [backend({ postgres: { sql: env.app } })] } as DenextConfig;
       await applyPlugins({ projectRoot: root, appDir: `${root}/app`, config, mode: "build", load });
       const run = runner(root, env.url);
-      await run(DB_ACTIONS, ["push"]);
+      // --yes: the test database may be on another host, where push asks first.
+      await run(DB_ACTIONS, ["push"], { yes: true });
       // lint: RLS is off on a table the API roles can reach (when they exist) or no grants.
       const lint = JSON.parse(await run(DB_ACTIONS, ["lint"], { "fail-on": "none" }, true));
       assert(Array.isArray(lint.issues));
@@ -347,7 +348,7 @@ Deno.test({
         });
         const run = runner(root, env.url);
         await run(MIGRATION_ACTIONS, ["up"]);
-        const out = await run(MIGRATION_ACTIONS, ["squash"]); // --db-url: the history is rewritten
+        const out = await run(MIGRATION_ACTIONS, ["squash"], { yes: true }); // --db-url: history rewritten
         assertStringIncludes(out, "history: 2 rows → 20260102000000_b.sql");
         const listed = JSON.parse(await run(MIGRATION_ACTIONS, ["list"], {}, true));
         assertEquals(

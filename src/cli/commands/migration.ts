@@ -104,6 +104,11 @@ async function readStdin(): Promise<string> {
   return await new Response(Deno.stdin.readable).text();
 }
 
+/** Ask on the terminal (`[y/N]`). */
+function askYesNo(question: string): Promise<boolean> {
+  return Promise.resolve(globalThis.confirm(question));
+}
+
 /** The actions of `denext migration`. */
 export const MIGRATION_ACTIONS: Record<string, (run: MigrationRun) => Promise<void>> = {
   new: newAction,
@@ -134,7 +139,14 @@ async function runDbAction(
   const projectDir = resolve(ctx.global.cwd ?? ".");
   try {
     await setUpProject(projectDir);
-    await action({ ctx, projectDir, io, env: readEnv, stdin: readStdin });
+    await action({
+      ctx,
+      projectDir,
+      io,
+      env: readEnv,
+      stdin: readStdin,
+      ...(Deno.stdin.isTerminal() ? { confirm: askYesNo } : {}),
+    });
     return 0;
   } catch (error) {
     io.error(`denext ${verb} ${ctx.positionals[0] ?? ""}: ${(error as Error)?.message ?? error}`);

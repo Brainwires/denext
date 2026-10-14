@@ -548,6 +548,12 @@ a 3.x app to 4.0 involves. This section is the record.
   random secret for the run when none is configured and leaves the OAuth client credentials, the
   short-secret refusal and the production `canonicalOrigin` check to `denext start` /
   `denext dev`, which check everything as before.
+- **Destructive database verbs ask before they change a remote database.** `denext db push` and
+  `denext migration squash` against `--linked`, or a `--db-url` Postgres URL that is not on this
+  machine, now ask for confirmation at the terminal (as the Supabase CLI does), and refuse with no
+  terminal unless `--yes` is passed. `db reset` and `migration down --force-reset` accept a "yes"
+  at the terminal as well as `--yes`, and name the remote database in the question. A local
+  database (loopback host, Unix socket, SQLite) is unchanged.
 - **A stack `.env` can no longer turn a placeholder into the service-role key.**
   `denext generate docker --stack` wrote the four optional Supabase key lines of `.env.example`
   as the literal `undefined`, so `denext stack up` crash-looped, and a hand-filled `.env` that

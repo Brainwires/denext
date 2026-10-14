@@ -28,7 +28,14 @@ import { displayTarget } from "../db-admin/connection.ts";
 import type { CommandContext } from "../command.ts";
 import { type BackendDbHooks, backendHooks, type DbIo } from "./project.ts";
 import { type SeedFiles, seedFilesFor, seedHash } from "./seed-files.ts";
-import { type DbTarget, type EnvReader, historyFor, LINKED_URL_ENV, openTarget } from "./target.ts";
+import {
+  type DbTarget,
+  type EnvReader,
+  historyFor,
+  LINKED_URL_ENV,
+  openTarget,
+  remoteTargetName,
+} from "./target.ts";
 
 /** One invocation of a migration action. */
 export interface MigrationRun {
@@ -42,6 +49,30 @@ export interface MigrationRun {
   env: EnvReader;
   /** Reads stdin whole (`migration new --stdin`). */
   stdin?: () => Promise<string>;
+  /** Asks a yes/no question on the terminal; absent when there is no terminal to ask on. */
+  confirm?: (question: string) => Promise<boolean>;
+}
+
+/**
+ * Gate a destructive action: `--yes` passes; otherwise it is confirmed at the
+ * terminal, and refused with no terminal. `always` gates it on any database; else only on a
+ * remote one (`--linked`, or a `--db-url` off this machine), as the Supabase CLI prompts there.
+ *
+ * @param run The invocation.
+ * @param what What it does (`"reset drops every table in the app's schemas"`).
+ * @param always Whether a local database needs the confirmation too.
+ * @throws {Error} When it is not confirmed.
+ */
+async function confirmDestructive(run: MigrationRun, what: string, always = false): Promise<void> {
+  if (run.ctx.flags.yes === true) return;
+  const remote = remoteTargetName({
+    dbUrl: stringFlag(run.ctx, "db-url"),
+    linked: run.ctx.flags.linked === true,
+  }, run.env);
+  if (!remote && !always) return;
+  const full = remote ? `${what} on the remote database ${remote}` : what;
+  if (!run.confirm) throw new Error(`${full}: run it with --yes`);
+  if (!await run.confirm(`${full}. Continue?`)) throw new Error(`cancelled (${full})`);
 }
 
 /** The tracking table `@denext/backend`'s own migrations are recorded in. */
@@ -189,8 +220,14 @@ export async function listAction(run: MigrationRun): Promise<void> {
 }
 
 /** `migration up` / `db migrate` / `db push`: the backend's migrations, then the pending ones. */
-export async function upAction(run: MigrationRun, options: { seed?: boolean } = {}): Promise<void> {
+export async function upAction(
+  run: MigrationRun,
+  options: { seed?: boolean; confirm?: boolean } = {},
+): Promise<void> {
   const dryRun = run.ctx.flags["dry-run"] === true;
+  if (options.confirm && !dryRun) {
+    await confirmDestructive(run, "push applies the pending migrations");
+  }
   await withHistory(run, false, async (history, local, target) => {
     const own = await applyBackend(target, backendHooks(), dryRun);
     const verb = dryRun ? "would apply" : "applied";
@@ -258,8 +295,8 @@ async function forceReset(
   run: MigrationRun,
   options: { steps?: number; to?: string; dryRun: boolean },
 ): Promise<void> {
-  if (!options.dryRun && run.ctx.flags.yes !== true) {
-    throw new Error("--force-reset drops every table in the app's schemas: add --yes");
+  if (!options.dryRun) {
+    await confirmDestructive(run, "--force-reset drops every table in the app's schemas", true);
   }
   const target = await withHistory(run, true, async (history, local) => {
     const steps = await planDown(history, local.files, options);
@@ -334,7 +371,10 @@ export async function squashAction(run: MigrationRun): Promise<void> {
   );
   const updateHistory = run.ctx.flags.linked === true || !!stringFlag(run.ctx, "db-url") ||
     run.ctx.flags.local === true;
-  if (updateHistory) await rewriteHistory(run, chosen, last, text);
+  if (updateHistory) {
+    await confirmDestructive(run, "squash rewrites the database's migration history");
+    await rewriteHistory(run, chosen, last, text);
+  }
   for (const file of chosen.slice(0, -1)) {
     await Deno.remove(join(local.abs, file.name));
     await removeIfExists(join(local.abs, file.name.replace(/\.sql$/, ".down.sql")));
@@ -513,9 +553,8 @@ export async function resetAction(
   run: MigrationRun,
   forced?: { upTo: string; reapplyNothing: boolean },
 ): Promise<void> {
-  if (run.ctx.flags.yes !== true) {
-    throw new Error("reset drops every table in the app's schemas: run it with --yes");
-  }
+  // `migration down --force-reset` confirmed already.
+  if (!forced) await confirmDestructive(run, "reset drops every table in the app's schemas", true);
   await withHistory(run, false, async (history, local, target) => {
     await dropAll(target, history);
     run.io.log(`Reset ${target.display}.`);

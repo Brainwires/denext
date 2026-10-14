@@ -388,7 +388,10 @@ file older than the newest applied one unless you pass `--include-all`. The runn
 The database is the project's own. That is `@denext/backend`'s Postgres, else `DATABASE_URL`
 when it is a `postgres://` URL, else SQLite at `DB_PATH` (default `app.db`), the file
 `jobs/migrate.ts` uses. `--db-url <url | sqlite:path>` or `--linked` (after `denext db link
---url …`) picks another. The history is `_migrations`, the same table the runners write. A
+--url …`) picks another. Against a remote database (`--linked`, or a `--db-url` that is not
+on this machine) `db push` and `migration squash` ask for confirmation first, as `db reset` and
+`migration down --force-reset` always do; `--yes` answers it, and with no terminal to ask on the
+verb refuses without `--yes`. The history is `_migrations`, the same table the runners write. A
 project whose files are in `supabase/migrations/` keeps the Supabase CLI's
 `supabase_migrations.schema_migrations`, so its history carries over. `migration fetch` writes
 that history's SQL back into files. `denext db seed` records each seed file's hash, skips an

@@ -15,7 +15,13 @@ import { DB_ACTIONS } from "../src/cli/commands/db.ts";
 import { MIGRATION_ACTIONS } from "../src/cli/commands/migration.ts";
 import { type MigrationRun, setDotenv } from "../src/cli/db/migrations.ts";
 import { backendHooks } from "../src/cli/db/project.ts";
-import { LINKED_URL_ENV, openTarget, sqlitePathOf } from "../src/cli/db/target.ts";
+import {
+  isLoopbackPostgres,
+  LINKED_URL_ENV,
+  openTarget,
+  remoteTargetName,
+  sqlitePathOf,
+} from "../src/cli/db/target.ts";
 import { scriptedSql } from "./helpers/scripted-sql.ts";
 
 async function project(files: Record<string, string>): Promise<string> {
@@ -34,7 +40,12 @@ async function act(
   root: string,
   positionals: string[],
   flags: Record<string, string | number | boolean> = {},
-  options: { json?: boolean; env?: Record<string, string>; stdin?: string } = {},
+  options: {
+    json?: boolean;
+    env?: Record<string, string>;
+    stdin?: string;
+    confirm?: (question: string) => Promise<boolean>;
+  } = {},
 ): Promise<string[]> {
   const lines: string[] = [];
   await table[positionals[0]]({
@@ -48,6 +59,7 @@ async function act(
     io: { log: (l) => lines.push(l), error: (l) => lines.push(`error: ${l}`) },
     env: (name) => options.env?.[name],
     stdin: () => Promise.resolve(options.stdin ?? ""),
+    ...(options.confirm ? { confirm: options.confirm } : {}),
   });
   return lines;
 }
@@ -457,4 +469,117 @@ Deno.test("seed files on Postgres: the Supabase table or _seed_files, a missing 
   );
   await assertRejects(() => broken.hashOf("x"), Error, "boom");
   assertEquals((await seedHash("a")).length, 64);
+});
+
+Deno.test("targets: which Postgres URLs are this machine's", () => {
+  for (
+    const url of [
+      "postgres://u:p@localhost:5432/app",
+      "postgresql://127.0.0.1/app",
+      "postgres://127.8.0.1/app",
+      "postgres://[::1]:5432/app",
+      "postgres://api.localhost/app",
+      "postgres:///app",
+      "postgres://u@/app?host=/var/run/postgresql",
+    ]
+  ) assert(isLoopbackPostgres(url), url);
+  for (
+    const url of [
+      "postgres://u:p@db.example.com:5432/app",
+      "postgres://10.0.0.5/app",
+      "postgres://0.0.0.0/app",
+      "postgres://localhost.example.com/app",
+      "postgres://localhost/app?host=db.example.com",
+      "postgres://%zz",
+    ]
+  ) assert(!isLoopbackPostgres(url), url);
+  const env = (name: string) =>
+    name === LINKED_URL_ENV ? "postgres://u:pw@h.example/db" : undefined;
+  assertEquals(remoteTargetName({ dbUrl: "sqlite:app.db" }, env), undefined);
+  assertEquals(remoteTargetName({ dbUrl: "postgres://localhost/app" }, env), undefined);
+  assertEquals(remoteTargetName({}, env), undefined);
+  assertEquals(remoteTargetName({ linked: true }, env), "postgres://u:•••@h.example/db");
+  assertEquals(remoteTargetName({ linked: true }, () => undefined), "the linked database");
+});
+
+Deno.test("db push / reset, migration squash / down --force-reset: a remote database needs --yes or a yes", async () => {
+  const root = await project({ "migrations/1_a.sql": A, "migrations/2_b.sql": B });
+  // Port 1 refuses at once: an action that gets past the gate fails on connecting instead.
+  const remote = "postgres://u:pw@0.0.0.0:1/app";
+  const env = { [LINKED_URL_ENV]: remote };
+  const gates = [
+    [DB_ACTIONS, ["push"], { "db-url": remote }, "push applies the pending migrations"],
+    [DB_ACTIONS, ["push"], { linked: true }, "push applies the pending migrations"],
+    [DB_ACTIONS, ["reset"], { linked: true }, "reset drops every table"],
+    [DB_ACTIONS, ["reset"], { "db-url": remote }, "reset drops every table"],
+    [MIGRATION_ACTIONS, ["squash"], { "db-url": remote }, "squash rewrites"],
+    [MIGRATION_ACTIONS, ["squash"], { linked: true }, "squash rewrites"],
+    [MIGRATION_ACTIONS, ["down"], { "force-reset": true, linked: true }, "--force-reset drops"],
+  ] as const;
+  try {
+    for (const [table, args, flags, phrase] of gates) {
+      const label = `${args[0]} ${JSON.stringify(flags)}`;
+      // No terminal to ask on and no --yes: refused before anything connects or changes.
+      const refused = await assertRejects(() => act(table, root, [...args], flags, { env }));
+      assertStringIncludes((refused as Error).message, phrase, label);
+      assertStringIncludes(
+        (refused as Error).message,
+        "on the remote database postgres://u:•••@0.0.0.0:1/app: run it with --yes",
+        label,
+      );
+      // A "no" at the prompt cancels.
+      const asked: string[] = [];
+      const cancelled = await assertRejects(() =>
+        act(table, root, [...args], flags, {
+          env,
+          confirm: (question) => {
+            asked.push(question);
+            return Promise.resolve(false);
+          },
+        })
+      );
+      assertStringIncludes((cancelled as Error).message, "cancelled", label);
+      assertEquals(asked.length, 1, label);
+      assertStringIncludes(asked[0], `${phrase}`, label);
+      assertStringIncludes(asked[0], "Continue?", label);
+      // A "yes", or --yes, gets past the gate (to the connection, which fails here).
+      for (
+        const [extra, confirm] of [
+          [{}, () => Promise.resolve(true)],
+          [{ yes: true }, undefined],
+        ] as const
+      ) {
+        const passed = await assertRejects(() =>
+          act(table, root, [...args], { ...flags, ...extra }, {
+            env,
+            ...(confirm ? { confirm } : {}),
+          })
+        );
+        assert(
+          !/run it with --yes|cancelled/.test((passed as Error).message),
+          `${label}: ${(passed as Error).message}`,
+        );
+      }
+      // Nothing local was touched by a refusal (squash would have folded the files).
+      assertEquals([...Deno.readDirSync(`${root}/migrations`)].length, 2, label);
+    }
+    // A local database needs no confirmation to push; --dry-run never asks.
+    await act(DB_ACTIONS, root, ["push"], { "db-url": "sqlite:local.db" });
+    assertEquals(tables(`${root}/local.db`), ["a", "b"]);
+    await act(DB_ACTIONS, root, ["push"], { "db-url": remote, "dry-run": true }, { env }).catch(
+      (error) => assert(!/run it with --yes/.test(error.message), error.message),
+    );
+    // A local reset still needs --yes with no terminal, and takes a yes at the prompt.
+    await assertRejects(
+      () => act(DB_ACTIONS, root, ["reset"], { "db-url": "sqlite:local.db" }),
+      Error,
+      "reset drops every table in the app's schemas: run it with --yes",
+    );
+    await act(DB_ACTIONS, root, ["reset"], { "db-url": "sqlite:local.db", "no-seed": true }, {
+      confirm: () => Promise.resolve(true),
+    });
+    assertEquals(tables(`${root}/local.db`), ["a", "b"]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
 });
