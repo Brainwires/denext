@@ -483,14 +483,17 @@ export async function handleGoTrueRequest(
  * setup and with `undefined` at teardown.
  *
  * @param handler The options and keys, or `undefined`.
+ * @param serving Whether the app is serving requests (dev/start); the background refresh starts
+ *   only then, not during a build or export. Default `true`.
  */
-export function installGoTrue(handler: GoTrueHandlerOptions | undefined): void {
+export function installGoTrue(handler: GoTrueHandlerOptions | undefined, serving = true): void {
   if (!handler) {
     setGoTrueOAuthCallback(undefined);
     stopSsoMetadataRefresh();
     return;
   }
-  startSsoMetadataRefresh(handler.options, handler.config);
+  if (serving) startSsoMetadataRefresh(handler.options, handler.config);
+  else stopSsoMetadataRefresh();
   setGoTrueOAuthCallback(oauthRoutes.gotrueOAuthCallback({
     session: (request, config) => {
       const origin = new URL(absoluteUrl(request, "/", { canonicalOrigin: config.canonicalOrigin }))

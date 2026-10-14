@@ -15,7 +15,8 @@ import {
   ssoMetadataRefreshActive,
   ssoMetadataRefreshTick,
 } from "../src/server/auth/gotrue/sso-refresh.ts";
-import { refreshSsoMetadata } from "../src/server/mod.ts";
+import { resolveSupabaseKeys } from "../src/server/auth/gotrue/keys.ts";
+import { installGoTrue, refreshSsoMetadata } from "../src/server/mod.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp } from "./_supabase-auth-app.ts";
 import { ACS, requestIdOf, SLO, testIdp } from "./_saml-idp.ts";
 import { spKey } from "./_saml-enc-helpers.ts";
@@ -341,6 +342,20 @@ Deno.test("SSO metadata: saml.metadataRefresh starts a timer the teardown stops"
     assert(!ssoMetadataRefreshActive());
     return Promise.resolve();
   }, { saml: { metadataRefresh: false } });
+});
+
+Deno.test("SSO metadata: the timer does not start when not serving (build/export)", async () => {
+  const keys = await resolveSupabaseKeys({ jwtSecret: "s".repeat(40) }, () => undefined);
+  await withApp(() => {
+    assert(ssoMetadataRefreshActive());
+    const handler = { options: { saml: { metadataRefresh: { intervalSeconds: 1 } } }, keys };
+    installGoTrue(handler, false);
+    assert(!ssoMetadataRefreshActive());
+    installGoTrue(handler, true);
+    assert(ssoMetadataRefreshActive());
+    return Promise.resolve();
+  }, { saml: { metadataRefresh: { intervalSeconds: 1 } } });
+  assert(!ssoMetadataRefreshActive());
 });
 
 Deno.test("SSO metadata: a background pass logs a failure, never throws", async () => {

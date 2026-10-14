@@ -325,7 +325,8 @@ async function setupSupabase(ctx: PluginContext, option: true | SupabaseOptions)
   const supabase = option === true ? {} : option;
   const keys = await setupSupabaseKeys(ctx, supabase, env);
   const auth = { options: supabase.auth ?? {}, keys };
-  installGoTrue(auth);
+  // The SAML metadata refresh timer is background work: serving (dev/prod) only, not build/export.
+  installGoTrue(auth, ctx.mode === "dev" || ctx.mode === "prod");
   installSupabaseAuthHooks(supabase.auth?.hooks);
   ctx.addTeardown(() => {
     installGoTrue(undefined);

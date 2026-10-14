@@ -651,25 +651,28 @@ const SESSION_CASES: Record<string, Case> = {
 };
 
 const PROFILE_CASES: Record<string, Case> = {
+  // fallow-ignore-next-line complexity -- one adapter scenario; each `?.` in its asserts counts as a branch
   "Supabase fields round-trip: phone, metadata, anonymous, timestamps, ban": async (adapter) => {
+    // Fixed once: `at()` reads the clock, so calling it again for the comparison can cross a second.
+    const phoneVerified = at(-10), lastSignInAt = at(-1), bannedUntil = at(3600);
     const user = await adapter.createUser({
       phone: "+15555550100",
-      phoneVerified: at(-10),
+      phoneVerified,
       userMetadata: { name: "Ada", nested: { a: [1, 2] } },
       appMetadata: { provider: "phone", providers: ["phone"] },
       isAnonymous: true,
       updatedAt: at(-5),
-      lastSignInAt: at(-1),
-      bannedUntil: at(3600),
+      lastSignInAt,
+      bannedUntil,
     });
     const read = await adapter.getUser(user.id);
     assertEquals(read?.phone, "+15555550100");
-    assertEquals(read?.phoneVerified, at(-10));
+    assertEquals(read?.phoneVerified, phoneVerified);
     assertEquals(read?.userMetadata, { name: "Ada", nested: { a: [1, 2] } });
     assertEquals(read?.appMetadata, { provider: "phone", providers: ["phone"] });
     assertEquals(read?.isAnonymous, true);
-    assertEquals(read?.lastSignInAt, at(-1));
-    assertEquals(read?.bannedUntil, at(3600));
+    assertEquals(read?.lastSignInAt, lastSignInAt);
+    assertEquals(read?.bannedUntil, bannedUntil);
     assert(typeof read?.createdAt === "number", "createdAt is stamped");
     assertEquals((await adapter.getUserByPhone!("+15555550100"))?.id, user.id);
     assertEquals(await adapter.getUserByPhone!("+15555550199"), undefined);
@@ -695,6 +698,7 @@ const PROFILE_CASES: Record<string, Case> = {
   },
   "identity fields round-trip on linked accounts": async (adapter) => {
     const user = await adapter.createUser({ email: "id@x.test" });
+    const lastSignInAt = at(-1);
     await adapter.linkAccount({
       userId: user.id,
       provider: "github",
@@ -703,13 +707,13 @@ const PROFILE_CASES: Record<string, Case> = {
       identityData: { sub: "42", login: "ada" },
       email: "id@x.test",
       updatedAt: at(-2),
-      lastSignInAt: at(-1),
+      lastSignInAt,
     });
     const [account] = await adapter.listAccounts!(user.id);
     assertEquals(account.identityId, "0b7c3c1e-1f1a-4a57-9c39-2d0a7f1a0001");
     assertEquals(account.identityData, { sub: "42", login: "ada" });
     assertEquals(account.email, "id@x.test");
-    assertEquals(account.lastSignInAt, at(-1));
+    assertEquals(account.lastSignInAt, lastSignInAt);
     assert(typeof account.createdAt === "number", "createdAt is stamped");
   },
   "MFA factors: create, list, update, claim a step once, delete": async (adapter) => {

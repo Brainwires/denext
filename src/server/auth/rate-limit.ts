@@ -6,7 +6,7 @@
  * - the **credentials** limiter counts *failed* `POST {basePath}/callback/:provider`
  *   attempts per client (IP + submitted identifier by default), 5 per 15 minutes;
  * - the **sign-in-start** limiter counts *every* `GET {basePath}/signin/:provider` per
- *   client IP, 20 per 15 minutes, so an unauthenticated visitor can't make the app mint
+ *   client IP, 100 per 15 minutes, so an unauthenticated visitor can't make the app mint
  *   PKCE/state transactions (or probe provider ids) without bound;
  * - the **session-read** limiter counts every `GET {basePath}/session` per client IP,
  *   300 per minute (`rateLimit.session`), so the unauthenticated poll endpoint can't be

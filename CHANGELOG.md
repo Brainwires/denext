@@ -449,6 +449,10 @@ and this project adheres to
 
 ### Fixed
 
+- **The SAML metadata background refresh no longer starts during a build.** The timer
+  (`saml.metadataRefresh`) now starts only when serving (`dev` / `start`), not in `denext build`
+  or export.
+
 - **`/auth/v1` phone-factor challenges spend the user's SMS budget, not the factor's**:
   unenrolling and re-enrolling a phone factor no longer starts a fresh send budget.
 - **`/auth/v1` `/resend` for an SMS confirmation answers `over_sms_send_rate_limit`** past its

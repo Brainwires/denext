@@ -420,8 +420,8 @@ hash and writes `await hashPassword(password)` with `setCredential` on success.
 What does not move:
 
 - **Sessions and refresh tokens.** Everyone signs in once more.
-- **TOTP factors.** Supabase offers no export of the TOTP secrets, so these users enroll again
-  (through `/mfa/enroll` or `supabase.auth.mfa.enroll()` — one store, either path). Until they
+- **TOTP factors.** Supabase documents no supported way to export TOTP secrets, so plan for these users to
+  enroll again (through `/mfa/enroll` or `supabase.auth.mfa.enroll()` — one store, either path). Until they
   do, they sign in without a second factor, so a policy that requires `aal2` should give them a
   way to enroll first.
 - **WebAuthn factors and passkeys.** A credential is bound to the relying-party domain it was
@@ -430,7 +430,8 @@ What does not move:
 - **SAML SSO providers.** Under `backend({ supabase })` `/auth/v1` serves SAML SSO: register each
   identity provider again with `POST /auth/v1/admin/sso/providers` (`supabase.auth.admin.sso`),
   and users link their SSO identity on their next sign-in.
-- **OAuth 2.1 server clients.** Supabase keeps only a hash of each client secret, so register the
+- **OAuth 2.1 server clients.** Supabase's OAuth server schema stores a hash of each client secret (`client_secret_hash`), so
+  the secrets cannot be carried over; register the
   clients again (`supabase.auth.admin.oauth.createClient()`, or `POST
   /auth/v1/admin/oauth/clients`) and hand them their new credentials; their users approve again.
 - **Denext's own (cookie) sign-in has no SAML.** SAML users sign in through `/auth/v1`
