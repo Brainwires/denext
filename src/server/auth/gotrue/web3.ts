@@ -145,7 +145,9 @@ function readFields(lines: string[], start: number) {
  * @throws {Web3Error} For anything that is not a well-formed message.
  */
 export function parseWeb3Message(text: string): Web3Message {
-  if (text.length > 8192 || text.includes("\r")) throw new Web3Error("message too long or CRLF");
+  if (text.length > 20 * 1024 || text.includes("\r")) {
+    throw new Web3Error("message too long or CRLF");
+  }
   const lines = text.split("\n");
   const preamble = readPreamble(lines);
   const { fields, resources } = readFields(lines, preamble.next);

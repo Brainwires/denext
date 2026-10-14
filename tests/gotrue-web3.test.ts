@@ -225,7 +225,7 @@ Deno.test("web3 grant: a signature is single-use (nonce, or the message without 
     assertEquals((await grant(app, ethereum(message, wallet.sign(message)))).status, 200);
     const replay = await grant(app, ethereum(message, wallet.sign(message)));
     assertEquals(replay.status, 400);
-    assertEquals(replay.json.error_code, "validation_failed");
+    assertEquals(replay.json.error, "invalid_grant");
     // Another message reusing the nonce.
     const other = siweMessage({ address: wallet.address, nonce: "replay001", statement: "x" });
     assertEquals((await grant(app, ethereum(other, wallet.sign(other)))).status, 400);
@@ -245,18 +245,61 @@ Deno.test("web3 grant: the message must name this app, now", async () => {
       assertEquals(res.status, 400, JSON.stringify(fields));
       return res.json;
     };
-    await refused({ domain: "evil.test" });
-    await refused({ uri: "https://evil.test/" });
-    await refused({ chainId: 5 }); // chainIds: [1]
-    await refused({ issuedAt: new Date(Date.now() + 5 * 60_000) });
-    await refused({ issuedAt: new Date(Date.now() - 20 * 60_000) });
-    await refused({ expirationTime: new Date(Date.now() - 1000) });
-    await refused({ notBefore: new Date(Date.now() + 5 * 60_000) });
-    await refused({ nonce: "short" });
+    // GoTrue's invalid_grant refusals: `400 { error, error_description }`.
+    const grantRefusals: Array<[Partial<Parameters<typeof siweMessage>[0]>, string]> = [
+      [
+        { uri: "http://app.test/" },
+        "Signed Ethereum message is using URI which does not use HTTPS",
+      ],
+      [
+        { uri: "https://evil.test/" },
+        "Signed Ethereum message is using URI which is not allowed on this server, message was " +
+        "signed for another app",
+      ],
+      [
+        { domain: "evil.test" },
+        "Signed Ethereum message is using a Domain that does not match the one in URI which is " +
+        "not allowed on this server",
+      ],
+      [{ chainId: 5 }, "Signed Ethereum message is using a Chain ID which is not allowed"],
+      [
+        { notBefore: new Date(Date.now() + 5 * 60_000) },
+        "Signed Ethereum message becomes valid in the future",
+      ],
+      [{ expirationTime: new Date(Date.now() - 1000) }, "Signed Ethereum message is expired"],
+      [
+        { issuedAt: new Date(Date.now() - 20 * 60_000) },
+        "Ethereum message was issued too long ago",
+      ],
+      [
+        { issuedAt: new Date(Date.now() + 5 * 60_000) },
+        "Ethereum message was issued too far in the future",
+      ],
+    ];
+    for (const [fields, description] of grantRefusals) {
+      assertEquals(await refused(fields), {
+        error: "invalid_grant",
+        error_description: description,
+      });
+    }
+    // A malformed message is GoTrue's validation_failed.
+    assertEquals((await refused({ nonce: "short" })).error_code, "validation_failed");
     // Signed by someone else.
     const message = siweMessage({ address: wallet.address });
     const forged = await grant(app, ethereum(message, ethereumWallet().sign(message)));
-    assertEquals(forged.json.error_code, "invalid_credentials");
+    assertEquals(forged.json, {
+      error: "invalid_grant",
+      error_description: "Signature does not match address in message",
+    });
+    // Malformed requests: GoTrue's validation_failed and its messages.
+    const short = await grant(app, ethereum("too short", wallet.sign("too short")));
+    assertEquals(short.json.msg, "message is too short");
+    const badSig = await grant(app, ethereum(message, "0x1234"));
+    assertEquals(badSig.json.error_code, "validation_failed");
+    assertEquals(
+      badSig.json.msg,
+      "signature must be 65 bytes long, encoded as a 130 character-long hexadecimal string",
+    );
     // A mis-checksummed address.
     const lower = wallet.address.slice(2);
     const flipped = "0x" +
@@ -324,7 +367,10 @@ Deno.test("web3 grant: Solana — Ed25519 over the SIWS message", async () => {
       message: message.replace("Version: 1", "Version: 1\nNonce: abcdefgh1"),
       signature: base64UrlEncode(await other.sign(message)),
     });
-    assertEquals(forged.json.error_code, "invalid_credentials");
+    assertEquals(forged.json, {
+      error: "invalid_grant",
+      error_description: "Signature does not match address in message",
+    });
     // An Ethereum message on the Solana chain is refused before any signature check.
     const eth = siweMessage({ address: ethereumWallet().address });
     assertEquals((await grant(app, { chain: "solana", message: eth, signature })).status, 400);

@@ -3,7 +3,7 @@
 // Postgres suites). A third-party client's own calls (`/oauth/authorize`, `/oauth/token`) are
 // raw HTTP, as such a client would make them; everything supabase-js exposes goes through it.
 
-import { assert, assertEquals, assertExists, assertNotEquals } from "@std/assert";
+import { assertEquals, assertExists, assertNotEquals } from "@std/assert";
 import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
 import { base64UrlEncode } from "../src/server/auth/oauth.ts";
 import type { AuthConfig } from "../src/server/auth/types.ts";
@@ -219,7 +219,9 @@ const web3Flow: Step = async (app) => {
     statement: "Sign in to the app",
     options: { url: `${ORIGIN}/`, signInWithEthereum: { nonce: "nonce12345" } },
   });
-  assertEquals(replay.error?.code, "validation_failed");
+  // GoTrue's invalid_grant: supabase-js raises it with the description and status 400.
+  assertEquals(replay.error?.status, 400);
+  assertEquals(replay.error?.message, "Signed message has already been used");
   const again = await app.client().auth.signInWithWeb3({
     chain: "ethereum",
     wallet: eth.provider,
@@ -242,7 +244,11 @@ const web3Flow: Step = async (app) => {
     wallet: eth.provider,
     options: { url: "https://evil.test/" },
   });
-  assert(foreign.error);
+  assertEquals(
+    foreign.error?.message,
+    "Signed Ethereum message is using URI which is not allowed on this server, message was " +
+      "signed for another app",
+  );
 };
 
 /** The flows. */

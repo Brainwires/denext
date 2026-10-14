@@ -2008,8 +2008,11 @@ The identity is GoTrue's: provider `web3`, `sub` / provider id `web3:<chain>:<ad
 address exactly as the message writes it (supabase-js writes Ethereum addresses lower-case, so a
 checksummed spelling is another identity, as in GoTrue), `identity_data.custom_claims`
 `{ address, chain, network, domain, statement }`, `app_metadata.provider` `web3`, and `amr`
-method `web3`. A disabled chain answers `422 web3_provider_disabled`, an unknown one
-`400 web3_unsupported_chain`. Ethereum signatures are verified by recovering the signer
+method `web3`. Refusals are GoTrue's too: a disabled chain answers `422 web3_provider_disabled`,
+an unknown one `400 web3_unsupported_chain`, a malformed request or message `400
+validation_failed`, and a signature or message that doesn't sign in here (wrong signer, URI, domain,
+chain id, time window, a used nonce) the OAuth-style `400 { error: "invalid_grant",
+error_description }` with GoTrue's descriptions. Ethereum signatures are verified by recovering the signer
 (secp256k1 and Keccak-256 in denext's own TypeScript; Web Crypto has neither), Solana's with Web
 Crypto's Ed25519. `ethereum.chainIds` restricts the `Chain ID`, `domains` allows message domains
 besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At` may be.

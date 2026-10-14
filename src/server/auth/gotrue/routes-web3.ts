@@ -25,10 +25,11 @@ import {
   checkCaptcha,
   type GoTrueContext,
   nowSeconds,
+  ok,
   redirectTarget,
   spendIp,
 } from "./context.ts";
-import { fail, GoTrueError } from "./errors.ts";
+import { GoTrueError } from "./errors.ts";
 import type { GoTrueOptions } from "./options.ts";
 import { type GoTrueSessionJson, startSession } from "./session.ts";
 import {
@@ -46,9 +47,18 @@ const SKEW = 30;
 
 type Chain = "ethereum" | "solana";
 
+/** A malformed request or message: GoTrue's `400 validation_failed`. */
 function refuse(message: string): GoTrueError {
   return new GoTrueError(400, "validation_failed", message);
 }
+
+/**
+ * A well-formed message that doesn't sign this user in here: GoTrue answers these as an OAuth
+ * error, `400 { error: "invalid_grant", error_description }`.
+ */
+class InvalidGrant extends Error {}
+
+const CHAIN_NAME: Record<Chain, string> = { ethereum: "Ethereum", solana: "Solana" };
 
 function maxAge(options: GoTrueOptions): number {
   const value = options.web3?.maxAge ?? DEFAULT_MAX_AGE;
@@ -65,56 +75,97 @@ function allowedDomains(ctx: GoTrueContext, chain: Chain): Set<string> {
   return hosts;
 }
 
-/** Whether a URI is the site URL (or below it) or an allowed redirect URL. */
-function allowedUri(ctx: GoTrueContext, uri: string): boolean {
-  let url: URL;
-  try {
-    url = new URL(uri);
-  } catch {
-    return false;
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") return false;
-  return redirectTarget(ctx, url.href) === url.href;
+/** GoTrue's request checks: the message's and the signature's size and encoding. */
+function checkRequest(chain: Chain, text: unknown, signature: unknown): string {
+  if (typeof text !== "string" || text.length < 64) throw refuse("message is too short");
+  if (text.length > 20 * 1024) throw refuse("message must not exceed 20KB");
+  if (chain === "ethereum") checkEthereumSignature(signature);
+  else checkSolanaSignature(signature);
+  return text;
 }
 
-/** The message's policy checks (everything but the signature and the nonce). */
-function checkMessage(ctx: GoTrueContext, chain: Chain, message: Web3Message): void {
+function checkEthereumSignature(signature: unknown): void {
+  if (typeof signature === "string" && /^0x[0-9a-fA-F]{130}$/.test(signature)) return;
+  throw refuse(
+    "signature must be 65 bytes long, encoded as a 130 character-long hexadecimal string",
+  );
+}
+
+function checkSolanaSignature(signature: unknown): void {
+  if (typeof signature !== "string" || (signature.length !== 86 && signature.length !== 88)) {
+    throw refuse("signature must be 64 bytes encoded as base64 with or without padding");
+  }
+  if (!/^[A-Za-z0-9_+/-]+={0,2}$/.test(signature)) {
+    throw refuse("signature does not contain valid base64 characters");
+  }
+}
+
+/** The message's shape (a parse error, as GoTrue's parser reports one). */
+function checkShape(chain: Chain, message: Web3Message): void {
   if (message.chain !== chain) throw refuse("Message is for another chain");
   if (message.version !== "1") throw refuse("Unsupported message version");
   if (message.scheme !== undefined && !["https", "http"].includes(message.scheme)) {
     throw refuse("Unsupported scheme in the message");
   }
-  if (!allowedDomains(ctx, chain).has(message.domain)) {
-    throw refuse("Message domain is not allowed");
-  }
-  if (!allowedUri(ctx, message.uri)) throw refuse("Message URI is not allowed");
+  checkFields(chain, message);
+}
+
+function checkFields(chain: Chain, message: Web3Message): void {
   if (message.nonce !== undefined && !/^[A-Za-z0-9]{8,128}$/.test(message.nonce)) {
     throw refuse("Message nonce must be 8 or more alphanumeric characters");
   }
-  checkChainId(ctx, chain, message);
-  checkTimes(ctx, message);
-}
-
-function checkChainId(ctx: GoTrueContext, chain: Chain, message: Web3Message): void {
-  if (chain !== "ethereum") return;
-  if (!message.chainId || !/^[1-9][0-9]{0,15}$/.test(message.chainId)) {
+  if (chain === "ethereum" && !/^[1-9][0-9]{0,15}$/.test(message.chainId ?? "")) {
     throw refuse("Message Chain ID is missing or invalid");
   }
+}
+
+/** The message's policy checks, GoTrue's `invalid_grant`s (after the signature). */
+function checkPolicy(ctx: GoTrueContext, chain: Chain, message: Web3Message): void {
+  const name = CHAIN_NAME[chain];
+  checkUri(ctx, name, message.uri);
+  if (!allowedDomains(ctx, chain).has(message.domain)) {
+    throw new InvalidGrant(
+      `Signed ${name} message is using a Domain that does not match the one in URI which is ` +
+        "not allowed on this server",
+    );
+  }
   const allowed = ctx.options.web3?.ethereum?.chainIds;
-  if (allowed?.length && !allowed.includes(Number(message.chainId))) {
-    throw refuse("Message Chain ID is not allowed");
+  if (chain === "ethereum" && allowed?.length && !allowed.includes(Number(message.chainId))) {
+    throw new InvalidGrant(`Signed ${name} message is using a Chain ID which is not allowed`);
+  }
+  checkTimes(ctx, name, message);
+}
+
+/** The message's URI: HTTPS (or localhost), and the site URL or an allowed redirect URL. */
+function checkUri(ctx: GoTrueContext, name: string, raw: string): void {
+  let uri: URL | undefined;
+  try {
+    uri = new URL(raw);
+  } catch { /* refused below */ }
+  if (!uri || (uri.protocol !== "https:" && uri.hostname !== "localhost")) {
+    throw new InvalidGrant(`Signed ${name} message is using URI which does not use HTTPS`);
+  }
+  if (redirectTarget(ctx, uri.href) !== uri.href) {
+    throw new InvalidGrant(
+      `Signed ${name} message is using URI which is not allowed on this server, message was ` +
+        "signed for another app",
+    );
   }
 }
 
-function checkTimes(ctx: GoTrueContext, message: Web3Message): void {
+function checkTimes(ctx: GoTrueContext, name: string, message: Web3Message): void {
   const now = Date.now();
-  if (message.issuedAt > now + SKEW * 1000) throw refuse("Message is issued in the future");
-  if (now - message.issuedAt > maxAge(ctx.options) * 1000) throw refuse("Message has expired");
-  if (message.expirationTime !== undefined && message.expirationTime <= now) {
-    throw refuse("Message has expired");
-  }
   if (message.notBefore !== undefined && message.notBefore > now + SKEW * 1000) {
-    throw refuse("Message is not valid yet");
+    throw new InvalidGrant(`Signed ${name} message becomes valid in the future`);
+  }
+  if (message.expirationTime !== undefined && message.expirationTime <= now) {
+    throw new InvalidGrant(`Signed ${name} message is expired`);
+  }
+  if (now - message.issuedAt > maxAge(ctx.options) * 1000) {
+    throw new InvalidGrant(`${name} message was issued too long ago`);
+  }
+  if (message.issuedAt > now + SKEW * 1000) {
+    throw new InvalidGrant(`${name} message was issued too far in the future`);
   }
 }
 
@@ -129,7 +180,7 @@ async function claimOnce(ctx: GoTrueContext, message: Web3Message, text: string)
     : `message:${text}`;
   const expiresAt = Math.ceil(message.issuedAt / 1000) + maxAge(ctx.options) + SKEW;
   const fresh = await claim.call(ctx.adapter, await sha256Hex(`gotrue-web3:${key}`), expiresAt);
-  if (!fresh) throw refuse("Signed message has already been used");
+  if (!fresh) throw new InvalidGrant("Signed message has already been used");
 }
 
 function parse(text: string): Web3Message {
@@ -144,9 +195,8 @@ async function signatureValid(
   chain: Chain,
   message: Web3Message,
   text: string,
-  signature: unknown,
+  signature: string,
 ): Promise<boolean> {
-  if (typeof signature !== "string") return false;
   return chain === "ethereum"
     ? verifyEthereum(message, text, signature)
     : await verifySolana(message, text, signature);
@@ -179,17 +229,51 @@ async function web3User(
 }
 
 /**
- * `POST /token?grant_type=web3`: `{ chain, message, signature }`.
+ * `POST /token?grant_type=web3`: `{ chain, message, signature }`. Refusals carry GoTrue's status
+ * and shape: `422 web3_provider_disabled`, `400 web3_unsupported_chain`, `400 validation_failed`
+ * for a malformed request or message, and `400 { error: "invalid_grant", error_description }`
+ * for a signature or message that doesn't sign in here.
  *
  * @param ctx The context.
  * @param body The request body.
- * @returns The session.
+ * @returns The session, or the refusal.
  */
 export async function web3Grant(
   ctx: GoTrueContext,
   body: Record<string, unknown>,
+): Promise<Response> {
+  try {
+    return ok(await signIn(ctx, body));
+  } catch (error) {
+    if (!(error instanceof InvalidGrant)) throw error;
+    return Response.json({ error: "invalid_grant", error_description: error.message }, {
+      status: 400,
+      headers: { "cache-control": "no-store" },
+    });
+  }
+}
+
+/** The grant's checks, then the session. */
+async function signIn(
+  ctx: GoTrueContext,
+  body: Record<string, unknown>,
 ): Promise<GoTrueSessionJson> {
-  const chain = body.chain;
+  const chain = enabledChain(ctx, body.chain);
+  await checkCaptcha(ctx, body);
+  await spendIp(ctx, signinStartLimiter(ctx.config), "web3");
+  const text = checkRequest(chain, body.message, body.signature);
+  const message = parse(text);
+  checkShape(chain, message);
+  if (!(await signatureValid(chain, message, text, body.signature as string))) {
+    throw new InvalidGrant("Signature does not match address in message");
+  }
+  checkPolicy(ctx, chain, message);
+  await claimOnce(ctx, message, text);
+  return await startWeb3Session(ctx, chain, message);
+}
+
+/** The chain the request names, when Web3 and that chain are on. */
+function enabledChain(ctx: GoTrueContext, chain: unknown): Chain {
   if (!ctx.options.web3) {
     throw new GoTrueError(422, "web3_provider_disabled", "Web3 provider is disabled");
   }
@@ -200,17 +284,18 @@ export async function web3Grant(
     throw new GoTrueError(
       422,
       "web3_provider_disabled",
-      `${chain === "ethereum" ? "Ethereum" : "Solana"} Web3 provider is disabled`,
+      `${CHAIN_NAME[chain]} Web3 provider is disabled`,
     );
   }
-  await checkCaptcha(ctx, body);
-  await spendIp(ctx, signinStartLimiter(ctx.config), "web3");
-  const text = body.message;
-  if (typeof text !== "string" || text === "") throw fail.validation("message is required");
-  const message = parse(text);
-  checkMessage(ctx, chain, message);
-  if (!(await signatureValid(chain, message, text, body.signature))) throw fail.credentials();
-  await claimOnce(ctx, message, text);
+  return chain;
+}
+
+/** The user's `web3` identity (GoTrue's shape) and a session. */
+async function startWeb3Session(
+  ctx: GoTrueContext,
+  chain: Chain,
+  message: Web3Message,
+): Promise<GoTrueSessionJson> {
   // GoTrue's shape: the address as the message writes it (supabase-js writes it lower-case).
   const providerId = `${PROVIDER}:${chain}:${message.address}`;
   const identityData = {

@@ -255,7 +255,7 @@ export async function token(ctx: GoTrueContext): Promise<Response> {
     case "id_token":
       return ok(await idTokenGrant(ctx, body));
     case "web3":
-      return ok(await web3Grant(ctx, body));
+      return await web3Grant(ctx, body);
     default:
       throw new GoTrueError(400, "validation_failed", "unsupported_grant_type");
   }

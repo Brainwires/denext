@@ -96,7 +96,8 @@ and this project adheres to
   recovery and Keccak-256 in denext's own TypeScript; low-s, EIP-55) and Sign-In with Solana
   (Ed25519), with the message's domain, URI, chain id and time window checked and its nonce
   claimed once; identities are GoTrue's (provider `web3`, `sub` `web3:<chain>:<address>`,
-  `custom_claims`, `amr` method `web3`). OAuth-server sessions carry GoTrue's
+  `custom_claims`, `amr` method `web3`) and so are its refusals (`validation_failed`, and
+  `400 { error: "invalid_grant", error_description }` for a message that doesn't sign in here). OAuth-server sessions carry GoTrue's
   `oauth_provider/authorization_code` `amr` method. New optional adapter groups (OAuth clients / authorizations / consents, stored
   providers, Web3 nonces) on the in-memory, SQLite and Postgres adapters (Postgres migration
   `0005_auth_oauth_server`). Tested with `@supabase/supabase-js` on the in-memory adapter and on
