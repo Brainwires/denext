@@ -41,6 +41,7 @@ const FULL: DockerOptions = {
   auth: true,
   backend: true,
   backendStorage: true,
+  backendVault: true,
   bucket: "media",
   cli: ["--config", "deno.json", "jsr:@denext/denext@^4.0.0/cli"],
   migrateCommand: [
@@ -166,7 +167,9 @@ Deno.test("the secrets follow the features: auth, backend, storage", () => {
     "DENEXT_JWT_SIGNING_KEYS",
     "DENEXT_JWT_SECRET",
   ]);
-  assert(names({ backend: true, postgres: true }).includes("DENEXT_VAULT_KEY"));
+  // The vault key is required, so it is listed only when `vault` is configured.
+  assert(!names({ backend: true, postgres: true }).includes("DENEXT_VAULT_KEY"));
+  assert(names({ backend: true, backendVault: true, postgres: true }).includes("DENEXT_VAULT_KEY"));
   assertEquals(names({ backendStorage: true }), ["DENEXT_STORAGE_SECRET"]);
   assert(names({ storage: true }).includes("MINIO_ROOT_PASSWORD"));
 });
@@ -235,7 +238,7 @@ const auth = denextAuth({ secret: "x" });
 Deno.test("detect: a plain app needs nothing", async () => {
   const d = await detect({ "deno.json": "{}" });
   assertEquals(d.features, { postgres: false, pgvector: false, storage: false, migrate: false });
-  assertEquals([d.auth, d.backend, d.backendStorage], [false, false, false]);
+  assertEquals([d.auth, d.backend, d.backendStorage, d.backendVault], [false, false, false, false]);
   assertEquals(d.cli, ["--config", "deno.json", "jsr:@denext/denext/cli"]);
   assertEquals(d.warnings, []);
 });
@@ -252,8 +255,19 @@ Deno.test("detect: @denext/backend → Postgres, s3() → MinIO with the literal
   assertEquals(d.reasons.postgres, "@denext/backend in denext.config");
   assertEquals(d.bucket, "media");
   assertEquals([d.auth, d.backend, d.backendStorage], [true, true, true]);
+  assertEquals(d.backendVault, false, "no vault configured: DENEXT_VAULT_KEY is not required");
   assertEquals(d.cli, ["--config", "deno.json", "jsr:@denext/denext@^4.0.0/cli"]);
   assertEquals(d.migrateCommand.slice(-2), ["job", "migrate"]);
+});
+
+Deno.test("detect: backend({ vault }) requires DENEXT_VAULT_KEY", async () => {
+  const d = await detect({
+    "deno.json": "{}",
+    "denext.config.ts": BACKEND_CONFIG.replace("postgres: {},", "postgres: {},\n    vault: {},"),
+  });
+  assertEquals(d.backendVault, true);
+  const env = stackEnv(resolveStack(d)).map((v) => v.name);
+  assert(env.includes("DENEXT_VAULT_KEY"));
 });
 
 Deno.test("detect: a Postgres DATABASE_URL in .env, migrations + runner, the vector extension", async () => {

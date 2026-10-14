@@ -139,9 +139,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Tooling
 
-- **The compiled `denext` binary needs `deno` for every module-loading verb** (`dev`, `build`,
-  `export`, `start`, …) by design: it re-execs the denext the project pins. Without
-  `DENEXT_VERSION` the installers pick the newest non-prerelease.
+- **The compiled `denext` binary re-execs the denext the project pins** for every module-loading
+  verb (`dev`, `build`, `export`, `start`, …), on denext's Deno toolchain (downloaded on first
+  need; no Deno install required). Offline on first use, with no toolchain cached, it needs a
+  `deno` on PATH. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,

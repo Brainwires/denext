@@ -110,9 +110,12 @@ loopback: `docker compose -f docker-compose.yml -f compose.dev.yml up --build`. 
 asks a browser on another address for its per-run token, so open the URL it logs.
 
 **Secrets.** `.env.example` lists every variable the stack reads — `POSTGRES_PASSWORD`,
-`AUTH_SECRET` (with `denextAuth`), `DENEXT_JWT_SECRET` and `DENEXT_VAULT_KEY` (with
-`@denext/backend`), `DENEXT_STORAGE_SECRET` (with backend storage), `MINIO_ROOT_PASSWORD`, … —
-each with the command that generates a value (`openssl rand -base64 32`). Required ones are left
+`AUTH_SECRET` (with `denextAuth`); with `@denext/backend` the Supabase keys
+`DENEXT_PUBLISHABLE_KEY`, `DENEXT_SECRET_KEY` and `DENEXT_JWT_SIGNING_KEYS` (from `denext backend
+keys`; the legacy `DENEXT_JWT_SECRET` only for HS256 keys), `DENEXT_VAULT_KEY` (required only
+with `vault`) and `DENEXT_WEBHOOK_SECRET` (read only with `webhooks`); `DENEXT_STORAGE_SECRET`
+(with backend storage), `MINIO_ROOT_PASSWORD`, … — each with the command that generates a value
+(`openssl rand -base64 32`). Required ones are left
 empty, and the compose file reads them as `${NAME:?…}`, so `docker compose` refuses to start
 until `.env` sets them; nothing is ever written with a real secret. `.dockerignore` keeps `.env`
 out of the image — keep it out of git too (the generator warns when `.gitignore` doesn't).
@@ -126,8 +129,8 @@ out of the image — keep it out of git too (the generator warns when `.gitignor
 browser — presigned uploads, downloads, multipart parts — for `S3_PUBLIC_ENDPOINT` instead
 (`s3({ publicEndpoint })`; SigV4 signs the host, so the URL must be signed for the name the
 browser uses). Set it to a public HTTPS hostname routed to the `minio` service in production, or
-`http://localhost:9000` with the dev overlay, which publishes MinIO's port. Left empty, browser URLs
-point at `S3_ENDPOINT`. MinIO no longer publishes pullable
+`http://localhost:9000` with the dev overlay, which publishes MinIO's port. Left empty or unset,
+it is `http://localhost:9000`, so set it in production. MinIO no longer publishes pullable
 images, so the service uses Bitnami's legacy build of the same server, pinned by digest;
 `MINIO_IMAGE` in `.env` swaps in any MinIO-compatible image that has `mc`.
 

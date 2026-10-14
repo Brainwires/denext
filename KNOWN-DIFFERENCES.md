@@ -245,8 +245,11 @@ Where `@denext/backend` deliberately departs from Supabase. See
   reads as its owner), and lists what it skipped in a startup warning. Naming a relation in
   `rest.tables` serves it as is. A full count (`Prefer: count=exact`) is for signed-in callers by
   default (`rest.exactCount`).
-- **There is no service-role key.** The unscoped connection is `db.service()` (and a bucket's
-  `{ service: true }`) in server code; nothing the browser holds can bypass the policies.
+- **Server code needs no service-role key.** With `backend({ supabase })` the secret key
+  (`DENEXT_SECRET_KEY`) is the `service_role`, past every policy, as on Supabase — keep it
+  server-side. denext additionally gives server code `db.service()` (and a bucket's
+  `{ service: true }`), so the key never has to leave the server; without `supabase` there is no
+  key at all.
 - **A request without the rate-limit header is still limited.** `rateLimitHeader` is Supabase
   Auth's `GOTRUE_RATE_LIMIT_HEADER`, but where Supabase applies no limit to a request that lacks
   the header, denext keys it on the trusted hop or the socket peer (with one warning), so a

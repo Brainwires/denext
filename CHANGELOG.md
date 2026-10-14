@@ -8,6 +8,43 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Breaking (4.0)
+
+These join the [4.0.0-rc.1 breaking changes](#400-rc1---2026-10-13); together they are what moving
+a 3.x app to 4.0 involves. [Upgrading to 4.0](https://denext.dev/docs/upgrading) walks through them.
+
+- **Project verbs run on denext's Deno toolchain.** `dev`, `build`, `export`, `start`, `test`,
+  `check`, `job`, `doctor` and the other verbs that run project code re-run themselves on the
+  pinned `2.9.7-denext.N` Deno, downloaded and SHA-256-verified into `<DENO_DIR>/denext-deno/` on
+  first need, so the Deno your code runs on is no longer the one that started the CLI. A launcher
+  that denies `--allow-run`, or a sandbox without network on first use, stays on stock Deno (one
+  warning); `DENEXT_DENO=stock` opts out.
+- **First-party plugins need their 4.0 releases.** Each plugin's 4.0-compatible release requires
+  denext 4.0, and the releases built for 3.x don't work with it: `@denext/backend` 0.3,
+  `@denext/content-collections` 0.5, `@denext/effect` 0.2, `@denext/graphql` 0.3, `@denext/htmx`
+  2.1, `@denext/openapi` 0.4, `@denext/pages-router` 0.12, `@denext/react-router` 0.3.
+  `denext upgrade` moves the denext pin, the CLI tasks and these plugins together.
+- **No `npm:esbuild`.** denext runs the esbuild 0.25.5 binary its toolchain ships (or the
+  verified `@esbuild/<platform>` one), and the framework deps a local-path migration copies no
+  longer include `esbuild`: an app that imports esbuild itself adds its own `deno.json` entry.
+- **`@denext/backend`: `db()` scopes every query with the request's identity**
+  (`resolveIdentity()`): with `backend({ supabase })` keys, the secret key runs as `service_role`
+  with no row-level security, and a refused credential is an `IdentityError` (401).
+- **`@denext/backend` storage:** `listBuckets` for anon and signed-in callers is an empty list
+  and `getBucket` is `Bucket not found` (they were `403`); a bucket's `authorize` receives the
+  request's `identity`, and a bucket created at runtime (or declared without `authorize`) is
+  decided by `storage.authorize`, else open only to the service role; the size refusal reads "The
+  object exceeded the maximum allowed size".
+- **`@denext/backend` auto-REST:** `readRestCatalog(sql, schemas, tables)` takes a list of
+  schemas and returns the whole catalog, `generateRestTypes(catalog)` takes the catalog alone,
+  and the client's `range()` sends `offset` / `limit` instead of a `Range` header.
+- **`denext generate docker`'s Postgres publishes no host port** unless `--expose-db`
+  (`127.0.0.1:5432`).
+- **`denext db` is a core verb**, no longer contributed by `@denext/backend`.
+- **A TOTP secret kept in a pre-4.0 user's MFA record moves into the factor store** the first time
+  the user's factors are read (no key needed). Keep a database backup from before the upgrade if
+  you may need to roll back to 3.x.
+
 ### Added
 
 - **A captcha budget in front of the verifier (`rateLimit.captcha`).** Every captcha token
@@ -75,7 +112,8 @@ and this project adheres to
   `jwtExpiry`, `refreshTokenReuseInterval`, `disableSignup`, `autoconfirm`, `phoneAutoconfirm`,
   `anonymousUsers`, `minPasswordLength`, `otpLength`, `otpExpiry`, `sendSms`, `captcha`
   (hCaptcha / Turnstile), `hooks` (`customAccessToken`, `sendEmail`, `sendSms`),
-  `requireReauthentication`, `manualLinking`, `mfa`, `saml`, `idTokenProviders`. Errors are
+  `requireReauthentication`, `manualLinking`, `mfa`, `saml`, `idTokenProviders`, `oauthServer`
+  and `web3` (below). Errors are
   GoTrue's `{ code, error_code, msg }`. Tested with `@supabase/supabase-js` on the in-memory
   adapter and on Postgres.
 - **SAML metadata validity, background refresh and `EncryptedID`.** IdP metadata's `validUntil`
@@ -383,15 +421,6 @@ and this project adheres to
   (a WebSocket it upgraded) captures the request before upgrading and later re-enters a copy of it,
   so `auth()`, `cookies()` and `clientIpForLimits()` answer as they did for the original — how it
   re-checks who is on the other end.
-- **Edge Functions in `@denext/backend`.** `backend({ functions: {} })` serves
-  `functions/<name>.ts` (or `functions/<name>/index.ts`; `supabase/functions/` when only that
-  exists) at `/functions/v1/<name>`, the path supabase-js's `functions.invoke` calls. A module that
-  calls `Deno.serve(handler)` or default-exports a handler runs unchanged, each in a Deno Worker of
-  its own (started on first use, replaced after a crash, restarted on an edit under `denext dev`;
-  optional per-function `permissions` with Deno's worker options). A caller needs a valid identity
-  unless `verifyJwt: false`; a CORS preflight passes through to the function; a cookie-carrying
-  cross-site write is refused. Responses stream; `timeoutMs` and `maxBodyBytes` bound a request.
-  `denext generate function <name>` scaffolds one, and `denext functions list` lists them.
 - **Vault, queues, vector search and database webhooks in `@denext/backend`.**
   `backend({ postgres: {}, vault: {} })` stores secrets in `vault.secrets` (Supabase Vault's
   table shape), encrypted with AES-256-GCM in the app under `DENEXT_VAULT_KEY` (the row id is

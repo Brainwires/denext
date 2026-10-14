@@ -1981,34 +1981,38 @@ identity rows with `identityData`. Access tokens carry Supabase's claims (`sub`,
 `exp`, `iat`, `iss`), so RLS policies written for Supabase work through `db()` and auto-REST.
 
 `sendSms`, `captcha`, `hooks` and `anonymous` can also be set once on `denextAuth({ … })`; they
-then apply to denext's own endpoints and to `/auth/v1`, and the `/auth/v1` options below override
-them there.
+then apply to denext's own endpoints and to `/auth/v1`. The `/auth/v1` options below override
+`sendSms`, `captcha` and `anonymous` there, and merge `hooks` key by key. A hook beats a plain
+sender wherever either is set: a `hooks.sendSms` on `denextAuth()` delivers `/auth/v1`'s texts
+even when `supabase: { auth: { sendSms } }` is set.
 
 The `/auth/v1` options (`backend({ supabase: { auth } })`):
 
-| Option                             | Default           | What it does                                                              |
-| ---------------------------------- | ----------------- | ------------------------------------------------------------------------- |
-| `siteUrl`                          | `canonicalOrigin` | Where links land by default                                               |
-| `redirectUrls`                     | `[]`              | Other `redirect_to` targets (`*` one segment, `**` anything)              |
-| `jwtExpiry`                        | `3600`            | Access-token lifetime, seconds                                            |
-| `refreshTokenReuseInterval`        | `10`              | Seconds a used refresh token may be presented again                       |
-| `disableSignup`                    | `false`           | Refuse new sign-ups (invites and the admin API still create users)        |
-| `autoconfirm` / `phoneAutoconfirm` | `false`           | Sign in at sign-up without confirming the email / phone                   |
-| `anonymousUsers`                   | `false`           | Allow `signInAnonymously()` (default: `denextAuth({ anonymous })`)        |
-| `minPasswordLength`                | `8`               | Password policy (`weak_password`)                                         |
-| `otpLength` / `otpExpiry`          | `6` / `3600`      | Email and SMS codes                                                       |
-| `sendSms`                          | none              | Deliver SMS codes (phone sign-up, phone OTP, phone MFA)                   |
-| `captcha`                          | off               | `{ provider: "hcaptcha" \| "turnstile", secret }` — checks `captchaToken` |
-| `hooks`                            | none              | `customAccessToken`, `sendEmail`, `sendSms` (Supabase's auth hooks)       |
-| `requireReauthentication`          | `false`           | A password change needs a `reauthenticate()` nonce                        |
-| `manualLinking`                    | `true`            | Allow `linkIdentity()`                                                    |
-| `mfa`                              | TOTP              | `{ phone: true }` adds SMS factors; `maxFactors` (10)                     |
-| `saml`                             | none              | SAML SSO: `providers`, `signingKey`, `encryptionKey`, `metadataRefresh`   |
-| `oauthServer`                      | off               | `{ authorizationPath?, codeExpiry? }` — the OAuth 2.1 server, below       |
-| `web3`                             | off               | `{ ethereum?: { chainIds?, domains? }, solana?: { domains? }, maxAge? }`  |
+| Option                             | Default                          | What it does                                                                                                             |
+| ---------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `siteUrl`                          | `canonicalOrigin`                | Where links land by default                                                                                              |
+| `redirectUrls`                     | `[]`                             | Other `redirect_to` targets (`*` one segment, `**` anything)                                                             |
+| `jwtExpiry`                        | `3600`                           | Access-token lifetime, seconds                                                                                           |
+| `refreshTokenReuseInterval`        | `10`                             | Seconds a used refresh token may be presented again                                                                      |
+| `disableSignup`                    | `false`                          | Refuse new sign-ups (invites and the admin API still create users)                                                       |
+| `autoconfirm` / `phoneAutoconfirm` | `false`                          | Sign in at sign-up without confirming the email / phone                                                                  |
+| `anonymousUsers`                   | `false`                          | Allow `signInAnonymously()` (default: `denextAuth({ anonymous })`)                                                       |
+| `minPasswordLength`                | `8`                              | Password policy (`weak_password`)                                                                                        |
+| `otpLength` / `otpExpiry`          | `6` / `3600`                     | Email and SMS codes                                                                                                      |
+| `sendSms`                          | none                             | Deliver SMS codes (phone sign-up, phone OTP, phone MFA)                                                                  |
+| `captcha`                          | off                              | `{ provider: "hcaptcha" \| "turnstile", secret }` — checks `captchaToken`                                                |
+| `hooks`                            | none                             | `customAccessToken`, `sendEmail`, `sendSms` (Supabase's auth hooks)                                                      |
+| `requireReauthentication`          | `false`                          | A password change needs a `reauthenticate()` nonce                                                                       |
+| `manualLinking`                    | `true`                           | Allow `linkIdentity()`                                                                                                   |
+| `mfa`                              | TOTP                             | `{ phone: true }` adds SMS factors; `maxFactors` (10)                                                                    |
+| `idTokenProviders`                 | `native.google` / `native.apple` | `{ google?, apple? }` — the client ids `signInWithIdToken` accepts                                                       |
+| `saml`                             | none                             | SAML SSO: `providers`, `signingKey` + `signingCertificate`, `encryptionKey` + `encryptionCertificate`, `metadataRefresh` |
+| `oauthServer`                      | off                              | `{ authorizationPath?, codeExpiry? }` — the OAuth 2.1 server, below                                                      |
+| `web3`                             | off                              | `{ ethereum?: { chainIds?, domains? }, solana?: { domains? }, maxAge? }`                                                 |
 
 `sendSms`, `captcha`, `hooks` and `anonymous` set on `denextAuth()` apply here too unless these
-options set their own (a hook set here wins over the same hook there) — see
+options set their own (a hook set here wins over the same hook there, and any `hooks.sendSms`
+wins over a plain `sendSms`) — see
 [Captcha](#captcha) and [Hooks](#hooks).
 
 ### SAML single sign-on
@@ -2399,9 +2403,9 @@ What the first-party auth layer still does not do — the full ledger is
   ended early either; it lasts 15 minutes.
 - **`mfa.required: "always"` is trust-on-first-use**: a user with no factor enrolls one
   during the step-up, so whoever holds the first factor at that moment chooses the second.
-- **No public helper spends the MFA attempt budget from a Server Action.** The endpoints
-  spend it; a Server Action calling `verifySecondFactor` or `confirmTotp` must throttle
-  itself.
+- **A Server Action must spend the MFA attempt budget itself.** The endpoints spend it; a
+  Server Action calling `verifySecondFactor` or `confirmTotp` calls
+  `spendMfaAttempt(authConfig, { userId })` first (see above).
 - **An email address's local part must be ASCII**: the emailed flows refuse an SMTPUTF8 local
   part. An internationalised domain is accepted and carried in its punycode form
   (`ada@bücher.de` is `ada@xn--bcher-kva.de`).

@@ -35,10 +35,12 @@ export interface StackOptions {
   readonly dev?: boolean;
   /** The app signs in with `denextAuth` (adds `AUTH_SECRET`). */
   readonly auth?: boolean;
-  /** The app uses `@denext/backend` (adds the backend's JWT and vault keys). */
+  /** The app uses `@denext/backend` (adds the backend's API and JWT keys). */
   readonly backend?: boolean;
   /** `@denext/backend` storage is configured (adds `DENEXT_STORAGE_SECRET`). */
   readonly backendStorage?: boolean;
+  /** `@denext/backend`'s `vault` is configured (adds the required `DENEXT_VAULT_KEY`). */
+  readonly backendVault?: boolean;
   /** The S3 bucket the bootstrap creates (default `denext`). */
   readonly bucket?: string;
   /** The `deno run -A` arguments that run denext's CLI (default: `jsr:@denext/denext/cli`). */
@@ -156,7 +158,7 @@ export const STACK_ENV: readonly StackEnvVar[] = [
     generate: RAND_B64,
     required: true,
     app: true,
-    when: (o) => o.backend === true && o.postgres === true,
+    when: (o) => o.backendVault === true && o.postgres === true,
   },
   {
     name: "DENEXT_WEBHOOK_SECRET",
@@ -212,7 +214,7 @@ export const STACK_ENV: readonly StackEnvVar[] = [
     name: "S3_PUBLIC_ENDPOINT",
     about: "The S3 endpoint BROWSERS reach the store at: presigned upload and download URLs " +
       "are signed for this host. In production a public HTTPS hostname routed to the minio " +
-      "service; empty, browser URLs use S3_ENDPOINT (unreachable outside the containers).",
+      "service; empty or unset, it is http://localhost:9000 (the dev overlay's published port).",
     example: "http://localhost:9000",
     required: false,
     app: true,

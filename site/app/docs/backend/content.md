@@ -93,7 +93,7 @@ restart. In production a missing secret is an error the first time a URL is sign
 
 ### Drivers
 
-**`s3({ region, bucket, endpoint?, credentials?, pathStyle? })`** talks to AWS S3, Cloudflare R2,
+**`s3({ region, bucket, endpoint?, credentials?, pathStyle?, publicEndpoint?, fetch? })`** talks to AWS S3, Cloudflare R2,
 MinIO and other S3-compatible stores over `fetch`, with AWS Signature Version 4 computed by
 `crypto.subtle` (no SDK). Every denext bucket is a key prefix in the one S3 bucket:
 `avatars/u1/me.png`. Credentials default to `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
@@ -280,7 +280,7 @@ ETag, owner and free-form `metadata` — and a row per bucket. With `postgres` t
 tables, `storage.objects` and `storage.buckets` (same columns, same unique index, row-level
 security enabled, `anon` / `authenticated` granted access), plus `storage.foldername(name)`,
 `storage.filename(name)` and `storage.extension(name)`, created by the `backend_storage_0001`
-migration on first use (`storageMigrations()` returns it for a DBA). A database restored from
+migration on first use (`backend_storage_0002` adds the versioning and lifecycle columns) (`storageMigrations()` returns it for a DBA). A database restored from
 Supabase keeps its tables and gains any missing column. Without `postgres` the same rows live in a
 `node:sqlite` file (`storage.metadataPath`), which serves one server process: several replicas
 sharing storage need the Postgres store. Listings, `info()` and the bucket API read the rows; the
@@ -545,17 +545,19 @@ With `backend({ supabase: true })` the backend also recognizes Supabase's creden
   secret key (`sb_secret_…`, the `service_role`, server-side only), and the legacy `anon` /
   `service_role` JWTs signed HS256 with a JWT secret. They come from `DENEXT_PUBLISHABLE_KEY`,
   `DENEXT_SECRET_KEY` and `DENEXT_JWT_SECRET` (or `backend({ supabase: { publishableKey,
-  secretKey, jwtSecret } })`); several, comma-separated, rotate one out.
+  secretKey, jwtSecret } })`). The publishable and secret keys take several, comma-separated (any
+  one is accepted, so you can rotate one out); the JWT secret is a single value.
 - **Access tokens**: JWTs with Supabase's claims, signed ES256 under `DENEXT_JWT_SIGNING_KEYS` (a
-  private JWK, or a JSON array of them, current first; the public halves are served at
+  private JWK, or a JSON array of them, current first — or `supabase: { signingKeys }`; the first
+  signs, all of them verify, and the public halves are served at
   `/auth/v1/.well-known/jwks.json`), or HS256 under the JWT secret when no signing key is set.
 
 The same option mounts GoTrue's `/auth/v1` over your `denextAuth()` users, so `supabase.auth.*`
 works unchanged; its options go under `supabase: { auth: { … } }` — see
-[Supabase clients](/docs/auth#supabase-clients-auth-v1).
+[Supabase clients](/docs/auth#supabase-clients-authv1).
 
-`denext backend keys` prints a fresh set as environment variables (`--legacy` adds a JWT secret
-and the legacy JWT keys); under `denext dev` with none configured, a set is generated once into
+`denext backend keys` prints a fresh set as environment variables (`--json` as JSON; `--legacy`
+adds a JWT secret and the legacy JWT keys); under `denext dev` with none configured, a set is generated once into
 `.denext/backend-keys.json`. Store them as secrets; never commit them. `denext backend token
 --sub <user-id>` signs an access token with the app's key (`--role anon | service_role`,
 `--exp <seconds>`, `--claims '{…}'`), like `supabase gen bearer-jwt`. It prints only the token,
@@ -642,7 +644,7 @@ The first scoped query applies the migration `backend_rls_0001` (recorded in `ba
 
 That needs a database user that may create roles (`CREATEROLE`). Where it may not, have a database
 administrator run the same setup once — `rlsSetupSql("app_user")` from `@denext/backend` prints it —
-and set `rls: { migrate: false }`. Without the grant, the first scoped query fails with
+and set `backend({ postgres: { rls: { migrate: false } } })`. Without the grant, the first scoped query fails with
 `… may not grant itself the role anon` and a hint naming the `GRANT`. A superuser connection works
 too, but connect as an ordinary role in production: a superuser could switch to any role.
 
@@ -657,8 +659,10 @@ too, but connect as an ordinary role in production: a superuser could switch to 
   `authenticated` by default; here a table is reachable only once you `grant` it, as above —
   `alter default privileges in schema public grant select, insert, update, delete on tables to authenticated;`
   restores Supabase's default if you want it.
-- There is no `service_role` key: the server is the only client, and `db.service()` is its
-  unscoped connection.
+- With `backend({ supabase })` the secret key (`DENEXT_SECRET_KEY`, `sb_secret_…`) and the legacy
+  `service_role` JWT run as `service_role`, with no row-level security — as on Supabase. Keep them
+  server-side, never in a browser bundle. Server code doesn't need either: `db.service()` is its
+  unscoped connection (and without `supabase` it is the only one).
 - RLS guards against a query that forgets a `where`, not against SQL injection: injected SQL could
   `reset role`. Keep values bound (the tagged template does it) and never build `unsafe()` text
   from input.

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Breaking
+
+- `readRestCatalog(sql, schemas, tables)` takes the list of schemas and returns
+  the whole catalog (`tables`, `foreignKeys`, `functions`, `enums`, …); `generateRestTypes(catalog)`
+  takes the catalog alone; the client's `range()` sends `offset` / `limit` (as supabase-js does)
+  instead of a `Range` header, and `maybeSingle()` checks the row count on the client.
+- **`db()` resolves every request through `resolveIdentity()`**: with `supabase` keys a request
+  carrying the secret key runs as `service_role` (no row-level security), and a refused credential
+  is an `IdentityError` (401).
+- A bucket's `authorize` receives the request's `identity`; anon and signed-in bucket listings
+  changed (below).
+
+### Added
+
 - **`/auth/v1`.** `backend({ supabase: { auth } })` serves the GoTrue-compatible auth API over
   the `denextAuth()` users (sign-up, password / OTP / magic link / phone / anonymous / OAuth /
   id_token / PKCE sign-in, user updates, MFA factors, identities, SAML SSO, the admin API), so the
@@ -15,7 +29,7 @@
   (noncurrent versions, delete markers, `versionId` reads and deletes, restore by copy, lifecycle
   policies; migration `backend_storage_0002`), cursor-paged `listV2`, TUS uploads authorized by a
   signed upload token (`/upload/resumable/sign`), multipart uploads streamed instead of buffered,
-  anon/user bucket listings answered as Supabase does (empty), and the `denext ui` admin hooks.
+  and the `denext ui` admin hooks.
 - **SAML SSO admin API, Single Logout and encrypted assertions.** `supabase.auth.saml` takes
   `signingKey` / `signingCertificate` (signed AuthnRequests, Single Logout at
   `/auth/v1/sso/saml/slo`) and `encryptionKey` / `encryptionCertificate` (`EncryptedAssertion`), and
@@ -95,10 +109,6 @@
   `CompositeTypes`, the `Tables<>` / `TablesInsert<>` / `TablesUpdate<>` / `Enums<>` helpers and
   `Constants`, so `createClient<Database>()` type-checks; it still registers the default schema
   for denext's `from()`.
-- **Breaking:** `readRestCatalog(sql, schemas, tables)` takes the list of schemas and returns
-  the whole catalog (`tables`, `foreignKeys`, `functions`, `enums`, …); `generateRestTypes(catalog)`
-  takes the catalog alone; the client's `range()` sends `offset` / `limit` (as supabase-js does)
-  instead of a `Range` header, and `maybeSingle()` checks the row count on the client.
 - **Supabase Realtime.** `backend({ realtime })` serves `/realtime/v1/websocket` (Phoenix channels,
   serializer `1.0.0` and `2.0.0`, binary broadcast frames) and `POST /realtime/v1/api/broadcast`, so
   `@supabase/supabase-js`'s `supabase.channel(…)` works against the app: `postgres_changes` (per
@@ -145,7 +155,28 @@
   `vault.decrypted_secrets`, same format as the app side; keys set per transaction by
   `vault.withKey()` and `denext db push`.
 - `vectorSearchSql()` now comes from `@denext/denext/server` (re-exported unchanged).
-- **`denext db push | status | reset | diff | dump`.**
+- **`/auth/v1`: the OAuth 2.1 server, stored providers and Web3.** `supabase: { auth: { oauthServer } }`
+  serves `supabase.auth.oauth.*` and `admin.oauth.*` (clients, consent, authorization codes with
+  PKCE); `custom:` OAuth / OIDC providers can be stored through the admin API; `web3` turns on
+  `signInWithWeb3` (Sign-In with Ethereum and Solana). `backendAuthAdapter()` stores all of them in
+  Postgres.
+- **`s3({ publicEndpoint })`** (or `S3_PUBLIC_ENDPOINT`): URLs handed to a browser — presigned
+  uploads, downloads, multipart parts — are signed for that host, while the server keeps `endpoint`.
+- **CLI verbs.** `denext functions list | new | serve | delete`, `denext storage ls | cp | mv | rm`
+  (`ss:///bucket/key` paths), `denext backend keys` (`--json`, `--legacy`) and `denext backend
+  token` (a signed test access token).
+
+### Changed
+
+- **`denext db` is a core denext verb.** This plugin no longer contributes it; it installs the
+  hooks the core verb uses (its migrations, its service schemas and the Postgres actions `diff`,
+  `dump`, `pull`, `lint`, `inspect`, `test`, `types`).
+- **Bucket listings for anon and signed-in callers** answer as Supabase does without policies:
+  `listBuckets` is an empty list and `getBucket` is `Bucket not found` (they were `403`). The
+  service role, and `storage: { rls: true }` policies, see buckets as before.
+- **`storage.buckets` may be empty** (buckets can be created at runtime); a runtime bucket is
+  authorized by `storage.authorize`. An upload refused for its size says "The object exceeded the
+  maximum allowed size".
 
 ## 0.3.0 - 2026-10-13
 

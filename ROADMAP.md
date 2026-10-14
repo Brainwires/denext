@@ -12,8 +12,6 @@
 
 - **Deno's next minor:** rebase denext's patches onto it and cut a new `-denext.N`. That release
   replaces Deno's TypeScript fork with stock TypeScript 6, so this rebase is larger than usual.
-- **esbuild in the toolchain download** (`2.9.7-denext.17`): carry esbuild 0.25.5 in the same
-  verified download, so a build fetches no `npm:esbuild`.
 
 ## Deno Desktop
 
@@ -124,10 +122,6 @@ Each is documented as a manual recipe today (the
   served by `denext openapi types`).
 - **CLI distribution:** publish the Homebrew / Scoop / winget manifests each release generates
   to a tap, a bucket and winget-pkgs; a Windows Arm64 `denext` binary.
-- **`@denext/backend` database type generator:** row types for every table of the schema, for
-  server-side `db()` queries (auto-REST's `.denext/rest.ts` types only the tables it serves).
-- **`@denext/backend` realtime over logical replication,** for the very high write volumes that
-  LISTEN/NOTIFY serializes on commit.
 
 ## `denext ui` and DevTools
 

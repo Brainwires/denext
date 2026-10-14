@@ -63,6 +63,8 @@ export interface StackDetection {
   readonly backend: boolean;
   /** `@denext/backend` storage is configured (any driver). */
   readonly backendStorage: boolean;
+  /** `@denext/backend`'s `vault` is configured. */
+  readonly backendVault: boolean;
   /** The S3 bucket named literally in `s3({ bucket: "…" })`, when there is one. */
   readonly bucket?: string;
   /** The `deno run -A` arguments that run denext's CLI (`--config deno.json jsr:…/cli`). */
@@ -164,6 +166,15 @@ const S3_BUCKET =
 /** `create extension [if not exists] vector` in a migration. */
 const VECTOR_EXTENSION = /\bcreate\s+extension\s+(?:if\s+not\s+exists\s+)?["']?vector\b/i;
 
+/** Which `@denext/backend` services the config text sets (only when the backend is in it). */
+function backendServices(
+  config: string,
+  backendInConfig: boolean,
+): { backendStorage: boolean; backendVault: boolean } {
+  if (!backendInConfig) return { backendStorage: false, backendVault: false };
+  return { backendStorage: /\bstorage\s*:/.test(config), backendVault: /\bvault\s*:/.test(config) };
+}
+
 /**
  * Detect the stack a project needs from its `denext.config.*`, `deno.json`, `.env` and
  * `migrations/` — by reading text only (nothing is imported).
@@ -211,7 +222,7 @@ export async function detectDockerStack(dir: string): Promise<StackDetection> {
     reasons,
     auth: /\bdenextAuth\s*\(/.test(config),
     backend,
-    backendStorage: backendInConfig && /\bstorage\s*:/.test(config),
+    ...backendServices(config, backendInConfig),
     ...(bucket ? { bucket } : {}),
     cli,
     migrateCommand: migrateCommandOf(json, cli),
@@ -248,6 +259,7 @@ export function resolveStack(
     auth: detection.auth,
     backend: detection.backend,
     backendStorage: detection.backendStorage,
+    backendVault: detection.backendVault,
     ...(detection.bucket ? { bucket: detection.bucket } : {}),
     cli: detection.cli,
     migrateCommand: detection.migrateCommand,
