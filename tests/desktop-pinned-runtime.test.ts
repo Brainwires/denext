@@ -491,7 +491,11 @@ Deno.test({
   const archive = await tarGz(cefAppEntries(macho));
   const signed = new Set<string>();
   const order: string[] = [];
-  const rel = (p: string) => p.slice(p.indexOf("laufey.app/") + "laufey.app/".length);
+  // Windows hands back `\` paths; the recorded order is always in `/` form.
+  const rel = (p: string) => {
+    const posix = p.replaceAll("\\", "/");
+    return posix.slice(posix.indexOf("laufey.app/") + "laufey.app/".length);
+  };
   const entries = (dir: string) => {
     try {
       return [...Deno.readDirSync(dir)].map((e) => join(dir, e.name));
@@ -515,7 +519,7 @@ Deno.test({
       );
     }
     const main = "/MacOS/laufey";
-    const bundle = path.endsWith(main) ? path.slice(0, -main.length) : path;
+    const bundle = path.replaceAll("\\", "/").endsWith(main) ? path.slice(0, -main.length) : path;
     const missing = nestedCode(bundle).filter((p) => !signed.has(p));
     if (missing.length > 0) {
       return Promise.resolve({
