@@ -32,11 +32,13 @@ import {
 } from "./rate-limit.ts";
 import { accountRoutes } from "./routes-account.ts";
 import { handleCredentials } from "./routes-credentials.ts";
+import { anonymousRoutes } from "./routes-anonymous.ts";
 import { emailCallbacks } from "./routes-email.ts";
 import { mfaRoutes } from "./routes-mfa.ts";
 import { nativeRoutes } from "./routes-native.ts";
 import { handleOAuthCallback, handleOAuthFormPost, handleSignin } from "./routes-oauth.ts";
 import { passkeyRoutes } from "./routes-passkeys.ts";
+import { phoneCallbacks } from "./routes-phone.ts";
 import { handleProviders, handleSession, handleSignout } from "./routes-session.ts";
 import {
   type AuthRoute,
@@ -119,7 +121,7 @@ type CallbackHandler<P extends AuthProvider> = (
  * `{basePath}/callback/:provider`, per provider type: the verbs it answers. GET is the
  * OAuth/OIDC redirect back and the magic-link click; POST the Credentials sign-in, the
  * email send/redeem, and a `responseMode: "form_post"` provider's response (a query-mode
- * provider answers that POST `405` itself). A verb missing here is a `405`.
+ * provider answers that POST `405` itself), and the phone send/redeem (POST only). A verb missing here is a `405`.
  */
 const CALLBACKS: {
   readonly [T in AuthProvider["type"]]: Partial<
@@ -128,6 +130,7 @@ const CALLBACKS: {
 } = {
   credentials: { POST: handleCredentials },
   email: emailCallbacks,
+  phone: phoneCallbacks,
   oauth: { GET: handleOAuthCallback, POST: handleOAuthFormPost },
   oidc: { GET: handleOAuthCallback, POST: handleOAuthFormPost },
 };
@@ -189,6 +192,9 @@ const declaredRoutes: readonly AuthRoute[] = [
   // `/reset/confirm` (the link click carries the per-IP `"session-read"` gate). They
   // answer `null` without an adapter that has the verification-token group.
   ...accountRoutes,
+  // Anonymous sign-in (`anonymous: true`): POST `/anonymous`. It answers `null` (a plain 404)
+  // when the feature is off.
+  ...anonymousRoutes,
   // The second factor: POST `/mfa`, `/mfa/enroll`, `/mfa/confirm`, `/mfa/disable` — each
   // spends the per-user MFA budget itself, and answers `null` without the MFA group.
   ...mfaRoutes,

@@ -8,7 +8,9 @@
 import { readCappedBody, STALLED, TOO_LARGE } from "../../body.ts";
 import type { AdapterUser, AuthAdapter } from "../adapter.ts";
 import { bearerTokenOf } from "../bearer-header.ts";
+import { captchaRemoteIp, usableCaptchaToken, verifyCaptcha } from "../captcha.ts";
 import { resolveAuthOptions } from "../options.ts";
+import { normalizePhoneNumber } from "../phone.ts";
 import {
   authTrustsProxy,
   clientIpBucket,
@@ -294,36 +296,17 @@ export async function checkCaptcha(
 /** The `captcha_token` a body carries (`gotrue_meta_security.captcha_token`, or top level). */
 function captchaTokenOf(body: Record<string, unknown>): string | undefined {
   const security = body.gotrue_meta_security as Record<string, unknown> | undefined;
-  const token = security?.captcha_token ?? body.captcha_token;
-  return typeof token === "string" && token !== "" && token.length <= 4096 ? token : undefined;
+  return usableCaptchaToken(security?.captcha_token ?? body.captcha_token);
 }
 
 /** Ask the captcha provider whether `token` is a solved challenge (a failure is "no"). */
-async function captchaVerified(
+function captchaVerified(
   ctx: GoTrueContext,
   captcha: NonNullable<GoTrueOptions["captcha"]>,
   token: string,
 ): Promise<boolean> {
-  const url = captcha.verifyUrl ??
-    (captcha.provider === "hcaptcha"
-      ? "https://api.hcaptcha.com/siteverify"
-      : "https://challenges.cloudflare.com/turnstile/v0/siteverify");
-  const form = new URLSearchParams({ secret: captcha.secret, response: token });
-  const ip = clientIpBucket(ctx.request, { trustForwardedHeaders: authTrustsProxy(ctx.config) });
-  if (ip && ip !== "unknown" && !ip.includes("/")) form.set("remoteip", ip);
-  try {
-    const response = await (captcha.fetch ?? fetch)(url, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: form,
-      signal: AbortSignal.timeout(10_000),
-    });
-    const result = await response.json() as { success?: unknown };
-    return response.ok && result?.success === true;
-  } catch (error) {
-    resolveAuthOptions(ctx.config).logger.error("captcha verification failed", error);
-    return false;
-  }
+  const remoteIp = captchaRemoteIp(ctx.request, ctx.config);
+  return verifyCaptcha(captcha, token, remoteIp, resolveAuthOptions(ctx.config).logger);
 }
 
 /** A budget to spend before an attempt runs; a 429 when it is spent. */
@@ -356,11 +339,8 @@ export async function spendIp(
 /** E.164: `+` and 8–15 digits (spaces, dashes and parentheses are dropped first). */
 export function normalizePhone(input: string | undefined): string | undefined {
   if (!input) return undefined;
-  const digits = input.replace(/[\s().-]/g, "");
-  const e164 = digits.startsWith("+") ? digits : `+${digits}`;
-  if (!/^\+[1-9][0-9]{7,14}$/.test(e164)) {
-    throw fail.validation("Invalid phone number format (E.164 required)");
-  }
+  const e164 = normalizePhoneNumber(input);
+  if (!e164) throw fail.validation("Invalid phone number format (E.164 required)");
   return e164;
 }
 

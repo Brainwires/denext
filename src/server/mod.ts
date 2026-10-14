@@ -548,6 +548,7 @@ export {
   microsoftEntra,
   oidc,
   okta,
+  phoneOtp,
   slack,
 } from "./auth/providers.ts";
 export type {
@@ -561,6 +562,7 @@ export type {
   OAuthClientOptions,
   OidcOptions,
   OktaOptions,
+  PhoneProviderOptions,
 } from "./auth/providers.ts";
 // Password hashing for the Credentials provider (salted scrypt via node:crypto).
 export { hashPassword, verifyPassword } from "./auth/password.ts";
@@ -770,6 +772,7 @@ export type {
   NativeAppleConfig,
   NativeIdTokenProviderConfig,
   OAuthProvider,
+  PhoneProvider,
   ProfileInput,
   SendVerificationRequest,
   SignInFailedReason,

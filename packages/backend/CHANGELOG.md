@@ -34,6 +34,12 @@
   denext's own hooks on the same channels, one same-origin socket per page; a same-origin socket
   may omit `apikey`.
 - **`useTableChanges` / `tableChanges` `schema` option** (keys may name `schema.table`).
+- **Custom Access Token Hook and anonymous users for denext sessions.** A cookie or native
+  session's claims (what `db()`, auto-REST and storage run with) go through
+  `hooks.customAccessToken` — the `denextAuth()` one, else `supabase.auth.hooks` — with `sub`,
+  `role`, `aud`, `session_id`, `iat`, `exp`, `aal`, `is_anonymous` and `email` restored after
+  it, the result cached per session for 60 seconds, and a throwing or malformed hook failing the
+  request. `is_anonymous` is `true` for an anonymous user's session.
 
 - **`supabase` option and `resolveIdentity()`.** `backend({ supabase: true | { publishableKey,
   secretKey, jwtSecret, signingKeys } })` installs Supabase-compatible API keys and JWT signing

@@ -276,7 +276,9 @@ function aalOf(amr: readonly string[]): "aal1" | "aal2" {
  *
  * `{ sub, role: "authenticated", aud: "authenticated", email?, exp?, iat?, session_id?,
  *   aal, amr: [{ method, timestamp? }], app_metadata: { provider, providers, roles },
- *   user_metadata: { name?, image?, email_verified? }, is_anonymous: false, ...custom }`
+ *   user_metadata: { name?, image?, email_verified? }, is_anonymous, ...custom }`
+ *
+ * `is_anonymous` is `true` for an anonymous user's session (`AuthUser.isAnonymous`).
  *
  * @param session The denext session.
  * @param custom Extra claims (`sub`, `role` and `email` are not overridden).
@@ -306,7 +308,7 @@ export function sessionClaims(
       roles: user.roles ?? [],
     },
     user_metadata: metadata,
-    is_anonymous: false,
+    is_anonymous: user.isAnonymous === true,
     ...withoutIdentity(custom),
     ...identityClaims(user.id, user.email),
   };

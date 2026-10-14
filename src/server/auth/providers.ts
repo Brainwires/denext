@@ -42,6 +42,7 @@ export {
   magicLink,
   type MagicLinkOptions,
 } from "./providers-email.ts";
+export { phoneOtp, type PhoneProviderOptions } from "./providers-phone.ts";
 
 /**
  * Google (OIDC). Verifies the `id_token`; no userinfo round-trip needed.

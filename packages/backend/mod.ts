@@ -57,6 +57,7 @@
 
 import type { DenextPlugin, PluginContext } from "@denext/denext/server";
 import { handleGoTrueRequest, installGoTrue } from "@denext/denext/server";
+import { installSupabaseAuthHooks } from "./src/identity.ts";
 import { checkBucketName } from "./src/keys.ts";
 import { handleStorageRequest } from "./src/handler.ts";
 import { handleStorageApi } from "./src/storage-api.ts";
@@ -324,7 +325,11 @@ async function setupSupabase(ctx: PluginContext, option: true | SupabaseOptions)
   const keys = await setupSupabaseKeys(ctx, supabase, env);
   const auth = { options: supabase.auth ?? {}, keys };
   installGoTrue(auth);
-  ctx.addTeardown(() => installGoTrue(undefined));
+  installSupabaseAuthHooks(supabase.auth?.hooks);
+  ctx.addTeardown(() => {
+    installGoTrue(undefined);
+    installSupabaseAuthHooks(undefined);
+  });
   ctx.addRequestHandler((request) =>
     jwksResponse(request, keys) ?? handleGoTrueRequest(request, auth)
   );

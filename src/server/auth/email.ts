@@ -31,11 +31,12 @@
 import { requestOrigin } from "../absolute-url.ts";
 import { after, currentContext } from "../request-context.ts";
 import { isProductionEnv } from "../session.ts";
-import type { AdapterUser, AuthAdapter, VerificationPurpose } from "./adapter.ts";
+import type { AdapterUser, AuthAdapter, MaybePromise, VerificationPurpose } from "./adapter.ts";
 import { isVerified } from "./adapter-link.ts";
 import { emitAuthEvent } from "./events.ts";
 import { sha256Hex } from "./hash.ts";
 import { forgetPasskeyFactor, removeAllFactors } from "./factors.ts";
+import { userJson } from "./gotrue/user.ts";
 import { randomToken } from "./oauth.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import {
@@ -163,12 +164,56 @@ function requireFlowAdapter(config: AuthConfig, flow: EmailFlow, fn: string): Em
   );
 }
 
+/** Supabase's `email_action_type` for each of denext's email token spaces. */
+const EMAIL_ACTIONS: Readonly<Record<VerificationRequestParams["purpose"], string>> = {
+  email: "signup",
+  reset: "recovery",
+  magic: "magiclink",
+  otp: "email",
+};
+
+/**
+ * The mailer every native email send goes through: `hooks.sendEmail` when configured — handed
+ * Supabase's Send Email Hook payload — else `sendVerificationRequest`, else `null`.
+ *
+ * The hook's payload: `email_data.email_action_type` is `signup` (email verification),
+ * `recovery` (password reset), `magiclink` (a `magicLink()` link) or `email` (an `emailOtp()`
+ * code); `token` is the code or link token, `action_link` the ready-to-click link (for a code,
+ * the page it is typed into), `site_url` the `canonicalOrigin`; `token_hash` and `redirect_to`
+ * are `""` — denext's own links verify through `action_link`, not `/auth/v1/verify`. `user` is
+ * the account in GoTrue's JSON shape when the address has one, else `{ email }`.
+ *
+ * @param config The app's auth config.
+ * @returns The mailer, or `null` when neither is configured.
+ */
+export function mailerOf(config: AuthConfig): SendVerificationRequest | null {
+  const hook = config.hooks?.sendEmail;
+  if (!hook) return config.sendVerificationRequest ?? null;
+  return async (params) => {
+    const adapter = resolveAuthOptions(config).adapter;
+    const user = await adapter?.getUserByEmail?.(params.identifier);
+    await hook({
+      user: adapter && user ? await userJson(adapter, user) : { email: params.identifier },
+      email_data: {
+        token: params.token,
+        token_hash: "",
+        redirect_to: "",
+        email_action_type: EMAIL_ACTIONS[params.purpose],
+        site_url: config.canonicalOrigin ?? "",
+        action_link: params.url,
+      },
+    });
+  };
+}
+
 /** The configured mailer, or an actionable error: the sending flows refuse to start without one. */
 function requireMailer(config: AuthConfig, fn: string): SendVerificationRequest {
-  if (config.sendVerificationRequest) return config.sendVerificationRequest;
+  const mailer = mailerOf(config);
+  if (mailer) return mailer;
   throw new Error(
-    `${fn}: denext ships no mailer — pass \`sendVerificationRequest\` to denextAuth ` +
-      "(it receives { identifier, url, token, purpose, expiresAt } for every outbound token).",
+    `${fn}: denext ships no mailer — pass \`sendVerificationRequest\` (or \`hooks.sendEmail\`) ` +
+      "to denextAuth (it receives { identifier, url, token, purpose, expiresAt } for every " +
+      "outbound token).",
   );
 }
 
@@ -276,12 +321,62 @@ export interface ThrottledSendOptions {
   issue(origin: string): Promise<VerificationRequestParams>;
 }
 
+/** What {@linkcode throttledDispatch} is handed. */
+export interface ThrottledDispatchOptions {
+  /** The normalised identifier (an email address, or an E.164 number for `"sms"`). */
+  identifier: string;
+  /** The token space a send issues into — also what the no-send path's dummy round-trip names. */
+  purpose: VerificationPurpose;
+  /** The incoming request, when there is one (the IP bucket). */
+  request?: Request;
+  /** The adapter's verification-token group (the no-send path's round-trip). */
+  tokens: Pick<AuthAdapter, "useVerificationToken">;
+  /** Find the account the identifier belongs to (`getUserByEmail`, `getUserByPhone`). */
+  lookup(identifier: string): MaybePromise<AdapterUser | undefined>;
+  /** Whether the looked-up identifier gets a message; `false` does comparable dummy work. */
+  shouldSend(user: AdapterUser | undefined): boolean;
+  /** Mint the token and hand it to the sender. */
+  dispatch(user: AdapterUser | undefined): Promise<void>;
+}
+
+/**
+ * The enumeration-safe send core every one-time-token flow shares (the email flows and the
+ * `phoneOtp()` text): spend the per-identifier + per-IP send budget, look the identifier up,
+ * then either dispatch a token or do the equivalent dummy work — hashing a fresh token and
+ * making one adapter round-trip that matches nothing, where the real path hashes and stores.
+ * The budget is spent BEFORE the lookup, so a throttled unknown identifier and a throttled
+ * known one are indistinguishable.
+ *
+ * @param config The app's auth config.
+ * @param input The identifier, the budget inputs, the lookup and the flow's two decisions.
+ * @returns Whether the request was throttled — identical for known and unknown identifiers.
+ */
+export async function throttledDispatch(
+  config: AuthConfig,
+  input: ThrottledDispatchOptions,
+): Promise<EmailRequestResult> {
+  const keys = subjectBucketKeys("verify", input.identifier, input.request, config);
+  const retryAfter = await consumeHitBudget(verificationLimiter(config), keys);
+  if (retryAfter !== null) return { ok: false, error: "throttled", retryAfter };
+  const user = await input.lookup(input.identifier);
+  if (!input.shouldSend(user)) {
+    const tokenHash = await sha256Hex(randomToken(32));
+    await input.tokens.useVerificationToken?.({
+      identifier: input.identifier,
+      purpose: input.purpose,
+      tokenHash,
+    });
+    return ACCEPTED;
+  }
+  await input.dispatch(user);
+  return ACCEPTED;
+}
+
 /**
  * The send path every emailed-token flow shares (email verification, password reset,
- * magic link, one-time code): resolve the link origin, spend the send budget, look the
- * address up, then either issue + deliver a token or do the equivalent dummy work —
- * hashing a fresh token and making one adapter round-trip that matches nothing, where the
- * real path hashes and stores. Callers have already validated the address and the
+ * magic link, one-time code): resolve the link origin, then {@linkcode throttledDispatch} —
+ * spend the send budget, look the address up (`getUserByEmail`), and either issue + deliver a
+ * token or do the equivalent dummy work. Callers have already validated the address and the
  * configuration.
  *
  * @param config The app's auth config.
@@ -294,21 +389,17 @@ export async function sendThrottled(
   input: ThrottledSendOptions,
 ): Promise<EmailRequestResult> {
   const origin = linkOrigin(config, input.request);
-  const keys = subjectBucketKeys("verify", input.identifier, input.request, config);
-  const retryAfter = await consumeHitBudget(verificationLimiter(config), keys);
-  if (retryAfter !== null) return { ok: false, error: "throttled", retryAfter };
-  const user = await input.adapter.getUserByEmail(input.identifier);
-  if (!input.shouldSend(user)) {
-    const tokenHash = await sha256Hex(randomToken(32));
-    await input.adapter.useVerificationToken({
-      identifier: input.identifier,
-      purpose: input.purpose,
-      tokenHash,
-    });
-    return ACCEPTED;
-  }
-  await deliver(resolveAuthOptions(config), input.send, await input.issue(origin));
-  return ACCEPTED;
+  const adapter = input.adapter;
+  return await throttledDispatch(config, {
+    identifier: input.identifier,
+    purpose: input.purpose,
+    request: input.request,
+    tokens: adapter,
+    lookup: (identifier) => adapter.getUserByEmail(identifier),
+    shouldSend: input.shouldSend,
+    dispatch: async () =>
+      await deliver(resolveAuthOptions(config), input.send, await input.issue(origin)),
+  });
 }
 
 /**
@@ -607,11 +698,12 @@ async function evictUnprovenAccess(
   options: ResolvedAuthOptions,
   adapter: ProvenMailboxAdapter,
   userId: string,
+  reason: ApiTokenRevokedReason = "email_verified",
 ): Promise<void> {
   await retirePassword(options, adapter, userId);
   await retireSecondFactor(config, adapter, userId);
   await deletePasskeys(config, adapter, userId);
-  await revokeApiTokens(options, adapter, userId, "email_verified");
+  await revokeApiTokens(options, adapter, userId, reason);
   await revokeUserSessions(config, options, userId);
 }
 
@@ -637,6 +729,32 @@ export async function markVerified(
   await evictUnprovenAccess(config, options, adapter, user.id);
   const verified = await adapter.updateUser({ id: user.id, emailVerified: nowSeconds() });
   await emitAuthEvent(options, "emailVerified", { user: verified });
+  return verified;
+}
+
+/**
+ * The phone sibling of {@linkcode markVerified}: record that `user` just proved their number
+ * (a redeemed `phoneOtp()` code). An unset `phoneVerified` is set — firing `phoneVerified` —
+ * after the same pre-account-hijacking eviction retires everything the account had (its
+ * password, second factors, passkeys, bearer tokens — `reason: "phone_verified"` — and
+ * server-side sessions). A number that was already verified is returned unchanged.
+ *
+ * @param config The app's auth config.
+ * @param options The resolved auth options.
+ * @param adapter The configured adapter.
+ * @param user The account whose number was just proven.
+ * @returns The (now phone-verified) user.
+ */
+export async function markPhoneVerified(
+  config: AuthConfig,
+  options: ResolvedAuthOptions,
+  adapter: ProvenMailboxAdapter,
+  user: AdapterUser,
+): Promise<AdapterUser> {
+  if (isVerified(user.phoneVerified)) return user;
+  await evictUnprovenAccess(config, options, adapter, user.id, "phone_verified");
+  const verified = await adapter.updateUser({ id: user.id, phoneVerified: nowSeconds() });
+  await emitAuthEvent(options, "phoneVerified", { user: verified });
   return verified;
 }
 

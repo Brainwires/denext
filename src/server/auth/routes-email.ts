@@ -25,52 +25,50 @@
  * without the proof (its password, second factor, bearer tokens and server-side sessions)
  * is retired, the pre-account-hijacking defence (`evictUnprovenAccess`); an unknown address becomes a new, already-verified user when
  * the provider allows sign-up (firing `createUser` — no account row is linked: as in
- * Auth.js, the address on the user record is the identity). `callbacks.signIn` may then
+ * Auth.js, the address on the user record is the identity) — unless the request carries a
+ * complete anonymous session, whose user is converted instead (it keeps its id, gains the
+ * verified address and loses `isAnonymous`; `userConverted` fires). `callbacks.signIn` may then
  * veto it (`?error=AccessDenied`), and the one sign-in tail
  * ({@link ./sign-in-tail.ts | finishSignIn}) decides the MFA step-up, mints the session
  * (`amr: ["email"]` for a link, `["otp"]` for a code) and answers.
+ *
+ * With `captcha` configured a send needs a solved captcha token first; a redeem does not.
  *
  * The `Authorization` header is never read, and every POST is same-origin gated.
  *
  * @module
  */
 
-import { bufferedRequest, readCappedBody, STALLED } from "../body.ts";
 import type { AuthAdapter } from "./adapter.ts";
 import { type ResolvedSignIn, toAuthUser } from "./adapter-link.ts";
+import { captchaRefusal } from "./captcha.ts";
 import {
   type EmailFlowAdapter,
   emailFlowAdapter,
+  mailerOf,
   markVerified,
   sendThrottled,
   tokenLink,
 } from "./email.ts";
-import { emitAuthEvent } from "./events.ts";
+import { type AttemptKeys, subjectBucketKeys } from "./rate-limit.ts";
+import { convertOrCreateUser, hasConvertibleSession } from "./routes-anonymous.ts";
 import {
-  authTrustsProxy,
-  clientIpBucket,
-  consumeHitBudget,
-  mfaLimiter,
-  settleAttempt,
-  subjectBucketKeys,
-} from "./rate-limit.ts";
+  errorLocation,
+  noticePage,
+  pageWith,
+  readSignInForm,
+  redeemAndSignIn,
+  sentAnswer,
+} from "./routes-passwordless.ts";
 import {
   afterSignIn,
-  applySignInCallback,
   type AuthRouteContext,
   isSameOrigin,
   json,
   redirect,
-  sameOriginRedirect,
   wantsJson,
 } from "./routes-shared.ts";
-import { finishSignIn } from "./sign-in-tail.ts";
-import type {
-  AuthConfig,
-  EmailProvider,
-  SignInFailedReason,
-  VerificationRequestParams,
-} from "./types.ts";
+import type { AuthConfig, EmailProvider, VerificationRequestParams } from "./types.ts";
 import {
   issueVerificationCode,
   issueVerificationToken,
@@ -78,9 +76,6 @@ import {
   redeemVerificationCode,
   redeemVerificationToken,
 } from "./verification.ts";
-
-/** The most an email sign-in body may carry (an address, a code or token, a callbackUrl). */
-const MAX_BODY_BYTES = 8 * 1024;
 
 /**
  * The adapter surface an email sign-in needs — the email-flow group plus `createUser` —
@@ -100,24 +95,6 @@ interface RedeemInput {
   secret: string;
   /** The requested landing page, if any. */
   callbackUrl: string | undefined;
-}
-
-/** A proven mailbox, and how the sign-in it earned should answer. */
-interface MailboxProof {
-  /** The normalised address the redeemed token was issued for. */
-  identifier: string;
-  /** The requested landing page, if any. */
-  callbackUrl: string | undefined;
-  /** Answer JSON rather than redirect. */
-  asJson: boolean;
-}
-
-/** The two buckets a redeem failure counts against (`null`: not counted there). */
-interface RedeemKeys {
-  /** The per-address bucket (codes only). */
-  key: string | null;
-  /** The per-client-IP bucket. */
-  ipKey: string | null;
 }
 
 /** The current time in epoch seconds. */
@@ -141,68 +118,6 @@ function notConfigured(ctx: AuthRouteContext, provider: EmailProvider): Response
       "verification-token group, getUserByEmail, updateUser and createUser.",
   );
   return json({ error: "unknown provider" }, 404);
-}
-
-/**
- * An email sign-in body's string fields — JSON, or a form post (urlencoded or multipart) —
- * read through the shared size + stall cap; nested JSON values and files are dropped. An
- * unusable body is `{}`: a send then sends nothing and a redeem fails like any wrong
- * code — never a `500`.
- */
-async function readEmailForm(ctx: AuthRouteContext): Promise<Record<string, string>> {
-  const bytes = await readCappedBody(ctx.request, MAX_BODY_BYTES).catch(() => STALLED);
-  if (typeof bytes === "symbol") return {};
-  const body = bufferedRequest(ctx.request, bytes);
-  const isJson = (ctx.request.headers.get("content-type") ?? "").includes("application/json");
-  const parsed: unknown = await (isJson ? body.json() : body.formData().then(Object.fromEntries))
-    .catch((error: unknown) => {
-      ctx.options.logger.debug("denextAuth: refused an email sign-in body", {
-        error: String(error),
-      });
-      return null;
-    });
-  const entries = parsed && typeof parsed === "object" ? Object.entries(parsed) : [];
-  return Object.fromEntries(entries.filter((entry) => typeof entry[1] === "string"));
-}
-
-/** `page` carrying `query`, as a same-origin path (a configured absolute page keeps its path). */
-function pageWith(config: AuthConfig, page: string, query: Record<string, string>): string {
-  const url = new URL(page, "http://denext.invalid");
-  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
-  return sameOriginRedirect(config, null, url.pathname + url.search + url.hash);
-}
-
-/** The "check your email" page — also where a code is typed in. */
-function noticePage(config: AuthConfig): string {
-  return config.pages?.verifyRequest || config.pages?.signIn || "/";
-}
-
-/** Where a refused redeem lands, carrying `?error=<code>`. */
-function errorLocation(config: AuthConfig, code: string): string {
-  return pageWith(config, config.pages?.error || config.pages?.signIn || "/", { error: code });
-}
-
-/** The generic `429` both budgets answer with. */
-function tooManyAttempts(retryAfter: number): Response {
-  return json({ error: "too many attempts" }, 429, { "retry-after": String(retryAfter) });
-}
-
-/** The one failure answer every wrong, spent or expired token or code gets. */
-function verificationFailed(ctx: AuthRouteContext, asJson: boolean): Response {
-  return asJson
-    ? json({ error: "invalid code" }, 401)
-    : redirect(errorLocation(ctx.config, "Verification"));
-}
-
-/** Fire `signInFailed` with the client bucket the limiter counts — it never alters the answer. */
-function emitFailure(
-  ctx: AuthRouteContext,
-  provider: EmailProvider,
-  reason: SignInFailedReason,
-): Promise<void> {
-  const trust = { trustForwardedHeaders: authTrustsProxy(ctx.config) };
-  const ip = clientIpBucket(ctx.request, trust);
-  return emitAuthEvent(ctx.options, "signInFailed", { provider: provider.id, reason, ip });
 }
 
 // ---- send --------------------------------------------------------------------
@@ -256,13 +171,15 @@ async function sendSignInEmail(
   fields: Record<string, string>,
 ): Promise<Response> {
   const identifier = normalizeEmailIdentifier(fields.email);
-  const send = ctx.config.sendVerificationRequest;
+  const send = mailerOf(ctx.config);
   if (!send) {
     ctx.options.logger.error(
-      `denextAuth: the "${provider.id}" provider needs \`sendVerificationRequest\` — no ` +
-        "sign-in email was sent.",
+      `denextAuth: the "${provider.id}" provider needs \`sendVerificationRequest\` (or ` +
+        "`hooks.sendEmail`) — no sign-in email was sent.",
     );
   }
+  // An anonymous session converts on redeem, so its proof is sent even without sign-up.
+  const signUp = provider.allowSignUp || await hasConvertibleSession(ctx);
   const result = send && identifier
     ? await sendThrottled(ctx.config, {
       adapter,
@@ -270,17 +187,14 @@ async function sendSignInEmail(
       request: ctx.request,
       identifier,
       purpose: provider.mode,
-      shouldSend: (user) => user !== undefined || provider.allowSignUp,
+      shouldSend: (user) => user !== undefined || signUp,
       issue: (origin) =>
         provider.mode === "magic"
           ? magicLinkMessage(ctx, provider, identifier, origin, fields.callbackUrl)
           : codeMessage(ctx, identifier, origin),
     })
     : undefined;
-  if (result && !result.ok) return tooManyAttempts(result.retryAfter);
-  return wantsJson(ctx.request)
-    ? json({ ok: true })
-    : redirect(pageWith(ctx.config, noticePage(ctx.config), { sent: "1" }));
+  return sentAnswer(ctx, result);
 }
 
 // ---- redeem ------------------------------------------------------------------
@@ -295,7 +209,7 @@ function redeemKeys(
   ctx: AuthRouteContext,
   provider: EmailProvider,
   identifier: string,
-): RedeemKeys {
+): AttemptKeys {
   const keys = subjectBucketKeys("mfa", `${provider.mode}:${identifier}`, ctx.request, ctx.config);
   return { key: provider.mode === "otp" ? keys.key : null, ipKey: keys.ipKey };
 }
@@ -315,7 +229,11 @@ function redeemSecret(
   return redeemVerificationCode(config, { identifier, purpose: "otp", token: code });
 }
 
-/** The user a proven address signs in as: the existing one, a new verified one, or `null`. */
+/**
+ * The user a proven address signs in as: the existing one; else the signed-in anonymous user,
+ * converted (it keeps its id — even under `allowSignUp: false`, since it exists already); else
+ * a new verified one when the provider allows sign-up; else `null`.
+ */
 async function findOrCreateUser(
   ctx: AuthRouteContext,
   provider: EmailProvider,
@@ -329,57 +247,8 @@ async function findOrCreateUser(
       isNewUser: false,
     };
   }
-  if (!provider.allowSignUp) return null;
-  const created = await adapter.createUser({ email: identifier, emailVerified: nowSeconds() });
-  await emitAuthEvent(ctx.options, "createUser", { user: created });
-  return { user: toAuthUser(created), isNewUser: true };
-}
-
-/**
- * {@link findOrCreateUser} with the adapter's failures contained: a throw (a UNIQUE race
- * between two first sign-ins, a store that went away) is logged, reported as
- * `signInFailed` / `"adapter_error"`, and answered like any other failed redeem.
- */
-async function resolveEmailUser(
-  ctx: AuthRouteContext,
-  provider: EmailProvider,
-  adapter: EmailSignInAdapter,
-  identifier: string,
-): Promise<ResolvedSignIn | null> {
-  try {
-    return await findOrCreateUser(ctx, provider, adapter, identifier);
-  } catch (error) {
-    ctx.options.logger.error(
-      `denextAuth: the "${provider.id}" sign-in could not be persisted`,
-      error,
-    );
-    await emitFailure(ctx, provider, "adapter_error");
-    return null;
-  }
-}
-
-/** Turn a proven mailbox into a sign-in: resolve the user, run `callbacks.signIn`, finish. */
-async function signInByEmail(
-  ctx: AuthRouteContext,
-  provider: EmailProvider,
-  adapter: EmailSignInAdapter,
-  proof: MailboxProof,
-): Promise<Response> {
-  const resolved = await resolveEmailUser(ctx, provider, adapter, proof.identifier);
-  if (!resolved) return verificationFailed(ctx, proof.asJson);
-  const approved = await applySignInCallback(ctx.config, resolved.user, provider.id);
-  if (!approved) {
-    await emitFailure(ctx, provider, "access_denied");
-    return proof.asJson
-      ? json({ error: "access denied" }, 403)
-      : redirect(errorLocation(ctx.config, "AccessDenied"));
-  }
-  return await finishSignIn(ctx, approved, provider.id, {
-    isNewUser: resolved.isNewUser,
-    returnTo: proof.callbackUrl,
-    amr: [provider.mode === "magic" ? "email" : "otp"],
-    json: proof.asJson,
-  });
+  const proof = { email: identifier, emailVerified: nowSeconds() };
+  return await convertOrCreateUser(ctx, adapter, proof, provider);
 }
 
 /** Redeem a link token or a code under the failure budget, then sign the mailbox's owner in. */
@@ -391,21 +260,14 @@ async function redeem(
   asJson: boolean,
 ): Promise<Response> {
   const identifier = normalizeEmailIdentifier(input.email) ?? "";
-  const limiter = mfaLimiter(ctx.config);
-  const keys = redeemKeys(ctx, provider, identifier);
-  const retryAfter = await consumeHitBudget(limiter, keys);
-  if (retryAfter !== null) {
-    await emitFailure(ctx, provider, "rate_limited");
-    return tooManyAttempts(retryAfter);
-  }
-  const record = await redeemSecret(ctx.config, provider, identifier, input.secret);
-  if (!record) {
-    await emitFailure(ctx, provider, "invalid_credentials");
-    return verificationFailed(ctx, asJson);
-  }
-  await settleAttempt(limiter, keys);
-  const proof = { identifier: record.identifier, callbackUrl: input.callbackUrl, asJson };
-  return await signInByEmail(ctx, provider, adapter, proof);
+  return await redeemAndSignIn(ctx, provider.id, {
+    keys: redeemKeys(ctx, provider, identifier),
+    consume: () => redeemSecret(ctx.config, provider, identifier, input.secret),
+    resolve: (proven) => findOrCreateUser(ctx, provider, adapter, proven),
+    callbackUrl: input.callbackUrl,
+    asJson,
+    amr: [provider.mode === "magic" ? "email" : "otp"],
+  });
 }
 
 // ---- handlers ----------------------------------------------------------------
@@ -413,15 +275,16 @@ async function redeem(
 /**
  * `POST {basePath}/callback/:provider` for an email provider. With a `token` (a
  * `magicLink()` provider) or a `code` (an `emailOtp()` provider) in the body it
- * **redeems**; otherwise it **sends** a link or code to the body's `email`. Same-origin
- * gated; the body (JSON or a form) is read through the shared size/stall cap.
+ * **redeems**; otherwise it **sends** a link or code to the body's `email` — after the
+ * captcha check when `captcha` is configured. Same-origin gated; the body (JSON or a form)
+ * is read through the shared size/stall cap.
  *
  * @param ctx The route context.
  * @param provider The email provider the callback names.
  * @returns For a send: `{ ok: true }` or a `303` with `?sent=1` (identical for every
- * address), or a `429`. For a redeem: the sign-in answer (`finishSignIn`), a generic `401`
- * / `303 ?error=Verification`, a `403` / `?error=AccessDenied`, or a `429`. A cross-origin
- * POST is a `403`.
+ * address), a `429`, or a captcha refusal. For a redeem: the sign-in answer
+ * (`finishSignIn`), a generic `401` / `303 ?error=Verification`, a `403` /
+ * `?error=AccessDenied`, or a `429`. A cross-origin POST is a `403`.
  */
 export async function handleEmailRequest(
   ctx: AuthRouteContext,
@@ -430,9 +293,12 @@ export async function handleEmailRequest(
   if (!isSameOrigin(ctx.request, ctx.config)) return json({ error: "forbidden" }, 403);
   const adapter = signInAdapter(ctx.config);
   if (!adapter) return notConfigured(ctx, provider);
-  const fields = await readEmailForm(ctx);
+  const fields = await readSignInForm(ctx);
   const secret = fields[provider.mode === "magic" ? "token" : "code"];
-  if (secret === undefined) return await sendSignInEmail(ctx, provider, adapter, fields);
+  if (secret === undefined) {
+    return await captchaRefusal(ctx, fields, provider.id) ??
+      await sendSignInEmail(ctx, provider, adapter, fields);
+  }
   const input = { email: fields.email, secret, callbackUrl: fields.callbackUrl };
   return await redeem(ctx, provider, adapter, input, wantsJson(ctx.request));
 }

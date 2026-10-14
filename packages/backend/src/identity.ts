@@ -6,7 +6,9 @@
 //      A legacy `anon` / `service_role` JWT there acts as that API key.
 //   2. The secret key (`apikey: sb_secret_…`, the legacy `service_role` JWT, or either as the
 //      bearer) — `service_role`, which bypasses row-level security.
-//   3. The denext session — the auth cookie, or a native app's `nat_…` token (`auth()`).
+//   3. The denext session — the auth cookie, or a native app's `nat_…` token (`auth()`). Its
+//      claims go through Supabase's Custom Access Token Hook (`hooks.customAccessToken`) when
+//      one is configured, cached per session for 60 seconds.
 //   4. Otherwise `anon` (the publishable key, the legacy `anon` JWT, or nothing at all).
 //
 // A credential that is presented and refused is an error (401), never a silent downgrade to
@@ -18,6 +20,7 @@ import {
   auth,
   type AuthSession,
   bearerTokenOf,
+  type GoTrueHooks,
   installedSupabaseKeys,
   looksLikeJwt,
   opaqueKeyRole,
@@ -167,12 +170,111 @@ function sessionIdentity(session: AuthSession, custom: Record<string, unknown>):
   };
 }
 
+/** The `/auth/v1` hooks `backend({ supabase: { auth: { hooks } } })` installed, if any. */
+let installedHooks: GoTrueHooks | undefined;
+
+/**
+ * Install (or, with `undefined`, remove) the `/auth/v1` options' hooks — the fallback source of
+ * `customAccessToken` for a denext session when the auth config sets none. `backend()` calls it.
+ *
+ * @param hooks The `supabase.auth.hooks`, or `undefined`.
+ */
+export function installSupabaseAuthHooks(hooks: GoTrueHooks | undefined): void {
+  installedHooks = hooks;
+}
+
+/** How long a hook's claims are reused for the same session. */
+const HOOK_TTL_MS = 60_000;
+/** The most sessions whose hook claims are kept, per hook. */
+const HOOK_CACHE_MAX = 1000;
+
+/**
+ * The claims the hook may not change — restored from the pre-hook claims after it runs (and
+ * dropped when the session had none), as `/auth/v1` does for its access tokens.
+ */
+const FIXED_CLAIMS = [
+  "sub",
+  "role",
+  "aud",
+  "session_id",
+  "iat",
+  "exp",
+  "aal",
+  "is_anonymous",
+  "email",
+] as const;
+
+type AccessTokenHook = NonNullable<GoTrueHooks["customAccessToken"]>;
+
+/** Per hook: the shaped claims per session, oldest first. */
+const hookCaches = new WeakMap<AccessTokenHook, Map<string, { at: number; claims: Claims }>>();
+
+type Claims = Record<string, unknown>;
+
+/** The configured Custom Access Token Hook: the auth config's, else the installed `/auth/v1` one. */
+function accessTokenHook(): AccessTokenHook | undefined {
+  return authConfig()?.hooks?.customAccessToken ?? installedHooks?.customAccessToken;
+}
+
+/** One cache entry per session: its id, else the user and the sign-in time. */
+function hookCacheKey(session: AuthSession): string {
+  const id = session.sessionId ?? session.nativeSessionId;
+  return id ? `s:${id}` : `u:${session.user.id}:${session.authTime ?? session.issuedAt ?? ""}`;
+}
+
+/** Run the hook over `claims` and restore the fixed claims; a throw or a malformed answer throws. */
+async function runAccessTokenHook(
+  hook: AccessTokenHook,
+  session: AuthSession,
+  claims: Claims,
+): Promise<Claims> {
+  const result = await hook({
+    user_id: session.user.id,
+    claims: structuredClone(claims),
+    authentication_method: session.amr?.at(-1) ?? "password",
+  });
+  const shaped = result?.claims;
+  if (typeof shaped !== "object" || shaped === null || Array.isArray(shaped)) {
+    throw new Error("customAccessToken hook failed: it must return { claims: { … } }");
+  }
+  const out: Claims = { ...shaped };
+  for (const key of FIXED_CLAIMS) {
+    if (key in claims) out[key] = claims[key];
+    else delete out[key];
+  }
+  return out;
+}
+
+/**
+ * A denext session's claims through the Custom Access Token Hook, when one is configured —
+ * cached per session for 60 seconds (at most 1000 sessions), so a page's many queries don't
+ * call it each time. A throwing or malformed hook fails the request: the claims are never used
+ * half-shaped.
+ */
+async function hookedClaims(session: AuthSession, claims: Claims): Promise<Claims> {
+  const hook = accessTokenHook();
+  if (!hook) return claims;
+  let cache = hookCaches.get(hook);
+  if (!cache) hookCaches.set(hook, cache = new Map());
+  const key = hookCacheKey(session);
+  const now = Date.now();
+  const hit = cache.get(key);
+  if (hit && now - hit.at < HOOK_TTL_MS) return { ...hit.claims };
+  const shaped = await runAccessTokenHook(hook, session, claims);
+  cache.delete(key);
+  if (cache.size >= HOOK_CACHE_MAX) cache.delete(cache.keys().next().value!);
+  cache.set(key, { at: now, claims: shaped });
+  return { ...shaped };
+}
+
 /** A cookie or native denext session, or `null`. */
 async function denextSession(rls: RlsOptions | undefined): Promise<RequestIdentity | null> {
   const session = await auth();
   if (!session) return null;
   const custom = rls?.claims ? await rls.claims(session) : {};
-  return sessionIdentity(session, custom ?? {});
+  const identity = sessionIdentity(session, custom ?? {});
+  identity.claims = await hookedClaims(session, identity.claims);
+  return identity;
 }
 
 type ContextBridge = { __denextCurrentRequestContext?: () => { request?: Request } | undefined };

@@ -4,8 +4,8 @@
  * config-time check that an app configuring one can actually run it.
  *
  * Both are plain data: the flow lives in {@link ./routes-email.ts | routes-email.ts}, on
- * `{basePath}/callback/:provider`. Either one needs `sendVerificationRequest` (denext ships
- * no mailer) and an adapter with the verification-token group plus `getUserByEmail`,
+ * `{basePath}/callback/:provider`. Either one needs `sendVerificationRequest` or
+ * `hooks.sendEmail` (denext ships no mailer) and an adapter with the verification-token group plus `getUserByEmail`,
  * `createUser` and `updateUser`.
  *
  * ```ts
@@ -20,6 +20,8 @@
  * @module
  */
 
+import type { AuthAdapter } from "./adapter.ts";
+import { mailerOf } from "./email.ts";
 import { type AuthConfig, type EmailProvider, isEmailProvider } from "./types.ts";
 
 /** Options for {@linkcode magicLink} and {@linkcode emailOtp}. */
@@ -102,7 +104,7 @@ export function emailOtp(options: EmailProviderOptions = {}): EmailProvider {
 
 /**
  * Refuse, at config time, an email provider the app can't run: one is configured but
- * there is no `sendVerificationRequest`, or the adapter lacks a method the flow needs
+ * there is neither `sendVerificationRequest` nor `hooks.sendEmail`, or the adapter lacks a method the flow needs
  * (`createVerificationToken`, `useVerificationToken`, `getUserByEmail`, `createUser`,
  * `updateUser`). A config without an email provider is never affected.
  *
@@ -112,18 +114,34 @@ export function emailOtp(options: EmailProviderOptions = {}): EmailProvider {
 export function assertEmailProviderConfig(config: AuthConfig): void {
   const provider = config.providers?.find(isEmailProvider);
   if (!provider) return;
-  if (typeof config.sendVerificationRequest !== "function") {
+  if (typeof mailerOf(config) !== "function") {
     throw new Error(
-      `denextAuth: the email provider "${provider.id}" needs \`sendVerificationRequest\` — ` +
-        "denext ships no mailer; pass a function that delivers " +
+      `denextAuth: the email provider "${provider.id}" needs \`sendVerificationRequest\` ` +
+        "(or `hooks.sendEmail`) — denext ships no mailer; pass a function that delivers " +
         "{ identifier, url, token, purpose, expiresAt }.",
     );
   }
+  assertProviderAdapter(config, `the email provider "${provider.id}"`, REQUIRED_ADAPTER_METHODS);
+}
+
+/**
+ * Refuse a passwordless provider whose adapter lacks a method its flow needs.
+ *
+ * @param config The app's auth config.
+ * @param what The provider, as the message names it (`the email provider "email"`).
+ * @param methods The adapter methods the flow can't run without.
+ * @throws {Error} Naming exactly what is missing.
+ */
+export function assertProviderAdapter(
+  config: AuthConfig,
+  what: string,
+  methods: readonly (keyof AuthAdapter)[],
+): void {
   const adapter = config.adapter;
-  const missing = REQUIRED_ADAPTER_METHODS.filter((m) => typeof adapter?.[m] !== "function");
+  const missing = methods.filter((m) => typeof adapter?.[m] !== "function");
   if (missing.length === 0) return;
   throw new Error(
-    `denextAuth: the email provider "${provider.id}" needs an \`adapter\` implementing ` +
+    `denextAuth: ${what} needs an \`adapter\` implementing ` +
       `${missing.join(" / ")}${adapter ? "" : " (none is configured)"} — pass e.g. ` +
       "`adapter: sqliteAuthAdapter({ path })`, or `inMemoryAuthAdapter()` in tests.",
   );

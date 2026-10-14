@@ -60,6 +60,32 @@ and this project adheres to
   `verifyLogoutRequest`, `verifyLogoutResponse`, `SamlSpConfig.signingKey` / `encryptionKey` and
   the codes `decryption_failed`, `bad_key` and `bad_binding`. Golden encrypted, signed and logout
   fixtures come from xmlsec1 and `openssl`.
+- **Phone sign-in, anonymous sign-in, captcha and Supabase's auth hooks on denext's own auth
+  endpoints.** One `denextAuth()` config now drives both paths:
+  - `phoneOtp()` (from `denext/server`): `POST {basePath}/callback/phone` with `{ phone }` texts a
+    one-time code through `sendSms` / `hooks.sendSms`, and `{ phone, code }` signs in
+    (`amr: ["sms"]`). Sends are enumeration-safe (one answer for known, unknown and invalid
+    numbers; the per-number + per-IP send budget spent before the lookup), redeems are single-use
+    under the failure budget, a new number signs up phone-verified unless `allowSignUp: false`,
+    and a first proof into an account whose number was never verified retires its password,
+    second factors, passkeys, bearer tokens and sessions first (new `phoneVerified` event). No GET:
+    a code never rides a URL. Codes live in a new `"sms"` verification-token space.
+  - `anonymous: true` adds `POST {basePath}/anonymous`, which creates and signs in a user with no
+    identifier (`isAnonymous: true` on the session user and `is_anonymous: true` in the claims
+    `@denext/backend` runs a cookie session's queries with). Redeeming an email link / code or a
+    phone code for an identifier no account has, from a complete anonymous session, converts that
+    user in place — same id, `isAnonymous` cleared, new `userConverted` event — even under
+    `allowSignUp: false`; an identifier that already has an account signs into it instead.
+  - `captcha` (hCaptcha / Turnstile) now also guards the credentials sign-in, the email and phone
+    sends, `/anonymous` and `POST /reset`: the token comes from `captchaToken`, `captcha_token`,
+    `cf-turnstile-response`, `h-captcha-response` or the `x-captcha-token` header and is checked
+    before any adapter work or rate-limit spend; a refusal is `400 { error: "captcha_failed" }`
+    (a form: `?error=CaptchaFailed`), and `signInFailed` gains the `"captcha_failed"` reason.
+  - `hooks.sendEmail` delivers every native auth email (verification, reset, magic link, email
+    code) with Supabase's Send Email Hook payload instead of `sendVerificationRequest`;
+    `hooks.sendSms` every native SMS; and `hooks.customAccessToken` shapes the claims a cookie or
+    native session's `@denext/backend` queries run with (fixed claims restored, cached per session
+    for 60 seconds, a throwing hook fails the request).
 - **One MFA factor store for `denextAuth()` and `/auth/v1`.** A user may hold several second
   factors — TOTP authenticators, phones that receive SMS codes, and WebAuthn authenticators — in
   the adapter's factor group, and both sign-in paths read the same factors and enforce them the

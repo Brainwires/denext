@@ -31,8 +31,11 @@ import type { SessionStore } from "./session-store.ts";
 /** A value an adapter may return directly or as a promise. */
 export type MaybePromise<T> = T | Promise<T>;
 
-/** What a verification token is for (one token space per purpose). */
-export type VerificationPurpose = "email" | "reset" | "magic" | "otp";
+/**
+ * What a verification token is for (one token space per purpose). `"sms"` is a `phoneOtp()`
+ * sign-in code, whose identifier is an E.164 phone number rather than an email address.
+ */
+export type VerificationPurpose = "email" | "reset" | "magic" | "otp" | "sms";
 
 /** A user record as the adapter stores it. `id` is the identity `session.user.id` carries. */
 export interface AdapterUser {
@@ -116,7 +119,7 @@ export interface AdapterAccount {
  * database read never yields a usable token.
  */
 export interface VerificationTokenRecord {
-  /** What the token proves control of — an email address, in practice. */
+  /** What the token proves control of — an email address, or an E.164 number for `"sms"`. */
   identifier: string;
   /** SHA-256 (hex) of the presented token, scoped by `identifier` + `purpose`. */
   tokenHash: string;

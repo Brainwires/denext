@@ -1358,7 +1358,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ApiRouteHandler<D, R>` — The route handler defineApi returns: a plain ApiHandler at runtime, carrying the definition and the handler's result type as a phantom for the typed-API-client generator.
 - `interface ApiRouteMeta` — The metadata attached to a defineApi handler (what handleApi and plugins read).
 - `interface ApiTokenRecord` — A long-lived bearer API token. The presented secret is never stored, only its hash.
-- `type ApiTokenRevokedReason = revoked | password_reset | email_verified` — Why an API token was revoked, as apiTokenRevoked reports it.
+- `type ApiTokenRevokedReason = revoked | password_reset | email_verified | phone_verified` — Why an API token was revoked, as apiTokenRevoked reports it.
 - `class ApiValidationError` — A request that failed schema validation: a 400 with code "validation", the per-field messages, and data.source naming the offending part of the request.
 - `type ApiValidationSource = params | query | body` — Which part of the request a validation failure came from.
 - `interface ApnsConfig` — Token-based APNs credentials (a .p8 key from the Apple Developer portal).
@@ -1385,7 +1385,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface Author` — A named author (<meta name="author">, optional <link rel="author">).
 - `interface AuthorizedCallbackInput` — What AuthCallbacks.authorized is asked about.
 - `interface AuthPasskeyConfig` — Passkeys (WebAuthn) — sign-in with a platform or roaming authenticator, as a first factor or as the second. Every field is optional; the relying party defaults to canonicalOrigin.
-- `type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider` — Any configured provider.
+- `type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider | PhoneProvider` — Any configured provider.
 - `interface AuthSession` — The signed (readable, tamper-evident) session payload. Never stores tokens/secrets.
 - `interface AuthSessionConfig` — Session lifetime + storage strategy.
 - `interface AuthUser` — A normalized user profile — the non-sensitive identity denext stores in the session.
@@ -1459,6 +1459,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CsrfDoubleSubmitOptions` — The double-submit half of CsrfOptions.
 - `interface CsrfOptions` — Options for csrf.
 - `currentContext(): RequestContext | undefined` — The current request context, or undefined if none is active.
+- `interface CustomProviderAdapter` — The stored-provider group.
+- `interface CustomProviderRecord` — One stored OAuth / OIDC identity provider (custom:<name>).
 - `interface DataEntry` — A cached data entry (the value returned by an unstable_cache loader).
 - `defaultLoader(filePath: unknown): Promise<unknown>` — Default module loader: dynamic import by absolute file path. A module is shared by every request, so it is loaded outside the request that first asks for it: its top-level code, and anything that code schedules, never runs as that request.
 - `defineAction<Out, In>(config: object): TypedAction<Out>` — Define a typed Server Action. Put it in a "use server" module and pass it to useActionState; denext dispatches the form submission to the server, where this runs.
@@ -1550,14 +1552,16 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface GoTrueAccessTokenHookInput` — What GoTrueHooks.customAccessToken receives.
 - `interface GoTrueCaptchaOptions` — Captcha verification for sign-up, sign-in, OTP, recovery and anonymous sign-in.
 - `class GoTrueError` — A GoTrue-shaped refusal; goTrueErrorResponse renders it.
-- `type GoTrueErrorCode = anonymous_provider_disabled | bad_code_verifier | bad_json | bad_jwt | bad_oauth_callback | bad_oauth_state | captcha_failed | email_address_invalid | email_exists | email_not_confirmed | email_provider_disabled | flow_state_expired | flow_state_not_found | identity_already_exists | identity_not_found | insufficient_aal | invalid_credentials | manual_linking_disabled | mfa_challenge_expired | mfa_factor_not_found | mfa_verification_failed | mfa_verification_rejected | mfa_phone_enroll_not_enabled | no_authorization | not_admin | otp_disabled | otp_expired | over_email_send_rate_limit | over_request_rate_limit | over_sms_send_rate_limit | phone_exists | phone_provider_disabled | provider_disabled | reauthentication_needed | reauthentication_not_valid | refresh_token_already_used | refresh_token_not_found | same_password | saml_entity_id_mismatch | saml_idp_already_exists | saml_metadata_fetch_failed | saml_provider_disabled | session_not_found | signup_disabled | single_identity_not_deletable | sms_send_failed | sso_domain_already_exists | sso_provider_not_found | unexpected_failure | user_already_exists | user_banned | user_not_found | validation_failed | weak_password | not_found | method_not_allowed` — A GoTrue error code (the subset denext answers with).
+- `type GoTrueErrorCode = anonymous_provider_disabled | bad_code_verifier | bad_json | bad_jwt | bad_oauth_callback | bad_oauth_state | captcha_failed | custom_provider_not_found | email_address_invalid | email_exists | email_not_confirmed | email_provider_disabled | flow_state_expired | flow_state_not_found | identity_already_exists | identity_not_found | insufficient_aal | invalid_credentials | manual_linking_disabled | mfa_challenge_expired | mfa_factor_not_found | mfa_verification_failed | mfa_verification_rejected | mfa_phone_enroll_not_enabled | no_authorization | oauth_authorization_not_found | oauth_client_not_found | not_admin | otp_disabled | otp_expired | over_email_send_rate_limit | over_request_rate_limit | over_sms_send_rate_limit | phone_exists | phone_provider_disabled | provider_disabled | reauthentication_needed | reauthentication_not_valid | refresh_token_already_used | refresh_token_not_found | same_password | saml_entity_id_mismatch | saml_idp_already_exists | saml_metadata_fetch_failed | saml_provider_disabled | session_not_found | signup_disabled | single_identity_not_deletable | sms_send_failed | sso_domain_already_exists | sso_provider_not_found | unexpected_failure | user_already_exists | user_banned | user_not_found | validation_failed | weak_password | web3_provider_disabled | web3_unsupported_chain | not_found | method_not_allowed` — A GoTrue error code (the subset denext answers with).
 - `interface GoTrueHandlerOptions` — What the handler needs besides the request.
 - `interface GoTrueHooks` — Supabase's auth hooks, as functions.
+- `interface GoTrueOAuthServerOptions` — GoTrueOptions.oauthServer.
 - `interface GoTrueOptions` — The /auth/v1 options.
 - `interface GoTrueSamlOptions` — The /auth/v1 SAML 2.0 options.
 - `interface GoTrueSamlProvider` — A SAML 2.0 identity provider for signInWithSSO.
 - `interface GoTrueSendEmailPayload` — What GoTrueHooks.sendEmail receives — Supabase's Send Email Hook payload.
 - `interface GoTrueSmsMessage` — What GoTrueOptions.sendSms delivers.
+- `interface GoTrueWeb3Options` — GoTrueOptions.web3.
 - `handleGoTrueRequest(request: Request, handler: GoTrueHandlerOptions): Promise<Response | null>` — Handle an /auth/v1 request.
 - `interface Hasher` — How denext hashes and checks user-supplied secrets. An implementation MUST compare in constant time and MUST NOT throw on a malformed stored value — return false, so a corrupted row can never surface as a 500 or a stack trace.
 - `hashPassword(password: string, options?: HashPasswordOptions): Promise<string>` — Hash a password for storage: a fresh random salt + scrypt, encoded as scrypt$N=…,r=…,p=…$salt$hash. Store the returned string; verify later with verifyPassword.
@@ -1702,8 +1706,15 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface NextCommand` — Command returned by next to continue routing, optionally adding headers.
 - `noStore(): void` — Opt the current render out of the page cache (Next's unstable_noStore() / connection() intent): a route with export const revalidate = N that calls this is rendered per request instead of being stored and served to other visitors.
 - `notFound(): never` — Throw to render the nearest not-found UI with a 404 status.
+- `interface OAuthAuthorizationExpect` — What OAuthServerAdapter.updateOAuthAuthorization requires of the stored row.
+- `type OAuthAuthorizationPatch = Partial<Pick<OAuthAuthorizationRecord, userId | status | codeHash | sessionId | expiresAt>>` — The fields OAuthServerAdapter.updateOAuthAuthorization may change.
+- `interface OAuthAuthorizationRecord` — A pending (then settled) authorization request — /oauth/authorize creates one.
 - `interface OAuthClientOptions` — The client credentials every OAuth preset needs.
+- `interface OAuthClientRecord` — One registered OAuth client (Supabase's OAuthClient, secret hashed).
+- `interface OAuthConsentRecord` — A user's consent to a client (Supabase's OAuthGrant).
 - `interface OAuthProvider` — An OAuth 2.0 / OIDC provider (Authorization Code + PKCE).
+- `interface OAuthServerAdapter` — The OAuth 2.1 authorization-server group.
+- `interface OAuthSessionLink` — A session family issued to a client on a user's behalf.
 - `oidc(options: OidcOptions): OAuthProvider` — A generic OIDC provider (Authorization Code + PKCE, id_token verified via JWKS).
 - `interface OidcOptions` — Options for a generic oidc provider.
 - `okta(options: OktaOptions): OAuthProvider` — Okta (OIDC, custom authorization server). Claims come from the verified id_token.
@@ -1742,6 +1753,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `peelLocale(pathname: string, i18n: I18nConfig | undefined, host?: string): PeeledLocale` — Peel a leading locale segment off pathname. If the first path segment is a configured locale it is stripped and returned; otherwise the default locale is used and the pathname is returned unchanged.
 - `pendingMfaSession(): Promise<AuthSession | null>` — The current request's session **only while it still owes a second factor** — null for a complete session, and for none. For the app's pages.mfa page: render the code form (or, under mfa.required: "always" for a user with no factor yet, the enrollment step) when this returns a session, and redirect onward when it doesn't.
 - `permanentRedirect(url: Href | parenthesized, type?: RedirectType): never` — Throw to issue a permanent (308) redirect to url.
+- `phoneOtp(options?: PhoneProviderOptions): PhoneProvider` — Passwordless sign-in by **SMS one-time code**: POST {basePath}/callback/phone with { phone } texts a numeric code (email.otpDigits, default 6; valid 5 minutes by default, email.otpMaxAge) through sendSms / hooks.sendSms; posting { phone, code } to the same endpoint signs the user in (amr: ["sms"]). Wrong codes count against a failure budget (5 per 5 minutes per number). There is no GET: a code never rides a URL.
+- `interface PhoneProvider` — A passwordless **phone** provider: phoneOtp() texts a one-time numeric code through the SMS sender (AuthConfig.sendSms, or hooks.sendSms) and needs an adapter with the verification-token group plus getUserByPhone / createUser / updateUser.
+- `interface PhoneProviderOptions` — Options for phoneOtp.
 - `interface PlatformExtensionsConfig` — The object form of DenextConfig.platformExtensions.
 - `interface PluginBuildContext` — Context passed to a PluginBuildStep.
 - `type PluginBuildStep = (context: PluginBuildContext) => void | Promise<void>` — A build-time step that emits the plugin's client bundles/assets into outDir, and publishes generated files at the site root with PluginBuildContext.emitFile. Runs at denext build and at denext export (App Router, SPA and Pages Router alike).
@@ -1900,7 +1914,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `setCacheStore(store: CacheStore): void` — Replace the CacheStore backing the data cache and page (ISR) cache. Use this to share cached data and rendered pages across instances — back it with a custom or shared store (Redis, etc.) so a render or data entry produced on one replica is served by another, and revalidateTag/revalidatePath invalidate every instance. Called explicitly, this overrides the smart default (resolveDefaultCacheStore).
 - `setChannelTransport(t: ChannelTransport): void` — Install the transport that carries channel events between instances (default: in-memory, single instance). The Live hub re-subscribes to the new transport.
 - `interface SignalSink` — The status a caught control signal asks for (0 = none caught).
-- `type SignInFailedReason = invalid_credentials | invalid_mfa_code | invalid_passkey | rate_limited | access_denied | account_not_linked | adapter_error | invalid_state | invalid_request | config | oauth_failed | provider_error | invalid_nonce | invalid_token` — Why a sign-in attempt was refused, as signInFailed reports it — a closed set, so an app can switch over it exhaustively:
+- `type SignInFailedReason = invalid_credentials | invalid_mfa_code | invalid_passkey | rate_limited | access_denied | account_not_linked | adapter_error | invalid_state | invalid_request | config | oauth_failed | provider_error | invalid_nonce | invalid_token | captcha_failed` — Why a sign-in attempt was refused, as signInFailed reports it — a closed set, so an app can switch over it exhaustively:
 - `signSupabaseJwt(keys: SupabaseKeys, claims: Record<string, unknown>): Promise<string>` — Sign claims as a compact JWT: ES256 under the current signing key, else HS256 under the legacy secret.
 - `type Sitemap = SitemapEntry[]` — A sitemap: the array a sitemap.ts default export returns.
 - `interface SitemapEntry` — One entry in a sitemap (Next.js MetadataRoute.Sitemap element).
@@ -1982,7 +1996,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `userAgentFromString(ua?: string): UserAgent` — Parse a raw user-agent string into structured details (Next's userAgentFromString).
 - `vectorSearchSql(o?: VectorSearchSqlOptions): string` — The SQL for Supabase's semantic-search recipe, for a migration: the vector extension, a documents table (id, content, metadata, embedding vector(N)) with an HNSW index, and a match_documents(query_embedding, match_threshold, match_count) function returning the closest rows with their similarity — callable with matchDocuments() from @denext/backend/server, db(), or REST /rpc.
 - `interface VectorSearchSqlOptions` — Options for vectorSearchSql.
-- `type VerificationPurpose = email | reset | magic | otp` — What a verification token is for (one token space per purpose).
+- `type VerificationPurpose = email | reset | magic | otp | sms` — What a verification token is for (one token space per purpose). "sms" is a phoneOtp() sign-in code, whose identifier is an E.164 phone number rather than an email address.
 - `interface VerificationRequestParams` — What AuthConfig.sendVerificationRequest is handed for each outbound token.
 - `interface VerificationTokenRecord` — A single-use token proving control of an identifier (an email verification link, a password-reset link, a magic link, a one-time code). Only the **hash** is stored, so a database read never yields a usable token.
 - `interface VerificationTokenRef` — Identifies one verification token (the tuple its uniqueness is scoped by).
@@ -2011,6 +2025,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type VNodeChildren = VNodeChild | VNodeChild[]` — One child or an array of children, as accepted by JSX.
 - `type VNodeType = string | Component<any> | FRAGMENT` — The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker.
 - `interface VProps` — Props passed to a virtual node. children is normalized separately.
+- `interface Web3NonceAdapter` — The Web3 sign-in group.
 - `withHeaders(response: Response, extra?: Headers): Response` — Merge extra headers into a response (returning a new Response if needed).
 
 ### `denext/client`

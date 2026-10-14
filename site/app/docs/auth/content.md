@@ -125,33 +125,34 @@ function UserMenu() {
 
 Every path is relative to `basePath` (default `/auth`).
 
-| Endpoint              | Method      | What it does                                                                                                                                                         |
-| --------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/session`            | GET         | `{ user, expires }` (or nulls). `no-store`. The sliding-expiry path. Rate-limited.                                                                                   |
-| `/providers`          | GET         | The configured providers' `id` + `type` (and an email provider's `name`) — never client ids, secrets or endpoints.                                                   |
-| `/signin/:provider`   | GET         | Starts the OAuth flow (PKCE + `state` + `nonce`). Rate-limited per client IP.                                                                                        |
-| `/callback/:provider` | GET or POST | By provider type: GET is the OAuth callback and the magic-link click; POST is the Credentials sign-in and the email send / redeem. A verb the type lacks is a `405`. |
-| `/signout`            | POST        | Clears the cookie (and the store record). Same-origin only.                                                                                                          |
-| `/tokens`             | POST, GET   | Mint / list bearer API tokens. Cookie session only; minting needs a recent sign-in.                                                                                  |
-| `/tokens/:id`         | DELETE      | Revoke one of your own tokens. Cookie session only.                                                                                                                  |
-| `/verify`             | GET, POST   | Redeem an email-verification token — the emailed link (GET) or a form / JSON body.                                                                                   |
-| `/reset`              | POST        | Request a password-reset link. One answer for every address.                                                                                                         |
-| `/reset/confirm`      | POST        | `{ email, token, password }`: set the new password.                                                                                                                  |
-| `/mfa`                | POST        | Finish a pending sign-in with a TOTP, SMS or backup code.                                                                                                            |
-| `/mfa/challenge`      | POST        | `{ factorId }`: text a code to a verified phone factor for the pending sign-in; answers `{ challengeId, expiresAt }`.                                                |
-| `/mfa/enroll`         | POST        | Start a TOTP enrollment: `{ secret, uri }`. A complete session must have signed in recently, else `403 reauth_required`.                                             |
-| `/mfa/confirm`        | POST        | Confirm the enrollment; the backup codes come back once.                                                                                                             |
-| `/mfa/disable`        | POST        | Remove the factor, given a fresh second factor.                                                                                                                      |
-| `/passkey/*`          | POST        | Passkeys: `register/options` + `register` from a recent session, `authenticate/options` + `authenticate` to sign in or step up. See [Passkeys](#passkeys-webauthn).  |
-| `/passkeys`           | GET         | The signed-in user's passkeys (no key material).                                                                                                                     |
-| `/passkeys/:id`       | DELETE      | Remove one of your passkeys. Needs a recent sign-in.                                                                                                                 |
-| `/native/authorize`   | GET         | Native session mode: start a sign-in for an app (PKCE `S256` challenge, registered `redirect_uri`). See [App backend](/docs/app-backend).                            |
-| `/native/complete`    | GET         | Where that sign-in lands: a one-time code to the app's redirect URI, only for a sign-in made after `/native/authorize` began.                                        |
-| `/native/token`       | POST        | Code + verifier → bearer access token + rotating refresh token; or rotate a refresh token. A replayed refresh token revokes its session family.                      |
-| `/native/revoke`      | POST        | Sign a native session out (refresh token in the body, or the access token as a bearer). Always `200`.                                                                |
-| `/native/nonce`       | POST        | A single-use nonce for a native Apple / Google sign-in.                                                                                                              |
-| `/native/:provider`   | POST        | `apple` / `google`: verify a native sign-in sheet's `id_token` and answer the native session tokens.                                                                 |
-| `/account/delete`     | POST        | Delete the signed-in user (cookie, same-origin; or a native bearer). Needs a recent sign-in, else `403 reauth_required`. Revokes Sign in with Apple tokens.          |
+| Endpoint              | Method      | What it does                                                                                                                                                                  |
+| --------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/session`            | GET         | `{ user, expires }` (or nulls). `no-store`. The sliding-expiry path. Rate-limited.                                                                                            |
+| `/providers`          | GET         | The configured providers' `id` + `type` (and an email or phone provider's `name`) — never client ids, secrets or endpoints.                                                   |
+| `/signin/:provider`   | GET         | Starts the OAuth flow (PKCE + `state` + `nonce`). Rate-limited per client IP.                                                                                                 |
+| `/callback/:provider` | GET or POST | By provider type: GET is the OAuth callback and the magic-link click; POST is the Credentials sign-in and the email or phone send / redeem. A verb the type lacks is a `405`. |
+| `/anonymous`          | POST        | With `anonymous: true`: create an anonymous user and sign it in. See [Anonymous sign-in](#anonymous-sign-in).                                                                 |
+| `/signout`            | POST        | Clears the cookie (and the store record). Same-origin only.                                                                                                                   |
+| `/tokens`             | POST, GET   | Mint / list bearer API tokens. Cookie session only; minting needs a recent sign-in.                                                                                           |
+| `/tokens/:id`         | DELETE      | Revoke one of your own tokens. Cookie session only.                                                                                                                           |
+| `/verify`             | GET, POST   | Redeem an email-verification token — the emailed link (GET) or a form / JSON body.                                                                                            |
+| `/reset`              | POST        | Request a password-reset link. One answer for every address.                                                                                                                  |
+| `/reset/confirm`      | POST        | `{ email, token, password }`: set the new password.                                                                                                                           |
+| `/mfa`                | POST        | Finish a pending sign-in with a TOTP, SMS or backup code.                                                                                                                     |
+| `/mfa/challenge`      | POST        | `{ factorId }`: text a code to a verified phone factor for the pending sign-in; answers `{ challengeId, expiresAt }`.                                                         |
+| `/mfa/enroll`         | POST        | Start a TOTP enrollment: `{ secret, uri }`. A complete session must have signed in recently, else `403 reauth_required`.                                                      |
+| `/mfa/confirm`        | POST        | Confirm the enrollment; the backup codes come back once.                                                                                                                      |
+| `/mfa/disable`        | POST        | Remove the factor, given a fresh second factor.                                                                                                                               |
+| `/passkey/*`          | POST        | Passkeys: `register/options` + `register` from a recent session, `authenticate/options` + `authenticate` to sign in or step up. See [Passkeys](#passkeys-webauthn).           |
+| `/passkeys`           | GET         | The signed-in user's passkeys (no key material).                                                                                                                              |
+| `/passkeys/:id`       | DELETE      | Remove one of your passkeys. Needs a recent sign-in.                                                                                                                          |
+| `/native/authorize`   | GET         | Native session mode: start a sign-in for an app (PKCE `S256` challenge, registered `redirect_uri`). See [App backend](/docs/app-backend).                                     |
+| `/native/complete`    | GET         | Where that sign-in lands: a one-time code to the app's redirect URI, only for a sign-in made after `/native/authorize` began.                                                 |
+| `/native/token`       | POST        | Code + verifier → bearer access token + rotating refresh token; or rotate a refresh token. A replayed refresh token revokes its session family.                               |
+| `/native/revoke`      | POST        | Sign a native session out (refresh token in the body, or the access token as a bearer). Always `200`.                                                                         |
+| `/native/nonce`       | POST        | A single-use nonce for a native Apple / Google sign-in.                                                                                                                       |
+| `/native/:provider`   | POST        | `apple` / `google`: verify a native sign-in sheet's `id_token` and answer the native session tokens.                                                                          |
+| `/account/delete`     | POST        | Delete the signed-in user (cookie, same-origin; or a native bearer). Needs a recent sign-in, else `403 reauth_required`. Revokes Sign in with Apple tokens.                   |
 
 A row claims only its own verb, so `GET {basePath}/reset` and `GET {basePath}/mfa` fall
 through to your app — that is where a reset link and `pages.mfa` can land. The account rows
@@ -172,7 +173,7 @@ production, where that mailer refuses to send). See
 
 ## Providers
 
-Fifteen presets ship in `denext/server`. Every OAuth preset takes
+Sixteen presets ship in `denext/server`. Every OAuth preset takes
 `{ clientId, clientSecret, scopes? }`; `scopes` replaces the defaults rather than adding
 to them.
 
@@ -193,6 +194,7 @@ to them.
 | Credentials     | `credentials()`    | `authorize` (optional with an adapter) | Email/password or anything custom. Rate-limited by default.                                                |
 | Magic link      | `magicLink()`      | `id`, `name`, `allowSignUp`            | Passwordless: mails a single-use sign-in link — see [below](#passwordless-magic-links-and-one-time-codes). |
 | Email code      | `emailOtp()`       | `id`, `name`, `allowSignUp`            | Passwordless: mails a one-time numeric code.                                                               |
+| Phone code      | `phoneOtp()`       | `id`, `name`, `allowSignUp`            | Passwordless: texts a one-time code through `sendSms` — see [Phone sign-in](#phone-sign-in).               |
 
 A `domain` / `baseUrl` is validated before it is interpolated: `https:` only, host only,
 no credentials, path, query or fragment. A `tenant` / `realm` /
@@ -851,6 +853,130 @@ The page is denext's own: no script, `default-src 'none'` with its one style all
 token, so it never leaks cross-origin, while the form's POST still carries this origin in
 `Origin`, which the same-origin gate on the redeem requires. Every value from the link is
 HTML-escaped. A link without a valid address or token goes to the error page instead.
+
+## Phone sign-in
+
+```ts
+import { denextAuth, phoneOtp, sqliteAuthAdapter } from "denext/server";
+
+denextAuth({
+  // …
+  adapter: sqliteAuthAdapter({ path: "auth.db" }),
+  sendSms: ({ phone, message }) => sms.send(phone, message), // or hooks.sendSms
+  providers: [phoneOtp()],
+});
+```
+
+`phoneOtp()` texts a one-time code to an E.164 number. It is a `type: "phone"` provider on
+`{basePath}/callback/:provider` — id `"phone"` and name `"Phone code"` by default, both
+echoed by `GET {basePath}/providers` — and takes `{ id?, name?, allowSignUp? }`. Configuring it
+without `sendSms` or `hooks.sendSms`, or with an adapter missing `createVerificationToken`,
+`useVerificationToken`, `getUserByPhone`, `createUser` or `updateUser`, makes `denextAuth()`
+throw.
+
+| Request                                    | What it does                                                                             |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `POST /callback/phone` — `{ phone }`       | Texts a code (`email.otpDigits`, 6; `email.otpMaxAge`, 5 minutes) through the SMS sender |
+| `POST /callback/phone` — `{ phone, code }` | Redeems the code (spaces and hyphens ignored) and signs the user in (`amr: ["sms"]`)     |
+
+There is no GET (a `405`): a code is never put in a URL. The number is normalised to E.164
+(`+`, then 8–15 digits, once spaces, dashes, dots and parentheses are dropped); anything else
+sends nothing. The SMS sender gets `{ phone, otp, message: "Your code is …", channel: "sms",
+type: "sms", user? }` after the response, and a delivery failure is logged without the code.
+From the client: `signIn("phone", { credentials: { phone } })`, then
+`signIn("phone", { credentials: { phone, code } })`.
+
+The flow mirrors the email code exactly. **Sending answers the same for everyone**: a known
+number, an unknown one under `allowSignUp: false` (no text, comparable work) and an invalid
+value all get `{ ok: true }` (a form: a `303` to `pages.verifyRequest` with `?sent=1`), and the
+per-number + per-IP send budget (the verification limiter, spent before the number is looked
+up) is the only thing that changes the answer, to a `429`. **Redeeming**: one generic
+`401 { error: "invalid code" }` (a form: `?error=Verification`) for every failure, 5 failures per
+5 minutes per number plus the IP-wide bucket, codes stored as an HMAC under the auth `secret` in
+their own `"sms"` token space. **Who signs in**: the account with that number
+(`getUserByPhone`), else a new user `{ phone, phoneVerified }` when sign-up is allowed
+(`createUser`, `isNewUser`); `callbacks.signIn` can veto, and an enrolled user owes a second
+factor. **Pre-account hijacking**: an existing account whose `phoneVerified` is unset first loses
+its password, second factors, passkeys, bearer tokens (`apiTokenRevoked` with
+`"phone_verified"`) and server-side sessions — the same eviction a first email proof runs — and
+then `phoneVerified` fires.
+
+## Anonymous sign-in
+
+```ts
+denextAuth({ /* … */ anonymous: true, adapter: sqliteAuthAdapter({ path: "auth.db" }) });
+// the client
+await fetch("/auth/anonymous", { method: "POST", headers: { accept: "application/json" } });
+```
+
+With `anonymous: true`, `POST {basePath}/anonymous` (same-origin, captcha when configured, the
+per-IP sign-in-start budget) creates a user with no identifier (`isAnonymous: true`,
+`createUser`) and signs it in: provider `"anonymous"`, `amr: ["anonymous"]`, and a session user
+carrying `isAnonymous: true`, which `@denext/backend` turns into `is_anonymous: true` in the
+claims a cookie session's queries run with. Without the flag the endpoint does not exist. The
+same `anonymous` flag turns on `signInAnonymously()` on `/auth/v1`, and both keep the flag in
+the adapter's `isAnonymous`, so either path sees the other's anonymous users.
+
+**Conversion.** An anonymous user becomes permanent by proving an identifier from its session:
+when a request carrying a complete (not second-factor-owed) anonymous session redeems an email
+link or code, or a phone code, for an address or number **no account has**, the proof is
+attached to the anonymous user — same id, the verified email or phone added, `isAnonymous`
+cleared — and `userConverted` fires (with the `signIn` that follows, `isNewUser: false`).
+`allowSignUp: false` does not block a conversion, since it creates no user, and a send from an
+anonymous session goes out under it for the same reason. An identifier that **already has an
+account** signs into that account instead; the anonymous user is left as it was — nothing is
+merged — so move any data it owned yourself if you want to keep it. A pending session never
+converts.
+
+## Captcha
+
+```ts
+denextAuth({
+  // …
+  captcha: { provider: "turnstile", secret: Deno.env.get("TURNSTILE_SECRET")! }, // or "hcaptcha"
+});
+```
+
+One `captcha` protects both paths. On denext's endpoints a solved challenge is required by the
+credentials sign-in POST, an email provider's **send** (a magic link or code), a phone
+**send**, `POST /anonymous` and `POST /reset` — never by a redeem, the link click, `/verify` or
+`/reset/confirm`. The token is read from the body field `captchaToken`, `captcha_token`,
+`cf-turnstile-response` or `h-captcha-response` (the widgets' own hidden fields, so a plain
+HTML form works), or the `x-captcha-token` header, and checked with the provider (the client
+IP, by the same `trustForwardedHeaders` rule as the rate limiters, goes along as `remoteip`). A
+refusal is `400 { error: "captcha_failed" }`, or for a form a `303` to `pages.error` (else
+`pages.signIn`) with `?error=CaptchaFailed`; a refused sign-in fires `signInFailed` with
+`"captcha_failed"`. On `/auth/v1` the same check reads supabase-js's `captchaToken` and answers
+GoTrue's `captcha_failed`.
+
+The check runs **before** any adapter lookup and before the request spends a rate-limit budget,
+so refused requests can't drain a user's send or sign-in budget. A provider error, a non-2xx
+answer or no answer within 10 seconds counts as unsolved — the endpoints fail closed.
+
+## Hooks
+
+`hooks` takes Supabase's auth hooks as functions, and each applies to denext's endpoints and
+`/auth/v1` alike (`backend({ supabase: { auth: { hooks } } })` may set its own for `/auth/v1`):
+
+- **`sendSms`** delivers every SMS — phone sign-in codes, phone MFA challenges, `/auth/v1`'s phone
+  flows — in place of `sendSms`.
+- **`sendEmail`** delivers every auth email in place of `sendVerificationRequest`, with Supabase's
+  Send Email Hook payload: `email_data.email_action_type` is `signup` (email verification),
+  `recovery` (password reset), `magiclink` (a magic link) or `email` (an email code); `token` is
+  the code or link token; `action_link` the ready-to-click link (for a code, the page it is typed
+  into); `site_url` the `canonicalOrigin`; `user` the account in GoTrue's JSON shape (or
+  `{ email }` when the address has none). On denext's endpoints `token_hash` and `redirect_to`
+  are `""`: denext's links verify through `action_link`, not `/auth/v1/verify`.
+- **`customAccessToken`** shapes the claims of every session: an `/auth/v1` access token when it
+  is minted, and the `request.jwt.claims` a cookie or native session's queries run with through
+  `@denext/backend` (`db()`, auto-REST, storage). It receives `{ user_id, claims,
+  authentication_method }` and returns `{ claims }`; `sub`, `role`, `aud`, `session_id`, `iat`,
+  `exp`, `aal`, `is_anonymous` and `email` are restored after it runs. For a denext session it
+  runs once per session and its result is reused for 60 seconds (up to 1000 sessions), not on
+  every query (the hook on `denextAuth()` is used, else the one under
+  `backend({ supabase: { auth: { hooks } } })`) — so a claim it reads from the database can be up to a minute old. A hook that
+  throws or returns no claims object **fails the request**; a query never runs with half-shaped
+  claims.
 
 ## Two-factor authentication (TOTP)
 
@@ -1847,7 +1973,7 @@ The `/auth/v1` options (`backend({ supabase: { auth } })`):
 | `refreshTokenReuseInterval`        | `10`              | Seconds a used refresh token may be presented again                       |
 | `disableSignup`                    | `false`           | Refuse new sign-ups (invites and the admin API still create users)        |
 | `autoconfirm` / `phoneAutoconfirm` | `false`           | Sign in at sign-up without confirming the email / phone                   |
-| `anonymousUsers`                   | `false`           | Allow `signInAnonymously()`                                               |
+| `anonymousUsers`                   | `false`           | Allow `signInAnonymously()` (default: `denextAuth({ anonymous })`)        |
 | `minPasswordLength`                | `8`               | Password policy (`weak_password`)                                         |
 | `otpLength` / `otpExpiry`          | `6` / `3600`      | Email and SMS codes                                                       |
 | `sendSms`                          | none              | Deliver SMS codes (phone sign-up, phone OTP, phone MFA)                   |
@@ -1859,6 +1985,10 @@ The `/auth/v1` options (`backend({ supabase: { auth } })`):
 | `saml`                             | none              | SAML SSO: `providers`, `entityId`, `signingKey`, `encryptionKey` (below)  |
 | `oauthServer`                      | off               | `{ authorizationPath?, codeExpiry? }` — the OAuth 2.1 server, below       |
 | `web3`                             | off               | `{ ethereum?: { chainIds?, domains? }, solana?: { domains? }, maxAge? }`  |
+
+`sendSms`, `captcha`, `hooks` and `anonymous` set on `denextAuth()` apply here too unless these
+options set their own (a hook set here wins over the same hook there) — see
+[Captcha](#captcha) and [Hooks](#hooks).
 
 ### SAML single sign-on
 
@@ -2087,8 +2217,8 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
 
 ## Security notes
 
-- **CSRF.** Every state-changing auth POST — the Credentials and email callbacks,
-  `/signout`, `/verify`, `/reset`, `/reset/confirm`, the `/mfa` steps and the `/tokens`
+- **CSRF.** Every state-changing auth POST — the Credentials, email and phone callbacks,
+  `/anonymous`, `/signout`, `/verify`, `/reset`, `/reset/confirm`, the `/mfa` steps and the `/tokens`
   mutations — is gated on a same-origin `Origin` / `Referer`. With
   `canonicalOrigin` set it is matched exactly and scheme-strictly; otherwise the request's
   own `Host` is the fallback.

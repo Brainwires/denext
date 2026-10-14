@@ -274,6 +274,14 @@ const VERIFICATION_CASES: Record<string, Case> = {
     assertEquals((await use.call(adapter, { ...token(), purpose: "reset" }))?.purpose, "reset");
     assertEquals((await use.call(adapter, token()))?.purpose, "email");
   },
+  "an SMS code is stored against an E.164 number in its own space": async (adapter) => {
+    const { create, use } = tokenMethods(adapter);
+    const sms = { ...token(), identifier: "+15550100001", purpose: "sms" as const };
+    await create(sms);
+    assertEquals(await use({ ...sms, purpose: "otp" }), undefined, "another space is a miss");
+    const redeemed = await use(sms);
+    assertEquals([redeemed?.identifier, redeemed?.purpose], ["+15550100001", "sms"]);
+  },
 };
 
 // ---- credentials -----------------------------------------------------------

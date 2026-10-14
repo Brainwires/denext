@@ -102,8 +102,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `native.refreshReuseInterval` is set; Apple token revocation needs `native.apple.clientSecret`.
 - **`cors` covers route handlers and the native auth endpoints only**, not pages, Server Actions,
   the batch endpoint or Live; middleware must let `OPTIONS` under `/auth` through.
-- **No phone / SMS sign-in, anonymous sign-in or SAML SSO** (generic `oidc()` covers OIDC
-  identity providers).
+- **No SAML SSO on denext's own sign-in endpoints** (generic `oidc()` covers OIDC identity
+  providers; `/auth/v1` serves SAML with `backend({ supabase })`).
 
 ### Backend (`@denext/backend`)
 

@@ -107,7 +107,8 @@ function assignDefined<T extends object>(target: T, values: Partial<T>): T {
 
 /** Project an adapter record onto the session user, `emailVerified` back to a boolean. */
 /**
- * The session user for a stored adapter user (`emailVerified` becomes a boolean).
+ * The session user for a stored adapter user (`emailVerified` becomes a boolean; an
+ * anonymous user carries `isAnonymous: true`).
  *
  * @param user The adapter's user record.
  * @returns The {@link AuthUser} the session carries.
@@ -115,7 +116,13 @@ function assignDefined<T extends object>(target: T, values: Partial<T>): T {
 export function toAuthUser(user: AdapterUser): AuthUser {
   return assignDefined<AuthUser>(
     { id: user.id, emailVerified: isVerified(user.emailVerified) },
-    { email: user.email, name: user.name, image: user.image, roles: user.roles },
+    {
+      email: user.email,
+      name: user.name,
+      image: user.image,
+      roles: user.roles,
+      isAnonymous: user.isAnonymous === true ? true : undefined,
+    },
   );
 }
 

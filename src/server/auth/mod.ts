@@ -32,6 +32,8 @@ import { emitAuthEvent } from "./events.ts";
 import { hasMfaAdapter } from "./mfa.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { assertEmailProviderConfig } from "./providers-email.ts";
+import { assertPhoneProviderConfig } from "./providers-phone.ts";
+import { assertAnonymousConfig } from "./routes-anonymous.ts";
 import { resolvePasskeys } from "./passkeys.ts";
 import { authTrustsProxy } from "./rate-limit.ts";
 import { handleAuthRequest } from "./routes.ts";
@@ -96,6 +98,8 @@ function validateConfig(config: AuthConfig): void {
   validateProviders(config.providers);
   assertCredentialsVerifiable(config);
   assertEmailProviderConfig(config);
+  assertPhoneProviderConfig(config);
+  assertAnonymousConfig(config);
   // Resolving validates the 2.5 surface too: an unusable `basePath`, an invalid cookie
   // name, or `session.strategy: "database"` with nowhere to store sessions all throw here
   // — at config time, not on the first login.

@@ -18,7 +18,8 @@
  *   consumed and refused in the same step.
  * - An identifier is ONE normalised email address (trimmed, lower-cased). A value that
  *   isn't exactly one address — `a@x.com,b@y.com`, `a@x.com; b@y.com`, a display-name
- *   form — is refused outright; it is never split into several recipients.
+ *   form — is refused outright; it is never split into several recipients. In the `"sms"`
+ *   token space (a `phoneOtp()` code) it is ONE E.164 phone number instead.
  *
  * @module
  */
@@ -29,6 +30,7 @@ import { asciiDomain } from "./email-key.ts";
 import { constantTimeEqualHex, sha256Hex } from "./hash.ts";
 import { randomToken } from "./oauth.ts";
 import { resolveAuthOptions } from "./options.ts";
+import { normalizePhoneNumber } from "./phone.ts";
 import type { AuthConfig } from "./types.ts";
 
 /** Entropy per token, in bytes (256 bits → a 43-character base64url string). */
@@ -65,7 +67,10 @@ export type VerificationTokenAdapter = Required<
 
 /** What {@linkcode issueVerificationToken} is asked for. */
 export interface IssueVerificationTokenOptions {
-  /** The email address the token proves control of (normalised before storage). */
+  /**
+   * The email address the token proves control of (normalised before storage) — an E.164
+   * phone number for `purpose: "sms"`.
+   */
   identifier: string;
   /** Which token space it belongs to. */
   purpose: VerificationPurpose;
@@ -156,6 +161,14 @@ export function normalizeEmailIdentifier(input: unknown): string | null {
 }
 
 /**
+ * The identifier a token in `purpose`'s space is scoped to: one E.164 number for `"sms"`, one
+ * email address ({@linkcode normalizeEmailIdentifier}) for every other space, or `null`.
+ */
+function normalizeIdentifier(input: unknown, purpose: VerificationPurpose): string | null {
+  return purpose === "sms" ? normalizePhoneNumber(input) : normalizeEmailIdentifier(input);
+}
+
+/**
  * The configured adapter's verification-token group, or `null` when the app has no
  * adapter (or one without the group) — i.e. when the email-token flows aren't configured.
  *
@@ -210,9 +223,10 @@ async function storeToken(
   digest: TokenDigest,
 ): Promise<IssuedVerificationToken> {
   const adapter = requireVerificationAdapter(config, fn);
-  const identifier = normalizeEmailIdentifier(options.identifier);
+  const identifier = normalizeIdentifier(options.identifier, options.purpose);
   if (!identifier) {
-    throw new Error(`${fn}: \`identifier\` must be exactly one email address.`);
+    const what = options.purpose === "sms" ? "E.164 phone number" : "email address";
+    throw new Error(`${fn}: \`identifier\` must be exactly one ${what}.`);
   }
   if (!Number.isFinite(options.ttl) || options.ttl < 1) {
     throw new Error(
@@ -288,7 +302,7 @@ async function redeemWith(
   digest: TokenDigest,
 ): Promise<VerificationTokenRecord | null> {
   const adapter = requireVerificationAdapter(config, fn);
-  const identifier = normalizeEmailIdentifier(options.identifier);
+  const identifier = normalizeIdentifier(options.identifier, options.purpose);
   const token = typeof options.token === "string" ? options.token : "";
   if (!identifier || token.length === 0 || token.length > MAX_TOKEN_LENGTH) return null;
   const tokenHash = await digest(token, { identifier, purpose: options.purpose });
