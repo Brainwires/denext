@@ -21,12 +21,6 @@
 Entries in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) that aren't forced by an OS, a browser
 or an upstream. Each one's limitation entry is deleted when it ships.
 
-- **Auth, mail:** an `smtpMailer()` for `sendVerificationRequest`, and the `/auth/v1` SMTP
-  settings Supabase takes (`GOTRUE_SMTP_*`).
-- **Auth, sessions:** a per-user "sessions valid after" time that ends stateless cookie sessions
-  early (a ban, a password reset or a deletion); magic links default to `confirm: true`; a
-  default `native.refreshReuseInterval` (GoTrue uses 10 s); one passkey ceremony per tab, not per
-  browser.
 - **Deno Desktop (runtime work):** CEF on macOS keeps cookies under a real Keychain key in a
   signed app, not Chromium's mock keychain; a share sheet (macOS `NSSharingServicePicker`,
   Windows `DataTransferManager`); Spotlight indexing and Handoff on macOS; icons and the

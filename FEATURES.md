@@ -233,8 +233,8 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   signed out everywhere until the second factor, then mints a fresh session;
   **passkeys** (WebAuthn L3 registration + authentication at `/auth/passkey/*`,
   verified with `crypto.subtle` and an in-house CBOR decoder: ES256 / RS256 / Ed25519,
-  `none` / `packed` attestation, counter clone detection, single-use browser-bound
-  challenges) as a first factor or the second. A
+  `none` / `packed` attestation, counter clone detection, single-use challenges keyed
+  by a per-tab ceremony id) as a first factor or the second. A
   first email sign-in into an unverified account retires whatever was set up
   without proof of the mailbox (pre-account hijacking). Every message goes through
   `sendVerificationRequest` — `smtpMailer()` (a zero-npm SMTP client, TLS required) or your own.

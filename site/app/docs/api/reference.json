@@ -7717,6 +7717,18 @@
           "denextOnly": true
         },
         {
+          "name": "GoTrueMailKind",
+          "slug": "GoTrueMailKind",
+          "kind": "typeAlias",
+          "signature": "type GoTrueMailKind = confirmation | invite | recovery | magic_link | email_change | reauthentication",
+          "doc": "The mails GoTrue sends, by the names its subject and template settings use.",
+          "docFull": "The mails GoTrue sends, by the names its subject and template settings use.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "GoTrueOAuthServerOptions",
           "slug": "GoTrueOAuthServerOptions",
           "kind": "interface",
@@ -7783,6 +7795,35 @@
           "signature": "interface GoTrueSmsMessage",
           "doc": "What GoTrueOptions.sendSms delivers.",
           "docFull": "What {@linkcode GoTrueOptions.sendSms} delivers.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "goTrueSmtpFromEnv",
+          "slug": "goTrueSmtpFromEnv",
+          "kind": "function",
+          "signature": "goTrueSmtpFromEnv(env: (name: string) => string | undefined): GoTrueSmtpOptions | undefined",
+          "doc": "Supabase Auth's SMTP settings from the environment: GOTRUE_SMTP_HOST, _PORT, _USER, _PASS, _ADMIN_EMAIL (the sender) and _SENDER_NAME, plus GOTRUE_MAILER_SUBJECTS_* and GOTRUE_MAILER_TEMPLATES_*. undefined unless both the host and the sender are set.",
+          "docFull": "Supabase Auth's SMTP settings from the environment: `GOTRUE_SMTP_HOST`, `_PORT`, `_USER`,\n`_PASS`, `_ADMIN_EMAIL` (the sender) and `_SENDER_NAME`, plus `GOTRUE_MAILER_SUBJECTS_*` and\n`GOTRUE_MAILER_TEMPLATES_*`. `undefined` unless both the host and the sender are set.",
+          "params": [
+            {
+              "name": "env",
+              "doc": "Reads an environment variable."
+            }
+          ],
+          "returns": "The options, or undefined.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GoTrueSmtpOptions",
+          "slug": "GoTrueSmtpOptions",
+          "kind": "interface",
+          "signature": "interface GoTrueSmtpOptions",
+          "doc": "/auth/v1's SMTP delivery: the server, plus GoTrue's subjects and template URLs.",
+          "docFull": "`/auth/v1`'s SMTP delivery: the server, plus GoTrue's subjects and template URLs.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -9139,8 +9180,8 @@
           "slug": "magicLink",
           "kind": "function",
           "signature": "magicLink(options?: MagicLinkOptions): EmailProvider",
-          "doc": "Passwordless sign-in by **magic link**: POST {basePath}/callback/email with { email } mails a single-use link (10 minutes by default, email.magicMaxAge); opening it signs the user in. By default the link is consumed by its GET, so a mail gateway that pre-fetches links can spend it — pass confirm: true to open a confirmation page whose button POSTs the token instead, or prefer emailOtp.",
-          "docFull": "Passwordless sign-in by **magic link**: `POST {basePath}/callback/email` with `{ email }`\nmails a single-use link (10 minutes by default, `email.magicMaxAge`); opening it signs\nthe user in. By default the link is consumed by its GET, so a mail gateway that pre-fetches\nlinks can spend it — pass `confirm: true` to open a confirmation page whose button POSTs\nthe token instead, or prefer {@linkcode emailOtp}.",
+          "doc": "Passwordless sign-in by **magic link**: POST {basePath}/callback/email with { email } mails a single-use link (10 minutes by default, email.magicMaxAge); opening it signs the user in. By default the link opens a confirmation page (naming the account) whose button POSTs the token, so a mail gateway that pre-fetches links can't spend it and nobody is signed in without a click; confirm: false redeems on the GET instead, as in Auth.js.",
+          "docFull": "Passwordless sign-in by **magic link**: `POST {basePath}/callback/email` with `{ email }`\nmails a single-use link (10 minutes by default, `email.magicMaxAge`); opening it signs\nthe user in. By default the link opens a confirmation page (naming the account) whose button\nPOSTs the token, so a mail gateway that pre-fetches links can't spend it and nobody is signed\nin without a click; `confirm: false` redeems on the GET instead, as in Auth.js.",
           "params": [
             {
               "name": "options",
@@ -9158,6 +9199,18 @@
           "signature": "interface MagicLinkOptions",
           "doc": "Options for magicLink.",
           "docFull": "Options for {@linkcode magicLink}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MailMessage",
+          "slug": "MailMessage",
+          "kind": "interface",
+          "signature": "interface MailMessage",
+          "doc": "One outbound message.",
+          "docFull": "One outbound message.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11940,8 +11993,8 @@
           "slug": "revokeAllSessions",
           "kind": "function",
           "signature": "revokeAllSessions(userId: string): Promise<void>",
-          "doc": "Revoke every server-side session of userId — \"sign out everywhere\", the right call after a password change or a suspected cookie theft — and every native app session family when the adapter has that group. Fires the sessionRevoked event. Requires denextAuth({ sessionStore }) or native sessions; throws when neither exists.",
-          "docFull": "Revoke every server-side session of `userId` — \"sign out everywhere\", the right call\nafter a password change or a suspected cookie theft — and every native app session family\nwhen the adapter has that group. Fires the `sessionRevoked` event. Requires\n`denextAuth({ sessionStore })` or native sessions; throws when neither exists.",
+          "doc": "Revoke every session of userId — \"sign out everywhere\", the right call after a password change or a suspected cookie theft: the session store's records, every native app session family when the adapter has that group, and — with an adapter — every cookie session signed in before now, stateless ones included (the user's sessionsValidAfter). Fires the sessionRevoked event. Throws when there is nothing to revoke through: no adapter and no sessionStore.",
+          "docFull": "Revoke every session of `userId` — \"sign out everywhere\", the right call after a password\nchange or a suspected cookie theft: the session store's records, every native app session\nfamily when the adapter has that group, and — with an adapter — every cookie session signed\nin before now, stateless ones included (the user's `sessionsValidAfter`). Fires the\n`sessionRevoked` event. Throws when there is nothing to revoke through: no adapter and no\n`sessionStore`.",
           "params": [
             {
               "name": "userId",
@@ -12556,8 +12609,8 @@
           "slug": "SendVerificationRequest",
           "kind": "typeAlias",
           "signature": "type SendVerificationRequest = (params: VerificationRequestParams) => Promise<void> | void",
-          "doc": "Deliver a verification token. denext ships **no mailer** — email verification, password reset, magic links and one-time codes all call this, and the flows that need it refuse to start when it is absent.",
-          "docFull": "Deliver a verification token. denext ships **no mailer** — email verification,\npassword reset, magic links and one-time codes all call this, and the flows that need\nit refuse to start when it is absent.",
+          "doc": "Deliver a verification token — smtpMailer({ … }) is one; email verification, password reset, magic links and one-time codes all call this, and the flows that need it refuse to start when it is absent.",
+          "docFull": "Deliver a verification token — `smtpMailer({ … })` is one; email verification, password\nreset, magic links and one-time codes all call this, and the flows that need it refuse to\nstart when it is absent.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -12958,6 +13011,83 @@
           "signature": "interface SlotRoutes",
           "doc": "A parallel-route slot's own routable subtree (its pages + a default fallback).",
           "docFull": "A parallel-route slot's own routable subtree (its pages + a default fallback).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SmtpContent",
+          "slug": "SmtpContent",
+          "kind": "interface",
+          "signature": "interface SmtpContent",
+          "doc": "What SmtpMailerOptions.render returns.",
+          "docFull": "What {@linkcode SmtpMailerOptions.render} returns.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SmtpError",
+          "slug": "SmtpError",
+          "kind": "class",
+          "signature": "class SmtpError",
+          "doc": "Why a send failed: the step, and the server's reply code when it answered.",
+          "docFull": "Why a send failed: the step, and the server's reply code when it answered.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "smtpMailer",
+          "slug": "smtpMailer-fn",
+          "kind": "function",
+          "signature": "smtpMailer(options: SmtpMailerOptions): SmtpMailer",
+          "doc": "A mailer over SMTP: pass it as denextAuth({ sendVerificationRequest: smtpMailer({ … }) }), and every verification email, password reset, magic link and one-time code goes out through it; mailer.send({ to, subject, text, html? }) sends anything else.",
+          "docFull": "A mailer over SMTP: pass it as `denextAuth({ sendVerificationRequest: smtpMailer({ … }) })`,\nand every verification email, password reset, magic link and one-time code goes out through\nit; `mailer.send({ to, subject, text, html? })` sends anything else.\n\n```ts\ndenextAuth({\n  sendVerificationRequest: smtpMailer({\n    host: \"smtp.example.com\", // port 587 + STARTTLS by default; 465 is implicit TLS\n    user: Deno.env.get(\"SMTP_USER\")!,\n    pass: Deno.env.get(\"SMTP_PASS\")!,\n    from: \"Example <noreply@example.com>\",\n  }),\n});\n```",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The server, the credentials, the sender and the TLS policy."
+            }
+          ],
+          "returns": "The mailer.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SmtpMailer",
+          "slug": "SmtpMailer-iface",
+          "kind": "interface",
+          "signature": "interface SmtpMailer",
+          "doc": "A configured mailer: a sendVerificationRequest, and send() for any message.",
+          "docFull": "A configured mailer: a `sendVerificationRequest`, and `send()` for any message.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SmtpMailerOptions",
+          "slug": "SmtpMailerOptions",
+          "kind": "interface",
+          "signature": "interface SmtpMailerOptions",
+          "doc": "Options for smtpMailer.",
+          "docFull": "Options for {@linkcode smtpMailer}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SmtpMessageError",
+          "slug": "SmtpMessageError",
+          "kind": "class",
+          "signature": "class SmtpMessageError",
+          "doc": "Why a message can't be built.",
+          "docFull": "Why a message can't be built.",
           "params": [],
           "returns": "",
           "examples": [],

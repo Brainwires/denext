@@ -7,9 +7,10 @@
  * **Challenges** (WebAuthn L3 §13.4.3). Each ceremony gets 32 random bytes. Only their SHA-256
  * is stored, through the adapter's atomic `usePasskeyChallenge`, so a challenge verifies once
  * and a replayed response — same challenge — is refused. The challenge record names its
- * ceremony (`register`, `signin`, `mfa`), its user where there is one, and a random binding
- * that also rides a short-lived signed cookie: a response is accepted only from the browser
- * that started the ceremony.
+ * ceremony (`register`, `signin`, `mfa`), its user where there is one, and the SHA-256 of a
+ * random ceremony id that only the options response carries: the verifying request must
+ * present it, so a response is accepted only from the tab that started the ceremony — and
+ * several tabs of one browser can each run one.
  *
  * **Factors.** A passkey sign-in with user verification (the default policy) proves possession
  * and the user's PIN or biometric — it completes a sign-in even for a user with TOTP, with
@@ -174,7 +175,7 @@ export interface ChallengeData {
   kind: PasskeyCeremony;
   /** The user it was issued to (`register`, `mfa`). */
   userId?: string;
-  /** The random value the ceremony cookie also carries. */
+  /** The SHA-256 (hex) of the ceremony id the options response handed out. */
   binding: string;
 }
 

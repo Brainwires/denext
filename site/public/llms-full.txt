@@ -286,9 +286,9 @@ pass `authConfig` first to be explicit) — it self-documents as `bearerAuth`
 for `@denext/openapi` (declare the matching `securitySchemes: { bearerAuth: … }` once in the
 `openapi()` options). `credentials()` with no `authorize` verifies against the adapter
 (`getUserByEmail` + `getCredential` + the hasher). Passwordless: `providers: [magicLink(),
-emailOtp()]` plus `sendVerificationRequest` (denext ships no mailer);
-`magicLink({ confirm: true })` puts a click-to-confirm page in front of the redeem, so a mail
-scanner's pre-fetch can't spend the link. Passkeys: `passkeys: true` (or `{ rpId, rpName, userVerification }`) mounts
+emailOtp()]` plus `sendVerificationRequest` (`smtpMailer({ host, user, pass, from })` from
+`denext/server`, TLS required, or your own); a magic link opens a click-to-confirm page by
+default, so a mail scanner's pre-fetch can't spend it (`magicLink({ confirm: false })` opts out). Passkeys: `passkeys: true` (or `{ rpId, rpName, userVerification }`) mounts
 `/auth/passkey/*`, and `registerPasskey()` / `signInWithPasskey()` from `denext/client` (check
 `passkeysSupported()`) sign in usernameless or complete a pending second factor. An OAuth / OIDC
 provider takes `responseMode: "form_post"` (the callback is then a POST). Second factor: an
@@ -1591,12 +1591,15 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type GoTrueErrorCode = anonymous_provider_disabled | bad_code_verifier | bad_json | bad_jwt | bad_oauth_callback | bad_oauth_state | captcha_failed | custom_provider_not_found | email_address_invalid | email_address_not_authorized | email_exists | email_not_confirmed | email_provider_disabled | flow_state_expired | flow_state_not_found | identity_already_exists | identity_not_found | insufficient_aal | invalid_credentials | manual_linking_disabled | mfa_challenge_expired | mfa_factor_not_found | mfa_verification_failed | mfa_verification_rejected | mfa_phone_enroll_not_enabled | no_authorization | oauth_authorization_not_found | oauth_client_not_found | not_admin | otp_disabled | otp_expired | over_email_send_rate_limit | over_request_rate_limit | over_sms_send_rate_limit | phone_exists | phone_provider_disabled | provider_disabled | reauthentication_needed | reauthentication_not_valid | refresh_token_already_used | refresh_token_not_found | same_password | saml_entity_id_mismatch | saml_idp_already_exists | saml_metadata_expired | saml_metadata_fetch_failed | saml_provider_disabled | session_not_found | signup_disabled | single_identity_not_deletable | sms_send_failed | sso_domain_already_exists | sso_provider_not_found | unexpected_failure | user_already_exists | user_banned | user_not_found | user_sso_managed | validation_failed | weak_password | web3_provider_disabled | web3_unsupported_chain | not_found | method_not_allowed` — A GoTrue error code (the subset denext answers with).
 - `interface GoTrueHandlerOptions` — What the handler needs besides the request.
 - `interface GoTrueHooks` — Supabase's auth hooks, as functions.
+- `type GoTrueMailKind = confirmation | invite | recovery | magic_link | email_change | reauthentication` — The mails GoTrue sends, by the names its subject and template settings use.
 - `interface GoTrueOAuthServerOptions` — GoTrueOptions.oauthServer.
 - `interface GoTrueOptions` — The /auth/v1 options.
 - `interface GoTrueSamlOptions` — The /auth/v1 SAML 2.0 options.
 - `interface GoTrueSamlProvider` — A SAML 2.0 identity provider for signInWithSSO.
 - `interface GoTrueSendEmailPayload` — What GoTrueHooks.sendEmail receives — Supabase's Send Email Hook payload.
 - `interface GoTrueSmsMessage` — What GoTrueOptions.sendSms delivers.
+- `goTrueSmtpFromEnv(env: (name: string) => string | undefined): GoTrueSmtpOptions | undefined` — Supabase Auth's SMTP settings from the environment: GOTRUE_SMTP_HOST, _PORT, _USER, _PASS, _ADMIN_EMAIL (the sender) and _SENDER_NAME, plus GOTRUE_MAILER_SUBJECTS_* and GOTRUE_MAILER_TEMPLATES_*. undefined unless both the host and the sender are set.
+- `interface GoTrueSmtpOptions` — /auth/v1's SMTP delivery: the server, plus GoTrue's subjects and template URLs.
 - `interface GoTrueWeb3Options` — GoTrueOptions.web3.
 - `handleGoTrueRequest(request: Request, handler: GoTrueHandlerOptions): Promise<Response | null>` — Handle an /auth/v1 request.
 - `interface Hasher` — How denext hashes and checks user-supplied secrets. An implementation MUST compare in constant time and MUST NOT throw on a malformed stored value — return false, so a corrupted row can never surface as a 500 or a stack trace.
@@ -1697,8 +1700,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface LocalPattern` — An allowed **local** image source pattern (Next.js images.localPatterns). A local source (/… under public/) matches when its pathname matches pathname (a glob: * = one path segment, ** = any) and, if search is given, its query string equals it exactly (search: "" ⇒ only a query-less URL). When localPatterns is set, a local source matching none is refused — an enumeration guard for query-string variants.
 - `localServerOrigin(): string | undefined` — The origin on which this machine reaches the denext server that received the current request: the address it listens on, a wildcard bind (0.0.0.0 / ::) as the loopback address — http://127.0.0.1:3000. It is never derived from the request's Host or forwarded headers, so server code can hand it to something that outlives the request (a worker's environment, a URL the server calls itself on) without a forged header steering it elsewhere. For the app's public origin, configure canonicalOrigin.
 - `looksLikeJwt(value: string): boolean` — Whether a string has the shape of a compact JWS (three base64url segments).
-- `magicLink(options?: MagicLinkOptions): EmailProvider` — Passwordless sign-in by **magic link**: POST {basePath}/callback/email with { email } mails a single-use link (10 minutes by default, email.magicMaxAge); opening it signs the user in. By default the link is consumed by its GET, so a mail gateway that pre-fetches links can spend it — pass confirm: true to open a confirmation page whose button POSTs the token instead, or prefer emailOtp.
+- `magicLink(options?: MagicLinkOptions): EmailProvider` — Passwordless sign-in by **magic link**: POST {basePath}/callback/email with { email } mails a single-use link (10 minutes by default, email.magicMaxAge); opening it signs the user in. By default the link opens a confirmation page (naming the account) whose button POSTs the token, so a mail gateway that pre-fetches links can't spend it and nobody is signed in without a click; confirm: false redeems on the GET instead, as in Auth.js.
 - `interface MagicLinkOptions` — Options for magicLink.
+- `interface MailMessage` — One outbound message.
 - `makeTranslate(messages: Messages): TranslateFn` — Build a TranslateFn over messages (missing keys return the key).
 - `interface MatchContext` — What a matcher's has/missing conditions are evaluated against.
 - `interface MatcherCondition` — One has/missing condition of a matcher entry (Next's shape): the request must carry (has) or lack (missing) a header, cookie, query parameter, or host. Without value the condition is presence; with it, the actual value must equal value — or match it as a regular expression when it contains regex syntax ((?<team>\w+), a|b, .*).
@@ -1900,7 +1904,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RevenueCatWebhookBody` — The whole webhook body.
 - `class RevenueCatWebhookError` — A refused webhook: status is the HTTP status to answer with.
 - `interface RevenueCatWebhookEvent` — One webhook event (the fields RevenueCat documents; others are kept on the object).
-- `revokeAllSessions(userId: string): Promise<void>` — Revoke every server-side session of userId — "sign out everywhere", the right call after a password change or a suspected cookie theft — and every native app session family when the adapter has that group. Fires the sessionRevoked event. Requires denextAuth({ sessionStore }) or native sessions; throws when neither exists.
+- `revokeAllSessions(userId: string): Promise<void>` — Revoke every session of userId — "sign out everywhere", the right call after a password change or a suspected cookie theft: the session store's records, every native app session family when the adapter has that group, and — with an adapter — every cookie session signed in before now, stateless ones included (the user's sessionsValidAfter). Fires the sessionRevoked event. Throws when there is nothing to revoke through: no adapter and no sessionStore.
 - `revokeApiToken(config: AuthConfig, id: string, options?: object): Promise<boolean>` — Revoke a token by id — it stops authenticating immediately and can never be revived. Revoking an unknown (or already revoked) id is a no-op, not an error, and fires nothing; an actual revocation fires apiTokenRevoked (reason: "revoked").
 - `revokeSession(sessionId: string): Promise<void>` — Revoke one server-side session by id (the sessionId on an AuthSession), so its cookie stops authenticating immediately — "sign out this device". Fires the sessionRevoked event. Requires denextAuth({ sessionStore }); throws when sessions are stateless.
 - `rewrite(destination: string, init?: object): RewriteCommand` — Internally route as if the request were for destination (no client redirect).
@@ -1946,7 +1950,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type SegmentKind = static | dynamic | catchAll | optionalCatchAll` — The category of a route segment, determining how it matches path parts.
 - `interface SegmentLevel` — The convention files one route directory level contributes (own files, not inherited).
 - `sendPush(config: PushSenderConfig, target: PushTarget, payload: PushPayload): Promise<PushResult>` — Send one push with a throwaway createPushSender: convenient for a script, but it signs a new token every call, so a server should keep a sender instead.
-- `type SendVerificationRequest = (params: VerificationRequestParams) => Promise<void> | void` — Deliver a verification token. denext ships **no mailer** — email verification, password reset, magic links and one-time codes all call this, and the flows that need it refuse to start when it is absent.
+- `type SendVerificationRequest = (params: VerificationRequestParams) => Promise<void> | void` — Deliver a verification token — smtpMailer({ … }) is one; email verification, password reset, magic links and one-time codes all call this, and the flows that need it refuse to start when it is absent.
 - `serializeFlight(flight: FlightNode): string` — Serialize a Flight payload to a JSON string safe to embed in a <script>.
 - `serializeRobots(robots: Robots): string` — Serialize a robots config to robots.txt text.
 - `serializeSitemap(entries: Sitemap): string` — Serialize sitemap entries to an XML urlset document.
@@ -1975,6 +1979,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SitemapModule` — The shape of a sitemap.ts module, optionally sharded via generateSitemaps.
 - `slack(options: OAuthClientOptions): OAuthProvider` — Slack ("Sign in with Slack", OIDC). Claims come from the verified id_token; Slack's email_verified claim is honoured by the shared mapper.
 - `interface SlotRoutes` — A parallel-route slot's own routable subtree (its pages + a default fallback).
+- `interface SmtpContent` — What SmtpMailerOptions.render returns.
+- `class SmtpError` — Why a send failed: the step, and the server's reply code when it answered.
+- `smtpMailer(options: SmtpMailerOptions): SmtpMailer` — A mailer over SMTP: pass it as denextAuth({ sendVerificationRequest: smtpMailer({ … }) }), and every verification email, password reset, magic link and one-time code goes out through it; mailer.send({ to, subject, text, html? }) sends anything else.
+- `interface SmtpMailer` — A configured mailer: a sendVerificationRequest, and send() for any message.
+- `interface SmtpMailerOptions` — Options for smtpMailer.
+- `class SmtpMessageError` — Why a message can't be built.
 - `interface SpaConfig` — SPA-mode settings (mode: "spa"). denext bundles SpaConfig.entry as a single client-side-rendered app, wraps it in a generated HTML shell, and serves that shell for every navigation (history-API fallback) — no app/ directory, no SSR/Flight. The entry module mounts the app itself (a side-effect import, like a Vite main.tsx calling createRoot(...).render(...)), so denext stays out of the mount: bring your own router (TanStack, etc.) and data layer.
 - `interface SpaDesktopConfig` — deno desktop packaging settings under SpaConfig.desktop.
 - `interface SpaProxyConfig` — Reverse-proxy configuration for SPA serving — the SPA analogue of a Vite dev server's server.proxy. The client talks to its own origin and denext relays matched requests (HTTP + WebSocket) to a separate backend.

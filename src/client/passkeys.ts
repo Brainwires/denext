@@ -174,15 +174,19 @@ async function errorOf(res: Response | null): Promise<PasskeyClientError> {
   return res.status === 401 && body.error === "unauthorized" ? "unauthorized" : "invalid";
 }
 
-/** The ceremony options from `{base}/<path>`, or the typed refusal. */
+/**
+ * The ceremony options from `{base}/<path>` and the ceremony's id (which the verifying POST
+ * carries back), or the typed refusal.
+ */
 async function ceremonyOptions(
   base: string,
   path: string,
-): Promise<{ json: unknown } | { ok: false; error: PasskeyClientError }> {
+): Promise<{ json: unknown; ceremonyId: unknown } | { ok: false; error: PasskeyClientError }> {
   if (!passkeysSupported()) return { ok: false, error: "unsupported" };
   const res = await post(`${base}${path}`, {});
   if (!res?.ok) return { ok: false, error: await errorOf(res) };
-  return { json: await res.json() };
+  const { ceremonyId, ...json } = await res.json() as Record<string, unknown>;
+  return { json, ceremonyId };
 }
 
 /**
@@ -224,6 +228,7 @@ export async function registerPasskey(
   if (created === "cancelled" || created === "exists") return { ok: false, error: created };
   const res = await post(`${base}/passkey/register`, {
     credential: credentialJSON(created),
+    ceremonyId: fetched.ceremonyId,
     name: options.name,
   });
   if (!res?.ok) return { ok: false, error: await errorOf(res) };
@@ -253,6 +258,7 @@ export async function signInWithPasskey(
   if (asserted === "cancelled" || asserted === "exists") return { ok: false, error: asserted };
   const res = await post(`${base}/passkey/authenticate`, {
     credential: credentialJSON(asserted),
+    ceremonyId: fetched.ceremonyId,
     callbackUrl: options.callbackUrl,
   });
   if (!res?.ok) return { ok: false, error: await errorOf(res) };

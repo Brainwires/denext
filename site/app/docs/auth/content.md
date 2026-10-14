@@ -1479,13 +1479,13 @@ denextAuth({
 | `timeout`          | `300`                    | Seconds a ceremony's challenge lives (`30–900`)                                                               |
 
 `origins` lists what `clientDataJSON.origin` may say; it does not open the endpoints to other
-origins. Every `/passkey/*` row is same-origin gated (`403` otherwise) and binds its ceremony
-with a cookie, so each listed origin must serve the auth routes itself — an app answering on
+origins. Every `/passkey/*` row is same-origin gated (`403` otherwise), so each listed origin
+must serve the auth routes itself — an app answering on
 several hosts under one RP ID (no `canonicalOrigin`, so the request's `Host` decides; with one,
 only that origin is same-origin). A page on another origin can't run a ceremony against these
 endpoints, and neither can a native Android app (`android:apk-key-hash:…` is accepted in the
-signed client data, but the routes need a same-origin browser request carrying the ceremony
-cookie) — such a client needs endpoints of your own.
+signed client data, but the routes need a same-origin browser request) — such a client needs
+endpoints of your own.
 
 It needs an adapter with the passkey group (both shipped adapters have it), and a relying
 party that doesn't come from the request: with neither `rpId` nor `canonicalOrigin`,
@@ -1523,10 +1523,11 @@ A counter that doesn't increase means a cloned authenticator: the sign-in is ref
 `signInFailed` fires. A counter that stays at `0` — a synced passkey keeps none — is fine.
 
 Every challenge is 32 random bytes, stored only as its SHA-256 through the adapter's atomic
-`usePasskeyChallenge`, and bound to the browser that asked for it by a short-lived signed
-cookie: a replayed response, or one relayed to another browser, is refused. That cookie is one
-per browser, so starting a second ceremony (another tab, a retry) supersedes the first: finish
-one before starting the next. Registration needs a complete session that signed in within
+`usePasskeyChallenge`, and bound to a random `ceremonyId` that the options answer hands the
+tab that asked (only its SHA-256 is stored) and the verifying POST must carry back (the client
+helpers do): a replayed response, a swapped or missing id, or a response relayed to another
+browser without the id is refused, and the challenge is spent either way. Each ceremony is its
+own, so several tabs of one browser can run one at the same time. Registration needs a complete session that signed in within
 `mfa.freshness` (five minutes at least), like `/mfa/enroll`, so a stolen session can't plant a
 passkey of its own — and an account with an email address needs it verified (`403
 email_unverified`), so nobody can leave a passkey on an account whose mailbox they never
@@ -2800,12 +2801,9 @@ What the first-party auth layer still does not do — the full ledger is
 - **Rotating `secret` invalidates the one-time codes in flight**: they are keyed under the
   current (first) secret, and live for minutes. A retired secret can be removed once
   `denext auth reseal` reports zero remaining.
-- **One passkey ceremony per browser at a time**: the ceremony cookie is per browser, so a
-  second ceremony supersedes the first.
-- **Stateless cookie sessions survive a password reset** — and a pre-account-hijacking
-  eviction — until they expire. Run a `sessionStore` (or `session.strategy: "database"`) so
-  either one signs out every device. A pending second-factor session in a cookie can't be
-  ended early either; it lasts 15 minutes.
+- **Stateless cookie sessions end early only through an adapter**: a password reset, a ban or
+  `revokeAllSessions` stamps the stored user's `sessionsValidAfter`; with no adapter there is
+  no user to stamp, and a cookie lives until it expires.
 - **`mfa.required: "always"` is trust-on-first-use**: a user with no factor enrolls one
   during the step-up, so whoever holds the first factor at that moment chooses the second.
 - **A Server Action must spend the MFA attempt budget itself.** The endpoints spend it; a

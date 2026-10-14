@@ -210,6 +210,12 @@ and this project adheres to
   whatever waited for it (`minio-init`, the app, `docker compose up --wait`) could hit the restart
   gap with `connection refused`. The check now also requires that PID 1 is no longer the image's
   `entrypoint.sh`.
+- **One passkey ceremony per tab, not per browser.** The passkey options answers carry a random
+  `ceremonyId` (only its SHA-256 is stored with the challenge) and `POST /passkey/register` /
+  `/passkey/authenticate` must send it back; `registerPasskey()` / `signInWithPasskey()` do. The
+  per-browser ceremony cookie is gone, so ceremonies in two tabs no longer cancel each other. A
+  missing, swapped or replayed id is refused, and the challenge is still single-use and expires
+  after `passkeys.timeout`. A client that calls the endpoints itself must carry `ceremonyId`.
 - **`native.refreshReuseInterval` defaults to 10 seconds**, as GoTrue's
   `GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL` does. Two refreshes racing with one native refresh
   token (a background task and the app) both get the same new pair and the family advances once,
