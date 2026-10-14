@@ -34,6 +34,7 @@ import { getSession } from "../session.ts";
 import { randomToken } from "./oauth.ts";
 import { cookieSessionOptions, resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { sessionExpired, type SessionStore } from "./session-store.ts";
+import { ssoSessionAllowed } from "./sso-user.ts";
 import type { AuthConfig, AuthSession, AuthUser } from "./types.ts";
 
 /** What the signed cookie carries: the payload (stateless) or a store id. */
@@ -356,6 +357,37 @@ export async function refreshIfStale(
   if (!(await rewriteStored(options, sessionId, refreshed))) return session;
   await cookie.set({ sid: sessionId });
   return { ...refreshed, sessionId };
+}
+
+/**
+ * {@linkcode refreshIfStale}, but a session due to slide forward is first checked against its
+ * stored user: an SSO user's session ends instead (its store record deleted, its cookie cleared)
+ * and `null` is returned — denextAuth's own sign-ins never come from an identity provider, so a
+ * cookie session of an SSO user is one from before the account became an SSO user, or from
+ * before such sign-ins were refused. Without an adapter there is no user to read.
+ *
+ * @param config The app's auth config.
+ * @param session The session just read for this request.
+ * @param nowMs The current time in ms (injectable for tests).
+ * @returns The (possibly refreshed) session, or `null` when it was ended.
+ */
+export async function refreshLiveSession(
+  config: AuthConfig,
+  session: AuthSession,
+  nowMs: number = Date.now(),
+): Promise<AuthSession | null> {
+  const options = resolveAuthOptions(config);
+  if (shouldRefresh(options, session, nowMs) && options.adapter) {
+    const user = await options.adapter.getUser(session.user.id);
+    if (user && !ssoSessionAllowed(user, session.amr ?? [])) {
+      if (session.sessionId && options.sessionStore) {
+        await options.sessionStore.delete(session.sessionId);
+      }
+      await clearAuthSession(config);
+      return null;
+    }
+  }
+  return await refreshIfStale(config, session, nowMs);
 }
 
 /**

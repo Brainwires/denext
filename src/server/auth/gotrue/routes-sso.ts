@@ -22,6 +22,7 @@ import { nativeAdapterOf } from "../native.ts";
 import { randomToken } from "../oauth.ts";
 import { resolveAuthOptions } from "../options.ts";
 import { signinStartLimiter } from "../rate-limit.ts";
+import { isSsoUser } from "../sso-user.ts";
 import {
   buildAuthnRequest,
   spMetadataXml,
@@ -371,7 +372,8 @@ function emailOf(
  * - Its linked SSO identity signs in the same user every time.
  * - A first sign-in never takes over an existing account with the same email (GoTrue's rule)
  *   unless the config-declared provider sets `linkExistingAccounts` and the address is on its
- *   domains; else it is refused with `email_exists`. Linking to an account whose address was
+ *   domains; else it is refused with `email_exists`. An SSO user another provider signed up is
+ *   never linked, `linkExistingAccounts` or not (`email_exists`). Linking to an account whose address was
  *   never confirmed retires everything set up on it first, as any first proof of an address.
  * - A new user is created only while sign-ups are allowed (`disableSignup`, the provider's
  *   `allowSignUp`), with no `email` identity: the SSO identity is its only sign-in method.
@@ -407,6 +409,11 @@ async function ssoUser(
   return user;
 }
 
+/** Whether `user` is an SSO user that signed up through an identity provider other than `provider`. */
+function ssoUserOfAnother(user: AdapterUser, provider: SsoProvider): boolean {
+  return isSsoUser(user) && user.appMetadata?.provider !== `sso:${provider.id}`;
+}
+
 /** The account a provider's first sign-in for a NameID gets: a trusted link, or a new user. */
 async function firstSsoUser(
   ctx: GoTrueContext,
@@ -417,7 +424,8 @@ async function firstSsoUser(
 ): Promise<AdapterUser> {
   const existing = email ? await ctx.adapter.getUserByEmail(email) : undefined;
   if (existing) {
-    if (!provider.linkExistingAccounts) {
+    // Another identity provider's SSO user is that IdP's alone: never linked to this one.
+    if (!provider.linkExistingAccounts || ssoUserOfAnother(existing, provider)) {
       throw new GoTrueError(
         422,
         "email_exists",

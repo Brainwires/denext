@@ -15,6 +15,7 @@ import { isVerified } from "../adapter-link.ts";
 import { isBanned } from "../ban.ts";
 import { bearerTokenOf } from "../bearer-header.ts";
 import { nativeAdapterOf } from "../native.ts";
+import { snapshotAllowed } from "../sso-user.ts";
 import type { AuthConfig, AuthSession } from "../types.ts";
 import {
   installedSupabaseKeys,
@@ -62,7 +63,8 @@ export async function verifyAccessToken(
  * {@linkcode verifyAccessToken}, also saying whether the token's session still owes a second
  * factor (an `aal1` session of a user who must complete MFA). A user's token is refused while its
  * user is banned (at every use, not only through the revocation a ban performs); the stored user
- * read for that check is returned.
+ * read for that check is returned. An SSO user's token is refused unless its session was started
+ * by the user's identity provider (`sso/saml`).
  *
  * @param keys The key material.
  * @param token The JWT.
@@ -83,6 +85,7 @@ export async function verifyAccessTokenSession(
   const now = Math.floor((options.now ?? Date.now()) / 1000);
   const adapter = nativeAdapterOf(config?.adapter);
   let pending = false;
+  let snapshot: FamilySnapshot | undefined;
   if (typeof claims.session_id === "string" && adapter) {
     const family = await adapter.getNativeSession(claims.session_id);
     if (
@@ -91,20 +94,33 @@ export async function verifyAccessTokenSession(
     ) {
       throw new SupabaseKeyError("bad_jwt", "invalid JWT: session not found");
     }
-    pending = claims.aal !== "aal2" && snapshotPending(family.session);
+    snapshot = familySnapshot(family.session);
+    pending = claims.aal !== "aal2" && snapshot.pending === true;
   }
   const user = typeof claims.sub === "string"
     ? await config?.adapter?.getUser(claims.sub) ?? undefined
     : undefined;
   if (isBanned(user, now)) throw new SupabaseKeyError("bad_jwt", "invalid JWT: user is banned");
+  // An SSO user's session its identity provider did not start is dead at every use, as at refresh.
+  if (user && snapshot && !snapshotAllowed(user, snapshot)) {
+    throw new SupabaseKeyError("bad_jwt", "invalid JWT: session not found");
+  }
   return { claims, pending, user };
 }
 
-function snapshotPending(raw: string): boolean {
+/** What a session family's stored snapshot says about its session. */
+interface FamilySnapshot {
+  pending?: unknown;
+  amr?: unknown;
+  oauth?: unknown;
+}
+
+function familySnapshot(raw: string): FamilySnapshot {
   try {
-    return (JSON.parse(raw) as { pending?: unknown }).pending === true;
+    const value = JSON.parse(raw) as FamilySnapshot | null;
+    return value && typeof value === "object" ? value : {};
   } catch {
-    return false;
+    return {};
   }
 }
 

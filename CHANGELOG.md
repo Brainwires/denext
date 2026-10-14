@@ -794,6 +794,22 @@ Hardening of the new `/auth/v1` API (unreleased) and the user store it shares wi
   first SAML sign-in), so linking or unlinking another identity no longer changes it; an existing
   account an IdP was linked to (`linkExistingAccounts`) is not an SSO user and keeps its other
   sign-in methods.
+- **An SSO user's sessions are the ones its identity provider started.** A session of an SSO user
+  that no SAML sign-in started — one from a password, code, link, passkey or OAuth sign-in made
+  before the account became an SSO user, or before such sign-ins were refused — is now refused at
+  use (`403 session_not_found`) and at refresh (`refresh_token_not_found`, its session revoked) on
+  `/auth/v1`; a session that stepped up with MFA after a SAML sign-in keeps working, and a token
+  issued to an OAuth client is unaffected. No such session is started any more either: a sign-in
+  through an identity linked to an SSO user answers `422 user_sso_managed` on `/auth/v1`, and
+  denextAuth refuses it (`AccountNotLinkedError`). denextAuth's native sessions of an SSO user are
+  refused at use and revoked at refresh, and its cookie sessions end when they are next due to
+  slide (`session.updateAge`). The admin API no longer changes whether a user is an SSO user:
+  `app_metadata.provider` is kept as stored when an update would make a user an SSO user, stop one
+  being one or move it to another provider, and `POST /admin/users` never creates one (GoTrue's
+  `is_sso_user` is not admin-writable). `GET /reauthenticate` for an SSO user answers
+  `422 user_sso_managed` and sends nothing (`PUT /user` refuses its nonce anyway). A SAML provider
+  with `linkExistingAccounts` never links onto an SSO user another provider signed up
+  (`email_exists`).
 - **An admin-generated sign-up link keeps the admin's password.** `generate_link` with
   `type: "signup"` and a `password` binds the code to that password, so confirming it no longer
   retires the password as a foreign one (GoTrue's behaviour).

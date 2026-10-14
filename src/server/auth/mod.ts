@@ -47,7 +47,7 @@ import {
 import { currentContext, headers } from "../request-context.ts";
 import { jwtBearerOf, sessionFromJwtBearer } from "./gotrue/access.ts";
 import type { SessionStore } from "./session-store.ts";
-import { readAuthSession, refreshIfStale } from "./session.ts";
+import { readAuthSession, refreshLiveSession } from "./session.ts";
 import { isOAuthProvider } from "./types.ts";
 import type { AuthConfig, AuthSession, OAuthProvider } from "./types.ts";
 
@@ -431,10 +431,10 @@ export async function pendingMfaSession(): Promise<AuthSession | null> {
  * and {@link updateAuthSession}; the refreshed cookie rides the request's outgoing
  * headers, so only call it where the response has not been sent yet.
  */
-function refreshActiveSession(session: AuthSession): Promise<AuthSession> {
+function refreshActiveSession(session: AuthSession): Promise<AuthSession | null> {
   // A native (bearer) session has no cookie to slide; its app refreshes its own token.
   if (session.nativeSessionId) return Promise.resolve(session);
-  return activeConfig ? refreshIfStale(activeConfig, session) : Promise.resolve(session);
+  return activeConfig ? refreshLiveSession(activeConfig, session) : Promise.resolve(session);
 }
 
 /**
@@ -443,7 +443,8 @@ function refreshActiveSession(session: AuthSession): Promise<AuthSession> {
  * `requireSession()` do for you. Call it from a Server Action or a `route.ts` handler
  * (anywhere the response has not been sent yet); the refreshed cookie rides that
  * response. In a streamed Server Component use {@link auth} instead — a `Set-Cookie`
- * written after the headers flush is dropped silently.
+ * written after the headers flush is dropped silently. A session due to slide whose user is
+ * an SSO user is ended instead (its identity provider is that user's only way in).
  *
  * @returns The (possibly refreshed) {@link AuthSession}, or `null` when signed out.
  */
@@ -531,7 +532,8 @@ export async function requireAuth(
   // re-issued cookie is queued on the outgoing headers and the pipeline attaches it to
   // whatever response the request ends up producing — the "continue" case needs no
   // Response of its own.
-  await refreshActiveSession(session);
+  // A session ended instead (an SSO user's, never its identity provider's) is signed out.
+  if (!(await refreshActiveSession(session))) return refuse(request, options.signInPath);
   return null;
 }
 

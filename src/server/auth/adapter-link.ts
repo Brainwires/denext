@@ -8,7 +8,8 @@
  *
  * | Situation | Outcome |
  * | --- | --- |
- * | the `(provider, providerAccountId)` is already linked | that user signs in |
+ * | the `(provider, providerAccountId)` is already linked | that user signs in — unless it is an SSO user (**refused**, `AccountNotLinkedError`) |
+ * | not linked, the local user with that address is an SSO user | **refused** — `AccountNotLinkedError` |
  * | not linked, provider asserts a **verified** email, a local user has that address **verified** | link the account (`linkAccount` event) |
  * | not linked, either side's email is **unverified** | **refused** — `AccountNotLinkedError` |
  * | not linked, no local user with that address (or no address at all) | create the user (`createUser` + `linkAccount` events) |
@@ -214,6 +215,22 @@ function assertNotSso(provider: OAuthProvider, existing: AdapterUser): void {
 }
 
 /**
+ * Refuse a sign-in to an SSO user through an account linked to it (one linked from a session its
+ * identity provider started, or from before it became an SSO user): denextAuth's sessions never
+ * come from an identity provider, and an SSO user's identity provider is its only way in.
+ *
+ * @throws {AccountNotLinkedError} For an SSO user.
+ */
+function assertNotSsoSignIn(provider: OAuthProvider, linked: AdapterUser): void {
+  if (!isSsoUser(linked)) return;
+  throw new AccountNotLinkedError(
+    `denextAuth: refusing the "${provider.id}" sign-in of the existing user ` +
+      `${JSON.stringify(linked.id)} — it is an SSO user, which signs in through its identity ` +
+      "provider only.",
+  );
+}
+
+/**
  * Store the account under `user` and announce it.
  *
  * The account is persisted **with** whatever tokens the provider returned (that is what an
@@ -285,6 +302,7 @@ export async function resolveSignInUser(
 
   const linked = await adapter.getUserByAccount(account);
   if (linked) {
+    assertNotSsoSignIn(provider, linked);
     return { user: toAuthUser(await mergeProfile(adapter, linked, profile)), isNewUser: false };
   }
 

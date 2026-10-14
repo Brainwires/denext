@@ -15,8 +15,17 @@ import { requestPasswordReset, resetPassword } from "../src/server/auth/email.ts
 import { base64UrlEncode } from "../src/server/auth/oauth.ts";
 import type { AuthConfig, OAuthProvider } from "../src/server/auth/types.ts";
 import type { GoTrueOptions, GoTrueSmsMessage } from "../src/server/auth/gotrue/options.ts";
-import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp } from "./_supabase-auth-app.ts";
-import { ACS, requestIdOf, testIdp } from "./_saml-idp.ts";
+import { inMemorySessionStore } from "../src/server/auth/session-store.ts";
+import { readAuthSession, refreshLiveSession } from "../src/server/auth/session.ts";
+import {
+  refreshNativeSession,
+  resolveNative,
+  startNativeSession,
+  verifyNativeAccessToken,
+} from "../src/server/auth/native.ts";
+import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp, totpCode } from "./_supabase-auth-app.ts";
+import { ACS, requestIdOf, type TestIdp, testIdp } from "./_saml-idp.ts";
 
 const idp = await testIdp();
 
@@ -148,17 +157,24 @@ async function withApp(
   }
 }
 
-/** A SAML sign-in at the ACS (SP-initiated); the access token from the landing fragment. */
-async function samlSignIn(app: SupabaseAuthApp, email: string): Promise<string> {
+/** A SAML sign-in at the ACS (SP-initiated): the landing fragment, or the refusal's code. */
+async function samlLanding(
+  app: SupabaseAuthApp,
+  email: string,
+  via: { providerId: string; idp: TestIdp } | undefined = undefined,
+): Promise<{ status: number; fragment: URLSearchParams; error?: string }> {
   const started = await api(app, "/sso", {
-    body: { domain: "corp.example", redirect_to: `${ORIGIN}/in` },
+    body: {
+      ...(via ? { provider_id: via.providerId } : { domain: "corp.example" }),
+      redirect_to: `${ORIGIN}/in`,
+    },
   });
   assertEquals(started.status, 200, JSON.stringify(started.json));
   const landing = await app.fetch(ACS, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      SAMLResponse: await idp.response({
+      SAMLResponse: await (via?.idp ?? idp).response({
         inResponseTo: await requestIdOf(started.json.url),
         nameId: email,
       }),
@@ -166,11 +182,35 @@ async function samlSignIn(app: SupabaseAuthApp, email: string): Promise<string> 
     }),
     redirect: "manual",
   });
-  assertEquals(landing.status, 303);
-  const fragment = new URLSearchParams(new URL(landing.headers.get("location")!).hash.slice(1));
-  const token = fragment.get("access_token");
-  assert(token, `a session: ${landing.headers.get("location")}`);
-  return token;
+  const location = landing.headers.get("location");
+  if (!location) {
+    return {
+      status: landing.status,
+      fragment: new URLSearchParams(),
+      error: (await landing.json()).error_code,
+    };
+  }
+  return {
+    status: landing.status,
+    fragment: new URLSearchParams(new URL(location).hash.slice(1)),
+  };
+}
+
+/** A SAML sign-in at the ACS (SP-initiated); the session from the landing fragment. */
+async function samlSession(
+  app: SupabaseAuthApp,
+  email: string,
+): Promise<{ access: string; refresh: string }> {
+  const { status, fragment, error } = await samlLanding(app, email);
+  assertEquals(status, 303, error);
+  const access = fragment.get("access_token");
+  assert(access, `a session: ${fragment}`);
+  return { access, refresh: fragment.get("refresh_token")! };
+}
+
+/** A SAML sign-in at the ACS (SP-initiated); the access token from the landing fragment. */
+async function samlSignIn(app: SupabaseAuthApp, email: string): Promise<string> {
+  return (await samlSession(app, email)).access;
 }
 
 /**
@@ -362,14 +402,18 @@ Deno.test("/auth/v1: an SSO user registers no passkey and links no identity with
       assertEquals(old.status, 200);
       await makeSso(h.app, id);
       const sso = await samlSignIn(h.app, SSO_EMAIL);
-      for (const token of [old.json.access_token, sso]) {
-        const options = await api(h.app, "/passkeys/registration/options", { token, body: {} });
-        assertEquals([options.status, options.json.error_code], [422, "validation_failed"]);
-      }
+      const options = await api(h.app, "/passkeys/registration/options", { token: sso, body: {} });
+      assertEquals([options.status, options.json.error_code], [422, "validation_failed"]);
+      // The session from before is dead outright (see the session tests below).
+      const stale = await api(h.app, "/passkeys/registration/options", {
+        token: old.json.access_token,
+        body: {},
+      });
+      assertEquals([stale.status, stale.json.error_code], [403, "session_not_found"]);
       const link = (token: string) =>
         api(h.app, "/user/identities/authorize?provider=nope&skip_http_redirect=true", { token });
       const refused = await link(old.json.access_token);
-      assertEquals([refused.status, refused.json.error_code], [422, "user_sso_managed"]);
+      assertEquals([refused.status, refused.json.error_code], [403, "session_not_found"]);
       // From the IdP's session the link goes on (and fails only on the unknown provider here).
       const allowed = await link(sso);
       assertEquals([allowed.status, allowed.json.error_code], [400, "validation_failed"]);
@@ -535,4 +579,273 @@ Deno.test("an existing account an IdP was linked to keeps its password, codes an
     {},
     { passkeys: true },
   );
+});
+
+// ── sessions an SSO user's identity provider did not start ───────────────────
+
+Deno.test("/auth/v1: an SSO user's session from before it became one is refused at use and at refresh", async () => {
+  await withApp(async (h) => {
+    const id = await passwordUser(h.app, SSO_EMAIL);
+    const old = await api(h.app, "/token?grant_type=password", {
+      body: { email: SSO_EMAIL, password: PASSWORD },
+    });
+    assertEquals(old.status, 200);
+    assertEquals((await api(h.app, "/user", { token: old.json.access_token })).status, 200);
+    await makeSso(h.app, id);
+    const used = await api(h.app, "/user", { token: old.json.access_token });
+    assertEquals([used.status, used.json.error_code], [403, "session_not_found"]);
+    const refreshed = await api(h.app, "/token?grant_type=refresh_token", {
+      body: { refresh_token: old.json.refresh_token },
+    });
+    assertEquals([refreshed.status, refreshed.json.error_code], [400, "refresh_token_not_found"]);
+    // The family is revoked, not merely refused.
+    const family = await h.app.config.adapter!.getNativeSession!(
+      old.json.refresh_token.split(".")[0],
+    );
+    assert(family?.revokedAt !== undefined, "revoked");
+  });
+});
+
+Deno.test("/auth/v1: an SSO user's IdP session refreshes, and keeps working after an MFA step-up", async () => {
+  await withApp(async (h) => {
+    const first = await samlSession(h.app, SSO_EMAIL);
+    const refreshed = await api(h.app, "/token?grant_type=refresh_token", {
+      body: { refresh_token: first.refresh },
+    });
+    assertEquals(refreshed.status, 200, JSON.stringify(refreshed.json));
+    const token = refreshed.json.access_token as string;
+    assertEquals((await api(h.app, "/user", { token })).status, 200);
+    // Step up to aal2 with a TOTP factor: the new family keeps the `sso/saml` entry.
+    const enrolled = await api(h.app, "/factors", { token, body: { factor_type: "totp" } });
+    assertEquals(enrolled.status, 200, JSON.stringify(enrolled.json));
+    const challenge = await api(h.app, `/factors/${enrolled.json.id}/challenge`, {
+      token,
+      body: {},
+    });
+    const verified = await api(h.app, `/factors/${enrolled.json.id}/verify`, {
+      token,
+      body: { challenge_id: challenge.json.id, code: await totpCode(enrolled.json.totp.secret) },
+    });
+    assertEquals(verified.status, 200, JSON.stringify(verified.json));
+    const stepped = await api(h.app, "/token?grant_type=refresh_token", {
+      body: { refresh_token: verified.json.refresh_token },
+    });
+    assertEquals(stepped.status, 200, JSON.stringify(stepped.json));
+    const user = await api(h.app, "/user", { token: stepped.json.access_token });
+    assertEquals(user.status, 200);
+  });
+});
+
+Deno.test("/auth/v1: a sign-in through an identity linked to an SSO user starts no session", async () => {
+  const google = await googleIdp();
+  await withApp(
+    async (h) => {
+      const { id } = await ssoUser(h.app);
+      await h.app.config.adapter!.linkAccount({
+        userId: id,
+        provider: "google",
+        providerAccountId: `google-${SSO_EMAIL}`,
+        identityId: crypto.randomUUID(),
+        identityData: { sub: `google-${SSO_EMAIL}`, email: SSO_EMAIL },
+      });
+      const grant = await api(h.app, "/token?grant_type=id_token", {
+        body: { provider: "google", id_token: await google.idToken(SSO_EMAIL) },
+      });
+      assertEquals([grant.status, grant.json.error_code], [422, "user_sso_managed"]);
+    },
+    {},
+    { native: google.native },
+  );
+});
+
+/** A denextAuth credentials sign-in; the session cookie pair. */
+async function cookieSignIn(app: SupabaseAuthApp, email: string): Promise<string> {
+  const res = await app.fetch(`${ORIGIN}/auth/callback/credentials`, {
+    method: "POST",
+    headers: { origin: ORIGIN, "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ email, password: PASSWORD }),
+  });
+  await res.body?.cancel();
+  const pair = res.headers.getSetCookie().find((c) => /^__Host-denext_auth=[^;]/.test(c));
+  assert(pair, `a session cookie (${res.status})`);
+  return pair.split(";")[0];
+}
+
+/** Read the cookie's session and, when `slide`, slide it as if `updateAge` had passed. */
+function cookieSession(app: SupabaseAuthApp, cookie: string, slide = true) {
+  const ctx = createRequestContext(new Request(`${ORIGIN}/`, { headers: { cookie } }));
+  return runWithContext(ctx, async () => {
+    const session = await readAuthSession(app.config);
+    if (!session || !slide) return session;
+    return await refreshLiveSession(app.config, session, Date.now() + 120_000);
+  });
+}
+
+Deno.test("denextAuth: an SSO user's cookie session ends when it is due to slide", async () => {
+  await withApp(
+    async (h) => {
+      const id = await passwordUser(h.app, SSO_EMAIL);
+      await passwordUser(h.app, "regular@corp.example");
+      const cookie = await cookieSignIn(h.app, SSO_EMAIL);
+      const regular = await cookieSignIn(h.app, "regular@corp.example");
+      assert(await cookieSession(h.app, cookie, false), "live");
+      await makeSso(h.app, id);
+      assert(await cookieSession(h.app, cookie, false), "auth() still reads it (no user read)");
+      assertEquals(await cookieSession(h.app, cookie), null);
+      assertEquals(await cookieSession(h.app, cookie, false), null, "its record is gone");
+      assert(await cookieSession(h.app, regular), "another user's still slides");
+    },
+    {},
+    { sessionStore: inMemorySessionStore(), session: { updateAge: 60 } },
+  );
+});
+
+Deno.test("denextAuth: an SSO user's native session is refused at use and at refresh", async () => {
+  await withApp(
+    async (h) => {
+      const id = await passwordUser(h.app, SSO_EMAIL);
+      const native = resolveNative(h.app.config)!;
+      const pair = await startNativeSession(h.app.config, native, {
+        user: { id, email: SSO_EMAIL },
+        provider: "credentials",
+        amr: ["pwd"],
+        authTime: Math.floor(Date.now() / 1000),
+      });
+      assert(await verifyNativeAccessToken(h.app.config, pair.access_token), "live before");
+      await makeSso(h.app, id);
+      assertEquals(await verifyNativeAccessToken(h.app.config, pair.access_token), null);
+      assertEquals(await refreshNativeSession(h.app.config, native, pair.refresh_token), {
+        ok: false,
+        reason: "sso_user",
+      });
+    },
+    {},
+    { native: { redirectUris: ["com.example.app://auth/callback"] } },
+  );
+});
+
+Deno.test("denextAuth: an OAuth sign-in through an account linked to an SSO user is refused", async () => {
+  await withApp(async (h) => {
+    const { id } = await ssoUser(h.app);
+    await h.app.config.adapter!.linkAccount({
+      userId: id,
+      provider: "github",
+      providerAccountId: "gh-9",
+      type: "oauth",
+    });
+    const error = await resolveSignInUser(
+      resolveAuthOptions(h.app.config),
+      { id: "github", type: "oauth" } as OAuthProvider,
+      { id: "gh-9", email: SSO_EMAIL, emailVerified: true },
+      { provider: "github", providerAccountId: "gh-9", type: "oauth" },
+    ).then(() => undefined, (e) => e);
+    assertInstanceOf(error, AccountNotLinkedError);
+  });
+});
+
+// ── the admin API, reauthentication and a second identity provider ──────────
+
+Deno.test("/auth/v1 admin: app_metadata never makes a user an SSO user, nor stops one being one", async () => {
+  await withApp(async (h) => {
+    const admin = (path: string, body: unknown, method = "POST") =>
+      api(h.app, path, { key: h.app.secretKey, method, body });
+    const id = await passwordUser(h.app, "regular@corp.example");
+    const flipped = await admin(`/admin/users/${id}`, {
+      app_metadata: { provider: "sso:acme", plan: "pro" },
+    }, "PUT");
+    assertEquals(flipped.status, 200, JSON.stringify(flipped.json));
+    assertEquals(flipped.json.app_metadata.provider, "email");
+    assertEquals(flipped.json.app_metadata.plan, "pro", "the rest of app_metadata is written");
+    const stored = await h.app.config.adapter!.getUser(id);
+    assertEquals(stored?.appMetadata?.provider, "email");
+    // …so its non-SSO sign-ins still work.
+    const grant = await api(h.app, "/token?grant_type=password", {
+      body: { email: "regular@corp.example", password: PASSWORD },
+    });
+    assertEquals(grant.status, 200);
+
+    const created = await admin("/admin/users", {
+      email: "made@corp.example",
+      password: PASSWORD,
+      email_confirm: true,
+      app_metadata: { provider: "sso:acme" },
+    });
+    assertEquals(created.status, 200, JSON.stringify(created.json));
+    assertEquals(
+      (await h.app.config.adapter!.getUser(created.json.id))?.appMetadata?.provider,
+      "email",
+    );
+
+    const sso = await ssoUser(h.app);
+    for (const provider of ["email", "sso:other"]) {
+      const cleared = await admin(`/admin/users/${sso.id}`, {
+        app_metadata: { provider },
+      }, "PUT");
+      assertEquals(cleared.status, 200, JSON.stringify(cleared.json));
+      assertEquals(
+        (await h.app.config.adapter!.getUser(sso.id))?.appMetadata?.provider,
+        "sso:acme",
+        provider,
+      );
+    }
+    const still = await api(h.app, "/token?grant_type=password", {
+      body: { email: SSO_EMAIL, password: PASSWORD },
+    });
+    assertEquals([still.status, still.json.error_code], [400, "invalid_credentials"]);
+  });
+});
+
+Deno.test("/auth/v1: GET /reauthenticate for an SSO user sends nothing", async () => {
+  await withApp(async (h) => {
+    const { token } = await ssoUser(h.app);
+    const before = h.sent();
+    const res = await api(h.app, "/reauthenticate", { token });
+    assertEquals([res.status, res.json.error_code], [422, "user_sso_managed"]);
+    assertEquals(h.sent(), before, "no email, no text");
+    // A regular user's still sends.
+    await passwordUser(h.app, "regular@corp.example");
+    const grant = await api(h.app, "/token?grant_type=password", {
+      body: { email: "regular@corp.example", password: PASSWORD },
+    });
+    const regular = await api(h.app, "/reauthenticate", { token: grant.json.access_token });
+    assertEquals(regular.status, 200, JSON.stringify(regular.json));
+    assertEquals(h.sent(), before + 1);
+  });
+});
+
+const idp2 = await testIdp("https://idp2.example.org/metadata");
+
+Deno.test("SAML linkExistingAccounts: another identity provider's SSO user is never linked", async () => {
+  await withApp(async (h) => {
+    const { id } = await ssoUser(h.app);
+    const via = { providerId: "beta", idp: idp2 };
+    const refused = await samlLanding(h.app, SSO_EMAIL, via);
+    assertEquals([refused.status, refused.error], [422, "email_exists"]);
+    const accounts = await h.app.config.adapter!.listAccounts!(id);
+    assertEquals(accounts.map((account) => account.provider), ["sso:acme"]);
+    // A regular account on the same domain still links to it.
+    const regular = await passwordUser(h.app, LINKED_EMAIL);
+    const linked = await samlLanding(h.app, LINKED_EMAIL, via);
+    assertEquals(linked.status, 303, linked.error);
+    assert(
+      (await h.app.config.adapter!.listAccounts!(regular)).some((a) => a.provider === "sso:beta"),
+    );
+  }, {
+    saml: {
+      providers: [
+        {
+          id: "acme",
+          domains: ["corp.example"],
+          metadataXml: idp.metadataXml(),
+          linkExistingAccounts: true,
+        },
+        {
+          id: "beta",
+          domains: ["corp.example"],
+          metadataXml: idp2.metadataXml(),
+          linkExistingAccounts: true,
+        },
+      ],
+    },
+  });
 });

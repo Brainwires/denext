@@ -272,6 +272,13 @@ Where `@denext/backend` deliberately departs from Supabase. See
   email it answers a sign-up as for a registered address, creates nothing for a one-time code,
   refuses an OAuth / `id_token` sign-in (`account_not_linked` / `email_exists`) and answers
   `generate_link` `magiclink` / `signup` / `invite` and `POST /invite` with `email_exists`.
+- **An SSO user signs in through its identity provider only — linked identities included.**
+  Supabase lets an OAuth identity linked to an SSO user sign it in and keeps every session it ever
+  issued. denext refuses that sign-in (`422 user_sso_managed`), refuses any session of an SSO user
+  that no SAML sign-in started (at use and at refresh), refuses `GET /reauthenticate` for an SSO
+  user (`422 user_sso_managed`, nothing sent; Supabase sends a nonce `PUT /user` then refuses),
+  and never links a `linkExistingAccounts` provider onto another provider's SSO user
+  (`email_exists`; Supabase would create a separate account).
 - **A magic link, one-time code or recovery link that first confirms an account retires its
   password.** Supabase keeps a password set by an earlier unconfirmed sign-up; denext keeps only
   the one the account's own sign-up confirmation proves.

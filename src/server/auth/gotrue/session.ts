@@ -31,6 +31,7 @@ import { signSupabaseJwt, type SupabaseKeys } from "./keys.ts";
 import type { GoTrueOptions } from "./options.ts";
 import { toAuthUser } from "../adapter-link.ts";
 import { mfaPendingFor } from "../mfa.ts";
+import { snapshotAllowed, ssoSessionAllowed } from "../sso-user.ts";
 import { factorsJson } from "./factors.ts";
 import { appMetadataOf, identitiesOf, userJson, userMetadataOf } from "./user.ts";
 
@@ -342,7 +343,8 @@ export function startSession(
  * @param oauth For a session issued to an OAuth client: the client and the granted scopes. It
  *   never owes a second factor — the consent it was issued on needed a complete session.
  * @returns The session response.
- * @throws {GoTrueError} `user_banned` for a banned user.
+ * @throws {GoTrueError} `user_banned` for a banned user; `user_sso_managed` for an SSO user's
+ *   sign-in its identity provider did not perform.
  */
 export async function startSessionWithAal(
   ctx: SessionContext,
@@ -353,6 +355,14 @@ export async function startSessionWithAal(
   oauth?: OAuthGrantRef,
 ): Promise<GoTrueSessionJson> {
   if (isBanned(user)) throw new GoTrueError(400, "user_banned", "User is banned");
+  // An SSO user signs in through its identity provider only: no other session is started for it.
+  if (!oauth && !ssoSessionAllowed(user, [amr.method])) {
+    throw new GoTrueError(
+      422,
+      "user_sso_managed",
+      "A SSO account can only sign in via SSO",
+    );
+  }
   const at = now();
   const adapter = ctx.config.adapter!;
   const updated = await adapter.updateUser({ id: user.id, lastSignInAt: at });
@@ -432,7 +442,7 @@ const notFound = () =>
  *   session refreshes, so an OAuth client's refresh token never works at `/token`.
  * @returns The new session.
  * @throws {GoTrueError} `refresh_token_not_found` (unknown, forged, revoked, expired, another
- *   client's) or `refresh_token_already_used` (a replay — the session is revoked).
+ *   client's, or an SSO user's session its identity provider did not start — revoked) or `refresh_token_already_used` (a replay — the session is revoked).
  */
 export async function refreshSession(
   ctx: SessionContext,
@@ -466,6 +476,12 @@ export async function refreshSession(
     throw notFound();
   }
   if (isBanned(user)) throw new GoTrueError(400, "user_banned", "User is banned");
+  // An SSO user's session its identity provider did not start (one from before the account
+  // became an SSO user, or before such sign-ins were refused) ends here.
+  if (!snapshotAllowed(user, snapshot)) {
+    await families.revokeNativeSession(family.id);
+    throw notFound();
+  }
   if (generation < family.generation) return await olderGeneration(ctx, user, family, generation);
   const expiresAt = at + familyLifetime(ctx.config);
   const swapped = await families.rotateNativeSession(family.id, generation, expiresAt, {

@@ -279,9 +279,21 @@ export async function promoteAnonymous(ctx: GoTrueContext, userId: string): Prom
   });
 }
 
-/** `GET /reauthenticate`: send a nonce to the user's email (or phone). */
+/**
+ * `GET /reauthenticate`: send a nonce to the user's email (or phone). An SSO user is refused
+ * (`user_sso_managed`) with nothing sent: `PUT /user` would refuse its nonce anyway.
+ */
 export async function reauthenticate(ctx: GoTrueContext): Promise<Response> {
   const { user } = await requireUser(ctx, { allowPending: true });
+  // An SSO user's credentials belong to its identity provider, and `PUT /user` refuses its nonce
+  // (`user_sso_managed`): a code it could never use is not sent. (GoTrue sends one.)
+  if (isSsoUser(user)) {
+    throw new GoTrueError(
+      422,
+      "user_sso_managed",
+      "Reauthentication of a SSO account is only possible via SSO",
+    );
+  }
   if (!user.email && !user.phone) {
     throw fail.validation("Reauthentication requires the user to have an email or a phone number");
   }

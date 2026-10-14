@@ -2321,14 +2321,30 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   linked (even with `allowDangerousEmailAccountLinking`). A code or reset link issued before the
   account became an SSO user signs nobody in. An SSO user can't register a passkey, a passkey it
   held before signs it in nowhere, and linking an identity to it needs a session its IdP started;
-  an identity linked that way (an OAuth account) is then a sign-in of its own, as in GoTrue. The
+  unlike GoTrue, an identity linked that way (an OAuth account) does not sign it in (`422
+  user_sso_managed` on `/auth/v1`, `AccountNotLinkedError` in denextAuth). The
   admin API's `generate_link` answers `user_not_found` for `recovery` and the email-change links,
   and `email_exists` for `magiclink`, `signup` and `invite` (GoTrue would create a new account
   for them), as does `POST /invite`. A user is an SSO user when its stored
   `app_metadata.provider` is `sso:<id>` (its first SAML sign-in sets it), so linking or unlinking
-  identities never changes it — and an admin who edits `app_metadata.provider` changes it. An
-  existing account an IdP was linked to (`linkExistingAccounts`) is not an SSO user and keeps
-  its other sign-in methods.
+  identities never changes it, and neither does the admin API (as GoTrue's `is_sso_user`, it is
+  not admin-writable: an `app_metadata.provider` that would make a user an SSO user, stop one being
+  one or move it to another provider is kept as stored, and `POST /admin/users` never creates
+  one). An existing account an IdP was linked to (`linkExistingAccounts`) is not an SSO user and
+  keeps its other sign-in methods; an SSO user another provider signed up is never linked
+  (`email_exists`).
+- **An SSO user's sessions are the ones its IdP started.** A session of an SSO user whose `amr`
+  has no `sso/saml` entry — one from before the account became an SSO user, or from before
+  non-SSO sign-ins of SSO users were refused — is refused at every use (`403 session_not_found`)
+  and at refresh (`refresh_token_not_found`, and its session is revoked). A session that stepped
+  up with MFA after a SAML sign-in keeps its `sso/saml` entry and keeps working; a token issued to
+  an OAuth client is unaffected (its consent needed a live session). denextAuth's own sessions
+  never come from an IdP: an SSO user's native session is refused at use and revoked at refresh,
+  and its cookie session ends when it is next due to slide (`session.updateAge`, in
+  `requireAuth()`, `requireSession()`, `updateAuthSession()` and `GET {basePath}/session`; a bare
+  `auth()` reads no user, so without sliding it lasts until it expires — call
+  `revokeAllSessions(userId)` to end it at once). `GET /reauthenticate` for an SSO user answers
+  `422 user_sso_managed` and sends nothing (GoTrue sends a nonce `PUT /user` then refuses).
 - **SAML endpoints.** The SingleSignOnService and SingleLogoutService URLs in IdP metadata are sent
   to the browser, so they must be `https:` (a loopback `http:` one only under
   `dangerouslyAllowInsecureProviders`); any other scheme refuses the metadata at registration, at

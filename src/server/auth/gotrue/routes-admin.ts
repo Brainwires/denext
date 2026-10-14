@@ -7,7 +7,7 @@
  */
 
 import type { AdapterUser } from "../adapter.ts";
-import { isSsoUser } from "../sso-user.ts";
+import { isSsoUser, preserveSsoStatus } from "../sso-user.ts";
 import {
   checkPassword,
   createAccount,
@@ -134,13 +134,22 @@ async function applyAdminFields(
   return await updateAccount(ctx, patch);
 }
 
-/** `user_metadata` (or `data`) and `app_metadata`, merged into the stored values. */
+/**
+ * `user_metadata` (or `data`) and `app_metadata`, merged into the stored values. The user's SSO
+ * status is not admin-writable (GoTrue's `is_sso_user`): an `app_metadata.provider` that would
+ * make a user an SSO user, or stop one being one, is left as stored.
+ */
 function metadataPatch(user: AdapterUser, body: Record<string, unknown>): Partial<AdapterUser> {
   const patch: Partial<AdapterUser> = {};
   const userMeta = obj(body, "user_metadata") ?? obj(body, "data");
   if (userMeta) patch.userMetadata = { ...(user.userMetadata ?? {}), ...userMeta };
   const appMeta = obj(body, "app_metadata");
-  if (appMeta) patch.appMetadata = { ...(user.appMetadata ?? {}), ...appMeta };
+  if (appMeta) {
+    patch.appMetadata = preserveSsoStatus(user.appMetadata, {
+      ...(user.appMetadata ?? {}),
+      ...appMeta,
+    });
+  }
   return patch;
 }
 
@@ -182,7 +191,8 @@ export async function adminCreateUser(ctx: GoTrueContext): Promise<Response> {
     anonymous: !email && !phone,
     password: typeof body.password === "string" ? body.password : undefined,
     userMetadata: obj(body, "user_metadata") ?? obj(body, "data"),
-    appMetadata: obj(body, "app_metadata"),
+    // An admin-created user is never an SSO user: only its identity provider's sign-in makes one.
+    appMetadata: preserveSsoStatus(undefined, obj(body, "app_metadata") ?? {}),
     emailVerified: body.email_confirm === true,
     phoneVerified: body.phone_confirm === true,
   });
