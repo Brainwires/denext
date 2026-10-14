@@ -120,15 +120,31 @@ ${DOCKER_SENTINEL}. Pinned to the Deno version this was
 # generated with — bump it deliberately.`;
 }
 
+/** An exec-form instruction's JSON array, spaced as the rest of the file is. */
+function execForm(words: readonly string[]): string {
+  return `[${words.map((w) => JSON.stringify(w)).join(", ")}]`;
+}
+
 /**
- * The SSR image's `ENV PORT` + `CMD`. `denext start` reads `$PORT` (what a PaaS injects), so a
- * non-default port rides in the environment: `deno task` forwards a literal `--` to the task,
- * and `start` would then treat `--port` as passthrough and ignore it.
+ * The SSR image's `ENV PORT` + `ENTRYPOINT` + `CMD`. `denext start` reads `$PORT` (what a PaaS
+ * injects), so a non-default port rides in the environment: `deno task` forwards a literal `--`
+ * to the task, and `start` would then treat `--port` as passthrough and ignore it.
+ *
+ * Shutdown: `docker stop` sends SIGTERM to PID 1 (the image's `tini`), which passes it to its
+ * child. `deno task` does not forward it to the server it started, so the server never drained
+ * and was SIGKILLed after the grace period (no plugin teardowns). The `start` task's own
+ * `deno run` line is therefore the `CMD` when it needs no shell, and `tini -g` signals the whole
+ * process group either way (which also covers a `deno task start` fallback).
  */
-function serverCmd(port: number): string {
-  return port === DEFAULT_PORT
-    ? `CMD ["deno", "task", "start"]`
-    : `ENV PORT=${port}\nCMD ["deno", "task", "start"]`;
+function serverCmd(port: number, options: DockerOptions): string {
+  const lines = [`ENTRYPOINT ["/tini", "-g", "--", "docker-entrypoint.sh"]`, "STOPSIGNAL SIGTERM"];
+  const start = options.startCommand;
+  if (start) {
+    lines.push("# The `start` task's own command, run directly (not through `deno task`).");
+  }
+  if (port !== DEFAULT_PORT) lines.push(`ENV PORT=${port}`);
+  lines.push(`CMD ${start ? execForm(start) : `["deno", "task", "start"]`}`);
+  return lines.join("\n");
 }
 
 /**
@@ -194,7 +210,7 @@ ${healthcheck(port)}
 # \`deno task start\` is the least-privilege task \`denext create\` writes:
 #   --allow-net --allow-read --allow-env --allow-write=.denext
 # The write grant is what keeps the cache durable — make sure your start task has it.
-${serverCmd(port)}
+${serverCmd(port, options)}
 `;
 }
 
@@ -289,6 +305,8 @@ services:
     environment:
       - NODE_ENV=production
     restart: unless-stopped
+    # SIGTERM drains in-flight requests (DENEXT_SHUTDOWN_DRAIN_MS, 10 s by default) first.
+    stop_grace_period: 30s
     # Load secrets / runtime env from a file (uncomment and create .env):
     # env_file: .env
 

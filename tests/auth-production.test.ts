@@ -224,3 +224,39 @@ Deno.test("production: without canonicalOrigin a magic-link request is an error 
     assertEquals(sent.length, 0, "the mailer was never invoked");
   });
 });
+
+// ---- the build phase (denext build / export) -------------------------------------
+
+/** Run `fn` as `denext build` does (the per-isolate flag, not the shared environment). */
+async function inBuildPhase(fn: () => void | Promise<void>): Promise<void> {
+  const flags = globalThis as Record<symbol, unknown>;
+  flags[Symbol.for("denext.buildPhase")] = true;
+  try {
+    await fn();
+  } finally {
+    delete flags[Symbol.for("denext.buildPhase")];
+  }
+}
+
+Deno.test("build phase: denextAuth({ secret: Deno.env.get(…)! }) builds with no runtime secrets", async () => {
+  // A Docker `RUN deno task build` layer has no .env: the documented config used to fail the
+  // build with "`secret` is required". Building now relaxes only the env-derived checks.
+  const { config } = setup({ secret: undefined as unknown as string, canonicalOrigin: undefined });
+  assertThrows(() => denextAuth(config), Error, "`secret` is required");
+  await inProduction(() =>
+    inBuildPhase(() => {
+      denextAuth(config);
+      denextAuth({ ...config, secret: [undefined as unknown as string] });
+      denextAuth({ ...config, secret: "short" });
+    })
+  );
+  // Serving (outside the build phase) checks in full again.
+  assertThrows(() => denextAuth(config), Error, "`secret` is required");
+  await inProduction(() => {
+    assertThrows(
+      () => denextAuth({ ...config, secret: SECRET }),
+      Error,
+      "`canonicalOrigin` is required",
+    );
+  });
+});

@@ -8,6 +8,9 @@ services:
     build: .
     image: ${APP_IMAGE:-denext-app}
     restart: unless-stopped
+    # SIGTERM drains in-flight requests (DENEXT_SHUTDOWN_DRAIN_MS, 10 s by default), then plugin
+    # teardowns run; give both room before Docker's SIGKILL.
+    stop_grace_period: 30s
     ports:
       - "3000:3000"
     # Anything else the app reads at runtime: put it in .env (optional file).

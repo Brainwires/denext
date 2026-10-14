@@ -40,4 +40,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
 # `deno task start` is the least-privilege task `denext create` writes:
 #   --allow-net --allow-read --allow-env --allow-write=.denext
 # The write grant is what keeps the cache durable — make sure your start task has it.
-CMD ["deno", "task", "start"]
+ENTRYPOINT ["/tini", "-g", "--", "docker-entrypoint.sh"]
+STOPSIGNAL SIGTERM
+# The `start` task's own command, run directly (not through `deno task`).
+CMD ["deno", "run", "--allow-net", "--allow-read", "--allow-env", "--allow-write=.denext", "jsr:@denext/denext@^4.0.0/cli", "start", "."]

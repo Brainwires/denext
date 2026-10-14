@@ -28,6 +28,7 @@
 import type { DenextPlugin } from "../../plugin/mod.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { isProductionEnv, isWeakSecret } from "../session.ts";
+import { isBuildPhase } from "../phase.ts";
 import { emitAuthEvent } from "./events.ts";
 import { hasMfaAdapter } from "./mfa.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
@@ -84,17 +85,37 @@ export function peekActiveAuthConfig(): AuthConfig | null {
 
 let warnedNoOrigin = false;
 
+/** Whether `secret` holds no usable value (unset, empty, or a list of only unset entries). */
+function missingSecret(secret: AuthConfig["secret"]): boolean {
+  return Array.isArray(secret) ? !secret.some((s) => typeof s === "string" && s !== "") : !secret;
+}
+
+/**
+ * Under `denext build` / `denext export` the runtime secrets are usually absent (a Docker build
+ * layer has no `.env`), and nothing is signed: a missing `secret` becomes a random one for the
+ * run, so `denextAuth({ secret: Deno.env.get("AUTH_SECRET")! })` builds. Serving checks in full.
+ */
+function forBuildPhase(config: AuthConfig): AuthConfig {
+  if (!isBuildPhase() || !missingSecret(config.secret)) return config;
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return { ...config, secret: btoa(String.fromCharCode(...bytes)) };
+}
+
+/** A brute-forceable secret is refused in production (checked when serving, not building). */
+function assertStrongSecretInProd(secret: AuthConfig["secret"]): void {
+  if (!isWeakSecret(secret) || !isProductionEnv() || isBuildPhase()) return;
+  throw new Error(
+    "denextAuth: `secret` is shorter than 32 chars — refusing to boot in production with " +
+      "a brute-forceable session secret. Set a long, random secret (e.g. `openssl rand " +
+      "-base64 32`).",
+  );
+}
+
 function validateConfig(config: AuthConfig): void {
   if (!config.secret || (Array.isArray(config.secret) && config.secret.length === 0)) {
     throw new Error("denextAuth: `secret` is required");
   }
-  if (isWeakSecret(config.secret) && isProductionEnv()) {
-    throw new Error(
-      "denextAuth: `secret` is shorter than 32 chars — refusing to boot in production with " +
-        "a brute-forceable session secret. Set a long, random secret (e.g. `openssl rand " +
-        "-base64 32`).",
-    );
-  }
+  assertStrongSecretInProd(config.secret);
   validateProviders(config.providers);
   assertCredentialsVerifiable(config);
   assertEmailProviderConfig(config);
@@ -128,6 +149,7 @@ function validateConfig(config: AuthConfig): void {
 
 /** At least one provider, unique ids, and non-empty OAuth credentials. */
 function validateProviders(providers: AuthConfig["providers"]): void {
+  const building = isBuildPhase();
   if (!providers || providers.length === 0) {
     throw new Error("denextAuth: at least one provider is required");
   }
@@ -136,7 +158,8 @@ function validateProviders(providers: AuthConfig["providers"]): void {
     if (seen.has(p.id)) throw new Error(`denextAuth: duplicate provider id "${p.id}"`);
     seen.add(p.id);
     if (isOAuthProvider(p)) {
-      assertOAuthCredentials(p);
+      // Client credentials come from the runtime environment: checked when serving.
+      if (!building) assertOAuthCredentials(p);
       assertResponseMode(p);
     }
   }
@@ -241,6 +264,8 @@ function warnOnUndeclaredProxy(config: AuthConfig): void {
  * standard NODE_ENV/DENEXT_ENV=production signal a deploy sets; elsewhere warn once.
  */
 function requireCanonicalOriginInProd(): void {
+  // Building, not serving: the origin usually comes from the runtime environment.
+  if (isBuildPhase()) return;
   if (isProductionEnv()) {
     throw new Error(
       "denextAuth: `canonicalOrigin` is required in production — without it the OAuth " +
@@ -264,6 +289,7 @@ function requireCanonicalOriginInProd(): void {
  * @returns A {@link DenextPlugin}.
  */
 export function denextAuth(config: AuthConfig): DenextPlugin {
+  config = forBuildPhase(config);
   validateConfig(config);
   activeConfig = config;
   return {

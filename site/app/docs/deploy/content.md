@@ -50,11 +50,19 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
   CMD deno eval "fetch('http://127.0.0.1:3000/_denext/health').then((r)=>Deno.exit(r.ok?0:1)).catch(()=>Deno.exit(1))"
 
-# `deno task start` = --allow-net --allow-read --allow-env --allow-write=.denext (the
-# least-privilege task `denext create` writes; the write grant keeps the cache durable).
-# It spawns nothing, so it serves on the image's own Deno.
-CMD ["deno", "task", "start"]
+# tini (PID 1) signals the whole process group, and the CMD is the `start` task's own
+# `deno run` line: `deno task` does not forward SIGTERM, so `docker stop` would otherwise
+# wait out its grace period and SIGKILL the server (no drain, no plugin teardowns).
+# --allow-net --allow-read --allow-env --allow-write=.denext is the least-privilege task
+# `denext create` writes; the write grant keeps the cache durable.
+ENTRYPOINT ["/tini", "-g", "--", "docker-entrypoint.sh"]
+CMD ["deno", "run", "--allow-net", "--allow-read", "--allow-env", "--allow-write=.denext", "jsr:@denext/denext@^4.0.0/cli", "start", "."]
 ```
+
+`denext build` / `denext export` set `DENEXT_PHASE=build` while they run: a `RUN deno task build`
+layer has no runtime secrets, so `denextAuth({ secret: Deno.env.get("AUTH_SECRET")! })` builds
+with a throwaway secret, and its OAuth client credentials and production `canonicalOrigin` are
+checked when the server starts instead. Nothing else needs a build-time `.env`.
 
 `docker build -t my-app . && docker run -p 3000:3000 -e SESSION_SECRET=… my-app`.
 Put a concurrency ceiling / TLS in front (§1) — a reverse proxy or your
@@ -492,7 +500,10 @@ deadline (default **10s**): set `DENEXT_SHUTDOWN_DRAIN_MS` to tune it, or `0` to
 drain indefinitely. If the deadline elapses with requests still in flight the
 process force-exits (and plugin teardown is skipped). Size it above your longest
 expected request and below your orchestrator's kill grace (e.g. k8s
-`terminationGracePeriodSeconds`, typically 30s).
+`terminationGracePeriodSeconds`, typically 30s; the generated compose file sets
+`stop_grace_period: 30s`). The signal must reach the server process itself: run
+`deno run … start` directly (as the generated Dockerfile does), not under `deno task`, which
+does not forward `SIGTERM`.
 
 ## 11. The ISR page-cache key omits the Host (multi-tenant caveat)
 

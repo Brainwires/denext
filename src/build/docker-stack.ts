@@ -47,6 +47,13 @@ export interface StackOptions {
   readonly cli?: readonly string[];
   /** The command the migrations service runs (default: the project's `migrate` task). */
   readonly migrateCommand?: readonly string[];
+  /**
+   * The project's `start` task as an exec-form command (`["deno", "run", …, "start", "."]`), when
+   * it is a plain `deno run` / `deno serve` line. The image runs it directly so the server is the
+   * process `docker stop`'s SIGTERM reaches — `deno task` does not forward the signal. Absent:
+   * the image runs `deno task start` under `tini -g` (the signal goes to the whole group).
+   */
+  readonly startCommand?: readonly string[];
 }
 
 /** One variable `.env.example` lists. */
@@ -335,6 +342,9 @@ function webService(options: StackOptions, port: number, static_: boolean): stri
     build: .
     image: ${APP_IMAGE}
     restart: unless-stopped
+    # SIGTERM drains in-flight requests (DENEXT_SHUTDOWN_DRAIN_MS, 10 s by default), then plugin
+    # teardowns run; give both room before Docker's SIGKILL.
+    stop_grace_period: 30s
     ports:
       - "${port}:${port}"
     # Anything else the app reads at runtime: put it in .env (optional file).

@@ -534,6 +534,20 @@ a 3.x app to 4.0 involves. This section is the record.
 
 ### Fixed
 
+- **The generated Docker image shuts down gracefully.** Its `CMD` was `deno task start`, and
+  `deno task` does not forward `SIGTERM` to the server it starts: `docker stop` waited out the
+  grace period and SIGKILLed the app (exit 137) — in-flight requests cut, no plugin teardowns.
+  `denext generate docker` now writes the `start` task's own `deno run …` line as an exec-form
+  `CMD` (when the task needs no shell), runs it under `tini -g` (the whole process group gets the
+  signal, which also covers a `deno task start` fallback), and the stack's `web` service sets
+  `stop_grace_period: 30s`. An idle container now stops in well under a second, with exit code 0.
+- **`denext build` no longer needs runtime secrets.** A Docker `RUN deno task build` layer has no
+  `.env`, so an app with the documented `denextAuth({ secret: Deno.env.get("AUTH_SECRET")! })`
+  failed the image build with "`secret` is required". `denext build` / `denext export` now set
+  `DENEXT_PHASE=build` before the config is imported; while it is set, `denextAuth()` uses a
+  random secret for the run when none is configured and leaves the OAuth client credentials, the
+  short-secret refusal and the production `canonicalOrigin` check to `denext start` /
+  `denext dev`, which check everything as before.
 - **A stack `.env` can no longer turn a placeholder into the service-role key.**
   `denext generate docker --stack` wrote the four optional Supabase key lines of `.env.example`
   as the literal `undefined`, so `denext stack up` crash-looped, and a hand-filled `.env` that

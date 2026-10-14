@@ -54,6 +54,17 @@ const FULL: DockerOptions = {
     "job",
     "migrate",
   ],
+  startCommand: [
+    "deno",
+    "run",
+    "--allow-net",
+    "--allow-read",
+    "--allow-env",
+    "--allow-write=.denext",
+    "jsr:@denext/denext@^4.0.0/cli",
+    "start",
+    ".",
+  ],
 };
 
 /** Compare `text` with the golden file `name` (or rewrite it under DENEXT_UPDATE_GOLDEN=1). */
@@ -263,6 +274,52 @@ Deno.test("detect: @denext/backend → Postgres, s3() → MinIO with the literal
   assertEquals(d.backendVault, false, "no vault configured: DENEXT_VAULT_KEY is not required");
   assertEquals(d.cli, ["--config", "deno.json", "jsr:@denext/denext@^4.0.0/cli"]);
   assertEquals(d.migrateCommand.slice(-2), ["job", "migrate"]);
+  assertEquals(d.startCommand, [
+    "deno",
+    "run",
+    "--allow-net",
+    "jsr:@denext/denext@^4.0.0/cli",
+    "start",
+    ".",
+  ]);
+  assertEquals(resolveStack(d).startCommand, d.startCommand);
+});
+
+Deno.test("shutdown: the server is tini's direct child, so docker stop's SIGTERM drains it", async () => {
+  // `deno task start` swallowed SIGTERM: docker stop waited out its grace period and SIGKILLed
+  // the server (exit 137, no plugin teardowns). The image now runs the start task's own
+  // `deno run` line, and tini signals the whole process group either way.
+  const d = await detect({
+    "deno.json": JSON.stringify({
+      tasks: {
+        start:
+          "deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.0.0/cli start .",
+      },
+    }),
+  });
+  const file = renderDockerfile({ mode: "server", denoTag: "2.9.7", ...resolveStack(d) });
+  assertStringIncludes(
+    file,
+    'CMD ["deno", "run", "--allow-net", "--allow-read", "--allow-env", "--allow-write=.denext", "jsr:@denext/denext@^4.0.0/cli", "start", "."]',
+  );
+  assert(!file.includes('CMD ["deno", "task", "start"]'), "never deno task as the server's parent");
+  assertStringIncludes(file, 'ENTRYPOINT ["/tini", "-g", "--", "docker-entrypoint.sh"]');
+  // A start task that needs a shell (or isn't `deno run`) keeps `deno task start`, under tini -g.
+  for (
+    const start of [
+      "deno run -A jsr:@denext/denext/cli start . && echo done",
+      "PORT=4000 deno run -A jsr:@denext/denext/cli start .",
+      "denext start",
+    ]
+  ) {
+    const other = await detect({ "deno.json": JSON.stringify({ tasks: { start } }) });
+    assertEquals(other.startCommand, undefined, start);
+    const text = renderDockerfile({ mode: "server", denoTag: "2.9.7", ...resolveStack(other) });
+    assertStringIncludes(text, 'CMD ["deno", "task", "start"]');
+    assertStringIncludes(text, '"/tini", "-g"');
+  }
+  // The compose web service gives the drain + teardowns room before SIGKILL.
+  assertStringIncludes(renderCompose(FULL), "stop_grace_period: 30s");
 });
 
 Deno.test("detect: backend({ vault }) requires DENEXT_VAULT_KEY", async () => {

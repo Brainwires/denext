@@ -46,6 +46,7 @@ import {
   writeMergedModuleConfig,
 } from "./src/build/module-config.ts";
 import { loadEnv } from "./src/server/env.ts";
+import { markBuildPhase } from "./src/server/phase.ts";
 import { cliNpmModeArgs } from "./src/build/pnpm-workspace.ts";
 import {
   COMMAND_DISPATCH_BUDGET_MS,
@@ -434,6 +435,9 @@ async function startServesCss(dir: string): Promise<boolean> {
  */
 async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<boolean> {
   if (!command.loadsModules) return false;
+  // Before anything below imports denext.config.ts (the CSS gate does): building, not serving,
+  // so config helpers don't refuse a runtime secret the build environment doesn't have.
+  if (command.name === "build" || command.name === "export") markBuildPhase();
   const dir = gateDir(command, ctx);
   if (await maybeReexecPinned(dir)) return true;
   await loadEnv({ dir, mode: envTierFor(command) });

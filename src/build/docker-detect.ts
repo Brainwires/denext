@@ -71,6 +71,8 @@ export interface StackDetection {
   readonly cli: readonly string[];
   /** What the migrations service runs. */
   readonly migrateCommand: readonly string[];
+  /** The `start` task as an exec-form command, when it is a plain `deno run` line. */
+  readonly startCommand?: readonly string[];
   /** Things the user should know (a half-set-up migration runner, …). */
   readonly warnings: readonly string[];
 }
@@ -159,6 +161,24 @@ function migrateCommandOf(json: Record<string, unknown>, cli: readonly string[])
   return ["deno", "run", "-A", ...cli, "job", "migrate"];
 }
 
+/** Anything that makes a task line need a shell (operators, expansion, quoting, env prefixes). */
+const SHELL_SYNTAX = /[;&|<>$`'"\\(){}*?~#]|(?:^|\s)[A-Za-z_][A-Za-z0-9_]*=/;
+
+/**
+ * The project's `start` task as an exec-form command: `deno run|serve …` split on whitespace,
+ * when the line needs no shell. The image then runs the server as tini's direct child, so a
+ * `docker stop` SIGTERM drains it — `deno task` would swallow the signal.
+ */
+function startCommandOf(json: Record<string, unknown>): string[] | undefined {
+  const task = ((json.tasks ?? {}) as Record<string, unknown>).start;
+  const text = typeof task === "string"
+    ? task
+    : (task as { command?: unknown } | undefined)?.command;
+  if (typeof text !== "string" || SHELL_SYNTAX.test(text)) return undefined;
+  const words = text.trim().split(/\s+/);
+  return words[0] === "deno" && (words[1] === "run" || words[1] === "serve") ? words : undefined;
+}
+
 /** `s3({ … bucket: "name" … })` — the bucket when it is a literal. */
 const S3_BUCKET =
   /\bs3\s*\(\s*\{[^}]*?\bbucket\s*:\s*["'`]([a-z0-9][a-z0-9.\-]{1,61}[a-z0-9])["'`]/;
@@ -186,6 +206,7 @@ export async function detectDockerStack(dir: string): Promise<StackDetection> {
   const config = await configText(dir);
   const { name: configName, json } = await denoJson(dir);
   const cli = cliArgsOf(json, configName);
+  const startCommand = startCommandOf(json);
   const imports = (json.imports ?? {}) as Record<string, unknown>;
   const backend = /["']@denext\/backend["']/.test(config) ||
     Object.keys(imports).some((k) => k === "@denext/backend");
@@ -226,6 +247,7 @@ export async function detectDockerStack(dir: string): Promise<StackDetection> {
     ...(bucket ? { bucket } : {}),
     cli,
     migrateCommand: migrateCommandOf(json, cli),
+    ...(startCommand ? { startCommand } : {}),
     warnings,
   };
 }
@@ -263,6 +285,7 @@ export function resolveStack(
     ...(detection.bucket ? { bucket: detection.bucket } : {}),
     cli: detection.cli,
     migrateCommand: detection.migrateCommand,
+    ...(detection.startCommand ? { startCommand: detection.startCommand } : {}),
   };
 }
 

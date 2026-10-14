@@ -18,6 +18,7 @@ import { devSessionToken, withDevTokenParam } from "../../build/dev-server/dev-t
 import { devOriginError } from "../../server/config-validate.ts";
 import { SOURCEMAPS_ENV } from "../../build/hidden-sourcemaps.ts";
 import { abortJobRuns } from "../../server/jobs.ts";
+import { markBuildPhase } from "../../server/phase.ts";
 
 /** `--port`/`--host` shared by the two serving verbs. */
 const SERVE_FLAGS = [
@@ -176,6 +177,7 @@ export const buildCommand: CommandSpec = {
   locks: (ctx) => ({ projectDir: projectDir(ctx), buildDir: "exclusive" }),
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   run: async (ctx) => {
+    markBuildPhase();
     const { dir } = await appProject(ctx);
     console.log(`\n  denext build  ▸  ${dir}\n`);
     await runBuildStep(() => build(dir), "build");
@@ -226,6 +228,7 @@ export const exportCommand: CommandSpec = {
       Deno.exit(1);
     }
     if (sourcemaps === "hidden") Deno.env.set(SOURCEMAPS_ENV, "hidden");
+    markBuildPhase();
     const platform = exportPlatform(ctx.flags.platform);
     const { dir } = await appProject(ctx);
     console.log(
