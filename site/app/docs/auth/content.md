@@ -1726,7 +1726,10 @@ gets a short-lived bearer access token (`nat_…`) and a rotating refresh token 
 slides and sets no cookie); the `/tokens` and `/mfa*` endpoints still read the cookie only.
 `revokeAllSessions(userId)`, a password reset and a pre-account-hijacking eviction end the
 native sessions too. `POST {basePath}/account/delete` deletes the signed-in user after a
-recent sign-in, revoking their Sign in with Apple tokens.
+recent sign-in, revoking their Sign in with Apple tokens. Deletion ends every credential the
+user held, whether or not the adapter's `deleteUser` removed it: each verification re-reads the
+user, so a deleted user's cookie session, native access token, bearer API token and `/auth/v1`
+access token (one with no `session_id` included) authenticate nothing from the next request.
 
 The whole flow — CORS for the app's origin, the client helper `nativeSession()`,
 `createApiClient({ base, auth })`, the id_token checks and deletion — is on

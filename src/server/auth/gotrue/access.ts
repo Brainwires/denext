@@ -77,8 +77,8 @@ export async function verifyAccessToken(
  * @param options The clock.
  * @returns The claims, whether the session is pending, the stored user (when read) and the
  *   stored session's methods (when there is one).
- * @throws {SupabaseKeyError} `bad_jwt` / `jwt_expired`, or `bad_jwt` for a dead session or a
- *   banned user.
+ * @throws {SupabaseKeyError} `bad_jwt` / `jwt_expired`, or `bad_jwt` for a dead session, a
+ *   deleted user (`session not found`, with or without a `session_id`) or a banned user.
  */
 export async function verifyAccessTokenSession(
   keys: SupabaseKeys,
@@ -89,31 +89,56 @@ export async function verifyAccessTokenSession(
   const claims = await verifySupabaseJwt(keys, token, options);
   if (claims.role !== "authenticated") return { claims, pending: false };
   const now = Math.floor((options.now ?? Date.now()) / 1000);
-  const adapter = nativeAdapterOf(config?.adapter);
-  let pending = false;
-  let snapshot: FamilySnapshot | undefined;
-  if (typeof claims.session_id === "string" && adapter) {
-    const family = await adapter.getNativeSession(claims.session_id);
-    if (
-      !family || family.revokedAt !== undefined || family.expiresAt <= now ||
-      family.userId !== claims.sub
-    ) {
-      throw new SupabaseKeyError("bad_jwt", "invalid JWT: session not found");
-    }
-    snapshot = familySnapshot(family.session);
-    pending = claims.aal !== "aal2" && snapshot.pending === true;
-  }
-  const user = typeof claims.sub === "string"
-    ? await config?.adapter?.getUser(claims.sub) ?? undefined
-    : undefined;
-  if (isBanned(user, now)) throw new SupabaseKeyError("bad_jwt", "invalid JWT: user is banned");
+  const snapshot = await liveFamilySnapshot(claims, config, now);
+  const pending = claims.aal !== "aal2" && snapshot?.pending === true;
+  const user = await liveUser(claims, config, now);
   // An SSO user's session its identity provider did not start is dead at every use, as at refresh.
-  if (user && snapshot && !snapshotAllowed(user, snapshot)) {
-    throw new SupabaseKeyError("bad_jwt", "invalid JWT: session not found");
-  }
+  if (user && snapshot && !snapshotAllowed(user, snapshot)) throw sessionNotFound();
   const verified: VerifiedAccessToken = { claims, pending, user };
   if (Array.isArray(snapshot?.amr)) verified.storedAmr = snapshotMethods(snapshot);
   return verified;
+}
+
+const sessionNotFound = () => new SupabaseKeyError("bad_jwt", "invalid JWT: session not found");
+
+/**
+ * The stored snapshot of the token's session family (`session_id`), when the adapter keeps them:
+ * refused unless the family is live and the token's user's. `undefined` with no `session_id` or
+ * no session families.
+ */
+async function liveFamilySnapshot(
+  claims: SupabaseJwtClaims,
+  config: AuthConfig | null | undefined,
+  now: number,
+): Promise<FamilySnapshot | undefined> {
+  const adapter = nativeAdapterOf(config?.adapter);
+  if (typeof claims.session_id !== "string" || !adapter) return undefined;
+  const family = await adapter.getNativeSession(claims.session_id);
+  if (
+    !family || family.revokedAt !== undefined || family.expiresAt <= now ||
+    family.userId !== claims.sub
+  ) {
+    throw sessionNotFound();
+  }
+  return familySnapshot(family.session);
+}
+
+/**
+ * The token's stored user, read fresh when there is an adapter. A deleted user's token is dead at
+ * every use — one with no `session_id` (nothing revoked it) included — exactly as a revoked
+ * session's is; a banned user's is refused while the ban lasts.
+ */
+async function liveUser(
+  claims: SupabaseJwtClaims,
+  config: AuthConfig | null | undefined,
+  now: number,
+): Promise<AdapterUser | undefined> {
+  const adapter = config?.adapter;
+  if (!adapter) return undefined;
+  const user = typeof claims.sub === "string" ? await adapter.getUser(claims.sub) : undefined;
+  if (!user) throw sessionNotFound();
+  if (isBanned(user, now)) throw new SupabaseKeyError("bad_jwt", "invalid JWT: user is banned");
+  return user;
 }
 
 /** What {@linkcode verifyAccessTokenSession} answers. */

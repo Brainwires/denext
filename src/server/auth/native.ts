@@ -739,8 +739,9 @@ export async function familyOfRefreshToken(
 
 /**
  * Whether the family's user may use its session now: a ban refuses the token at every use while
- * it lasts, not only through the revocation, and an SSO user's session (never its identity
- * provider's) is refused the same way.
+ * it lasts, not only through the revocation, a deleted user's token is refused outright (an
+ * adapter whose deletion left the family live included), and an SSO user's session (never its
+ * identity provider's) is refused the same way.
  */
 async function userMayUse(
   config: AuthConfig,
@@ -748,9 +749,12 @@ async function userMayUse(
   snapshot: NativeSnapshot,
   at: number,
 ): Promise<boolean> {
-  const user = await resolveAuthOptions(config).adapter?.getUser(userId);
-  if (isBanned(user, at)) return false;
-  return !user || ssoSessionAllowed(user, snapshot.amr ?? []);
+  const adapter = resolveAuthOptions(config).adapter;
+  if (!adapter) return true;
+  const user = await adapter.getUser(userId);
+  // A deleted user's family is dead at every use, whether or not the deletion revoked it.
+  if (!user || isBanned(user, at)) return false;
+  return ssoSessionAllowed(user, snapshot.amr ?? []);
 }
 
 /**

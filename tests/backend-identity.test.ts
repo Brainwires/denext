@@ -55,6 +55,8 @@ const authConfig: AuthConfig = {
   adapter,
 };
 denextAuth(authConfig);
+// The tokens below act for a stored user: a deleted user's token is refused at every use.
+await adapter.createUser({ id: USER, email: "a@x.test" });
 
 const now = () => Math.floor(Date.now() / 1000);
 

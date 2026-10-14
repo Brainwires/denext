@@ -80,6 +80,12 @@ and this project adheres to
   An SSO user's client tokens from a grant approved any other way (before the account became an
   SSO user, or recorded before this release) are refused at use and revoked at refresh, and such a
   code can't be exchanged; grants approved from an SSO session keep working.
+- **A deleted user's native and `/auth/v1` access tokens authenticate nothing.** A native access
+  token was still accepted when its user was gone but its session survived (an adapter whose
+  deletion doesn't cascade, a row deleted out of band), and an `/auth/v1` access token with no
+  `session_id` was never checked against the stored user. Both now re-read the user and refuse a
+  missing one — the access token with the error a revoked session gets (`403
+  session_not_found` on `/auth/v1`, signed out in `auth()`); nothing is deleted at read time.
 - **API tokens: an SSO user's token needs an SSO-started minting session, and a deleted owner's
   token authenticates nothing.** `issueApiToken({ session })` records whether the minting session
   was SSO-started, and an SSO user's token without that record — minted without a session, from
