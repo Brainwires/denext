@@ -8,6 +8,12 @@
   title attribute-escaped, `src` refused as link targets are), indented code blocks and code
   spans of any backtick-run length.
 
+### Fixed
+
+- The Markdown renderer no longer turns `_x_` / `*x*` inside a link destination (inline or
+  reference) into `<em>`, which corrupted the `href`; the destination is held out before emphasis
+  runs and the link text still takes emphasis.
+
 ## [0.5.0] - 2026-10-13
 
 ### Changed

@@ -170,3 +170,31 @@ Deno.test("renderMarkdown keeps a code span inside an image's alt or title out o
     `<p><img src="/i.png" alt="a &quot;&gt;&lt;x b" title="t &quot;q&quot;" /></p>`,
   );
 });
+
+Deno.test("renderMarkdown leaves _ and * in link, image and reference destinations alone", () => {
+  assertEquals(
+    renderMarkdown("[x](https://a.test/_x_/y) and [z](https://a.test/*x*/y)"),
+    `<p><a href="https://a.test/_x_/y" rel="noopener noreferrer" target="_blank">x</a> and ` +
+      `<a href="https://a.test/*x*/y" rel="noopener noreferrer" target="_blank">z</a></p>`,
+  );
+  assertEquals(
+    renderMarkdown("![i](/a/_x_/b.png) ![j](/a/*x*/b.png)"),
+    `<p><img src="/a/_x_/b.png" alt="i" /> <img src="/a/*x*/b.png" alt="j" /></p>`,
+  );
+  assertEquals(
+    renderMarkdown("[ref] and [t][r2]\n\n[ref]: https://a.test/_x_/y\n[r2]: https://a.test/*x*/y"),
+    `<p><a href="https://a.test/_x_/y" rel="noopener noreferrer" target="_blank">ref</a> and ` +
+      `<a href="https://a.test/*x*/y" rel="noopener noreferrer" target="_blank">t</a></p>`,
+  );
+  // A URL used as the link text and destination alike: the text is emphasized, the href is not.
+  assertEquals(
+    renderMarkdown("[https://a.test/_x_](https://a.test/_x_/y)"),
+    `<p><a href="https://a.test/_x_/y" rel="noopener noreferrer" target="_blank">` +
+      `https://a.test/<em>x</em></a></p>`,
+  );
+  // Emphasis in the link text still works.
+  assertEquals(
+    renderMarkdown("[a *b* and _c_ **d**](/p_q_)"),
+    `<p><a href="/p_q_">a <em>b</em> and <em>c</em> <strong>d</strong></a></p>`,
+  );
+});

@@ -83,6 +83,13 @@ function renderLink(label: string, href: string): string {
   return `<a href="${safe}"${rel}>${label}</a>`;
 }
 
+/** `renderLink`, with the `<a ...>` and `</a>` tags held out so the label alone stays inline. */
+function holdAnchor(label: string, href: string, hold: (html: string) => string): string {
+  const html = renderLink("\u0001", href);
+  const at = html.indexOf("\u0001");
+  return at < 0 ? label : hold(html.slice(0, at)) + label + hold(html.slice(at + 1));
+}
+
 /** The start of the backtick run of exactly `len` at or after `from`, or -1. */
 function findBacktickRun(s: string, from: number, len: number): number {
   let k = s.indexOf("`", from);
@@ -198,14 +205,17 @@ function renderInline(text: string, refs: LinkRefs): string {
   // An image's alt is plain text: a held code span inside it contributes its text, not markup.
   out = replaceImages(out, refs, hold, (t) => t.replace(PLACEHOLDER, (_m, i) => plain[Number(i)]));
 
-  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, href) => renderLink(label, href));
+  // A link's opening tag (and so its href) is held out BEFORE emphasis runs, so `_x_` / `*x*` in
+  // a URL is never turned into `<em>`; the label stays in place and still takes emphasis.
+  const holdLink = (label: string, href: string): string => holdAnchor(label, href, hold);
+  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, href) => holdLink(label, href));
   // Reference links: `[text][label]`, `[label][]`, and the shortcut `[label]` — only when the
   // label was defined (an undefined `[thing]` stays literal text, as in CommonMark).
   if (refs.links.size > 0) {
     out = out.replace(/\[([^\]]+)\](?:\[([^\]]*)\])?(?!\()/g, (m, text, label) => {
       const key = (label || text).toLowerCase();
       const href = refs.links.get(key);
-      return href === undefined ? m : renderLink(text, href);
+      return href === undefined ? m : holdLink(text, href);
     });
   }
   out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");

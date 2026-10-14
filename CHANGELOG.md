@@ -118,6 +118,12 @@ and this project adheres to
   in a hole that streams after the shell is reported as it happens (`routeType: "render"`), as
   the shell's catches already were; before, only the server log had it.
 
+### Fixed
+
+- **`@denext/content-collections` Markdown: `_x_` / `*x*` in a link destination** (inline or
+  reference, e.g. `[x](https://a.test/_x_/y)`) is no longer turned into `<em>`, which corrupted
+  the `href`. The destination is held out before emphasis runs; the link text still takes it.
+
 ### Security
 
 - **A cookie session ends at its user's next request after a ban, a deletion or an SSO
