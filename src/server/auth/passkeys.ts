@@ -32,6 +32,7 @@ import { forgetPasskeyFactor } from "./factors.ts";
 import { sha256Hex } from "./hash.ts";
 import { base64UrlEncode, randomToken } from "./oauth.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
+import { type ResolvedMds, resolveMds } from "./fido-mds.ts";
 import type { AuthConfig, AuthPasskeyConfig } from "./types.ts";
 import { PASSKEY_ALGORITHMS, type PasskeyAlgorithm, WebAuthnError } from "./webauthn.ts";
 
@@ -82,6 +83,8 @@ export interface ResolvedPasskeys {
   timeout: number;
   /** The algorithms offered at registration. */
   algorithms: readonly PasskeyAlgorithm[];
+  /** The FIDO Metadata Service policy, or `null` when attestation isn't checked. */
+  mds: ResolvedMds | null;
 }
 
 /** The longest WebAuthn `user.id` (§5.4.3): 64 bytes. */
@@ -158,6 +161,7 @@ function resolve(config: AuthConfig, options: AuthPasskeyConfig): ResolvedPasske
     requireUserVerification: options.userVerification !== "preferred",
     timeout: Number.isFinite(timeout) ? Math.min(900, Math.max(30, Math.floor(timeout))) : 300,
     algorithms: PASSKEY_ALGORITHMS,
+    mds: resolveMds(options.attestation?.mds),
   };
 }
 

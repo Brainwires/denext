@@ -96,8 +96,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **One passkey ceremony per browser at a time** (the ceremony cookie is per browser), and the
   passkey endpoints are same-origin only: an extra `passkeys.origins` entry (another web origin,
   an Android `apk-key-hash`) needs that origin to serve the auth routes itself.
-- **Passkeys verify `none` and `packed` attestation only, without a trust chain** (no FIDO
-  Metadata Service), and ES256 / RS256 / Ed25519 keys only.
+- **Passkeys verify `none` and `packed` attestation only** (with `attestation.mds`, another
+  format registers only as unattested), and ES256 / RS256 / Ed25519 keys only. The Metadata
+  Service checks fetch no certificate revocation lists.
 - **Fixed profiles:** TOTP is SHA-1 / 6 digits / 30 s (what every authenticator supports); an
   email local part must be ASCII.
 - **Native sessions:** under `mfa.required: "always"` a user with no factor yet can't enroll from

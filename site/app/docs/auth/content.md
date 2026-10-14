@@ -1443,7 +1443,8 @@ and `crossOrigin` (a call from a cross-origin iframe is refused); the authentica
 RP ID hash, User Present, User Verified under `"required"`, and the backup flags; the
 credential's algorithm — ES256, RS256 or Ed25519, nothing else; the attestation statement,
 `none` or `packed` (self, or an `x5c` leaf whose signature and certificate profile are
-checked — denext does not chain it to an authenticator vendor's root); and each assertion's
+checked — chained to the authenticator vendor's root only with
+[`attestation.mds`](#attestation-the-fido-metadata-service)); and each assertion's
 signature, its backup-eligibility flag against the stored record, and the signature counter.
 A counter that doesn't increase means a cloned authenticator: the sign-in is refused and
 `signInFailed` fires. A counter that stays at `0` — a synced passkey keeps none — is fine.
@@ -1472,6 +1473,71 @@ code. It spends the same per-user MFA budget.
 For a settings page, `listPasskeys(authConfig, userId)` answers `{ id, name, createdAt,
 lastUsedAt, backedUp, transports }[]` and `deletePasskey(authConfig, { userId, id })` removes
 one — gate that yourself, as `DELETE {basePath}/passkeys/:id` does with the recent-sign-in rule.
+
+### Attestation: the FIDO Metadata Service
+
+By default any `none` or `packed` attestation registers: a certificate in it is checked for
+its profile but not chained to anything, so it proves no authenticator model. An app that must
+know which authenticators its users hold — security keys of certified models, nothing reported
+compromised — turns on the FIDO Metadata Service (MDS3) checks:
+
+```ts
+denextAuth({
+  // …
+  passkeys: {
+    attestation: {
+      mds: {
+        allowUnattested: true, // let synced passkeys (which attest `none`) register too
+      },
+    },
+  },
+});
+```
+
+With `mds` set, registration options ask for `attestation: "direct"`, and each new passkey is
+held to the metadata after the WebAuthn checks:
+
+- **A certificate attestation** (`packed` with `x5c`) must come from an AAGUID the metadata
+  lists, and its `x5c` chain must validate to that entry's `attestationRootCertificates`
+  (signatures, validity, `cA`, `pathLenConstraint`, `keyUsage`, no unknown critical extension).
+  An AAGUID with no entry is refused unless `allowUnknownAuthenticators: true` (its chain is
+  then not checked).
+- **`none` and self attestation** prove no model, so they are refused unless
+  `allowUnattested: true`. Most phone and password-manager passkeys attest `none`; leave it off
+  only when every user registers a certified security key. A format denext doesn't verify
+  (`tpm`, `android-key`, `apple`, `fido-u2f` — `"direct"` brings them) counts as unattested: it
+  registers under `allowUnattested`, and is refused otherwise.
+- **A compromised model is refused** whatever the attestation: an entry whose latest status
+  report is `USER_VERIFICATION_BYPASS`, `ATTESTATION_KEY_COMPROMISE`,
+  `USER_KEY_REMOTE_COMPROMISE`, `USER_KEY_PHYSICAL_COMPROMISE` or `REVOKED`, or that was ever
+  `REVOKED` or `ATTESTATION_KEY_COMPROMISE`. (An unattested AAGUID is the authenticator's own
+  claim, so this can only refuse it.)
+
+**The metadata BLOB** is fetched on the first registration that needs it — server-side, from
+`https://mds.fidoalliance.org/` (or `url`), with a timeout (`timeoutMs`, default 15 s) and a
+size cap (`maxBytes`, default 32 MiB); nothing is fetched while `mds` is unset. It is a signed
+JWT: its `x5c` chain must validate to the FIDO root **pinned in denext** (GlobalSign Root CA -
+R3), never to a certificate the response carries, its signing certificate must be issued for
+`mds.fidoalliance.org`, and its signature must verify — so a mirror (`url`) or an offline copy
+(`blob: string | () => string | Promise<string>`, for a server without outbound network) needs
+no trust of its own. The verified BLOB is kept in memory until its `nextUpdate`; a BLOB with a
+lower serial number than the one held, or already a day past its own `nextUpdate`, is refused,
+so a replayed old BLOB can't bring back a revoked model. When a refresh fails, the held BLOB
+serves for one more day, then registrations are refused (`400 { code: "attestation" }`;
+`registerPasskey()` answers `invalid`) until a refresh succeeds — retried at most every five minutes. Sign-ins never consult the
+metadata.
+
+| Key                          | Default                         | What it sets                                           |
+| ---------------------------- | ------------------------------- | ------------------------------------------------------ |
+| `url`                        | `https://mds.fidoalliance.org/` | Where the BLOB is fetched (`https:` only)              |
+| `blob`                       | —                               | The BLOB itself, or a loader; `url` is then unused     |
+| `timeoutMs`                  | `15000`                         | The fetch timeout                                      |
+| `maxBytes`                   | 32 MiB                          | The largest BLOB accepted                              |
+| `allowUnattested`            | `false`                         | Accept `none` / self attestation                       |
+| `allowUnknownAuthenticators` | `false`                         | Accept a certificate attestation the BLOB doesn't list |
+
+Certificate revocation lists (of the BLOB's chain and of attestation chains) are not fetched;
+the pinned root expires on 2029-03-18, and a denext release before then pins its successor.
 
 ## Roles and authorization
 
@@ -2623,10 +2689,11 @@ What the first-party auth layer still does not do — the full ledger is
 
 - **No mailer, no next-auth compatibility shim.** Every emailed token goes through your
   `sendVerificationRequest`; a `next-auth` shim is on the roadmap.
-- **Passkeys: no attestation trust, three algorithms.** A `packed` attestation's certificate
-  is checked but not chained to a vendor root (no FIDO Metadata Service), so it can't prove a
-  specific authenticator model; `tpm`, `android-key`, `apple` and `fido-u2f` statements are
-  refused, as are ES384, ES512 and Ed448 keys. Browsers send `none` unless asked otherwise.
+- **Passkeys: two attestation formats, three algorithms.** Only `none` and `packed` statements
+  are verified — `tpm`, `android-key`, `apple` and `fido-u2f` are refused, or with
+  [`attestation.mds`](#attestation-the-fido-metadata-service) and `allowUnattested` registered
+  as unattested — as are ES384, ES512 and Ed448 keys. The Metadata Service checks fetch no
+  certificate revocation lists.
 - **Single-node SQLite, additive schema only, and sliding expiry only on paths that own a
   `Response`** — see [Database adapter](#database-adapter) and [Sessions](#sessions).
 - **`verifyTotp` is SHA-1 only**, the algorithm every authenticator app supports.

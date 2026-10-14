@@ -145,6 +145,15 @@ and this project adheres to
   `linkExistingAccounts`, an SSO user of another IdP never linked). Its users are SSO users, and
   its sessions are SSO sign-ins (`amr` `sso/saml`), the only kind an SSO user's session may be.
   Only SP-initiated logins are accepted; Single Logout stays `/auth/v1`'s.
+- **Passkeys: optional FIDO Metadata Service checks** (`passkeys: { attestation: { mds: {} } }`,
+  off by default). New passkeys are held to the FIDO Metadata Service (MDS3) BLOB: a `packed`
+  certificate attestation must chain to its authenticator model's metadata roots, a model whose
+  status reports a compromise (`REVOKED`, `USER_VERIFICATION_BYPASS`, a key compromise) is
+  refused, and `none` / self attestation registers only with `allowUnattested`. The BLOB's
+  signature is checked against a FIDO root pinned in denext (never one the response carries),
+  it is kept until its `nextUpdate`, a rollback to an older BLOB is refused, and it is fetched on
+  the server only, with a timeout and a size cap — or supplied offline with `blob`. Registration
+  options ask for `"direct"` attestation while it is on.
 
 ### Changed
 

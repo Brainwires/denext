@@ -791,6 +791,49 @@ export interface AuthPasskeyConfig {
   userVerification?: "required" | "preferred";
   /** How long a ceremony's challenge lives, in seconds. Default `300`; clamped to `30..900`. */
   timeout?: number;
+  /**
+   * Attestation policy for new passkeys. Off by default: any `none` or `packed` attestation
+   * registers, and a certificate in it is not chained to anything.
+   */
+  attestation?: {
+    /**
+     * Check registrations against the FIDO Metadata Service (MDS3): the authenticator's
+     * certificate must chain to its model's metadata roots, and a model whose metadata reports
+     * a compromise is refused. Registration options then ask for `attestation: "direct"`. See
+     * {@link AuthPasskeyMdsConfig}.
+     */
+    mds?: AuthPasskeyMdsConfig;
+  };
+}
+
+/** `passkeys.attestation.mds`: where the metadata comes from and what it lets through. */
+export interface AuthPasskeyMdsConfig {
+  /**
+   * The BLOB's URL (`https:` only). Default: `https://mds.fidoalliance.org/`. A mirror works:
+   * the BLOB is verified against the pinned FIDO root wherever it came from.
+   */
+  url?: string;
+  /**
+   * The BLOB itself (the JWT text), or a function returning it — for a server without
+   * outbound network. Verified exactly like a fetched one; when set, `url` is never fetched.
+   */
+  blob?: string | (() => string | Promise<string>);
+  /** The fetch timeout, ms. Default `15000`. */
+  timeoutMs?: number;
+  /** The largest BLOB accepted, bytes. Default 32 MiB. */
+  maxBytes?: number;
+  /**
+   * Accept `none` and self attestation (no certificate, so no model is proven), still refusing
+   * an AAGUID whose metadata reports compromise. Default `false`: only an attestation that
+   * chains to its authenticator's metadata roots registers. Synced passkeys attest `none`, so
+   * turn this on unless every user has a certified security key.
+   */
+  allowUnattested?: boolean;
+  /**
+   * Accept a certificate attestation whose AAGUID has no metadata entry (its chain is then not
+   * checked). Default `false`.
+   */
+  allowUnknownAuthenticators?: boolean;
 }
 
 /** A provider whose `id_token`s a native app may exchange at `POST {basePath}/native/<id>`. */

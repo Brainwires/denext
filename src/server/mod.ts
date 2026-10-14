@@ -783,6 +783,7 @@ export type {
   AuthNativeConfig,
   AuthorizedCallbackInput,
   AuthPasskeyConfig,
+  AuthPasskeyMdsConfig,
   AuthProvider,
   AuthSession,
   AuthSessionConfig,

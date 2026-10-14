@@ -13,8 +13,9 @@
  * - the credential public key (COSE, RFC 9052/9053): ES256 (`-7`, P-256), RS256 (`-257`) and
  *   EdDSA (`-8`, Ed25519) — and nothing else;
  * - the attestation statement (§8): `none` (§8.7) and `packed` (§8.2) — self attestation, or
- *   an `x5c` leaf whose signature and §8.2.1 certificate requirements are checked (denext
- *   does not evaluate the chain to a trust anchor; see {@linkcode RegistrationResult});
+ *   an `x5c` leaf whose signature and §8.2.1 certificate requirements are checked (the chain
+ *   to a trust anchor is evaluated only with `passkeys.attestation.mds`, one layer up; see
+ *   {@linkcode RegistrationResult});
  * - the assertion signature over `authenticatorData ‖ SHA-256(clientDataJSON)` (§7.2 step 20),
  *   the backup-eligibility flag against the stored record, and the signature counter (§6.1.1):
  *   a counter that doesn't increase is a possible cloned authenticator and is refused.
@@ -467,6 +468,13 @@ export interface RegistrationExpectations extends Omit<ClientDataExpectations, "
   requireUserVerification: boolean;
   /** The algorithms offered in `pubKeyCredParams` (§7.1 step 17). Default: all supported. */
   algorithms?: readonly PasskeyAlgorithm[];
+  /**
+   * Accept an attestation statement format this relying party can't verify (`tpm`,
+   * `android-key`, `apple`, `fido-u2f`, …) as no attestation (`fmt: "none"`) instead of refusing
+   * the registration — what a relying party that asks for `"direct"` attestation but accepts
+   * unattested credentials needs. Default `false`.
+   */
+  acceptUnverifiedFormats?: boolean;
 }
 
 /** A verified registration: what to store as the credential record (§7.1 step 27). */
@@ -487,15 +495,21 @@ export interface RegistrationResult {
   backedUp: boolean;
   /** Whether UV was set. */
   userVerified: boolean;
-  /** The attestation statement format. */
+  /**
+   * The attestation statement format — `"none"` also for a format accepted unverified under
+   * {@linkcode RegistrationExpectations.acceptUnverifiedFormats}.
+   */
   fmt: "none" | "packed";
   /**
    * What the attestation established (§6.5.4): `"none"`, `"self"` (packed without `x5c`), or
-   * `"basic"` — an `x5c` leaf whose signature and certificate profile verified. denext does
-   * not chain the leaf to a trust anchor (no metadata service), so `"basic"` is unverified
-   * attestation, never proof of a specific authenticator model.
+   * `"basic"` — an `x5c` leaf whose signature and certificate profile verified. This function
+   * does not chain the leaf to a trust anchor, so on its own `"basic"` is unverified attestation,
+   * never proof of a specific authenticator model; `passkeys.attestation.mds` chains it to the
+   * FIDO Metadata Service's roots one layer up ({@link ./fido-mds.ts}).
    */
   attestationType: "none" | "self" | "basic";
+  /** The packed statement's `x5c` (DER, leaf first), for `"basic"` attestation. */
+  attestationCertificates?: Uint8Array[];
 }
 
 /** A CBOR map's string-keyed value. */
@@ -565,13 +579,14 @@ export async function verifyRegistration(
     "the credential algorithm was not offered",
   );
   // Steps 19–21: the attestation statement.
-  const attestationType = await verifyAttestation(
+  const attestation = await verifyAttestation(
     fmt,
     attStmt as Map<number | string, unknown>,
     authDataBytes,
     clientDataHash,
     credential,
     attested.aaguid,
+    expected.acceptUnverifiedFormats === true,
   );
   return {
     credentialId: attested.credentialId,
@@ -582,15 +597,22 @@ export async function verifyRegistration(
     backupEligible: authData.flags.backupEligible,
     backedUp: authData.flags.backedUp,
     userVerified: authData.flags.userVerified,
-    fmt: fmt as "none" | "packed",
-    attestationType,
+    fmt: fmt === "packed" ? "packed" : "none",
+    attestationType: attestation.type,
+    ...(attestation.x5c ? { attestationCertificates: attestation.x5c } : {}),
   };
+}
+
+/** What an attestation statement established, with the `x5c` chain of a `"basic"` one. */
+interface VerifiedAttestation {
+  type: RegistrationResult["attestationType"];
+  x5c?: Uint8Array[];
 }
 
 /**
  * Verify the attestation statement (§7.1 step 21) for the formats denext supports.
  *
- * @returns The attestation type it established.
+ * @returns The attestation type it established (and the `x5c` chain of a basic one).
  */
 async function verifyAttestation(
   fmt: string,
@@ -599,11 +621,14 @@ async function verifyAttestation(
   clientDataHash: Uint8Array,
   credential: CredentialKey,
   aaguid: Uint8Array,
-): Promise<RegistrationResult["attestationType"]> {
+  acceptUnverifiedFormats: boolean,
+): Promise<VerifiedAttestation> {
+  // An unsupported format, accepted unverified: its statement proves nothing here.
+  if (fmt !== "none" && fmt !== "packed" && acceptUnverifiedFormats) return { type: "none" };
   if (fmt === "none") {
     // §8.7: the statement is the empty map.
     check(stmt.size === 0, "attestation", "a none attestation statement must be empty");
-    return "none";
+    return { type: "none" };
   }
   check(fmt === "packed", "attestation", "unsupported attestation format");
   return await verifyPacked(stmt, concat(authData, clientDataHash), credential, aaguid);
@@ -618,7 +643,7 @@ async function verifyPacked(
   signed: Uint8Array,
   credential: CredentialKey,
   aaguid: Uint8Array,
-): Promise<"self" | "basic"> {
+): Promise<VerifiedAttestation> {
   const alg = field(stmt, "alg");
   const sig = field(stmt, "sig");
   const x5c = field(stmt, "x5c");
@@ -631,7 +656,7 @@ async function verifyPacked(
       "attestation",
       "the self-attestation signature does not verify",
     );
-    return "self";
+    return { type: "self" };
   }
   check(
     Array.isArray(x5c) && x5c.length >= 1 && x5c.every((c) => c instanceof Uint8Array),
@@ -646,13 +671,13 @@ async function verifyPacked(
     "attestation",
     "the attestation signature does not verify",
   );
-  return "basic";
+  return { type: "basic", x5c: x5c as Uint8Array[] };
 }
 
 // ---- a minimal X.509 reader (RFC 5280) for the packed leaf (§8.2.1) -------------------
 
 /** One DER TLV. */
-interface Der {
+export interface Der {
   tag: number;
   /** The value bytes. */
   value: Uint8Array;
@@ -660,8 +685,15 @@ interface Der {
   raw: Uint8Array;
 }
 
-/** Read the TLV at `at`; throws `attestation` on malformed DER. */
-function derAt(bytes: Uint8Array, at: number): Der {
+/**
+ * Read the DER TLV at `at`.
+ *
+ * @param bytes The DER bytes.
+ * @param at The offset of the tag byte.
+ * @returns The TLV.
+ * @throws {WebAuthnError} `attestation` on malformed DER.
+ */
+export function derAt(bytes: Uint8Array, at: number): Der {
   check(at + 2 <= bytes.length, "attestation", "truncated certificate");
   const tag = bytes[at];
   let len = bytes[at + 1];
@@ -681,8 +713,14 @@ function derAt(bytes: Uint8Array, at: number): Der {
   };
 }
 
-/** The TLVs inside a constructed value. */
-function derChildren(value: Uint8Array): Der[] {
+/**
+ * The TLVs inside a constructed DER value.
+ *
+ * @param value The constructed value's content bytes.
+ * @returns Its children, in order.
+ * @throws {WebAuthnError} `attestation` on malformed DER.
+ */
+export function derChildren(value: Uint8Array): Der[] {
   const out: Der[] = [];
   for (let at = 0; at < value.length;) {
     const child = derAt(value, at);
@@ -701,7 +739,7 @@ interface Certificate {
   /** The SubjectPublicKeyInfo, DER. */
   spki: Uint8Array;
   /** Extensions by OID hex: criticality and the OCTET STRING's content. */
-  extensions: Map<string, { critical: boolean; value: Uint8Array }>;
+  extensions: Map<string, CertificateExtension>;
 }
 
 const OID_C = "550406";
@@ -744,18 +782,35 @@ function nameAttributes(name: Der): Map<string, string> {
   return out;
 }
 
-/** The `[3] EXPLICIT Extensions` among `parts`, by OID hex. */
-function certificateExtensions(parts: Der[]): Certificate["extensions"] {
-  const out: Certificate["extensions"] = new Map();
+/** One certificate extension: its criticality and the extnValue OCTET STRING's content. */
+export interface CertificateExtension {
+  critical: boolean;
+  value: Uint8Array;
+}
+
+/**
+ * The `[3] EXPLICIT Extensions` among a tbsCertificate's fields, by OID hex. A malformed
+ * extension, or one that appears twice (RFC 5280 §4.2), fails the certificate.
+ *
+ * @param parts The tbsCertificate's fields.
+ * @returns The extensions.
+ * @throws {WebAuthnError} `attestation` on a malformed or repeated extension.
+ */
+export function certificateExtensions(parts: Der[]): Map<string, CertificateExtension> {
+  const out = new Map<string, CertificateExtension>();
   const wrapper = parts.find((p) => p.tag === 0xa3);
   const [seq] = wrapper ? derChildren(wrapper.value) : [];
   for (const ext of seq ? derChildren(seq.value) : []) {
     // Extension ::= SEQUENCE { extnID OID, critical BOOLEAN DEFAULT FALSE, extnValue OCTET STRING }
     const items = derChildren(ext.value);
     const octets = items[items.length - 1];
-    if (items[0]?.tag !== 0x06 || octets?.tag !== 0x04) continue;
-    const critical = items[1]?.tag === 0x01 && items[1].value[0] !== 0;
-    out.set(hex(items[0].value), { critical, value: octets.value });
+    check(items[0]?.tag === 0x06 && octets?.tag === 0x04, "attestation", "malformed extension");
+    const id = hex(items[0].value);
+    check(!out.has(id), "attestation", "a repeated certificate extension");
+    out.set(id, {
+      critical: items[1]?.tag === 0x01 && items[1].value[0] !== 0,
+      value: octets.value,
+    });
   }
   return out;
 }

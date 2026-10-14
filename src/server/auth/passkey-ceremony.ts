@@ -9,6 +9,7 @@
  */
 
 import type { PasskeyRecord } from "./adapter.ts";
+import { checkMdsAttestation } from "./fido-mds.ts";
 import { base64UrlDecode, base64UrlEncode } from "./oauth.ts";
 import type { PasskeyAdapter, ResolvedPasskeys } from "./passkeys.ts";
 import { userHandleOf } from "./passkeys.ts";
@@ -117,7 +118,8 @@ export function creationOptions(
       requireResidentKey: true,
       userVerification: rp.requireUserVerification ? "required" : "preferred",
     },
-    attestation: "none",
+    // The FIDO Metadata Service checks need the authenticator's certificate.
+    attestation: rp.mds ? "direct" : "none",
   };
 }
 
@@ -173,8 +175,12 @@ export async function verifyNewPasskey(
       rpId: rp.rpId,
       requireUserVerification: rp.requireUserVerification,
       algorithms: rp.algorithms,
+      // Asking for "direct" attestation brings formats denext doesn't verify (`tpm`, …): with
+      // unattested passkeys allowed, they register as unattested, held to the AAGUID's status.
+      acceptUnverifiedFormats: rp.mds?.allowUnattested === true,
     },
   );
+  if (rp.mds) await checkMdsAttestation(rp.mds, result);
   const credentialId = base64UrlEncode(result.credentialId);
   if (credentialId !== id) throw new WebAuthnError("malformed", "credential.id mismatch");
   const record: PasskeyRecord = {
