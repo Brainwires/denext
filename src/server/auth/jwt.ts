@@ -8,6 +8,7 @@
  * @module
  */
 
+import type { TenantIssuer } from "./types.ts";
 import { base64UrlDecode } from "./oauth.ts";
 
 const decoder = new TextDecoder();
@@ -182,6 +183,12 @@ export interface VerifyIdTokenOptions {
    * legitimately mints multi-audience tokens without an `azp`.
    */
   strictAudience?: boolean;
+  /**
+   * A multi-tenant issuer: `issuer` is a template with `{tenantid}`, filled from this claim of
+   * the token (a GUID) before the exact `iss` comparison; the tenant must also pass the
+   * allow / exclude lists.
+   */
+  tenantIssuer?: TenantIssuer;
 }
 
 /**
@@ -266,12 +273,40 @@ export function idTokenKid(idToken: string): string | undefined {
  * now), all with clock tolerance.
  */
 function assertIdTokenClaims(claims: IdTokenClaims, options: VerifyIdTokenOptions): void {
-  if (claims.iss !== options.issuer) throw new Error("id_token issuer mismatch");
+  if (claims.iss !== expectedIssuer(claims, options)) throw new Error("id_token issuer mismatch");
   assertAudience(claims, options);
   if (options.nonce !== undefined && claims.nonce !== options.nonce) {
     throw new Error("id_token nonce mismatch");
   }
   assertTimeClaims(claims, options);
+}
+
+/** The placeholder a multi-tenant issuer template carries (Microsoft's discovery document). */
+const TENANT_PLACEHOLDER = "{tenantid}";
+/** A tenant id: a GUID, in the lower-case form Microsoft issues. */
+const TENANT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * The `iss` this token must carry. A single-tenant issuer is the configured one. A
+ * multi-tenant template takes the token's OWN tenant claim — so a token can only claim the
+ * issuer of the tenant it says it is from, and a tenant outside the allow list (or on the
+ * exclude list) is refused before the comparison.
+ */
+function expectedIssuer(claims: IdTokenClaims, options: VerifyIdTokenOptions): string {
+  const tenancy = options.tenantIssuer;
+  if (!tenancy) return options.issuer;
+  const tenant = claims[tenancy.claim];
+  if (typeof tenant !== "string" || !TENANT_ID.test(tenant)) {
+    throw new Error("id_token tenant claim missing or malformed");
+  }
+  if (tenancy.allowedTenants && !tenancy.allowedTenants.includes(tenant)) {
+    throw new Error("id_token tenant not allowed");
+  }
+  if (tenancy.excludedTenants?.includes(tenant)) throw new Error("id_token tenant not allowed");
+  if (!options.issuer.includes(TENANT_PLACEHOLDER)) {
+    throw new Error("tenantIssuer needs an issuer template with {tenantid}");
+  }
+  return options.issuer.replace(TENANT_PLACEHOLDER, tenant);
 }
 
 /**

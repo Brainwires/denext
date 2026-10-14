@@ -794,6 +794,7 @@ export type {
   ProfileInput,
   SendVerificationRequest,
   SignInFailedReason,
+  TenantIssuer,
   VerificationRequestParams,
 } from "./auth/types.ts";
 

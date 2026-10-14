@@ -186,6 +186,15 @@ export interface OAuthProvider {
    */
   strictAudience?: boolean;
   /**
+   * A multi-tenant issuer (`microsoftEntra({ tenant: "common" | "organizations" })`): `issuer`
+   * is a template carrying `{tenantid}`, and an `id_token` is accepted only when its `iss` is
+   * exactly that template with the token's own tenant claim (`claim`, a GUID) substituted —
+   * the templated issuer the provider's discovery document declares. `allowedTenants` limits
+   * which tenants may sign in; `excludedTenants` refuses some (`organizations` excludes the
+   * personal-account tenant).
+   */
+  tenantIssuer?: TenantIssuer;
+  /**
    * DANGEROUS: when this provider returns an email that already belongs to a local
    * account, link to it even though that account's address is **unverified**. Off by
    * default, and off is the safe answer — an attacker who registers an unverified local
@@ -193,6 +202,16 @@ export interface OAuthProvider {
    * provider login.
    */
   allowDangerousEmailAccountLinking?: boolean;
+}
+
+/** How a multi-tenant provider's `id_token` issuer is checked (see {@link OAuthProvider.tenantIssuer}). */
+export interface TenantIssuer {
+  /** The claim naming the token's tenant (Microsoft Entra: `tid`). Its value must be a GUID. */
+  claim: string;
+  /** Only these tenants (GUIDs) may sign in; unset admits every tenant. */
+  allowedTenants?: readonly string[];
+  /** These tenants (GUIDs) may never sign in. */
+  excludedTenants?: readonly string[];
 }
 
 /** A Credentials (e.g. email/password) provider. */
