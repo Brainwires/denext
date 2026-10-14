@@ -7869,6 +7869,30 @@
           "denextOnly": true
         },
         {
+          "name": "HealthCheck",
+          "slug": "HealthCheck",
+          "kind": "typeAlias",
+          "signature": "type HealthCheck = () => boolean | object | Promise<boolean | object>",
+          "doc": "A check's verdict: true / { ok: true } is healthy; anything else (or a throw) is down.",
+          "docFull": "A check's verdict: `true` / `{ ok: true }` is healthy; anything else (or a throw) is down.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "HealthCheckOptions",
+          "slug": "HealthCheckOptions",
+          "kind": "interface",
+          "signature": "interface HealthCheckOptions",
+          "doc": "Options for registerHealthCheck.",
+          "docFull": "Options for {@linkcode registerHealthCheck}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "HstsConfig",
           "slug": "HstsConfig",
           "kind": "interface",
@@ -11155,6 +11179,31 @@
           "denextOnly": true
         },
         {
+          "name": "registerHealthCheck",
+          "slug": "registerHealthCheck",
+          "kind": "function",
+          "signature": "registerHealthCheck(name: string, check: HealthCheck, options?: HealthCheckOptions): () => void",
+          "doc": "Register a readiness check /_denext/health runs on every probe. While it fails the probe answers 503 with \"status\": \"degraded\" and checks: { [name]: \"down\" } (never the error itself — the probe is public). Registering a name again replaces the check.",
+          "docFull": "Register a readiness check `/_denext/health` runs on every probe. While it fails the probe\nanswers `503` with `\"status\": \"degraded\"` and `checks: { [name]: \"down\" }` (never the error\nitself — the probe is public). Registering a name again replaces the check.",
+          "params": [
+            {
+              "name": "name",
+              "doc": "The check's name in the probe's checks (e.g. \"database\")."
+            },
+            {
+              "name": "check",
+              "doc": "Resolves true (or { ok: true }) when healthy."
+            },
+            {
+              "name": "options",
+              "doc": "timeoutMs: how long it may take (default 2000)."
+            }
+          ],
+          "returns": "Unregisters it (a plugin calls this from its teardown).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "registerJob",
           "slug": "registerJob",
           "kind": "function",
@@ -12615,6 +12664,23 @@
             {
               "name": "t",
               "doc": "The transport."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "setRequestTimeout",
+          "slug": "setRequestTimeout",
+          "kind": "function",
+          "signature": "setRequestTimeout(ms: number): void",
+          "doc": "Give the current request a deadline of its own, replacing the app's requestTimeout (30 s by default) — for a surface with its own time budget: an Edge Function's timeoutMs, a large upload or download, a long statement. 0 removes the deadline (the work must then bound itself). Counted from the request's start; a no-op outside a request.",
+          "docFull": "Give the current request a deadline of its own, replacing the app's `requestTimeout` (30 s by\ndefault) — for a surface with its own time budget: an Edge Function's `timeoutMs`, a large\nupload or download, a long statement. `0` removes the deadline (the work must then bound\nitself). Counted from the request's start; a no-op outside a request.",
+          "params": [
+            {
+              "name": "ms",
+              "doc": "The deadline, ms from the request's start (0: none)."
             }
           ],
           "returns": "",
