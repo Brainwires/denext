@@ -221,6 +221,7 @@ const SCHEMA: TableSpec[] = [
       ["last_used_at", "INTEGER"],
       ["revoked_at", "INTEGER"],
       ["created_at", "INTEGER"],
+      ["sso_session", "INTEGER"],
     ],
     indexes: [
       {

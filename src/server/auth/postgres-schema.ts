@@ -145,6 +145,15 @@ CREATE INDEX IF NOT EXISTS auth_saml_message_ids_expiry ON ${p}auth_saml_message
 ALTER TABLE ${p}auth_sso_providers ADD COLUMN metadata_valid_until BIGINT;
 ALTER TABLE ${p}auth_sso_providers ADD COLUMN metadata_refresh_after BIGINT;
 `,
+  }, {
+    // Whether a credential came from a session an SSO user's identity provider started: an
+    // OAuth-server approval (its client's tokens) and a bearer API token. A row without it reads
+    // as not SSO-started, so an SSO user's older grants and tokens stop working.
+    name: "0007_auth_sso_session_records",
+    sql: `
+ALTER TABLE ${p}auth_oauth_authorizations ADD COLUMN sso_consent BIGINT;
+ALTER TABLE ${p}auth_api_tokens ADD COLUMN sso_session BOOLEAN;
+`,
   }];
 }
 

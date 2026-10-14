@@ -326,6 +326,9 @@ const API_TOKEN_CASES: Record<string, Case> = {
     assertEquals(found?.userId, user.id);
     assertEquals(await byHash.call(adapter, "hash-t"), undefined, "no prefix matching");
     assertEquals(await byHash.call(adapter, "hash-t1 "), undefined, "no trimming");
+    assertEquals(found?.ssoSession, undefined, "no SSO mark unless one was stored");
+    await create.call(adapter, { ...apiToken("t2", user.id), ssoSession: true });
+    assertEquals((await byHash.call(adapter, "hash-t2"))?.ssoSession, true, "the SSO mark");
   },
   "touchApiToken records the last use": async (adapter) => {
     const create = adapter.createApiToken;

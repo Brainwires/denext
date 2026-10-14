@@ -31,6 +31,9 @@
  */
 
 import { getSession } from "../session.ts";
+import { currentContext } from "../request-context.ts";
+import type { AdapterUser } from "./adapter.ts";
+import { isBanned } from "./ban.ts";
 import { randomToken } from "./oauth.ts";
 import { cookieSessionOptions, resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { sessionExpired, type SessionStore } from "./session-store.ts";
@@ -102,8 +105,54 @@ async function resolveSession(
   return stored ? { ...stored, sessionId: sid } : null;
 }
 
+/** The request memo slot of {@linkcode storedUser}: user id → the adapter and its read. */
+const STORED_USERS = Symbol("denext.auth.storedUsers");
+
+/** One memoized user read: the adapter it went to, and its result. */
+interface StoredUserRead {
+  adapter: object;
+  read: Promise<AdapterUser | null>;
+}
+
 /**
- * Read the current auth session, or `null` when absent/expired/invalid/revoked.
+ * The stored user `id`, read through `options.adapter` at most once per request (the request
+ * context's memo; a call outside a request reads every time). Several `auth()` calls in one
+ * request, and the slide `requireAuth()` does after its own read, cost one lookup.
+ *
+ * @param options The resolved auth options (an adapter is required).
+ * @param id The user id.
+ * @returns The stored user, or `null` when there is none.
+ */
+function storedUser(options: ResolvedAuthOptions, id: string): Promise<AdapterUser | null> {
+  const adapter = options.adapter!;
+  const memo = currentContext()?.memo;
+  let reads = memo?.get(STORED_USERS);
+  if (memo && !reads) memo.set(STORED_USERS, reads = new Map());
+  const hit = reads?.get(id) as StoredUserRead | undefined;
+  if (hit && hit.adapter === adapter) return hit.read;
+  const read = Promise.resolve(adapter.getUser(id)).then((user) => user ?? null);
+  reads?.set(id, { adapter, read } satisfies StoredUserRead);
+  return read;
+}
+
+/**
+ * Whether a cookie session's user, read fresh, may still use it: the user exists, is not
+ * banned, and — for an SSO user — its identity provider started the session (denextAuth's own
+ * sign-ins never come from one, so no cookie session of an SSO user lives). Without an adapter
+ * there is no user to read, and the session stands as signed.
+ */
+async function userMayUse(options: ResolvedAuthOptions, session: AuthSession): Promise<boolean> {
+  if (!options.adapter) return true;
+  const user = await storedUser(options, session.user.id);
+  return !!user && !isBanned(user) && ssoSessionAllowed(user, session.amr ?? []);
+}
+
+/**
+ * Read the current auth session, or `null` when absent/expired/invalid/revoked — or when its
+ * user, read fresh through the adapter (once per request), was deleted or banned, or is an SSO
+ * user (whose identity provider never starts a cookie session). The check runs on every read,
+ * so a ban, a deletion or an SSO conversion takes effect on the user's very next request, not
+ * when the session next slides or expires.
  *
  * @param config The app's auth config.
  * @returns The session, normalised to the current payload shape, or `null`.
@@ -111,7 +160,8 @@ async function resolveSession(
 export async function readAuthSession(config: AuthConfig): Promise<AuthSession | null> {
   const options = resolveAuthOptions(config);
   const session = await getSession<CookieData>(sessionOptions(config));
-  return await resolveSession(session.data, options);
+  const resolved = await resolveSession(session.data, options);
+  return resolved && await userMayUse(options, resolved) ? resolved : null;
 }
 
 /** How {@link issueAuthSession} marks the session it mints. */
@@ -378,7 +428,7 @@ export async function refreshLiveSession(
 ): Promise<AuthSession | null> {
   const options = resolveAuthOptions(config);
   if (shouldRefresh(options, session, nowMs) && options.adapter) {
-    const user = await options.adapter.getUser(session.user.id);
+    const user = await storedUser(options, session.user.id);
     if (user && !ssoSessionAllowed(user, session.amr ?? [])) {
       if (session.sessionId && options.sessionStore) {
         await options.sessionStore.delete(session.sessionId);

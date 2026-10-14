@@ -187,6 +187,7 @@ export const API_TOKEN_MAP: FieldMap<ApiTokenRecord> = {
   expiresAt: ["expires_at", INT],
   lastUsedAt: ["last_used_at", INT],
   revokedAt: ["revoked_at", INT],
+  ssoSession: ["sso_session", FLAG],
 };
 
 export const MFA_MAP: FieldMap<MfaRecord> = {

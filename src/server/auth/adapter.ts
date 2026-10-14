@@ -155,6 +155,12 @@ export interface ApiTokenRecord {
   scopes?: string[];
   /** When the token was revoked, epoch seconds; a revoked token must never authenticate. */
   revokedAt?: number;
+  /**
+   * Set when the token was minted from a session the user's identity provider started (a SAML
+   * sign-in). An SSO user's token authenticates only with it; a token without it — minted
+   * without a session, from any other session, or before the field existed — is refused.
+   */
+  ssoSession?: true;
 }
 
 /** A user's TOTP factor plus their single-use backup codes. */

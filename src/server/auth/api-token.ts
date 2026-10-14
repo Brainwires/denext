@@ -23,12 +23,13 @@
  */
 
 import type { ApiTokenRecord, AuthAdapter } from "./adapter.ts";
-import { isBannedUser } from "./ban.ts";
+import { isBanned } from "./ban.ts";
 import { emitAuthEvent } from "./events.ts";
 import { sha256Hex } from "./hash.ts";
 import { randomToken } from "./oauth.ts";
 import { resolveAuthOptions } from "./options.ts";
-import type { AuthConfig } from "./types.ts";
+import { apiTokenAllowed, ssoStarted } from "./sso-user.ts";
+import type { AuthConfig, AuthSession } from "./types.ts";
 
 /** The prefix every denext API token carries — recognizable in logs and secret scanners. */
 const TOKEN_PREFIX = "tok_";
@@ -57,6 +58,14 @@ export interface IssueApiTokenOptions {
   scopes?: string[];
   /** Lifetime in seconds. Omit for a token that never expires (revocation still ends it). */
   expiresInSeconds?: number;
+  /**
+   * The session minting the token (what `auth()` returned for the request). Its `amr` says
+   * whether the user's identity provider started it, which the token records
+   * ({@linkcode ApiTokenRecord.ssoSession}): an SSO user's token authenticates only when it
+   * was minted from such a session, so one minted without a session, or from any other, is
+   * refused at every use.
+   */
+  session?: Pick<AuthSession, "amr">;
 }
 
 /** What {@linkcode issueApiToken} returns: the plaintext (once) plus the stored record. */
@@ -147,6 +156,7 @@ export async function issueApiToken(
     createdAt: now,
     expiresAt,
     scopes: options.scopes ? [...options.scopes] : undefined,
+    ...(ssoStarted(options.session?.amr ?? []) ? { ssoSession: true as const } : {}),
   };
   await adapter.createApiToken(record);
   const event = { userId: record.userId, tokenId: record.id };
@@ -178,8 +188,9 @@ async function touch(config: AuthConfig, adapter: ApiTokenAdapter, id: string): 
  * secret is ever compared in-process), and check it is still live.
  *
  * Every failure mode returns the same `null`: an unknown token, a revoked one, an expired
- * one, a malformed one, one whose owner is banned, and "bearer tokens aren't configured at all". Callers must keep
- * that uniformity in their answer — see `requireBearer`.
+ * one, a malformed one, one whose owner is banned or no longer exists, an SSO user's token
+ * not minted from a session its identity provider started, and "bearer tokens aren't
+ * configured at all". Callers must keep that uniformity in their answer — see `requireBearer`.
  *
  * @param config The app's auth config.
  * @param presented The raw token from the `Authorization` header.
@@ -199,11 +210,22 @@ export async function verifyApiToken(
   if (record.expiresAt !== undefined && record.expiresAt <= Math.floor(Date.now() / 1000)) {
     return null;
   }
-  // A banned owner's tokens authenticate nothing while the ban lasts — checked here, at every
-  // use, not only by the revocation a ban performs.
-  if (await isBannedUser(config, record.userId)) return null;
+  if (!(await ownerMayUse(config, record))) return null;
   await touch(config, adapter, record.id);
   return record;
+}
+
+/**
+ * Whether the token's owner, read fresh, may use it: a banned owner's tokens authenticate
+ * nothing while the ban lasts, a deleted owner's nothing at all (an adapter that keeps the rows
+ * of a deleted user included), and an SSO user's only those minted from a session its identity
+ * provider started — checked at every use, not only by the revocation a ban performs.
+ */
+async function ownerMayUse(config: AuthConfig, record: ApiTokenRecord): Promise<boolean> {
+  const adapter = resolveAuthOptions(config).adapter;
+  if (!adapter) return true;
+  const user = await adapter.getUser(record.userId);
+  return !!user && !isBanned(user) && apiTokenAllowed(user, record);
 }
 
 /**

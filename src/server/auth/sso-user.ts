@@ -16,7 +16,9 @@
  *
  * The rule holds for sessions too ({@linkcode ssoSessionAllowed}): an SSO user's session lives
  * only when its identity provider started it, so one minted any other way (before the account
- * became an SSO user, or before such sign-ins were refused) is refused at refresh and at use.
+ * became an SSO user, or before such sign-ins were refused) is refused at refresh and at use. An
+ * OAuth client's grant and a bearer API token carry the same fact from the session they came
+ * from ({@linkcode snapshotAllowed}, {@linkcode apiTokenAllowed}).
  *
  * @module
  */
@@ -49,6 +51,18 @@ export function nonSsoUser(user: AdapterUser | null | undefined): AdapterUser | 
 const SSO_AMR_METHOD = "sso/saml";
 
 /**
+ * Whether a session that proved `methods` was started by an identity provider (`sso/saml`; an
+ * MFA step-up keeps that entry).
+ *
+ * @param methods The session's authentication methods (`amr`).
+ * @returns `true` for a session a SAML sign-in started.
+ */
+export function ssoStarted(methods: Iterable<string>): boolean {
+  for (const method of methods) if (method === SSO_AMR_METHOD) return true;
+  return false;
+}
+
+/**
  * Whether a session of `user` that proved `methods` may live: any session of a non-SSO user, and
  * an SSO user's only when its identity provider started it (`methods` include `sso/saml`; an MFA
  * step-up keeps that entry). Every other session of an SSO user — a password, code, link,
@@ -64,16 +78,30 @@ export function ssoSessionAllowed(
   user: Pick<AdapterUser, "appMetadata">,
   methods: Iterable<string>,
 ): boolean {
-  if (!isSsoUser(user)) return true;
-  for (const method of methods) if (method === SSO_AMR_METHOD) return true;
-  return false;
+  return !isSsoUser(user) || ssoStarted(methods);
+}
+
+/**
+ * The method names of a stored `/auth/v1` snapshot's `amr` (entries are `{ method }` objects).
+ * The stored snapshot, never a token's `amr` claim: the custom access token hook may rewrite the
+ * claim, not the snapshot.
+ *
+ * @param snapshot A session family's stored snapshot.
+ * @returns Its methods, in order.
+ */
+export function snapshotMethods(snapshot: { amr?: unknown } | undefined): string[] {
+  const amr = Array.isArray(snapshot?.amr) ? snapshot.amr : [];
+  return amr.map((entry) =>
+    typeof entry === "string" ? entry : String((entry as { method?: unknown })?.method ?? "")
+  );
 }
 
 /**
  * Whether an `/auth/v1` session family of `user` may live: an SSO user's only when its identity
  * provider started it (an `sso/saml` entry, kept through an MFA step-up). A session issued to an
- * OAuth client is exempt — the consent it was issued on needed a live session, which this same rule
- * already held to.
+ * OAuth client lives when its grant was consented from a session the identity provider started
+ * (`oauth.sso`); a grant consented from any other session — or one with no record of it (older
+ * data) — is refused like the other non-IdP sessions.
  *
  * @param user The stored user, read fresh.
  * @param snapshot The family's stored snapshot (its `amr` entries and OAuth grant).
@@ -83,12 +111,26 @@ export function snapshotAllowed(
   user: Pick<AdapterUser, "appMetadata">,
   snapshot: { amr?: unknown; oauth?: unknown },
 ): boolean {
-  if (snapshot.oauth) return true;
-  const amr = Array.isArray(snapshot.amr) ? snapshot.amr : [];
-  return ssoSessionAllowed(
-    user,
-    amr.map((entry) => String((entry as { method?: unknown })?.method ?? "")),
-  );
+  if (!isSsoUser(user)) return true;
+  if (snapshot.oauth) return (snapshot.oauth as { sso?: unknown }).sso === true;
+  return ssoStarted(snapshotMethods(snapshot));
+}
+
+/**
+ * Whether a bearer API token of `user` may authenticate: any of a non-SSO user's, and an SSO
+ * user's only when it was minted from a session its identity provider started
+ * (`ssoSession`). A token with no such record — minted without a session, from any other
+ * session, or before the record existed — is refused.
+ *
+ * @param user The stored user, read fresh.
+ * @param token The token's stored record.
+ * @returns `true` when the token may authenticate.
+ */
+export function apiTokenAllowed(
+  user: Pick<AdapterUser, "appMetadata">,
+  token: { ssoSession?: boolean },
+): boolean {
+  return !isSsoUser(user) || token.ssoSession === true;
 }
 
 /**

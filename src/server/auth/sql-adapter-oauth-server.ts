@@ -43,7 +43,10 @@ export interface OAuthServerTableSpec {
   indexes?: Array<{ sql: string }>;
 }
 
-/** The SQLite tables (the Postgres migration `0005_auth_oauth_server` creates the same). */
+/**
+ * The SQLite tables (the Postgres migrations `0005_auth_oauth_server` and
+ * `0007_auth_sso_session_records` create the same).
+ */
 export const OAUTH_SERVER_SQLITE_TABLES: OAuthServerTableSpec[] = [
   {
     name: "auth_oauth_clients",
@@ -60,6 +63,7 @@ export const OAUTH_SERVER_SQLITE_TABLES: OAuthServerTableSpec[] = [
       ["session_id", "TEXT"],
       ["expires_at", "INTEGER NOT NULL"],
       ["data", "TEXT NOT NULL"],
+      ["sso_consent", "INTEGER"],
     ],
     indexes: [
       {
@@ -283,6 +287,7 @@ function authorizationFromRow(row: Record<string, unknown> | undefined) {
   if (userId) record.userId = userId;
   if (codeHash) record.codeHash = codeHash;
   if (sessionId) record.sessionId = sessionId;
+  if (num(row.sso_consent) === 1) record.ssoConsent = true;
   return record;
 }
 
@@ -292,7 +297,11 @@ const PATCH_COLUMNS: Record<keyof OAuthAuthorizationPatch, string> = {
   codeHash: "code_hash",
   sessionId: "session_id",
   expiresAt: "expires_at",
+  ssoConsent: "sso_consent",
 };
+
+/** A patch value as a bound parameter (a flag as `1`: node:sqlite binds no booleans). */
+const patchParam = (value: unknown): unknown => value === true ? 1 : value;
 
 function casClause(expect: OAuthAuthorizationExpect): { sql: string; params: unknown[] } {
   const parts: string[] = [];
@@ -331,7 +340,7 @@ function authorizationMethods(db: OAuthServerSql): Pick<
       };
       await db.rows(
         `INSERT INTO ${t()} (id, client_id, user_id, status, code_hash, session_id, expires_at, ` +
-          "data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          "data, sso_consent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           record.id,
           record.clientId,
@@ -341,6 +350,7 @@ function authorizationMethods(db: OAuthServerSql): Pick<
           record.sessionId ?? null,
           record.expiresAt,
           JSON.stringify(data),
+          record.ssoConsent ? 1 : null,
         ],
       );
     },
@@ -359,7 +369,7 @@ function authorizationMethods(db: OAuthServerSql): Pick<
       const updated = await db.rows(
         `UPDATE ${t()} SET ${sets.map((key) => `${PATCH_COLUMNS[key]} = ?`).join(", ")} ` +
           `WHERE id = ?${cas.sql} RETURNING id`,
-        [...sets.map((key) => patch[key]), id, ...cas.params],
+        [...sets.map((key) => patchParam(patch[key])), id, ...cas.params],
       );
       return updated.length === 1;
     },

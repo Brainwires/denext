@@ -8,6 +8,33 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- **A cookie session ends at its user's next request after a ban, a deletion or an SSO
+  conversion.** With an adapter, every read of a denextAuth cookie session (`auth()`,
+  `requireAuth()`, `requireSession()`, the `/auth/*` endpoints) re-reads its user, once per
+  request however many times `auth()` is called, and a deleted or banned user, or an SSO user,
+  reads as signed out. Before, a bare `auth()` read no user, so such a session (a stateless one
+  especially) lived until it next slid or expired.
+- **Whether a session was SSO-started comes from the stored session, never the token's claim.**
+  Linking an identity onto an SSO user on `/auth/v1` checked the access token's `amr` claim, which
+  the custom access token hook can rewrite; it now reads the stored session, as the session checks
+  already did. The `amr` of the session `auth()` returns for a `/auth/v1` access token is the
+  stored session's too.
+- **An SSO user's OAuth-server grants rest on a consent its identity provider's session gave.**
+  The OAuth 2.1 server records, on each approval, whether the approving session was SSO-started.
+  An SSO user's client tokens from a grant approved any other way (before the account became an
+  SSO user, or recorded before this release) are refused at use and revoked at refresh, and such a
+  code can't be exchanged; grants approved from an SSO session keep working.
+- **API tokens: an SSO user's token needs an SSO-started minting session, and a deleted owner's
+  token authenticates nothing.** `issueApiToken({ session })` records whether the minting session
+  was SSO-started, and an SSO user's token without that record — minted without a session, from
+  any other session, or before this release — is refused by `verifyApiToken` / `requireBearer`.
+  A token whose owner no longer exists (an adapter that keeps a deleted user's rows) is refused
+  too, as a banned owner's already was. Stored data: the SQLite tables gain a column on first
+  use, and the Postgres migration `0007_auth_sso_session_records` adds `sso_consent` and
+  `sso_session`.
+
 ## [4.0.0] - 2026-10-14
 
 ### Added

@@ -782,8 +782,10 @@ Deno.test("passkeys: an SSO user registers none, and one from before it became o
     id: a.userId,
     appMetadata: { provider: "sso:acme", providers: ["sso:acme"] },
   });
+  // Its cookie session is signed out at its next read (the user is re-read), before the
+  // registration's own SSO check (403 sso_user) is reached.
   const res = await owner.send("POST", "/passkey/register/options", {});
-  assertEquals([res.status, (await res.json()).error], [403, "sso_user"]);
+  assertEquals([res.status, (await res.json()).error], [401, "unauthorized"]);
   const b = new Browser(a);
   const options = await signInOptions(b);
   const refused = await b.send("POST", "/passkey/authenticate", {

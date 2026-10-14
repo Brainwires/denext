@@ -396,7 +396,13 @@ await revokeSession(session.sessionId!);
 ```
 
 Both throw when sessions are stateless, rather than pretending to revoke something. Both
-fire the `sessionRevoked` event. Anything holding a resource is released on server drain
+fire the `sessionRevoked` event.
+
+A user who can no longer sign in needs no revocation to be signed out: with an `adapter`, every
+read of a cookie session — `auth()`, `requireAuth()`, `requireSession()`, the `/auth/*` endpoints —
+re-reads its user through the adapter (once per request, however many times `auth()` is called),
+and a deleted or banned user, or an SSO user (whose identity provider never starts a denextAuth
+session), reads as signed out from their very next request, stateless cookies included. Anything holding a resource is released on server drain
 through the plugin teardown seam — a closable session store **and** a closable `adapter`,
 so a `sqliteAuthAdapter` no longer keeps its file handle for the life of the process.
 
@@ -1636,11 +1642,15 @@ set, the limiters count in `auth_rate_limits` on that database (the adapter's ow
 
 ## API tokens and `requireBearer`
 
-`issueApiToken(config, { userId, name?, scopes?, expiresInSeconds? })` mints `tok_` plus
+`issueApiToken(config, { userId, name?, scopes?, expiresInSeconds?, session? })` mints `tok_` plus
 256 bits of CSPRNG entropy and returns the **plaintext exactly once**; what is stored is
 the SHA-256 (hex) of the full presented string, so a database read yields nothing usable
 and verification is an indexed exact-match lookup rather than an in-process comparison —
-there is no timing oracle to equalise.
+there is no timing oracle to equalise. `session` is the session minting the token (what
+`auth()` returned): the token records whether the user's identity provider started it, and an
+SSO user's token authenticates only when it did — one minted without a session, or from any
+other, is refused. Every verification re-reads the owner: a banned owner's tokens authenticate
+nothing while the ban lasts, and a deleted owner's nothing at all.
 `requireBearer(authConfig, { scope, role })` — or `requireBearer({ scope, role })`, which reads
 the config `denextAuth()` was built with (`activeAuthConfig()`) — is the `createApi()` middleware that
 authenticates `Authorization: Bearer tok_…` and extends the handler's context with
@@ -2267,8 +2277,9 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   endpoints refuse it.
 - **One user store.** A ban (`ban_duration`) refuses denextAuth's own sign-ins too and ends every
   session of both kinds; while it lasts, the user's tokens (bearer API tokens, native tokens,
-  access and refresh tokens) are refused at every use as well, and a stateless cookie still owing
-  its second factor can't finish the step-up. A password change through `/auth/v1` ends the user's other sessions,
+  access and refresh tokens) are refused at every use as well, and so is every denextAuth cookie
+  session, a stateless one included (each read re-reads the user) — so a stateless cookie still
+  owing its second factor can't finish the step-up either. A password change through `/auth/v1` ends the user's other sessions,
   including denextAuth cookie sessions in the `sessionStore` (a stateless cookie can't be revoked
   and lives until it expires); an admin password change ends all of them, as in GoTrue.
   `session.user.emailVerified` of an access token is read from the stored user, never from the
@@ -2333,18 +2344,24 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   one). An existing account an IdP was linked to (`linkExistingAccounts`) is not an SSO user and
   keeps its other sign-in methods; an SSO user another provider signed up is never linked
   (`email_exists`).
-- **An SSO user's sessions are the ones its IdP started.** A session of an SSO user whose `amr`
-  has no `sso/saml` entry — one from before the account became an SSO user, or from before
+- **An SSO user's sessions are the ones its IdP started.** A session of an SSO user whose stored
+  `amr` has no `sso/saml` entry — one from before the account became an SSO user, or from before
   non-SSO sign-ins of SSO users were refused — is refused at every use (`403 session_not_found`)
   and at refresh (`refresh_token_not_found`, and its session is revoked). A session that stepped
-  up with MFA after a SAML sign-in keeps its `sso/saml` entry and keeps working; a token issued to
-  an OAuth client is unaffected (its consent needed a live session). denextAuth's own sessions
-  never come from an IdP: an SSO user's native session is refused at use and revoked at refresh,
-  and its cookie session ends when it is next due to slide (`session.updateAge`, in
-  `requireAuth()`, `requireSession()`, `updateAuthSession()` and `GET {basePath}/session`; a bare
-  `auth()` reads no user, so without sliding it lasts until it expires — call
-  `revokeAllSessions(userId)` to end it at once). `GET /reauthenticate` for an SSO user answers
-  `422 user_sso_managed` and sends nothing (GoTrue sends a nonce `PUT /user` then refuses).
+  up with MFA after a SAML sign-in keeps its `sso/saml` entry and keeps working. Whether a session
+  was SSO-started is read from its stored session, never from the access token's `amr` claim,
+  which the custom access token hook may rewrite: linking an identity onto an SSO user, and the
+  `amr` of the session `auth()` returns for a bearer access token, both come from the stored
+  session. A token issued to an OAuth client lives only when its grant was approved from a session
+  the IdP started; one approved from any other session (or recorded before denext kept that fact)
+  is refused at use and revoked at refresh, and its code can't be exchanged. denextAuth's own
+  sessions never come from an IdP: an SSO user's native session is refused at use and revoked at
+  refresh, and its cookie session reads as signed out from its next request (every cookie-session
+  read re-reads the user). A bearer API token of an SSO user authenticates only when it was minted
+  from a session the IdP started (`issueApiToken({ session })`); one minted without a session or
+  from any other — `POST {basePath}/tokens` mints from a cookie session, so never — is refused.
+  `GET /reauthenticate` for an SSO user answers `422 user_sso_managed` and sends nothing (GoTrue
+  sends a nonce `PUT /user` then refuses).
 - **SAML endpoints.** The SingleSignOnService and SingleLogoutService URLs in IdP metadata are sent
   to the browser, so they must be `https:` (a loopback `http:` one only under
   `dangerouslyAllowInsecureProviders`); any other scheme refuses the metadata at registration, at

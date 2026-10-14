@@ -400,6 +400,11 @@ function currentSession(): Promise<AuthSession | null> {
  * guard built on `auth()` (requireAuth, requireSession, Live `authorize`, Server
  * Actions) refuses it without having to know MFA exists.
  *
+ * With an adapter, a cookie session's user is re-read on every request (once per request,
+ * however many times `auth()` is called): a deleted or banned user, and an SSO user (whose
+ * identity provider never starts a denextAuth session), read as `null` from their very next
+ * request. A bearer session's user is re-read the same way by its own verification.
+ *
  * @returns The {@link AuthSession}, or `null`.
  */
 export async function auth(): Promise<AuthSession | null> {

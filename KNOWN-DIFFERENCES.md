@@ -275,7 +275,9 @@ Where `@denext/backend` deliberately departs from Supabase. See
 - **An SSO user signs in through its identity provider only — linked identities included.**
   Supabase lets an OAuth identity linked to an SSO user sign it in and keeps every session it ever
   issued. denext refuses that sign-in (`422 user_sso_managed`), refuses any session of an SSO user
-  that no SAML sign-in started (at use and at refresh), refuses `GET /reauthenticate` for an SSO
+  that no SAML sign-in started (at use and at refresh) — read from the stored session, not the
+  hook-writable `amr` claim — as well as an OAuth client's tokens whose grant was approved from
+  such a session (Supabase keeps them), refuses `GET /reauthenticate` for an SSO
   user (`422 user_sso_managed`, nothing sent; Supabase sends a nonce `PUT /user` then refuses),
   and never links a `linkExistingAccounts` provider onto another provider's SSO user
   (`email_exists`; Supabase would create a separate account). The reason is offboarding: an

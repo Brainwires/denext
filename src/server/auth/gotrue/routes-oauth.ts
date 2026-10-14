@@ -182,8 +182,9 @@ export async function authorizeLink(ctx: GoTrueContext): Promise<Response> {
   const caller = await requireUser(ctx);
   // Linking a sign-in method changes what can reach the account: not from a password alone.
   await requireAal2WithFactor(ctx, caller, "link an identity");
-  // An SSO user gains another sign-in method only from a session its identity provider started.
-  if (isSsoUser(caller.user) && !ssoAuthenticated(caller.claims)) {
+  // An SSO user gains another sign-in method only from a session its identity provider started —
+  // as the stored session says, never the token's `amr` claim (the access token hook writes that).
+  if (isSsoUser(caller.user) && !caller.ssoSession) {
     throw new GoTrueError(
       422,
       "user_sso_managed",
@@ -195,12 +196,6 @@ export async function authorizeLink(ctx: GoTrueContext): Promise<Response> {
     return new Response(null, { status: 302, headers: { location: url } });
   }
   return ok({ url });
-}
-
-/** Whether an access token's session was started by an SSO sign-in (an `sso/saml` `amr` entry). */
-function ssoAuthenticated(claims: Record<string, unknown>): boolean {
-  const amr = Array.isArray(claims.amr) ? claims.amr : [];
-  return amr.some((entry) => (entry as { method?: unknown })?.method === "sso/saml");
 }
 
 /** What the `/auth/v1` callback needs that the request does not carry. */

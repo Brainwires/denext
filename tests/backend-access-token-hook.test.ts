@@ -29,6 +29,8 @@ function configWith(hooks?: GoTrueHooks): AuthConfig {
 }
 
 async function cookieFor(config: AuthConfig, user: AuthUser): Promise<string> {
+  // A cookie session is read only while its user is stored (every read re-reads it).
+  await config.adapter!.createUser({ id: user.id, email: user.email });
   const issuing = createRequestContext(new Request(`${ORIGIN}/`));
   await runWithContext(
     issuing,

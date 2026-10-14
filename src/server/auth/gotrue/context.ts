@@ -23,7 +23,8 @@ import {
 } from "../rate-limit.ts";
 import type { AuthConfig } from "../types.ts";
 import { hasVerifiedFactor } from "../factors.ts";
-import { verifyAccessToken, verifyAccessTokenSession } from "./access.ts";
+import { type VerifiedAccessToken, verifyAccessToken, verifyAccessTokenSession } from "./access.ts";
+import { ssoStarted } from "../sso-user.ts";
 import { fail, GoTrueError, type GoTrueErrorCode } from "./errors.ts";
 import {
   apiKeyRole,
@@ -128,6 +129,12 @@ export interface CallerUser {
   sessionId?: string;
   /** The session still owes its second factor (an `aal1` sign-in of an MFA user). */
   pending: boolean;
+  /**
+   * The session's stored family says a SAML sign-in started it (`sso/saml`). Read from the
+   * stored session, never the token's `amr` claim (the custom access token hook may rewrite
+   * that); `false` for a token with no stored session.
+   */
+  ssoSession: boolean;
 }
 
 /**
@@ -155,7 +162,7 @@ export async function requireUser(
 ): Promise<CallerUser> {
   const token = bearerOf(ctx.request);
   if (!token || !looksLikeJwt(token)) throw fail.noAuthorization();
-  const { claims, pending, user: stored } = await verifiedCaller(ctx, token);
+  const { claims, pending, user: stored, storedAmr } = await verifiedCaller(ctx, token);
   if (claims.role !== "authenticated") throw fail.badJwt("invalid JWT: not a user token");
   if (claims.client_id !== undefined && !options.allowOAuthClient) {
     throw fail.badJwt("invalid JWT: an OAuth client's token cannot call this endpoint");
@@ -168,14 +175,14 @@ export async function requireUser(
     throw new GoTrueError(403, "insufficient_aal", "AAL2 session is required");
   }
   const sessionId = typeof claims.session_id === "string" ? claims.session_id : undefined;
-  return { claims, user, sessionId, pending };
+  return { claims, user, sessionId, pending, ssoSession: ssoStarted(storedAmr ?? []) };
 }
 
 /** The caller's verified token, its refusals as GoTrue's errors. */
 async function verifiedCaller(
   ctx: GoTrueContext,
   token: string,
-): Promise<{ claims: SupabaseJwtClaims; pending: boolean; user?: AdapterUser }> {
+): Promise<VerifiedAccessToken> {
   try {
     return await verifyAccessTokenSession(ctx.keys, token, ctx.config);
   } catch (error) {

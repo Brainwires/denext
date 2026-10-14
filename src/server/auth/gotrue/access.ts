@@ -15,7 +15,7 @@ import { isVerified } from "../adapter-link.ts";
 import { isBanned } from "../ban.ts";
 import { bearerTokenOf } from "../bearer-header.ts";
 import { nativeAdapterOf } from "../native.ts";
-import { snapshotAllowed } from "../sso-user.ts";
+import { snapshotAllowed, snapshotMethods } from "../sso-user.ts";
 import type { AuthConfig, AuthSession } from "../types.ts";
 import {
   installedSupabaseKeys,
@@ -66,11 +66,17 @@ export async function verifyAccessToken(
  * read for that check is returned. An SSO user's token is refused unless its session was started
  * by the user's identity provider (`sso/saml`).
  *
+ * `storedAmr` is what the session's stored family says it proved — the source of truth for
+ * anything that depends on how the session started, since the custom access token hook may
+ * rewrite the token's `amr` claim. It is `undefined` for a token with no stored session (no
+ * `session_id`, or an adapter without session families) or a stored session that records none.
+ *
  * @param keys The key material.
  * @param token The JWT.
  * @param config The auth config whose adapter holds the sessions (optional).
  * @param options The clock.
- * @returns The claims, whether the session is pending, and the stored user (when read).
+ * @returns The claims, whether the session is pending, the stored user (when read) and the
+ *   stored session's methods (when there is one).
  * @throws {SupabaseKeyError} `bad_jwt` / `jwt_expired`, or `bad_jwt` for a dead session or a
  *   banned user.
  */
@@ -79,7 +85,7 @@ export async function verifyAccessTokenSession(
   token: string,
   config?: AuthConfig | null,
   options: VerifySupabaseJwtOptions = {},
-): Promise<{ claims: SupabaseJwtClaims; pending: boolean; user?: AdapterUser }> {
+): Promise<VerifiedAccessToken> {
   const claims = await verifySupabaseJwt(keys, token, options);
   if (claims.role !== "authenticated") return { claims, pending: false };
   const now = Math.floor((options.now ?? Date.now()) / 1000);
@@ -105,7 +111,21 @@ export async function verifyAccessTokenSession(
   if (user && snapshot && !snapshotAllowed(user, snapshot)) {
     throw new SupabaseKeyError("bad_jwt", "invalid JWT: session not found");
   }
-  return { claims, pending, user };
+  const verified: VerifiedAccessToken = { claims, pending, user };
+  if (Array.isArray(snapshot?.amr)) verified.storedAmr = snapshotMethods(snapshot);
+  return verified;
+}
+
+/** What {@linkcode verifyAccessTokenSession} answers. */
+export interface VerifiedAccessToken {
+  /** The verified claims. */
+  claims: SupabaseJwtClaims;
+  /** The session still owes its second factor. */
+  pending: boolean;
+  /** The stored user, when read. */
+  user?: AdapterUser;
+  /** The stored session's `amr` methods (never the hook-writable claim), when there is one. */
+  storedAmr?: string[];
 }
 
 /** What a session family's stored snapshot says about its session. */
@@ -204,10 +224,16 @@ export async function sessionFromJwtBearer(
   const keys = installedSupabaseKeys();
   if (!keys) return undefined;
   try {
-    const { claims, pending, user: stored } = await verifyAccessTokenSession(keys, token, config);
+    const { claims, pending, user: stored, storedAmr } = await verifyAccessTokenSession(
+      keys,
+      token,
+      config,
+    );
     if (claims.role !== "authenticated") return undefined;
     const session = sessionFromClaims(claims);
     if (stored) session.user.emailVerified = isVerified(stored.emailVerified);
+    // How the session started is the stored family's word, not the (hook-writable) claim's.
+    if (storedAmr) session.amr = storedAmr;
     // A session still owing its second factor fails closed in `auth()`, as a cookie one does.
     if (pending) session.mfaPending = true;
     return session;
