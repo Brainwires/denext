@@ -355,12 +355,12 @@ A project is a `deno.json` with the JSX settings, the import map and the lint pl
     "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
   },
   "imports": {
-    "denext": "jsr:@denext/denext@^4.0.0-rc.1",
-    "denext/jsx-runtime": "jsr:@denext/denext@^4.0.0-rc.1/jsx-runtime",
-    "denext/server": "jsr:@denext/denext@^4.0.0-rc.1/server",
-    "denext/client": "jsr:@denext/denext@^4.0.0-rc.1/client"
+    "denext": "jsr:@denext/denext@^4.0.0",
+    "denext/jsx-runtime": "jsr:@denext/denext@^4.0.0/jsx-runtime",
+    "denext/server": "jsr:@denext/denext@^4.0.0/server",
+    "denext/client": "jsr:@denext/denext@^4.0.0/client"
   },
-  "lint": { "plugins": ["jsr:@denext/denext@^4.0.0-rc.1/lint-plugin"] }
+  "lint": { "plugins": ["jsr:@denext/denext@^4.0.0/lint-plugin"] }
 }
 ```
 

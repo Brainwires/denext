@@ -207,7 +207,7 @@ PORT=3000                                        # every PaaS injects one; --por
 ```
 
 ```sh
-deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.0.0-rc.1/cli start .
+deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.0.0/cli start .
 ```
 
 And the config keys that belong in `denext.config.ts` rather than the

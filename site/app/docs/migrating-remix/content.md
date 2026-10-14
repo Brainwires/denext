@@ -93,7 +93,7 @@ denext task dev
 ```
 
 With Deno installed and no `denext` command:
-`deno run --node-modules-dir=none -A jsr:@denext/denext@^4.0.0-rc.1/cli migrate --from remix`,
+`deno run --node-modules-dir=none -A jsr:@denext/denext@^4.0.0/cli migrate --from remix`,
 then `deno task dev`.
 
 Commit before you run it. The Remix path rewrites `app/` in place, and a clean

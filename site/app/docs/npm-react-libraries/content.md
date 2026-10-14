@@ -72,13 +72,13 @@ other.
     "skipLibCheck": true
   },
   "imports": {
-    "denext": "jsr:@denext/denext@^4.0.0-rc.1",
-    "denext/": "jsr:@denext/denext@^4.0.0-rc.1/",
-    "react": "jsr:@denext/denext@^4.0.0-rc.1/react",
-    "react/jsx-runtime": "jsr:@denext/denext@^4.0.0-rc.1/react/jsx-runtime",
-    "react-dom": "jsr:@denext/denext@^4.0.0-rc.1/react-dom",
-    "react-dom/client": "jsr:@denext/denext@^4.0.0-rc.1/react-dom/client",
-    "react-is": "jsr:@denext/denext@^4.0.0-rc.1/react-is"
+    "denext": "jsr:@denext/denext@^4.0.0",
+    "denext/": "jsr:@denext/denext@^4.0.0/",
+    "react": "jsr:@denext/denext@^4.0.0/react",
+    "react/jsx-runtime": "jsr:@denext/denext@^4.0.0/react/jsx-runtime",
+    "react-dom": "jsr:@denext/denext@^4.0.0/react-dom",
+    "react-dom/client": "jsr:@denext/denext@^4.0.0/react-dom/client",
+    "react-is": "jsr:@denext/denext@^4.0.0/react-is"
   }
 }
 ```

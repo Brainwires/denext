@@ -47,7 +47,7 @@ database, an object store and a migrations step:
 
 ## Deno Deploy
 
-Point the entrypoint at `jsr:@denext/denext@^4.0.0-rc.1/cli` with `start .` (or run
+Point the entrypoint at `jsr:@denext/denext@^4.0.0/cli` with `start .` (or run
 `deno task build` in a build step). What the platform changes:
 
 - **No persistent disk**: the cache is per-isolate memory (`/_denext/health`
@@ -71,7 +71,7 @@ Recipe: [Deployment › Deno Deploy](/docs/deploy#deno-deploy).
 
 A unit that runs
 `deno run --allow-net --allow-read --allow-env --allow-write=.denext
-jsr:@denext/denext@^4.0.0-rc.1/cli start .`
+jsr:@denext/denext@^4.0.0/cli start .`
 with `Restart=always`, `Environment=PORT=3000` and the secrets;
 `denext task build` (or `deno task build`) in the deploy step, then `systemctl restart my-app`. Front it
 with nginx or Caddy for TLS and the connection ceiling. For a zero-downtime

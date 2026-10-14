@@ -325,8 +325,8 @@ jobs:
           deno-version: v2.x
       - run: deno install          # from deno.lock
       - run: deno task check
-      - run: deno run -A jsr:@denext/denext@^4.0.0-rc.1/cli doctor   # renders every route, exits 1 on a bad document
-      - run: deno run -A jsr:@denext/denext@^4.0.0-rc.1/cli audit --strict`}
+      - run: deno run -A jsr:@denext/denext@^4.0.0/cli doctor   # renders every route, exits 1 on a bad document
+      - run: deno run -A jsr:@denext/denext@^4.0.0/cli audit --strict`}
       </Code>
       <p>
         <code>denext doctor</code>{" "}
@@ -362,7 +362,7 @@ const ORIGIN = \`http://127.0.0.1:\${PORT}\`;
 
 async function startDev(): Promise<() => Promise<void>> {
   const child = new Deno.Command("deno", {
-    args: ["run", "-A", "jsr:@denext/denext@^4.0.0-rc.1/cli", "dev", ".", "--port", String(PORT)],
+    args: ["run", "-A", "jsr:@denext/denext@^4.0.0/cli", "dev", ".", "--port", String(PORT)],
     stdout: "null",
     stderr: "inherit",
   }).spawn();

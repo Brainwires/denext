@@ -158,7 +158,7 @@ instead, or write the step itself as a denext verb:
 {
   "tasks": {
     // denext's own test verb (`deno test -A` on the toolchain); what `denext create` scaffolds
-    "test": "deno run -A jsr:@denext/denext@^4.0.0-rc.1/cli test",
+    "test": "deno run -A jsr:@denext/denext@^4.0.0/cli test",
     // or run any deno subcommand on it, arguments verbatim
     "test:raw": "denext deno test -A"
   }

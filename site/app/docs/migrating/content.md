@@ -145,7 +145,7 @@ denext migrate
 denext task dev
 ```
 
-With Deno installed and no `denext` command, `deno run -A jsr:@denext/denext@^4.0.0-rc.1/cli migrate`
+With Deno installed and no `denext` command, `deno run -A jsr:@denext/denext@^4.0.0/cli migrate`
 and `deno task dev` do the same.
 
 By default `migrate` **only creates config files** — it never rewrites your

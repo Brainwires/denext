@@ -165,7 +165,7 @@ images, so the service uses Bitnami's legacy build of the same server, pinned by
 
 ### Deno Deploy
 
-Push the repo and point the entrypoint at `jsr:@denext/denext@^4.0.0-rc.1/cli` with args
+Push the repo and point the entrypoint at `jsr:@denext/denext@^4.0.0/cli` with args
 `start .`, or add a build step running `deno task build`. Deno Deploy provides
 TLS and autoscaling; still set a per-instance `maxConcurrency` (§1) and your
 secrets (`SESSION_SECRET`, etc.) as environment variables.
@@ -185,7 +185,7 @@ WorkingDirectory=/srv/my-app
 Environment=PORT=3000
 Environment=SESSION_SECRET=…
 Environment=DENEXT_CANONICAL_ORIGIN=https://example.com
-ExecStart=/usr/local/bin/deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.0.0-rc.1/cli start .
+ExecStart=/usr/local/bin/deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.0.0/cli start .
 Restart=always
 [Install]
 WantedBy=multi-user.target

@@ -8,42 +8,7 @@ and this project adheres to
 
 ## [Unreleased]
 
-### Breaking (4.0)
-
-These join the [4.0.0-rc.1 breaking changes](#400-rc1---2026-10-13); together they are what moving
-a 3.x app to 4.0 involves. This section is the record.
-
-- **Project verbs run on denext's Deno toolchain.** `dev`, `build`, `export`, `start`, `test`,
-  `check`, `job`, `doctor` and the other verbs that run project code re-run themselves on the
-  pinned `2.9.7-denext.N` Deno, downloaded and SHA-256-verified into `<DENO_DIR>/denext-deno/` on
-  first need, so the Deno your code runs on is no longer the one that started the CLI. A launcher
-  that denies `--allow-run`, or a sandbox without network on first use, stays on stock Deno (one
-  warning); `DENEXT_DENO=stock` opts out.
-- **First-party plugins need their 4.0 releases.** Each plugin's 4.0-compatible release requires
-  denext 4.0, and the releases built for 3.x don't work with it: `@denext/backend` 0.3,
-  `@denext/content-collections` 0.5, `@denext/effect` 0.2, `@denext/graphql` 0.3, `@denext/htmx`
-  2.1, `@denext/openapi` 0.4, `@denext/pages-router` 0.12, `@denext/react-router` 0.3.
-  `denext upgrade` moves the denext pin, the CLI tasks and these plugins together.
-- **No `npm:esbuild`.** denext runs the esbuild 0.25.5 binary its toolchain ships (or the
-  verified `@esbuild/<platform>` one), and the framework deps a local-path migration copies no
-  longer include `esbuild`: an app that imports esbuild itself adds its own `deno.json` entry.
-- **`@denext/backend`: `db()` scopes every query with the request's identity**
-  (`resolveIdentity()`): with `backend({ supabase })` keys, the secret key runs as `service_role`
-  with no row-level security, and a refused credential is an `IdentityError` (401).
-- **`@denext/backend` storage:** `listBuckets` for anon and signed-in callers is an empty list
-  and `getBucket` is `Bucket not found` (they were `403`); a bucket's `authorize` receives the
-  request's `identity`, and a bucket created at runtime (or declared without `authorize`) is
-  decided by `storage.authorize`, else open only to the service role; the size refusal reads "The
-  object exceeded the maximum allowed size".
-- **`@denext/backend` auto-REST:** `readRestCatalog(sql, schemas, tables)` takes a list of
-  schemas and returns the whole catalog, `generateRestTypes(catalog)` takes the catalog alone,
-  and the client's `range()` sends `offset` / `limit` instead of a `Range` header.
-- **`denext generate docker`'s Postgres publishes no host port** unless `--expose-db`
-  (`127.0.0.1:5432`).
-- **`denext db` is a core verb**, no longer contributed by `@denext/backend`.
-- **A TOTP secret kept in a pre-4.0 user's MFA record moves into the factor store** the first time
-  the user's factors are read (no key needed). Keep a database backup from before the upgrade if
-  you may need to roll back to 3.x.
+## [4.0.0] - 2026-10-14
 
 ### Added
 
@@ -271,7 +236,6 @@ a 3.x app to 4.0 involves. This section is the record.
   `createSignedUploadUrl` token), as on Supabase; `uploadResumable(…, { signature })`.
 - **`denext ui` storage** lists buckets created at runtime too, and deletes through the plugin's
   storage operations (so the object's metadata row goes with its bytes).
-
 - **Supabase-compatible keys and request identity (`backend({ supabase })`).** `@denext/backend`
   takes a `supabase` option (`true`, or the keys) that installs Supabase's API keys — a
   publishable key (`sb_publishable_…`, the `anon` role), a secret key (`sb_secret_…`, the
@@ -292,7 +256,6 @@ a 3.x app to 4.0 involves. This section is the record.
   adapter's session families, so a revoked session's tokens stop at once. Core exports the key
   primitives (`resolveSupabaseKeys`, `signSupabaseJwt`, `verifySupabaseJwt`, `apiKeyRole`,
   `generateSupabaseKeys`, `supabaseJwks`, `verifyAccessToken`) from `denext/server`.
-
 - **Edge Functions in `@denext/backend`.** `backend({ functions: {} })` serves
   `functions/<name>.ts` (or `functions/<name>/index.ts`; `supabase/functions/` when only that
   exists) at `/functions/v1/<name>`, the path supabase-js's `functions.invoke` calls. A module that
@@ -341,7 +304,6 @@ a 3.x app to 4.0 involves. This section is the record.
   `fill` stretches to it), `format: "origin"` (keep the source's PNG, JPEG or WebP) and a
   `maxDimension` option that accepts any width, height and quality up to a bound instead of the
   `images` allowlists.
-
 - **`denext generate docker` writes a self-hosted stack.** It reads the project and adds the
   services it needs to the compose file: Postgres 17 (for `@denext/backend` or a Postgres
   `DATABASE_URL`; `pgvector/pgvector:pg17` when a migration creates the `vector` extension), MinIO
@@ -470,6 +432,79 @@ a 3.x app to 4.0 involves. This section is the record.
   database and run its seed file, print (or write as a migration) the DDL for what the live
   database has that the migrations do not, by comparing it with a throwaway shadow database, and
   run `pg_dump`.
+- **Every Deno verb through `denext`.** A verb denext doesn't define runs on denext's Deno
+  toolchain exactly like `denext deno <verb>` — `denext compile …`, `denext run …`, `denext x …`,
+  `denext bench …` — arguments verbatim, exit code and signals passed through, stock Deno when no
+  toolchain can be had. `denext main.ts` (a script extension, a URL or `jsr:` / `npm:` specifier,
+  or an existing file written as a path) is `deno run`. Precedence: denext's built-in verbs, then
+  the project's own (`commands:`, plugin `addCommand`; one stderr notice when one shadows a Deno
+  verb, naming `denext deno <verb>`), then Deno's. An unknown verb still gets a did-you-mean, now
+  over denext, project and Deno verbs. `denext --help`, shell completions and the
+  [CLI reference](https://denext.dev/docs/cli#deno-verbs) list the forwarded verbs; the list is the
+  pinned Deno's, checked against its `--help` by a test. `upgrade`, `desktop`, `create`, `init` and
+  `completions` keep denext's meaning and say how to reach Deno's.
+- **denext's Deno toolchain.** The verbs that run project code (`dev`, `build`, `export`, `start`,
+  `test`, `check`, `task`, `analyze`, `profile`, `doctor`, `desktop run|dev|build|package`,
+  `mobile dev|build`, and a project's own verbs) now re-run themselves on denext's pinned Deno build
+  (`2.9.7-denext.N`: stock Deno plus `Deno.SQL` and Vitest/Jest compatibility in `deno test`) —
+  same argv, cwd, stdio, exit code and forwarded shutdown signals, with a
+  `DENEXT_TOOLCHAIN_ACTIVE` marker so it never loops (only a process running the pinned version
+  stays put: a leaked marker or an older `-denext.N` build switches), the `--config` the first process was started with
+  (read from its command line on Linux and macOS) and its denials (`--deny-net`) as well as
+  its grants. It downloads on first need into
+  `<DENO_DIR>/denext-deno/<version>/<platform>/`, is pinned by version and SHA-256 (checked before
+  the file is extracted, made executable or renamed; a mismatch deletes it), installs atomically
+  under the Cargo-style cache lock, and is re-hashed when its size or mtime changes. Nothing new to
+  install, and the `deno` on PATH is never replaced. `DENEXT_DENO=stock` opts out,
+  `DENEXT_DENO=<path>` uses a given binary unverified; an unsupported platform, no network or a
+  failed download falls back to stock Deno with one warning. A process run without the grants to
+  install and start it (`--allow-run`, read/write on the cache: the least-privilege `start` task
+  `denext create` scaffolds) stays on the Deno that launched it, silently. The pinned build is
+  `2.9.7-denext.15` on macOS (arm64, x64), Linux (x64, arm64) and Windows (x64).
+- **`denext toolchain install | status | path | link | unlink`** (`status --json`, `--verify`) and
+  **`denext deno <args…>`**, which runs the toolchain's `deno` with the arguments verbatim and
+  passes its exit code back (`install`, `path` and `link` refuse clearly when the toolchain can't be
+  had; `status` warns when the `link` points at an older toolchain); like every forwarded verb it runs stock Deno (after one warning) when
+  the toolchain can't be had, and only a `DENEXT_DENO=<path>` that isn't a file is an error. `link` writes an opt-in `~/.denext/bin/deno` (a `deno.cmd` shim on
+  Windows) and prints the `PATH` line; `unlink` removes only what `link` created.
+- `denext doctor` reports the toolchain (pinned version, cached and verified, whether the run is on
+  it or why not) and names `deno.json` tasks that call `deno test` directly, which `deno task` runs
+  on stock Deno. `denext create` scaffolds a `test` task through `denext test`.
+- **`rateLimitHeader` and `rateLimitLocalAddresses`: choose the address per-address limits key
+  on.** Modelled on Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`. `rateLimitHeader` (env
+  `DENEXT_RATE_LIMIT_HEADER`) names a header the fronting proxy sets to the client address
+  (`cf-connecting-ip`, `fly-client-ip`, `x-real-ip`); when a request carries an IP address there
+  (its last comma-separated value), `rateLimit()`, `denextAuth`'s per-IP budgets,
+  `live.limits.maxConnectionsPerIp`, `@denext/backend` realtime's signed-out quota and
+  `clientIpForLimits()` key on it, loopback/private or not, IPv6 per `/64` and IPv4-mapped as its
+  IPv4. A request without it falls back to the trusted hop / socket peer with one warning, where
+  Supabase Auth applies no limit: a client that reaches the server directly cannot skip every
+  limit by leaving the header out. `clientIp()` is unchanged. `rateLimitLocalAddresses: true` (env
+  `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`) applies the same limits to a loopback, private, link-local
+  or unique-local socket peer, counted by its own address, instead of skipping it. Both default to
+  today's behaviour and are validated at boot.
+- `deno task desktop:pin-runtime <tag>` also writes `src/build/deno-toolchain-pin.json` from the
+  release's `cli` section (every CLI archive cross-checked against `SHA256SUMS`, hashed and
+  `gh attestation verify`'d like the runtime archives), so one command pins both.
+- **React Native mode: `TextInput` takes the props react-native-web drops.** `autoComplete`'s
+  React Native values (`"password-new"`, `"sms-otp"`, `"name-given"`, …) and iOS's
+  `textContentType` (`"oneTimeCode"`, `"emailAddress"`, `"newPassword"`, …) become the HTML
+  `autocomplete` token password managers and one-time-code autofill read; `submitBehavior`
+  (`"submit"` on a `multiline` input submits on Enter without blurring); `onEndEditing`;
+  `cursorColor` / `selectionColor` tint the caret and the selection highlight.
+- **React Native mode: `Modal`, `Pressable`, `ScrollView` and `Text` take more React Native
+  props.** In the Android shell a visible `Modal` takes the back button and back gesture and calls
+  `onRequestClose` (nothing under it runs), and `Pressable`'s `android_ripple` draws Material's
+  ripple from the touch point; `ScrollView`'s `bounces={false}` / `overScrollMode="never"` turn the
+  overscroll effect off and `contentOffset` sets the starting position; `Text`'s
+  `adjustsFontSizeToFit` / `minimumFontScale` shrink an overflowing text until it fits.
+- **React Native mode: more component props.** `Text`'s `ellipsizeMode` (`"clip"`, and `"head"` /
+  `"middle"` on one line) and `onTextLayout` (the drawn lines); `ScrollView`'s
+  `maintainVisibleContentPosition` (`minIndexForVisible`, `autoscrollToTopThreshold`),
+  `contentInset` and `automaticallyAdjustKeyboardInsets`; `Image`'s React Native 0.71 `src` /
+  `srcSet` / `alt` / `width` / `height`, a `source` array, `loadingIndicatorSource` and (Android
+  shell) `fadeDuration`; `Switch`'s `ios_backgroundColor` and `onChange`; `Modal`'s
+  `backdropColor` and, in the iOS shell, `presentationStyle="pageSheet"` / `"formSheet"`.
 
 ### Changed
 
@@ -520,7 +555,6 @@ a 3.x app to 4.0 involves. This section is the record.
   Vitest run (each reported through its own source map, then combined line for line), and
   `--coverage-raw-data-only` runs keep accumulating in one directory. The minimum desktop runtime
   stays 2.9.7-denext.14.
-
 - **`denext db` is a core verb.** `@denext/backend` no longer contributes it; it installs hooks
   the core verb uses: its own migrations, its service schemas, and the Postgres actions
   (`diff`, `dump`, `pull`, `lint`, `inspect`, `test`, `types`). `db status` prints
@@ -533,21 +567,17 @@ a 3.x app to 4.0 involves. This section is the record.
 - **`denext db seed` tracks seed files by hash**, in `supabase_migrations.seed_files` like the
   Supabase CLI (`_seed_files` in a project with a `_migrations` history). It skips a file it has
   already run unchanged; an edited file runs again, and so does every file with `--force`.
-
 - **Storage form uploads are streamed**: the file part of a multipart upload flows through the
   size cap and sniffing to the store instead of being read into memory first.
 - **Storage bucket listings for anon and signed-in users** answer as Supabase does without
   policies: `listBuckets` is an empty list and `getBucket` is `Bucket not found` (they were `403`);
   the service role, and `storage: { rls: true }` policies, see buckets as before.
-
 - **`@denext/backend`: `storage.buckets` may be empty** (buckets can be created at runtime), and an
   upload refused for its size now says "The object exceeded the maximum allowed size".
-
 - **The generated Postgres service is Postgres 17 and publishes no port by default.** The
   commented example in a plain `docker-compose.yml` is `postgres:17-alpine`; a switched-on one
   (the UI's Postgres box, now `--postgres`) is the stack's service: credentials from `.env`, a
   `pg_isready` health check, a `db-data` volume, and `127.0.0.1:5432` only with `--expose-db`.
-
 - **esbuild 0.25.5, and no `npm:esbuild`.** denext vendors esbuild's JavaScript API
   (`src/build/esbuild/`, MIT, from esbuild 0.25.5) and spawns an esbuild binary itself:
   `ESBUILD_BINARY_PATH` when set (checked to be 0.25.5), else the `esbuild` denext's Deno toolchain
@@ -561,6 +591,38 @@ a 3.x app to 4.0 involves. This section is the record.
   status` shows which esbuild builds run. Moving from 0.24 to 0.25 changes nothing denext relies
   on; a regular-expression plugin `filter` now honours its flags (`/…/i`), as esbuild 0.25.2 made
   it.
+- **denext's Deno toolchain and Deno Desktop runtime are 2.9.7-denext.16** (both pins from the same
+  release, hashes and attestations verified). The Vitest/Jest layer in `deno test` needs no
+  permission of its own (its config, `__mocks__` and automock reads take no `--allow-read` inside
+  the project, and it needs no `--allow-env`), `vi.mock` works under a path with `~` or a space,
+  and `deno coverage` maps the modules the layer transformed. Upstream Deno picks: `deno compile`
+  checks read permission for a dynamic import, Node-API fixes, coverage runs skip V8's code cache,
+  the `fetch` connection pool, `rand` 0.9.3. The minimum desktop runtime stays 2.9.7-denext.14.
+- **`rateLimit()` follows the app's `trustForwardedHeaders`.** Without its own
+  `trustForwardedHeaders`, the API middleware now keys on the last `x-forwarded-for` hop whenever
+  the app trusts its proxy (`trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1`, read per request),
+  as `clientIp()`, `clientIpForLimits()` and Live do; it used to ignore the header unless the
+  limiter was told separately. An explicit `trustForwardedHeaders` on the limiter still wins.
+- **The `denextAuth` per-IP budgets follow the same limit-address rule.** They are skipped for any
+  loopback, private, link-local or unique-local socket peer with no trusted forwarded hop, as
+  `rateLimit()` skips its default key, not only for one that sends `x-forwarded-for`: a proxy that
+  doesn't set the header no longer puts every client in one sign-in-start or session-read bucket.
+  The credentials limiter's per-identifier key still applies there.
+- **denext pins Deno Desktop runtime 2.9.7-denext.15** (the release that also ships the toolchain's
+  CLI; `Deno.SQL` in the runtime). The minimum stays 2.9.7-denext.14.
+- **Every Deno version check accepts the toolchain's `2.9.7-denext.N`**, a semver prerelease that
+  sorts below 2.9.7: `denext desktop doctor`'s "needs Deno 2.9.7 exactly" check, the
+  `denoland/deno:<tag>` image of `denext generate docker` / `denext ui`'s Docker page and the
+  `setup-deno` version of `denext generate ci` all use the Deno release it is built from.
+- **denext requires Deno Desktop runtime 2.9.7-denext.14** (was 2.9.7-denext.9). An older runtime
+  starts a sidecar's `spawnSelf` children with the runtime's launch messages on their stdout. The
+  startup warning for a runtime that publishes no `DENO_DESKTOP_WS_URL` now names denext.14 as the
+  oldest supported.
+- **`spawnSelf()` needs no `permissions.run` under denext's pinned runtime.** The runtime
+  authorizes a fork of its own executable that has an IPC channel, so a module sidecar no longer
+  grants `run: ["*"]` for its children. Under the stock runtime and `deno run`, `spawnSelf` still
+  checks `run` over the executable and says what to grant. Docs:
+  [Deno Desktop › Sidecars](/docs/desktop#desktop-sidecars).
 
 ### Fixed
 
@@ -691,12 +753,10 @@ a 3.x app to 4.0 involves. This section is the record.
 - **The SAML metadata background refresh no longer starts during a build.** The timer
   (`saml.metadataRefresh`) now starts only when serving (`dev` / `start`), not in `denext build`
   or export.
-
 - **`/auth/v1` phone-factor challenges spend the user's SMS budget, not the factor's**:
   unenrolling and re-enrolling a phone factor no longer starts a fresh send budget.
 - **`/auth/v1` `/resend` for an SMS confirmation answers `over_sms_send_rate_limit`** past its
   budget (it answered `over_email_send_rate_limit`).
-
 - **`inMemoryAuthAdapter()` keeps one live verification token per address and purpose**, as the
   SQL adapters do: issuing a new one retires the older, and a token is consumed only when its
   hash matches (compared in constant time).
@@ -718,6 +778,27 @@ a 3.x app to 4.0 involves. This section is the record.
   deno 2.9.7" (the Deno embedded in the executable, which runs only the CLI itself): it says
   denext runs every command on the toolchain, or on the `deno` on `PATH` with
   `DENEXT_DENO=stock`, and that a missing toolchain downloads on the first denext command.
+- **Running a project verb no longer reports it as an unknown command on a loaded machine.**
+  `denext <verb>` discovered the project's `commands:` / plugin verbs under the 1.5 s budget meant
+  for listings, so a config import slowed by a cold cache or a busy CPU dropped the verb silently
+  (`denext: unknown command "seed"`). Dispatch now waits up to 30 s, and when discovery still falls
+  short — a hung plugin `setup`, a config that throws — the error says why.
+- The Deno Desktop runtime's Deno version check accepts denext's Deno toolchain
+  (`2.9.7-denext.N` is Deno 2.9.7).
+- **`denext create`'s least-privilege `deno task start` serves the built app.** It failed with
+  `NotCapable: Requires run access` on every scaffolded app: `denext start` rebuilt the
+  stylesheets and re-ran itself under a CSS import map (a second `deno`), and an app with no
+  Flight route re-crawled its import graph with a `deno info` child. The build now points every
+  server module's stylesheet import at its shim in the server copies and records the crawled
+  boundary, so `start` spawns nothing and needs no `--allow-run` (a SPA's `start` skips the CSS
+  step too). A next-compat build, or a project moved since its build, still takes the old path.
+- **Per-address limits key on the same client through a basePath, a config rewrite and a custom
+  middleware runner's rewrite.** The request rebuilt for the new URL lost the recorded socket peer, so
+  `rateLimit()`'s default key put every client of such a route in one `unknown` bucket and
+  `clientIp()` answered `undefined` there.
+- **`ipBucket()` (every per-address limit) buckets a NAT64 address (`64:ff9b::/96`) and an
+  IPv4-compatible one (`::198.51.100.7`) by the IPv4 address it carries**, as it already did for
+  an IPv4-mapped one, instead of putting every such client in one shared `/64`.
 
 ### Security
 
@@ -731,9 +812,7 @@ a 3.x app to 4.0 involves. This section is the record.
   still uses the request's origin and is sent `no-store`. A `generateSitemaps` sitemap index
   built on a `Host`-derived origin is now sent `private, no-store` too. Production logs one
   warning when no stable origin is configured.
-
-Hardening of the new `/auth/v1` API (unreleased) and the user store it shares with `denextAuth()`:
-
+  Hardening of the new `/auth/v1` API (unreleased) and the user store it shares with `denextAuth()`:
 - **No password set before an address was proven survives its first proof.** A magic link, an
   email or SMS one-time code, a recovery link or an invite that first confirms an account's
   address now retires everything set up on it before: the password, second factors, passkeys,
@@ -817,7 +896,6 @@ Hardening of the new `/auth/v1` API (unreleased) and the user store it shares wi
   with another scheme (`javascript:`, `data:`) refuses the metadata, and `/auth/v1` refuses a
   plaintext one (loopback `http:` only under `dangerouslyAllowInsecureProviders`) at registration,
   at a refresh and at use, so the URL handed to the browser is always an HTTPS page.
-
 - **`@denext/backend` Edge Functions: `SUPABASE_URL` never comes from a request's `Host`.** With
   neither `functions.url` nor a `SUPABASE_URL` env var, a function's worker took `SUPABASE_URL`
   from the first request that started it and kept it for its whole life, beside
@@ -866,18 +944,54 @@ Hardening of the new `/auth/v1` API (unreleased) and the user store it shares wi
   could never be read again. Secrets are now sealed under the id the database returns, the
   additional data uses the canonical form of a UUID, and the write is checked to land on that
   row.
+- **A typed-API batch item and a server-side typed-API self-call keep the client's
+  `rateLimitHeader` address.** The sub-request copied only an allowlist of the parent's headers,
+  so with `rateLimitHeader` set behind a loopback proxy each item had no address to limit on and
+  `rateLimit()` skipped it: the batch endpoint bypassed every per-route limit. The header the app
+  names is now inherited from the parent (a caller's extra header cannot replace it).
+- **Behaviour note for direct LAN / VPN deployments:** since the change above that aligns the
+  `denextAuth` per-IP budgets with the limit-address rule, those budgets (sign-in start, session
+  read, the IP-wide buckets) are skipped for ANY untrusted loopback/private socket peer, not only
+  one that sends `x-forwarded-for`. Where those peers are the real clients, set
+  `rateLimitLocalAddresses: true` to budget each by its own address. The credentials limiter's
+  per-identifier key applies either way.
 
-## [4.0.0-rc.2] - 2026-10-13
+### Breaking (4.0)
 
-### Changed
+These join the [4.0.0-rc.1 breaking changes](#400-rc1---2026-10-13); together they are what moving
+a 3.x app to 4.0 involves. This section is the record.
 
-- **denext's Deno toolchain and Deno Desktop runtime are 2.9.7-denext.16** (both pins from the same
-  release, hashes and attestations verified). The Vitest/Jest layer in `deno test` needs no
-  permission of its own (its config, `__mocks__` and automock reads take no `--allow-read` inside
-  the project, and it needs no `--allow-env`), `vi.mock` works under a path with `~` or a space,
-  and `deno coverage` maps the modules the layer transformed. Upstream Deno picks: `deno compile`
-  checks read permission for a dynamic import, Node-API fixes, coverage runs skip V8's code cache,
-  the `fetch` connection pool, `rand` 0.9.3. The minimum desktop runtime stays 2.9.7-denext.14.
+- **Project verbs run on denext's Deno toolchain.** `dev`, `build`, `export`, `start`, `test`,
+  `check`, `job`, `doctor` and the other verbs that run project code re-run themselves on the
+  pinned `2.9.7-denext.N` Deno, downloaded and SHA-256-verified into `<DENO_DIR>/denext-deno/` on
+  first need, so the Deno your code runs on is no longer the one that started the CLI. A launcher
+  that denies `--allow-run`, or a sandbox without network on first use, stays on stock Deno (one
+  warning); `DENEXT_DENO=stock` opts out.
+- **First-party plugins need their 4.0 releases.** Each plugin's 4.0-compatible release requires
+  denext 4.0, and the releases built for 3.x don't work with it: `@denext/backend` 0.3,
+  `@denext/content-collections` 0.5, `@denext/effect` 0.2, `@denext/graphql` 0.3, `@denext/htmx`
+  2.1, `@denext/openapi` 0.4, `@denext/pages-router` 0.12, `@denext/react-router` 0.3.
+  `denext upgrade` moves the denext pin, the CLI tasks and these plugins together.
+- **No `npm:esbuild`.** denext runs the esbuild 0.25.5 binary its toolchain ships (or the
+  verified `@esbuild/<platform>` one), and the framework deps a local-path migration copies no
+  longer include `esbuild`: an app that imports esbuild itself adds its own `deno.json` entry.
+- **`@denext/backend`: `db()` scopes every query with the request's identity**
+  (`resolveIdentity()`): with `backend({ supabase })` keys, the secret key runs as `service_role`
+  with no row-level security, and a refused credential is an `IdentityError` (401).
+- **`@denext/backend` storage:** `listBuckets` for anon and signed-in callers is an empty list
+  and `getBucket` is `Bucket not found` (they were `403`); a bucket's `authorize` receives the
+  request's `identity`, and a bucket created at runtime (or declared without `authorize`) is
+  decided by `storage.authorize`, else open only to the service role; the size refusal reads "The
+  object exceeded the maximum allowed size".
+- **`@denext/backend` auto-REST:** `readRestCatalog(sql, schemas, tables)` takes a list of
+  schemas and returns the whole catalog, `generateRestTypes(catalog)` takes the catalog alone,
+  and the client's `range()` sends `offset` / `limit` instead of a `Range` header.
+- **`denext generate docker`'s Postgres publishes no host port** unless `--expose-db`
+  (`127.0.0.1:5432`).
+- **`denext db` is a core verb**, no longer contributed by `@denext/backend`.
+- **A TOTP secret kept in a pre-4.0 user's MFA record moves into the factor store** the first time
+  the user's factors are read (no key needed). Keep a database backup from before the upgrade if
+  you may need to roll back to 3.x.
 
 ### Notes
 
@@ -885,8 +999,6 @@ Hardening of the new `/auth/v1` API (unreleased) and the user store it shares wi
   releases and takes fixes between them, how each denext release pins and verifies one build, and
   how the first command bootstraps it. See
   [denext's Deno toolchain › Notes](https://denext.dev/docs/toolchain#notes-how-denexts-deno-build-is-kept-current).
-
-## [4.0.0-rc.1] - 2026-10-13
 
 ### Breaking (4.0)
 
@@ -923,149 +1035,6 @@ Hardening of the new `/auth/v1` API (unreleased) and the user store it shares wi
   `--` in what it hands Deno, so `denext test a.test.ts -- --seed 1` gives the script its own
   arguments, and hands back `--quiet` (and `--json` to `lint`), which denext parses as global
   flags.
-
-### Added
-
-- **Every Deno verb through `denext`.** A verb denext doesn't define runs on denext's Deno
-  toolchain exactly like `denext deno <verb>` — `denext compile …`, `denext run …`, `denext x …`,
-  `denext bench …` — arguments verbatim, exit code and signals passed through, stock Deno when no
-  toolchain can be had. `denext main.ts` (a script extension, a URL or `jsr:` / `npm:` specifier,
-  or an existing file written as a path) is `deno run`. Precedence: denext's built-in verbs, then
-  the project's own (`commands:`, plugin `addCommand`; one stderr notice when one shadows a Deno
-  verb, naming `denext deno <verb>`), then Deno's. An unknown verb still gets a did-you-mean, now
-  over denext, project and Deno verbs. `denext --help`, shell completions and the
-  [CLI reference](https://denext.dev/docs/cli#deno-verbs) list the forwarded verbs; the list is the
-  pinned Deno's, checked against its `--help` by a test. `upgrade`, `desktop`, `create`, `init` and
-  `completions` keep denext's meaning and say how to reach Deno's.
-- **denext's Deno toolchain.** The verbs that run project code (`dev`, `build`, `export`, `start`,
-  `test`, `check`, `task`, `analyze`, `profile`, `doctor`, `desktop run|dev|build|package`,
-  `mobile dev|build`, and a project's own verbs) now re-run themselves on denext's pinned Deno build
-  (`2.9.7-denext.N`: stock Deno plus `Deno.SQL` and Vitest/Jest compatibility in `deno test`) —
-  same argv, cwd, stdio, exit code and forwarded shutdown signals, with a
-  `DENEXT_TOOLCHAIN_ACTIVE` marker so it never loops (only a process running the pinned version
-  stays put: a leaked marker or an older `-denext.N` build switches), the `--config` the first process was started with
-  (read from its command line on Linux and macOS) and its denials (`--deny-net`) as well as
-  its grants. It downloads on first need into
-  `<DENO_DIR>/denext-deno/<version>/<platform>/`, is pinned by version and SHA-256 (checked before
-  the file is extracted, made executable or renamed; a mismatch deletes it), installs atomically
-  under the Cargo-style cache lock, and is re-hashed when its size or mtime changes. Nothing new to
-  install, and the `deno` on PATH is never replaced. `DENEXT_DENO=stock` opts out,
-  `DENEXT_DENO=<path>` uses a given binary unverified; an unsupported platform, no network or a
-  failed download falls back to stock Deno with one warning. A process run without the grants to
-  install and start it (`--allow-run`, read/write on the cache: the least-privilege `start` task
-  `denext create` scaffolds) stays on the Deno that launched it, silently. The pinned build is
-  `2.9.7-denext.15` on macOS (arm64, x64), Linux (x64, arm64) and Windows (x64).
-- **`denext toolchain install | status | path | link | unlink`** (`status --json`, `--verify`) and
-  **`denext deno <args…>`**, which runs the toolchain's `deno` with the arguments verbatim and
-  passes its exit code back (`install`, `path` and `link` refuse clearly when the toolchain can't be
-  had; `status` warns when the `link` points at an older toolchain); like every forwarded verb it runs stock Deno (after one warning) when
-  the toolchain can't be had, and only a `DENEXT_DENO=<path>` that isn't a file is an error. `link` writes an opt-in `~/.denext/bin/deno` (a `deno.cmd` shim on
-  Windows) and prints the `PATH` line; `unlink` removes only what `link` created.
-- `denext doctor` reports the toolchain (pinned version, cached and verified, whether the run is on
-  it or why not) and names `deno.json` tasks that call `deno test` directly, which `deno task` runs
-  on stock Deno. `denext create` scaffolds a `test` task through `denext test`.
-- **`rateLimitHeader` and `rateLimitLocalAddresses`: choose the address per-address limits key
-  on.** Modelled on Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`. `rateLimitHeader` (env
-  `DENEXT_RATE_LIMIT_HEADER`) names a header the fronting proxy sets to the client address
-  (`cf-connecting-ip`, `fly-client-ip`, `x-real-ip`); when a request carries an IP address there
-  (its last comma-separated value), `rateLimit()`, `denextAuth`'s per-IP budgets,
-  `live.limits.maxConnectionsPerIp`, `@denext/backend` realtime's signed-out quota and
-  `clientIpForLimits()` key on it, loopback/private or not, IPv6 per `/64` and IPv4-mapped as its
-  IPv4. A request without it falls back to the trusted hop / socket peer with one warning, where
-  Supabase Auth applies no limit: a client that reaches the server directly cannot skip every
-  limit by leaving the header out. `clientIp()` is unchanged. `rateLimitLocalAddresses: true` (env
-  `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`) applies the same limits to a loopback, private, link-local
-  or unique-local socket peer, counted by its own address, instead of skipping it. Both default to
-  today's behaviour and are validated at boot.
-- `deno task desktop:pin-runtime <tag>` also writes `src/build/deno-toolchain-pin.json` from the
-  release's `cli` section (every CLI archive cross-checked against `SHA256SUMS`, hashed and
-  `gh attestation verify`'d like the runtime archives), so one command pins both.
-
-- **React Native mode: `TextInput` takes the props react-native-web drops.** `autoComplete`'s
-  React Native values (`"password-new"`, `"sms-otp"`, `"name-given"`, …) and iOS's
-  `textContentType` (`"oneTimeCode"`, `"emailAddress"`, `"newPassword"`, …) become the HTML
-  `autocomplete` token password managers and one-time-code autofill read; `submitBehavior`
-  (`"submit"` on a `multiline` input submits on Enter without blurring); `onEndEditing`;
-  `cursorColor` / `selectionColor` tint the caret and the selection highlight.
-- **React Native mode: `Modal`, `Pressable`, `ScrollView` and `Text` take more React Native
-  props.** In the Android shell a visible `Modal` takes the back button and back gesture and calls
-  `onRequestClose` (nothing under it runs), and `Pressable`'s `android_ripple` draws Material's
-  ripple from the touch point; `ScrollView`'s `bounces={false}` / `overScrollMode="never"` turn the
-  overscroll effect off and `contentOffset` sets the starting position; `Text`'s
-  `adjustsFontSizeToFit` / `minimumFontScale` shrink an overflowing text until it fits.
-- **React Native mode: more component props.** `Text`'s `ellipsizeMode` (`"clip"`, and `"head"` /
-  `"middle"` on one line) and `onTextLayout` (the drawn lines); `ScrollView`'s
-  `maintainVisibleContentPosition` (`minIndexForVisible`, `autoscrollToTopThreshold`),
-  `contentInset` and `automaticallyAdjustKeyboardInsets`; `Image`'s React Native 0.71 `src` /
-  `srcSet` / `alt` / `width` / `height`, a `source` array, `loadingIndicatorSource` and (Android
-  shell) `fadeDuration`; `Switch`'s `ios_backgroundColor` and `onChange`; `Modal`'s
-  `backdropColor` and, in the iOS shell, `presentationStyle="pageSheet"` / `"formSheet"`.
-
-### Changed
-
-- **`rateLimit()` follows the app's `trustForwardedHeaders`.** Without its own
-  `trustForwardedHeaders`, the API middleware now keys on the last `x-forwarded-for` hop whenever
-  the app trusts its proxy (`trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1`, read per request),
-  as `clientIp()`, `clientIpForLimits()` and Live do; it used to ignore the header unless the
-  limiter was told separately. An explicit `trustForwardedHeaders` on the limiter still wins.
-- **The `denextAuth` per-IP budgets follow the same limit-address rule.** They are skipped for any
-  loopback, private, link-local or unique-local socket peer with no trusted forwarded hop, as
-  `rateLimit()` skips its default key, not only for one that sends `x-forwarded-for`: a proxy that
-  doesn't set the header no longer puts every client in one sign-in-start or session-read bucket.
-  The credentials limiter's per-identifier key still applies there.
-- **denext pins Deno Desktop runtime 2.9.7-denext.15** (the release that also ships the toolchain's
-  CLI; `Deno.SQL` in the runtime). The minimum stays 2.9.7-denext.14.
-- **Every Deno version check accepts the toolchain's `2.9.7-denext.N`**, a semver prerelease that
-  sorts below 2.9.7: `denext desktop doctor`'s "needs Deno 2.9.7 exactly" check, the
-  `denoland/deno:<tag>` image of `denext generate docker` / `denext ui`'s Docker page and the
-  `setup-deno` version of `denext generate ci` all use the Deno release it is built from.
-- **denext requires Deno Desktop runtime 2.9.7-denext.14** (was 2.9.7-denext.9). An older runtime
-  starts a sidecar's `spawnSelf` children with the runtime's launch messages on their stdout. The
-  startup warning for a runtime that publishes no `DENO_DESKTOP_WS_URL` now names denext.14 as the
-  oldest supported.
-- **`spawnSelf()` needs no `permissions.run` under denext's pinned runtime.** The runtime
-  authorizes a fork of its own executable that has an IPC channel, so a module sidecar no longer
-  grants `run: ["*"]` for its children. Under the stock runtime and `deno run`, `spawnSelf` still
-  checks `run` over the executable and says what to grant. Docs:
-  [Deno Desktop › Sidecars](/docs/desktop#desktop-sidecars).
-
-### Fixed
-
-- **Running a project verb no longer reports it as an unknown command on a loaded machine.**
-  `denext <verb>` discovered the project's `commands:` / plugin verbs under the 1.5 s budget meant
-  for listings, so a config import slowed by a cold cache or a busy CPU dropped the verb silently
-  (`denext: unknown command "seed"`). Dispatch now waits up to 30 s, and when discovery still falls
-  short — a hung plugin `setup`, a config that throws — the error says why.
-- The Deno Desktop runtime's Deno version check accepts denext's Deno toolchain
-  (`2.9.7-denext.N` is Deno 2.9.7).
-- **`denext create`'s least-privilege `deno task start` serves the built app.** It failed with
-  `NotCapable: Requires run access` on every scaffolded app: `denext start` rebuilt the
-  stylesheets and re-ran itself under a CSS import map (a second `deno`), and an app with no
-  Flight route re-crawled its import graph with a `deno info` child. The build now points every
-  server module's stylesheet import at its shim in the server copies and records the crawled
-  boundary, so `start` spawns nothing and needs no `--allow-run` (a SPA's `start` skips the CSS
-  step too). A next-compat build, or a project moved since its build, still takes the old path.
-- **Per-address limits key on the same client through a basePath, a config rewrite and a custom
-  middleware runner's rewrite.** The request rebuilt for the new URL lost the recorded socket peer, so
-  `rateLimit()`'s default key put every client of such a route in one `unknown` bucket and
-  `clientIp()` answered `undefined` there.
-- **`ipBucket()` (every per-address limit) buckets a NAT64 address (`64:ff9b::/96`) and an
-  IPv4-compatible one (`::198.51.100.7`) by the IPv4 address it carries**, as it already did for
-  an IPv4-mapped one, instead of putting every such client in one shared `/64`.
-
-### Security
-
-- **A typed-API batch item and a server-side typed-API self-call keep the client's
-  `rateLimitHeader` address.** The sub-request copied only an allowlist of the parent's headers,
-  so with `rateLimitHeader` set behind a loopback proxy each item had no address to limit on and
-  `rateLimit()` skipped it: the batch endpoint bypassed every per-route limit. The header the app
-  names is now inherited from the parent (a caller's extra header cannot replace it).
-- **Behaviour note for direct LAN / VPN deployments:** since the change above that aligns the
-  `denextAuth` per-IP budgets with the limit-address rule, those budgets (sign-in start, session
-  read, the IP-wide buckets) are skipped for ANY untrusted loopback/private socket peer, not only
-  one that sends `x-forwarded-for`. Where those peers are the real clients, set
-  `rateLimitLocalAddresses: true` to budget each by its own address. The credentials limiter's
-  per-identifier key applies either way.
 
 ## [3.4.16] - 2026-10-12
 
@@ -14530,7 +14499,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.0.0-rc.2...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.0.0...development
+[4.0.0]: https://jsr.io/@denext/denext@4.0.0
 [4.0.0-rc.2]: https://jsr.io/@denext/denext@4.0.0-rc.2
 [4.0.0-rc.1]: https://jsr.io/@denext/denext@4.0.0-rc.1
 [3.4.16]: https://jsr.io/@denext/denext@3.4.16
