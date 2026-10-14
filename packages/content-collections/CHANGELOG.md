@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- The Markdown renderer gains nested lists, GFM footnotes, inline and reference images (alt and
+  title attribute-escaped, `src` refused as link targets are), indented code blocks and code
+  spans of any backtick-run length.
+
 ## [0.5.0] - 2026-10-13
 
 ### Changed

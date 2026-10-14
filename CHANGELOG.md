@@ -61,11 +61,62 @@ and this project adheres to
 - **`@denext/graphql` 0.4.0: the schema reloads in `denext dev`.** `schema` takes the module path
   that exports it; an edit beside it (or under the `watch` globs) loads the schema again for the
   next request, and subscriptions on the old schema complete.
+- **`captureOwnerStack()` returns the owner stack in development.** Called while a component
+  renders on the client, React 19's `captureOwnerStack()` (from the `react` alias) returns the
+  components above it, nearest first, formatted as React formats it
+  (`"\n    at Parent (file:line:column)\n    at App (…)"`): the chain denext's DevTools panel
+  shows, each frame's location being where the component was declared. It returns `null` in
+  production, outside a render and during a server render.
+- **`cacheSignal()` returns the server render's cache-scope signal.** During a server render,
+  React 19.2's `cacheSignal()` returns an `AbortSignal` that aborts when the render ends (its last
+  streamed byte included), fails, or is aborted by a client disconnect or the request timeout,
+  with React's "render completed" reason. Thread it into work a `cache()`d function or a Server
+  Component starts. It returns `null` on the client, outside a request and inside a
+  `"use cache"` scope, whose fill other readers share.
+- **`denext doctor` / `probeApp` fail a page an `error.tsx` rendered.** A server error that a
+  segment `error.tsx` caught renders the fallback at 200; the new `no-caught-error` check fails
+  that route with the error's message and the digest the server logged it under. The probe reads
+  the error through its own `onRequestError` hook, so responses carry nothing new, in production
+  or otherwise.
+- **React Native mode's `Image` takes `crossOrigin` and `referrerPolicy`.** With either set, the
+  image is drawn as a real `<img>` carrying them (react-native-web's CSS background can't):
+  `resizeMode` as `object-fit`, `blurRadius` as a blur, `defaultSource` until it loads, and the
+  load events in react-native-web's shapes.
+- **An iOS `pageSheet` / `formSheet` `Modal` swipes down to dismiss.** In React Native mode's iOS
+  shell, dragging the sheet past half its height (or flicking it) slides it away and calls
+  `onRequestClose`, as React Native does; `onDismiss` follows once the app hides it, and a sheet
+  the app keeps visible slides back. A scroll view inside moves the sheet only from its top.
+- **`TouchableNativeFeedback` draws its `background` ripple** in the Android shell, as
+  `Pressable`'s `android_ripple`: `TouchableNativeFeedback.Ripple(color, borderless, radius)`
+  in its colour, and `SelectableBackground()` (the default) / `SelectableBackgroundBorderless()`
+  in the theme's highlight.
+- **LegendList on `VirtualList` honours `waitForInitialLayout`, `itemsAreEqual`,
+  `experimental_adaptiveRender` and the start of `contentInset`.** In React Native mode and with
+  `lists: "denext"`, `contentInset.top` (`left` when horizontal) adds room before the content
+  (through `VirtualList`'s new `startInset`). `waitForInitialLayout` keeps the list invisible
+  until its first items are measured. `itemsAreEqual` (with a `keyExtractor`) keeps an equal
+  item's rendered element, so neither `renderItem` nor its components run again.
+  `useAdaptiveRender()` / `useAdaptiveRenderChange()` report `"light"` while the list scrolls
+  faster than `enterVelocity`, with LegendList's web thresholds (6 / 3 px per ms, 250 ms) and
+  `onChange(mode, reason)`.
+- **The first-party Markdown renderer covers more of CommonMark and GFM.** A content
+  collection's `.md` entries (and anything else rendered through
+  `@denext/content-collections/markdown`) now get nested lists (an item indented two or more
+  columns past its parent's marker; a further paragraph of an item stays inside it), GFM
+  footnotes (`[^1]` with `[^1]: …`, a numbered section with back-links, numbered by first
+  reference), inline and reference images (`![alt](src "title")`; the alt and title are
+  attribute-escaped and `src` is refused exactly as a link target is), indented code blocks and
+  code spans of any backtick-run length (``a ` b``). Raw HTML is still escaped.
 
 ### Changed
 
 - **`.env.example` points at `denext stack passwd --postgres`** for changing `POSTGRES_PASSWORD`
   on an existing volume. Before, it said that changing the password locked the stack out.
+- **`Image`'s `fadeDuration` follows React Native:** the Android shell fades by 300 ms when it is
+  unset, iOS never fades, and a browser fades only when it is set.
+- **`onRequestError` hears an error an `error.tsx` caught in a streamed Suspense hole.** A catch
+  in a hole that streams after the shell is reported as it happens (`routeType: "render"`), as
+  the shell's catches already were; before, only the server log had it.
 
 ### Security
 

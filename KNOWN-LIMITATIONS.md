@@ -21,8 +21,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   instruments every client `await`; `yield*` delegation and top-level `await` are not).
 - **`next-intl` formats the common ICU subset.** An unknown number/date skeleton token is
   ignored, and deeply nested `plural`/`select` is depth-capped (an error, not a wrong render).
-- **`captureOwnerStack()` and `cacheSignal()` return `null`** (owner stacks are in denext's
-  DevTools; there is no client cache scope).
+- **`captureOwnerStack()` reports the render-parent chain** (the DevTools panel's), not React's
+  JSX-owner chain: a component passed as `children` through a wrapper is listed under the wrapper.
+  Each frame's location is where the component was declared, and during a server render it
+  returns `null`.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`), Next's `taint` config
   (React's `experimental_taint*` are enforced), and Next canary's navigation-stage APIs
   (`unstable_navigation` / `unstable_prefetch` from `next/cache`; an import fails the build).
@@ -149,26 +151,21 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
   `allowedDevOrigins`; no wildcards), the CVE-2025-48068 defence.
-- **`denext doctor` / `probeApp` see a crash only as the bare 500.** An error an `error.tsx`
-  rendered at 200 is a page to the probe; assert on its content yourself.
+- **`denext doctor` / `probeApp` don't see a streamed Suspense hole whose error nothing inside it
+  catches:** the hole keeps its fallback in a 200 page. Put an `error.tsx` inside the hole, or
+  assert on the route's content yourself.
 - **DevTools hook names are all-or-nothing per component** (a conditional hook, or one imported
   by a bare / `npm:` / `jsr:` / URL specifier, a namespace import or `export *`, aborts naming).
   The bundled App Router path names route files only. Network, Cache, Routes and the MCP snapshot
   need the App Router dev server. React DevTools' hooks view and Profiler read React internals,
   so they don't work; use denext's panel.
-- **The first-party Markdown renderer is a subset:** no nested lists, footnotes, images, indented
-  code, double-backtick spans or raw HTML (escaped). Use an `.mdx` entry for those.
+- **The first-party Markdown renderer escapes raw HTML** (it is not passed through). Use an `.mdx`
+  entry for raw HTML or components.
 - **`denext ui`'s compose editor owns a closed set of fields** (services, image, restart, build,
   ports, volumes, environment, depends_on, networks); the rest is hand-edited, a multi-document
   file is read-only, and a merge-key (`<<`) field can be overridden, not deleted. A third-party
   plugin's form needs a published `denext.catalog.optionsSchema`; code-valued options are
   read-only.
-
-### Lists (`lists: "denext"`)
-
-- **LegendList's DOM build on `VirtualList` ignores a few props:** `waitForInitialLayout` and
-  `itemsAreEqual` have no effect, `adaptiveRender` is always `"normal"`, and the start insets of
-  `contentInset` (`top` / `left`) add no room before the first item (its end does).
 
 ### Remix and React Router
 
@@ -236,12 +233,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **`LayoutAnimation` animates positions, not sizes**, takes the next DOM change as the commit,
   and skips pages over 3,000 elements. Snap props are CSS scroll snap.
 - **`adjustsFontSizeToFit` shrinks the outer `Text` only** (a nested `Text` with its own
-  `fontSize` keeps it) and needs a box to overflow (`numberOfLines` or a fixed size). The
-  `android_ripple` of `Pressable` is drawn in the Android shell; `TouchableNativeFeedback`'s
-  `background` ripple is not. `ellipsizeMode="head"` / `"middle"` work on one plain-text line
-  only, and `onTextLayout`'s font metrics are estimated from the font size. An iOS
-  `pageSheet` / `formSheet` modal has no swipe-down to dismiss. `Image`'s `crossOrigin` /
-  `referrerPolicy` do nothing, and `fadeDuration` fades only when set.
+  `fontSize` keeps it) and needs a box to overflow (`numberOfLines` or a fixed size).
+  `ellipsizeMode="head"` / `"middle"` work on one plain-text line only, and `onTextLayout`'s font
+  metrics are estimated from the font size. An `Image` with `crossOrigin` / `referrerPolicy` is
+  drawn as an `<img>`, which doesn't draw `tintColor`.
 - **`reactNative` requires `mode: "spa"`.** Fast Refresh reloads on a new dependency import, an
   added or removed route or a lockfile change. Resolution variants (`@2x`) are picked at load.
 - **Can't (no WebView or browser API):** `expo-gl` on a worklet / UI runtime
