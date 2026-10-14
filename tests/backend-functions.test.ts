@@ -508,12 +508,84 @@ Deno.test("denext functions list: names, routes, files and verifyJwt", async () 
     lines.length = 0;
     await run(["list"], {}, `${root}/functions/hello`);
     assertStringIncludes(lines[0], "No Edge Functions");
-    await run(["serve"]);
+    await run(["sideways"]);
     assertEquals(code, 1);
     assertStringIncludes(errors[0], "unknown action");
   } finally {
     await Deno.remove(root, { recursive: true });
   }
+});
+
+Deno.test({
+  name: "denext functions new / serve / delete / download / deploy",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { createFunctionsCommand } = await import(
+      "../packages/backend/src/functions-command.ts"
+    );
+    const root = await Deno.makeTempDir();
+    try {
+      await Deno.mkdir(`${root}/supabase/functions`, { recursive: true });
+      const config = resolveFunctions({ verifyJwt: false });
+      const lines: string[] = [];
+      const errors: string[] = [];
+      let answered = "";
+      const io = {
+        log: (l: string) => lines.push(l),
+        error: (l: string) => errors.push(l),
+        exit: () => {},
+        wait: async (server: Deno.HttpServer<Deno.NetAddr>) => {
+          const { port } = server.addr;
+          const res = await fetch(`http://127.0.0.1:${port}/functions/v1/hello`, {
+            method: "POST",
+            body: JSON.stringify({ name: "serve" }),
+          });
+          answered = await res.text();
+          const missing = await fetch(`http://127.0.0.1:${port}/other`);
+          assertEquals(missing.status, 404);
+          await missing.body?.cancel();
+          await server.shutdown();
+        },
+      };
+      const command = createFunctionsCommand(config, io);
+      const run = (positionals: string[], flags: Record<string, unknown> = {}) =>
+        command.run({ positionals, flags, global: { cwd: root } as never, rest: [] } as never);
+      // `new` writes into the project's functions directory (supabase/functions here).
+      await run(["new", "hello"]);
+      assertEquals(lines[0], "Created supabase/functions/hello/index.ts (/functions/v1/hello)");
+      assertStringIncludes(
+        await Deno.readTextFile(`${root}/supabase/functions/hello/index.ts`),
+        "Deno.serve",
+      );
+      await run(["new", "hello"]);
+      assertStringIncludes(errors.at(-1)!, "denext functions new");
+      await run(["new", "bad name"]);
+      assertStringIncludes(errors.at(-1)!, "slug");
+      // `serve`: only the functions host, on its own port.
+      await run(["serve"], { port: 0 });
+      assertStringIncludes(lines.at(-1)!, "Serving /functions/v1/<name> at http://127.0.0.1:");
+      assertEquals(JSON.parse(answered), { message: "Hello serve!" });
+      // download / deploy: nothing to do.
+      await run(["deploy"]);
+      assertStringIncludes(errors.at(-1)!, "ship inside the app");
+      await run(["download"]);
+      assertStringIncludes(errors.at(-1)!, "no hosted platform");
+      // delete
+      await run(["delete", "hello"]);
+      assertStringIncludes(errors.at(-1)!, "--yes");
+      await run(["delete", "nope"], { yes: true });
+      assertStringIncludes(errors.at(-1)!, "no function named");
+      await run(["delete", "hello"], { yes: true });
+      assertEquals(lines.at(-1), "Deleted supabase/functions/hello");
+      await Deno.writeTextFile(`${root}/supabase/functions/solo.ts`, "export default () => 1;");
+      await run(["delete", "solo"], { yes: true });
+      assertEquals(lines.at(-1), "Deleted supabase/functions/solo.ts");
+      assertEquals([...Deno.readDirSync(`${root}/supabase/functions`)], []);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  },
 });
 
 Deno.test({

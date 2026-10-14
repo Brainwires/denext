@@ -670,7 +670,11 @@ inside `vault.withKey(fn)` and `denext db push`), `queues: {}` (pgmq's SQL API +
 and `webhooks: { hooks: { name: { url } } }` (`supabase_functions.http_request('name')` triggers,
 delivered signed + retried) from `@denext/backend/server`; the plugin adds the Postgres half of
 `denext db`: `diff | pull | dump | lint | inspect <report> | test` (pgTAP) `| types` (whole-schema
-`Database` type, `supabase gen types`-shaped), and applies its own migrations first on `db push`.
+`Database` type, `supabase gen types`-shaped), and applies its own migrations first on `db push`;
+also `denext storage ls | cp | mv | rm` (`ss:///bucket/key`), `denext functions new | list | serve |
+delete`, `denext backend token --sub <id>` (a test bearer JWT) and `denext gen types | keys |
+bearer-jwt`. `denext stack up | down | status | logs` runs the `generate docker` stack like
+`supabase start` (writes it and a generated `.env` when missing; `status --show-secrets`).
 
 **A database (zero-npm, server-only module):**
 
@@ -957,7 +961,8 @@ denext ships tooling so agents get it right the first time:
   page starts pushing only once one of them has been called, so the FIRST call may say
   "posted nothing yet" — call it again after the page's next commit, or start dev with
   `DENEXT_DEV_INSPECT=1`. String values arrive redacted as `string(n)`),
-  `denext_profile` (build
+  `denext_migrations` / `denext_gen_types` (the project's migrations — list, up, down — and its
+  database types, run as CLI children), `denext_profile` (build
   unminified, serve, and profile a route in headless Chromium — CPU self-time by
   function + heap growth + a leak check; pass `interact` to profile a re-render, `budget`
   to gate a regression), `denext_search_docs` (BM25
@@ -1559,7 +1564,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface GoTrueAccessTokenHookInput` — What GoTrueHooks.customAccessToken receives.
 - `interface GoTrueCaptchaOptions` — Captcha verification for sign-up, sign-in, OTP, recovery and anonymous sign-in.
 - `class GoTrueError` — A GoTrue-shaped refusal; goTrueErrorResponse renders it.
-- `type GoTrueErrorCode = anonymous_provider_disabled | bad_code_verifier | bad_json | bad_jwt | bad_oauth_callback | bad_oauth_state | captcha_failed | custom_provider_not_found | email_address_invalid | email_exists | email_not_confirmed | email_provider_disabled | flow_state_expired | flow_state_not_found | identity_already_exists | identity_not_found | insufficient_aal | invalid_credentials | manual_linking_disabled | mfa_challenge_expired | mfa_factor_not_found | mfa_verification_failed | mfa_verification_rejected | mfa_phone_enroll_not_enabled | no_authorization | oauth_authorization_not_found | oauth_client_not_found | not_admin | otp_disabled | otp_expired | over_email_send_rate_limit | over_request_rate_limit | over_sms_send_rate_limit | phone_exists | phone_provider_disabled | provider_disabled | reauthentication_needed | reauthentication_not_valid | refresh_token_already_used | refresh_token_not_found | same_password | saml_entity_id_mismatch | saml_idp_already_exists | saml_metadata_fetch_failed | saml_provider_disabled | session_not_found | signup_disabled | single_identity_not_deletable | sms_send_failed | sso_domain_already_exists | sso_provider_not_found | unexpected_failure | user_already_exists | user_banned | user_not_found | validation_failed | weak_password | web3_provider_disabled | web3_unsupported_chain | not_found | method_not_allowed` — A GoTrue error code (the subset denext answers with).
+- `type GoTrueErrorCode = anonymous_provider_disabled | bad_code_verifier | bad_json | bad_jwt | bad_oauth_callback | bad_oauth_state | captcha_failed | custom_provider_not_found | email_address_invalid | email_exists | email_not_confirmed | email_provider_disabled | flow_state_expired | flow_state_not_found | identity_already_exists | identity_not_found | insufficient_aal | invalid_credentials | manual_linking_disabled | mfa_challenge_expired | mfa_factor_not_found | mfa_verification_failed | mfa_verification_rejected | mfa_phone_enroll_not_enabled | no_authorization | oauth_authorization_not_found | oauth_client_not_found | not_admin | otp_disabled | otp_expired | over_email_send_rate_limit | over_request_rate_limit | over_sms_send_rate_limit | phone_exists | phone_provider_disabled | provider_disabled | reauthentication_needed | reauthentication_not_valid | refresh_token_already_used | refresh_token_not_found | same_password | saml_entity_id_mismatch | saml_idp_already_exists | saml_metadata_expired | saml_metadata_fetch_failed | saml_provider_disabled | session_not_found | signup_disabled | single_identity_not_deletable | sms_send_failed | sso_domain_already_exists | sso_provider_not_found | unexpected_failure | user_already_exists | user_banned | user_not_found | validation_failed | weak_password | web3_provider_disabled | web3_unsupported_chain | not_found | method_not_allowed` — A GoTrue error code (the subset denext answers with).
 - `interface GoTrueHandlerOptions` — What the handler needs besides the request.
 - `interface GoTrueHooks` — Supabase's auth hooks, as functions.
 - `interface GoTrueOAuthServerOptions` — GoTrueOptions.oauthServer.
@@ -1605,7 +1610,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `inOtaRollout(channel: string, candidateVersion: string, installId: string | null | undefined, percent: number): Promise<boolean>` — Whether an install falls inside a rollout of percent for candidateVersion on channel. No (or an invalid) install id is never in a rollout: such a device always gets the stable release.
 - `type InputSpec<In> = parenthesized | StandardSchemaV1<In>` — How an action validates FormData into its typed input: a function or a Standard Schema.
 - `installedSupabaseKeys(): SupabaseKeys | undefined` — The installed key material, or undefined when backend({ supabase }) is not configured.
-- `installGoTrue(handler: GoTrueHandlerOptions | undefined): void` — Mount the /auth/v1 flows that finish outside its own paths — an OAuth callback arrives at denext's {basePath}/callback/:provider — or remove them with undefined. backend({ supabase }) calls it at setup.
+- `installGoTrue(handler: GoTrueHandlerOptions | undefined): void` — Mount the /auth/v1 flows that finish outside its own paths — an OAuth callback arrives at denext's {basePath}/callback/:provider — and start the background SAML metadata refresh (saml.metadataRefresh), or remove them with undefined. backend({ supabase }) calls it at setup and with undefined at teardown.
 - `installSupabaseKeys(keys: SupabaseKeys | undefined): void` — Install the process's key material (backend({ supabase }) does at setup), or clear it with undefined. Process-global, so a bundled copy of this module sees the same keys.
 - `interface Instrumentation` — The shape of a project's instrumentation module.
 - `interface InstrumentationRequest` — The request info passed to OnRequestError — Next's shape (a plain object, NOT a Request), so instrumentation reading request.path/.method (Sentry, OpenTelemetry) works unchanged.
@@ -1749,7 +1754,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PageProps<P>` — Props passed to a page component (and to metadata/generateMetadata/ generateViewport).
 - `interface PageRoute` — A rendered page route discovered by scanning the app directory.
 - `parseAcceptLanguage(header: string | null): string[]` — Parse an Accept-Language header into an ordered list of locale codes.
-- `parseIdpMetadata(xml: string): SamlIdpConfig & object` — Read an IdP's SAML 2.0 metadata (an EntityDescriptor, or an EntitiesDescriptor holding exactly one IdP). The metadata's own signature is NOT checked — fetch it over HTTPS from a URL you trust, or pin the certificate it yields.
+- `interface ParsedIdpMetadata` — An IdP's metadata, read: the IdP plus what the document says about itself.
+- `parseIdpMetadata(xml: string): ParsedIdpMetadata` — Read an IdP's SAML 2.0 metadata (an EntityDescriptor, or an EntitiesDescriptor holding exactly one IdP). The metadata's own signature is NOT checked — fetch it over HTTPS from a URL you trust, or pin the certificate it yields.
 - `parsePattern(pattern: string): Segment[]` — Parse a route pattern like "blog/[slug]" into an ordered segment list.
 - `parseRange(header: string, size: number): object | null | undefined` — One bytes=start-end / bytes=start- / bytes=-suffix range against size: undefined = ignore the header (unsupported form or multiple ranges → serve the whole file), null = unsatisfiable (416).
 - `interface PasskeyChallengeRecord` — A single-use WebAuthn challenge (§13.4.3): only the SHA-256 of the challenge is stored, with the ceremony it belongs to.
@@ -1815,6 +1821,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RedirectRule` — A URL-path redirect rule (source → destination).
 - `enum RedirectType` — next/navigation's RedirectType — how a client-side (soft) navigation applies the redirect: push a new history entry or replace the current one. Server responses ignore it (they always issue an HTTP redirect).
 - `refresh(): void` — Request a refresh of the **uncached** data on the current route from inside a Server Action (Next.js 16 refresh). It doesn't touch the cache — it flags the request so the action response tells the client router to re-fetch, keeping cached shells/static content fast while dynamic data (notification counts, live metrics) updates. A no-op outside a request context.
+- `type RefreshOutcome = refreshed | unchanged | failed | not_due | backoff` — How a refresh of one provider ended.
+- `refreshSsoMetadata(config?: AuthConfig, options?: RefreshSsoMetadataOptions): Promise<SsoMetadataRefreshSummary>` — Fetch the metadata of every stored SSO provider registered by metadata_url whose refresh is due (a day after the last fetch, or sooner by its cacheDuration / validUntil), one at a time — the same single-flight, backed-off fetch a sign-in uses, so a job and the sign-ins never fetch one URL twice in a window. Run it from a scheduled job: defineJob({ schedule: "0 * * * *", handler: () => refreshSsoMetadata() }).
+- `interface RefreshSsoMetadataOptions` — Options for refreshSsoMetadata.
 - `registerCacheLifeProfiles(profiles: Record<string, CacheLifeProfile>): void` — Register named cacheLife profiles (typically from denext.config). A custom profile whose name collides with a built-in overrides it. Idempotent-ish: a later call with the same name wins.
 - `type RegisterFn = () => void | Promise<void>` — The register export: run once at server startup.
 - `registerJob(name: string, job: Job): void` — Register (or replace) a job by name — used by the jobs/ loader and by app code.
@@ -1957,6 +1966,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type SqlValue = null | number | bigint | string | Uint8Array` — A value bindable as a SQLite statement parameter.
 - `interface SsoAttributeMapping` — GoTrue's SAML attribute_mapping.
 - `interface SsoAttributeMappingKey` — How a SAML attribute maps to a user field — GoTrue's attribute_mapping.keys[field]: the value of the attribute name (or the first of names present), else default; array keeps every value.
+- `interface SsoMetadataRefreshSummary` — What refreshSsoMetadata did.
 - `interface SsoProviderRecord` — A stored SAML 2.0 identity provider of the /auth/v1 SSO admin API (/admin/sso/providers). The entity id is unique across providers, and so is every domain.
 - `type SsoProviderWrite = ok | not_found | entity_id_exists | domain_exists` — What a create / update of an SsoProviderRecord came to.
 - `interface SsoSessionRecord` — An /auth/v1 session that a SAML assertion started — what an IdP-initiated LogoutRequest (NameID + SessionIndex) is resolved to.

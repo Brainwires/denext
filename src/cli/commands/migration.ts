@@ -29,7 +29,7 @@ import { type DbIo, setUpProject } from "../db/project.ts";
 import { readEnv } from "../db/target.ts";
 
 /** The flags that pick the database. */
-const TARGET_FLAGS: readonly FlagSpec[] = [
+export const TARGET_FLAGS: readonly FlagSpec[] = [
   {
     name: "db-url",
     type: "string",

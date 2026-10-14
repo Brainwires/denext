@@ -666,7 +666,11 @@ inside `vault.withKey(fn)` and `denext db push`), `queues: {}` (pgmq's SQL API +
 and `webhooks: { hooks: { name: { url } } }` (`supabase_functions.http_request('name')` triggers,
 delivered signed + retried) from `@denext/backend/server`; the plugin adds the Postgres half of
 `denext db`: `diff | pull | dump | lint | inspect <report> | test` (pgTAP) `| types` (whole-schema
-`Database` type, `supabase gen types`-shaped), and applies its own migrations first on `db push`.
+`Database` type, `supabase gen types`-shaped), and applies its own migrations first on `db push`;
+also `denext storage ls | cp | mv | rm` (`ss:///bucket/key`), `denext functions new | list | serve |
+delete`, `denext backend token --sub <id>` (a test bearer JWT) and `denext gen types | keys |
+bearer-jwt`. `denext stack up | down | status | logs` runs the `generate docker` stack like
+`supabase start` (writes it and a generated `.env` when missing; `status --show-secrets`).
 
 **A database (zero-npm, server-only module):**
 
@@ -953,7 +957,8 @@ denext ships tooling so agents get it right the first time:
   page starts pushing only once one of them has been called, so the FIRST call may say
   "posted nothing yet" — call it again after the page's next commit, or start dev with
   `DENEXT_DEV_INSPECT=1`. String values arrive redacted as `string(n)`),
-  `denext_profile` (build
+  `denext_migrations` / `denext_gen_types` (the project's migrations — list, up, down — and its
+  database types, run as CLI children), `denext_profile` (build
   unminified, serve, and profile a route in headless Chromium — CPU self-time by
   function + heap growth + a leak check; pass `interact` to profile a re-render, `budget`
   to gate a regression), `denext_search_docs` (BM25

@@ -11,8 +11,10 @@ import type { CommandSpec } from "@denext/denext/cli/command";
 import {
   generateSupabaseKeys,
   type GoTrueOptions,
+  installedSupabaseKeys,
   installSupabaseKeys,
   resolveSupabaseKeys,
+  signSupabaseJwt,
   SUPABASE_KEY_ENV,
   supabaseJwks,
   type SupabaseKeys,
@@ -119,6 +121,55 @@ export interface KeysCommandIo {
   log(line: string): void;
 }
 
+/** The roles `denext backend token` mints for. */
+const TOKEN_ROLES = ["authenticated", "anon", "service_role"];
+
+/**
+ * The claims of a test token (`denext backend token`), in the shape `/auth/v1` issues.
+ *
+ * @param flags The command's flags.
+ * @param now The clock, in seconds.
+ * @returns The claims.
+ * @throws {TypeError} For an unknown role, a bad `--exp` or `--claims`.
+ */
+export function tokenClaims(
+  flags: Readonly<Record<string, string | number | boolean>>,
+  now = Math.floor(Date.now() / 1000),
+): Record<string, unknown> {
+  const role = typeof flags.role === "string" ? flags.role : "authenticated";
+  if (!TOKEN_ROLES.includes(role)) {
+    throw new TypeError(`--role is one of ${TOKEN_ROLES.join(", ")}`);
+  }
+  const exp = flags.exp === undefined ? 3600 : Number(flags.exp);
+  if (!Number.isInteger(exp) || exp <= 0) throw new TypeError("--exp is a number of seconds");
+  if (role === "authenticated" && typeof flags.sub !== "string") {
+    throw new TypeError("an authenticated token needs --sub <user id>");
+  }
+  let extra: Record<string, unknown> = {};
+  if (typeof flags.claims === "string") {
+    const parsed = JSON.parse(flags.claims);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new TypeError("--claims is a JSON object");
+    }
+    extra = parsed;
+  }
+  return {
+    iss: "denext",
+    aud: role === "authenticated" ? "authenticated" : role,
+    role,
+    iat: now,
+    exp: now + exp,
+    ...(typeof flags.sub === "string" ? { sub: flags.sub } : {}),
+    ...(typeof flags.email === "string" ? { email: flags.email } : {}),
+    ...(role === "authenticated"
+      ? { aal: "aal1", amr: [{ method: "password", timestamp: now }], is_anonymous: false }
+      : {}),
+    app_metadata: {},
+    user_metadata: {},
+    ...extra,
+  };
+}
+
 /**
  * `denext backend keys [--legacy] [--json]`: mint a key set and print it as environment
  * variables (or JSON).
@@ -129,24 +180,39 @@ export interface KeysCommandIo {
 export function createBackendCommand(io: KeysCommandIo = { log: console.log }): CommandSpec {
   return {
     name: "backend",
-    summary: "Backend utilities: `keys` mints Supabase-compatible API and JWT keys",
+    summary: "Backend utilities: `keys` mints API and JWT keys, `token` a bearer JWT for testing",
     usage: [
       "Usage: denext backend keys [--legacy] [--json]",
+      "       denext backend token [--role r] [--sub id] [--email e] [--exp s] [--claims json]",
       "",
       "  keys        Print a new publishable key, secret key and ES256 signing key as env vars",
       "  --legacy    Also mint a JWT secret and the legacy anon / service_role JWTs",
       "  --json      Print JSON instead of KEY=value lines",
+      "  token       Sign an access token with the app's signing key (like `supabase gen",
+      "              bearer-jwt`): --role authenticated (needs --sub) | anon | service_role,",
+      "              --exp seconds (default 3600), --claims '{…}' merged in. Prints only the token.",
     ].join("\n"),
-    positionals: [{ name: "action", help: "keys" }],
+    positionals: [{ name: "action", help: "keys | token" }],
     flags: [
-      { name: "legacy", type: "boolean", help: "Also mint the legacy HS256 keys" },
+      { name: "legacy", type: "boolean", help: "keys: also mint the legacy HS256 keys" },
       { name: "json", type: "boolean", help: "Print JSON" },
+      { name: "role", type: "string", help: "token: authenticated | anon | service_role" },
+      { name: "sub", type: "string", help: "token: the user id" },
+      { name: "email", type: "string", help: "token: the email claim" },
+      { name: "exp", type: "number", help: "token: seconds until it expires (default 3600)" },
+      { name: "claims", type: "string", help: "token: extra claims, a JSON object" },
     ],
     run: async (ctx) => {
       const action = ctx.positionals[0];
+      if (action === "token") {
+        const keys = installedSupabaseKeys();
+        if (!keys) throw new Error("denext backend token: no Supabase keys are installed");
+        io.log(await signSupabaseJwt(keys, tokenClaims(ctx.flags)));
+        return;
+      }
       if (action !== "keys") {
         throw new Error(
-          `denext backend: unknown action ${JSON.stringify(action ?? "")} (try keys)`,
+          `denext backend: unknown action ${JSON.stringify(action ?? "")} (try keys or token)`,
         );
       }
       const keys = await generateSupabaseKeys({ legacy: ctx.flags.legacy === true });

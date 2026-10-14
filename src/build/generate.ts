@@ -234,8 +234,14 @@ export default defineJob({
 `;
 }
 
-/** An Edge Function in Supabase's shape, for `backend({ functions })` from `@denext/backend`. */
-function functionSource(name: string): string {
+/**
+ * An Edge Function in Supabase's shape, for `backend({ functions })` from `@denext/backend`:
+ * what `denext generate function <name>` and `denext functions new <name>` write.
+ *
+ * @param name The function's name (a slug).
+ * @returns The module's source.
+ */
+export function edgeFunctionSource(name: string): string {
   return `// Edge Function: /functions/v1/${name} — call it with supabase.functions.invoke("${name}", { body })
 // or fetch(). Served by backend({ functions: {} }) from @denext/backend, in a worker of its own.
 // Callers need a valid identity unless denext.config.ts sets functions.functions["${name}"].verifyJwt
@@ -474,7 +480,7 @@ function artifactTarget(
       }
       return {
         path: safeJoin(projectDir, "functions", segment, "index.ts"),
-        content: functionSource(segment),
+        content: edgeFunctionSource(segment),
       };
     }
     case "component":

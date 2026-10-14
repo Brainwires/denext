@@ -106,6 +106,7 @@ import {
 } from "./src/webhooks.ts";
 import { backendMigrationsOf, createDbHooks, installDbHooks } from "./src/db-command.ts";
 import { seedBuckets } from "./src/storage-seed.ts";
+import { createStorageCommand } from "./src/storage-command.ts";
 
 export { backendAuthAdapter } from "./src/postgres.ts";
 export type { BackendAuthAdapterOptions, PostgresOptions } from "./src/postgres.ts";
@@ -506,6 +507,7 @@ async function setupStorage(
   };
   rt.admin = storageAdmin(rt);
   installRuntime(rt);
+  ctx.addCommand(createStorageCommand());
   ctx.addRequestHandler(handleStorageRequest);
   if (apiBase) ctx.addRequestHandler((request) => handleStorageApi(rt, request));
 }

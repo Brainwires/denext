@@ -785,6 +785,86 @@
       ]
     },
     {
+      "name": "gen",
+      "summary": "Generate database types, API keys or a test bearer JWT (supabase gen)",
+      "usage": "denext gen <what> [lang] [options]",
+      "description": "Usage: denext gen <types|keys|signing-key|bearer-jwt> [flags]\n\n  types [typescript]  The `Database` type for the schemas (= denext db types;\n                      --schema, --file <path>, --db-url / --linked)\n  keys, signing-key   A publishable key, a secret key and an ES256 signing key\n                      (= denext backend keys; --legacy, --json)\n  bearer-jwt          A signed access token (= denext backend token; --role, --sub, --exp)",
+      "flags": [
+        {
+          "name": "schema",
+          "type": "string",
+          "valueName": "<name>",
+          "description": "types: the schema (repeatable; default public)"
+        },
+        {
+          "name": "file",
+          "type": "string",
+          "valueName": "<path>",
+          "description": "types: write to this file"
+        },
+        {
+          "name": "legacy",
+          "type": "boolean",
+          "description": "keys: also mint the legacy HS256 keys"
+        },
+        {
+          "name": "role",
+          "type": "string",
+          "description": "bearer-jwt: authenticated | anon | service_role"
+        },
+        {
+          "name": "sub",
+          "type": "string",
+          "description": "bearer-jwt: the user id"
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "description": "bearer-jwt: the email claim"
+        },
+        {
+          "name": "exp",
+          "type": "number",
+          "description": "bearer-jwt: seconds until it expires"
+        },
+        {
+          "name": "claims",
+          "type": "string",
+          "description": "bearer-jwt: extra claims, a JSON object"
+        },
+        {
+          "name": "db-url",
+          "type": "string",
+          "valueName": "<url>",
+          "description": "The database: a postgres:// URL, or a SQLite file (sqlite:<path>, or a .db path)"
+        },
+        {
+          "name": "linked",
+          "type": "boolean",
+          "description": "The database `denext db link` stored (DENEXT_LINKED_DATABASE_URL)"
+        },
+        {
+          "name": "local",
+          "type": "boolean",
+          "description": "The project's own database (the default)"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "what",
+          "required": true,
+          "variadic": false,
+          "description": "types | keys | signing-key | bearer-jwt"
+        },
+        {
+          "name": "lang",
+          "required": false,
+          "variadic": false,
+          "description": "types: typescript (the only one)"
+        }
+      ]
+    },
+    {
       "name": "generate",
       "aliases": [
         "g"
@@ -1044,13 +1124,13 @@
       "name": "mcp",
       "summary": "Run the denext MCP server (stdio) so agents/IDEs can call denext's tooling",
       "usage": "denext mcp [action] [dir] [options]",
-      "description": "  denext mcp                     # speak MCP over stdio (configure as an MCP server)\n  denext mcp --disable rag,docs # expose fewer tools to trim the client's context\n  denext mcp init [dir] [--clients claude,vscode,cursor] [--disable <groups>] [--dry-run] [--force]\n\n  Tools: denext_check_snippet, denext_import_map, denext_generate, denext_doctor,\n  denext_codemod, denext_list_routes, denext_dev_logs, denext_render, denext_route_map,\n  denext_search_docs, denext_index_codebase, denext_query_codebase, denext_find_definition,\n  denext_find_references. Resources: denext://guide, denext://import-map.\n\n  --disable takes a comma-separated list of groups (authoring, project, inspect, profile, dev, devtools, docs, rag) and/or tool\n  names (with or without the denext_ prefix), e.g. --disable rag,docs or --disable render.\n\n  init  adds a `mcp` task to deno.json (the denext version the project pins, so the server\n        matches the framework) and registers it as the `denext` server in each client's\n        project-level config, beside any servers already there. --clients picks (or `all`):\n    claude  .mcp.json  (default)\n    vscode  .vscode/mcp.json  (default)\n    cursor  .cursor/mcp.json  (default)\n    gemini  .gemini/settings.json\n    codex   .codex/config.toml\n        --disable is baked into the task; --force rewrites an existing denext entry/task.",
+      "description": "  denext mcp                     # speak MCP over stdio (configure as an MCP server)\n  denext mcp --disable rag,docs # expose fewer tools to trim the client's context\n  denext mcp init [dir] [--clients claude,vscode,cursor] [--disable <groups>] [--dry-run] [--force]\n\n  Tools: denext_check_snippet, denext_import_map, denext_generate, denext_doctor,\n  denext_codemod, denext_list_routes, denext_dev_logs, denext_render, denext_route_map,\n  denext_search_docs, denext_index_codebase, denext_query_codebase, denext_find_definition,\n  denext_find_references. Resources: denext://guide, denext://import-map.\n\n  --disable takes a comma-separated list of groups (authoring, project, inspect, profile, dev, devtools, docs, database, rag) and/or tool\n  names (with or without the denext_ prefix), e.g. --disable rag,docs or --disable render.\n\n  init  adds a `mcp` task to deno.json (the denext version the project pins, so the server\n        matches the framework) and registers it as the `denext` server in each client's\n        project-level config, beside any servers already there. --clients picks (or `all`):\n    claude  .mcp.json  (default)\n    vscode  .vscode/mcp.json  (default)\n    cursor  .cursor/mcp.json  (default)\n    gemini  .gemini/settings.json\n    codex   .codex/config.toml\n        --disable is baked into the task; --force rewrites an existing denext entry/task.",
       "flags": [
         {
           "name": "disable",
           "type": "string",
           "valueName": "<groups|tools>",
-          "description": "Comma-separated groups (authoring, project, inspect, profile, dev, devtools, docs, rag) and/or tool names to hide"
+          "description": "Comma-separated groups (authoring, project, inspect, profile, dev, devtools, docs, database, rag) and/or tool names to hide"
         },
         {
           "name": "clients",
@@ -1856,6 +1936,118 @@
           "required": false,
           "variadic": false,
           "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "stack",
+      "summary": "Start, stop and inspect the local Docker stack (app, Postgres, MinIO), like supabase start",
+      "usage": "denext stack <action> [service] [options]",
+      "description": "Usage: denext stack <up|down|status|logs> [flags]\n\n  up      Write the stack if missing (denext generate docker --stack, or your flags), fill a\n          missing .env with generated secrets, docker compose up -d --wait, then status\n          (--dev: the dev overlay; --build: rebuild the app image)\n  down    Stop it (--volumes also drops the database and storage data)\n  status  The API, REST, database and S3 URLs and the publishable key (--json;\n          --show-secrets adds the secret key and the passwords)\n  logs    docker compose logs [service] (--follow)",
+      "flags": [
+        {
+          "name": "build",
+          "type": "boolean",
+          "description": "up: rebuild the app image"
+        },
+        {
+          "name": "volumes",
+          "type": "boolean",
+          "description": "down: remove the data volumes too"
+        },
+        {
+          "name": "follow",
+          "type": "boolean",
+          "description": "logs: keep following"
+        },
+        {
+          "name": "show-secrets",
+          "type": "boolean",
+          "description": "status: print the secret key and passwords"
+        },
+        {
+          "name": "postgres",
+          "type": "boolean",
+          "description": "docker: Postgres 17 service + DATABASE_URL (detected: @denext/backend / a Postgres URL)"
+        },
+        {
+          "name": "no-postgres",
+          "type": "boolean",
+          "description": "docker: leave the postgres service out"
+        },
+        {
+          "name": "pgvector",
+          "type": "boolean",
+          "description": "docker: Use the pgvector/pgvector:pg17 image (detected: the vector extension in migrations/)"
+        },
+        {
+          "name": "no-pgvector",
+          "type": "boolean",
+          "description": "docker: leave the pgvector service out"
+        },
+        {
+          "name": "storage",
+          "type": "boolean",
+          "description": "docker: MinIO S3 store + a one-shot bucket bootstrap (detected: an s3() storage driver)"
+        },
+        {
+          "name": "no-storage",
+          "type": "boolean",
+          "description": "docker: leave the storage service out"
+        },
+        {
+          "name": "migrate",
+          "type": "boolean",
+          "description": "docker: One-shot `denext job migrate` service the app waits for (detected: migrations/ + jobs/migrate.ts)"
+        },
+        {
+          "name": "no-migrate",
+          "type": "boolean",
+          "description": "docker: leave the migrate service out"
+        },
+        {
+          "name": "stack",
+          "altNames": [
+            "all"
+          ],
+          "type": "boolean",
+          "description": "docker: every service the project needs (detected), and Postgres regardless"
+        },
+        {
+          "name": "expose-db",
+          "type": "boolean",
+          "description": "docker: publish Postgres on 127.0.0.1:5432 (off: only the app reaches it)"
+        },
+        {
+          "name": "dev",
+          "type": "boolean",
+          "description": "docker: also write compose.dev.yml (denext dev on a bind mount)"
+        },
+        {
+          "name": "port",
+          "type": "number",
+          "valueName": "<port>",
+          "description": "docker: the port the app listens on (default 3000)"
+        },
+        {
+          "name": "deno-tag",
+          "type": "string",
+          "valueName": "<tag>",
+          "description": "docker: the denoland/deno image tag (default: this Deno's version)"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "action",
+          "required": true,
+          "variadic": false,
+          "description": "up | down | status | logs"
+        },
+        {
+          "name": "service",
+          "required": false,
+          "variadic": false,
+          "description": "logs: one service"
         }
       ]
     },

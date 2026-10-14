@@ -353,3 +353,46 @@ Deno.test("cli.ts: denext migration / db dispatch, unknown actions", async () =>
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test({
+  name: "denext gen: types through the backend's hooks, keys and bearer-jwt through its verb",
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  const { GEN_ACTIONS } = await import("../src/cli/commands/gen.ts");
+  const { applyPlugins, resetPlugins, runPluginTeardown } = await import("../src/plugin/mod.ts");
+  const { backend } = await import("../packages/backend/mod.ts");
+  const root = await project({});
+  try {
+    resetPlugins();
+    await assertRejects(() => act(GEN_ACTIONS, root, ["keys"]), Error, "backend({ supabase");
+    await assertRejects(() => act(GEN_ACTIONS, root, ["types"]), Error, "@denext/backend");
+    const logged: string[] = [];
+    const log = console.log;
+    console.log = (line: string) => logged.push(line);
+    try {
+      await Deno.mkdir(`${root}/app`);
+      await applyPlugins({
+        projectRoot: root,
+        appDir: `${root}/app`,
+        config: {
+          plugins: [
+            backend({ supabase: { jwtSecret: "gen-test-jwt-secret-at-least-32-chars!!" } }),
+          ],
+        },
+        mode: "build",
+        load: ((path: string) => import(path)) as never,
+      });
+      await act(GEN_ACTIONS, root, ["keys"]);
+      await act(GEN_ACTIONS, root, ["bearer-jwt"], { role: "anon" });
+    } finally {
+      console.log = log;
+    }
+    assert(logged[0].startsWith("DENEXT_PUBLISHABLE_KEY="), logged[0]);
+    assertEquals(logged.at(-1)!.split(".").length, 3, "a JWT");
+  } finally {
+    await runPluginTeardown();
+    resetPlugins();
+    await Deno.remove(root, { recursive: true });
+  }
+});

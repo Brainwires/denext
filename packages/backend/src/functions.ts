@@ -829,6 +829,62 @@ export async function setupFunctions(ctx: PluginContext, config: ResolvedFunctio
   if (dev) watchFunctions(ctx, dir, () => registry.reset(false));
 }
 
+/** Options for {@linkcode serveFunctions}. */
+export interface ServeFunctionsOptions {
+  /** The port (default 54321, the Supabase CLI's). */
+  port?: number;
+  /** The interface (default `127.0.0.1`). */
+  hostname?: string;
+  /** Stops the server. */
+  signal?: AbortSignal;
+  /** Called once it listens. */
+  onListen?: (addr: Deno.NetAddr) => void;
+}
+
+/**
+ * `denext functions serve`: only the functions host, on its own port — `/functions/v1/<name>`
+ * answered from the functions directory (re-read on a miss, workers restarted on an edit),
+ * everything else a 404.
+ *
+ * @param projectRoot The project.
+ * @param config The resolved options.
+ * @param options Where to listen.
+ * @returns The server.
+ */
+export async function serveFunctions(
+  projectRoot: string,
+  config: ResolvedFunctions,
+  options: ServeFunctionsOptions = {},
+): Promise<Deno.HttpServer<Deno.NetAddr>> {
+  const dir = await functionsDir(projectRoot, config.dir);
+  const registry = directoryRegistry(dir, config, true);
+  const handle = functionsHandler(config, registry);
+  let watcher: Deno.FsWatcher | undefined;
+  try {
+    watcher = Deno.watchFs(dir, { recursive: true });
+    (async () => {
+      for await (const _event of watcher!) registry.reset(false);
+    })().catch(() => {});
+  } catch { /* no directory yet */ }
+  const server = Deno.serve(
+    {
+      port: options.port ?? 54321,
+      hostname: options.hostname ?? "127.0.0.1",
+      ...(options.signal ? { signal: options.signal } : {}),
+      onListen: (addr) => options.onListen?.(addr),
+    },
+    async (request) =>
+      (await handle(request)) ?? relayError(404, "NOT_FOUND", "Requested function was not found"),
+  );
+  server.finished.then(() => {
+    registry.reset();
+    try {
+      watcher?.close();
+    } catch { /* closed */ }
+  });
+  return server;
+}
+
 /** Restart the workers after an edit under `dir` (debounced). */
 function watchFunctions(ctx: PluginContext, dir: string, reset: () => void): void {
   let watcher: Deno.FsWatcher;

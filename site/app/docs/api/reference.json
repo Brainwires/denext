@@ -7636,7 +7636,7 @@
           "name": "GoTrueErrorCode",
           "slug": "GoTrueErrorCode",
           "kind": "typeAlias",
-          "signature": "type GoTrueErrorCode = anonymous_provider_disabled | bad_code_verifier | bad_json | bad_jwt | bad_oauth_callback | bad_oauth_state | captcha_failed | custom_provider_not_found | email_address_invalid | email_exists | email_not_confirmed | email_provider_disabled | flow_state_expired | flow_state_not_found | identity_already_exists | identity_not_found | insufficient_aal | invalid_credentials | manual_linking_disabled | mfa_challenge_expired | mfa_factor_not_found | mfa_verification_failed | mfa_verification_rejected | mfa_phone_enroll_not_enabled | no_authorization | oauth_authorization_not_found | oauth_client_not_found | not_admin | otp_disabled | otp_expired | over_email_send_rate_limit | over_request_rate_limit | over_sms_send_rate_limit | phone_exists | phone_provider_disabled | provider_disabled | reauthentication_needed | reauthentication_not_valid | refresh_token_already_used | refresh_token_not_found | same_password | saml_entity_id_mismatch | saml_idp_already_exists | saml_metadata_fetch_failed | saml_provider_disabled | session_not_found | signup_disabled | single_identity_not_deletable | sms_send_failed | sso_domain_already_exists | sso_provider_not_found | unexpected_failure | user_already_exists | user_banned | user_not_found | validation_failed | weak_password | web3_provider_disabled | web3_unsupported_chain | not_found | method_not_allowed",
+          "signature": "type GoTrueErrorCode = anonymous_provider_disabled | bad_code_verifier | bad_json | bad_jwt | bad_oauth_callback | bad_oauth_state | captcha_failed | custom_provider_not_found | email_address_invalid | email_exists | email_not_confirmed | email_provider_disabled | flow_state_expired | flow_state_not_found | identity_already_exists | identity_not_found | insufficient_aal | invalid_credentials | manual_linking_disabled | mfa_challenge_expired | mfa_factor_not_found | mfa_verification_failed | mfa_verification_rejected | mfa_phone_enroll_not_enabled | no_authorization | oauth_authorization_not_found | oauth_client_not_found | not_admin | otp_disabled | otp_expired | over_email_send_rate_limit | over_request_rate_limit | over_sms_send_rate_limit | phone_exists | phone_provider_disabled | provider_disabled | reauthentication_needed | reauthentication_not_valid | refresh_token_already_used | refresh_token_not_found | same_password | saml_entity_id_mismatch | saml_idp_already_exists | saml_metadata_expired | saml_metadata_fetch_failed | saml_provider_disabled | session_not_found | signup_disabled | single_identity_not_deletable | sms_send_failed | sso_domain_already_exists | sso_provider_not_found | unexpected_failure | user_already_exists | user_banned | user_not_found | validation_failed | weak_password | web3_provider_disabled | web3_unsupported_chain | not_found | method_not_allowed",
           "doc": "A GoTrue error code (the subset denext answers with).",
           "docFull": "A GoTrue error code (the subset denext answers with).",
           "params": [],
@@ -8233,8 +8233,8 @@
           "slug": "installGoTrue",
           "kind": "function",
           "signature": "installGoTrue(handler: GoTrueHandlerOptions | undefined): void",
-          "doc": "Mount the /auth/v1 flows that finish outside its own paths — an OAuth callback arrives at denext's {basePath}/callback/:provider — or remove them with undefined. backend({ supabase }) calls it at setup.",
-          "docFull": "Mount the `/auth/v1` flows that finish outside its own paths — an OAuth callback arrives at\ndenext's `{basePath}/callback/:provider` — or remove them with `undefined`.\n`backend({ supabase })` calls it at setup.",
+          "doc": "Mount the /auth/v1 flows that finish outside its own paths — an OAuth callback arrives at denext's {basePath}/callback/:provider — and start the background SAML metadata refresh (saml.metadataRefresh), or remove them with undefined. backend({ supabase }) calls it at setup and with undefined at teardown.",
+          "docFull": "Mount the `/auth/v1` flows that finish outside its own paths — an OAuth callback arrives at\ndenext's `{basePath}/callback/:provider` — and start the background SAML metadata refresh\n(`saml.metadataRefresh`), or remove them with `undefined`. `backend({ supabase })` calls it at\nsetup and with `undefined` at teardown.",
           "params": [
             {
               "name": "handler",
@@ -10144,19 +10144,31 @@
           "denextOnly": true
         },
         {
+          "name": "ParsedIdpMetadata",
+          "slug": "ParsedIdpMetadata",
+          "kind": "interface",
+          "signature": "interface ParsedIdpMetadata",
+          "doc": "An IdP's metadata, read: the IdP plus what the document says about itself.",
+          "docFull": "An IdP's metadata, read: the IdP plus what the document says about itself.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "parseIdpMetadata",
           "slug": "parseIdpMetadata",
           "kind": "function",
-          "signature": "parseIdpMetadata(xml: string): SamlIdpConfig & object",
+          "signature": "parseIdpMetadata(xml: string): ParsedIdpMetadata",
           "doc": "Read an IdP's SAML 2.0 metadata (an EntityDescriptor, or an EntitiesDescriptor holding exactly one IdP). The metadata's own signature is NOT checked — fetch it over HTTPS from a URL you trust, or pin the certificate it yields.",
           "docFull": "Read an IdP's SAML 2.0 metadata (an EntityDescriptor, or an EntitiesDescriptor holding\nexactly one IdP). The metadata's own signature is NOT checked — fetch it over HTTPS from\na URL you trust, or pin the certificate it yields.",
           "params": [
             {
               "name": "xml",
-              "doc": "The metadata document."
+              "doc": "The metadata document. The document's own validUntil (an xs:dateTime with a time zone) and cacheDuration (an xs:duration) are read from the EntityDescriptor and an enclosing EntitiesDescriptor — the earliest validUntil and the shortest cacheDuration win; a malformed value refuses the metadata. Whether the metadata has expired is the caller's check (validUntil)."
             }
           ],
-          "returns": "The entity id, the HTTP-Redirect SSO URL, the HTTP-Redirect SingleLogoutService (when advertised), the signing certificates (bare base64 DER, those with a key type denext can verify) and the advertised NameID formats.",
+          "returns": "The entity id, the HTTP-Redirect SSO URL, the HTTP-Redirect SingleLogoutService (when advertised), the signing certificates (bare base64 DER, those with a key type denext can verify), the advertised NameID formats, and validUntil / cacheDuration when given.",
           "examples": [],
           "denextOnly": true
         },
@@ -11051,6 +11063,51 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "RefreshOutcome",
+          "slug": "RefreshOutcome",
+          "kind": "typeAlias",
+          "signature": "type RefreshOutcome = refreshed | unchanged | failed | not_due | backoff",
+          "doc": "How a refresh of one provider ended.",
+          "docFull": "How a refresh of one provider ended.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "refreshSsoMetadata",
+          "slug": "refreshSsoMetadata",
+          "kind": "function",
+          "signature": "refreshSsoMetadata(config?: AuthConfig, options?: RefreshSsoMetadataOptions): Promise<SsoMetadataRefreshSummary>",
+          "doc": "Fetch the metadata of every stored SSO provider registered by metadata_url whose refresh is due (a day after the last fetch, or sooner by its cacheDuration / validUntil), one at a time — the same single-flight, backed-off fetch a sign-in uses, so a job and the sign-ins never fetch one URL twice in a window. Run it from a scheduled job: defineJob({ schedule: \"0 * * * *\", handler: () => refreshSsoMetadata() }).",
+          "docFull": "Fetch the metadata of every stored SSO provider registered by `metadata_url` whose refresh is\ndue (a day after the last fetch, or sooner by its `cacheDuration` / `validUntil`), one at a\ntime — the same single-flight, backed-off fetch a sign-in uses, so a job and the sign-ins\nnever fetch one URL twice in a window. Run it from a scheduled job:\n`defineJob({ schedule: \"0 * * * *\", handler: () => refreshSsoMetadata() })`.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The auth config (default: the one denextAuth() was built with)."
+            },
+            {
+              "name": "options",
+              "doc": "force, jitterMs."
+            }
+          ],
+          "returns": "What happened; a provider's failure is counted and logged, not thrown.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RefreshSsoMetadataOptions",
+          "slug": "RefreshSsoMetadataOptions",
+          "kind": "interface",
+          "signature": "interface RefreshSsoMetadataOptions",
+          "doc": "Options for refreshSsoMetadata.",
+          "docFull": "Options for {@linkcode refreshSsoMetadata}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "registerCacheLifeProfiles",
@@ -13042,6 +13099,18 @@
           "denextOnly": true
         },
         {
+          "name": "SsoMetadataRefreshSummary",
+          "slug": "SsoMetadataRefreshSummary",
+          "kind": "interface",
+          "signature": "interface SsoMetadataRefreshSummary",
+          "doc": "What refreshSsoMetadata did.",
+          "docFull": "What {@linkcode refreshSsoMetadata} did.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "SsoProviderRecord",
           "slug": "SsoProviderRecord",
           "kind": "interface",
@@ -14001,7 +14070,7 @@
           "kind": "function",
           "signature": "verifySamlResponse(options: VerifySamlResponseOptions): Promise<VerifiedSamlAssertion>",
           "doc": "Verify an HTTP-POST-binding SAML 2.0 Response and return its Assertion's claims.",
-          "docFull": "Verify an HTTP-POST-binding SAML 2.0 Response and return its Assertion's claims.\n\nChecks, in order: well-formed strict XML (no DOCTYPE); a samlp:Response root with status\nSuccess; no EncryptedID and exactly one Assertion or EncryptedAssertion in the whole document,\na direct child of the Response; unique IDs; the Response signature, when present, BEFORE\nanything is decrypted (so it covers the cipher text); an EncryptedAssertion decrypted with\n`sp.encryptionKey` and its content parsed by the same strict parser (no DOCTYPE, exactly one\nAssertion, IDs unique across the outer document and the decrypted one); every signature\npresent verifies with a configured certificate and at least one is present (the Assertion's\nwhen `requireSignedAssertion`); Destination; Issuers; a bearer SubjectConfirmation for this\nACS URL; Conditions and AudienceRestriction; the AuthnStatement session window; InResponseTo;\nand finally the replay cache. Claims are read only from the verified element objects.",
+          "docFull": "Verify an HTTP-POST-binding SAML 2.0 Response and return its Assertion's claims.\n\nChecks, in order: well-formed strict XML (no DOCTYPE); a samlp:Response root with status\nSuccess; exactly one Assertion or EncryptedAssertion in the whole document, a direct child of\nthe Response, and an EncryptedID only as its Subject's identifier; unique IDs; the Response signature, when present, BEFORE\nanything is decrypted (so it covers the cipher text); an EncryptedAssertion decrypted with\n`sp.encryptionKey` and its content parsed by the same strict parser (no DOCTYPE, exactly one\nAssertion, IDs unique across the outer document and the decrypted one); every signature\npresent verifies with a configured certificate and at least one is present (the Assertion's\nwhen `requireSignedAssertion`); Destination; Issuers; a bearer SubjectConfirmation for this\nACS URL; the Subject's one NameID or EncryptedID (decrypted only now, after the signature\nover it verified, by the same rules as an EncryptedAssertion); Conditions and\nAudienceRestriction; the AuthnStatement session window; InResponseTo; and finally the replay\ncache. Claims are read only from the verified element objects.",
           "params": [],
           "returns": "",
           "examples": [],

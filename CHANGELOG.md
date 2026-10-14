@@ -40,6 +40,19 @@ and this project adheres to
   all). `db test` runs pgTAP files from `supabase/tests/` in rolled-back transactions. `db types`
   prints the whole-schema `Database` type in `supabase gen types` shape. `db seed` also creates
   the config's buckets and uploads `supabase/buckets/<bucket>/**`.
+- **The rest of the Supabase CLI.** `denext stack up | down | status | logs` runs the Docker stack
+  `denext generate docker` writes, the way `supabase start` does. `up` writes the stack when it is
+  missing, fills a missing `.env` with generated secrets and a fresh key set, then runs
+  `docker compose up --wait`. `status` prints the API, REST, database and S3 URLs and the
+  publishable key; the secret key and the passwords appear only with `--show-secrets`.
+  `@denext/backend` adds `denext storage ls | cp | mv | rm` (`ss:///bucket/key` paths, `-r`,
+  local ↔ bucket and bucket ↔ bucket), `denext functions new | serve | delete` (`serve` runs only
+  the functions host, on port 54321) next to `list`, and `denext backend token` (a signed access
+  token for a role and user, like `supabase gen bearer-jwt`; it prints only the token).
+  `denext gen types | keys | signing-key | bearer-jwt` maps the Supabase CLI's `gen` group onto
+  them. Shell completions now complete each verb's actions (`denext db <TAB>`). `denext mcp` adds
+  `denext_migrations` (list, up, down) and `denext_gen_types`.
+  `edgeFunctionSource` is exported from `denext/plugin-kit` for a plugin's own scaffolding verbs.
 - **`denextAuth({ sendSms, captcha, hooks, anonymous })`.** SMS delivery, captcha (hCaptcha /
   Turnstile), Supabase's auth hooks (`customAccessToken`, `sendEmail`, `sendSms`) and anonymous
   sign-in are now configured once on `denextAuth()`; `/auth/v1` uses them unless

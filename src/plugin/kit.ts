@@ -163,3 +163,8 @@ export { enableFastRefresh, registerFamily } from "../client/refresh-runtime.ts"
  * an app whose sources stay untouched.
  */
 export * as remixCodegen from "../build/remix-codegen.ts";
+
+// ── Scaffolding ─────────────────────────────────────────────────────────────
+// The Edge Function `denext generate function` writes, for a plugin verb that scaffolds one
+// into its own directory (`denext functions new <name>`).
+export { edgeFunctionSource } from "../build/generate.ts";

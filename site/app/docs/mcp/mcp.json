@@ -485,6 +485,72 @@
           "required": false
         }
       ]
+    },
+    {
+      "name": "denext_migrations",
+      "description": "The project's SQL migrations (migrations/ or supabase/migrations/) on its database (Postgres or SQLite): `list` shows local vs applied versions as JSON; `up` applies the pending ones (`to` stops at a version); `down` runs the newest applied ones' down scripts (`steps`, default 1). Pass dryRun to see what would run.",
+      "params": [
+        {
+          "name": "action",
+          "type": "string",
+          "description": "Default list",
+          "required": false
+        },
+        {
+          "name": "to",
+          "type": "string",
+          "description": "up: the last version to apply; down: keep it",
+          "required": false
+        },
+        {
+          "name": "steps",
+          "type": "number",
+          "description": "down: how many to revert (default 1)",
+          "required": false
+        },
+        {
+          "name": "dryRun",
+          "type": "boolean",
+          "description": "up / down: list what would run, run nothing",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        },
+        {
+          "name": "dbUrl",
+          "type": "string",
+          "description": "Another database: a postgres:// URL or sqlite:<path> (default: the project's)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_gen_types",
+      "description": "The database's TypeScript types (the `Database` type `supabase gen types typescript` writes) for the given schemas — tables, views, functions, enums. Needs @denext/backend with postgres.",
+      "params": [
+        {
+          "name": "schema",
+          "type": "string",
+          "description": "Comma-separated schemas (default public)",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        },
+        {
+          "name": "dbUrl",
+          "type": "string",
+          "description": "Another database: a postgres:// URL or sqlite:<path> (default: the project's)",
+          "required": false
+        }
+      ]
     }
   ],
   "resources": [

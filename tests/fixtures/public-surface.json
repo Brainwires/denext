@@ -413,6 +413,7 @@
     "compareSpecificity:function",
     "compileMdxSource:function",
     "createNextCompatServerLoader:function",
+    "edgeFunctionSource:function",
     "enableFastRefresh:function",
     "extractRouteCss:function",
     "fromBase64Url:function",

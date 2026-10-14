@@ -20,6 +20,7 @@ import { runCodemod } from "../build/codemod.ts";
 import { collectRoutes, formatRouteListText } from "../build/route-list.ts";
 import type { DevEvent } from "../build/dev-events.ts";
 import { fetchDevState } from "./dev-client.ts";
+import { databaseTools } from "./database.ts";
 import { devtoolsTools } from "./devtools.ts";
 import { renderComponent, renderRoute, routeMap } from "./inspect.ts";
 import { profileApp } from "../profile/core.ts";
@@ -642,6 +643,8 @@ export const TOOLS: readonly Tool[] = [
   // The DevTools bridge: the component tree / render reasons / hook cells a RUNNING dev
   // page pushed to the dev server (see ./devtools.ts).
   ...devtoolsTools(projectDir),
+  // The project's database: migrations and generated types (child processes).
+  ...databaseTools(projectDir),
 ];
 
 /**
@@ -664,6 +667,8 @@ export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
   devtools: ["denext_component_tree", "denext_why_render", "denext_hook_state"],
   /** denext's own docs, offline: search + read every guide page and the API reference. */
   docs: ["denext_search_docs", "denext_read_docs"],
+  /** The project's database: its migrations, and its generated TypeScript types. */
+  database: ["denext_migrations", "denext_gen_types"],
   /** Project-codebase search: index, query, find-definition, find-references. */
   rag: [
     "denext_index_codebase",

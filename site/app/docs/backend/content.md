@@ -120,6 +120,25 @@ development and single-server self-hosting. Uploads and downloads go through the
 endpoint with signed, expiring URLs; downloads answer `Range` requests. Writes land in a temporary
 file and are renamed into place, so a refused upload leaves nothing behind.
 
+### From the command line
+
+`denext storage` is the Supabase CLI's `storage` group. It runs as the service role through the
+app's own driver and metadata. A storage path is `ss:///<bucket>/<key>`; anything else is a local
+path.
+
+```sh
+denext storage ls                                   # the buckets
+denext storage ls ss:///avatars/team -r             # every key below a prefix
+denext storage cp ./logo.png ss:///avatars/          # upload (--content-type, --cache-control)
+denext storage cp ./public ss:///site -r             # a whole tree
+denext storage cp ss:///avatars/logo.png ./logo.png  # download
+denext storage mv ss:///avatars/a.png ss:///archive/a.png
+denext storage rm ss:///archive -r
+```
+
+`denext db seed` creates the buckets the config declares, then uploads each
+`supabase/buckets/<bucket>/**` file into its bucket.
+
 ### Server API
 
 ```ts
@@ -537,7 +556,11 @@ works unchanged; its options go under `supabase: { auth: { … } }` — see
 
 `denext backend keys` prints a fresh set as environment variables (`--legacy` adds a JWT secret
 and the legacy JWT keys); under `denext dev` with none configured, a set is generated once into
-`.denext/backend-keys.json`. Store them as secrets; never commit them.
+`.denext/backend-keys.json`. Store them as secrets; never commit them. `denext backend token
+--sub <user-id>` signs an access token with the app's key (`--role anon | service_role`,
+`--exp <seconds>`, `--claims '{…}'`), like `supabase gen bearer-jwt`. It prints only the token,
+for a test or a `curl`. `denext gen keys` and `denext gen bearer-jwt` are the same commands under
+the Supabase CLI's names.
 
 Every request is resolved by one function, `resolveIdentity()` from `@denext/backend/server`, which
 `db()`, auto-REST and the other endpoints share. The first that applies wins:
@@ -1324,8 +1347,16 @@ build` does not bundle them — so deploy the `functions/` directory with the ap
 
 The directory is `functions/`, or `supabase/functions/` when only that exists (a project moved from
 the Supabase CLI). Entries starting with `_` (`_shared/`) or `.` are not functions, nor are test
-files. `denext functions list` prints each function's route, file and whether it verifies the
-caller.
+files. `denext functions` is the Supabase CLI's `functions` group:
+
+```sh
+denext functions new hello      # functions/hello/index.ts, served at /functions/v1/hello
+denext functions list           # each route, file, and whether it verifies the caller (--json)
+denext functions serve          # only the functions host, on :54321 (--port); edits reload
+denext functions delete hello --yes
+```
+
+There is nothing to `download` or `deploy`: the functions ship inside the app, wherever it runs.
 
 | Option         | Default            | What it does                                                                                          |
 | -------------- | ------------------ | ----------------------------------------------------------------------------------------------------- |
@@ -1598,6 +1629,17 @@ healthy and the one-shots have finished.
 denext generate docker --stack   # web, db, minio + minio-init, migrate; .env.example
 cp .env.example .env             # fill in POSTGRES_PASSWORD, DENEXT_STORAGE_SECRET, …
 docker compose up -d --build
+```
+
+Or let `denext stack` do all three, the way `supabase start` does:
+
+```sh
+denext stack up            # writes the stack if it is missing (--stack, or your generate flags),
+                           # fills a missing .env with generated secrets (0600), compose up --wait
+denext stack status        # API, REST, database and S3 URLs, the publishable key (--json);
+                           # --show-secrets adds the secret key and the passwords
+denext stack logs db -f    # docker compose logs
+denext stack down          # --volumes also drops the data
 ```
 
 `.env.example` names every secret the backend reads, with how to generate each; the compose

@@ -24,6 +24,7 @@ import {
   resolveSupabaseKeys,
   signSupabaseJwt,
   type SupabaseKeys,
+  verifySupabaseJwt,
 } from "../src/server/auth/gotrue/keys.ts";
 import { sessionFromClaims } from "../src/server/auth/gotrue/access.ts";
 import { backend } from "../packages/backend/mod.ts";
@@ -36,7 +37,11 @@ import {
   resolveIdentity,
 } from "../packages/backend/server.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
-import { createBackendCommand, DEV_KEYS_FILE } from "../packages/backend/src/supabase.ts";
+import {
+  createBackendCommand,
+  DEV_KEYS_FILE,
+  tokenClaims,
+} from "../packages/backend/src/supabase.ts";
 import { fakeSqlClient } from "./helpers/fake-sql-client.ts";
 
 const load = ((path: string) => import(path)) as unknown as ModuleLoader;
@@ -463,4 +468,58 @@ Deno.test("denext backend keys prints env lines, JSON, and the legacy keys", asy
   await command.run(ctx({ json: true }));
   assert(JSON.parse(lines.join("\n")).signingKey.d);
   await assertRejects(async () => await command.run(ctx({}, ["nope"])), Error, "unknown action");
+});
+
+Deno.test("denext backend token: a signed access token for a role, never the key", async () => {
+  const lines: string[] = [];
+  const command = createBackendCommand({ log: (line) => lines.push(line) });
+  const ctx = (flags: Record<string, string | number | boolean>) =>
+    ({ positionals: ["token"], flags, global: {}, rest: [] }) as unknown as Parameters<
+      typeof command.run
+    >[0];
+  const previous = installedSupabaseKeys();
+  try {
+    installSupabaseKeys(undefined);
+    await assertRejects(async () => await command.run(ctx({})), Error, "no Supabase keys");
+    const generated = await generateSupabaseKeys({ legacy: false });
+    const keys = await resolveSupabaseKeys({
+      publishableKey: generated.publishableKey,
+      secretKey: generated.secretKey,
+      signingKeys: [generated.signingKey],
+    });
+    installSupabaseKeys(keys);
+    await command.run(ctx({ sub: USER, email: "a@b.test", claims: '{"team":"x"}' }));
+    assertEquals(lines.length, 1);
+    assert(!lines[0].includes(generated.signingKey.d!), "the key is never printed");
+    const claims = await verifySupabaseJwt(keys, lines[0]);
+    assertEquals([claims.role, claims.sub, claims.email, claims.aud], [
+      "authenticated",
+      USER,
+      "a@b.test",
+      "authenticated",
+    ]);
+    assertEquals((claims as Record<string, unknown>).team, "x");
+    await command.run(ctx({ role: "service_role", exp: 60 }));
+    const service = await verifySupabaseJwt(keys, lines[1]);
+    assertEquals(service.role, "service_role");
+    assertEquals(service.exp! - service.iat!, 60);
+  } finally {
+    installSupabaseKeys(previous);
+  }
+  assertEquals(tokenClaims({ role: "anon" }, 100).exp, 3700);
+  for (
+    const [flags, message] of [
+      [{ role: "root" }, "--role"],
+      [{}, "--sub"],
+      [{ role: "anon", exp: -1 }, "--exp"],
+      [{ role: "anon", claims: "[1]" }, "JSON object"],
+    ] as const
+  ) {
+    try {
+      tokenClaims(flags as Record<string, string | number>);
+      throw new Error("expected a refusal");
+    } catch (error) {
+      assertStringIncludes((error as Error).message, message);
+    }
+  }
 });
