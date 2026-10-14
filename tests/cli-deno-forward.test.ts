@@ -474,9 +474,32 @@ Deno.test("a forwarding verb keeps `--` so script arguments stay the script's", 
   const out = buildRegistry().parse(["test", "a.test.ts", "--", "--seed", "1"]);
   assert(out.kind === "run");
   assertEquals(out.ctx.rest, ["a.test.ts", "--", "--seed", "1"]);
-  const dev = buildRegistry().parse(["routes", "--", "x"]);
+  const dev = buildRegistry().parse(["routes", ".", "--", "x"]);
   assert(dev.kind === "run");
   assertEquals(dev.ctx.rest, ["x"], "a non-forwarding verb still drops it");
+});
+
+Deno.test("real verbs: a leading -- (a task runner's) is ignored unless the verb forwards", () => {
+  const reg = buildRegistry();
+  for (
+    const [argv, flag, value] of [
+      [["start", "--", "--port", "4000"], "port", 4000],
+      [["dev", "--", "--port", "4100", "--host", "0.0.0.0"], "host", "0.0.0.0"],
+      [["build", "--", "--json"], "json", true],
+      [["routes", "--", "--json"], "json", true],
+    ] as const
+  ) {
+    const out = reg.parse([...argv]);
+    assert(out.kind === "run", argv.join(" "));
+    assertEquals(out.ctx.flags[flag], value, argv.join(" "));
+    assertEquals(out.ctx.rest, [], argv.join(" "));
+  }
+  // Forwarding verbs keep today's meaning: the separator goes to Deno.
+  for (const verb of ["test", "task", "fmt"]) {
+    const out = reg.parse([verb, "--", "--seed", "1"]);
+    assert(out.kind === "run", verb);
+    assertEquals(out.ctx.rest, ["--", "--seed", "1"], verb);
+  }
 });
 
 Deno.test("a relative DENEXT_DENO resolves against the starting directory", async () => {

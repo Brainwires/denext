@@ -619,6 +619,11 @@ a 3.x app to 4.0 involves. This section is the record.
   terminal unless `--yes` is passed. `db reset` and `migration down --force-reset` accept a "yes"
   at the terminal as well as `--yes`, and name the remote database in the question. A local
   database (loopback host, Unix socket, SQLite) is unchanged.
+- **A leading `--` no longer swallows a verb's flags.** `deno task start -- --port 4000` runs
+  `denext start -- --port 4000`, and the `--` made `--port 4000` pass-through tokens that `start`
+  ignored. A verb that forwards nothing (`start`, `dev`, `build`, `routes`, …) now skips a `--`
+  that comes first and parses the rest as its own flags. Forwarding verbs (`test`, `task`, `fmt`,
+  `lint`, …) and a `--` later in the line keep their meaning.
 - **`denext storage cp -r` never writes through a symbolic link inside the destination.** A
   download into a folder that held a link (to a directory or a file elsewhere) wrote through it.
   Each path component under the destination is now checked first, and the copy is refused.
