@@ -1,4 +1,5 @@
-// Schema snapshots and their diff, for `denext db diff`: read what a database's schemas contain
+// Schema snapshots and their diff, for `denext db diff` (denext's seed bookkeeping,
+// `public._seed_files`, is left out): read what a database's schemas contain
 // from the catalog (tables, columns, constraints, indexes, row-level security and its policies,
 // functions, views, triggers, enum types), compare two snapshots, and print the DDL that turns
 // the first into the second. Grants, sequences' own settings, comments and extensions are not
@@ -104,6 +105,7 @@ export async function readSnapshot(sql: SqlClient, schemas: string[]): Promise<S
        WHERE c.relkind IN ('r', 'p') AND n.nspname = ANY($1) AND ${
         extensionOwned.replace("%s", "c.oid")
       }
+         AND NOT (c.relname = '_seed_files' AND n.nspname = 'public')
        ORDER BY 1, 2`,
     )
   ) {

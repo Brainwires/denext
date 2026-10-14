@@ -391,7 +391,10 @@ when it is a `postgres://` URL, else SQLite at `DB_PATH` (default `app.db`), the
 --url …`) picks another. The history is `_migrations`, the same table the runners write. A
 project whose files are in `supabase/migrations/` keeps the Supabase CLI's
 `supabase_migrations.schema_migrations`, so its history carries over. `migration fetch` writes
-that history's SQL back into files. `denext db reset --yes` and `denext db seed` (`seed.sql`)
+that history's SQL back into files. `denext db seed` records each seed file's hash, skips an
+unchanged one and runs an edited one (`--force` runs them all). A `jobs/migrate.ts` written by an
+older denext applied files whole, down section included. `denext generate migration` replaces it,
+and until then the job refuses to run while any migration has a down script. `denext db reset --yes` and `denext db seed` (`seed.sql`)
 work on both databases. The Postgres tooling (`db diff`, `pull`, `lint`, `inspect`, `test`,
 `types`) comes with [`@denext/backend`](/docs/backend#denext-db).
 

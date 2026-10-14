@@ -8232,13 +8232,17 @@
           "name": "installGoTrue",
           "slug": "installGoTrue",
           "kind": "function",
-          "signature": "installGoTrue(handler: GoTrueHandlerOptions | undefined): void",
+          "signature": "installGoTrue(handler: GoTrueHandlerOptions | undefined, serving?: boolean): void",
           "doc": "Mount the /auth/v1 flows that finish outside its own paths — an OAuth callback arrives at denext's {basePath}/callback/:provider — and start the background SAML metadata refresh (saml.metadataRefresh), or remove them with undefined. backend({ supabase }) calls it at setup and with undefined at teardown.",
           "docFull": "Mount the `/auth/v1` flows that finish outside its own paths — an OAuth callback arrives at\ndenext's `{basePath}/callback/:provider` — and start the background SAML metadata refresh\n(`saml.metadataRefresh`), or remove them with `undefined`. `backend({ supabase })` calls it at\nsetup and with `undefined` at teardown.",
           "params": [
             {
               "name": "handler",
               "doc": "The options and keys, or undefined."
+            },
+            {
+              "name": "serving",
+              "doc": "Whether the app is serving requests (dev/start); the background refresh starts only then, not during a build or export. Default true."
             }
           ],
           "returns": "",

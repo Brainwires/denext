@@ -27,6 +27,7 @@ import { isPostgresUrl, runScript, type SqlClient } from "../../server/postgres.
 import { displayTarget } from "../db-admin/connection.ts";
 import type { CommandContext } from "../command.ts";
 import { type BackendDbHooks, backendHooks, type DbIo } from "./project.ts";
+import { type SeedFiles, seedFilesFor, seedHash } from "./seed-files.ts";
 import { type DbTarget, type EnvReader, historyFor, LINKED_URL_ENV, openTarget } from "./target.ts";
 
 /** One invocation of a migration action. */
@@ -129,8 +130,12 @@ export async function newAction(run: MigrationRun): Promise<void> {
   const plan = await migrationPlan(run.projectDir, name, new Date(), up);
   for (const file of plan) {
     await Deno.mkdir(dirname(file.path), { recursive: true });
-    await Deno.writeTextFile(file.path, file.contents, { createNew: true });
-    run.io.log(`Created ${relative(run.projectDir, file.path).replaceAll("\\", "/")}`);
+    await Deno.writeTextFile(file.path, file.contents, { createNew: !file.overwrite });
+    run.io.log(
+      `${file.overwrite ? "Replaced the outdated" : "Created"} ${
+        relative(run.projectDir, file.path).replaceAll("\\", "/")
+      }`,
+    );
   }
 }
 
@@ -205,7 +210,7 @@ export async function upAction(run: MigrationRun, options: { seed?: boolean } = 
       for (const name of names) run.io.log(`  ${verb} ${name}`);
     }
     json.applied.push(...names);
-    if (options.seed && !dryRun) json.seeded = await seedTarget(run, target);
+    if (options.seed && !dryRun) json.seeded = await seedTarget(run, target, history);
     if (run.ctx.global.json) run.io.log(JSON.stringify(json, null, 2));
     else if (!own.length && !names.length) run.io.log("The database is up to date.");
   });
@@ -408,38 +413,65 @@ async function seedFiles(projectDir: string): Promise<string[]> {
   return [];
 }
 
-/** Run the seed SQL (and the backend's bucket seeds) on a target; returns what ran. */
-async function seedTarget(run: MigrationRun, target: DbTarget): Promise<string[]> {
+/** Run one seed file unless its recorded hash is unchanged (and not `--force`); its name, if it ran. */
+async function seedFile(
+  run: MigrationRun,
+  target: DbTarget,
+  record: SeedFiles,
+  file: string,
+): Promise<string | undefined> {
+  const text = await Deno.readTextFile(file);
+  const name = relative(run.projectDir, file).replaceAll("\\", "/");
+  const hash = await seedHash(text);
+  if (run.ctx.flags.force !== true && await record.hashOf(name) === hash) {
+    say(run, `  skipped ${name} (unchanged; --force re-runs it)`);
+    return undefined;
+  }
+  if (target.dialect === "postgres") await runScript(await keyed(target.sql!), text);
+  else target.sqlite!.exec(text);
+  await record.record(name, hash);
+  say(run, `  seeded from ${name}`);
+  return name;
+}
+
+/** Print a progress line (not under `--json`). */
+function say(run: MigrationRun, line: string): void {
+  if (!run.ctx.global.json) run.io.log(line);
+}
+
+/**
+ * Run the seed SQL (and the backend's bucket seeds) on a target; returns what ran. A seed file
+ * whose content hash is recorded unchanged is skipped unless `--force`.
+ */
+async function seedTarget(
+  run: MigrationRun,
+  target: DbTarget,
+  history: MigrationHistory,
+): Promise<string[]> {
   const done: string[] = [];
+  const record = seedFilesFor(target, history);
   for (const file of await seedFiles(run.projectDir)) {
-    const text = await Deno.readTextFile(file);
-    if (target.dialect === "postgres") await runScript(await keyed(target.sql!), text);
-    else target.sqlite!.exec(text);
-    const name = relative(run.projectDir, file).replaceAll("\\", "/");
-    done.push(name);
-    if (!run.ctx.global.json) run.io.log(`  seeded from ${name}`);
+    const name = await seedFile(run, target, record, file);
+    if (name) done.push(name);
   }
   for (const line of await backendHooks()?.seedBuckets?.(run.projectDir) ?? []) {
     done.push(line);
-    if (!run.ctx.global.json) run.io.log(`  ${line}`);
+    say(run, `  ${line}`);
   }
   return done;
 }
 
 /** `db seed`: the seed SQL, then the config's buckets and their objects. */
 export async function seedAction(run: MigrationRun): Promise<void> {
-  const target = targetOf(run);
-  try {
-    const done = await seedTarget(run, target);
+  await withHistory(run, false, async (history, _local, target) => {
+    const done = await seedTarget(run, target, history);
     if (run.ctx.global.json) run.io.log(JSON.stringify({ seeded: done }, null, 2));
-    else if (!done.length) {
+    else if (!done.length && !(await seedFiles(run.projectDir)).length) {
       run.io.log(
         "Nothing to seed: add supabase/seed.sql (or seed.sql), or buckets to backend({ storage }).",
       );
     }
-  } finally {
-    await target.close();
-  }
+  });
 }
 
 /** Drop everything the app's migrations made (Postgres: the app's schemas; SQLite: every object). */
@@ -493,7 +525,7 @@ export async function resetAction(
     await migrateUp(history, files, { to: to || undefined, includeAll: true }, (name) => {
       run.io.log(`  applied ${name}`);
     });
-    if (run.ctx.flags["no-seed"] !== true) await seedTarget(run, target);
+    if (run.ctx.flags["no-seed"] !== true) await seedTarget(run, target, history);
   });
 }
 

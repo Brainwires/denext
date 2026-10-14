@@ -20,6 +20,7 @@
 // Build-time only; never imported by a shipped bundle.
 
 import { projectMigrationsDir } from "../server/migration-files.ts";
+import { isLegacyMigrateJob } from "../server/legacy-migrate-job.ts";
 import { vectorSearchSql } from "../server/vector-sql.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { join } from "@std/path";
@@ -32,6 +33,8 @@ export interface OpsPlanFile {
   readonly path: string;
   /** Full contents. */
   readonly contents: string;
+  /** Replace an existing file (an outdated generated one) even without `--force`. */
+  readonly overwrite?: boolean;
 }
 
 /** The ORM a project's migrations and seeds belong to. */
@@ -310,7 +313,14 @@ export async function migrationPlan(
     contents: migrationSql(slug, supabase || await usesPostgres(projectDir), up),
   }];
   const runner = join(projectDir, "jobs", "migrate.ts");
-  if (!supabase && !(await exists(runner))) plan.push({ path: runner, contents: MIGRATE_JOB });
+  if (!supabase) {
+    const current = await readText(runner);
+    if (current === undefined) plan.push({ path: runner, contents: MIGRATE_JOB });
+    // An older generated runner ran whole files: it would apply the down section too.
+    else if (isLegacyMigrateJob(current)) {
+      plan.push({ path: runner, contents: MIGRATE_JOB, overwrite: true });
+    }
+  }
   return plan;
 }
 

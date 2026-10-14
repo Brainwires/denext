@@ -66,6 +66,8 @@ export interface GeneratePreviewFile {
   readonly path: string;
   /** The file's full contents. */
   readonly contents: string;
+  /** Replace an existing file (an outdated generated one) even without `--force`. */
+  readonly overwrite?: boolean;
 }
 
 /** How a generate run treats the filesystem. */
@@ -433,7 +435,7 @@ export async function generateArtifact(
     return { written, skipped, preview: plan };
   }
   for (const file of plan) {
-    await writeIfAbsent(file.path, file.contents, written, skipped, force);
+    await writeIfAbsent(file.path, file.contents, written, skipped, force || file.overwrite);
   }
   return { written, skipped };
 }

@@ -111,7 +111,8 @@ services:
       retries: 20
       start_period: 10s
 
-  # Creates the bucket once (idempotent), then exits; the app waits for it.
+  # Creates the bucket once (idempotent), then exits; the app waits for it. The image restarts
+  # its server once after first boot (past the health check), so the alias is retried.
   minio-init:
     image: ${MINIO_IMAGE:-bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20}
     restart: "no"
@@ -124,7 +125,7 @@ services:
       S3_BUCKET: ${S3_BUCKET:-media}
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - mc alias set stack http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" && mc mb --ignore-existing "stack/$$S3_BUCKET"
+      - for i in $$(seq 1 30); do mc alias set stack http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" && break; sleep 2; done && mc mb --ignore-existing "stack/$$S3_BUCKET"
 
 volumes:
   db-data:

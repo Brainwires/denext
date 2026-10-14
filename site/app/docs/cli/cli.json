@@ -361,7 +361,7 @@
         {
           "name": "force",
           "type": "boolean",
-          "description": "fetch: overwrite existing files"
+          "description": "fetch: overwrite existing files; seed: re-run unchanged seed files"
         },
         {
           "name": "db-url",
@@ -1307,7 +1307,7 @@
         {
           "name": "force",
           "type": "boolean",
-          "description": "fetch: overwrite existing files"
+          "description": "fetch: overwrite existing files; seed: re-run unchanged seed files"
         },
         {
           "name": "db-url",

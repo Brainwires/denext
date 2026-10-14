@@ -85,7 +85,11 @@ export const MIGRATION_FLAGS: readonly FlagSpec[] = [
     help: "repair: mark the versions applied or reverted",
   },
   { name: "stdin", type: "boolean", help: "new: read the up SQL from stdin" },
-  { name: "force", type: "boolean", help: "fetch: overwrite existing files" },
+  {
+    name: "force",
+    type: "boolean",
+    help: "fetch: overwrite existing files; seed: re-run unchanged seed files",
+  },
   ...TARGET_FLAGS,
 ];
 

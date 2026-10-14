@@ -408,7 +408,8 @@ function storageServices(options: StackOptions): string {
       retries: 20
       start_period: 10s
 
-  # Creates the bucket once (idempotent), then exits; the app waits for it.
+  # Creates the bucket once (idempotent), then exits; the app waits for it. The image restarts
+  # its server once after first boot (past the health check), so the alias is retried.
   minio-init:
     image: ${image}
     restart: "no"
@@ -421,7 +422,7 @@ function storageServices(options: StackOptions): string {
       S3_BUCKET: ${bucket}
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - mc alias set stack http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" && mc mb --ignore-existing "stack/$$S3_BUCKET"`;
+      - for i in $$(seq 1 30); do mc alias set stack http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" && break; sleep 2; done && mc mb --ignore-existing "stack/$$S3_BUCKET"`;
 }
 
 /** The named volumes the stack keeps its data in. */

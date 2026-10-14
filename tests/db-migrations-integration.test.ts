@@ -325,3 +325,139 @@ rollback;
     }
   },
 });
+
+Deno.test({
+  name: `migration squash rewrites a Postgres history, both formats${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await environment();
+    const supa = await Deno.makeTempDir({ prefix: "dnx-squash-supa-" });
+    const plain = await Deno.makeTempDir({ prefix: "dnx-squash-plain-" });
+    try {
+      for (const [root, dir] of [[supa, "supabase/migrations"], [plain, "migrations"]] as const) {
+        await write(root, {
+          [`${dir}/20260101000000_a.sql`]: `-- migrate:up\ncreate table ${
+            dir.startsWith("s") ? "sa" : "pa"
+          } (id int);\n-- migrate:down\ndrop table ${dir.startsWith("s") ? "sa" : "pa"};\n`,
+          [`${dir}/20260102000000_b.sql`]: `-- migrate:up\ncreate table ${
+            dir.startsWith("s") ? "sb" : "pb"
+          } (id int);\n-- migrate:down\ndrop table ${dir.startsWith("s") ? "sb" : "pb"};\n`,
+        });
+        const run = runner(root, env.url);
+        await run(MIGRATION_ACTIONS, ["up"]);
+        const out = await run(MIGRATION_ACTIONS, ["squash"]); // --db-url: the history is rewritten
+        assertStringIncludes(out, "history: 2 rows → 20260102000000_b.sql");
+        const listed = JSON.parse(await run(MIGRATION_ACTIONS, ["list"], {}, true));
+        assertEquals(
+          listed.migrations.map((m: { version: string; local: boolean; remote: boolean }) => [
+            m.version,
+            m.local,
+            m.remote,
+          ]),
+          [["20260102000000", true, true]],
+        );
+        assertEquals(await run(MIGRATION_ACTIONS, ["up"]), "The database is up to date.");
+        // The squashed file still rolls back as one (both tables, newest first).
+        await run(MIGRATION_ACTIONS, ["down"]);
+        const left = await env.app`select count(*)::int as n from information_schema.tables
+          where table_schema = 'public' and table_name in ('sa', 'sb', 'pa', 'pb')`;
+        assertEquals(left[0].n, root === supa ? 0 : 2, "the squashed pair is gone");
+        if (root === supa) await run(MIGRATION_ACTIONS, ["up"]);
+      }
+      const history = await env.app`select version, name, array_length(statements, 1) as n
+        from supabase_migrations.schema_migrations`;
+      assertEquals(history.map((r) => [r.version, r.name]), [["20260102000000", "b"]]);
+    } finally {
+      await Deno.remove(supa, { recursive: true });
+      await Deno.remove(plain, { recursive: true });
+      await env.drop();
+    }
+  },
+});
+
+const S3_ENDPOINT = Deno.env.get("DENEXT_TEST_S3_ENDPOINT") || undefined;
+const s3Reason = reason ?? (S3_ENDPOINT ? undefined : "set DENEXT_TEST_S3_ENDPOINT");
+
+Deno.test({
+  name: `db seed on Postgres + MinIO: seed_files hashes, buckets and their objects${
+    s3Reason ? ` (skipped: ${s3Reason})` : ""
+  }`,
+  ignore: s3Reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { s3 } = await import("../packages/backend/mod.ts");
+    const { storage } = await import("../packages/backend/server.ts");
+    const { installRuntime } = await import("../packages/backend/src/runtime.ts");
+    const { sha256Hex, signRequest } = await import("../packages/backend/src/sigv4.ts");
+    const credentials = {
+      accessKeyId: Deno.env.get("DENEXT_TEST_S3_ACCESS_KEY") ?? "",
+      secretAccessKey: Deno.env.get("DENEXT_TEST_S3_SECRET_KEY") ?? "",
+    };
+    const store = `seed${Date.now().toString(36)}`;
+    const sign = async (method: string) => {
+      const req = await signRequest(
+        { method, origin: new URL(S3_ENDPOINT!).origin, path: `/${store}` },
+        { region: "us-east-1", service: "s3", credentials },
+        await sha256Hex(""),
+      );
+      delete req.headers.host;
+      return await fetch(req.url, { method, headers: req.headers });
+    };
+    const created = await sign("PUT");
+    await created.body?.cancel();
+    const env = await environment();
+    const root = await Deno.makeTempDir({ prefix: "dnx-seed-pg-" });
+    try {
+      await write(root, {
+        "supabase/migrations/20260101000000_init.sql": "create table notes (body text);\n",
+        "supabase/seed.sql": "insert into notes values ('seeded');\n",
+        "supabase/buckets/avatars/team/a.txt": "hello",
+      });
+      await Deno.mkdir(`${root}/app`);
+      resetPlugins();
+      installPostgres(undefined);
+      installRuntime(undefined);
+      const config = {
+        plugins: [backend({
+          postgres: { sql: env.app },
+          storage: {
+            secret: "storage-secret-at-least-32-characters",
+            driver: s3({ endpoint: S3_ENDPOINT!, region: "us-east-1", bucket: store, credentials }),
+            buckets: { avatars: {} },
+          },
+        })],
+      } as DenextConfig;
+      await applyPlugins({ projectRoot: root, appDir: `${root}/app`, config, mode: "build", load });
+      const run = runner(root, env.url);
+      await run(DB_ACTIONS, ["migrate"]);
+      const first = await run(DB_ACTIONS, ["seed"]);
+      assertStringIncludes(first, "seeded from supabase/seed.sql");
+      assertStringIncludes(first, "bucket avatars");
+      assertStringIncludes(first, "uploaded avatars/team/a.txt");
+      const recorded = await env.app`select path, hash from supabase_migrations.seed_files`;
+      assertEquals(recorded.map((r) => r.path), ["supabase/seed.sql"]);
+      assertEquals(String(recorded[0].hash).length, 64);
+      const again = await run(DB_ACTIONS, ["seed"]);
+      assertStringIncludes(again, "skipped supabase/seed.sql (unchanged");
+      await run(DB_ACTIONS, ["seed"], { force: true });
+      assertEquals((await env.app`select count(*)::int as n from notes`)[0].n, 2);
+      const object = await storage.bucket("avatars", { service: true }).download("team/a.txt");
+      assertEquals(await new Response(object!.body).text(), "hello");
+      const rows = await env.app`select name from storage.objects where bucket_id = 'avatars'`;
+      assertEquals(rows.map((r) => r.name), ["team/a.txt"]);
+      await storage.bucket("avatars", { service: true }).remove(["team/a.txt"]);
+    } finally {
+      await runPluginTeardown();
+      resetPlugins();
+      installPostgres(undefined);
+      installRuntime(undefined);
+      const removed = await sign("DELETE");
+      await removed.body?.cancel();
+      await Deno.remove(root, { recursive: true });
+      await env.drop();
+    }
+  },
+});

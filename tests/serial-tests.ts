@@ -43,6 +43,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/integration/example-notes.test.ts",
   "tests/integration/rate-limit-header-server.test.ts",
   "tests/job-discovery.test.ts",
+  "tests/legacy-migrate-job.test.ts",
   "tests/mcp-dev-logs-spa.test.ts",
   "tests/mcp-devtools.test.ts",
   "tests/migrate-effect-fixture.test.ts",

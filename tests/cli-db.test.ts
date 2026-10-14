@@ -146,10 +146,30 @@ Deno.test("db rollback --force-reset, db reset, db seed and repair on SQLite", a
     await assertRejects(() => act(DB_ACTIONS, root, ["reset"]), Error, "--yes");
     const full = await act(DB_ACTIONS, root, ["reset"], { yes: true, version: "1" });
     assertEquals(full.slice(1), ["  applied 1_a.sql", "  seeded from seed.sql"]);
-    assertEquals(await act(DB_ACTIONS, root, ["seed"]), ["  seeded from seed.sql"]);
+    // Seed files are tracked by hash: unchanged is skipped, --force or an edit re-runs it.
+    assertEquals(await act(DB_ACTIONS, root, ["seed"]), [
+      "  skipped seed.sql (unchanged; --force re-runs it)",
+    ]);
+    assertEquals(await act(DB_ACTIONS, root, ["seed"], { force: true }), [
+      "  seeded from seed.sql",
+    ]);
+    await Deno.writeTextFile(`${root}/seed.sql`, "INSERT INTO a VALUES (8);");
     assertEquals(JSON.parse((await act(DB_ACTIONS, root, ["seed"], {}, { json: true }))[0]), {
       seeded: ["seed.sql"],
     });
+    const seeded = new DatabaseSync(`${root}/app.db`);
+    try {
+      assertEquals(
+        (seeded.prepare("SELECT id FROM a ORDER BY id").all() as { id: number }[]).map((r) => r.id),
+        [7, 7, 8],
+      );
+      assertEquals(
+        (seeded.prepare("SELECT path FROM _seed_files").all() as { path: string }[])[0].path,
+        "seed.sql",
+      );
+    } finally {
+      seeded.close();
+    }
     // repair
     await assertRejects(() => act(MIGRATION_ACTIONS, root, ["repair", "2"]), TypeError, "--status");
     await assertRejects(
@@ -395,4 +415,46 @@ Deno.test({
     resetPlugins();
     await Deno.remove(root, { recursive: true });
   }
+});
+
+Deno.test("seed files on Postgres: the Supabase table or _seed_files, a missing table is empty", async () => {
+  const { seedFilesFor, seedHash } = await import("../src/cli/db/seed-files.ts");
+  const { postgresHistory, supabaseHistory } = await import("../src/server/migration-history.ts");
+  let missing = true;
+  const sql = scriptedSql((text) => {
+    if (text.startsWith("SELECT hash")) {
+      if (missing) throw Object.assign(new Error("no table"), { code: "42P01" });
+      return [{ hash: "h1" }];
+    }
+    return [];
+  });
+  const target = {
+    dialect: "postgres" as const,
+    sql,
+    display: "pg",
+    close: () => Promise.resolve(),
+  };
+  const supa = seedFilesFor(target, supabaseHistory(sql));
+  assertEquals(supa.table, "supabase_migrations.seed_files");
+  assertEquals(await supa.hashOf("supabase/seed.sql"), undefined);
+  missing = false;
+  assertEquals(await supa.hashOf("supabase/seed.sql"), "h1");
+  await supa.record("supabase/seed.sql", "h2");
+  assert(sql.calls.some((c) => c.text === "CREATE SCHEMA IF NOT EXISTS supabase_migrations"));
+  const insert = sql.calls.find((c) =>
+    c.text.startsWith("INSERT INTO supabase_migrations.seed_files")
+  )!;
+  assertEquals(insert.params, ["supabase/seed.sql", "h2"]);
+  assertEquals(seedFilesFor(target, postgresHistory(sql)).table, "_seed_files");
+  const broken = seedFilesFor(
+    {
+      ...target,
+      sql: scriptedSql(() => {
+        throw Object.assign(new Error("boom"), { code: "XX000" });
+      }),
+    },
+    supabaseHistory(sql),
+  );
+  await assertRejects(() => broken.hashOf("x"), Error, "boom");
+  assertEquals((await seedHash("a")).length, 64);
 });
