@@ -29,7 +29,7 @@ export const DB_ACTIONS: Record<string, (run: MigrationRun) => Promise<void>> = 
   migrate: (run) => upAction(run),
   rollback: downAction,
   status: listAction,
-  push: (run) => upAction(run, { seed: run.ctx.flags["include-seed"] === true, confirm: true }),
+  push: (run) => upAction(run, { seed: run.ctx.flags["include-seed"] === true, verb: "push" }),
   reset: (run) => resetAction(run),
   seed: seedAction,
   link: linkAction,

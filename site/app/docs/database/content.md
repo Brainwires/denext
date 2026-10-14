@@ -389,7 +389,8 @@ The database is the project's own. That is `@denext/backend`'s Postgres, else `D
 when it is a `postgres://` URL, else SQLite at `DB_PATH` (default `app.db`), the file
 `jobs/migrate.ts` uses. `--db-url <url | sqlite:path>` or `--linked` (after `denext db link
 --url …`) picks another. Against a remote database (`--linked`, or a `--db-url` that is not
-on this machine) `db push` and `migration squash` ask for confirmation first, as `db reset` and
+on this machine) `db push`, `migration up` / `down` / `repair` / `squash` and their `db`
+spellings (`db migrate`, `db rollback`) ask for confirmation first, as `db reset` and
 `migration down --force-reset` always do; `--yes` answers it, and with no terminal to ask on the
 verb refuses without `--yes`. The history is `_migrations`, the same table the runners write. A
 project whose files are in `supabase/migrations/` keeps the Supabase CLI's

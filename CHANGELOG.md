@@ -616,6 +616,11 @@ a 3.x app to 4.0 involves. This section is the record.
   terminal unless `--yes` is passed. `db reset` and `migration down --force-reset` accept a "yes"
   at the terminal as well as `--yes`, and name the remote database in the question. A local
   database (loopback host, Unix socket, SQLite) is unchanged.
+- **`denext migration up` / `down` / `repair`, `db migrate` / `rollback` and `denext storage rm
+  -r` confirm against a remote target.** With `--linked` or a `--db-url` off this machine (the
+  migration verbs), or an S3 store off this machine (`storage rm -r`), they now ask at the
+  terminal, and refuse without one unless `--yes`, as `db push` and `migration squash` already
+  did. A dry run, and loopback, Unix-socket, SQLite and fs targets, are not asked about.
 - **A stack `.env` can no longer turn a placeholder into the service-role key.**
   `denext generate docker --stack` wrote the four optional Supabase key lines of `.env.example`
   as the literal `undefined`, so `denext stack up` crash-looped, and a hand-filled `.env` that

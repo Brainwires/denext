@@ -76,7 +76,12 @@ export const MIGRATION_FLAGS: readonly FlagSpec[] = [
     type: "boolean",
     help: "down: reset the database and re-apply up to the target (no down scripts needed)",
   },
-  { name: "yes", type: "boolean", help: "reset / down --force-reset: confirm dropping the data" },
+  {
+    name: "yes",
+    type: "boolean",
+    help: "Confirm without asking: reset / down --force-reset anywhere; up / down / push / " +
+      "repair / squash on a remote database",
+  },
   { name: "no-seed", type: "boolean", help: "reset: skip the seed" },
   {
     name: "status",

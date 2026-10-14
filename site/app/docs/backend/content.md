@@ -138,6 +138,9 @@ denext storage mv ss:///avatars/a.png ss:///archive/a.png
 denext storage rm ss:///archive -r
 ```
 
+`rm -r` against a remote store (S3 off this machine) asks for confirmation first; `--yes`
+answers it, and with no terminal to ask on it refuses without `--yes`.
+
 `denext db seed` creates the buckets the config declares, then uploads each
 `supabase/buckets/<bucket>/**` file into its bucket.
 

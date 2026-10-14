@@ -6,12 +6,14 @@
 //   ls [ss:///bucket/prefix] [-r]    the buckets, or one folder level (-r: every key below)
 //   cp <src> <dst> [-r]              local → bucket (upload), bucket → local, bucket → bucket
 //   mv <src> <dst> [-r]              bucket → bucket
-//   rm <ss:///…>… [-r]               delete objects (-r: everything under a prefix)
+//   rm <ss:///…>… [-r] [--yes]       delete objects (-r: everything under a prefix; on a remote
+//                                    store, confirmed at the terminal or with --yes)
 
 import { dirname, relative, resolve, SEPARATOR } from "@std/path";
 import type { CommandContext, CommandSpec } from "@denext/denext/cli/command";
 import { type CommandIo, consoleIo } from "./command-io.ts";
 import { filesUnder } from "./files.ts";
+import { runtime } from "./runtime.ts";
 import { storage } from "./storage.ts";
 import { seedContentType } from "./storage-seed.ts";
 
@@ -215,12 +217,58 @@ async function mv(ctx: CommandContext, io: CommandIo): Promise<void> {
   await transfer(from, to, ctx, io, "move");
 }
 
+/** Whether `host` (a URL's hostname) is this machine. */
+function isLoopbackHost(host: string): boolean {
+  const name = host.toLowerCase().replace(/^\[|\]$/g, "");
+  return name === "localhost" || name.endsWith(".localhost") || name === "::1" ||
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(name);
+}
+
+/**
+ * The store's location when it is REMOTE (a network store off this machine), else `undefined`:
+ * the fs driver, and an S3-compatible store on a loopback endpoint, are local.
+ *
+ * @param location The storage driver's `location`.
+ * @returns The location, or `undefined`.
+ */
+export function remoteStore(location: string | undefined): string | undefined {
+  if (!location) return undefined;
+  try {
+    return isLoopbackHost(new URL(location).hostname) ? undefined : location;
+  } catch {
+    return location;
+  }
+}
+
+/**
+ * Gate `rm -r` on a remote store as `denext db` gates its destructive actions: `--yes` passes,
+ * else a "yes" at the terminal; with no terminal it is refused.
+ */
+async function confirmRemote(ctx: CommandContext, io: CommandIo, what: string): Promise<void> {
+  if (ctx.flags.yes === true) return;
+  const remote = remoteStore(runtime().driver.location);
+  if (!remote) return;
+  const full = `${what} on the remote store ${remote}`;
+  if (!io.confirm) throw new Error(`${full}: run it with --yes`);
+  if (!await io.confirm(`${full}. Continue?`)) throw new Error(`cancelled (${full})`);
+}
+
 async function rm(ctx: CommandContext, io: CommandIo): Promise<void> {
   const paths = ctx.positionals.slice(1);
   if (!paths.length) throw new TypeError("rm takes one or more storage paths");
-  for (const path of paths) {
+  const remotes = paths.map((path) => {
     const remote = parseStoragePath(path);
     if (!remote?.bucket) throw new TypeError(`not a storage path: ${path}`);
+    return remote;
+  });
+  if (recursive(ctx)) {
+    await confirmRemote(
+      ctx,
+      io,
+      `rm -r deletes everything under ${paths.map((p) => JSON.stringify(p)).join(", ")}`,
+    );
+  }
+  for (const remote of remotes) {
     const keys = recursive(ctx) ? await keysUnder(remote) : [remote.key];
     if (keys.length) await bucketOf(remote.bucket).remove(keys);
     for (const key of keys) io.log(`removed ss:///${remote.bucket}/${key}`);
@@ -250,7 +298,9 @@ export function createStorageCommand(io: CommandIo = consoleIo): CommandSpec {
       "  rm <ss:///bucket/key>…     delete objects (-r: everything under a prefix)",
       "",
       "A storage path is ss:///<bucket>/<key>; anything else is a local path. It runs as the",
-      "service role, through the app's own storage driver and metadata.",
+      "service role, through the app's own storage driver and metadata. rm -r on a remote store",
+      "(S3 off this machine) asks first; --yes skips the question, and without a terminal it is",
+      "refused unless --yes.",
     ].join("\n"),
     positionals: [
       { name: "action", help: "ls | cp | mv | rm", required: true },
@@ -260,6 +310,7 @@ export function createStorageCommand(io: CommandIo = consoleIo): CommandSpec {
       { name: "recursive", alias: "r", type: "boolean", help: "Every key under a prefix" },
       { name: "content-type", type: "string", help: "cp: the uploaded objects' content type" },
       { name: "cache-control", type: "string", help: "cp: the uploaded objects' Cache-Control" },
+      { name: "yes", type: "boolean", help: "rm -r on a remote store: confirm without asking" },
     ],
     moduleDir: (ctx) => resolve(ctx.global.cwd ?? "."),
     run: async (ctx) => {

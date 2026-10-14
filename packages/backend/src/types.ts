@@ -170,6 +170,11 @@ export interface PutInfo {
 export interface StorageDriver {
   /** A short name for messages (`"s3"`, `"fs"`). */
   readonly name: string;
+  /**
+   * Where the store is, for a store reached over the network: its endpoint's origin
+   * (`https://s3.us-east-1.amazonaws.com`). Absent for one on this machine's disk (fs).
+   */
+  readonly location?: string;
   /** Called once at plugin setup with the project root (resolve relative paths against it). */
   init?(context: { projectRoot: string }): void | Promise<void>;
   /** Store an object. The stream errors when the body breaks a rule; the driver then stores nothing. */

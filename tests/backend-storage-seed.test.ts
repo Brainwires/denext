@@ -237,3 +237,84 @@ Deno.test("denext storage cp -r: an object key cannot write outside the destinat
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("denext storage rm -r on a remote store needs --yes or a yes at the terminal", async () => {
+  const { createStorageCommand, remoteStore } = await import(
+    "../packages/backend/src/storage-command.ts"
+  );
+  const { FakeS3 } = await import("./_fake-s3.ts");
+  const { backendApp } = await import("./_backend-app.ts");
+  const { s3 } = await import("../packages/backend/mod.ts");
+  assertEquals(remoteStore(undefined), undefined, "fs: local");
+  assertEquals(remoteStore("http://127.0.0.1:9000"), undefined);
+  assertEquals(remoteStore("http://localhost:9000"), undefined);
+  assertEquals(remoteStore("http://[::1]:9000"), undefined);
+  assertEquals(
+    remoteStore("https://s3.us-east-1.amazonaws.com"),
+    "https://s3.us-east-1.amazonaws.com",
+  );
+  assertEquals(remoteStore("http://minio.internal:9000"), "http://minio.internal:9000");
+  for (const endpoint of ["http://s3.test", "http://127.0.0.1:9"]) {
+    const fake = new FakeS3();
+    const app = await backendApp({
+      driver: s3({
+        endpoint,
+        region: "us-east-1",
+        bucket: fake.bucket,
+        credentials: { accessKeyId: "AKIDTEST", secretAccessKey: "secret-test-key" },
+        fetch: fake.fetch,
+      }),
+      buckets: { files: { authorize: () => true } },
+    });
+    try {
+      const files = storage.bucket("files", { service: true });
+      const errors: string[] = [];
+      const asked: string[] = [];
+      let code = 0;
+      const rmTree = async (flags: Record<string, unknown>, answer?: boolean) => {
+        for (const key of ["tree/a.txt", "tree/b.txt"]) await files.upload(key, "x");
+        code = 0;
+        const command = createStorageCommand({
+          log: () => {},
+          error: (l) => errors.push(l),
+          exit: (c) => (code = c),
+          ...(answer === undefined ? {} : {
+            confirm: (question: string) => (asked.push(question), Promise.resolve(answer)),
+          }),
+        });
+        await command.run(
+          {
+            positionals: ["rm", "ss:///files/tree"],
+            flags: { recursive: true, ...flags },
+            global: { cwd: app.root },
+            rest: [],
+          } as never,
+        );
+        return (await files.list("tree/")).objects.length;
+      };
+      if (endpoint === "http://s3.test") {
+        // No terminal, no --yes: refused before anything is deleted.
+        assertEquals(await rmTree({}), 2);
+        assertEquals(code, 1);
+        assertStringIncludes(
+          errors.at(-1)!,
+          "on the remote store http://s3.test: run it with --yes",
+        );
+        // A "no" cancels; a "yes", or --yes, deletes.
+        assertEquals(await rmTree({}, false), 2);
+        assertStringIncludes(errors.at(-1)!, "cancelled");
+        assertStringIncludes(asked.at(-1)!, 'rm -r deletes everything under "ss:///files/tree"');
+        assertEquals(await rmTree({}, true), 0);
+        assertEquals(code, 0);
+        assertEquals(await rmTree({ yes: true }), 0);
+        assertEquals(asked.length, 2, "--yes does not ask");
+      } else {
+        // A store on this machine's loopback is local: no question.
+        assertEquals(await rmTree({}), 0);
+        assertEquals([code, asked.length], [0, 0]);
+      }
+    } finally {
+      await app.close();
+    }
+  }
+});

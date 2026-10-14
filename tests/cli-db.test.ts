@@ -583,3 +583,71 @@ Deno.test("db push / reset, migration squash / down --force-reset: a remote data
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("migration up / down / repair and db migrate / rollback: a remote database needs --yes or a yes", async () => {
+  const root = await project({ "migrations/1_a.sql": A, "migrations/2_b.sql": B });
+  // Port 1 refuses at once: an action that gets past the gate fails on connecting instead.
+  const remote = "postgres://u:pw@0.0.0.0:1/app";
+  const env = { [LINKED_URL_ENV]: remote };
+  const repair = ["repair", "1"];
+  const gates = [
+    [MIGRATION_ACTIONS, ["up"], { "db-url": remote }, "up applies the pending migrations"],
+    [MIGRATION_ACTIONS, ["up"], { linked: true }, "up applies the pending migrations"],
+    [DB_ACTIONS, ["migrate"], { linked: true }, "up applies the pending migrations"],
+    [MIGRATION_ACTIONS, ["down"], { "db-url": remote }, "down runs the newest migrations'"],
+    [DB_ACTIONS, ["rollback"], { linked: true }, "down runs the newest migrations'"],
+    [MIGRATION_ACTIONS, repair, { status: "applied", linked: true }, "repair rewrites"],
+    [MIGRATION_ACTIONS, repair, { status: "reverted", "db-url": remote }, "repair rewrites"],
+  ] as const;
+  try {
+    for (const [table, args, flags, phrase] of gates) {
+      const label = `${args[0]} ${JSON.stringify(flags)}`;
+      const refused = await assertRejects(() => act(table, root, [...args], flags, { env }));
+      assertStringIncludes((refused as Error).message, phrase, label);
+      assertStringIncludes((refused as Error).message, "run it with --yes", label);
+      const asked: string[] = [];
+      const cancelled = await assertRejects(() =>
+        act(table, root, [...args], flags, {
+          env,
+          confirm: (question) => (asked.push(question), Promise.resolve(false)),
+        })
+      );
+      assertStringIncludes((cancelled as Error).message, "cancelled", label);
+      assertEquals(asked.length, 1, label);
+      for (
+        const [extra, confirm] of [
+          [{}, () => Promise.resolve(true)],
+          [{ yes: true }, undefined],
+        ] as const
+      ) {
+        const passed = await assertRejects(() =>
+          act(table, root, [...args], { ...flags, ...extra }, {
+            env,
+            ...(confirm ? { confirm } : {}),
+          })
+        );
+        assert(
+          !/run it with --yes|cancelled/.test((passed as Error).message),
+          `${label}: ${(passed as Error).message}`,
+        );
+      }
+    }
+    // A dry run changes nothing, so it is not gated (it fails on connecting instead).
+    for (const action of ["up", "down"]) {
+      const dry = await assertRejects(() =>
+        act(MIGRATION_ACTIONS, root, [action], { "db-url": remote, "dry-run": true }, { env })
+      );
+      assert(!/run it with --yes/.test((dry as Error).message), action);
+    }
+    // A local database (SQLite here) is never asked about.
+    const lines = await act(MIGRATION_ACTIONS, root, ["up"], { "db-url": "sqlite:local.db" });
+    assert(lines.some((l) => l.includes("applied 1_a.sql")), lines.join("\n"));
+    await act(MIGRATION_ACTIONS, root, ["repair", "2"], {
+      status: "reverted",
+      "db-url": "sqlite:local.db",
+    });
+    await act(MIGRATION_ACTIONS, root, ["down"], { "db-url": "sqlite:local.db" });
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});

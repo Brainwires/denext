@@ -224,14 +224,17 @@ export async function listAction(run: MigrationRun): Promise<void> {
   });
 }
 
-/** `migration up` / `db migrate` / `db push`: the backend's migrations, then the pending ones. */
+/**
+ * `migration up` / `db migrate` / `db push`: the backend's migrations, then the pending ones.
+ * On a remote database it is confirmed first (`--yes`, or a "yes" at the terminal).
+ */
 export async function upAction(
   run: MigrationRun,
-  options: { seed?: boolean; confirm?: boolean } = {},
+  options: { seed?: boolean; verb?: string } = {},
 ): Promise<void> {
   const dryRun = run.ctx.flags["dry-run"] === true;
-  if (options.confirm && !dryRun) {
-    await confirmDestructive(run, "push applies the pending migrations");
+  if (!dryRun) {
+    await confirmDestructive(run, `${options.verb ?? "up"} applies the pending migrations`);
   }
   await withHistory(run, false, async (history, local, target) => {
     const own = await applyBackend(target, backendHooks(), dryRun);
@@ -278,6 +281,7 @@ export async function downAction(run: MigrationRun): Promise<void> {
     dryRun,
   };
   if (run.ctx.flags["force-reset"] === true) return await forceReset(run, options);
+  if (!dryRun) await confirmDestructive(run, "down runs the newest migrations' down scripts");
   await withHistory(run, false, async (history, local) => {
     const verb = dryRun ? "would revert" : "reverted";
     const names = await migrateDown(history, local.files, options, (name) => {
@@ -331,6 +335,7 @@ export async function repairAction(run: MigrationRun): Promise<void> {
   }
   const versions = run.ctx.positionals.slice(1);
   if (!versions.length) throw new TypeError("repair needs one or more versions");
+  await confirmDestructive(run, "repair rewrites the database's migration history");
   await withHistory(run, false, async (history, local) => {
     const names = await repairHistory(history, local.files, versions, status);
     if (run.ctx.global.json) {

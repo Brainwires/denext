@@ -340,7 +340,7 @@
         {
           "name": "yes",
           "type": "boolean",
-          "description": "reset / down --force-reset: confirm dropping the data"
+          "description": "Confirm without asking: reset / down --force-reset anywhere; up / down / push / repair / squash on a remote database"
         },
         {
           "name": "no-seed",
@@ -1286,7 +1286,7 @@
         {
           "name": "yes",
           "type": "boolean",
-          "description": "reset / down --force-reset: confirm dropping the data"
+          "description": "Confirm without asking: reset / down --force-reset anywhere; up / down / push / repair / squash on a remote database"
         },
         {
           "name": "no-seed",

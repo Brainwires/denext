@@ -144,6 +144,9 @@ export function s3(options: S3DriverOptions): StorageDriver {
   const client = new S3Client(options);
   return {
     name: "s3",
+    get location() {
+      return endpointOf(options).origin;
+    },
     put: (bucket, key, body, info) => client.put(`${bucket}/${key}`, key, body, info),
     get: (bucket, key, range) => client.get(`${bucket}/${key}`, key, range),
     head: (bucket, key) => client.head(`${bucket}/${key}`, key),
