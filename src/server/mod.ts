@@ -760,6 +760,9 @@ export type {
   TotpVerifyOptions,
   TotpVerifyResult,
 } from "./auth/totp.ts";
+// `denext auth reseal`: move TOTP factors off a retired `secret` (also callable from a job).
+export { resealTotpFactors } from "./auth/reseal.ts";
+export type { ResealOptions, ResealReport } from "./auth/reseal.ts";
 // Passkeys (WebAuthn): the account-settings helpers behind `{basePath}/passkeys`.
 export { deletePasskey, listPasskeys } from "./auth/passkeys.ts";
 export type { PasskeySummary } from "./auth/passkeys.ts";

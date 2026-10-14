@@ -119,9 +119,14 @@ async function migrateLegacyTotp(
 /**
  * Open a factor's TOTP secret: sealed for the factor, or — for the factor a legacy record moved
  * into — still sealed for the user, or a pre-sealing plaintext row. Anything but the first is
- * `stale` (re-sealed for the factor after a code it accepts).
+ * `stale` (re-sealed for the factor after a code it accepts, or by `denext auth reseal`).
+ *
+ * @param config The auth config (its `secret` list, current first).
+ * @param factor The factor the secret belongs to.
+ * @param stored The stored value.
+ * @returns The opened secret and whether it is stale, or `{ ok: false }`.
  */
-async function openFactorSecret(
+export async function openFactorSecret(
   config: AuthConfig,
   factor: MfaFactorRecord,
   stored: string,

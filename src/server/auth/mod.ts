@@ -38,6 +38,7 @@ import { assertAnonymousConfig } from "./routes-anonymous.ts";
 import { resolvePasskeys } from "./passkeys.ts";
 import { authTrustsProxy } from "./rate-limit.ts";
 import { handleAuthRequest } from "./routes.ts";
+import { createAuthCommand } from "./command.ts";
 import {
   nativeAdapterOf,
   nativeBearerOf,
@@ -306,6 +307,9 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
       if (store?.close) ctx.addTeardown(() => store.close!());
       const adapter = config.adapter;
       if (adapter?.close) ctx.addTeardown(() => adapter.close!());
+      // `denext auth reseal`: maintenance against this config's adapter and secret. (A
+      // hand-built context in a test may omit the seam.)
+      if (typeof ctx.addCommand === "function") ctx.addCommand(createAuthCommand(config));
     },
   };
 }
