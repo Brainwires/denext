@@ -133,12 +133,11 @@ export function userMetadataOf(user: AdapterUser): Record<string, unknown> {
   if (user.name !== undefined && meta.name === undefined) meta.name = user.name;
   if (user.image !== undefined && meta.avatar_url === undefined) meta.avatar_url = user.image;
   if (user.email !== undefined && meta.email === undefined) meta.email = user.email;
-  if (meta.email_verified === undefined && user.email !== undefined) {
-    meta.email_verified = user.emailVerified !== undefined;
-  }
-  if (user.phone !== undefined && meta.phone_verified === undefined) {
-    meta.phone_verified = user.phoneVerified !== undefined;
-  }
+  // The verified flags are the stored record's, never what the user wrote into the metadata.
+  if (user.email !== undefined) meta.email_verified = user.emailVerified !== undefined;
+  else delete meta.email_verified;
+  if (user.phone !== undefined) meta.phone_verified = user.phoneVerified !== undefined;
+  else delete meta.phone_verified;
   if (meta.sub === undefined) meta.sub = user.id;
   return meta;
 }

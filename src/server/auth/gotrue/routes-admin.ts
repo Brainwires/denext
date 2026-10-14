@@ -7,7 +7,13 @@
  */
 
 import type { AdapterUser } from "../adapter.ts";
-import { checkPassword, createAccount, hashPassword, updateAccount } from "./accounts.ts";
+import {
+  checkPassword,
+  createAccount,
+  hashPassword,
+  revokeEverySession,
+  updateAccount,
+} from "./accounts.ts";
 import {
   type GoTrueContext,
   normalizeEmail,
@@ -23,7 +29,6 @@ import {
 import { fail, GoTrueError } from "./errors.ts";
 import { factorAdapterOf, factorJson, factorsJson } from "./factors.ts";
 import { issueOtp, sendAuthEmail, verifyLink } from "./otp.ts";
-import { familiesOf } from "./session.ts";
 import { userJson } from "./user.ts";
 
 /**
@@ -115,11 +120,14 @@ async function applyAdminFields(
   if (ban) {
     const seconds = parseBanDuration(ban);
     patch.bannedUntil = seconds === 0 ? 0 : nowSeconds() + seconds;
-    if (seconds > 0) await familiesOf(ctx.config).revokeNativeSessionsByUser(user.id);
+    // A ban ends every session of both kinds: `/auth/v1` tokens and denextAuth cookies.
+    if (seconds > 0) await revokeEverySession(ctx, user.id);
   }
   if (typeof body.password === "string") {
     checkPassword(ctx, body.password);
     await ctx.adapter.setCredential?.(user.id, await hashPassword(ctx, body.password));
+    // GoTrue signs the user out everywhere when an admin sets the password.
+    await revokeEverySession(ctx, user.id);
   }
   return await updateAccount(ctx, patch);
 }
@@ -212,7 +220,7 @@ export async function adminDeleteUser(ctx: GoTrueContext): Promise<Response> {
   if (!ctx.adapter.deleteUser) {
     throw new GoTrueError(500, "unexpected_failure", "the adapter cannot delete users");
   }
-  await familiesOf(ctx.config).revokeNativeSessionsByUser(user.id);
+  await revokeEverySession(ctx, user.id);
   await ctx.adapter.deleteUser(user.id);
   return ok(json);
 }

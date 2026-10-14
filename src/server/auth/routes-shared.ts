@@ -230,18 +230,35 @@ export function callbackUri(ctx: AuthRouteContext, providerId: string): string {
 }
 
 /**
- * Run the app's signIn callback: `false` denies, an object enriches, else pass through.
+ * Whether the stored user is banned (`bannedUntil` in the future) — set by the `/auth/v1`
+ * admin API (`ban_duration`), and honoured by every denextAuth sign-in too: one user store.
+ *
+ * @param config The auth config.
+ * @param userId The user.
+ * @returns `true` while the ban lasts.
+ */
+async function isBannedUser(config: AuthConfig, userId: string): Promise<boolean> {
+  const stored = config.adapter ? await config.adapter.getUser(userId) : undefined;
+  const until = stored?.bannedUntil;
+  return typeof until === "number" && until > Math.floor(Date.now() / 1000);
+}
+
+/**
+ * Run the app's signIn callback: `false` denies, an object enriches, else pass through. A
+ * banned user is denied before the callback runs.
  *
  * @param config The auth config.
  * @param user The provider-mapped (or credentials-authorized) user.
  * @param providerId Which provider authenticated them.
- * @returns The user to issue a session for, or `null` when the app denied the sign-in.
+ * @returns The user to issue a session for, or `null` when the sign-in is denied (the user is
+ * banned, or the app said no).
  */
 export async function applySignInCallback(
   config: AuthConfig,
   user: AuthUser,
   providerId: string,
 ): Promise<AuthUser | null> {
+  if (user.id && await isBannedUser(config, user.id)) return null;
   if (!config.callbacks?.signIn) return user;
   const result = await config.callbacks.signIn(user, providerId);
   if (result === false) return null;

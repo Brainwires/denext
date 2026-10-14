@@ -63,7 +63,7 @@ function listItem(record: PasskeyRecord): Record<string, unknown> {
  * they hold a verified factor — passed it.
  */
 async function registrant(ctx: GoTrueContext): Promise<CallerUser> {
-  const caller = await requireUser(ctx);
+  const caller = await requireUser(ctx, { allowPending: true });
   const authTime = Array.isArray(caller.claims.amr)
     ? Math.max(
       ...caller.claims.amr.map((entry) => Number((entry as { timestamp?: number }).timestamp ?? 0)),
@@ -197,7 +197,7 @@ export async function authenticationVerify(ctx: GoTrueContext): Promise<Response
 
 /** `GET /passkeys`. */
 export async function listOwnPasskeys(ctx: GoTrueContext): Promise<Response> {
-  const { user } = await requireUser(ctx);
+  const { user } = await requireUser(ctx, { allowPending: true });
   const { store } = requireRelyingParty(ctx);
   return ok((await store.listPasskeys(user.id)).map(listItem));
 }

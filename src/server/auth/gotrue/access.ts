@@ -10,6 +10,7 @@
  * @module
  */
 
+import { isVerified } from "../adapter-link.ts";
 import { bearerTokenOf } from "../bearer-header.ts";
 import { nativeAdapterOf } from "../native.ts";
 import type { AuthConfig, AuthSession } from "../types.ts";
@@ -66,7 +67,7 @@ export async function verifyAccessToken(
  * @returns The claims, and whether the session is pending.
  * @throws {SupabaseKeyError} `bad_jwt` / `jwt_expired`, or `bad_jwt` for a dead session.
  */
-async function verifyAccessTokenSession(
+export async function verifyAccessTokenSession(
   keys: SupabaseKeys,
   token: string,
   config?: AuthConfig | null,
@@ -108,7 +109,9 @@ function str(value: unknown): string | undefined {
 }
 
 /**
- * The denext session an `authenticated` access token stands for.
+ * The denext session an `authenticated` access token stands for. `user.emailVerified` is left
+ * unset: the token's `user_metadata` is user-writable, so it is no evidence — read the stored
+ * user for it (`auth()` does).
  *
  * @param claims Verified claims (`role: "authenticated"`).
  * @returns The session.
@@ -152,7 +155,8 @@ function userFromClaims(claims: SupabaseJwtClaims): AuthSession["user"] {
   if (email) user.email = email;
   if (name) user.name = name;
   if (image) user.image = image;
-  if (typeof meta.email_verified === "boolean") user.emailVerified = meta.email_verified;
+  // `emailVerified` never comes from `user_metadata`: the user writes that object
+  // (`PUT /user { data }`). `sessionFromJwtBearer` reads it from the stored user instead.
   if (roles) user.roles = roles;
   return user;
 }
@@ -177,6 +181,8 @@ export async function sessionFromJwtBearer(
     const { claims, pending } = await verifyAccessTokenSession(keys, token, config);
     if (claims.role !== "authenticated") return undefined;
     const session = sessionFromClaims(claims);
+    const stored = await config.adapter?.getUser(claims.sub!);
+    if (stored) session.user.emailVerified = isVerified(stored.emailVerified);
     // A session still owing its second factor fails closed in `auth()`, as a cookie one does.
     if (pending) session.mfaPending = true;
     return session;

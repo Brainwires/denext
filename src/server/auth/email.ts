@@ -691,9 +691,16 @@ async function deletePasskeys(
  * second factor, every passkey, every bearer API token, and every server-side session
  * (`sessionRevoked`). A
  * stateless cookie session can't be revoked — it lives until it expires, which is warned
- * once. A throw leaves the address unverified: fail closed.
+ * once. A throw leaves the address unverified: fail closed. `/auth/v1` runs the same eviction
+ * on the first proof of an address it confirms (`gotrue/accounts.ts`).
+ *
+ * @param config The app's auth config.
+ * @param options The resolved auth options.
+ * @param adapter The configured adapter.
+ * @param userId The account whose access is retired.
+ * @param reason The `apiTokenRevoked` reason.
  */
-async function evictUnprovenAccess(
+export async function evictUnprovenAccess(
   config: AuthConfig,
   options: ResolvedAuthOptions,
   adapter: ProvenMailboxAdapter,

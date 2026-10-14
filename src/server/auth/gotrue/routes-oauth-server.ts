@@ -644,7 +644,7 @@ export function oauthMetadata(ctx: GoTrueContext): Response {
 
 /** `GET /oauth/userinfo` — the user's claims, within the token's scopes. */
 export async function userinfo(ctx: GoTrueContext): Promise<Response> {
-  const { user, claims } = await requireUser(ctx, { allowOAuthClient: true });
+  const { user, claims } = await requireUser(ctx, { allowOAuthClient: true, allowPending: true });
   const scopes = typeof claims.scope === "string" ? claims.scope.split(" ") : SUPPORTED_SCOPES;
   const meta = user.userMetadata ?? {};
   return ok({

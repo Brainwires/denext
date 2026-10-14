@@ -42,6 +42,7 @@ import {
   type ProviderEndpoints,
   resolveProviderEndpoints,
 } from "./discovery.ts";
+import { evictUnprovenAccess } from "./email.ts";
 import { emailKey } from "./email-key.ts";
 import { emitAuthEvent } from "./events.ts";
 import {
@@ -472,6 +473,7 @@ export async function resolveSessionUser(
       provider as OAuthProvider,
       keyedProfile(ctx, profile),
       account,
+      (user) => evictUnprovenAccess(ctx.config, ctx.options, ctx.options.adapter!, user.id),
     );
   } catch (error) {
     if (!accountNotLinkedCode(error)) throw error;

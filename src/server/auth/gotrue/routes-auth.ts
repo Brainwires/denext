@@ -27,6 +27,7 @@ import {
   markIdentityVerified,
   obfuscatedUser,
   passwordMatches,
+  retireChangedPassword,
   retireForeignPassword,
   updateAccount,
 } from "./accounts.ts";
@@ -466,7 +467,8 @@ export async function otp(ctx: GoTrueContext): Promise<Response> {
       userId: user.id,
       redirectTo,
       ...(challenge ? { codeChallenge: challenge } : {}),
-      pw: isNew ? undefined : await credentialFingerprint(ctx, user.id),
+      // No password binding: a magic link / code is not the sign-up that chose the stored
+      // password, so redeeming it as the first proof of the address retires that password.
     });
     await sendAuthEmail(ctx, { email, action, issued, redirectTo, user });
     return ok({});
@@ -504,10 +506,8 @@ async function applyVerification(
       return { user: await confirmAddress(ctx, user, "email", data.pw), method: "otp" };
     case "recovery": {
       if (user.email?.toLowerCase() !== address) throw fail.otpExpired();
-      const updated = user.emailVerified === undefined
-        ? await updateAccount(ctx, { id: user.id, emailVerified: nowSeconds() })
-        : user;
-      return { user: updated, method: "recovery" };
+      // A recovery link proves the mailbox: on an unconfirmed account it is the first proof.
+      return { user: await confirmAddress(ctx, user, "email", undefined), method: "recovery" };
     }
     case "sms":
       if (user.phone !== address) throw fail.otpExpired();
@@ -520,7 +520,11 @@ async function applyVerification(
   }
 }
 
-/** The first proof of an email / phone: retire a foreign password, mark it verified. */
+/**
+ * The proof of an email / phone: mark it verified. When the account had no verified address
+ * at all, this is the first proof of ownership — everything set up before it is retired unless
+ * the code is the account's own sign-up confirmation bound to the stored password.
+ */
 async function confirmAddress(
   ctx: GoTrueContext,
   user: AdapterUser,
@@ -529,7 +533,8 @@ async function confirmAddress(
 ): Promise<AdapterUser> {
   const verified = which === "email" ? user.emailVerified : user.phoneVerified;
   if (verified !== undefined) return user;
-  await retireForeignPassword(ctx, user, pw);
+  const other = which === "email" ? user.phoneVerified : user.emailVerified;
+  if (other === undefined) await retireForeignPassword(ctx, user, pw);
   await markIdentityVerified(ctx, user, which);
   return await updateAccount(
     ctx,
@@ -548,6 +553,11 @@ async function applyChange(
   data: OtpData,
 ): Promise<AdapterUser> {
   if (!data.newValue || data.newValue !== address) throw fail.otpExpired();
+  // The first verified address of an account that had none (an anonymous user): a password
+  // set after the change was requested — by whoever held the session — is not kept.
+  if (user.emailVerified === undefined && user.phoneVerified === undefined) {
+    await retireChangedPassword(ctx, user.id, data.pw);
+  }
   await updateAccount(
     ctx,
     kind === "email_change"
@@ -751,7 +761,7 @@ export async function recover(ctx: GoTrueContext): Promise<Response> {
  * already ended, and the URL tells the IdP (see `routes-slo.ts`).
  */
 export async function logout(ctx: GoTrueContext): Promise<Response> {
-  const caller = await requireUser(ctx);
+  const caller = await requireUser(ctx, { allowPending: true });
   const scope = ctx.url.searchParams.get("scope") ?? "local";
   const families = familiesOf(ctx.config);
   const slo = scope !== "others" && caller.sessionId

@@ -48,6 +48,7 @@ import {
   nowSeconds,
   ok,
   redirectTarget,
+  requireAal2WithFactor,
   requireUser,
   spendIp,
 } from "./context.ts";
@@ -177,8 +178,10 @@ export async function authorizeLink(ctx: GoTrueContext): Promise<Response> {
   if (ctx.options.manualLinking === false) {
     throw new GoTrueError(404, "manual_linking_disabled", "Manual linking is disabled");
   }
-  const { user } = await requireUser(ctx);
-  const { url } = await start(ctx, user.id);
+  const caller = await requireUser(ctx);
+  // Linking a sign-in method changes what can reach the account: not from a password alone.
+  await requireAal2WithFactor(ctx, caller, "link an identity");
+  const { url } = await start(ctx, caller.user.id);
   if (ctx.url.searchParams.get("skip_http_redirect") === "false") {
     return new Response(null, { status: 302, headers: { location: url } });
   }

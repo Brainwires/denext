@@ -265,7 +265,8 @@ Deno.test("auth() reads an access token as a session; revoking its session kills
       email: "a@x.test",
       name: "Ada",
       image: "https://x.test/a.png",
-      emailVerified: true,
+      // `user_metadata.email_verified` is user-writable: it never becomes `emailVerified`
+      // (the stored user decides, and this token's user has no stored record).
       roles: ["editor"],
     });
     assertEquals(session?.provider, "email");

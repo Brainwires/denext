@@ -22,7 +22,8 @@ import {
   subjectBucketKeys,
 } from "../rate-limit.ts";
 import type { AuthConfig } from "../types.ts";
-import { verifyAccessToken } from "./access.ts";
+import { hasVerifiedFactor } from "../factors.ts";
+import { verifyAccessToken, verifyAccessTokenSession } from "./access.ts";
 import { fail, GoTrueError, type GoTrueErrorCode } from "./errors.ts";
 import {
   apiKeyRole,
@@ -125,6 +126,8 @@ export interface CallerUser {
   user: AdapterUser;
   /** The session (family) id. */
   sessionId?: string;
+  /** The session still owes its second factor (an `aal1` sign-in of an MFA user). */
+  pending: boolean;
 }
 
 /**
@@ -134,20 +137,28 @@ export interface CallerUser {
  * where `allowOAuthClient` says so: a third-party app must not change the user's password,
  * factors or identities, approve its own consent, or list the user's grants.
  *
+ * A session that still owes its second factor (`pending`: an `aal1` sign-in of a user who must
+ * complete MFA) is refused with `insufficient_aal` unless `allowPending` says the endpoint is
+ * part of finishing the sign-in (reading the user, the factor endpoints, sign-out) or checks
+ * the assurance level itself.
+ *
  * @param ctx The context.
- * @param options `allowOAuthClient` — accept an OAuth client's token (`GET /user`, userinfo).
+ * @param options `allowOAuthClient` — accept an OAuth client's token (`GET /user`, userinfo);
+ *   `allowPending` — accept a session that still owes its second factor.
  * @returns The caller.
- * @throws {GoTrueError} `no_authorization` / `bad_jwt` / `session_not_found` / `user_not_found`.
+ * @throws {GoTrueError} `no_authorization` / `bad_jwt` / `session_not_found` / `user_not_found`
+ *   / `insufficient_aal`.
  */
 export async function requireUser(
   ctx: GoTrueContext,
-  options: { allowOAuthClient?: boolean } = {},
+  options: { allowOAuthClient?: boolean; allowPending?: boolean } = {},
 ): Promise<CallerUser> {
   const token = bearerOf(ctx.request);
   if (!token || !looksLikeJwt(token)) throw fail.noAuthorization();
   let claims: SupabaseJwtClaims;
+  let pending: boolean;
   try {
-    claims = await verifyAccessToken(ctx.keys, token, ctx.config);
+    ({ claims, pending } = await verifyAccessTokenSession(ctx.keys, token, ctx.config));
   } catch (error) {
     if (error instanceof SupabaseKeyError && error.message.includes("session not found")) {
       throw new GoTrueError(
@@ -166,8 +177,30 @@ export async function requireUser(
   if (!user) {
     throw new GoTrueError(403, "user_not_found", "User from sub claim in JWT does not exist");
   }
+  if (pending && !options.allowPending) {
+    throw new GoTrueError(403, "insufficient_aal", "AAL2 session is required");
+  }
   const sessionId = typeof claims.session_id === "string" ? claims.session_id : undefined;
-  return { claims, user, sessionId };
+  return { claims, user, sessionId, pending };
+}
+
+/**
+ * Refuse an account change from a session below `aal2` once the user holds a verified factor
+ * (a password alone must not change what MFA protects).
+ *
+ * @param ctx The context.
+ * @param caller The caller.
+ * @param what What is being done, for the message.
+ * @throws {GoTrueError} 403 `insufficient_aal`.
+ */
+export async function requireAal2WithFactor(
+  ctx: GoTrueContext,
+  caller: CallerUser,
+  what: string,
+): Promise<void> {
+  if (caller.claims.aal === "aal2") return;
+  if (!(await hasVerifiedFactor(ctx.config, caller.user.id))) return;
+  throw new GoTrueError(403, "insufficient_aal", `AAL2 required to ${what}`);
 }
 
 /**

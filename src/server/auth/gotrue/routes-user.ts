@@ -7,11 +7,14 @@
  */
 
 import { mfaLimiter, verificationLimiter } from "../rate-limit.ts";
+import { hasVerifiedFactor } from "../factors.ts";
 import {
   checkPassword,
+  credentialFingerprint,
   hashPassword,
   linkIdentity,
   passwordMatches,
+  revokeEverySession,
   updateAccount,
 } from "./accounts.ts";
 import type { AdapterUser } from "../adapter.ts";
@@ -24,6 +27,7 @@ import {
   ok,
   readJson,
   redirectTarget,
+  requireAal2WithFactor,
   requireUser,
   spend,
   str,
@@ -32,20 +36,56 @@ import { fail, GoTrueError } from "./errors.ts";
 import { factorsJson } from "./factors.ts";
 import { canSendSms, issueOtp, redeemOtp, sendAuthEmail, sendAuthSms } from "./otp.ts";
 import { readChallenge } from "./pkce.ts";
-import { familiesOf } from "./session.ts";
 import { identitiesOf, userJson } from "./user.ts";
 
 /** `GET /user`. */
 export async function getUser(ctx: GoTrueContext): Promise<Response> {
-  const { user } = await requireUser(ctx, { allowOAuthClient: true });
+  const { user } = await requireUser(ctx, { allowOAuthClient: true, allowPending: true });
   return ok(await userJson(ctx.adapter, user, { factors: await factorsJson(ctx.config, user.id) }));
+}
+
+/** Whether a `PUT /user` body changes the password, the email or the phone. */
+function changesCredentials(user: AdapterUser, body: Record<string, unknown>): boolean {
+  if (typeof body.password === "string" && body.password !== "") return true;
+  const email = normalizeEmail(str(body, "email"));
+  if (email && email !== user.email?.toLowerCase()) return true;
+  const phone = normalizePhone(str(body, "phone"));
+  return !!phone && phone !== user.phone;
+}
+
+/**
+ * GoTrue's rule for `PUT /user`: once the user holds a verified factor, a password, email or
+ * phone change needs an `aal2` session — else a password alone (exactly what MFA defends
+ * against) could replace the password, move the email and sign the owner out everywhere. A
+ * session that still owes its second factor is refused the same way.
+ */
+async function requireAalForCredentials(ctx: GoTrueContext, caller: CallerUser): Promise<void> {
+  const owes = caller.pending ||
+    (caller.claims.aal !== "aal2" && await hasVerifiedFactor(ctx.config, caller.user.id));
+  if (!owes) return;
+  throw new GoTrueError(
+    401,
+    "insufficient_aal",
+    "AAL2 session is required to update email or password when MFA is enabled.",
+  );
 }
 
 /** `PUT /user`. */
 export async function putUser(ctx: GoTrueContext): Promise<Response> {
-  const caller = await requireUser(ctx);
+  const caller = await requireUser(ctx, { allowPending: true });
   const body = await readJson(ctx);
   let user = caller.user;
+  if (changesCredentials(user, body)) await requireAalForCredentials(ctx, caller);
+  if (
+    user.isAnonymous && typeof body.password === "string" && body.password !== "" &&
+    !str(body, "email") && !str(body, "phone")
+  ) {
+    throw new GoTrueError(
+      422,
+      "validation_failed",
+      "Updating password of an anonymous user without an email or phone is not allowed",
+    );
+  }
   const data = obj(body, "data");
   if (data) {
     user = await updateAccount(ctx, {
@@ -102,8 +142,9 @@ async function changePassword(
     );
   }
   await ctx.adapter.setCredential?.(user.id, await hashPassword(ctx, password));
-  // Every other session ends: a changed password must evict whoever else holds one.
-  await familiesOf(ctx.config).revokeNativeSessionsByUser(user.id, caller.sessionId);
+  // Every other session ends — token sessions and denextAuth cookie sessions alike: a changed
+  // password must evict whoever else holds one.
+  await revokeEverySession(ctx, user.id, caller.sessionId);
   return await updateAccount(ctx, { id: user.id });
 }
 
@@ -140,9 +181,23 @@ async function changeEmail(
     newValue: email,
     redirectTo,
     ...(challenge ? { codeChallenge: challenge } : {}),
+    pw: await firstAddressBinding(ctx, user),
   });
   await sendAuthEmail(ctx, { email, action: "email_change", issued, redirectTo, user });
   return email;
+}
+
+/**
+ * For an account with no verified address yet (an anonymous user), the fingerprint of the
+ * password it holds now: the change code carries it, so a password set by someone else before
+ * the code is redeemed is retired then (see `retireChangedPassword`).
+ */
+async function firstAddressBinding(
+  ctx: GoTrueContext,
+  user: AdapterUser,
+): Promise<string | undefined> {
+  if (user.emailVerified !== undefined || user.phoneVerified !== undefined) return undefined;
+  return await credentialFingerprint(ctx, user.id);
 }
 
 /** A new phone: set at once under phone autoconfirm, else confirmed by an SMS code. */
@@ -173,6 +228,7 @@ async function changePhone(
     action: "phone_change",
     userId: user.id,
     newValue: phone,
+    pw: await firstAddressBinding(ctx, user),
   });
   await sendAuthSms(ctx, { phone, otp: issued.otp, type: "phone_change", user });
 }
@@ -208,7 +264,7 @@ export async function promoteAnonymous(ctx: GoTrueContext, userId: string): Prom
 
 /** `GET /reauthenticate`: send a nonce to the user's email (or phone). */
 export async function reauthenticate(ctx: GoTrueContext): Promise<Response> {
-  const { user } = await requireUser(ctx);
+  const { user } = await requireUser(ctx, { allowPending: true });
   if (!user.email && !user.phone) {
     throw fail.validation("Reauthentication requires the user to have an email or a phone number");
   }
@@ -233,7 +289,9 @@ export async function reauthenticate(ctx: GoTrueContext): Promise<Response> {
 
 /** `DELETE /user/identities/:id`: unlink one identity (never the last one). */
 export async function unlinkIdentity(ctx: GoTrueContext): Promise<Response> {
-  const { user } = await requireUser(ctx);
+  const caller = await requireUser(ctx);
+  await requireAal2WithFactor(ctx, caller, "unlink an identity");
+  const { user } = caller;
   if (ctx.options.manualLinking === false) {
     throw new GoTrueError(404, "manual_linking_disabled", "Manual linking is disabled");
   }

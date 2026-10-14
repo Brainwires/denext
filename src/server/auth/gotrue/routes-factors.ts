@@ -101,7 +101,7 @@ function requireAalWithFactor(
 
 /** `POST /factors`: enroll a TOTP, phone or WebAuthn factor. */
 export async function enroll(ctx: GoTrueContext): Promise<Response> {
-  const caller = await requireUser(ctx);
+  const caller = await requireUser(ctx, { allowPending: true });
   const { user } = caller;
   const body = await readJson(ctx);
   const type = str(body, "factor_type") ?? "totp";
@@ -208,7 +208,7 @@ async function enrollWebauthn(
 
 /** `POST /factors/:id/challenge`. */
 export async function challenge(ctx: GoTrueContext): Promise<Response> {
-  const { user } = await requireUser(ctx);
+  const { user } = await requireUser(ctx, { allowPending: true });
   const factor = await ownFactor(ctx, user.id);
   const body = await readJson(ctx);
   if (factor.type === "webauthn") {
@@ -285,7 +285,7 @@ const METHODS: Record<MfaFactorRecord["type"], string> = {
 
 /** `POST /factors/:id/verify`: answer a challenge; the session becomes `aal2`. */
 export async function verify(ctx: GoTrueContext): Promise<Response> {
-  const caller = await requireUser(ctx);
+  const caller = await requireUser(ctx, { allowPending: true });
   const factor = await ownFactor(ctx, caller.user.id);
   if (factor.status === "unverified") {
     requireAalWithFactor(
@@ -314,7 +314,7 @@ async function stepUp(ctx: GoTrueContext, caller: CallerUser, method: string) {
 
 /** `DELETE /factors/:id`: a verified factor needs an `aal2` session to remove. */
 export async function unenroll(ctx: GoTrueContext): Promise<Response> {
-  const caller = await requireUser(ctx);
+  const caller = await requireUser(ctx, { allowPending: true });
   const factor = await ownFactor(ctx, caller.user.id);
   if (factor.status === "verified" && caller.claims.aal !== "aal2") {
     throw new GoTrueError(403, "insufficient_aal", "AAL2 required to unenroll verified factor");
@@ -328,7 +328,7 @@ export async function unenroll(ctx: GoTrueContext): Promise<Response> {
 
 /** The caller and their stored backup codes. */
 async function recoveryState(ctx: GoTrueContext) {
-  const caller = await requireUser(ctx);
+  const caller = await requireUser(ctx, { allowPending: true });
   const record = await ctx.adapter.getMfa?.(caller.user.id);
   return { caller, record, id: await recoveryFactorId(caller.user.id) };
 }
@@ -405,7 +405,7 @@ export async function recoveryRemove(ctx: GoTrueContext): Promise<Response> {
 
 /** `POST /factors/recovery-codes/verify`: spend one code; the session becomes `aal2`. */
 export async function recoveryVerify(ctx: GoTrueContext): Promise<Response> {
-  const caller = await requireUser(ctx);
+  const caller = await requireUser(ctx, { allowPending: true });
   const body = await readJson(ctx);
   const code = str(body, "code") ?? "";
   const attempt = await spend(ctx, mfaLimiter(ctx.config), "mfa", `factor:${caller.user.id}`);

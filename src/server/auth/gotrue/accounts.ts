@@ -7,7 +7,10 @@
  */
 
 import type { AdapterUser } from "../adapter.ts";
+import { evictUnprovenAccess } from "../email.ts";
+import { emitAuthEvent } from "../events.ts";
 import { sha256Hex } from "../hash.ts";
+import { nativeAdapterOf } from "../native.ts";
 import { resolveAuthOptions } from "../options.ts";
 import { type GoTrueContext, nowSeconds } from "./context.ts";
 import { GoTrueError } from "./errors.ts";
@@ -70,13 +73,20 @@ export async function credentialFingerprint(
 }
 
 /**
- * The first proof of an address: retire a password set by someone else before it — when the
- * stored password is not the one the confirmed sign-up chose, it is removed (the owner resets
- * it), so an attacker who registered the address first cannot keep a password on the account.
+ * The first proof of an account's address (its email or phone confirmed while the account had
+ * NO verified address yet) by any channel other than the account's own sign-up confirmation —
+ * a magic link, an email / SMS one-time code, a recovery link, an invite. Whoever set the
+ * account up before that proof may be an attacker who registered the victim's address and is
+ * waiting for the victim to make it theirs, so everything set up without the proof goes:
+ * the password, every second factor and passkey, every bearer API token, every session (token
+ * and cookie). The one exception is the sign-up confirmation itself: when the code carries the
+ * fingerprint of the password that sign-up chose (`bound`) and the stored password still
+ * matches it, the person confirming chose that password, and the account is kept as it is.
  *
  * @param ctx The context.
  * @param user The user.
- * @param bound The fingerprint the confirmation carried.
+ * @param bound The password fingerprint a sign-up confirmation carried (`undefined` for every
+ *   other code).
  */
 export async function retireForeignPassword(
   ctx: GoTrueContext,
@@ -84,13 +94,60 @@ export async function retireForeignPassword(
   bound: string | undefined,
 ): Promise<void> {
   const current = await credentialFingerprint(ctx, user.id);
+  if (bound !== undefined && current === bound) return;
+  const options = resolveAuthOptions(ctx.config);
+  await evictUnprovenAccess(ctx.config, options, ctx.adapter, user.id);
+}
+
+/**
+ * An address change confirmed on an account that had no verified address (an anonymous user
+ * becoming permanent): the password goes unless it is the one the account held when the change
+ * was requested (`bound`) — a password set by someone else in between is not kept.
+ *
+ * @param ctx The context.
+ * @param userId The user.
+ * @param bound The password fingerprint the change code carried.
+ */
+export async function retireChangedPassword(
+  ctx: GoTrueContext,
+  userId: string,
+  bound: string | undefined,
+): Promise<void> {
+  const current = await credentialFingerprint(ctx, userId);
   if (current === undefined || current === bound) return;
-  if (ctx.adapter.deleteCredential) await ctx.adapter.deleteCredential(user.id);
+  await deletePassword(ctx, userId);
+  await revokeEverySession(ctx, userId);
+}
+
+/** Remove a password (or, without `deleteCredential`, replace it with one nobody holds). */
+async function deletePassword(ctx: GoTrueContext, userId: string): Promise<void> {
+  if (ctx.adapter.deleteCredential) await ctx.adapter.deleteCredential(userId);
   else {
     const random = crypto.randomUUID() + crypto.randomUUID();
-    await ctx.adapter.setCredential?.(user.id, await hashPassword(ctx, random));
+    await ctx.adapter.setCredential?.(userId, await hashPassword(ctx, random));
   }
-  await ctx.adapter.revokeNativeSessionsByUser?.(user.id);
+}
+
+/**
+ * End a user's sessions of both kinds: the `/auth/v1` (and native) session families — all but
+ * `keepFamily` — and every denextAuth cookie session in the session store. A changed password,
+ * a ban and a retired password reach a stolen cookie as well as a stolen refresh token. Fires
+ * `sessionRevoked` when a store was cleared.
+ *
+ * @param ctx The context.
+ * @param userId The user.
+ * @param keepFamily The caller's own session family, kept (a password change keeps it).
+ */
+export async function revokeEverySession(
+  ctx: GoTrueContext,
+  userId: string,
+  keepFamily?: string,
+): Promise<void> {
+  await nativeAdapterOf(ctx.adapter)?.revokeNativeSessionsByUser(userId, keepFamily);
+  const options = resolveAuthOptions(ctx.config);
+  if (!options.sessionStore) return;
+  await options.sessionStore.deleteByUser(userId);
+  await emitAuthEvent(options, "sessionRevoked", { userId });
 }
 
 /**
@@ -110,11 +167,7 @@ export async function contestPassword(
 ): Promise<void> {
   const stored = await ctx.adapter.getCredential?.(userId);
   if (!stored || await resolveAuthOptions(ctx.config).hasher.verify(password, stored)) return;
-  if (ctx.adapter.deleteCredential) await ctx.adapter.deleteCredential(userId);
-  else {
-    const random = crypto.randomUUID() + crypto.randomUUID();
-    await ctx.adapter.setCredential?.(userId, await hashPassword(ctx, random));
-  }
+  await deletePassword(ctx, userId);
 }
 
 /** Link (or refresh) an identity row. */
@@ -158,6 +211,8 @@ export interface NewUser {
   emailVerified?: boolean;
   phoneVerified?: boolean;
   anonymous?: boolean;
+  /** Attach the `email` / `phone` identity row (default `true`; an SSO user has none). */
+  addressIdentity?: boolean;
 }
 
 /**
@@ -188,7 +243,7 @@ export async function createAccount(ctx: GoTrueContext, input: NewUser): Promise
   if (input.password) {
     await ctx.adapter.setCredential?.(user.id, await hashPassword(ctx, input.password));
   }
-  const address = addressIdentity(user.id, input);
+  const address = input.addressIdentity === false ? null : addressIdentity(user.id, input);
   if (address) await linkIdentity(ctx, user, address);
   return (await ctx.adapter.getUser(user.id)) ?? user;
 }
