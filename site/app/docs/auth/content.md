@@ -1397,11 +1397,13 @@ denextAuth({
 });
 ```
 
-| Key       | Default                  | What it sets                                                                                                  |
-| --------- | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `rpId`    | `canonicalOrigin`'s host | The RP ID credentials are scoped to — the host, or a registrable suffix of it to span subdomains              |
-| `rpName`  | the RP ID                | The name an authenticator may show                                                                            |
-| `origins` | `[canonicalOrigin]`      | Origins a ceremony may come from, matched exactly; each must be `https:` (or `http://localhost`) on the RP ID |
+| Key                | Default                  | What it sets                                                                                                  |
+| ------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `rpId`             | `canonicalOrigin`'s host | The RP ID credentials are scoped to — the host, or a registrable suffix of it to span subdomains              |
+| `rpName`           | the RP ID                | The name an authenticator may show                                                                            |
+| `origins`          | `[canonicalOrigin]`      | Origins a ceremony may come from, matched exactly; each must be `https:` (or `http://localhost`) on the RP ID |
+| `userVerification` | `"required"`             | `"preferred"` accepts a presence-only assertion — one factor instead of two                                   |
+| `timeout`          | `300`                    | Seconds a ceremony's challenge lives (`30–900`)                                                               |
 
 `origins` lists what `clientDataJSON.origin` may say; it does not open the endpoints to other
 origins. Every `/passkey/*` row is same-origin gated (`403` otherwise) and binds its ceremony
@@ -1411,8 +1413,6 @@ only that origin is same-origin). A page on another origin can't run a ceremony 
 endpoints, and neither can a native Android app (`android:apk-key-hash:…` is accepted in the
 signed client data, but the routes need a same-origin browser request carrying the ceremony
 cookie) — such a client needs endpoints of your own.
-| `userVerification` | `"required"` | `"preferred"` accepts a presence-only assertion — one factor instead of two |
-| `timeout` | `300` | Seconds a ceremony's challenge lives (`30–900`) |
 
 It needs an adapter with the passkey group (both shipped adapters have it), and a relying
 party that doesn't come from the request: with neither `rpId` nor `canonicalOrigin`,
