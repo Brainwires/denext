@@ -24,7 +24,7 @@ export default function TasksMoved() {
         </a>. Where run history is kept is{" "}
         <a href="/docs/jobs#history-store">
           Where history is kept
-        </a>; moving a 3.x app is <a href="/docs/upgrading">Upgrading to 4.0</a>.
+        </a>; moving a 3.x app is in the <a href="/docs/changelog">changelog</a>.
       </p>
     </DocsShell>
   );

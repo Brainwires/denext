@@ -29,7 +29,6 @@ const ALLOWED = new Set([
   "CHANGELOG.md",
   "site/app/docs/jobs/page.tsx",
   "site/app/docs/tasks/page.tsx",
-  "site/app/docs/upgrading/content.md",
   "site/app/docs/changelog/content.md",
 ]);
 

@@ -77,7 +77,6 @@ export function llmsIndex(): string {
   \`runJob()\` / \`denext job <name>\`, run history.
 - [denext's Deno toolchain](${SITE}/docs/toolchain): the pinned Deno build project verbs run on
   (\`Deno.SQL\`, Vitest/Jest compatibility), and \`denext task\` vs \`deno task\`.
-- [Upgrading to 4.0](${SITE}/docs/upgrading): moving a 3.x app (tasks → jobs, the CLI, plugins).
 - [Coming from Supabase](${SITE}/docs/coming-from-supabase): a concept map and migration
   checklist (schema, policies, users and files).
 - [Guide (source)](${REPO}/blob/main/AGENTS.md): AGENTS.md in the repo.

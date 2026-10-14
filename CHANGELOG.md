@@ -11,7 +11,7 @@ and this project adheres to
 ### Breaking (4.0)
 
 These join the [4.0.0-rc.1 breaking changes](#400-rc1---2026-10-13); together they are what moving
-a 3.x app to 4.0 involves. [Upgrading to 4.0](https://denext.dev/docs/upgrading) walks through them.
+a 3.x app to 4.0 involves. This section is the record.
 
 - **Project verbs run on denext's Deno toolchain.** `dev`, `build`, `export`, `start`, `test`,
   `check`, `job`, `doctor` and the other verbs that run project code re-run themselves on the

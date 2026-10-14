@@ -33,7 +33,7 @@ emit correct denext instead of Next.js.
    `denext upgrade [--to <v>] [--dry-run | --check] [--allow-major] [--allow-downgrade]` moves
    the `jsr:@denext/denext` pin, the pinned CLI tasks and every first-party `@denext/*` package
    together (`--allow-major` also lets a package that imports no denext cross a major; an older
-   `--to` needs `--allow-downgrade`). From 3.x: https://denext.dev/docs/upgrading
+   `--to` needs `--allow-downgrade`). From 3.x: https://denext.dev/docs/changelog
 3. **File conventions are the same as Next App Router:** `app/page.tsx`,
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server

@@ -15,7 +15,6 @@ export const NAV: {
       { slug: "getting-started", label: "Getting started" },
       { slug: "tutorial", label: "Tutorial" },
       { slug: "routing", label: "Routing" },
-      { slug: "upgrading", label: "Upgrading to 4.0" },
       { slug: "migrating", label: "Migrating from Next.js" },
       { slug: "migrating-remix", label: "Migrating from Remix" },
       { slug: "fixed", label: "Fixed in denext" },
