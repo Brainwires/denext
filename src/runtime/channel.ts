@@ -180,6 +180,8 @@ function deliverTo(fn: (ev: ChannelEvent) => void, ev: ChannelEvent): void {
   }
 }
 let payloadCap = 16 * 1024;
+/** The default lazy re-authorization TTL (seconds) — the hub applies `live.limits.channelAuthTtlSeconds`. */
+let authTtlSeconds = 300;
 let transport: ChannelTransport = inMemoryChannelTransport();
 
 /**
@@ -297,6 +299,27 @@ export function setChannelPayloadCap(bytes: number): void {
 }
 
 /**
+ * Set the default lazy re-authorization TTL in seconds (the hub applies
+ * `live.limits.channelAuthTtlSeconds`); a channel's own `authTtlSeconds` overrides it.
+ *
+ * @param seconds The TTL.
+ */
+export function setChannelAuthTtl(seconds: number): void {
+  authTtlSeconds = seconds;
+}
+
+/**
+ * The re-authorization TTL in milliseconds for a channel: its own `authTtlSeconds`, else the
+ * default {@link setChannelAuthTtl} installed.
+ *
+ * @param id The channel id.
+ * @returns The TTL in milliseconds.
+ */
+export function channelAuthTtlMs(id: string): number {
+  return (channels.get(id)?.authTtlSeconds ?? authTtlSeconds) * 1000;
+}
+
+/**
  * Forget every registered channel and sequence counter and restore the default transport and
  * payload cap — for tests, which share one process-wide registry (kept off the public barrels,
  * like `resetPlugins`).
@@ -306,6 +329,7 @@ export function resetChannels(): void {
   seqs.clear();
   warnedUnknown.clear();
   payloadCap = 16 * 1024;
+  authTtlSeconds = 300;
   setChannelTransport(inMemoryChannelTransport());
 }
 
@@ -435,8 +459,13 @@ export function broadcastChannelTransport(name = "denext-channels"): ChannelTran
 export interface ChannelTapHandlers<T> {
   /** A payload published to the key (decoded; `seq` orders publishes from one instance). */
   onPayload: (payload: T, seq: number) => void;
-  /** The key was revoked cluster-wide (a peer-scoped revoke is not reported — the tap is no peer). */
+  /**
+   * The key was revoked cluster-wide — or, when {@linkcode ChannelTapHandlers.peerId} is set, for
+   * that peer. Any other peer-scoped revoke is not reported.
+   */
   onRevoke?: () => void;
+  /** The peer this tap acts for: a `revoke(key, { peerId })` naming it is reported too. */
+  peerId?: string;
 }
 
 /**
@@ -447,7 +476,8 @@ export interface ChannelTapHandlers<T> {
  * second event bus. Survives `setChannelTransport` (re-binds to the new transport).
  *
  * Not authorization: `authorize` gates socket SUBSCRIBERS; a server-side tap sees every
- * publish to the key, so the consumer gates its own audience.
+ * publish to the key. A tap that serves a viewer goes through `tapChannelAuthorized` (from
+ * `denext/server`), which runs the channel's `authorize` for that viewer first.
  *
  * @param channel The channel (or its id).
  * @param key The key to observe (exact match).
@@ -480,7 +510,7 @@ export function tapChannel<T>(
     unsubscribe = t.subscribe((ev) => {
       if (ev.channelId !== id || ev.key !== key) return;
       if (ev.kind === "revoke") {
-        if (!ev.peerId) handlers.onRevoke?.();
+        if (!ev.peerId || ev.peerId === handlers.peerId) handlers.onRevoke?.();
         return;
       }
       if (ev.encoded === undefined) return;

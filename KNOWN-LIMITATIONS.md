@@ -66,9 +66,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   only** (elsewhere it fetches on mount).
 - **`@denext/openapi` describes only what a validator can export** (else `{}` / `unknown`);
   middleware responses appear only as `default`; `scalar` / `swagger` load from a CDN.
-- **`@denext/graphql` subscriptions are GraphQL over SSE**, not WebSocket; `fromChannel` bypasses
-  the channel's `authorize` (gate in the resolver); with Yoga `batching` the cost budget is per
-  operation. A schema edit in `denext dev` needs a restart.
+- **`@denext/graphql`: with Yoga `batching` the cost budget is per operation.** A schema object
+  imported into `denext.config.ts` needs a restart after an edit (a module-path `schema` reloads).
 
 ### First-party auth (`denextAuth`)
 

@@ -2,8 +2,10 @@
 
 `@denext/graphql` in one app: a Pothos (code-first, no decorators) schema served by GraphQL
 Yoga at `/graphql`, with a **subscription that rides a denext channel** — a `post` mutation
-publishes to `createChannel`, and both the GraphQL `subscription { messages }` (SSE) and the
-page's `useChannel` (Live socket) receive it.
+publishes to `createChannel`, and both the GraphQL `subscription { messages }` (over SSE, or
+over WebSocket with any `graphql-ws` client) and the page's `useChannel` (Live socket) receive it.
+The channel's `authorize` gates the GraphQL subscription exactly as it gates `useChannel`, and an
+edit under `app/graphql/` reloads the schema in `denext dev` without a restart.
 
 ```sh
 denext task dev          # http://localhost:3000 — GraphiQL at /graphql

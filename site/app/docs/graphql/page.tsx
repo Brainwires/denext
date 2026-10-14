@@ -1,9 +1,9 @@
-import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
+import { Code, DocsShell } from "../../../components/ui.tsx";
 
 export const metadata = {
   title: "GraphQL",
   description:
-    "A GraphQL endpoint for a denext app via the @denext/graphql plugin: GraphQL Yoga at /graphql, subscriptions that ride denext channels (no second event bus), the SDL written at build, and a denext graphql CI verb.",
+    "A GraphQL endpoint for a denext app via the @denext/graphql plugin: GraphQL Yoga at /graphql, subscriptions that ride denext channels behind their authorize, over SSE or WebSocket (graphql-ws), a schema that reloads in dev, the SDL written at build, and a denext graphql CI verb.",
 };
 
 export default function GraphQL() {
@@ -11,7 +11,7 @@ export default function GraphQL() {
     <DocsShell
       active="graphql"
       title="GraphQL"
-      lead="@denext/graphql mounts a GraphQL Yoga server at /graphql through the plugin contract, bridges subscriptions onto denext channels — the app's push primitive, so there is no second event bus and no separate WebSocket server — writes the schema SDL at build, and adds a denext graphql verb for CI. Any GraphQLSchema works; Pothos (code-first, typed, no decorators) is the recommended builder."
+      lead="@denext/graphql mounts a GraphQL Yoga server at /graphql through the plugin contract, bridges subscriptions onto denext channels — the app's push primitive, so there is no second event bus — and serves them over SSE and over WebSocket (graphql-ws) on the same path. The schema reloads on an edit in denext dev, the SDL is written at build, and a denext graphql verb serves CI. Any GraphQLSchema works; Pothos (code-first, typed, no decorators) is the recommended builder."
     >
       <h2>Install</h2>
       <p>
@@ -24,7 +24,7 @@ export default function GraphQL() {
         {`// deno.json
 {
   "imports": {
-    "@denext/graphql": "jsr:@denext/graphql@^0.3.0",
+    "@denext/graphql": "jsr:@denext/graphql@^0.4.0",
     "graphql": "npm:graphql@^16.9.0",
     "graphql-yoga": "npm:graphql-yoga@^5.10.0",
     "@pothos/core": "npm:@pothos/core@^4"
@@ -34,10 +34,17 @@ export default function GraphQL() {
       <Code lang="ts">
         {`// denext.config.ts
 import { graphql } from "@denext/graphql";
-import { schema } from "./app/graphql/schema.ts";
 
-// context hands resolvers the request's abort signal (a subscription ends on disconnect).
-export default { plugins: [graphql({ schema, context: ({ signal }) => ({ signal }) })] };`}
+export default {
+  plugins: [
+    graphql({
+      // The module that exports \`schema\` — named by path, it reloads on an edit in dev.
+      schema: "./app/graphql/schema.ts",
+      // context hands resolvers the request's abort signal (a subscription ends on disconnect).
+      context: ({ signal }) => ({ signal }),
+    }),
+  ],
+};`}
       </Code>
       <p>
         The endpoint is a plugin request handler, so a page at <code>/graphql</code>{" "}
@@ -97,13 +104,14 @@ export const schema = builder.toSchema();`}
 
       <h2>Subscriptions over channels</h2>
       <p>
-        <code>fromChannel(channel, key)</code> returns the payloads published to one key of a{" "}
+        <code>fromChannel(channel, key)</code> resolves to the payloads published to one key of a
+        {" "}
         <a href="/docs/live">
           <code>createChannel</code>
         </a>{" "}
-        as an <code>AsyncIterable</code> — what a <code>subscribe</code>{" "}
-        resolver returns. Yoga streams it as GraphQL over SSE, which every GraphQL client supports.
-        The same <code>publish</code> reaches every <code>useChannel</code>{" "}
+        as an <code>AsyncIterable</code> — what a <code>subscribe</code> resolver returns. The same
+        {" "}
+        <code>publish</code> reaches every <code>useChannel</code>{" "}
         subscriber on the Live socket, and a <code>ChannelTransport</code>{" "}
         carries it across instances — the GraphQL side follows automatically.
       </p>
@@ -117,11 +125,75 @@ export const schema = builder.toSchema();`}
           subscription is a live feed, not a log.
         </li>
       </ul>
-      <Callout kind="warn">
-        Authorization is yours. A channel's <code>authorize</code>{" "}
-        gates Live-socket subscribers; a server-side subscription sees every publish to the key.
-        Check the viewer in the resolver before returning <code>fromChannel(...)</code>.
-      </Callout>
+      <h3>Authorization is the channel's</h3>
+      <p>
+        <code>fromChannel</code> runs the channel's <code>authorize(ctx, key)</code>{" "}
+        for the subscribing request — the context (<code>
+          {"{ origin, url, cookie, peerId }"}
+        </code>) and key the Live socket passes, inside the request so <code>auth()</code>{" "}
+        answers for the viewer — and refuses the subscription with a GraphQL error (<code>
+          extensions.code: "FORBIDDEN"
+        </code>) when it says no. A key built from a client argument is therefore checked:
+      </p>
+      <Code lang="ts">
+        {`// channels.ts ("use server")
+export const inbox = createChannel<{ text: string }>({
+  authorize: async (_ctx, key) => key === \`user:\${(await auth())?.user.id}\`,
+});
+// schema.ts — bob can't subscribe to alice's inbox by passing user: "alice"
+subscribe: (_root, { user }, ctx) => fromChannel(inbox, \`user:\${user}\`, { signal: ctx.signal }),`}
+      </Code>
+      <p>
+        An active subscription is re-checked lazily: the first payload after the channel's{" "}
+        <code>authTtlSeconds</code> (default <code>live.limits.channelAuthTtlSeconds</code>){" "}
+        waits for <code>authorize</code> again, and the subscription ends when it says no.{" "}
+        <code>channel.revoke(key)</code> ends every subscription to the key at once;{" "}
+        <code>channel.revoke(key, {"{ peerId }"})</code>{" "}
+        ends one connection's (each SSE request is a peer; every operation of one WebSocket is the
+        same peer).
+      </p>
+
+      <h2>GraphQL over WebSocket</h2>
+      <p>
+        The endpoint also speaks the <code>graphql-ws</code> protocol (subprotocol{" "}
+        <code>graphql-transport-ws</code>) on the same path, so a <code>graphql-ws</code>{" "}
+        client (or urql / Apollo through it) connects to <code>wss://…/graphql</code>{" "}
+        unchanged. It runs over Yoga's own pipeline, so the depth and cost limits, introspection
+        blocking and error masking apply to every operation — and it adds no dependency.
+      </p>
+      <ul>
+        <li>
+          The handshake is same-origin, as on the Live socket in production: a browser{" "}
+          <code>Origin</code> on the app's own host (or in <code>allowedOrigins</code>, or the app's
+          {" "}
+          <code>desktop.app.origin</code>); anything else is a 403.
+        </li>
+        <li>
+          Identity is the upgrade request's cookies and <code>Authorization</code>, or a{" "}
+          <code>connection_init</code> payload token (<code>
+            {'{ authorization: "Bearer …" }'}
+          </code>{" "}
+          or <code>{"{ token }"}</code>) when the upgrade carried none.
+        </li>
+        <li>
+          <code>connection_init</code> must arrive within{" "}
+          <code>websocket.connectionInitTimeoutMs</code> (3000); a socket runs at most{" "}
+          <code>websocket.maxSubscriptions</code> operations at once (32); a message over{" "}
+          <code>maxBodyBytes</code> closes it. <code>websocket: false</code>{" "}
+          turns the transport off.
+        </li>
+      </ul>
+
+      <h2>Schema reload in dev</h2>
+      <p>
+        With <code>schema</code> given as a module path, an edit to a script or{" "}
+        <code>.graphql</code>{" "}
+        file in that module's directory loads the schema again for the next request — no restart.
+        Subscriptions on the old schema complete (SSE and WebSocket alike), so clients resubscribe
+        against the new one. <code>watch</code> takes your own globs; a schema object imported into
+        {" "}
+        <code>denext.config.ts</code> still needs a restart.
+      </p>
 
       <h2>CI</h2>
       <Code lang="sh">
@@ -153,6 +225,10 @@ denext graphql diff schema.graphql        # exit 1 when the schema changed`}
         </li>
         <li>
           GraphiQL is off in production; gate it yourself if you turn it on.
+        </li>
+        <li>
+          Subscriptions pass the channel's <code>authorize</code>{" "}
+          and the WebSocket handshake requires the app's own <code>Origin</code>.
         </li>
       </ul>
       <p>

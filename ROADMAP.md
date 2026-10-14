@@ -23,9 +23,6 @@ or an upstream. Each one's limitation entry is deleted when it ships.
 
 - **React surface:** `captureOwnerStack()` returns the owner stack in development (the DevTools
   panel already has it), and `cacheSignal()` returns the server render's cache-scope signal.
-- **GraphQL:** `fromChannel` runs the channel's `authorize` (today it bypasses it); subscriptions
-  over WebSocket (`graphql-ws`) next to SSE; a schema edit reloads in `denext dev` without a
-  restart.
 - **Auth, mail:** an `smtpMailer()` for `sendVerificationRequest`, and the `/auth/v1` SMTP
   settings Supabase takes (`GOTRUE_SMTP_*`).
 - **Auth, sessions:** a per-user "sessions valid after" time that ends stateless cookie sessions

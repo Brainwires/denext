@@ -744,15 +744,21 @@ const UNCAPTURED_HEADERS =
  * they did for the original. Capture BEFORE `Deno.upgradeWebSocket`, which consumes the request.
  * Outside a request the function runs `fn` as it is.
  *
+ * @param init.headers Headers set on the copy (replacing the captured ones of the same name) —
+ *   a credential the client sent after the upgrade (a GraphQL over WebSocket `connection_init`
+ *   token as `authorization`), so the session is read as if the request had carried it.
  * @returns A runner: `(fn) => fn()` in a context equivalent to the captured request's.
  */
-export function captureRequestContext(): <T>(fn: () => T) => T {
+export function captureRequestContext(
+  init: { headers?: Record<string, string> } = {},
+): <T>(fn: () => T) => T {
   const ctx = currentContext();
   if (!ctx) return (fn) => fn();
   const headers = new Headers();
   for (const [name, value] of ctx.request.headers) {
     if (!UNCAPTURED_HEADERS.test(name)) headers.append(name, value);
   }
+  for (const [name, value] of Object.entries(init.headers ?? {})) headers.set(name, value);
   const template = new Request(ctx.request.url, { headers });
   copyRemoteAddr(ctx.request, template);
   const trust: RequestContextTrust = {

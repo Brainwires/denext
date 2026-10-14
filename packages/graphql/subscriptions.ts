@@ -1,10 +1,10 @@
 /**
  * GraphQL subscriptions over denext channels. A `createChannel` is the app's push primitive
- * (validated at the publisher, authorized per socket subscriber, multi-instance through a
+ * (validated at the publisher, authorized per subscriber, multi-instance through a
  * `ChannelTransport`); {@linkcode fromChannel} turns one key of it into the `AsyncIterable`
  * a GraphQL `subscribe` resolver returns, so a subscription rides the same events the Live
- * socket delivers — no second pub/sub bus, no separate WebSocket server (Yoga streams it as
- * GraphQL over SSE).
+ * socket delivers — no second pub/sub bus (Yoga streams it as GraphQL over SSE, and the plugin
+ * serves the `graphql-ws` protocol over WebSocket on the same path).
  *
  * ```ts
  * // Pothos
@@ -20,13 +20,18 @@
  * });
  * ```
  *
- * Authorization is yours: a channel's `authorize` gates SOCKET subscribers; a server-side
- * tap sees every publish, so check the viewer in the resolver before returning the iterable.
+ * Authorization is the channel's: `fromChannel` runs its `authorize(ctx, key)` for the
+ * subscribing request — the context and key the Live socket passes — and refuses the
+ * subscription with a GraphQL error (`extensions.code: "FORBIDDEN"`) when it says no. An active
+ * subscription is re-checked lazily (the channel's `authTtlSeconds`) and ends when that re-check
+ * fails or the key is revoked, exactly as a `useChannel` subscriber does.
  *
  * @module
  */
 
-import { type Channel, tapChannel } from "@denext/denext/plugin-kit";
+import { type Channel, ChannelAccessError, tapChannelAuthorized } from "@denext/denext/plugin-kit";
+import { createGraphQLError } from "graphql-yoga";
+import { currentPeer } from "./peer.ts";
 
 export type { Channel };
 
@@ -42,39 +47,62 @@ export interface FromChannelOptions {
 }
 
 /**
- * The payloads published to one key of a channel, as an async iterable. Ends when the key is
- * revoked, when `signal` aborts, or when the consumer returns (a GraphQL client disconnect).
+ * The payloads published to one key of a channel, as an async iterable — once the channel's
+ * `authorize` admits the subscribing request. Ends when the key is revoked (or revoked for this
+ * connection's peer), when a lazy re-authorization says no, when `signal` aborts, or when the
+ * consumer returns (a GraphQL client disconnect).
+ *
+ * Call it from a `subscribe` resolver (inside the request), and return the promise:
+ * `subscribe: (_root, { room }, ctx) => fromChannel(messages, room, { signal: ctx.signal })`.
  *
  * @param channel The channel (or its id).
- * @param key The key to follow.
+ * @param key The key to follow (validated against the channel's key shape).
  * @param options Abort signal and buffer cap.
+ * @returns The subscription's payloads.
+ * @throws A GraphQL error (`extensions.code: "FORBIDDEN"`) when the channel is unknown, the key
+ *   malformed, or `authorize` refuses the request.
  */
-export function fromChannel<T>(
+export async function fromChannel<T>(
   channel: Channel<T> | string,
   key: string,
   options: FromChannelOptions = {},
-): AsyncIterableIterator<T> {
+): Promise<AsyncIterableIterator<T>> {
   const cap = Math.max(1, options.buffer ?? 64);
   const queue: T[] = [];
   let wake: (() => void) | null = null;
   let done = false;
+  let stop: (() => void) | null = null;
 
   const finish = () => {
     if (done) return;
     done = true;
-    stop();
+    stop?.();
     options.signal?.removeEventListener("abort", finish);
     wake?.();
   };
-  const stop = tapChannel<T>(channel, key, {
-    onPayload: (payload) => {
-      if (done) return;
-      if (queue.length >= cap) queue.shift();
-      queue.push(payload);
-      wake?.();
-    },
-    onRevoke: finish,
-  });
+  try {
+    stop = await tapChannelAuthorized<T>(channel, key, {
+      peerId: currentPeer(),
+      onPayload: (payload) => {
+        if (done) return;
+        if (queue.length >= cap) queue.shift();
+        queue.push(payload);
+        wake?.();
+      },
+      // Access ended (revoke / failed re-check): nothing still queued is delivered.
+      onEnd: () => {
+        queue.length = 0;
+        finish();
+      },
+    });
+  } catch (err) {
+    if (err instanceof ChannelAccessError) {
+      throw createGraphQLError("Not authorized to subscribe to this channel", {
+        extensions: { code: "FORBIDDEN" },
+      });
+    }
+    throw err;
+  }
   if (options.signal?.aborted) finish();
   else options.signal?.addEventListener("abort", finish, { once: true });
 

@@ -175,7 +175,8 @@ Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or T
 described in full; others are `{}` + a lint warning.
 Need GraphQL? `@denext/graphql` mounts GraphQL Yoga at `/graphql` (any `GraphQLSchema`;
 Pothos recommended, no decorators) and `fromChannel(channel, key)` turns a `createChannel`
-into a subscription source — the same push the Live socket delivers.
+into a subscription source behind the channel's `authorize` — the same push the Live socket
+delivers, over SSE or WebSocket (`graphql-ws`); `schema: "./app/graphql/schema.ts"` reloads in dev.
 
 A plain handler still works and is still typed: return `TypedResponse<T>` / take a
 `TypedRequest<B>` from `denext/server`. A plain `route.ts` body is capped at 1 MiB

@@ -62,6 +62,7 @@
     "npm:@tanstack/router-plugin@1.168.42": "1.168.42_esbuild@0.24.2",
     "npm:effect@*": "3.22.1",
     "npm:effect@^3.22.0": "3.22.1",
+    "npm:graphql-ws@6.3.0": "6.3.0_graphql@16.14.2_ws@8.21.3",
     "npm:graphql-yoga@^5.10.0": "5.22.0_graphql@16.14.2",
     "npm:graphql@^16.9.0": "16.14.2",
     "npm:jsqr@1.4.0": "1.4.0",
@@ -1242,6 +1243,16 @@
     "graceful-fs@4.2.11": {
       "integrity": "sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ=="
     },
+    "graphql-ws@6.3.0_graphql@16.14.2_ws@8.21.3": {
+      "integrity": "sha512-qBAXPtFjWHF3QypDyNcBp8Rycd+rmofxUSJsu3bGI9QMMq7pImKBSLSg9hZ2ojIMbJ54T/LPjKBIeOUoJbNBnQ==",
+      "dependencies": [
+        "graphql",
+        "ws"
+      ],
+      "optionalPeers": [
+        "ws"
+      ]
+    },
     "graphql-yoga@5.22.0_graphql@16.14.2": {
       "integrity": "sha512-RTMS9WfDJQdYT1VRwDQ34Q9zFvuD3PZXBEDedNdUuoeNsJ6jZBwPo5PhdExzkR+s5iwf8MoiGJOS5Byt/PNAZg==",
       "dependencies": [
@@ -2238,6 +2249,7 @@
       "npm:@supabase/supabase-js@2.117.2",
       "npm:@tanstack/router-plugin@1.168.42",
       "npm:effect@^3.22.0",
+      "npm:graphql-ws@6.3.0",
       "npm:jsqr@1.4.0",
       "npm:playwright-core@1.63.0",
       "npm:sass@^1.80.0",

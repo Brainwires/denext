@@ -736,8 +736,8 @@
     },
     {
       "name": "@denext/graphql",
-      "version": "0.3.0",
-      "spec": "jsr:@denext/graphql@^0.3.0",
+      "version": "0.4.0",
+      "spec": "jsr:@denext/graphql@^0.4.0",
       "exports": [
         ".",
         "./command",
@@ -760,10 +760,12 @@
         "allowedOrigins",
         "context",
         "yoga",
-        "outFile"
+        "outFile",
+        "websocket",
+        "watch"
       ],
       "title": "@denext/graphql",
-      "blurb": "A GraphQL endpoint for a denext app, as a plugin. It mounts a GraphQL Yoga server at /graphql, bridges subscriptions onto denext channels (the app's push primitive — no second event bus, no separate…",
+      "blurb": "A GraphQL endpoint for a denext app, as a plugin. It mounts a GraphQL Yoga server at /graphql, bridges subscriptions onto denext channels (the app's push primitive — no second event bus), serves them…",
       "docs": "/docs/graphql",
       "optionsType": "GraphqlOptions",
       "optionsSchema": {
@@ -865,6 +867,36 @@
                 ]
               }
             ]
+          },
+          "websocket": {
+            "description": "Serve GraphQL over WebSocket — the `graphql-ws` protocol (subprotocol `graphql-transport-ws`) — on the same path, next to GraphQL over SSE. On by default; `false` turns it off. The handshake needs a browser `Origin` on the app's own host (or in `allowedOrigins`, or the app's `desktop.app.origin`) unless `requireSameOrigin: false`; the socket's identity is the upgrade request's cookies / `Authorization`, or a `connection_init` payload token (`{ authorization: \"Bearer …\" }` or `{ token }`) when the upgrade carried no `Authorization`. Every operation passes the same depth / cost limits as over HTTP.",
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "connectionInitTimeoutMs": {
+                    "description": "Close a socket that sent no `connection_init` within this many milliseconds (default 3000).",
+                    "type": "number"
+                  },
+                  "maxSubscriptions": {
+                    "description": "Operations one socket may run at once — subscriptions, queries and mutations alike (default 32, Live's per-connection channel cap). Past it a `subscribe` gets an `error` frame.",
+                    "type": "number"
+                  }
+                }
+              },
+              {
+                "enum": [
+                  false
+                ]
+              }
+            ]
+          },
+          "watch": {
+            "description": "Under `denext dev`, the files whose edit reloads the schema (globs, relative to the project root) when GraphqlOptions.schema is a module path. Default: the scripts and `.graphql` files in the schema module's directory and below (the schema module alone when it sits at the project root). In-flight subscriptions on the old schema end (`complete`).",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [

@@ -1,5 +1,6 @@
 // A code-first schema with Pothos (typed, no decorators). The mutation publishes to a denext
-// channel; the subscription is that channel's key as an AsyncIterable via `fromChannel`.
+// channel; the subscription is that channel's key as an AsyncIterable via `fromChannel`, which
+// runs the channel's `authorize` for the subscribing request first.
 import SchemaBuilder from "@pothos/core";
 import { fromChannel } from "@denext/graphql";
 import { type Message, messages } from "./channels.ts";
@@ -55,7 +56,7 @@ builder.subscriptionType({
   fields: (t) => ({
     messages: t.field({
       type: MessageRef,
-      description: "Messages posted to a room, live (GraphQL over SSE, fed by a denext channel).",
+      description: "Messages posted to a room, live (SSE or WebSocket, fed by a denext channel).",
       args: { room: t.arg.string({ required: true }) },
       subscribe: (_root, { room }, ctx) => fromChannel(messages, room, { signal: ctx.signal }),
       resolve: (message) => message,

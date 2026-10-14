@@ -141,6 +141,9 @@ export type {
   ChannelTapHandlers,
   ChannelTransport,
 } from "../runtime/channel.ts";
+// The authorized server-side subscriber a protocol bridge (GraphQL subscriptions) hands a viewer.
+export { ChannelAccessError, tapChannelAuthorized } from "./channel-subscriber.ts";
+export type { AuthorizedTapOptions } from "./channel-subscriber.ts";
 export type {
   ApiRateLimitOptions,
   CsrfDoubleSubmitOptions,

@@ -1,6 +1,6 @@
 {
   "name": "@denext/graphql",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
@@ -32,7 +32,9 @@
         "allowedOrigins",
         "context",
         "yoga",
-        "outFile"
+        "outFile",
+        "websocket",
+        "watch"
       ]
     }
   },
@@ -40,6 +42,8 @@
     "include": [
       "mod.ts",
       "subscriptions.ts",
+      "websocket.ts",
+      "peer.ts",
       "command.ts",
       "README.md",
       "CHANGELOG.md",

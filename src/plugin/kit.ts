@@ -96,6 +96,10 @@ export type { ApiDefinition, ApiRouteMeta } from "../server/mod.ts";
 // second event bus and follows the app's `ChannelTransport` across instances.
 export { tapChannel } from "../server/mod.ts";
 export type { Channel, ChannelTapHandlers } from "../server/mod.ts";
+// The same observation behind the channel's `authorize` (Live's gate, context, lazy re-check and
+// revoke) — what a bridge that delivers a channel to a VIEWER uses instead of a bare tap.
+export { ChannelAccessError, tapChannelAuthorized } from "../server/mod.ts";
+export type { AuthorizedTapOptions, ChannelContext } from "../server/mod.ts";
 // The same-origin proof every state-changing denext RPC applies (Server Actions, the typed-API
 // batch). A plugin that mounts its own POST endpoint (GraphQL, webhooks, RPC) must apply it —
 // a cross-site `<form>` reaches a plugin handler with the victim's cookies otherwise.

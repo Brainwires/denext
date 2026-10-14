@@ -829,8 +829,10 @@ cache uses Deno's built-in `node:sqlite`.)
 - **`@denext/graphql`** (`packages/graphql`): GraphQL Yoga mounted at `/graphql` through
   the plugin seam (same-origin gate on mutations, CORS off, body cap, introspection and
   GraphiQL dev-only), `fromChannel(channel, key)` turning a `createChannel` key into a
-  subscription source over `tapChannel` (delivered as GraphQL over SSE, across instances
-  via the app's `ChannelTransport`), `schema.graphql` at build, `denext graphql sdl | diff`.
+  subscription source behind the channel's `authorize` (`tapChannelAuthorized`: Live's context,
+  lazy re-check and revoke), delivered as GraphQL over SSE or over WebSocket (`graphql-ws`, a
+  same-origin handshake) and across instances via the app's `ChannelTransport`; a module-path
+  schema that reloads in `denext dev`; `schema.graphql` at build, `denext graphql sdl | diff`.
 - **`@denext/content-collections`** (`packages/content-collections`): a typed, validated,
   queryable content layer (MD/MDX/YAML/JSON) — Astro Content Layer / Nuxt Content for denext.
   `content.config.ts` declares collections with a Standard Schema + a loader (`glob` for local

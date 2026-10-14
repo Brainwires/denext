@@ -8,6 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Breaking
+
+- **`@denext/graphql` 0.4.0: `fromChannel(channel, key)` runs the channel's `authorize`.** It
+  used to subscribe any caller to any key, so a key built from a client-supplied argument could
+  read another viewer's channel unless the resolver checked it. It now applies the Live socket's
+  gate for the subscribing request (`ctx` = `{ origin, url, cookie, peerId }`, the key, a throw
+  is a deny) and refuses with a GraphQL error (`extensions.code: "FORBIDDEN"`); an active
+  subscription is re-checked lazily after `authTtlSeconds` and ends when the check fails or on
+  `channel.revoke(key)` (or a revoke naming its peer). `fromChannel` now returns a promise; a
+  `subscribe` resolver returns it as is.
+
 ### Added
 
 - **Operating the self-hosted stack: `denext stack health | passwd | roll | backup | restore`, and
@@ -28,6 +39,23 @@ and this project adheres to
   `--yes`, and rejects an archive entry with an absolute path, `..` or a link that leaves the
   backup. Every Postgres tool runs inside the stack's `db` container, so the machine needs no
   Postgres client.
+
+- **`tapChannelAuthorized(channel, key, { onPayload, onEnd, peerId })` (`denext/plugin-kit`,
+  `denext/server`).** A server-side channel subscriber behind the channel's own `authorize`, with
+  the Live socket's context, lazy re-authorization (the held payload is delivered only after the
+  re-check allows it) and revocation; it rejects with `ChannelAccessError` when refused. For a
+  plugin that delivers a channel to a viewer over another protocol. `tapChannel`'s handlers take
+  a `peerId` so a revoke naming that peer is reported, and `captureRequestContext({ headers })`
+  sets headers on the captured copy (a credential sent after a WebSocket upgrade).
+- **`@denext/graphql` 0.4.0: GraphQL over WebSocket.** The `graphql-ws` protocol (subprotocol
+  `graphql-transport-ws`) on the GraphQL path next to SSE, implemented without a new dependency
+  over Yoga's pipeline (the depth and cost limits, introspection blocking and error masking
+  apply). The handshake needs the app's own `Origin` (or an allowed one), as Live's does in
+  production; identity is the upgrade's cookies / `Authorization` or a `connection_init` token;
+  `websocket: { connectionInitTimeoutMs, maxSubscriptions }` bounds a socket.
+- **`@denext/graphql` 0.4.0: the schema reloads in `denext dev`.** `schema` takes the module path
+  that exports it; an edit beside it (or under the `watch` globs) loads the schema again for the
+  next request, and subscriptions on the old schema complete.
 
 ### Changed
 

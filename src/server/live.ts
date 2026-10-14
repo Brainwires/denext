@@ -38,6 +38,7 @@ import {
   broadcastInvalidation,
   type ChannelTransport,
   isForeignEvent,
+  setChannelAuthTtl,
   setChannelPayloadCap,
   watchChannelTransport,
 } from "../runtime/channel.ts";
@@ -274,6 +275,7 @@ export function installLiveHub(opts: {
   setLiveInvalidateHook(invalidateTags);
   bindChannelTransport();
   setChannelPayloadCap(limits.maxChannelPayloadBytes);
+  setChannelAuthTtl(limits.channelAuthTtlSeconds);
 }
 
 /**

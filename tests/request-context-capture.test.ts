@@ -59,3 +59,18 @@ Deno.test("captureRequestContext: a trusted proxy's hop is kept; outside a reque
   const bare = captureRequestContext();
   assertEquals(bare(() => currentContext()), undefined);
 });
+
+Deno.test("captureRequestContext: init headers are set on the copy (a token sent after the upgrade)", () => {
+  const request = new Request("https://app.test/graphql", {
+    headers: { cookie: "session=abc", authorization: "Bearer old" },
+  });
+  const run = runWithContext(
+    createRequestContext(request),
+    () => captureRequestContext({ headers: { authorization: "Bearer new" } }),
+  );
+  const seen = run(() => ({
+    auth: currentContext()!.request.headers.get("authorization"),
+    cookie: currentContext()!.request.headers.get("cookie"),
+  }));
+  assertEquals(seen, { auth: "Bearer new", cookie: "session=abc" });
+});

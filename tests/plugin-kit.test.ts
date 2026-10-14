@@ -42,6 +42,7 @@ Deno.test("plugin-kit does not leak an over-broad value surface", () => {
   // adding a value to the kit is a semver commitment, so it should be intentional.
   const values = Object.keys(kit).sort();
   assertEquals(values, [
+    "ChannelAccessError",
     "PageCache",
     "STALLED",
     "TOO_LARGE",
@@ -73,6 +74,7 @@ Deno.test("plugin-kit does not leak an over-broad value surface", () => {
     "revalidateTag",
     "specificity",
     "tapChannel",
+    "tapChannelAuthorized",
     "toBase64Url",
     "verifyOrigin",
     "viteEmitterPlugin",
