@@ -34,7 +34,8 @@ import {
 } from "./storage-meta.ts";
 
 /** Where the storage migrations are recorded. */
-const MIGRATIONS_TABLE = "backend_storage_migrations";
+export const STORAGE_MIGRATIONS_TABLE = "backend_storage_migrations";
+const MIGRATIONS_TABLE = STORAGE_MIGRATIONS_TABLE;
 
 /** Supabase's helper functions, created only when missing (a restored Supabase dump keeps its own). */
 const HELPERS: [string, string][] = [

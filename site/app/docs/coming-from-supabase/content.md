@@ -517,7 +517,8 @@ the store's CORS rules to allow your origin to `GET` and `PUT` and to expose `ET
 Supabase self-hosts as a `docker compose` stack; so does a denext app.
 `denext generate docker --stack` reads your config and writes the compose file for what it uses —
 the app, Postgres 17 (or `--pgvector`'s `pgvector/pgvector:pg17`), MinIO with its bucket created
-by a one-shot `mc` service, and a one-shot `denext job migrate` before the app starts — with
+by a one-shot `mc` service, and a one-shot `denext migration up` (the backend's own roles and
+schemas, then your migrations) before the app starts — with
 health checks and `depends_on` conditions throughout, named volumes, and a `.env.example` listing
 every secret (the role of Supabase's `.env` with its JWT secret and keys).
 

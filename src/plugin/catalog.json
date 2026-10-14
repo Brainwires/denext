@@ -52,6 +52,10 @@
                     "description": "A short name for messages (`\"s3\"`, `\"fs\"`).",
                     "type": "string"
                   },
+                  "location": {
+                    "description": "Where the store is, for a store reached over the network: its endpoint's origin (`https://s3.us-east-1.amazonaws.com`). Absent for one on this machine's disk (fs).",
+                    "type": "string"
+                  },
                   "init": {
                     "description": "Called once at plugin setup with the project root (resolve relative paths against it)."
                   },

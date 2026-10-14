@@ -14,6 +14,9 @@
 - **a client's direct upload reaches the object only when it completes.** Presigned PUTs and
   parts (S3) and signed PUTs (fs) go to a staging place; the completion checks the bytes, then
   writes the row and moves them to the key together. Abandoned uploads are swept.
+- **`denext migration up` / `db push` apply the storage and realtime schemas and the
+  `supabase_realtime` publication** (with the roles first) before the app's migrations, in the
+  tables the server's start records them in (the `denext db` hooks take `migrationSets`).
 - **`denext storage cp -r` refuses to write through a symbolic link inside the destination.**
 - **`denext storage rm -r` on a remote store asks first** (`--yes` answers; no terminal →
   refused). A storage driver may report its `location` (the s3 driver: its endpoint).

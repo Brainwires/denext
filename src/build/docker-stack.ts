@@ -41,6 +41,11 @@ export interface StackOptions {
   readonly backendStorage?: boolean;
   /** `@denext/backend`'s `vault` is configured (adds the required `DENEXT_VAULT_KEY`). */
   readonly backendVault?: boolean;
+  /**
+   * `@denext/backend`'s realtime reads the write-ahead log (`source: "logical"`): Postgres runs
+   * with `wal_level=logical` and the app's role gets `REPLICATION`.
+   */
+  readonly realtimeLogical?: boolean;
   /** The S3 bucket the bootstrap creates (default `denext`). */
   readonly bucket?: string;
   /** The `deno run -A` arguments that run denext's CLI (default: `jsr:@denext/denext/cli`). */
@@ -398,7 +403,14 @@ function migrateService(options: StackOptions): string {
     .replaceAll('","', '", "');
   const env = appEnvLines(options);
   const lines = [
-    `  # Applies pending migrations/*.sql (jobs/migrate.ts) once, then exits; the app waits for it.`,
+    ...(options.backend && options.migrateCommand?.includes("migration")
+      ? [
+        `  # Applies @denext/backend's own migrations, then pending migrations/*.sql, once`,
+        `  # (denext migration up), then exits; the app waits for it.`,
+      ]
+      : [
+        `  # Applies pending migrations/*.sql (jobs/migrate.ts) once, then exits; the app waits for it.`,
+      ]),
     `  migrate:`,
     `    image: ${APP_IMAGE}`,
     `    pull_policy: never`,
@@ -424,11 +436,14 @@ function migrateService(options: StackOptions): string {
  * login role when missing, set its password from `.env` (so a change takes effect on the next
  * up), make it the owner of the database and its `public` schema — what the backend's own DDL
  * needs (schemas, tables, triggers, the `anon` / `authenticated` roles via CREATEROLE) — and,
- * with pgvector, create the extension (only a superuser may). Idempotent, so it runs on every
+ * with pgvector, create the extension (only a superuser may); with realtime's logical source,
+ * the `REPLICATION` attribute (only a superuser may grant it). Idempotent, so it runs on every
  * up, an existing volume included.
  */
 function dbInitService(options: StackOptions): string {
   const vector = options.pgvector ? "\n        CREATE EXTENSION IF NOT EXISTS vector;" : "";
+  // Realtime's logical source opens a replication connection as the app's role.
+  const replication = options.realtimeLogical ? " REPLICATION" : "";
   return `  # Creates (or updates) the app's own login role — the database's owner, never a superuser —
   # then exits; the app and the migrations connect as it.
   db-init:
@@ -449,7 +464,7 @@ function dbInitService(options: StackOptions): string {
       - |
         psql -v ON_ERROR_STOP=1 -v u="$$APP_USER" -v p="$$APP_PASSWORD" -v d="$$PGDATABASE" <<'SQL'
         SELECT format('CREATE ROLE %I LOGIN', :'u') WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'u') \\gexec
-        ALTER ROLE :"u" WITH LOGIN CREATEROLE NOSUPERUSER PASSWORD :'p';
+        ALTER ROLE :"u" WITH LOGIN CREATEROLE NOSUPERUSER${replication} PASSWORD :'p';
         ALTER DATABASE :"d" OWNER TO :"u";
         ALTER SCHEMA public OWNER TO :"u";${vector}
         SQL`;
@@ -458,9 +473,13 @@ function dbInitService(options: StackOptions): string {
 /** The Postgres service. No host port unless `exposeDb` (the app reaches it as `db:5432`). */
 function dbService(options: StackOptions): string {
   const ports = options.exposeDb ? `\n    ports:\n      - "${DB_PORT}"` : "";
+  // Realtime's logical source decodes the write-ahead log (a restart applies a changed level).
+  const command = options.realtimeLogical
+    ? `\n    command: ["postgres", "-c", "wal_level=logical"]`
+    : "";
   return `  db:
     image: ${options.pgvector ? PGVECTOR_IMAGE : POSTGRES_IMAGE}
-    restart: unless-stopped
+    restart: unless-stopped${command}
     environment:
       POSTGRES_USER: ${envRef("POSTGRES_USER")}
       POSTGRES_PASSWORD: ${envRef("POSTGRES_PASSWORD")}

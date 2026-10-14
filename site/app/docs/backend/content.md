@@ -1668,9 +1668,13 @@ and honours `--read-only`.
 
 `denext generate docker` sees `backend()` in your config and writes the compose stack it needs:
 the app, Postgres 17 (`DATABASE_URL` wired in), MinIO with a one-shot bucket bootstrap when the
-storage driver is `s3()`, and a migrations service when you have `migrations/` and
-`jobs/migrate.ts` — every service health-checked, the app started only after the database is
-healthy and the one-shots have finished.
+storage driver is `s3()`, and a migrations service when you have `migrations/` — every service
+health-checked, the app started only after the database is healthy and the one-shots have
+finished. The migrations service runs `denext migration up`: the backend's own migrations first
+(the `anon` / `authenticated` roles, the `auth` functions, the storage and realtime schemas and the
+`supabase_realtime` publication), then yours, so a first migration that grants to `anon` or adds
+a table to the publication works on a fresh database. With `realtime({ source: "logical" })` the
+database runs with `wal_level=logical` and the app's role gets `REPLICATION`.
 
 ```sh
 denext generate docker --stack   # web, db, minio + minio-init, migrate; .env.example

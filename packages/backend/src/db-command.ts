@@ -29,6 +29,8 @@ import { diffSnapshots, emptySnapshot, readSnapshot } from "./schema-diff.ts";
 export interface DbCommandConfig {
   /** The backend's own migrations for the enabled services (RLS first). */
   backendMigrations: () => Migration[];
+  /** Further sets of the backend's migrations, each in its own tracking table (storage's). */
+  migrationSets?: () => MigrationSet[];
   /** The schemas the backend's services own (dropped by `reset`). */
   serviceSchemas: string[];
   /**
@@ -74,12 +76,22 @@ const BACKEND_TABLE = "backend_migrations";
 /** An action of `denext db` the plugin implements. */
 type Action = (input: DbActionInput, io: DbCommandIo) => Promise<void>;
 
+/** Migrations recorded in a tracking table of their own. */
+export interface MigrationSet {
+  /** The tracking table (the one the server's start uses for them). */
+  table: string;
+  /** The migrations, in order. */
+  migrations: Migration[];
+}
+
 /** The hooks `denext db` reads from `Symbol.for("denext.backend.db")`. */
 export interface DbHooks {
   /** The backend's own migrations. */
   migrations(): Migration[];
   /** Their tracking table. */
   table: string;
+  /** Further sets, applied after {@linkcode DbHooks.migrations}, each in its own table. */
+  migrationSets?(): MigrationSet[];
   /** The schemas `reset` drops. */
   serviceSchemas: string[];
   /** Wraps the client migrations run on. */
@@ -115,6 +127,7 @@ export function createDbHooks(
   return {
     migrations: config.backendMigrations,
     table: BACKEND_TABLE,
+    ...(config.migrationSets ? { migrationSets: config.migrationSets } : {}),
     serviceSchemas: config.serviceSchemas,
     ...(config.keyed ? { keyed: config.keyed } : {}),
     ...(config.seedBuckets ? { seedBuckets: config.seedBuckets } : {}),

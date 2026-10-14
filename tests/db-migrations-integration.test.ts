@@ -462,3 +462,92 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name:
+    `migration up on a fresh database: the backend's roles and schemas before the app's${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { fs, realtime } = await import("../packages/backend/mod.ts");
+    const { installRuntime } = await import("../packages/backend/src/runtime.ts");
+    const { migratePostgres } = await import("../src/server/postgres-migrate.ts");
+    const { realtimeMigrations } = await import("../packages/backend/src/realtime-sql.ts");
+    const { STORAGE_MIGRATIONS_TABLE, storageMigrations } = await import(
+      "../packages/backend/src/storage-meta-pg.ts"
+    );
+    // (On a server where `anon` / `authenticated` exist already, the app role is granted them as
+    // an administrator would; on a new server the first migration creates them.)
+    const env = await environment();
+    const root = await Deno.makeTempDir({ prefix: "dnx-backend-first-" });
+    try {
+      // What a Supabase app's first migration does: grant to the API roles, write storage and
+      // realtime policies. None of it exists on a fresh database until the backend's migrations
+      // ran — which the server's start does only after this migration (the stack's order).
+      await write(root, {
+        "migrations/20260101000000_init.sql": `create table notes (id int primary key, body text);
+alter table notes enable row level security;
+grant select on notes to anon, authenticated;
+create policy "read notes" on notes for select to anon using (true);
+create policy "own uploads" on storage.objects for insert to authenticated
+  with check (bucket_id = 'avatars' and owner_id = auth.uid()::text);
+create policy "room members" on realtime.messages for select to authenticated using (true);
+alter publication supabase_realtime add table notes;
+`,
+      });
+      await Deno.mkdir(`${root}/app`);
+      resetPlugins();
+      installPostgres(undefined);
+      installRuntime(undefined);
+      const realtimeOptions = { tables: { notes: {} } };
+      const config = {
+        plugins: [backend({
+          postgres: { sql: env.app },
+          storage: {
+            secret: "storage-secret-at-least-32-characters",
+            driver: fs({ dir: ".storage" }),
+            buckets: { avatars: {} },
+          },
+          realtime: realtime(realtimeOptions),
+        })],
+      } as DenextConfig;
+      await applyPlugins({ projectRoot: root, appDir: `${root}/app`, config, mode: "build", load });
+      const run = runner(root, env.url);
+      const out = await run(MIGRATION_ACTIONS, ["up"]);
+      assertStringIncludes(out, "backend_rls_0001  (@denext/backend)");
+      assertStringIncludes(out, "backend_realtime_0004  (@denext/backend)");
+      assertStringIncludes(out, "backend_storage_0001  (@denext/backend)");
+      assertStringIncludes(out, "backend_realtime_pub_supabase_realtime  (@denext/backend)");
+      assertStringIncludes(out, "applied 20260101000000_init.sql");
+      assert(out.indexOf("backend_storage_0001") < out.indexOf("20260101000000_init.sql"), out);
+      // The roles first: the realtime and storage schemas grant to them.
+      assert(out.indexOf("backend_rls_0001") < out.indexOf("backend_realtime_0001"), out);
+      // The server's start then finds them applied (same names, same tracking tables): only the
+      // per-table realtime trigger, which needs the app's table, is left for it.
+      const storage = await migratePostgres(env.app, {
+        migrations: storageMigrations(),
+        table: STORAGE_MIGRATIONS_TABLE,
+      });
+      assertEquals(storage.applied, []);
+      const live = await migratePostgres(env.app, {
+        migrations: realtimeMigrations(realtimeOptions),
+        table: "backend_migrations",
+      });
+      assert(live.applied.length > 0, "the per-table trigger is the start's");
+      assert(
+        live.applied.every((name) => name.startsWith("backend_realtime_t_")),
+        live.applied.join(", "),
+      );
+      // Run again: nothing to do.
+      assertStringIncludes(await run(MIGRATION_ACTIONS, ["up"]), "The database is up to date.");
+    } finally {
+      await runPluginTeardown();
+      resetPlugins();
+      installPostgres(undefined);
+      installRuntime(undefined);
+      await Deno.remove(root, { recursive: true });
+      await env.drop();
+    }
+  },
+});

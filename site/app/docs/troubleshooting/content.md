@@ -609,7 +609,8 @@ deletes the volume so the next `up` initialises it with `.env`'s values; for rea
 
 ## Docker: `service "migrate" didn't complete successfully: exit 1`
 
-**Cause.** The one-shot migrations service (`denext job migrate`) failed, so the app is never
+**Cause.** The one-shot migrations service (`denext migration up` with `@denext/backend`, else
+`denext job migrate`) failed, so the app is never
 started. A migration's SQL failed (it ran in a transaction and was rolled back), or the database
 lacks an extension it uses — `create extension vector` needs the pgvector image.
 

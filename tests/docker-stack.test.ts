@@ -42,6 +42,7 @@ const FULL: DockerOptions = {
   backend: true,
   backendStorage: true,
   backendVault: true,
+  realtimeLogical: true,
   bucket: "media",
   cli: ["--config", "deno.json", "jsr:@denext/denext@^4.0.0/cli"],
   migrateCommand: [
@@ -51,8 +52,8 @@ const FULL: DockerOptions = {
     "--config",
     "deno.json",
     "jsr:@denext/denext@^4.0.0/cli",
-    "job",
-    "migrate",
+    "migration",
+    "up",
   ],
   startCommand: [
     "deno",
@@ -295,7 +296,8 @@ Deno.test("detect: @denext/backend → Postgres, s3() → MinIO with the literal
   assertEquals([d.auth, d.backend, d.backendStorage], [true, true, true]);
   assertEquals(d.backendVault, false, "no vault configured: DENEXT_VAULT_KEY is not required");
   assertEquals(d.cli, ["--config", "deno.json", "jsr:@denext/denext@^4.0.0/cli"]);
-  assertEquals(d.migrateCommand.slice(-2), ["job", "migrate"]);
+  assertEquals(d.migrateCommand.slice(-2), ["migration", "up"], "the backend's migrations first");
+  assertEquals(d.features.migrate, false, "no migrations/: nothing for the service to do");
   assertEquals(d.startCommand, [
     "deno",
     "run",
@@ -363,6 +365,70 @@ Deno.test("detect: a Postgres DATABASE_URL in .env, migrations + runner, the vec
   });
   assertEquals(d.features, { postgres: true, pgvector: true, storage: false, migrate: true });
   assertEquals(d.migrateCommand, ["deno", "task", "migrate"], "the project's own task wins");
+});
+
+Deno.test("detect: @denext/backend + migrations/ → the migrations service runs `denext migration up`", async () => {
+  // An app migration that grants to `anon` needs the backend's roles first: on a fresh database
+  // only `denext migration up` applies them before migrations/ (the server's start comes later).
+  const d = await detect({
+    "deno.json": JSON.stringify({ tasks: { migrate: "deno run -A jobs/migrate.ts" } }),
+    "denext.config.ts": BACKEND_CONFIG,
+    "migrations/001_notes.sql": "create table notes (id int); grant select on notes to anon;\n",
+  });
+  assertEquals(d.features.migrate, true);
+  assertStringIncludes(d.reasons.migrate!, "denext migration up");
+  assertEquals(d.migrateCommand, [
+    "deno",
+    "run",
+    "-A",
+    "--config",
+    "deno.json",
+    "jsr:@denext/denext/cli",
+    "migration",
+    "up",
+  ]);
+  assertStringIncludes(d.warnings.join("\n"), "not the project's `migrate` task");
+  const compose = renderCompose({ ...resolveStack(d), mode: "server" });
+  assertStringIncludes(
+    compose,
+    'command: ["deno", "run", "-A", "--config", "deno.json", "jsr:@denext/denext/cli", "migration", "up"]',
+  );
+  assertStringIncludes(compose, "(denext migration up)");
+  // Without the backend the project's own runner stays.
+  const plain = await detect({
+    "deno.json": JSON.stringify({ tasks: { migrate: "deno run -A jobs/migrate.ts" } }),
+    "migrations/001.sql": "select 1;",
+    "jobs/migrate.ts": "export default {};\n",
+  });
+  assertEquals(plain.migrateCommand, ["deno", "task", "migrate"]);
+});
+
+Deno.test('detect: realtime({ source: "logical" }) → wal_level=logical and REPLICATION for the app\'s role', async () => {
+  const logical = await detect({
+    "deno.json": "{}",
+    "denext.config.ts": BACKEND_CONFIG.replace(
+      "postgres: {},",
+      'postgres: {},\n    realtime: realtime({ tables: { notes: {} }, source: "logical" }),',
+    ),
+  });
+  assertEquals(logical.realtimeLogical, true);
+  const compose = renderCompose({ ...resolveStack(logical), mode: "server" });
+  assertStringIncludes(compose, 'command: ["postgres", "-c", "wal_level=logical"]');
+  assertStringIncludes(
+    compose,
+    `ALTER ROLE :"u" WITH LOGIN CREATEROLE NOSUPERUSER REPLICATION PASSWORD :'p';`,
+  );
+  const notify = await detect({ "deno.json": "{}", "denext.config.ts": BACKEND_CONFIG });
+  assertEquals(notify.realtimeLogical, false);
+  const plain = renderCompose({ ...resolveStack(notify), mode: "server" });
+  assert(!plain.includes("wal_level"));
+  assert(!plain.includes("REPLICATION"));
+  // Only inside a backend config: a `source: "logical"` elsewhere means nothing.
+  const other = await detect({
+    "deno.json": "{}",
+    "denext.config.ts": 'const x = { source: "logical" };',
+  });
+  assertEquals(other.realtimeLogical, false);
 });
 
 Deno.test("detect: migrations without jobs/migrate.ts warn and leave the service off", async () => {
@@ -453,7 +519,7 @@ Deno.test("stack defaults: the app is not the superuser, per-IP limits on, presi
   const parts = [
     "CREATE ROLE %I LOGIN",
     "\\gexec",
-    `ALTER ROLE :"u" WITH LOGIN CREATEROLE NOSUPERUSER PASSWORD :'p'`,
+    `ALTER ROLE :"u" WITH LOGIN CREATEROLE NOSUPERUSER REPLICATION PASSWORD :'p'`,
     `ALTER DATABASE :"d" OWNER TO :"u"`,
     `ALTER SCHEMA public OWNER TO :"u"`,
     "CREATE EXTENSION IF NOT EXISTS vector",
@@ -461,6 +527,7 @@ Deno.test("stack defaults: the app is not the superuser, per-IP limits on, presi
   for (const part of parts) assertStringIncludes(script, part);
   const plain = scriptOf(compose({ mode: "server", postgres: true }), "db-init");
   assert(!plain.includes("vector"), "no pgvector, no extension");
+  assert(!plain.includes("REPLICATION"), "no logical realtime, no REPLICATION");
   assertEquals(web.DENEXT_RATE_LIMIT_LOCAL_ADDRESSES, "${DENEXT_RATE_LIMIT_LOCAL_ADDRESSES:-1}");
   assertEquals(doc.services.minio.ports, ["127.0.0.1:${MINIO_PORT:-9000}:9000"]);
   assertEquals(web.S3_PUBLIC_ENDPOINT, "${S3_PUBLIC_ENDPOINT:-http://localhost:9000}");

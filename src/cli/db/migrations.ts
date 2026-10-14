@@ -141,19 +141,37 @@ async function keyed(sql: SqlClient): Promise<SqlClient> {
   return hooks?.keyed ? await hooks.keyed(sql) : sql;
 }
 
-/** Apply `@denext/backend`'s own migrations (Postgres, when the plugin is set up). */
+/**
+ * Apply `@denext/backend`'s own migrations (Postgres, when the plugin is set up): the roles and
+ * `auth` functions, the service schemas the app's migrations may refer to (realtime, storage,
+ * vault, …), each set in the tracking table the server's start uses, so either applies a
+ * migration once (by name, under the same advisory lock).
+ */
 async function applyBackend(
   target: DbTarget,
   hooks: BackendDbHooks | undefined,
   dryRun: boolean,
 ): Promise<string[]> {
   if (!hooks || target.dialect !== "postgres") return [];
-  const result = await migratePostgres(await keyed(target.sql!), {
-    migrations: hooks.migrations(),
-    table: hooks.table || BACKEND_TABLE,
-    dryRun,
-  });
-  return dryRun ? result.pending : result.applied;
+  const sql = await keyed(target.sql!);
+  const sets = [
+    { table: hooks.table || BACKEND_TABLE, migrations: hooks.migrations() },
+    ...hooks.migrationSets?.() ?? [],
+  ];
+  const names: string[] = [];
+  // One at a time, in the hooks' order (the roles before the schemas that grant to them):
+  // `migratePostgres` orders a list by name, and `backend_realtime_*` sorts before `backend_rls_*`.
+  for (const set of sets) {
+    for (const migration of set.migrations) {
+      const result = await migratePostgres(sql, {
+        table: set.table,
+        migrations: [migration],
+        dryRun,
+      });
+      names.push(...dryRun ? result.pending : result.applied);
+    }
+  }
+  return names;
 }
 
 /** `migration new <name>`: a timestamped file with up and down sections. */

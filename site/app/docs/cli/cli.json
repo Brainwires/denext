@@ -916,7 +916,7 @@
         {
           "name": "migrate",
           "type": "boolean",
-          "description": "docker: One-shot `denext job migrate` service the app waits for (detected: migrations/ + jobs/migrate.ts)"
+          "description": "docker: One-shot migrations service the app waits for: `denext migration up` with @denext/backend, else `denext job migrate` (detected: migrations/ + jobs/migrate.ts or @denext/backend)"
         },
         {
           "name": "no-migrate",
@@ -1998,7 +1998,7 @@
         {
           "name": "migrate",
           "type": "boolean",
-          "description": "docker: One-shot `denext job migrate` service the app waits for (detected: migrations/ + jobs/migrate.ts)"
+          "description": "docker: One-shot migrations service the app waits for: `denext migration up` with @denext/backend, else `denext job migrate` (detected: migrations/ + jobs/migrate.ts or @denext/backend)"
         },
         {
           "name": "no-migrate",

@@ -53,11 +53,12 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  # Applies pending migrations/*.sql (jobs/migrate.ts) once, then exits; the app waits for it.
+  # Applies @denext/backend's own migrations, then pending migrations/*.sql, once
+  # (denext migration up), then exits; the app waits for it.
   migrate:
     image: ${APP_IMAGE:-denext-app}
     pull_policy: never
-    command: ["deno", "run", "-A", "--config", "deno.json", "jsr:@denext/denext@^4.0.0/cli", "job", "migrate"]
+    command: ["deno", "run", "-A", "--config", "deno.json", "jsr:@denext/denext@^4.0.0/cli", "migration", "up"]
     restart: "no"
     env_file:
       - path: .env
@@ -88,6 +89,7 @@ services:
   db:
     image: pgvector/pgvector:pg17
     restart: unless-stopped
+    command: ["postgres", "-c", "wal_level=logical"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-denext}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env (see .env.example)}
@@ -121,7 +123,7 @@ services:
       - |
         psql -v ON_ERROR_STOP=1 -v u="$$APP_USER" -v p="$$APP_PASSWORD" -v d="$$PGDATABASE" <<'SQL'
         SELECT format('CREATE ROLE %I LOGIN', :'u') WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'u') \gexec
-        ALTER ROLE :"u" WITH LOGIN CREATEROLE NOSUPERUSER PASSWORD :'p';
+        ALTER ROLE :"u" WITH LOGIN CREATEROLE NOSUPERUSER REPLICATION PASSWORD :'p';
         ALTER DATABASE :"d" OWNER TO :"u";
         ALTER SCHEMA public OWNER TO :"u";
         CREATE EXTENSION IF NOT EXISTS vector;

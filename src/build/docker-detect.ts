@@ -1,7 +1,7 @@
 // Which services `denext generate docker` puts in a project's stack, read from the project
 // itself: `@denext/backend` (or a Postgres `DATABASE_URL`) → Postgres; an `s3()` storage driver
-// → MinIO with its bucket; `migrations/` with `jobs/migrate.ts` → the migrations service; a
-// `vector` extension in a migration → the pgvector image. Every decision carries the reason it
+// → MinIO with its bucket; `migrations/` with `jobs/migrate.ts` (or `@denext/backend`) → the
+// migrations service; a `vector` extension in a migration → the pgvector image. Every decision carries the reason it
 // was made, so the CLI and the `denext ui` Docker panel can say why a service is in the stack,
 // and an explicit flag (`--postgres` / `--no-postgres`, …) overrides what was detected.
 //
@@ -47,8 +47,9 @@ export const STACK_FEATURE_HELP: Readonly<Record<StackFeature, string>> = {
   postgres: "Postgres 17 service + DATABASE_URL (detected: @denext/backend / a Postgres URL)",
   pgvector: "Use the pgvector/pgvector:pg17 image (detected: the vector extension in migrations/)",
   storage: "MinIO S3 store + a one-shot bucket bootstrap (detected: an s3() storage driver)",
-  migrate: "One-shot `denext job migrate` service the app waits for (detected: migrations/ + " +
-    "jobs/migrate.ts)",
+  migrate: "One-shot migrations service the app waits for: `denext migration up` with " +
+    "@denext/backend, else `denext job migrate` (detected: migrations/ + jobs/migrate.ts or " +
+    "@denext/backend)",
 };
 
 /** What detection found, with the reason behind every service it switched on. */
@@ -65,6 +66,8 @@ export interface StackDetection {
   readonly backendStorage: boolean;
   /** `@denext/backend`'s `vault` is configured. */
   readonly backendVault: boolean;
+  /** `@denext/backend`'s realtime reads the write-ahead log (`source: "logical"`). */
+  readonly realtimeLogical: boolean;
   /** The S3 bucket named literally in `s3({ bucket: "…" })`, when there is one. */
   readonly bucket?: string;
   /** The `deno run -A` arguments that run denext's CLI (`--config deno.json jsr:…/cli`). */
@@ -154,9 +157,20 @@ function cliArgsOf(json: Record<string, unknown>, configName?: string): string[]
   return [...config, "jsr:@denext/denext/cli"];
 }
 
-/** What the migrations service runs: the project's `migrate` task, else `denext job migrate`. */
-function migrateCommandOf(json: Record<string, unknown>, cli: readonly string[]): string[] {
+/**
+ * What the migrations service runs. With `@denext/backend` in the config, `denext migration up`:
+ * the backend's own migrations first (the `anon` / `authenticated` roles, the `auth` functions,
+ * the storage and realtime schemas — which the server's start would otherwise be the first to
+ * apply, after the app's migrations that grant to them), then `migrations/`. Otherwise the
+ * project's `migrate` task, else `denext job migrate`.
+ */
+function migrateCommandOf(
+  json: Record<string, unknown>,
+  cli: readonly string[],
+  backend: boolean,
+): string[] {
   const tasks = (json.tasks ?? {}) as Record<string, unknown>;
+  if (backend) return ["deno", "run", "-A", ...cli, "migration", "up"];
   if (tasks.migrate !== undefined) return ["deno", "task", "migrate"];
   return ["deno", "run", "-A", ...cli, "job", "migrate"];
 }
@@ -190,9 +204,48 @@ const VECTOR_EXTENSION = /\bcreate\s+extension\s+(?:if\s+not\s+exists\s+)?["']?v
 function backendServices(
   config: string,
   backendInConfig: boolean,
-): { backendStorage: boolean; backendVault: boolean } {
-  if (!backendInConfig) return { backendStorage: false, backendVault: false };
-  return { backendStorage: /\bstorage\s*:/.test(config), backendVault: /\bvault\s*:/.test(config) };
+): { backendStorage: boolean; backendVault: boolean; realtimeLogical: boolean } {
+  if (!backendInConfig) {
+    return { backendStorage: false, backendVault: false, realtimeLogical: false };
+  }
+  return {
+    backendStorage: /\bstorage\s*:/.test(config),
+    backendVault: /\bvault\s*:/.test(config),
+    realtimeLogical: /\bsource\s*:\s*["'`]logical["'`]/.test(config),
+  };
+}
+
+/**
+ * Why the migrations service is on (`reason`), and what to say about it: `migrations/` with
+ * `@denext/backend` (it runs `denext migration up`), or with a `jobs/migrate.ts` runner.
+ */
+async function migrateReason(
+  dir: string,
+  json: Record<string, unknown>,
+  backendInConfig: boolean,
+): Promise<{ reason?: string; warnings: string[] }> {
+  if (!await exists(join(dir, "migrations"))) return { warnings: [] };
+  if (backendInConfig) {
+    const task = ((json.tasks ?? {}) as Record<string, unknown>).migrate !== undefined;
+    return {
+      reason: "migrations/ + @denext/backend: denext migration up",
+      warnings: task
+        ? [
+          "the migrations service runs `denext migration up` (the backend's own migrations, then " +
+          "migrations/), not the project's `migrate` task.",
+        ]
+        : [],
+    };
+  }
+  if (await exists(join(dir, "jobs", "migrate.ts"))) {
+    return { reason: "migrations/ + jobs/migrate.ts", warnings: [] };
+  }
+  return {
+    warnings: [
+      "migrations/ has no jobs/migrate.ts runner — `denext generate migration <name>` writes one; " +
+      "the migrations service stays off until it exists (or pass --migrate).",
+    ],
+  };
 }
 
 /**
@@ -219,15 +272,9 @@ export async function detectDockerStack(dir: string): Promise<StackDetection> {
   else if (await usesPostgres(dir)) reasons.postgres = "a Postgres DATABASE_URL / postgres: key";
   if (s3) reasons.storage = "an s3() storage driver in denext.config";
 
-  const hasMigrations = await exists(join(dir, "migrations"));
-  const hasRunner = await exists(join(dir, "jobs", "migrate.ts"));
-  if (hasMigrations && hasRunner) reasons.migrate = "migrations/ + jobs/migrate.ts";
-  else if (hasMigrations) {
-    warnings.push(
-      "migrations/ has no jobs/migrate.ts runner — `denext generate migration <name>` writes one; " +
-        "the migrations service stays off until it exists (or pass --migrate).",
-    );
-  }
+  const migrate = await migrateReason(dir, json, backendInConfig);
+  if (migrate.reason) reasons.migrate = migrate.reason;
+  warnings.push(...migrate.warnings);
   if (VECTOR_EXTENSION.test(await migrationsText(dir)) || /\bpgvector\b/.test(config)) {
     reasons.pgvector = "the vector extension in migrations/";
   }
@@ -246,7 +293,7 @@ export async function detectDockerStack(dir: string): Promise<StackDetection> {
     ...backendServices(config, backendInConfig),
     ...(bucket ? { bucket } : {}),
     cli,
-    migrateCommand: migrateCommandOf(json, cli),
+    migrateCommand: migrateCommandOf(json, cli, backendInConfig),
     ...(startCommand ? { startCommand } : {}),
     warnings,
   };
@@ -282,6 +329,7 @@ export function resolveStack(
     backend: detection.backend,
     backendStorage: detection.backendStorage,
     backendVault: detection.backendVault,
+    realtimeLogical: detection.realtimeLogical,
     ...(detection.bucket ? { bucket: detection.bucket } : {}),
     cli: detection.cli,
     migrateCommand: detection.migrateCommand,

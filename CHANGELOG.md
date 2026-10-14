@@ -619,6 +619,19 @@ a 3.x app to 4.0 involves. This section is the record.
   terminal unless `--yes` is passed. `db reset` and `migration down --force-reset` accept a "yes"
   at the terminal as well as `--yes`, and name the remote database in the question. A local
   database (loopback host, Unix socket, SQLite) is unchanged.
+- **The stack's migrations service applies `@denext/backend`'s own migrations first.** It ran
+  `denext job migrate`, which knows only `migrations/`, and the backend's migrations (the `anon` /
+  `authenticated` roles, the `auth` functions, the storage and realtime schemas) ran only when the
+  app started. So on a fresh database an app migration that grants to `anon`, writes a policy on
+  `storage.objects` or adds a table to `supabase_realtime` failed, and the app never started. With
+  `@denext/backend` in the config the service now runs `denext migration up`. That verb (and `db
+  push` / `db migrate`) now also applies the storage schema, the realtime schema and the
+  `supabase_realtime` publication, one migration at a time in order (the roles first). They go in
+  the tracking tables and under the advisory locks the server's start uses, so neither applies
+  one twice. The per-table realtime triggers still come at the start, after the app's tables exist.
+- **`realtime({ source: "logical" })` works in the generated stack.** `denext generate docker`
+  runs Postgres with `wal_level=logical` and `db-init` gives the app's role `REPLICATION` when the
+  config uses the logical source.
 - **No more "request.signal aborts on successful responses (legacy behavior)" warning on
   `denext start` / `dev`.** The server loop reads each request's signal to cancel work when the
   client goes away, which made Deno print that warning on the first response. A CLI child on

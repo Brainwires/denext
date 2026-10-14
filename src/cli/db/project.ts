@@ -55,12 +55,22 @@ export interface BackendActionInput {
   io: DbIo;
 }
 
+/** Migrations recorded in a tracking table of their own. */
+export interface BackendMigrationSet {
+  /** The tracking table (the one the server's start records them in). */
+  table: string;
+  /** The migrations, in order. */
+  migrations: Migration[];
+}
+
 /** The hooks `@denext/backend` installs for the database verbs. */
 export interface BackendDbHooks {
   /** The backend's own migrations for the services the config enables (applied first). */
   migrations(): Migration[];
   /** Their tracking table. */
   table: string;
+  /** Further sets of the backend's migrations, each in its own table (applied after those). */
+  migrationSets?(): BackendMigrationSet[];
   /** The schemas the backend's services own (dropped by `db reset`). */
   serviceSchemas: string[];
   /** Wraps the client migrations run on (the SQL vault sets its keys per transaction). */

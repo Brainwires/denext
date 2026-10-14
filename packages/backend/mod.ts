@@ -61,7 +61,11 @@ import { installSupabaseAuthHooks } from "./src/identity.ts";
 import { checkBucketName } from "./src/keys.ts";
 import { handleStorageRequest } from "./src/handler.ts";
 import { handleStorageApi } from "./src/storage-api.ts";
-import { postgresMetaStore } from "./src/storage-meta-pg.ts";
+import {
+  postgresMetaStore,
+  STORAGE_MIGRATIONS_TABLE,
+  storageMigrations,
+} from "./src/storage-meta-pg.ts";
 import { sqliteMetaStore } from "./src/storage-meta-sqlite.ts";
 import type { BucketWrite, MetaStore } from "./src/storage-meta.ts";
 import { declaredBucketRows, storageAdmin } from "./src/storage-ops.ts";
@@ -82,7 +86,11 @@ import { createRealtimeChannel, installRealtime, RealtimeEngine } from "./src/re
 import { createHub, handleRealtimeRequest, installRealtimeHub } from "./src/realtime-socket.ts";
 import { postgresBus } from "./src/realtime-bus.ts";
 import { channelPermissions } from "./src/realtime-authz.ts";
-import { type RealtimeOptions, resolveRealtime } from "./src/realtime-sql.ts";
+import {
+  type RealtimeOptions,
+  realtimeSchemaMigrations,
+  resolveRealtime,
+} from "./src/realtime-sql.ts";
 import { resolveRest, type RestOptions, setupRest } from "./src/rest.ts";
 import { deadlineHandler, surfaceDeadlines } from "./src/timeouts.ts";
 import { type FunctionsOptions, resolveFunctions, setupFunctions } from "./src/functions.ts";
@@ -409,16 +417,25 @@ function installDbHooksFor(
 ): void {
   const on = { vault: !!options.vault, queues: !!options.queues, webhooks: !!webhooks };
   const postgres = !!options.postgres;
+  // The realtime schema and publication (not the per-table triggers, which need the app's
+  // tables) when the server would migrate them.
+  const realtimeOptions = options.realtime?.migrate !== false ? options.realtime : undefined;
   installDbHooks(createDbHooks(
     {
       backendMigrations: () =>
         postgres
           ? backendMigrationsOf([
+            realtimeOptions ? () => realtimeSchemaMigrations(realtimeOptions) : () => [],
             on.vault ? vaultMigrations : () => [],
             options.vault?.sql ? vaultSqlMigrations : () => [],
             on.queues ? queuesMigrations : () => [],
             on.webhooks ? webhooksMigrations : () => [],
           ])
+          : [],
+      // Storage's metadata lives on the backend's Postgres: its schema, in its own table.
+      migrationSets: () =>
+        postgres && options.storage
+          ? [{ table: STORAGE_MIGRATIONS_TABLE, migrations: storageMigrations() }]
           : [],
       serviceSchemas: [
         ...(on.vault ? ["vault"] : []),

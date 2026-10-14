@@ -748,12 +748,23 @@ export function realtimeMigrations(options: RealtimeOptions): Migration[] {
     const sql = tableTrigger(table);
     return { name: `backend_realtime_t_${table.name}_${shortHash(sql)}`, sql };
   });
-  const publication = resolved.publication
-    ? [{
-      name: `backend_realtime_pub_${resolved.publication}`,
-      sql: publicationSql(resolved.publication),
-    }]
-    : [];
+  return [...realtimeSchemaMigrations(options), ...tables];
+}
+
+/**
+ * The realtime migrations that need none of the app's tables: `backend_realtime_0001` to `0006`
+ * (the trigger functions, the `realtime` schema, the presence tables) and the publication,
+ * created empty. `denext migration up` applies them before the app's own migrations, which may
+ * refer to them (`alter publication supabase_realtime add table …`, a policy on
+ * `realtime.messages`); the per-table triggers follow at the server's start, once the app's
+ * tables exist. Both record them in `backend_migrations` under the same names.
+ *
+ * @param options The realtime options.
+ * @returns The migrations, in order.
+ * @throws {TypeError} For malformed options.
+ */
+export function realtimeSchemaMigrations(options: RealtimeOptions): Migration[] {
+  const { publication } = resolveRealtime(options);
   return [
     { name: "backend_realtime_0001", sql: NOTIFY_FUNCTION },
     { name: "backend_realtime_0002", sql: NOTIFY_FUNCTION_UTC_KEYS },
@@ -761,8 +772,9 @@ export function realtimeMigrations(options: RealtimeOptions): Migration[] {
     { name: "backend_realtime_0004", sql: REALTIME_SCHEMA },
     { name: "backend_realtime_0005", sql: PRESENCE_TABLES },
     { name: "backend_realtime_0006", sql: SEND_WITH_ID },
-    ...publication,
-    ...tables,
+    ...(publication
+      ? [{ name: `backend_realtime_pub_${publication}`, sql: publicationSql(publication) }]
+      : []),
   ];
 }
 
