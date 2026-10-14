@@ -65,15 +65,16 @@ Deno.test("readCompose: every generated variant parses, sentinel set", () => {
   assertEquals(db.commented, false);
   assertEquals(db.envForm, "map");
   assertEquals(db.dependsOn, []);
-  assertEquals(pg.services[0].dependsOn, ["db"]);
+  assertEquals(pg.services[0].dependsOn, ["db", "db-init"]);
   // The full stack: every service and its start order, both volumes.
   const stack = readCompose(GEN_STACK)!;
   assertEquals(
     stack.services.map((s) => [s.name, s.dependsOn]),
     [
-      ["web", ["db", "minio-init", "migrate"]],
-      ["migrate", ["db"]],
+      ["web", ["db", "db-init", "minio-init", "migrate"]],
+      ["migrate", ["db-init"]],
       ["db", []],
+      ["db-init", ["db"]],
       ["minio", []],
       ["minio-init", ["minio"]],
     ],
@@ -622,7 +623,7 @@ Deno.test("dependsOn / volumes: add and remove by value, in the short or the lon
     { op: "volumes", service: "web", action: "add", value: "./data:/data" },
   ]);
   const web = readCompose(next)!.services[0];
-  assertEquals(web.dependsOn, ["db", "cache"]);
+  assertEquals(web.dependsOn, ["db", "db-init", "cache"]);
   assertEquals(web.volumes, ["./data:/data"]);
   assertEquals(
     edit(next, [

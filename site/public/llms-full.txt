@@ -1594,6 +1594,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface HeaderRule` — A response-header rule applied to paths matching source.
 - `headers(): AwaitableHeaders` — Read the current request's headers. Read-only, as in Next.js: set/append/delete throw (the request's headers are shared by middleware, auth and the rest of the pipeline).
 - `interface HeadTag` — One hoisted <meta>/<link> in a HeadCollector.
+- `type HealthCheck = () => boolean | object | Promise<boolean | object>` — A check's verdict: true / { ok: true } is healthy; anything else (or a throw) is down.
+- `interface HealthCheckOptions` — Options for registerHealthCheck.
 - `interface HstsConfig` — Strict-Transport-Security (HSTS) header options.
 - `interface HtmlFlight` — Result of a unified render: SSR HTML plus the serializable Flight tree.
 - `interface HtmlFlightOptions` — Options for renderToHtmlFlight.
@@ -1839,6 +1841,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RefreshSsoMetadataOptions` — Options for refreshSsoMetadata.
 - `registerCacheLifeProfiles(profiles: Record<string, CacheLifeProfile>): void` — Register named cacheLife profiles (typically from denext.config). A custom profile whose name collides with a built-in overrides it. Idempotent-ish: a later call with the same name wins.
 - `type RegisterFn = () => void | Promise<void>` — The register export: run once at server startup.
+- `registerHealthCheck(name: string, check: HealthCheck, options?: HealthCheckOptions): () => void` — Register a readiness check /_denext/health runs on every probe. While it fails the probe answers 503 with "status": "degraded" and checks: { [name]: "down" } (never the error itself — the probe is public). Registering a name again replaces the check.
 - `registerJob(name: string, job: Job): void` — Register (or replace) a job by name — used by the jobs/ loader and by app code.
 - `interface RemotePattern` — An allowed remote image source for the optimizer (Next.js-style). A source URL matches when its protocol equals protocol (if given), its host matches hostname (a literal, or a leading-*. wildcard suffix), and its path starts with pathname (if given).
 - `renderDocument(opts: DocumentOptions): string` — Render a complete HTML document string: <!DOCTYPE> + <html> with the head content (metadata/viewport/styles), the hydration root wrapping bodyHtml, and the body scripts. The non-streaming counterpart to streamPprDocument.
@@ -1943,6 +1946,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SessionStore` — Where store-backed sessions live. Every method may be sync or async; get must return only an **unexpired** session (treat expiresAt in the past as a miss).
 - `setCacheStore(store: CacheStore): void` — Replace the CacheStore backing the data cache and page (ISR) cache. Use this to share cached data and rendered pages across instances — back it with a custom or shared store (Redis, etc.) so a render or data entry produced on one replica is served by another, and revalidateTag/revalidatePath invalidate every instance. Called explicitly, this overrides the smart default (resolveDefaultCacheStore).
 - `setChannelTransport(t: ChannelTransport): void` — Install the transport that carries channel events between instances (default: in-memory, single instance). The Live hub re-subscribes to the new transport.
+- `setRequestTimeout(ms: number): void` — Give the current request a deadline of its own, replacing the app's requestTimeout (30 s by default) — for a surface with its own time budget: an Edge Function's timeoutMs, a large upload or download, a long statement. 0 removes the deadline (the work must then bound itself). Counted from the request's start; a no-op outside a request.
 - `interface SignalSink` — The status a caught control signal asks for (0 = none caught).
 - `type SignInFailedReason = invalid_credentials | invalid_mfa_code | invalid_passkey | rate_limited | access_denied | account_not_linked | adapter_error | invalid_state | invalid_request | config | oauth_failed | provider_error | invalid_nonce | invalid_token | captcha_failed` — Why a sign-in attempt was refused, as signInFailed reports it — a closed set, so an app can switch over it exhaustively:
 - `signSupabaseJwt(keys: SupabaseKeys, claims: Record<string, unknown>): Promise<string>` — Sign claims as a compact JWT: ES256 under the current signing key, else HS256 under the legacy secret.
