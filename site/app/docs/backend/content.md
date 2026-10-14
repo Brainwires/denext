@@ -8,7 +8,7 @@ lead: "@denext/backend puts backend services inside your app as one opt-in plugi
 denext plugin add @denext/backend
 ```
 
-Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.3.0"` to `deno.json`'s `imports`,
+Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.4.0"` to `deno.json`'s `imports`,
 then the plugin to `denext.config.ts`.
 
 Moving a project from Supabase? [Coming from Supabase](/docs/coming-from-supabase) maps each
