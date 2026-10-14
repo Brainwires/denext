@@ -12,6 +12,7 @@
 /** The test files run one at a time (paths from the repo root). */
 export const SERIAL_TESTS: readonly string[] = [
   "tests/auth-example.test.ts",
+  "tests/backend-identity.test.ts",
   "tests/backend-postgres.test.ts",
   "tests/backend-supabase-functions.test.ts",
   "tests/build-next-config-eval.test.ts",
@@ -37,6 +38,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/devtools-meta.test.ts",
   "tests/devtools-route-meta.test.ts",
   "tests/docs-tutorial-islands.test.ts",
+  "tests/docker-cmd-port.test.ts",
   "tests/env.test.ts",
   "tests/instrumentation.test.ts",
   "tests/integration/build-smoke.test.ts",
@@ -91,6 +93,7 @@ export const SERIAL_SOURCES: Readonly<
   "src/profile/core.ts": { exports: ["profileApp"] },
   "src/server/env.ts": { exports: ["loadEnv"] },
   "src/server/instrumentation.ts": { exports: ["setNextRuntimeEnv"] },
+  "src/server/phase.ts": { exports: ["markBuildPhase"] },
 };
 
 /** src modules that change process-wide state without making a test that reaches them serial. */
