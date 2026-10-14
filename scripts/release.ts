@@ -12,7 +12,7 @@
 // Order of operations:
 //   0. CI: the newest ci.yml run on HEAD that ran the heavy jobs (integration, next-compat,
 //      coverage, backend-integration — a push to `development` skips them; dispatch ci.yml) is
-//      green, else ABORT
+//      green, and so is the newest desktop-ci.yml run on HEAD (every job), else ABORT
 //      (scripts/release-ci.ts)
 //   1. bump the version pins (scripts/bump-version.ts)
 //   2. roll CHANGELOG.md  [Unreleased] → [<version>] - <today>  (fresh [Unreleased] on top)
@@ -38,7 +38,7 @@
 import { exists, walk } from "@std/fs";
 import { join, relative } from "@std/path";
 import { bumpVersion, REPO_ROOT, VERSION_RE } from "./bump-version.ts";
-import { releaseCiHint, releaseCiVerdict } from "./release-ci.ts";
+import { desktopCiVerdict, releaseCiHint, releaseCiVerdict } from "./release-ci.ts";
 
 /**
  * Regenerate the `examples/effect` migrate golden against the just-bumped framework
@@ -400,18 +400,23 @@ async function checkPreconditions(tag: string, branch: string): Promise<void> {
 
 /**
  * Step 0: the ci.yml jobs a push skips (integration, next-compat, coverage, backend-integration)
- * passed on HEAD (scripts/release-ci.ts). A real run aborts otherwise; `--dry` reports and goes on.
+ * and every desktop-ci.yml job passed on HEAD (scripts/release-ci.ts). A real run aborts
+ * otherwise; `--dry` reports and goes on.
  */
 async function checkCi(branch: string, dry: boolean): Promise<void> {
   const sha = await capture("git", "rev-parse", "HEAD");
-  const verdict = await releaseCiVerdict(sha).catch((err: Error) => ({
-    ok: false,
-    reason: `could not ask GitHub (needs the GitHub CLI, logged in): ${err.message}`,
-    run: undefined,
-  }));
-  const where = verdict.run ? ` — ${verdict.run.url}` : "";
-  if (verdict.ok) return console.log(`0. CI: ${verdict.reason}${where}`);
-  const message = `CI gate: ${verdict.reason}${where}\n  ${releaseCiHint(branch)}`;
+  const verdicts = await Promise.all(
+    [releaseCiVerdict, desktopCiVerdict].map((check) =>
+      check(sha).catch((err: Error) => ({
+        ok: false,
+        reason: `could not ask GitHub (needs the GitHub CLI, logged in): ${err.message}`,
+        run: undefined,
+      }))
+    ),
+  );
+  const lines = verdicts.map((v) => `${v.reason}${v.run ? ` — ${v.run.url}` : ""}`);
+  if (verdicts.every((v) => v.ok)) return console.log(`0. CI: ${lines.join("\n   ")}`);
+  const message = `CI gate: ${lines.join("\n  ")}\n  ${releaseCiHint(branch)}`;
   if (dry) return console.log(`0. ${message}\n   (a real run stops here)`);
   die(`${message}\nrelease aborted BEFORE any change.`);
 }

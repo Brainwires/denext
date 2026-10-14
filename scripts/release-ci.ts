@@ -1,9 +1,13 @@
-// The release's CI gate: a version is tagged only from a commit that ci.yml's heavy jobs passed on.
+// The release's CI gate: a version is tagged only from a commit that ci.yml's heavy jobs and every
+// desktop-ci.yml job passed on.
 // A push to `development` runs only the fast jobs (integration, next-compat, coverage and
 // backend-integration stay on pull requests, `main` and a manual dispatch), so `deno task release`
 // asks GitHub for the ci.yml runs on HEAD and refuses unless the newest one that ran those jobs
-// has every required job green.
-// On `development` that run is a dispatch: `gh workflow run ci.yml --ref development`.
+// has every required job green. desktop-ci.yml runs on a push only when the desktop surface
+// changed (its `paths` filter), so the release asks for its newest run on HEAD, push or dispatch,
+// and refuses unless that run finished with every job green.
+// On `development` both are dispatches: `gh workflow run ci.yml --ref development` and
+// `gh workflow run desktop-ci.yml --ref development`.
 
 /** The ci.yml jobs a release needs green on the commit it is cut from. */
 export const RELEASE_CI_JOBS: readonly string[] = [
@@ -14,6 +18,25 @@ export const RELEASE_CI_JOBS: readonly string[] = [
   "backend-integration",
   "ios-export-router",
   "windows-resolve",
+];
+
+/**
+ * The desktop-ci.yml jobs a release needs green on the commit it is cut from (matrix legs by their
+ * full names). Any other job of that run must not fail either: this list only makes a job that
+ * went missing (renamed, dropped from the matrix) refuse rather than pass unseen.
+ */
+export const DESKTOP_CI_JOBS: readonly string[] = [
+  "desktop tests (windows-latest)",
+  "desktop tests (macos-latest)",
+  "desktop tests (ubuntu-latest)",
+  "secureStore round-trip (windows-latest)",
+  "secureStore round-trip (macos-latest)",
+  "install.ps1 (windows-latest — loopback release, this commit's build, the real latest one)",
+  "install.sh (ubuntu-latest — this commit's build + the real latest one)",
+  "installers (windows-latest — .msi per-user + per-machine, upgrade, uninstall)",
+  "installers (ubuntu-latest — .deb via apt, .rpm via dnf)",
+  "installers (macos-latest — .dmg mounted, .pkg installed; unsigned)",
+  "scaffold + package-script drift",
 ];
 
 /** The jobs a push to `development` skips: a run that skipped them can't vouch for a release. */
@@ -88,26 +111,8 @@ function ranHeavyJobs(jobs: readonly CiJob[]): boolean {
  * @param gh How `gh` is reached (default: the GitHub CLI).
  */
 export async function releaseCiVerdict(sha: string, gh: GhJson = ghJson): Promise<CiVerdict> {
-  const runs = (await gh([
-    "run",
-    "list",
-    "--workflow",
-    "ci.yml",
-    "--commit",
-    sha,
-    "--limit",
-    "20",
-    "--json",
-    "databaseId,event,status,conclusion,createdAt,url",
-  ]) as CiRun[]).toSorted((a, b) => b.createdAt.localeCompare(a.createdAt));
-  for (const run of runs) {
-    const { jobs } = await gh([
-      "run",
-      "view",
-      String(run.databaseId),
-      "--json",
-      "jobs",
-    ]) as { jobs: CiJob[] };
+  for (const run of await workflowRuns("ci.yml", sha, gh)) {
+    const jobs = await runJobs(run, gh);
     if (!ranHeavyJobs(jobs)) continue; // a plain push run: look further back
     if (run.status !== "completed") {
       return { ok: false, reason: `ci.yml ${run.event} run on ${sha} is ${run.status}`, run };
@@ -123,10 +128,60 @@ export async function releaseCiVerdict(sha: string, gh: GhJson = ghJson): Promis
   };
 }
 
-/** What to run to get the heavy jobs onto `sha` on `branch`. */
+/** `workflow`'s runs on `sha`, newest first. */
+async function workflowRuns(workflow: string, sha: string, gh: GhJson): Promise<CiRun[]> {
+  const runs = await gh([
+    "run",
+    "list",
+    "--workflow",
+    workflow,
+    "--commit",
+    sha,
+    "--limit",
+    "20",
+    "--json",
+    "databaseId,event,status,conclusion,createdAt,url",
+  ]) as CiRun[];
+  return runs.toSorted((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+/** The jobs of `run`. */
+async function runJobs(run: CiRun, gh: GhJson): Promise<CiJob[]> {
+  return (await gh(["run", "view", String(run.databaseId), "--json", "jobs"]) as {
+    jobs: CiJob[];
+  }).jobs;
+}
+
+/**
+ * Check desktop-ci.yml on `sha`: its newest run there (a push or a dispatch) must have finished
+ * with every {@linkcode DESKTOP_CI_JOBS} job green and no other job failed.
+ *
+ * @param sha The commit to release (HEAD).
+ * @param gh How `gh` is reached (default: the GitHub CLI).
+ */
+export async function desktopCiVerdict(sha: string, gh: GhJson = ghJson): Promise<CiVerdict> {
+  const [run] = await workflowRuns("desktop-ci.yml", sha, gh);
+  if (!run) return { ok: false, reason: `no desktop-ci.yml run on ${sha}` };
+  if (run.status !== "completed") {
+    return { ok: false, reason: `desktop-ci.yml ${run.event} run on ${sha} is ${run.status}`, run };
+  }
+  const jobs = await runJobs(run, gh);
+  const others = jobs.filter((j) =>
+    !DESKTOP_CI_JOBS.includes(j.name) && j.conclusion !== "success" && j.conclusion !== "skipped"
+  ).map((j) => `${j.name}: ${j.conclusion || j.status}`);
+  const unmet = [...unmetCiJobs(jobs, DESKTOP_CI_JOBS), ...others];
+  return unmet.length === 0
+    ? { ok: true, reason: `desktop-ci.yml ${run.event} run is green on ${sha}`, run }
+    : { ok: false, reason: `desktop-ci.yml ${run.event} run on ${sha}: ${unmet.join(", ")}`, run };
+}
+
+/** What to run to get the heavy jobs and desktop-ci onto `sha` on `branch`. */
 export function releaseCiHint(branch: string): string {
-  return `push ${branch}, then run ci.yml on it and wait for it:\n` +
-    `    gh workflow run ci.yml --ref ${branch}\n` +
-    `    gh run watch "$(gh run list --workflow=ci.yml --event=workflow_dispatch --limit 1 ` +
+  const watch = (workflow: string) =>
+    `    gh run watch "$(gh run list --workflow=${workflow} --event=workflow_dispatch --limit 1 ` +
     `--json databaseId -q '.[0].databaseId')" --exit-status`;
+  return `push ${branch}, then run ci.yml and desktop-ci.yml on it and wait for both:\n` +
+    `    gh workflow run ci.yml --ref ${branch}\n` +
+    `    gh workflow run desktop-ci.yml --ref ${branch}\n` +
+    `${watch("ci.yml")}\n${watch("desktop-ci.yml")}`;
 }

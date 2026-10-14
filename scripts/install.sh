@@ -204,6 +204,11 @@ main() {
 # did not create.
 install_toolchain() {
   [ "${DENEXT_NO_TOOLCHAIN:-}" = "1" ] && return 0
+  if ! has_toolchain_verb "$1"; then
+    echo "denext: $("$1" --version) predates denext's Deno toolchain (denext 4.0); skipping that"
+    echo "  step — this release runs on the deno on your PATH."
+    return 0
+  fi
   echo "denext: installing denext's Deno toolchain"
   if ! "$1" toolchain install; then
     echo "denext: warning — the Deno toolchain could not be installed now; it downloads on the" >&2
@@ -219,6 +224,13 @@ install_toolchain() {
     echo "denext: warning — could not link \`deno\` to the toolchain (\`denext deno …\` still" >&2
     echo "  runs it)." >&2
   fi
+}
+
+# Whether the binary at $1 has the `toolchain` verb, which denext 4.0 added: an older release
+# (DENEXT_VERSION=v3.x) answers it with `unknown command`. A version it cannot read is assumed new.
+has_toolchain_verb() {
+  major="$("$1" --version 2>/dev/null | sed -n 's/^denext \([0-9][0-9]*\)\..*/\1/p' | head -n 1)"
+  [ -z "$major" ] || [ "$major" -ge 4 ]
 }
 
 main "$@"

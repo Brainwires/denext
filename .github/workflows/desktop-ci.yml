@@ -21,8 +21,9 @@
 #   3. The installers the package scripts build (`desktop.installers`, `--format`) install, register
 #      and uninstall for real: the .msi per-user and per-machine (hosted runners are admin) with an
 #      in-place upgrade, the .deb through apt, the .rpm through dnf (a Fedora container), the .dmg
-#      mounted and the .pkg through `installer`. And install.ps1 against a loopback release and the
-#      real latest one.
+#      mounted and the .pkg through `installer`. And install.ps1 against a loopback release, and
+#      install.ps1 / install.sh against this commit's own binary build (the toolchain step included)
+#      and the real latest release (which may predate the `toolchain` verb: denext < 4.0).
 #   4. `denext desktop run` builds outside the project, launches the app (Linux under Xvfb, and macOS)
 #      and quits cleanly (`scripts/ci/desktop-run-smoke.ts`); and a packaged app whose import map
 #      names local modules by absolute path still runs once those sources are moved away
@@ -614,7 +615,7 @@ jobs:
           sudo pkgutil --forget "$id"
 
   install-ps1:
-    name: install.ps1 (windows-latest — loopback release + the real latest one)
+    name: install.ps1 (windows-latest — loopback release, this commit's build, the real latest one)
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -640,3 +641,72 @@ jobs:
           if ($v -notmatch '^denext \d+\.\d+\.\d+.* \(binary\)$') { throw "unexpected: $v" }
           & ./scripts/install.ps1 -Uninstall
           if (Test-Path $env:DENEXT_INSTALL) { throw 'uninstall left files behind' }
+      # This commit's installer with this commit's binary (a local release: DENEXT_ARTIFACTS, still
+      # checksum-verified), so the `toolchain install` step runs against a binary that has the verb.
+      - name: Install this commit's binary build, toolchain included, run it, uninstall
+        shell: powershell
+        env:
+          DENEXT_NO_PATH: "1"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $asset = 'denext-x86_64-pc-windows-msvc.zip'
+          $art = Join-Path $env:RUNNER_TEMP 'art'
+          New-Item -ItemType Directory -Force -Path $art | Out-Null
+          deno compile -A --output (Join-Path $env:RUNNER_TEMP 'denext.exe') cli.ts
+          if ($LASTEXITCODE -ne 0) { throw 'deno compile failed' }
+          Compress-Archive -Path (Join-Path $env:RUNNER_TEMP 'denext.exe') -DestinationPath (Join-Path $art $asset)
+          $hash = (Get-FileHash -Algorithm SHA256 (Join-Path $art $asset)).Hash.ToLowerInvariant()
+          Set-Content -Encoding ascii -Path (Join-Path $art 'SHA256SUMS') -Value "$hash  $asset"
+          $env:DENEXT_ARTIFACTS = $art
+          $env:DENEXT_INSTALL = Join-Path $env:RUNNER_TEMP 'denext-head'
+          $out = & ./scripts/install.ps1 *>&1 | Out-String
+          Write-Host $out
+          if ($out -notmatch "installing denext's Deno toolchain") { throw 'the toolchain step did not run' }
+          if ($out -match 'could not be installed now|predates') { throw 'the toolchain step failed' }
+          $exe = Join-Path $env:DENEXT_INSTALL 'bin\denext.exe'
+          $v = & $exe --version
+          if ($v -notmatch '^denext \d+\.\d+\.\d+.* \(binary\)$') { throw "unexpected: $v" }
+          & $exe toolchain status
+          if ($LASTEXITCODE -ne 0) { throw 'toolchain status failed' }
+          & ./scripts/install.ps1 -Uninstall
+          if (Test-Path $env:DENEXT_INSTALL) { throw 'uninstall left files behind' }
+
+  # install.sh end to end on Linux: this commit's binary (a local release, the toolchain step
+  # included), then the real latest release, which may predate the `toolchain` verb (denext < 4.0).
+  install-sh:
+    name: install.sh (ubuntu-latest — this commit's build + the real latest one)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.7"
+      - name: Install this commit's binary build, toolchain included, run it
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset=denext-x86_64-unknown-linux-gnu.tar.gz
+          art="$RUNNER_TEMP/art"
+          mkdir -p "$art"
+          deno compile -A --output "$RUNNER_TEMP/denext" cli.ts
+          tar czf "$art/$asset" -C "$RUNNER_TEMP" denext
+          (cd "$art" && sha256sum "$asset" > SHA256SUMS)
+          out="$(DENEXT_ARTIFACTS="$art" DENEXT_INSTALL="$RUNNER_TEMP/denext-head" sh scripts/install.sh 2>&1)"
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -F "installing denext's Deno toolchain" >/dev/null
+          if printf '%s\n' "$out" | grep -E 'could not be installed now|predates' >/dev/null; then
+            echo "::error::the toolchain step did not complete"; exit 1
+          fi
+          "$RUNNER_TEMP/denext-head/bin/denext" --version | grep -E '^denext [0-9]+\.[0-9]+\.[0-9]+.* \(binary\)$'
+          "$RUNNER_TEMP/denext-head/bin/denext" toolchain status
+      - name: Install the latest release for real, run it
+        shell: bash
+        env:
+          # The latest-version lookup's API call is authenticated (hosted runners share an IP and
+          # the anonymous 60/hour limit); install.sh sends it to api.github.com only.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          DENEXT_INSTALL="$RUNNER_TEMP/denext-latest" sh scripts/install.sh
+          "$RUNNER_TEMP/denext-latest/bin/denext" --version | grep -E '^denext [0-9]+\.[0-9]+\.[0-9]+.* \(binary\)$'

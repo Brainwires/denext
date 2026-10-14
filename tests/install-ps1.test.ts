@@ -67,6 +67,12 @@ async function releaseZip(dir: string): Promise<Uint8Array> {
   await Deno.mkdir(stage, { recursive: true });
   const sys = Deno.env.get("SystemRoot") ?? "C:\\Windows";
   await Deno.copyFile(join(sys, "System32", "whoami.exe"), join(stage, "denext.exe"));
+  return await zipStage(dir, stage);
+}
+
+/** Zip `stage/denext.exe` as the release asset in `dir`; returns its bytes. */
+async function zipStage(dir: string, stage: string): Promise<Uint8Array> {
+  const sys = Deno.env.get("SystemRoot") ?? "C:\\Windows";
   const zip = join(dir, ASSET);
   // System32's bsdtar writes a zip from `-a`; a CI step run under Git Bash puts GNU tar (which
   // cannot) first on PATH, so name it by path.
@@ -304,6 +310,72 @@ Deno.test("install.ps1: DENEXT_ARTIFACTS installs a local build, still checksum-
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/**
+ * A zip holding a compiled `denext.exe` stand-in that answers `--version` as `denext <version>
+ * (binary)` and, like a release before 4.0, refuses every other verb as `unknown command` after
+ * logging it to $STUB_LOG.
+ */
+async function preToolchainZip(dir: string, version: string): Promise<Uint8Array> {
+  const stage = join(dir, "stage");
+  await Deno.mkdir(stage, { recursive: true });
+  const src = join(dir, "stub.ts");
+  await Deno.writeTextFile(
+    src,
+    `if (Deno.args[0] === "--version") console.log("denext ${version} (binary)");
+else {
+  const log = Deno.env.get("STUB_LOG");
+  if (log) Deno.writeTextFileSync(log, Deno.args.join(" ") + "\\n", { append: true });
+  console.error(\`denext: unknown command "\${Deno.args[0]}"\`);
+  Deno.exit(1);
+}
+`,
+  );
+  const compiled = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "compile",
+      "--quiet",
+      "--no-check",
+      "--allow-env",
+      "--allow-write",
+      "--output",
+      join(stage, "denext.exe"),
+      src,
+    ],
+  }).output();
+  assert(compiled.success, new TextDecoder().decode(compiled.stderr));
+  return await zipStage(dir, stage);
+}
+
+Deno.test(
+  "install.ps1: a release before 4.0 (no `toolchain` verb) installs and uninstalls cleanly",
+  {
+    ignore: NOT_WINDOWS,
+  },
+  async () => {
+    const dir = await Deno.makeTempDir();
+    const release = serveRelease("v3.4.14");
+    try {
+      const zip = await preToolchainZip(dir, "3.4.14");
+      release.files.set(ASSET, zip);
+      release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
+      const root = join(dir, "home");
+      const log = join(dir, "calls.log");
+      const run = await install(release, root, { STUB_LOG: log });
+      assertEquals(run.code, 0, run.out);
+      assertStringIncludes(run.out, "denext 3.4.14 (binary) predates denext's Deno toolchain");
+      assert(!run.out.includes("could not be installed"), run.out);
+      const removed = await install(release, root, { STUB_LOG: log }, ["-Uninstall"]);
+      assertEquals(removed.code, 0, removed.out);
+      assert(!removed.out.includes("unknown command"), removed.out);
+      assert(!(await exists(root)));
+      assert(!(await exists(log)), "never asks a 3.x binary for `toolchain`");
+    } finally {
+      await release.close();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+);
 
 Deno.test("install.ps1 and publish.yml agree on the Windows asset and checksum names", async () => {
   const script = await Deno.readTextFile(SCRIPT);

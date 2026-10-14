@@ -60,8 +60,11 @@ if [ -n "$out" ]; then cp "$STUB_DIR/$name" "$out"; else cat "$STUB_DIR/$name"; 
 
 /** The released `denext` stand-in (see {@linkcode Release.create}). */
 const DENEXT_STUB = `#!/bin/sh
-[ "$1" = "--version" ] && { echo "denext 9.9.9 (binary)"; exit 0; }
+[ "$1" = "--version" ] && { echo "denext \${STUB_VERSION:-9.9.9} (binary)"; exit 0; }
 echo "$*" >> "$DENEXT_STUB_LOG"
+# A release before 4.0 has no \`toolchain\` verb.
+case "\${STUB_VERSION:-}" in 3.*) [ "$1" = "toolchain" ] && {
+  echo "denext: unknown command \"toolchain\"" >&2; exit 1; } ;; esac
 [ "$1 $2" = "toolchain install" ] && [ -n "$STUB_TOOLCHAIN_FAIL" ] && exit 1
 exit 0
 `;
@@ -355,6 +358,22 @@ Deno.test("install.sh: a toolchain that cannot be installed is one warning, not 
     assertEquals(run.calls, ["toolchain install"], "no link to a toolchain that is not there");
     assertStringIncludes(run.stderr, "could not be installed now");
     assertStringIncludes(run.stderr, "denext toolchain install");
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: a release before 4.0 (no `toolchain` verb) installs with a note", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    const run = await r.run({ STUB_VERSION: "3.4.14", DENEXT_VERSION: "v3.4.14" });
+    assertEquals(run.code, 0, run.stderr);
+    assert(await r.installed());
+    assertEquals(run.calls, [], "never asks a 3.x binary for `toolchain`");
+    assertStringIncludes(run.stdout, "denext 3.4.14 (binary) predates denext's Deno toolchain");
+    assert(!run.stderr.includes("warning"), run.stderr);
   } finally {
     await r.remove();
   }

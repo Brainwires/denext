@@ -287,6 +287,11 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    to start unless the newest ci.yml run on HEAD that ran those jobs has
    `check`, `integration`, `next-compat`, `coverage`, `backend-integration`,
    `ios-export-router` and `windows-resolve` green (it needs `gh`, logged in).
+   It also needs the newest desktop-ci.yml run on HEAD green in every job (the
+   desktop suites on all three OSes, the installers, install.ps1 / install.sh;
+   `DESKTOP_CI_JOBS` lists the ones that must exist). A push runs desktop-ci only
+   when its `paths` filter matches, so dispatch it as well:
+   `gh workflow run desktop-ci.yml --ref development`, and wait for it.
 3. **Cut:** `deno task release X.Y.Z` (add `--confirm` to skip the prompt,
    `--dry` to preview). The script: bumps every version spot (`deno task bump`
    — root `deno.json` + `mod.ts`, `ROADMAP.md`'s status line, every

@@ -519,6 +519,17 @@ a 3.x app to 4.0 involves. [Upgrading to 4.0](https://denext.dev/docs/upgrading)
   secret key under 32 characters or too predictable to be a secret, and a key configured as both
   publishable and secret, with an error naming the variable (never the value). An empty
   `DENEXT_JWT_SECRET` counts as unset.
+- **The installers can install a release from before 4.0 again.** `install.sh` / `install.ps1`
+  ran `denext toolchain install` after every install, but the `toolchain` verb arrived in 4.0, so
+  installing the latest stable 3.x release (or `DENEXT_VERSION=v3.x`) printed `unknown command
+  "toolchain"` and a warning, and `install.ps1 -Uninstall` ended with a failing exit code. The
+  installers now read the binary's `--version` and skip the toolchain step (and the uninstall's
+  `toolchain unlink`) for a release that predates it, with a one-line note.
+- **The pinned Deno Desktop runtime verifies on Windows when its archive holds a nested symlink.**
+  Windows stores a symlink's target with backslashes, so a link such as a macOS framework's
+  `Chromium Embedded Framework` → `Versions/A/…` never matched the `/`-separated target recorded at
+  install, and the install failed with "did not verify after install". The check now compares the
+  targets in the recorded form.
 - **A generated Dockerfile on a non-default port now listens on it.** The image's `CMD` was
   `deno task start -- --port N`; `deno task` forwards the literal `--`, so `denext start` took
   `--port` as passthrough and stayed on 3000. The Dockerfile now sets `ENV PORT=N` (which

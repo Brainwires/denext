@@ -985,7 +985,11 @@ All work lands on `development`, and releases are cut there with
 first refuses unless ci.yml's heavy jobs (`integration`, `next-compat`, `coverage`,
 with `check`, `backend-integration`, `ios-export-router` and `windows-resolve`) are green on HEAD: a push to `development`
 skips them, so dispatch ci.yml on the commit first
-(`gh workflow run ci.yml --ref development`, then wait for it). Active
+(`gh workflow run ci.yml --ref development`, then wait for it). It also refuses unless the newest
+desktop-ci.yml run on HEAD (Windows / macOS / Linux desktop suites, installers, install.ps1 /
+install.sh) finished with every job green (`DESKTOP_CI_JOBS` in `scripts/release-ci.ts` names the
+ones that must exist): a push runs desktop-ci only when its `paths` filter matches, so dispatch it
+too (`gh workflow run desktop-ci.yml --ref development`) and wait for both. Active
 `development` runs ahead of `main` by design.
 
 **`main` must always be exactly what is published.** So **cutting a version is not

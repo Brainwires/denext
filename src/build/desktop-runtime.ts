@@ -202,11 +202,19 @@ async function filesIntact(dir: string, m: RuntimeMarker, full: boolean): Promis
     if (full && await sha256File(path) !== want.sha256) return false;
   }
   for (const [rel, target] of Object.entries(m.symlinks ?? {})) {
-    if (await Deno.readLink(join(dir, ...rel.split("/"))).catch(() => null) !== target) {
-      return false;
-    }
+    if (await recordedLinkTarget(join(dir, ...rel.split("/"))) !== target) return false;
   }
   return true;
+}
+
+/**
+ * The target of the symlink at `path` in the marker's `/`-separated form, or `null`. A Windows
+ * link is created with the native separator (`createLink` in safe-extract), so `readLink` answers
+ * `Versions\A\…` there for the archive's `Versions/A/…`.
+ */
+async function recordedLinkTarget(path: string): Promise<string | null> {
+  const target = await Deno.readLink(path).catch(() => null);
+  return target !== null && Deno.build.os === "windows" ? target.replaceAll("\\", "/") : target;
 }
 
 /**

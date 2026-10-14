@@ -5,6 +5,8 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   type CiJob,
   type CiRun,
+  DESKTOP_CI_JOBS,
+  desktopCiVerdict,
   RELEASE_CI_JOBS,
   releaseCiHint,
   releaseCiVerdict,
@@ -107,6 +109,78 @@ Deno.test("release CI gate: the NEWEST heavy run decides — a failure, or one s
   const pending = await releaseCiVerdict(SHA, running.gh);
   assert(!pending.ok);
   assertStringIncludes(pending.reason, "queued");
+});
+
+/** Every desktop-ci job with `conclusion`, then `over` on top (extra names are added). */
+function desktopJobs(conclusion: string, over: Record<string, string> = {}): CiJob[] {
+  const names = [...new Set([...DESKTOP_CI_JOBS, ...Object.keys(over)])];
+  return names.map((name) => ({ name, status: "completed", conclusion: over[name] ?? conclusion }));
+}
+
+Deno.test("desktop CI gate: the newest desktop-ci run on HEAD, push or dispatch, decides", async () => {
+  const green = fakeGh([run(1, "push", "2026-10-06T10:00:00Z")], { 1: desktopJobs("success") });
+  const ok = await desktopCiVerdict(SHA, green.gh);
+  assert(ok.ok, ok.reason);
+  assertEquals(green.calls[0].slice(0, 6), [
+    "run",
+    "list",
+    "--workflow",
+    "desktop-ci.yml",
+    "--commit",
+    SHA,
+  ]);
+  // A newer red dispatch outranks an older green push.
+  const red = fakeGh(
+    [run(1, "push", "2026-10-06T10:00:00Z"), run(2, "workflow_dispatch", "2026-10-06T11:00:00Z")],
+    {
+      1: desktopJobs("success"),
+      2: desktopJobs("success", { "desktop tests (windows-latest)": "failure" }),
+    },
+  );
+  const failed = await desktopCiVerdict(SHA, red.gh);
+  assert(!failed.ok);
+  assertStringIncludes(failed.reason, "desktop tests (windows-latest): failure");
+  // A job outside the list still may not fail; a listed one that is missing refuses.
+  const extra = await desktopCiVerdict(
+    SHA,
+    fakeGh([run(3, "push", "2026-10-06T10:00:00Z")], {
+      3: desktopJobs("success", { "cross-launch (linux-to-windows)": "failure" }),
+    }).gh,
+  );
+  assertStringIncludes(extra.reason, "cross-launch (linux-to-windows): failure");
+  const missing = await desktopCiVerdict(
+    SHA,
+    fakeGh([run(4, "push", "2026-10-06T10:00:00Z")], {
+      4: desktopJobs("success").filter((j) => j.name !== "scaffold + package-script drift"),
+    }).gh,
+  );
+  assertStringIncludes(missing.reason, "scaffold + package-script drift: missing");
+  // Still running, or no run at all: refused, with the dispatch in the hint.
+  const queued = fakeGh([run(5, "workflow_dispatch", "2026-10-06T10:00:00Z", "queued")], {});
+  assertStringIncludes((await desktopCiVerdict(SHA, queued.gh)).reason, "queued");
+  const none = await desktopCiVerdict(SHA, fakeGh([], {}).gh);
+  assert(!none.ok);
+  assertStringIncludes(none.reason, "no desktop-ci.yml run");
+  assertStringIncludes(
+    releaseCiHint("development"),
+    "gh workflow run desktop-ci.yml --ref development",
+  );
+});
+
+Deno.test("desktop CI gate: every required job is named in desktop-ci.yml", async () => {
+  const workflow = await Deno.readTextFile(
+    new URL("../.github/workflows/desktop-ci.yml", import.meta.url),
+  );
+  for (const job of DESKTOP_CI_JOBS) {
+    // A matrix leg `<name> (<os>)` comes from `name: <name> (${{ matrix.os }})` and that os.
+    const leg = /^(.*) \(((?:windows|macos|ubuntu)-latest)\)$/.exec(job);
+    if (leg) {
+      assertStringIncludes(workflow, `name: ${leg[1]} (\${{ matrix.os }})`, job);
+      assertStringIncludes(workflow, leg[2], job);
+    } else {
+      assertStringIncludes(workflow, `name: ${job}\n`, job);
+    }
+  }
 });
 
 Deno.test("release CI gate: the release script runs it before changing anything", async () => {

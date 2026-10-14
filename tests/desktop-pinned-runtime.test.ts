@@ -40,7 +40,7 @@ const pinRuntimeMain = (args: string[], out: string, toolchainOut = `${out}.tool
     toolchainOut,
   );
 import { desktopRuntimeCheck } from "../src/cli/commands/doctor.ts";
-import { sha256Hex, tarGz, zip } from "./_archive-fixtures.ts";
+import { canSymlink, sha256Hex, tarGz, zip } from "./_archive-fixtures.ts";
 import { ESBUILD_VERSION } from "../src/build/esbuild/version.ts";
 
 const TARGET = "x86_64-unknown-linux-gnu";
@@ -478,7 +478,11 @@ function ensureMac(f: Fixture, target: string, capture: CaptureRunner) {
 
 type CaptureRunner = (cmd: string, args: string[]) => Promise<{ code: number; text: string }>;
 
-Deno.test("ensureDesktopRuntime ad-hoc signs an unsigned CEF app inside-out before the re-sign", async () => {
+// Its runtime archive carries symlinks: a standard Windows user cannot extract it.
+Deno.test({
+  name: "ensureDesktopRuntime ad-hoc signs an unsigned CEF app inside-out before the re-sign",
+  ignore: !canSymlink,
+}, async () => {
   // The pinned x86_64 CEF archive carries no signature at all (Apple's linker signs only arm64
   // Mach-Os), and codesign refuses its main executable ("code object is not signed at all / In
   // subcomponent: …laufey Helper (Renderer).app"). The install signs framework libraries →
@@ -708,7 +712,11 @@ async function windowsArchive(): Promise<Uint8Array> {
   ]);
 }
 
-Deno.test("resolveDesktopRuntimeEnv: a Windows target from macOS gets a cross-host LAUFEY_DEV_DIR", async () => {
+// Its runtime archive carries symlinks: a standard Windows user cannot extract it.
+Deno.test({
+  name: "resolveDesktopRuntimeEnv: a Windows target from macOS gets a cross-host LAUFEY_DEV_DIR",
+  ignore: !canSymlink,
+}, async () => {
   const win = "x86_64-pc-windows-msvc";
   const f = await fixture(await windowsArchive());
   const project = await Deno.makeTempDir();
@@ -769,7 +777,11 @@ Deno.test("resolveDesktopRuntimeEnv: a Windows target from macOS gets a cross-ho
   }
 });
 
-Deno.test("resolveDesktopRuntimeEnv: a cross-host symlink the OS refuses becomes a copy of its file", async () => {
+// Its runtime archive carries symlinks: a standard Windows user cannot extract it.
+Deno.test({
+  name: "resolveDesktopRuntimeEnv: a cross-host symlink the OS refuses becomes a copy of its file",
+  ignore: !canSymlink,
+}, async () => {
   const win = "x86_64-pc-windows-msvc";
   const f = await fixture(await windowsArchive());
   const project = await Deno.makeTempDir();
