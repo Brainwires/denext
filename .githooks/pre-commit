@@ -80,4 +80,12 @@ fi
 find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'fallow-audit-base-cache-*' -mmin +120 \
   -exec rm -rf {} + 2>/dev/null || true
 
+# A detached worktree (how parallel work is done here) has no upstream, so fallow's default
+# base falls back to origin/main and every commit since the last release counts as new. All
+# work lands on development: audit against it unless a base is already pinned.
+if [ -z "${FALLOW_AUDIT_BASE:-}" ] && ! git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1 \
+  && git rev-parse --verify -q origin/development >/dev/null; then
+  export FALLOW_AUDIT_BASE=origin/development
+fi
+
 $FALLOW audit --quiet --explain --gate-marker git --no-css $COV
