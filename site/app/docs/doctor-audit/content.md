@@ -12,7 +12,7 @@ in-process **route conformance** — exiting non-zero when a critical one fails.
 Conformance renders **every route** on the real SSR path, expanding dynamic
 routes through `generateStaticParams`, and asserts a well-formed document:
 `<!DOCTYPE>`, one `<html>`/`<head>`/`<body>`, a non-empty `<title>`, no server
-crash. Each route is classified **static** (0 KB JS) or **interactive**.
+crash, and no error an `error.tsx` boundary caught (the `no-caught-error` check). Each route is classified **static** (0 KB JS) or **interactive**.
 `--report` prints a markdown health report — the checks, every route's
 conformance result, and the last build's client bundle by chunk and role, read
 from `.denext/client` without building; `--json` emits the same data
@@ -28,15 +28,23 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext doctor`
 It renders the **JavaScript-disabled** surface, so a pass also proves
 progressive enhancement is intact — see [Testing](/docs/testing).
 
+## Errors an `error.tsx` caught
+
+A server error that a segment `error.tsx` caught renders the boundary's fallback at status
+200, a well-formed page. The probe still fails the route: it hands the app its own
+`onRequestError` hook and records every render error by the path that raised it, so the
+`no-caught-error` check names the error's message and the digest the server logged it under
+(`an error boundary rendered a caught error: "db down" [digest 66355f2c903f1967]`). A catch
+in a Suspense hole that streams after the shell counts too. Nothing about the error is added
+to the response: the probe reads it in process, so production responses are unchanged.
+
 ## What doctor cannot see
 
 > [!WARNING]
-> **`denext doctor` / `probeApp` see a crash only as the framework's bare 500.**
-> The "no-crash-marker" check matches the 500 fallback body (`Internal Server
-> Error` and nothing else) and raw stack frames. A server error that a segment
-> `error.tsx` caught and rendered at status 200 — the redacted message inside the
-> boundary's own markup — is a rendered page to the probe. Assert on such routes
-> yourself (a `contains` on the expected content).
+> **A streamed Suspense hole whose error no boundary inside it catches** keeps showing its
+> fallback in the HTML (the server logs `streamed Suspense boundary failed to resolve`); the
+> probe sees a rendered page. Put an `error.tsx` (or an error boundary) inside the hole, or
+> assert on the route's content yourself.
 
 More of these in [Known limitations](/docs/limitations).
 

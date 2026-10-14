@@ -1,7 +1,9 @@
 /**
  * Rendered-app conformance probe — render **every route** of a denext app in
  * process (the real SSR path) and assert each produces a well-formed HTML
- * document with no server crash.
+ * document with no server crash — including an error an `error.tsx` boundary caught
+ * and rendered at 200, which the probe reads through its own `onRequestError` hook
+ * (nothing about it is added to the response).
  *
  * Where the dependency probes in `examples/next-compat-feasibility` answer "would
  * this app's packages LOAD under Deno?", the conformance probe answers the harder
@@ -28,6 +30,7 @@
 
 import { createApp, defaultLoader, PageCache, scanRoutes } from "../server/mod.ts";
 import type { ModuleLoader } from "../server/types.ts";
+import type { AppConfig } from "../server/app-config.ts";
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
 import { fillPattern, type RouteParams } from "../router/segments.ts";
 import { enumerateStaticParams } from "../server/static-params.ts";
@@ -43,6 +46,8 @@ import { tagServerModules } from "../runtime/server-action.ts";
 import { createMiddlewareRunner } from "../server/mod.ts";
 import { resolve, toFileUrl } from "@std/path";
 import { createTestClient, type TestHandler } from "./client.ts";
+import { errorDigest } from "../runtime/error-boundary.ts";
+import type { RequestErrorContext } from "../server/instrumentation.ts";
 
 /** One conformance check applied to a single rendered route. */
 export interface ProbeCheck {
@@ -121,10 +126,37 @@ export interface ProbeOptions {
   load?: ModuleLoader;
 }
 
-/** Build the in-process handler AND return the manifest (probe needs both). */
-async function buildHandler(
+/**
+ * The errors the server reported while rendering, by requested path (`pathname + search`):
+ * the probe's own `onRequestError` hook, so an `error.tsx` that rendered a caught error at 200
+ * is seen without anything about it reaching the response.
+ */
+type RenderErrors = Map<string, unknown[]>;
+
+/** The probe's `onRequestError`: records each render error under the path that raised it. */
+function recordRenderErrors(errors: RenderErrors) {
+  return (error: unknown, request: { path: string }, context: RequestErrorContext): void => {
+    if (context.routeType !== "render") return;
+    const list = errors.get(request.path) ?? [];
+    list.push(error);
+    errors.set(request.path, list);
+  };
+}
+
+/**
+ * Build the in-process handler `createTestApp` returns AND the manifest (the probe needs
+ * both): the production request pipeline with the "use client"/"use server" boundary
+ * discovered by crawling the import graph, no build and no client bundle.
+ *
+ * @param projectDir The app directory.
+ * @param load The module loader.
+ * @param onRequestError The app's `onRequestError` (the probe records render errors with it).
+ * @returns The handler, the route manifest and the app directory.
+ */
+export async function buildTestHandler(
   projectDir: string,
   load: ModuleLoader,
+  onRequestError?: AppConfig["onRequestError"],
 ): Promise<{ handler: TestHandler; manifest: RouteManifest; appDir: string }> {
   const paths = await resolveProject(resolve(projectDir));
   const manifest = await scanRoutes(paths.appDir);
@@ -148,11 +180,13 @@ async function buildHandler(
     getMiddleware,
     pageCache: new PageCache(),
     i18n: paths.i18n ?? undefined,
+    appLinks: paths.config?.appLinks,
     flight: flightRoutes.size > 0,
     appDir: paths.appDir,
     flightRoutes,
     flightClients: boundary.client,
     flightServers: boundary.server,
+    onRequestError,
   });
   return { handler, manifest, appDir: paths.appDir };
 }
@@ -231,11 +265,18 @@ export async function probeApp(
   options: ProbeOptions = {},
 ): Promise<ConformanceReport> {
   const load = options.load ?? defaultLoader;
-  const { handler, manifest } = await buildHandler(projectDir, load);
+  const renderErrors: RenderErrors = new Map();
+  const { handler, manifest } = await buildTestHandler(
+    projectDir,
+    load,
+    recordRenderErrors(renderErrors),
+  );
   const client = createTestClient(handler, {
     origin: options.origin,
     followRedirects: false,
   });
+  const probe = (route: PageRoute, path: string, interactive: boolean) =>
+    probePath(client, renderErrors, route, path, interactive, options.expect?.[path]);
 
   const routes: RouteProbe[] = [];
   const record = (p: RouteProbe) => {
@@ -257,12 +298,12 @@ export async function probeApp(
     }
 
     for (const path of paths) {
-      record(await probePath(client, route, path, interactive, options.expect?.[path]));
+      record(await probe(route, path, interactive));
     }
   }
 
   for (const path of options.extraPaths ?? []) {
-    record(await probePath(client, syntheticRoute(path), path, false, options.expect?.[path]));
+    record(await probe(syntheticRoute(path), path, false));
   }
 
   return summarize(routes);
@@ -313,14 +354,35 @@ function syntheticRoute(path: string): PageRoute {
   };
 }
 
+/** One caught error as a check detail: its message and the digest the server logged it under. */
+function describeCaught(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return `${JSON.stringify(message.length > 200 ? `${message.slice(0, 200)}…` : message)} ` +
+    `[digest ${errorDigest(error)}]`;
+}
+
+/**
+ * The check that a rendered page carries no caught render error: an `error.tsx` boundary
+ * that caught one renders its fallback at 200, which the structural checks accept.
+ */
+function boundaryCheck(errors: readonly unknown[]): ProbeCheck {
+  return {
+    name: "no-caught-error",
+    pass: errors.length === 0,
+    detail: `an error boundary rendered a caught error: ${errors.map(describeCaught).join("; ")}`,
+  };
+}
+
 /** Request one concrete path and run the applicable conformance checks. */
 async function probePath(
   client: ReturnType<typeof createTestClient>,
+  renderErrors: RenderErrors,
   route: PageRoute,
   path: string,
   interactive: boolean,
   expected: number | undefined,
 ): Promise<RouteProbe> {
+  renderErrors.delete(path);
   const res = await client.get(path);
   const checks: ProbeCheck[] = [];
 
@@ -341,32 +403,30 @@ async function probePath(
 
   const isHtmlDoc = res.status === 200 &&
     (res.headers.get("content-type") ?? "").includes("text/html");
-  let rendered = false;
-  let note: string | undefined;
-
   if (isHtmlDoc) {
-    rendered = true;
-    checks.push(...checkDocument(res.text));
-  } else if (res.status >= 300 && res.status < 400) {
-    note = `redirect → ${res.location ?? "?"}`;
-  } else if (res.status === 404) {
-    note = "not found (no matching route or notFound())";
-  } else if (res.status !== 200) {
-    note = `status ${res.status}`;
-  } else {
-    note = `non-HTML response (${res.headers.get("content-type") ?? "no content-type"})`;
+    checks.push(...checkDocument(res.text), boundaryCheck(renderErrors.get(path) ?? []));
   }
 
   return {
     routePath: route.routePath,
     path,
     status: res.status,
-    rendered,
+    rendered: isHtmlDoc,
     interactive,
     ok: checks.every((c) => c.pass),
     checks,
-    note,
+    note: isHtmlDoc ? undefined : unrenderedNote(res),
   };
+}
+
+/** Why a response is not a rendered document (a redirect, a 404, another status or type). */
+function unrenderedNote(
+  res: { status: number; location?: string | null; headers: Headers },
+): string {
+  if (res.status >= 300 && res.status < 400) return `redirect → ${res.location ?? "?"}`;
+  if (res.status === 404) return "not found (no matching route or notFound())";
+  if (res.status !== 200) return `status ${res.status}`;
+  return `non-HTML response (${res.headers.get("content-type") ?? "no content-type"})`;
 }
 
 /** ANSI-free status glyph for a route line. */

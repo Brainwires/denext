@@ -141,9 +141,9 @@ The [deployment guide](/docs/deploy) owns observability — §14 for `onRequest`
 runbook step.
 
 > [!NOTE]
-> `denext doctor` and `probeApp` see a crash only as the framework's bare 500.
-> A server error that a segment `error.tsx` caught and rendered at status 200
-> looks like a rendered page to the probe — assert on those routes yourself.
+> `denext doctor` and `probeApp` fail a route whose `error.tsx` caught a server error and
+> rendered at status 200 (the `no-caught-error` check, with the error's message and digest).
+> They read it through their own `onRequestError` hook, so the response carries nothing more.
 
 ## In development
 

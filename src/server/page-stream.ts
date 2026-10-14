@@ -91,8 +91,8 @@ async function streamHtmlRoute(pr: PageRequest, prepared: PageContext): Promise<
     renderOptions(pr),
     prepared,
   );
-  // Report the shell's boundary catches (holes stream after the response, so their
-  // late catches are logged by H1, not reported here).
+  // Report the shell's boundary catches; a hole's (streamed after the response) is reported
+  // as it is caught.
   await reportBoundaryErrors(pr, "server-rendering");
   augmentPageMetadata(pr, shellResult.metadata, false); // streamed: per-request, never ISR
   const doc = {
