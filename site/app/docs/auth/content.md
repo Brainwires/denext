@@ -2261,7 +2261,9 @@ What it serves: `signup` (email or phone with a password, or anonymous), `token`
 `idTokenProviders` or `native.google` / `native.apple`), `otp` and `magiclink`, `verify` (POST,
 and the GET an emailed link opens — implicit fragment or PKCE `?code=`), `resend`, `recover`,
 `user` (GET and PUT: metadata, password, email and phone changes), `reauthenticate`, `logout`
-(`scope=local | others | global`), `authorize` (OAuth through the providers you configured; their
+(`scope=local | others | global`; `global` also ends the user's denextAuth cookie sessions,
+stateless ones included, and `others` all of them while keeping the caller's token session),
+`authorize` (OAuth through the providers you configured; their
 callback stays `{basePath}/callback/:provider`), `user/identities/authorize` and identity
 unlinking, `factors` (TOTP, phone and WebAuthn: enroll, challenge, verify, unenroll; recovery
 codes; `aal2` after a verified factor), `settings`, `sso` (SAML 2.0, below), `token?grant_type=web3` (Web3 sign-in, below), the
@@ -2322,7 +2324,7 @@ own settings from the environment, `GOTRUE_SMTP_HOST`, `GOTRUE_SMTP_PORT`, `GOTR
 `RECOVERY`, `MAGIC_LINK`, `EMAIL_CHANGE`, `REAUTHENTICATION`). The transport is
 [`smtpMailer()`](#sending-mail-over-smtp), so TLS is required (465 is implicit TLS, any other
 port must offer STARTTLS). Subjects default to GoTrue's ("Confirm Your Email", "Your Magic
-Link", …). A template is a URL of an HTML file, fetched on first use (http(s), 10 s, at most
+Link", …). A template is a URL of an HTML file, fetched on first use (http(s), 10 s, a redirect followed only to `https:` on the same origin, at most
 1 MiB) and kept for 10 minutes; it takes `{{ .ConfirmationURL }}`, `{{ .Token }}`,
 `{{ .TokenHash }}`, `{{ .SiteURL }}`, `{{ .Email }}`, `{{ .NewEmail }}` and `{{ .RedirectTo }}`,
 each HTML-escaped. A template with any other Go template action (`{{ if }}`, `{{ .Data }}`), or

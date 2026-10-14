@@ -237,6 +237,14 @@ and this project adheres to
 
 ### Security
 
+- **`/auth/v1` `logout?scope=global` and `scope=others` end the user's denextAuth cookie
+  sessions.** They ended only `/auth/v1` and native token sessions, so a cookie session (a stolen
+  one included) outlived "sign out everywhere". Both now clear the session store's records and
+  stamp `sessionsValidAfter`, so stateless cookies end too; `others` keeps the caller's own token
+  session, and `local` is unchanged.
+- **An `/auth/v1` mail template fetch follows a redirect only to `https:` on the same origin**
+  (at most 3). Before, it followed any redirect, so a template host could point the server at
+  another host (an internal address) or downgrade the fetch to plaintext.
 - **Stateless cookie sessions can be ended early: a per-user `sessionsValidAfter`.** Every read
   of a denextAuth cookie session (stateless or store-backed) refuses one that signed in
   (`authTime`, else its issue time) before the user's `sessionsValidAfter`. The time is set by

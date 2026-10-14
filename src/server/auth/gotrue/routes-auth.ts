@@ -29,6 +29,7 @@ import {
   passwordMatches,
   retireChangedPassword,
   retireForeignPassword,
+  revokeEverySession,
   signUpExisting,
   updateAccount,
 } from "./accounts.ts";
@@ -784,7 +785,9 @@ export async function recover(ctx: GoTrueContext): Promise<Response> {
 // ── logout ───────────────────────────────────────────────────────────────────
 
 /**
- * `POST /logout?scope=global|local|others`. A `local` / `global` logout of a session a SAML
+ * `POST /logout?scope=global|local|others`. `global` ends every session of the user — its token
+ * families and its denextAuth cookie sessions alike — and `others` all of them but the caller's
+ * own token session; `local` only the caller's. A `local` / `global` logout of a session a SAML
  * assertion started answers `200 { url }` when SAML Single Logout is on: the session is
  * already ended, and the URL tells the IdP (see `routes-slo.ts`).
  */
@@ -795,10 +798,13 @@ export async function logout(ctx: GoTrueContext): Promise<Response> {
   const slo = scope !== "others" && caller.sessionId
     ? await spLogoutUrl(ctx, caller.sessionId)
     : undefined;
+  // `global` / `others` end the user's denextAuth cookie sessions too (the caller here is always
+  // a token session, never a cookie): the session store's records, and every stateless cookie
+  // through the user's `sessionsValidAfter`. `others` keeps only the caller's token family.
   if (scope === "global") {
-    await families.revokeNativeSessionsByUser(caller.user.id);
+    await revokeEverySession(ctx, caller.user.id);
   } else if (scope === "others") {
-    await families.revokeNativeSessionsByUser(caller.user.id, caller.sessionId);
+    await revokeEverySession(ctx, caller.user.id, caller.sessionId);
   } else if (scope === "local") {
     if (caller.sessionId) await families.revokeNativeSession(caller.sessionId);
   } else {

@@ -9,8 +9,9 @@
  * `{{ .TokenHash }}`, `{{ .SiteURL }}`, `{{ .Email }}`, `{{ .NewEmail }}`, `{{ .RedirectTo }}`
  * — each HTML-escaped. A template that uses any other Go template action (`{{ if … }}`,
  * `{{ .Data.… }}`) is not rendered; the built-in one is sent instead and the reason logged.
- * A template URL is fetched (http(s) only, 10 s, at most 1 MiB) on first use and kept for 10
- * minutes; a failed fetch falls back to the built-in template.
+ * A template URL is fetched (http(s) only, 10 s, at most 1 MiB, a redirect followed only to an
+ * `https:` URL on the same origin) on first use and kept for 10 minutes; a failed fetch falls
+ * back to the built-in template.
  *
  * @module
  */
@@ -260,14 +261,43 @@ interface CachedTemplate {
   body: Promise<string | null>;
 }
 
+/** The most redirects a template fetch follows. */
+const MAX_TEMPLATE_REDIRECTS = 3;
+
+/**
+ * Fetch `url`, following a redirect only to an `https:` URL on the same origin (at most
+ * {@linkcode MAX_TEMPLATE_REDIRECTS}): a template host can't bounce the server to another host —
+ * an internal address, say — or downgrade it to plaintext.
+ */
+async function fetchSameOrigin(url: URL, fetchImpl: typeof fetch): Promise<Response> {
+  const signal = AbortSignal.timeout(10_000);
+  let current = url;
+  for (let hops = 0;; hops++) {
+    const res = await fetchImpl(current, { signal, redirect: "manual" });
+    if (res.status < 300 || res.status > 399) return res;
+    await res.body?.cancel();
+    const location = res.headers.get("location");
+    const next = location ? new URL(location, current) : null;
+    if (!next || next.protocol !== "https:" || next.origin !== current.origin) {
+      throw new Error("refused a redirect off the template's https origin");
+    }
+    if (hops >= MAX_TEMPLATE_REDIRECTS) throw new Error("too many redirects");
+    current = next;
+  }
+}
+
 /** Fetch a template URL: http(s), 10 s, ≤ 1 MiB; `null` on any failure. */
-async function fetchTemplate(url: string, logger: Logger): Promise<string | null> {
+async function fetchTemplate(
+  url: string,
+  logger: Logger,
+  fetchImpl: typeof fetch,
+): Promise<string | null> {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
       throw new Error("not an http(s) URL");
     }
-    const res = await fetch(parsed, { signal: AbortSignal.timeout(10_000), redirect: "follow" });
+    const res = await fetchSameOrigin(parsed, fetchImpl);
     if (!res.ok) throw new Error(`status ${res.status}`);
     // Streamed under the cap: an oversized (or endless) answer is cut off, never buffered.
     const bytes = await readCappedBody({ body: res.body } as Request, TEMPLATE_MAX_BYTES);
@@ -297,9 +327,14 @@ export interface GoTrueSmtpSender {
  *
  * @param options The SMTP settings, subjects and templates.
  * @param logger Where template problems are reported.
+ * @param fetchImpl `fetch` for the template URLs (tests).
  * @returns The sender.
  */
-export function goTrueSmtpSender(options: GoTrueSmtpOptions, logger: Logger): GoTrueSmtpSender {
+export function goTrueSmtpSender(
+  options: GoTrueSmtpOptions,
+  logger: Logger,
+  fetchImpl: typeof fetch = fetch,
+): GoTrueSmtpSender {
   const { subjects, templates, ...server } = options;
   const mailer: SmtpMailer = smtpMailer(server);
   const cache = new Map<string, CachedTemplate>();
@@ -308,7 +343,7 @@ export function goTrueSmtpSender(options: GoTrueSmtpOptions, logger: Logger): Go
     if (!url) return Promise.resolve(null);
     const hit = cache.get(url);
     if (hit && Date.now() - hit.at < TEMPLATE_TTL_MS) return hit.body;
-    const body = fetchTemplate(url, logger);
+    const body = fetchTemplate(url, logger, fetchImpl);
     cache.set(url, { at: Date.now(), body });
     return body;
   };

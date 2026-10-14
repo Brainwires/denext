@@ -9,6 +9,7 @@ import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
 import {
   type GoTrueMailInput,
   goTrueSmtpFromEnv,
+  goTrueSmtpSender,
   mailKindOf,
   processGoTrueSmtp,
   renderGoTrueTemplate,
@@ -256,6 +257,62 @@ Deno.test("gotrue smtp: a refused send is a 500 'Error sending email', with noth
       assertEquals((await res.json()).msg, "Error sending email");
       assertEquals(server.mail.length, 0);
     });
+  } finally {
+    await server.close();
+  }
+});
+
+Deno.test("gotrue smtp: a template redirect is followed only to https on the same origin", async () => {
+  const server = startFakeSmtp();
+  const requested: string[] = [];
+  const fakeFetch = ((input: URL | string) => {
+    const url = String(input);
+    requested.push(url);
+    const redirect = (to: string) =>
+      Promise.resolve(new Response(null, { status: 302, headers: { location: to } }));
+    switch (url) {
+      case "https://cdn.test/same":
+        return redirect("/real.html");
+      case "https://cdn.test/offsite":
+        return redirect("https://internal.test/secret");
+      case "https://cdn.test/downgrade":
+        return redirect("http://cdn.test/real.html");
+      case "https://cdn.test/loop":
+        return redirect("/loop");
+      case "https://cdn.test/real.html":
+        return Promise.resolve(new Response("<p>fetched {{ .Token }}</p>"));
+      default:
+        return Promise.resolve(new Response("<p>must not be fetched</p>"));
+    }
+  }) as typeof fetch;
+  const warnings: string[] = [];
+  const logger = { warn: (message: string) => void warnings.push(message) };
+  try {
+    for (
+      const [path, fetched] of [
+        ["same", true],
+        ["offsite", false],
+        ["downgrade", false],
+        ["loop", false],
+      ] as const
+    ) {
+      const sender = goTrueSmtpSender(
+        { ...smtpTo(server), templates: { confirmation: `https://cdn.test/${path}` } },
+        logger,
+        fakeFetch,
+      );
+      await sender.send(INPUT);
+      const body = decoded(server.mail.at(-1)!.data);
+      assertEquals(body.includes("fetched 123456"), fetched, path);
+      assertEquals(body.includes("must not be fetched"), false, path);
+    }
+    assert(!requested.some((u) => u.startsWith("https://internal.test") || u.startsWith("http:")));
+    assertEquals(
+      requested.filter((u) => u === "https://cdn.test/loop").length,
+      4,
+      "3 hops, then refused",
+    );
+    assertEquals(warnings.length, 3);
   } finally {
     await server.close();
   }

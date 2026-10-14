@@ -274,3 +274,60 @@ Deno.test("/auth/v1: an admin password change ends cookie sessions", async () =>
     assertEquals(await read(app, cookie), null);
   });
 });
+
+/** A `/auth/v1` password sign-in: the access token. */
+async function tokenSignIn(app: SupabaseAuthApp, email: string): Promise<string> {
+  const tokens = await api(app, "/token?grant_type=password", {
+    body: { email, password: PASSWORD },
+  });
+  assertEquals(tokens.status, 200);
+  return tokens.json.access_token;
+}
+
+async function logout(app: SupabaseAuthApp, token: string, scope: string): Promise<number> {
+  const res = await app.fetch(`${ORIGIN}/auth/v1/logout?scope=${scope}`, {
+    method: "POST",
+    headers: { apikey: app.publishableKey, authorization: `Bearer ${token}` },
+  });
+  await res.body?.cancel();
+  return res.status;
+}
+
+Deno.test("/auth/v1: logout scope=global ends the user's cookie sessions too", async () => {
+  await withApp(async (app) => {
+    await passwordUser(app, "ada@example.test");
+    await passwordUser(app, "bob@example.test");
+    const cookie = await signIn(app, "ada@example.test");
+    const bobs = await signIn(app, "bob@example.test");
+    const token = await tokenSignIn(app, "ada@example.test");
+    assertEquals(await logout(app, token, "global"), 204);
+    assertEquals(await read(app, cookie), null, "the stateless cookie is ended");
+    assertEquals((await api(app, "/user", { token })).status, 403, "the token session too");
+    assert(await read(app, bobs), "another user's session stands");
+  });
+});
+
+Deno.test("/auth/v1: logout scope=others ends every cookie session and keeps the caller's token", async () => {
+  await withApp(async (app) => {
+    await passwordUser(app, "ada@example.test");
+    const cookie = await signIn(app, "ada@example.test");
+    const stored = await signIn(app, "ada@example.test");
+    const token = await tokenSignIn(app, "ada@example.test");
+    const other = await tokenSignIn(app, "ada@example.test");
+    assertEquals(await logout(app, token, "others"), 204);
+    assertEquals(await read(app, cookie), null);
+    assertEquals(await read(app, stored), null);
+    assertEquals((await api(app, "/user", { token })).status, 200, "the caller's session is kept");
+    assertEquals((await api(app, "/user", { token: other })).status, 403);
+  }, { sessionStore: inMemorySessionStore() });
+});
+
+Deno.test("/auth/v1: logout scope=local leaves cookie sessions alone", async () => {
+  await withApp(async (app) => {
+    await passwordUser(app, "ada@example.test");
+    const cookie = await signIn(app, "ada@example.test");
+    const token = await tokenSignIn(app, "ada@example.test");
+    assertEquals(await logout(app, token, "local"), 204);
+    assert(await read(app, cookie));
+  });
+});

@@ -301,6 +301,10 @@ Where `@denext/backend` deliberately departs from Supabase. See
   other Go template action (`{{ if }}`, `{{ .Data }}`) gets the built-in one instead. SMTP needs
   TLS (implicit on 465, else STARTTLS), where GoTrue falls back to plaintext when the server
   offers no STARTTLS.
+- **`/auth/v1` `logout?scope=global` also ends denextAuth cookie sessions.** GoTrue's global
+  logout ends the user's token sessions; denext ends their cookie sessions too (stateless ones
+  through `sessionsValidAfter`), and `scope=others` ends every cookie session while keeping the
+  caller's token session — "sign out everywhere" covers every surface that signed the user in.
 - **`/auth/v1/verify` still redeems on GET.** denext's own `magicLink()` opens a confirmation
   page by default, but the GoTrue-compatible `GET /auth/v1/verify` link keeps Supabase's
   behaviour (the link verifies and redirects), because that is the supabase-js contract: a mail
