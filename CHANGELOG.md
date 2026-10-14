@@ -602,6 +602,44 @@ a 3.x app to 4.0 involves. This section is the record.
   denext runs every command on the toolchain, or on the `deno` on `PATH` with
   `DENEXT_DENO=stock`, and that a missing toolchain downloads on the first denext command.
 
+### Security
+
+Hardening of the new `/auth/v1` API (unreleased) and the user store it shares with `denextAuth()`:
+
+- **No password set before an address was proven survives its first proof.** A magic link, an
+  email or SMS one-time code, a recovery link or an invite that first confirms an account's
+  address now retires everything set up on it before: the password, second factors, passkeys,
+  bearer API tokens and every session (token and cookie). Only the account's own sign-up
+  confirmation, bound to the password that sign-up chose, keeps it. Previously a magic link into
+  an account someone else had registered with the address kept that person's password. An
+  anonymous user's address change keeps only the password it held when the change was requested,
+  and an anonymous user can't set a password without an email or phone (GoTrue's rule). An OAuth
+  provider's verified email marks the stored address verified only when it is the same address,
+  and an `allowDangerousEmailAccountLinking` link onto an unconfirmed account clears that account
+  first.
+- **Account changes need `aal2` once a user has a verified factor.** `PUT /user` refuses a
+  password, email or phone change from a session below `aal2` (`401 insufficient_aal`, as GoTrue
+  does), and linking or unlinking an identity needs `aal2` too. A session that still owes its
+  second factor is refused by the account endpoints (`403 insufficient_aal`); it can still read
+  the user, finish MFA and sign out.
+- **Bans and password changes reach denextAuth.** A banned user can't sign in through denextAuth's
+  own routes, and a ban ends every session, cookie sessions in the `sessionStore` included. A
+  password change through `PUT /user` ends the user's other sessions of both kinds; an admin
+  password change or user deletion ends all of them.
+- **`session.user.emailVerified` of an `/auth/v1` access token comes from the stored user.** It was
+  read from `user_metadata`, which the user can write; the token's `user_metadata.email_verified`
+  / `phone_verified` now always carry the stored flags.
+- **SAML SSO trust model.** An IdP speaks only for its provider's email domains: an address
+  outside them is never bound to an account (refused, `email_address_not_authorized`, for a
+  provider stored through the admin API). A first SSO sign-in no longer takes over an existing
+  account with the same email (`email_exists`, as in GoTrue) unless a config-declared provider
+  sets the new `linkExistingAccounts`. SSO sign-up honours `disableSignup` and the new per-provider
+  `allowSignUp`, and SSO users get no `email` identity.
+- **SAML metadata endpoints must be `https:`.** A SingleSignOnService / SingleLogoutService URL
+  with another scheme (`javascript:`, `data:`) refuses the metadata, and `/auth/v1` refuses a
+  plaintext one (loopback `http:` only under `dangerouslyAllowInsecureProviders`) at registration,
+  at a refresh and at use, so the URL handed to the browser is always an HTTPS page.
+
 ## [4.0.0-rc.2] - 2026-10-13
 
 ### Changed

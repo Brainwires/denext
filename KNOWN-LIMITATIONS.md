@@ -80,7 +80,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `magicLink({ confirm: true })` puts a confirmation page (naming the account) in front of the
   redeem; `emailOtp()` avoids links altogether.
 - **Stateless cookie sessions can't be ended early** by a password reset, a pre-account-hijacking
-  eviction or account deletion; run a `sessionStore` (or `session.strategy: "database"`).
+  eviction, a ban, an `/auth/v1` password change or account deletion; run a `sessionStore` (or
+  `session.strategy: "database"`).
 - **Sliding refresh needs a `Response` being produced** (`/session`, `requireAuth()`,
   `requireSession()`; a streamed component's headers have flushed). A store without `update`
   never slides.

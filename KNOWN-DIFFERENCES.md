@@ -260,6 +260,14 @@ Where `@denext/backend` deliberately departs from Supabase. See
   while `trustForwardedHeaders` is on), and otherwise keys the limit on the peer. Where the origin
   is reachable directly, trusting it blindly would let a client send a fresh value per request and
   get a fresh bucket each time.
+- **An SSO user's email is bound only on the IdP's own domains.** Supabase keeps SSO users as
+  separate accounts with whatever email the IdP asserts; denext has one user per email, so an
+  address outside the provider's `domains` is never put on an account (a provider stored through
+  the admin API is refused for it; a config-declared one signs in a user with no email), and an
+  SSO user has no `email` identity.
+- **A magic link, one-time code or recovery link that first confirms an account retires its
+  password.** Supabase keeps a password set by an earlier unconfirmed sign-up; denext keeps only
+  the one the account's own sign-up confirmation proves.
 
 ## Security posture — safe defaults
 

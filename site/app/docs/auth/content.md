@@ -2024,7 +2024,8 @@ With `saml` set, `signInWithSSO({ domain })` or `({ providerId })` starts an SP-
 the IdP posts to `/auth/v1/sso/saml/acs`, and this service provider's metadata is at
 `/auth/v1/sso/saml/metadata` (the entity id unless `saml.entityId` says otherwise). Identity
 providers come from two places that work side by side: `saml.providers` in config
-(`[{ id, domains, metadataXml, attributeMapping }]`, read-only), and the providers stored through
+(`[{ id, domains, metadataXml, attributeMapping, linkExistingAccounts?, allowSignUp? }]`,
+read-only), and the providers stored through
 the SSO admin API below. An entity id, and every domain, belongs to one provider only.
 
 ```ts
@@ -2059,7 +2060,10 @@ duplicate IDs, a second assertion, comment injection are refused), audience, rec
 destination, validity window and `InResponseTo` checked, and each assertion ID accepted once
 (remembered in the adapter, so every replica shares it). IdP-initiated logins are refused: the
 `RelayState` names a single-use record of the request being answered. A user's SSO identity is
-`sso:<id>`; an existing account is reused only on one of the provider's `domains`.
+`sso:<id>`. The provider vouches only for addresses on its `domains`; a first sign-in never
+takes over an existing account with the same email (`email_exists`) unless a config-declared
+provider sets `linkExistingAccounts: true`, and a new SSO user is created only while sign-ups are
+allowed (`disableSignup`, `allowSignUp: false`). See the SAML trust model under Threat notes.
 
 **The SSO admin API** (GoTrue's `/admin/sso/providers`; service role only, so server-side):
 
@@ -2239,8 +2243,26 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   `rateLimit.verification`); a link and its code are one secret. Password sign-in uses the
   credentials limiter and answers an unknown user and a wrong password alike; a second sign-up for
   a confirmed address answers with an obfuscated user.
-- **Pre-account hijacking.** Confirming an address keeps only the password the confirmed sign-up
-  chose; one set by anybody else before the confirmation is removed and the sessions end.
+- **Pre-account hijacking.** The first proof of an account's address keeps only what the account's
+  own sign-up confirmation proves: that confirmation keeps the password the sign-up chose. Any other
+  first proof — a magic link, an email or SMS code, a recovery link, an invite, a trusted SSO link —
+  removes the password, the second factors, the passkeys, the bearer API tokens and every session
+  (token and cookie) set up before it. An anonymous user's address change keeps only the password
+  it held when the change was requested, and an anonymous user can't set a password without an
+  address. An OAuth sign-in vouches only for the address it asserts, and linking it to an
+  unconfirmed account (`allowDangerousEmailAccountLinking`) clears that account the same way.
+- **Assurance level.** Once a user holds a verified factor, changing the password, email or phone
+  (`PUT /user`), linking or unlinking an identity, and managing factors, recovery codes and
+  passkeys need an `aal2` session (`401` / `403 insufficient_aal`, GoTrue's rule). A session that
+  still owes its second factor can only read the user, finish MFA and sign out; the other account
+  endpoints refuse it.
+- **One user store.** A ban (`ban_duration`) refuses denextAuth's own sign-ins too and ends every
+  session of both kinds. A password change through `/auth/v1` ends the user's other sessions,
+  including denextAuth cookie sessions in the `sessionStore` (a stateless cookie can't be revoked
+  and lives until it expires); an admin password change ends all of them, as in GoTrue.
+  `session.user.emailVerified` of an access token is read from the stored user, never from the
+  user-writable `user_metadata`, whose `email_verified` / `phone_verified` are always the stored
+  flags.
 - **PKCE and OAuth.** Only `s256` is accepted. An OAuth flow is bound to the browser by denext's
   signed transaction cookie; a PKCE flow started cross-origin finishes without it, but nothing —
   no session, no identity link — happens until the code is exchanged with the verifier. Implicit
@@ -2265,6 +2287,19 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   keeps their IdP session. A logout message is refused unless signed by the IdP's metadata
   certificate, and a replayed one is refused; its ID, like an assertion ID, is remembered in the
   adapter so every replica shares the check.
+- **SAML trust model.** An IdP speaks only for the email domains its provider was registered
+  with. An address on one of them becomes the account's verified email; an IdP stored through the
+  admin API that asserts any other address is refused (`403 email_address_not_authorized`), and a
+  config-declared one signs in a user with no email on the account. Registering a domain proves
+  nothing, so verify that a customer owns a domain before you register their IdP for it. A first
+  SSO sign-in never takes over an existing account with the same email, as in GoTrue: it is
+  refused with `email_exists` unless a config-declared provider sets `linkExistingAccounts` (and
+  then only for addresses on its domains). SSO users are created only while sign-ups are allowed
+  (`disableSignup`, the provider's `allowSignUp`), and have no `email` identity.
+- **SAML endpoints.** The SingleSignOnService and SingleLogoutService URLs in IdP metadata are sent
+  to the browser, so they must be `https:` (a loopback `http:` one only under
+  `dangerouslyAllowInsecureProviders`); any other scheme refuses the metadata at registration, at
+  a refresh and at use.
 - **SAML metadata URLs** are fetched SSRF-safely (HTTPS, host-pinned, private addresses refused);
   the metadata's own signature is not checked, so register only URLs of the IdP you trust. Expired
   metadata (`validUntil`) fails closed rather than keep trusting a certificate the IdP may have

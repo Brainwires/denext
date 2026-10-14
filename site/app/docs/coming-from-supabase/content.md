@@ -439,8 +439,10 @@ What does not move:
   made for, and Supabase's public keys are not portable to another relying party: users
   register again.
 - **SAML SSO providers.** Under `backend({ supabase })` `/auth/v1` serves SAML SSO: register each
-  identity provider again with `POST /auth/v1/admin/sso/providers` (`supabase.auth.admin.sso`),
-  and users link their SSO identity on their next sign-in.
+  identity provider again with `POST /auth/v1/admin/sso/providers` (`supabase.auth.admin.sso`).
+  As in Supabase, an SSO sign-in never takes over an existing account by email, so carry the SSO
+  identities over: in the import below, write each `sso:<old provider id>` identity as
+  `sso:<new provider id>` and those users sign in to their own accounts.
 - **OAuth 2.1 server clients.** Supabase's OAuth server schema stores a hash of each client secret (`client_secret_hash`), so
   the secrets cannot be carried over; register the
   clients again (`supabase.auth.admin.oauth.createClient()`, or `POST
