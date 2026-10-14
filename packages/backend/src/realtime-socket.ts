@@ -48,6 +48,7 @@ import type {
 } from "./realtime-bus.ts";
 import { type ChannelPermissions, PUBLIC_PERMISSIONS } from "./realtime-authz.ts";
 import { isIdentityError } from "./identity.ts";
+import { clientErrorMessage } from "./errors.ts";
 import {
   ANON_SOCKET_IDENTITY,
   apiKeyRefusal,
@@ -686,7 +687,7 @@ export class RealtimeHub {
       echoed = await this.#bind(channel, specs);
     } catch (error) {
       this.#forget(channel);
-      return fail((error as Error).message);
+      return fail(clientErrorMessage(error, "realtime: join failed"));
     }
     if (channel.closed || conn.channels.get(topic) !== channel || conn.closed) {
       this.#forget(channel);
@@ -955,7 +956,12 @@ export class RealtimeHub {
       }
       this.#armExpiry(channel);
     } catch (error) {
-      this.#system(channel, "system", "error", (error as Error).message);
+      this.#system(
+        channel,
+        "system",
+        "error",
+        clientErrorMessage(error, "realtime: rebind failed"),
+      );
       this.#close(channel, true);
     }
   }

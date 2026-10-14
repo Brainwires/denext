@@ -56,6 +56,8 @@ import {
 } from "../packages/backend/src/rest-lineage.ts";
 import { openApiDocument } from "../packages/backend/src/rest-openapi.ts";
 import { statusForSqlState } from "../packages/backend/src/rest.ts";
+import { errorResponse } from "../packages/backend/src/rest-http.ts";
+import { clientErrorMessage } from "../packages/backend/src/errors.ts";
 
 function col(name: string, castType: string, extra: Partial<RestColumn> = {}): RestColumn {
   return {
@@ -841,7 +843,11 @@ Deno.test("SQLSTATEs map to PostgREST's statuses", () => {
     ["08006", 503],
     ["53300", 503],
     ["54000", 413],
-    ["28P01", 403],
+    ["28P01", 503],
+    ["28000", 503],
+    ["57P01", 503],
+    ["57P03", 503],
+    ["3D000", 503],
     ["0LP01", 403],
     ["25006", 405],
     ["P0001", 400],
@@ -849,6 +855,36 @@ Deno.test("SQLSTATEs map to PostgREST's statuses", () => {
     ["40001", 500],
   ];
   for (const [code, status] of cases) assertEquals(statusForSqlState(code), status, code);
+});
+
+Deno.test("a connection-class error is a generic 503: the driver's text never reaches the client", async () => {
+  // `password authentication failed for user "denext"` (and host / user names) went to anonymous
+  // clients verbatim. Logged server-side; the client gets PostgREST's generic PGRST000.
+  const errors: unknown[] = [];
+  const log = console.error;
+  console.error = (...args: unknown[]) => void errors.push(args);
+  try {
+    for (const code of ["28P01", "08006", "53300", "57P03", "3D000"]) {
+      const response = errorResponse(
+        Object.assign(new Error(`password authentication failed for user "denext"`), {
+          code,
+          detail: "host=db user=denext",
+        }),
+      );
+      assertEquals(response.status, 503, code);
+      assertEquals(response.headers.get("retry-after"), "1");
+      const text = await response.text();
+      assert(!text.includes("denext") && !text.includes("password"), text);
+      assertEquals(JSON.parse(text).code, "PGRST000");
+    }
+    assertEquals(errors.length, 5, "each one logged server-side");
+    // The other surfaces (realtime joins) share the rule: a Postgres error's text stays server-side.
+    const pg = Object.assign(new Error(`role "denext" does not exist`), { code: "28000" });
+    assertEquals(clientErrorMessage(pg, "test"), "database error");
+    assertEquals(clientErrorMessage(new Error("bad filter"), "test"), "bad filter");
+  } finally {
+    console.error = log;
+  }
 });
 
 Deno.test("generated types: supabase gen types shape, relationships, functions, enums", () => {

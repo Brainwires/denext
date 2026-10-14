@@ -534,6 +534,17 @@ a 3.x app to 4.0 involves. This section is the record.
 
 ### Fixed
 
+- **`@denext/backend` no longer sends database connection errors to clients.** With a wrong
+  database password, `GET /rest/v1/<table>` answered an anonymous client with
+  `password authentication failed for user "…"`. Connection-class SQLSTATEs (08, 28, 53, 57P,
+  3D000) are now a generic `503` `PGRST000` "the database is unavailable" with `Retry-After`, the
+  detail logged server-side; a realtime join that fails on a database error says only
+  "database error".
+- **A storage bucket's `authorize({ session })` sees supabase-js users.** A request carrying a
+  Supabase access token reached `authorize` with no `session`, so the documented
+  `authorize: ({ session }) => !!session` refused every supabase-js upload. The session is now
+  the one `auth()` reads from the bearer (`null` for a revoked token or a pending second factor),
+  or the token's verified claims when `denextAuth()` is not configured.
 - **The generated Docker image shuts down gracefully.** Its `CMD` was `deno task start`, and
   `deno task` does not forward `SIGTERM` to the server it starts: `docker stop` waited out the
   grace period and SIGKILLed the app (exit 137) — in-flight requests cut, no plugin teardowns.

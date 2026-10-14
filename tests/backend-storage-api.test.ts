@@ -854,3 +854,45 @@ Deno.test({
     await h.close();
   }
 });
+
+Deno.test({
+  name: "authorize({ session }): a supabase-js caller's access token is a session",
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  // The documented `authorize: ({ session }) => !!session` refused every supabase-js upload:
+  // a JWT identity reached `authorize` with no session. It now carries the token's session.
+  const seen: unknown[] = [];
+  const h = await storageHarness(backend({
+    supabase: await supabaseKeys(),
+    storage: {
+      secret: "storage-secret-at-least-32-characters",
+      driver: fs({ dir: ".storage" }),
+      buckets: {
+        mine: {
+          authorize: ({ session, identity }) => {
+            seen.push([session?.user.id ?? null, identity.source]);
+            return !!session;
+          },
+        },
+      },
+    },
+  }));
+  try {
+    const upload = (headers: Record<string, string>) =>
+      h.fetch(`${ORIGIN}/storage/v1/object/mine/${USER_A}/note.txt`, {
+        method: "POST",
+        headers: { apikey: ANON_KEY, "content-type": "text/plain", "x-upsert": "true", ...headers },
+        body: "hello",
+      });
+    const asUser = await upload({ authorization: `Bearer ${await accessToken(USER_A)}` });
+    assertEquals(asUser.status, 200, await asUser.text());
+    const asAnon = await upload({ authorization: `Bearer ${ANON_KEY}` });
+    assert(asAnon.status >= 400, "anon has no session");
+    await asAnon.body?.cancel();
+    assertEquals(seen[0], [USER_A, "jwt"]);
+    assertEquals(seen[1], [null, "api_key"]);
+  } finally {
+    await h.close();
+  }
+});

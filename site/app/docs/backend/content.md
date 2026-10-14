@@ -63,7 +63,9 @@ A bucket name is lowercase letters, digits, `-` and `_`. Each bucket takes:
 `op` is `"upload"`, `"download"`, `"delete"` or `"list"` (for a listing, `key` is the prefix); a
 copy is `download` on the source and `upload` on the destination, a move adds `delete` on the
 source. `session` is `auth()` from [`denextAuth`](/docs/auth) — `null` when signed out or when the
-app has no auth. `identity` is who the request acts as: `{ role: "anon" | "authenticated", claims,
+app has no auth. A supabase-js caller's access token counts: its session is the one `auth()` reads
+from the bearer (a revoked token, or one still owing a second factor, is `null`), or, without
+`denextAuth`, the token's verified claims. `identity` is who the request acts as: `{ role: "anon" | "authenticated", claims,
 userId? }`, the claims shaped like a Supabase access token's. A request that presents the secret
 key (the service role) skips `authorize`.
 

@@ -72,3 +72,26 @@ export class StorageError extends Error {
 export function isStorageError(value: unknown): value is StorageError {
   return value instanceof StorageError;
 }
+
+/**
+ * What a client may read about `error`: its message, unless it is a Postgres error (a SQLSTATE
+ * `code`) — whose text can name the database user, host or schema — which is logged here and
+ * answered with `fallback`.
+ *
+ * @param error The error.
+ * @param where Names the surface in the server log.
+ * @param fallback The text the client gets for a database error.
+ * @returns The client-facing message.
+ */
+export function clientErrorMessage(
+  error: unknown,
+  where: string,
+  fallback = "database error",
+): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) {
+    console.error(`[@denext/backend] ${where}`, error);
+    return fallback;
+  }
+  return error instanceof Error ? error.message : String(error);
+}

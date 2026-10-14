@@ -282,7 +282,8 @@ export function statusForSqlState(code: string): number {
   if (code === "57014") return 504;
   if (code === "25006") return 405;
   if (code === "P0001") return 400;
-  const exact: Record<string, number> = { "08": 503, "53": 503, "54": 413, "28": 403 };
+  if (isConnectionSqlState(code)) return 503;
+  const exact: Record<string, number> = { "54": 413 };
   const head = code.slice(0, 2);
   if (head in exact) return exact[head];
   if (head === "0L" || head === "0P") return 403;
@@ -298,8 +299,29 @@ function jsonError(status: number, body: string): Response {
   });
 }
 
+/**
+ * Whether a SQLSTATE says the database could not be reached or used at all — a connection
+ * failure (08), the app's own login refused (28: a wrong password), resources exhausted (53),
+ * an operator intervention (57P: shutdown, crash, "cannot connect now") or a missing database
+ * (3D000). Never the client's fault, and its text (user names, hosts) is for the server log only.
+ */
+function isConnectionSqlState(code: string): boolean {
+  const head = code.slice(0, 2);
+  return head === "08" || head === "28" || head === "53" || code.startsWith("57P") ||
+    code === "3D000";
+}
+
 /** A Postgres error → its response (a 5xx hides the database's message). */
 function postgresError(pg: { code: string; message?: unknown; detail?: unknown; hint?: unknown }) {
+  if (isConnectionSqlState(pg.code)) {
+    console.error("[@denext/backend] REST: the database is unavailable", pg);
+    const response = jsonError(
+      503,
+      errorBody("PGRST000", "the database is unavailable", null, null),
+    );
+    response.headers.set("retry-after", "1");
+    return response;
+  }
   const status = statusForSqlState(pg.code);
   if (status < 500 || status === 504) {
     const text = (v: unknown) => (typeof v === "string" && v !== "" ? v : null);

@@ -6,8 +6,9 @@
 // a bucket's TypeScript `authorize` gets its session and claims, and the SQL-RLS mode runs its
 // `storage.objects` / `storage.buckets` statements as that role with those claims.
 
-import type { AuthSession } from "@denext/denext/server";
-import { resolveIdentity } from "./identity.ts";
+import { activeAuthConfig, auth, type AuthSession, sessionFromClaims } from "@denext/denext/server";
+import type { SupabaseJwtClaims } from "@denext/denext/server";
+import { type RequestIdentity, resolveIdentity } from "./identity.ts";
 
 /** The role a storage request runs as — Supabase's names. */
 export type StorageRole = "anon" | "authenticated" | "service_role";
@@ -43,5 +44,29 @@ export const SERVICE_IDENTITY: StorageIdentity = Object.freeze({
  */
 export async function storageIdentity(request: Request): Promise<StorageIdentity> {
   const identity = await resolveIdentity(request);
-  return { ...identity, session: identity.session ?? null };
+  return { ...identity, session: identity.session ?? await jwtSession(identity) };
+}
+
+/** Whether `denextAuth()` is configured (it keeps the sessions a token can be revoked with). */
+function hasDenextAuth(): boolean {
+  try {
+    activeAuthConfig();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The session behind a supabase-js caller's access token, as `auth()` reads it — so a bucket's
+ * `authorize: ({ session }) => !!session` admits a signed-in supabase-js user exactly as it
+ * admits a cookie session. With `denextAuth()` configured the token goes through `auth()` (a
+ * revoked session, or one still owing its second factor, is `null`); without it the verified
+ * claims are the session.
+ */
+async function jwtSession(identity: RequestIdentity): Promise<AuthSession | null> {
+  if (identity.source !== "jwt" || identity.role !== "authenticated") return null;
+  if (!hasDenextAuth()) return sessionFromClaims(identity.claims as SupabaseJwtClaims);
+  const session = await auth().catch(() => null);
+  return session && session.user.id === identity.userId ? session : null;
 }
