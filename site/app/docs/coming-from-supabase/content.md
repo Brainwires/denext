@@ -87,7 +87,7 @@ export default {
 | Supabase Auth: email + password                      | `credentials()` with an adapter. [Password sign-in](/docs/auth#password-sign-in-without-an-authorize)                                                                                                                                                                                                                                                                 |
 | Supabase Auth: magic link, email OTP                 | `magicLink()`, `emailOtp()` — through your own mailer. [Passwordless](/docs/auth#passwordless-magic-links-and-one-time-codes)                                                                                                                                                                                                                                         |
 | Supabase Auth: OAuth providers                       | `github()`, `google()`, `apple()`, `discord()`, … and generic `oidc()`. [Providers](/docs/auth#providers)                                                                                                                                                                                                                                                             |
-| Supabase Auth: MFA (TOTP), passkeys                  | TOTP with backup codes, and WebAuthn passkeys. [Two-factor](/docs/auth#two-factor-authentication-totp)                                                                                                                                                                                                                                                                |
+| Supabase Auth: MFA (TOTP, phone, WebAuthn), passkeys | TOTP, phone and WebAuthn factors with backup codes (recovery codes) in one store both sign-in paths share, and WebAuthn passkeys. [Two-factor](/docs/auth#two-factor-authentication-totp)                                                                                                                                                                             |
 | Supabase Auth: phone OTP                             | `phoneOtp()` — through your own `sendSms` (or `hooks.sendSms`). [Phone sign-in](/docs/auth#phone-sign-in)                                                                                                                                                                                                                                                             |
 | Supabase Auth: anonymous sign-in                     | `anonymous: true` → `POST /auth/anonymous`; an email or phone proof converts the user in place. [Anonymous sign-in](/docs/auth#anonymous-sign-in)                                                                                                                                                                                                                     |
 | Supabase Auth: captcha (hCaptcha, Turnstile)         | `captcha` on `denextAuth()` — the same check on denext's endpoints and `/auth/v1`. [Captcha](/docs/auth#captcha)                                                                                                                                                                                                                                                      |
@@ -376,9 +376,19 @@ What moves:
 - **Users, with their ids.** `createUser` takes an `id`, so each Supabase user keeps their UUID
   and every `owner = auth.uid()` row stays theirs. Copy `email`, `email_confirmed_at` (as epoch
   seconds in `emailVerified`) and the name and avatar from `raw_user_meta_data`.
-- **OAuth links.** Each `auth.identities` row with an OAuth provider becomes `linkAccount({
-  userId, provider, providerAccountId: provider_id })`, so the next GitHub or Google sign-in finds
-  the same user. Use the same provider id denext uses (`github`, `google`, …).
+- **OAuth and Web3 links.** Each `auth.identities` row with an OAuth provider becomes
+  `linkAccount({ userId, provider, providerAccountId: provider_id })`, so the next GitHub or
+  Google sign-in finds the same user. Use the same provider id denext uses (`github`, `google`,
+  …). A `web3` identity carries over the same way (`provider: "web3"`, its
+  `web3:<chain>:<address>` id unchanged), so `signInWithWeb3` finds the same user.
+- **Phone and anonymous users.** Copy `phone` and `phone_confirmed_at` (as epoch seconds in
+  `phoneVerified`) for a phone user, and `is_anonymous` as `isAnonymous: true`: phone sign-in
+  (`phoneOtp()`, or `/auth/v1`'s `signInWithOtp({ phone })`) and an anonymous user's later
+  conversion work as before.
+- **Phone MFA factors.** A verified `phone` row of `auth.mfa_factors` holds only the number, so it
+  can be re-created with `createMfaFactor({ id, userId, type: "phone", status: "verified", phone,
+  … })` in the [one factor store](/docs/auth#one-factor-store-for-both-sign-in-paths) both sign-in
+  paths share.
 - **Passwords — through a hasher that also verifies bcrypt.** Supabase stores bcrypt hashes
   (`$2a$…`) in `encrypted_password`; denext's default hasher is scrypt and does not read them.
   Copy each hash with `setCredential` as it is, and configure a `Hasher` that verifies both:
@@ -410,11 +420,21 @@ hash and writes `await hashPassword(password)` with `setCredential` on success.
 What does not move:
 
 - **Sessions and refresh tokens.** Everyone signs in once more.
-- **TOTP factors and passkeys.** Users enroll again; passkeys are also bound to the site's domain.
-- **Phone / SMS sign-in, anonymous users and SAML SSO** — denext auth has no equivalent (see
-  below); move those users to email or OAuth sign-in first. (Under `backend({ supabase })`,
-  `/auth/v1` serves SAML SSO: register each identity provider again with
-  `POST /auth/v1/admin/sso/providers`, and users link their SSO identity on their next sign-in.)
+- **TOTP factors.** Supabase offers no export of the TOTP secrets, so these users enroll again
+  (through `/mfa/enroll` or `supabase.auth.mfa.enroll()` — one store, either path). Until they
+  do, they sign in without a second factor, so a policy that requires `aal2` should give them a
+  way to enroll first.
+- **WebAuthn factors and passkeys.** A credential is bound to the relying-party domain it was
+  made for, and Supabase's public keys are not portable to another relying party: users
+  register again.
+- **SAML SSO providers.** Under `backend({ supabase })` `/auth/v1` serves SAML SSO: register each
+  identity provider again with `POST /auth/v1/admin/sso/providers` (`supabase.auth.admin.sso`),
+  and users link their SSO identity on their next sign-in.
+- **OAuth 2.1 server clients.** Supabase keeps only a hash of each client secret, so register the
+  clients again (`supabase.auth.admin.oauth.createClient()`, or `POST
+  /auth/v1/admin/oauth/clients`) and hand them their new credentials; their users approve again.
+- **Denext's own (cookie) sign-in has no SAML.** SAML users sign in through `/auth/v1`
+  (`supabase.auth.signInWithSSO`); the session is the same user `auth()` reads.
 
 A one-off script, run against both databases (`npm:postgres` makes it work on any Deno):
 

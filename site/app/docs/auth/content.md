@@ -142,7 +142,7 @@ Every path is relative to `basePath` (default `/auth`).
 | `/mfa/challenge`      | POST        | `{ factorId }`: text a code to a verified phone factor for the pending sign-in; answers `{ challengeId, expiresAt }`.                                                         |
 | `/mfa/enroll`         | POST        | Start a TOTP enrollment: `{ secret, uri }`. A complete session must have signed in recently, else `403 reauth_required`.                                                      |
 | `/mfa/confirm`        | POST        | Confirm the enrollment; the backup codes come back once.                                                                                                                      |
-| `/mfa/disable`        | POST        | Remove the factor, given a fresh second factor.                                                                                                                               |
+| `/mfa/disable`        | POST        | Remove the user's TOTP factors (and the backup codes, unless another verified factor remains), given a fresh second factor.                                                   |
 | `/passkey/*`          | POST        | Passkeys: `register/options` + `register` from a recent session, `authenticate/options` + `authenticate` to sign in or step up. See [Passkeys](#passkeys-webauthn).           |
 | `/passkeys`           | GET         | The signed-in user's passkeys (no key material).                                                                                                                              |
 | `/passkeys/:id`       | DELETE      | Remove one of your passkeys. Needs a recent sign-in.                                                                                                                          |
@@ -949,6 +949,12 @@ refusal is `400 { error: "captcha_failed" }`, or for a form a `303` to `pages.er
 `"captcha_failed"`. On `/auth/v1` the same check reads supabase-js's `captchaToken` and answers
 GoTrue's `captcha_failed`.
 
+The provider is only asked within a per-client-IP budget, spent first: 30 tokens per address
+per minute by default (`rateLimit.captcha`, see [Rate limiting](#rate-limiting)). Past it the
+request is a `429` with no provider call — `{ error: "too many attempts" }` with
+`Retry-After` on denext's endpoints, GoTrue's `over_request_rate_limit` on `/auth/v1`. A
+missing or oversized token is refused without spending.
+
 The check runs **before** any adapter lookup and before the request spends a rate-limit budget,
 so refused requests can't drain a user's send or sign-in budget. A provider error, a non-2xx
 answer or no answer within 10 seconds counts as unsolved — the endpoints fail closed.
@@ -1142,12 +1148,13 @@ failures, so a correct guess can't reset the counter.
 
 **Disabling.** `POST {basePath}/mfa/disable` needs a complete session **and** a fresh
 second factor: a `code` that verifies now, or — with no code — a session whose own step-up
-(`amr` `totp` / `bcp`) is at most `mfa.freshness` seconds old, measured from `authTime`, so
-it holds with sliding expiry on too. A session issued before 2.5.0-rc.3 has no `authTime`
-and, while sliding is on, must send a code. Anything else is a `403`. Disabling deletes the factor
-(`deleteMfa`; with an adapter that lacks it, an empty unconfirmed record takes its place and
-reads as "not enrolled" everywhere). `disableTotp(authConfig, userId)` does the same with no
-freshness check — gate it yourself.
+(`amr` `totp` / `bcp`, or `mfa` from a passkey step-up) is at most `mfa.freshness` seconds
+old, measured from `authTime`, so it holds with sliding expiry on too. A session issued before
+2.5.0-rc.3 has no `authTime` and, while sliding is on, must send a code. Anything else is a
+`403`. Disabling deletes **every TOTP factor** the user holds (`deleteMfaFactor`); the backup
+codes go too (`deleteMfa`, else an empty record in their place) unless a verified phone or
+WebAuthn factor remains, which keeps the user enrolled. `disableTotp(authConfig, userId)` does
+the same with no freshness check — gate it yourself.
 
 For a settings page, `mfaStatus(authConfig, userId)` answers
 `{ enrolled, pendingConfirmation, backupCodesRemaining }` (`enrolled` means a confirmed factor,
@@ -1517,16 +1524,28 @@ with `?reset=1`, and a refused step-up code goes back to `mfa` with
 
 ## Rate limiting
 
-Brute-force protection is **on by default**, as five fixed-window limiters built from one
+Brute-force protection is **on by default**, as six fixed-window limiters built from one
 `rateLimit` config:
 
-| Limiter       | Counts                                                                                                       | Key                                                       | Default        |
-| ------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- | -------------- |
-| Credentials   | _Failed_ `POST {basePath}/callback/:provider`                                                                | Client IP + submitted identifier, lower-cased             | 5 per 15 min   |
-| Sign-in start | _Every_ `GET {basePath}/signin/:provider`                                                                    | Client IP                                                 | 100 per 15 min |
-| Session read  | _Every_ `GET {basePath}/session`                                                                             | Client IP                                                 | 300 per minute |
-| Email sends   | _Every_ mail request — `/reset`, an email-provider send, `requestEmailVerification` / `requestPasswordReset` | Submitted address, plus client IP at 10×                  | 3 per 15 min   |
-| Second factor | _Every_ code check on `/mfa`, `/mfa/confirm`, `/mfa/disable`; _failed_ email-code and magic-link redeems     | User id (email codes: the address), plus client IP at 10× | 5 per 5 min    |
+| Limiter           | Counts                                                                                                                                                                      | Key                                                                        | Default        |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------- |
+| Credentials       | _Failed_ `POST {basePath}/callback/:provider`                                                                                                                               | Client IP + submitted identifier, lower-cased                              | 5 per 15 min   |
+| Sign-in start     | _Every_ `GET {basePath}/signin/:provider`                                                                                                                                   | Client IP                                                                  | 100 per 15 min |
+| Session read      | _Every_ `GET {basePath}/session`                                                                                                                                            | Client IP                                                                  | 300 per minute |
+| Email / SMS sends | _Every_ mail or text request — `/reset`, an email- or phone-provider send, `/mfa/challenge`, `requestEmailVerification` / `requestPasswordReset`, and every `/auth/v1` send | Submitted address or number (a challenge: the user), plus client IP at 10× | 3 per 15 min   |
+| Second factor     | _Every_ code check on `/mfa`, `/mfa/confirm`, `/mfa/disable`; _failed_ email-code and magic-link redeems                                                                    | User id (email codes: the address), plus client IP at 10×                  | 5 per 5 min    |
+| Captcha           | _Every_ captcha token about to be sent to the provider (denext's endpoints and `/auth/v1`)                                                                                  | Client IP                                                                  | 30 per minute  |
+
+**No request stream can drive unlimited calls to a third party.** Every outbound provider
+call an unauthenticated request (or an ordinary signed-in user) can cause is behind a cheap
+budget spent in the limiter store **before** the call, with no I/O to the provider: the
+captcha verifier behind the per-IP captcha budget, and every email or SMS send — on denext's
+own endpoints (`/reset`, the email and phone providers' sends, `/mfa/challenge`) and on
+`/auth/v1` (`/signup`, `/otp`, `/magiclink`, `/resend`, `/recover`, `/reauthenticate`, an
+email or phone change on `PUT /user`, a phone factor's challenge) — behind BOTH the
+per-identifier send budget (the address, number or user) and its client-IP bucket. A missing
+or oversized captcha token is refused without spending (it is never sent). Only the
+service-role admin calls (`/invite`, `/admin/generate_link`) send without a budget.
 
 Past the limit the endpoint answers a generic `429` with `Retry-After` — like the generic
 `401`, it never reveals whether the account exists — and a successful credentials sign-in
@@ -1565,8 +1584,8 @@ Two behaviours worth knowing:
   request arrives from a loopback, private, link-local or unique-local peer and no trusted
   `x-forwarded-for` hop names the client (the limit-address rule `rateLimit()` and
   `clientIpForLimits()` follow; with or without the header, and in local development too),
-  every visitor looks like the proxy — so the sign-in-start
-  and session-read budgets are skipped for it and every IP-wide bucket is dropped, with one
+  every visitor looks like the proxy — so the sign-in-start,
+  session-read and captcha budgets are skipped for it and every IP-wide bucket is dropped, with one
   console warning naming the fix, instead of turning the 21st sign-in site-wide into a
   fifteen-minute outage. The per-subject keys keep working: the credentials limiter's (it
   carries the submitted identifier), the send budget's address and the second-factor
@@ -1595,15 +1614,17 @@ denextAuth({
     session: { max: 120, windowMs: 60_000 }, // the session-read limiter
     verification: { max: 3, windowMs: 15 * 60_000 }, // email sends per address
     mfa: { max: 5, windowMs: 5 * 60_000 }, // second-factor attempts per user
+    captcha: { max: 30, windowMs: 60_000 }, // captcha verifier calls per client IP (or false)
     store: myRedisRateLimitStore, // RateLimitStore — share counts across replicas
   },
-  // or: rateLimit: false (disables ALL FIVE — you rate-limit at the edge)
+  // or: rateLimit: false (disables ALL SIX — you rate-limit at the edge)
 });
 ```
 
 `max` / `windowMs` / `keyGenerator` belong to the credentials limiter and never apply to
-the other four, which are tuned under `signin`, `session`, `verification` and `mfa`.
-`store` is shared by all five (their keys are namespaced apart). The default store is a bounded per-process map —
+the other five, which are tuned under `signin`, `session`, `verification`, `mfa` and
+`captcha` (`captcha: false` turns just that one off).
+`store` is shared by all six (their keys are namespaced apart). The default store is a bounded per-process map —
 fine for a single instance, but each replica counts on its own, so pass a shared `store`
 behind several — `postgresRateLimitStore({ sql })` is one (see [Postgres](#postgres)).
 
@@ -1945,8 +1966,8 @@ and the GET an emailed link opens — implicit fragment or PKCE `?code=`), `rese
 `user` (GET and PUT: metadata, password, email and phone changes), `reauthenticate`, `logout`
 (`scope=local | others | global`), `authorize` (OAuth through the providers you configured; their
 callback stays `{basePath}/callback/:provider`), `user/identities/authorize` and identity
-unlinking, `factors` (TOTP and phone: enroll, challenge, verify, unenroll; `aal2` after a verified
-factor), `settings`, `sso` (SAML 2.0, below), `token?grant_type=web3` (Web3 sign-in, below), the
+unlinking, `factors` (TOTP, phone and WebAuthn: enroll, challenge, verify, unenroll; recovery
+codes; `aal2` after a verified factor), `settings`, `sso` (SAML 2.0, below), `token?grant_type=web3` (Web3 sign-in, below), the
 OAuth 2.1 server (`oauth/*`, `user/oauth/grants`, below), and the admin API — `admin/users`
 (paginated list, create, read, update incl. `ban_duration`, delete), `invite`,
 `admin/generate_link`, `admin/users/:id/factors`, `admin/oauth/clients` and

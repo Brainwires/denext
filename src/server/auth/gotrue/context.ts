@@ -18,6 +18,7 @@ import {
   proxiedWithoutTrust,
   type RateLimiter,
   settleAttempt,
+  spendCaptchaBudget,
   subjectBucketKeys,
 } from "../rate-limit.ts";
 import type { AuthConfig } from "../types.ts";
@@ -264,11 +265,13 @@ export function redirectTarget(ctx: GoTrueContext, requested: string | null | un
 }
 
 /**
- * Verify the `captcha_token` (`gotrue_meta_security.captcha_token`) when captcha is on.
+ * Verify the `captcha_token` (`gotrue_meta_security.captcha_token`) when captcha is on. A
+ * present token first spends the per-IP captcha budget (`rateLimit.captcha`), so the provider
+ * is never called past it; a missing or oversized one is refused without spending.
  *
  * @param ctx The context.
  * @param body The request body.
- * @throws {GoTrueError} `captcha_failed`.
+ * @throws {GoTrueError} `captcha_failed`, or 429 `over_request_rate_limit` past the budget.
  */
 export async function checkCaptcha(
   ctx: GoTrueContext,
@@ -284,6 +287,7 @@ export async function checkCaptcha(
       "captcha protection: request disallowed (no captcha response)",
     );
   }
+  if (await spendCaptchaBudget(ctx.request, ctx.config) !== null) throw fail.rateLimited();
   if (!(await captchaVerified(ctx, captcha, token))) {
     throw new GoTrueError(
       400,

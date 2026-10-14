@@ -374,8 +374,8 @@ attack surface, so each ships with its own invariant:
   credentials limiter (5 per client + identifier per 15 minutes) is unchanged;
   2.5 adds a send budget (3 per address per 15 minutes) and a second-factor
   budget (5 per user per 5 minutes), each with an IP-wide bucket at ten times
-  that, and `rateLimit: false` disables all five. They count per process unless
-  a shared `rateLimit.store` is supplied.
+  that, and `rateLimit: false` disables all six (with the captcha budget below).
+  They count per process unless a shared `rateLimit.store` is supplied.
 
   Three properties make the limiter dependable rather than decorative. An IPv6
   client is normalised and bucketed by **/64**, so rotating through a client's
@@ -392,6 +392,15 @@ attack surface, so each ships with its own invariant:
   for the same reason. The app's `rateLimitHeader` and `rateLimitLocalAddresses`
   opt back in deliberately; a request missing the named header falls back to the
   socket peer rather than going unlimited.
+- **No request stream drives unlimited calls to a third party.** Every outbound
+  provider call an unauthenticated request can cause spends a budget in the
+  limiter store first, with no I/O to the provider: a captcha token goes to the
+  verifier only within 30 per client IP per minute (`rateLimit.captcha`; past
+  it a `429`, and a missing or oversized token is refused unsent), and every
+  email or SMS send — denext's own endpoints and every `/auth/v1` send — needs
+  both its per-identifier budget (address, number or user) and the client-IP
+  bucket. `tests/auth-outbound-limits.test.ts`,
+  `tests/gotrue-outbound-limits.test.ts`, `tests/auth-captcha.test.ts`.
 - **A revoked session cannot be resurrected by a refresh in flight.** Sliding
   expiry rewrites a store-backed session through `SessionStore.update` —
   write-only-if-present — rather than `create`, which is an upsert: a session

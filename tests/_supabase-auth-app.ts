@@ -135,7 +135,10 @@ export async function supabaseAuthApp(options: {
     matchExternal: getPluginRequestHandler(),
   });
   const appFetch: typeof fetch = async (input, init) => {
-    const request = new Request(input instanceof Request ? input : String(input), init);
+    // A Request with no init passes through as is, so a test's `setRemoteAddr` peer survives.
+    const request = input instanceof Request && init === undefined
+      ? input
+      : new Request(input instanceof Request ? input : String(input), init);
     const response = await handler(request);
     return response;
   };

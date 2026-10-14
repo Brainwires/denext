@@ -5,12 +5,18 @@
  * code / link send, anonymous sign-in, a password-reset request) refuse a request whose solved
  * challenge the provider does not confirm — before any adapter work or rate-limit spend.
  *
+ * The provider call itself is the one outbound call an unauthenticated request can trigger
+ * here, so it sits behind its own cheap per-IP budget (`rateLimit.captcha`, 30 per minute by
+ * default): a token is counted against the client's address BEFORE the provider is asked, and
+ * past the budget the request is a `429` with no provider call. A missing or oversized token
+ * is refused without spending (it is never sent).
+ *
  * @module
  */
 
 import type { GoTrueCaptchaOptions } from "./gotrue/options.ts";
 import { emitAuthEvent } from "./events.ts";
-import { authTrustsProxy, clientIpBucket } from "./rate-limit.ts";
+import { authTrustsProxy, clientIpBucket, spendCaptchaBudget } from "./rate-limit.ts";
 import {
   type AuthRouteContext,
   json,
@@ -131,7 +137,9 @@ function refusalLocation(config: AuthConfig): string {
  * @param signInProvider The provider id when the endpoint starts a sign-in — a refusal then
  *   fires `signInFailed` with `reason: "captcha_failed"`.
  * @returns `null` to proceed, or the refusal: JSON `400 { error: "captcha_failed" }`, or for a
- *   form a `303` to the error page with `?error=CaptchaFailed`.
+ *   form a `303` to the error page with `?error=CaptchaFailed`; past the per-IP captcha budget
+ *   (`rateLimit.captcha`, spent before the provider is called) a `429
+ *   { error: "too many attempts" }` with `Retry-After`.
  */
 export async function captchaRefusal(
   ctx: AuthRouteContext,
@@ -141,8 +149,14 @@ export async function captchaRefusal(
   const captcha = ctx.config.captcha;
   if (!captcha) return null;
   const token = nativeToken(fields, ctx.request);
-  const remoteIp = captchaRemoteIp(ctx.request, ctx.config);
-  if (token && await verifyCaptcha(captcha, token, remoteIp, ctx.options.logger)) return null;
+  if (token) {
+    const retryAfter = await spendCaptchaBudget(ctx.request, ctx.config);
+    if (retryAfter !== null) {
+      return json({ error: "too many attempts" }, 429, { "retry-after": String(retryAfter) });
+    }
+    const remoteIp = captchaRemoteIp(ctx.request, ctx.config);
+    if (await verifyCaptcha(captcha, token, remoteIp, ctx.options.logger)) return null;
+  }
   if (signInProvider !== undefined) {
     await emitAuthEvent(ctx.options, "signInFailed", {
       provider: signInProvider,

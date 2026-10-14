@@ -1,7 +1,8 @@
 // Captcha (`captcha`) on denext's own endpoints: the credentials sign-in, the email and phone
 // SENDS, `POST /anonymous` and `POST /reset` refuse a request without a token the provider
-// confirms — before any budget or adapter work — while the redeems need none; and the shared
-// `verifyCaptcha` treats every provider failure as "no".
+// confirms — before any send budget or adapter work — while the redeems need none; the shared
+// `verifyCaptcha` treats every provider failure as "no"; and the provider is only called
+// within the per-address captcha budget (`rateLimit.captcha`), spent before the call.
 
 import { assert, assertEquals } from "@std/assert";
 import { verifyCaptcha } from "../src/server/auth/captcha.ts";
@@ -162,4 +163,77 @@ Deno.test("without captcha configured nothing changes", async () => {
   const h: NativeHarness = nativeHarness({ providers: [emailOtp()], anonymous: true });
   assertEquals((await post(h, "/auth/anonymous", {})).res.status, 200);
   assertEquals((await post(h, "/auth/callback/email-otp", { email: "a@x.test" })).res.status, 200);
+});
+
+// ---- the captcha budget: a cheap pre-limit before every provider call ---------------------
+
+/** POST `/auth/anonymous` `n` times with `body` from `peer`; the statuses. */
+async function burst(
+  h: NativeHarness,
+  n: number,
+  body: Record<string, string>,
+  peer = "203.0.113.9",
+): Promise<Response[]> {
+  const answers: Response[] = [];
+  for (let i = 0; i < n; i++) answers.push((await post(h, "/auth/anonymous", body, { peer })).res);
+  return answers;
+}
+
+Deno.test("captcha budget: a burst of solved tokens from one address reaches the provider 30 times", async () => {
+  const { h, provider } = await setup();
+  const answers = await burst(h, 40, { captchaToken: "good" });
+  assertEquals(provider.calls.length, 30, "the provider is called at most budget-many times");
+  assertEquals(answers.slice(0, 30).map((r) => r.status), Array(30).fill(200));
+  const refused = answers.slice(30);
+  assertEquals(refused.map((r) => r.status), Array(10).fill(429));
+  assertEquals(await refused[0].json(), { error: "too many attempts" });
+  assert(Number(refused[0].headers.get("retry-after")) > 0, "a 429 says when to retry");
+  // Another address has its own budget.
+  assertEquals((await burst(h, 1, { captchaToken: "good" }, "198.51.100.7"))[0].status, 200);
+  assertEquals(provider.calls.length, 31);
+});
+
+Deno.test("captcha budget: unsolved tokens spend it too, so a stream of junk can't drive the provider", async () => {
+  const { h, provider } = await setup();
+  const answers = await burst(h, 45, { captchaToken: "bad" });
+  assertEquals(provider.calls.length, 30);
+  assertEquals(answers.filter((r) => r.status === 400).length, 30);
+  assertEquals(answers.filter((r) => r.status === 429).length, 15);
+  assertEquals((await burst(h, 1, { captchaToken: "good" }))[0].status, 429, "still spent");
+});
+
+Deno.test("captcha budget: a missing or oversized token is refused without spending", async () => {
+  const { h, provider } = await setup();
+  await burst(h, 40, {});
+  await burst(h, 40, { captchaToken: "x".repeat(5000) });
+  assertEquals(provider.calls.length, 0);
+  assertEquals((await burst(h, 1, { captchaToken: "good" }))[0].status, 200);
+});
+
+Deno.test("captcha budget: rateLimit.captcha tunes it, and false (or rateLimit: false) turns it off", async () => {
+  const tuned = await setup({ rateLimit: { captcha: { max: 2, windowMs: 60_000 } } });
+  const statuses = (await burst(tuned.h, 3, { captchaToken: "good" })).map((r) => r.status);
+  assertEquals([statuses, tuned.provider.calls.length], [[200, 200, 429], 2]);
+  for (const rateLimit of [{ captcha: false as const }, false as const]) {
+    const off = await setup({ rateLimit });
+    await burst(off.h, 35, { captchaToken: "bad" });
+    assertEquals(off.provider.calls.length, 35, JSON.stringify(rateLimit));
+  }
+});
+
+Deno.test("captcha budget: per-identifier send budgets still apply past the captcha", async () => {
+  const { h, provider } = await setup();
+  const statuses: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    const body = { email: "member@x.test", captchaToken: "good" };
+    statuses.push((await post(h, "/auth/callback/email-otp", body)).res.status);
+  }
+  assertEquals(statuses, [200, 200, 200, 429, 429]);
+  assertEquals([h.mail.length, provider.calls.length], [3, 5]);
+});
+
+Deno.test("captcha budget: an undeclared proxy peer is skipped, like every per-IP budget", async () => {
+  const { h, provider } = await setup();
+  await burst(h, 35, { captchaToken: "bad" }, "10.0.0.2");
+  assertEquals(provider.calls.length, 35);
 });

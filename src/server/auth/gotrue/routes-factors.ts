@@ -222,11 +222,13 @@ export async function challenge(ctx: GoTrueContext): Promise<Response> {
     });
   }
   if (factor.type === "phone") {
+    // Keyed on the user, not the factor: unenrolling and re-enrolling mints a new factor id,
+    // which must not mint a fresh SMS budget with it.
     await spend(
       ctx,
       verificationLimiter(ctx.config),
       "verify",
-      `mfa-sms:${factor.id}`,
+      `mfa-sms:${user.id}`,
       "over_sms_send_rate_limit",
     );
   }

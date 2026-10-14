@@ -86,10 +86,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   never slides.
 - **`mfa.required: "always"` is trust-on-first-use;** rotating `secret` invalidates in-flight
   one-time codes, and a retired `secret` must stay in the list until the TOTP factors sealed
-  under it are re-sealed — only when a TOTP or backup-code check passes, so never for a user who
-  signs in only by passkey with user verification, and never with an adapter lacking
-  `replaceMfaSecret` (there it stays for good); rate limiters count per node without a shared
-  `rateLimit.store`.
+  under it are re-sealed — which happens (through `updateMfaFactor`) only after a TOTP code from
+  that factor passes, so never for a user who steps up only with a backup code, a phone code or a
+  passkey with user verification; rate limiters count per node without a shared
+  `rateLimit.store`, and every per-IP budget (the captcha budget included) is skipped for a
+  loopback/private peer with no trusted proxy hop unless `rateLimitLocalAddresses` is set.
 - **One passkey ceremony per browser at a time** (the ceremony cookie is per browser), and the
   passkey endpoints are same-origin only: an extra `passkeys.origins` entry (another web origin,
   an Android `apk-key-hash`) needs that origin to serve the auth routes itself.
@@ -107,26 +108,30 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Backend (`@denext/backend`)
 
-- **Not hosted, and not supabase-js compatible.** There is no `createClient(url, anonKey)` drop-in;
-  client calls are rewritten. Backups, pooling and upgrades are the Postgres provider's job, and
+- **Not hosted.** The stock supabase-js client works against the app (`/auth/v1`, `/rest/v1`,
+  `/storage/v1`, `/realtime/v1`, `/functions/v1`, each once its option is on), but there is no
+  Supabase project behind it: backups, pooling and upgrades are the Postgres provider's job, and
   `denext ui`'s Database section is a local, loopback tool (no shared console, logs or metrics).
+  Moving from a Supabase project, TOTP secrets, WebAuthn credentials and OAuth-server client
+  secrets don't carry over (users enroll again, clients are re-registered).
 - **The built-in Postgres client is `Deno.SQL`, part of denext's Deno runtime.** On stock Deno pass
   `postgres: { sql: fromPostgresJs(postgres(url)) }` (the npm `postgres` package); without a client
   `db()` and realtime throw `code: "unsupported"`.
-- **Auto-REST is a subset of PostgREST:** no embedded resources (joins), aliases, casts or JSON
-  paths in `select`; no `or` / `and` groups; no upserts (`on_conflict`); no `/rpc/<function>`
-  (call it with `db()` in a route handler); no CSV bodies. The routes are not in the
-  `@denext/openapi` document, and the plugin does not rate-limit them (guard them in
+- **Auto-REST speaks PostgREST 12's wire format but is not PostgREST:** a request takes at most 64
+  filters, 256 select items and 8 levels of embedding, and runs under a 5-second
+  `statement_timeout`. The routes are not in the `@denext/openapi` document (`GET /rest/v1` serves
+  PostgREST's own Swagger 2.0 one), and the plugin does not rate-limit them (guard them in
   `middleware.ts`).
-- **Realtime is LISTEN/NOTIFY, not logical replication.** The trigger sends only the key, so every
-  change costs a re-read per identity and filter; `TRUNCATE` sends nothing; very high write
-  volumes serialize on commit; and a change sent while the listener reconnects is lost (every
-  subscriber is told to re-read). A delete, or an update out of view, reaches only a subscription
+- **Realtime re-reads every change as each subscriber.** With the default LISTEN/NOTIFY source the
+  trigger sends only the key, so every change costs a re-read per identity and filter; `TRUNCATE`
+  sends nothing; many concurrent writers serialize on commit (the logical-replication source
+  avoids that, but needs `wal_level = logical` and a `REPLICATION` role); and a change sent while
+  the listener reconnects is lost (every subscriber is told to re-read). A delete, or an update out of view, reaches only a subscription
   that tracked the key — at most `maxTrackedKeys` (default 10 000) per subscription. Subscriptions
   are capped per identity and per instance; behind a reverse proxy without
   `trustForwardedHeaders`, signed-out visitors are counted per Live connection, not per address.
-- **Storage rules are TypeScript, not SQL** (a bucket's `authorize`, no `storage` schema to join
-  against), and uploads are presigned (multipart on S3), not TUS resumable uploads. An S3 upload
+- **Storage's SQL policies need `storage: { rls: true }`** (otherwise a bucket's `authorize` in
+  TypeScript decides, with no `storage` schema to join against). An S3 upload
   whose client skips the completion call was checked by nobody: record the keys completion
   returned, and give the bucket lifecycle rules for unrecorded objects and incomplete multipart
   uploads. Image transforms take PNG, JPEG, GIF and WebP sources up to 25 MiB, at the configured

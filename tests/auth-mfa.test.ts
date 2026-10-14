@@ -558,6 +558,31 @@ Deno.test("a verified phone factor: sign-in is pending, /mfa/challenge texts a c
   );
 });
 
+Deno.test("/mfa/challenge: a burst texts at most the per-user send budget (3), spent before the gateway", async () => {
+  const sms: Array<{ phone: string; otp: string }> = [];
+  const h = await setup({ sendSms: (message) => void sms.push(message) });
+  const now = Math.floor(Date.now() / 1000);
+  const factorId = crypto.randomUUID();
+  await h.adapter.createMfaFactor!({
+    id: factorId,
+    userId: h.userId,
+    type: "phone",
+    status: "verified",
+    phone: "+15555550124",
+    createdAt: now,
+    updatedAt: now,
+  });
+  const cookie = await pendingSignIn(h);
+  const statuses: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    statuses.push(
+      (await post(h.config, "/mfa/challenge", { cookie, body: { factorId } })).res!.status,
+    );
+  }
+  assertEquals(statuses, [200, 200, 200, 429, 429, 429]);
+  assertEquals(sms.length, 3);
+});
+
 Deno.test('mfa.required "always": a pending session can\'t enroll (or confirm) a TOTP factor next to a verified phone factor', async () => {
   const h = await setup({ mfa: { window: 2, backupCodes: 2, required: "always" } });
   const now = Math.floor(Date.now() / 1000);

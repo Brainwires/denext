@@ -705,7 +705,7 @@ export async function resend(ctx: GoTrueContext): Promise<Response> {
     verificationLimiter(ctx.config),
     "verify",
     address,
-    "over_email_send_rate_limit",
+    email ? "over_email_send_rate_limit" : "over_sms_send_rate_limit",
   );
   const redirectTo = redirectTarget(
     ctx,

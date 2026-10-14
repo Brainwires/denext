@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Added
 
+- **A captcha budget in front of the verifier (`rateLimit.captcha`).** Every captcha token
+  denext is about to send to hCaptcha / Turnstile — on denext's own endpoints and `/auth/v1` —
+  first spends a per-client-IP budget, 30 per minute by default (`{ max, windowMs }`, or `false`
+  to turn it off; `rateLimit: false` turns it off with the rest). Past it the request is a `429`
+  with no provider call: `{ error: "too many attempts" }` with `Retry-After` on denext's
+  endpoints, GoTrue's `over_request_rate_limit` on `/auth/v1`. A missing or oversized token is
+  refused without spending. With the send budgets, no unauthenticated request stream can drive
+  unlimited calls to a captcha verifier, mailer or SMS gateway.
+
 - **`denextAuth({ sendSms, captcha, hooks, anonymous })`.** SMS delivery, captcha (hCaptcha /
   Turnstile), Supabase's auth hooks (`customAccessToken`, `sendEmail`, `sendSms`) and anonymous
   sign-in are now configured once on `denextAuth()`; `/auth/v1` uses them unless
@@ -392,6 +401,11 @@ and this project adheres to
   it.
 
 ### Fixed
+
+- **`/auth/v1` phone-factor challenges spend the user's SMS budget, not the factor's**:
+  unenrolling and re-enrolling a phone factor no longer starts a fresh send budget.
+- **`/auth/v1` `/resend` for an SMS confirmation answers `over_sms_send_rate_limit`** past its
+  budget (it answered `over_email_send_rate_limit`).
 
 - **`inMemoryAuthAdapter()` keeps one live verification token per address and purpose**, as the
   SQL adapters do: issuing a new one retires the older, and a token is consumed only when its
