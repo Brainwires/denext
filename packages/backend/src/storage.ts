@@ -36,15 +36,15 @@ import {
   moveObject,
   putObject,
   readableRow,
-  recordObject,
   removeObjects,
   serverCaller,
   SERVICE_CALLER,
   setLifecycle,
   updateBucket,
 } from "./storage-ops.ts";
-import { type BucketRow, type ObjectMetadata, type ObjectRow, SERVICE } from "./storage-meta.ts";
-import { isVersioned, keepsCurrent, locationOf, prepareOverwrite } from "./storage-versions.ts";
+import { type BucketRow, type ObjectRow, SERVICE } from "./storage-meta.ts";
+import { trackSignedUpload } from "./storage-tus.ts";
+import { commitStaged, type Location, locationOf, stagingLocation } from "./storage-versions.ts";
 import type {
   BucketAccessOptions,
   BucketInfo,
@@ -100,13 +100,16 @@ export function uploadPayload(
   exp: number,
   contentType: string,
   max: number,
-  size?: number,
+  size: number | undefined,
+  version: string,
 ): string {
-  return ["PUT", bucket, key, String(exp), contentType, String(max), String(size ?? "")].join("\n");
+  return ["PUT", bucket, key, String(exp), contentType, String(max), String(size ?? ""), version]
+    .join("\n");
 }
 
 /**
- * A signed upload URL for `key` (after `authorize`).
+ * A signed upload URL for `key` (after `authorize`). The client's bytes go to the upload's
+ * staging place, never the key: only the completion moves them there, with the object's row.
  *
  * @param rt The runtime.
  * @param bucket The bucket.
@@ -129,13 +132,24 @@ async function signedUpload(
   const expiresIn = clampExpiry(options.expiresIn, UPLOAD_EXPIRY);
   const exp = nowSeconds() + expiresIn;
   const secrets = secretsOf(rt);
+  const version = crypto.randomUUID();
+  const staged = stagingLocation(bucket.name, version);
+  await trackSignedUpload(rt, {
+    bucket: bucket.name,
+    key: k,
+    version,
+    uploadId: null,
+    contentType,
+    ...(options.size !== undefined ? { size: options.size } : {}),
+    expiresAt: (exp + COMPLETE_GRACE) * 1000,
+  });
   const url = rt.driver.direct
-    ? await rt.driver.direct.presignPut(bucket.name, k, {
+    ? await rt.driver.direct.presignPut(staged.bucket, staged.key, {
       expiresIn,
       contentType,
       size: options.size,
     })
-    : await localUploadUrl(rt, bucket.name, k, exp, contentType, max, options.size);
+    : await localUploadUrl(rt, bucket.name, k, exp, contentType, max, options.size, version);
   const grant: UploadGrant = {
     b: bucket.name,
     k,
@@ -144,6 +158,7 @@ async function signedUpload(
     exp: exp + COMPLETE_GRACE,
     n: options.size,
     o: owner,
+    v: version,
     ...pin,
   };
   return {
@@ -172,8 +187,6 @@ async function checkUpload(
   await authorizeOp(rt, bucket, "upload", key, caller);
   const owner = caller.service || !caller.request ? null : (await caller.identity()).userId ?? null;
   const pin = await checkSignedWrite(rt, bucket, key, owner, true, await actorFor(rt, caller));
-  // A versioned bucket keeps the current version's bytes before the client's PUT replaces them.
-  await prepareOverwrite(rt, bucket, key);
   return { owner, pin };
 }
 
@@ -184,18 +197,21 @@ async function localUploadUrl(
   exp: number,
   contentType: string,
   max: number,
-  size?: number,
+  size: number | undefined,
+  version: string,
 ): Promise<string> {
   const params = new URLSearchParams({ exp: String(exp), ct: contentType, max: String(max) });
   if (size !== undefined) params.set("n", String(size));
-  const payload = uploadPayload(bucket, key, exp, contentType, max, size);
+  params.set("v", version);
+  const payload = uploadPayload(bucket, key, exp, contentType, max, size, version);
   params.set("sig", await signPayload(payload, secretsOf(rt)));
   return `${objectPath(rt.basePath, bucket, key)}?${params}`;
 }
 
 /**
  * Plan a client upload of `size` bytes: one signed PUT, or — on a driver with direct access
- * and above the multipart threshold — a multipart upload with one presigned URL per part.
+ * and above the multipart threshold — a multipart upload with one presigned URL per part. Either
+ * way the bytes go to the upload's staging place until the completion.
  *
  * @param bucketName The bucket.
  * @param key The key.
@@ -224,14 +240,25 @@ export async function planUpload(
   const partSize = Math.max(rt.partSize, MIN_PART_SIZE, Math.ceil(size / MAX_PARTS));
   const count = Math.max(1, Math.ceil(size / partSize));
   const expiresIn = clampExpiry(undefined, UPLOAD_EXPIRY * 4);
-  const uploadId = await direct.createMultipart(bucket.name, k, type);
+  const exp = nowSeconds() + expiresIn;
+  const version = crypto.randomUUID();
+  const staged = stagingLocation(bucket.name, version);
+  const uploadId = await direct.createMultipart(staged.bucket, staged.key, type);
+  await trackSignedUpload(rt, {
+    bucket: bucket.name,
+    key: k,
+    version,
+    uploadId,
+    contentType: type,
+    size,
+    expiresAt: (exp + COMPLETE_GRACE) * 1000,
+  });
   const parts = await Promise.all(
     Array.from({ length: count }, async (_, i) => ({
       partNumber: i + 1,
-      url: await direct.presignPart(bucket.name, k, uploadId, i + 1, expiresIn),
+      url: await direct.presignPart(staged.bucket, staged.key, uploadId, i + 1, expiresIn),
     })),
   );
-  const exp = nowSeconds() + expiresIn;
   const grant: UploadGrant = {
     b: bucket.name,
     k,
@@ -240,6 +267,7 @@ export async function planUpload(
     max,
     u: uploadId,
     o: owner,
+    v: version,
     ...pin,
     exp: exp + COMPLETE_GRACE,
   };
@@ -255,9 +283,12 @@ export interface CompletedPart {
 }
 
 /**
- * Finish a client upload: assemble a multipart upload, then verify what was stored — its size
- * against the grant, and (for a store the bytes did not pass through) its first bytes against
- * the declared type. A failed check deletes the object.
+ * Finish a client upload: assemble a multipart upload, verify what was stored in the staging
+ * place — its size against the grant, and (for a store the bytes did not pass through) its first
+ * bytes against the declared type — then write the object's row and move the bytes to the key
+ * together ({@linkcode commitStaged}). A pinned grant (a policy-checked signer) writes the row
+ * only while the object is still at the version it was checked against (`conflict` otherwise),
+ * and nothing at the key changes. A failed check deletes the staged bytes.
  *
  * @param token The upload token.
  * @param parts The parts (multipart only).
@@ -267,60 +298,41 @@ export async function completeUpload(token: unknown, parts?: CompletedPart[]): P
   const rt = runtime();
   const grant = await openGrant(token, secretsOf(rt));
   const bucket = await resolveBucket(rt, grant.b);
+  const staged = stagingLocation(grant.b, grant.v);
   if (grant.u) {
     if (!parts?.length) throw new StorageError("bad_request", "parts are required");
-    await rt.driver.direct!.completeMultipart(grant.b, grant.k, grant.u, checkParts(parts));
+    await rt.driver.direct!.completeMultipart(
+      staged.bucket,
+      staged.key,
+      grant.u,
+      checkParts(parts),
+    );
   }
-  const info = await rt.driver.head(grant.b, grant.k);
-  if (!info) throw new StorageError("not_found", "the upload was not received");
+  const stored = await rt.driver.head(staged.bucket, staged.key);
+  if (!stored) throw new StorageError("not_found", "the upload was not received");
   try {
-    verifyStored(info, grant);
-    if (rt.driver.direct) await verifyContent(rt, bucket, grant);
+    verifyStored(stored, grant);
+    if (rt.driver.direct) await verifyContent(rt, bucket, grant, staged);
   } catch (err) {
-    await rt.driver.remove(grant.b, grant.k);
+    await rt.driver.remove(staged.bucket, staged.key);
     throw err;
   }
-  const row = { upsert: true, owner: grant.o ?? null };
-  const meta = metadataOf(info, DEFAULT_CACHE);
-  if (grant.cv !== undefined) {
-    // Authorized against the object as it was when signed: the row is recorded only while it
-    // still is (an object someone else created or replaced since is `conflict`).
-    await recordPinned(rt, bucket, grant, row.owner, meta);
-    return info;
-  }
-  await recordObject(rt, grant.b, grant.k, crypto.randomUUID(), row, meta);
-  return info;
-}
-
-/** Record a pinned client upload's row: only while the object is at the grant's version. */
-async function recordPinned(
-  rt: StorageRuntime,
-  bucket: ResolvedBucket,
-  grant: UploadGrant,
-  owner: string | null,
-  metadata: ObjectMetadata,
-): Promise<void> {
-  const versioned = isVersioned(bucket);
-  await rt.meta.commitObject(
+  const info: ObjectInfo = { ...stored, key: grant.k };
+  await commitStaged(
+    rt,
+    bucket,
+    grant.k,
+    grant.v,
     {
-      row: {
-        bucket_id: grant.b,
-        name: grant.k,
-        owner_id: owner,
-        version: crypto.randomUUID(),
-        metadata,
-        user_metadata: null,
-        ...(versioned ? { is_versioned: bucket.versioning === "ENABLED" } : {}),
-      },
       upsert: true,
-      reserved: false,
-      keep: versioned ? (current) => keepsCurrent(bucket, current) : null,
-      expect: grant.cv ?? null,
+      owner: grant.o ?? null,
+      ...(grant.cv !== undefined ? { expect: grant.cv } : {}),
     },
+    metadataOf(info, DEFAULT_CACHE),
     SERVICE,
-    // The client's PUT already put the bytes at the key (and signing kept the old version's).
-    () => Promise.resolve(),
+    staged,
   );
+  return info;
 }
 
 function checkParts(parts: CompletedPart[]): CompletedPart[] {
@@ -344,21 +356,28 @@ function verifyStored(info: ObjectInfo, grant: UploadGrant): void {
   }
 }
 
-async function verifyContent(rt: StorageRuntime, bucket: ResolvedBucket, grant: UploadGrant) {
-  const object = await rt.driver.get(grant.b, grant.k, { start: 0, end: SNIFF_BYTES - 1 });
+async function verifyContent(
+  rt: StorageRuntime,
+  bucket: ResolvedBucket,
+  grant: UploadGrant,
+  at: Location,
+) {
+  const object = await rt.driver.get(at.bucket, at.key, { start: 0, end: SNIFF_BYTES - 1 });
   const head = object ? await readAll(object.body, Infinity) : new Uint8Array();
   checkSniffed(grant.ct, head.subarray(0, SNIFF_BYTES), bucket.mime);
 }
 
 /**
- * Abandon a client upload (frees a multipart upload's parts; a single PUT needs nothing).
+ * Abandon a client upload: frees a multipart upload's parts, or a single PUT's staged bytes.
  *
  * @param token The upload token.
  */
 export async function abortUpload(token: unknown): Promise<void> {
   const rt = runtime();
   const grant = await openGrant(token, secretsOf(rt));
-  if (grant.u) await rt.driver.direct!.abortMultipart(grant.b, grant.k, grant.u);
+  const staged = stagingLocation(grant.b, grant.v);
+  if (grant.u) await rt.driver.direct!.abortMultipart(staged.bucket, staged.key, grant.u);
+  await rt.driver.remove(staged.bucket, staged.key).catch(() => {});
 }
 
 /** A download URL (after `authorize`). */

@@ -126,7 +126,7 @@ export function isVersioned(bucket: ResolvedBucket): boolean {
 }
 
 /** Whether replacing (or deleting) `current` keeps it as a noncurrent version. */
-export function keepsCurrent(bucket: ResolvedBucket, current: ObjectRow): boolean {
+function keepsCurrent(bucket: ResolvedBucket, current: ObjectRow): boolean {
   if (bucket.versioning === "ENABLED") return true;
   return bucket.versioning === "SUSPENDED" && current.is_versioned;
 }

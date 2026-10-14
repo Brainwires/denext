@@ -1,5 +1,5 @@
 // @denext/backend storage against a REAL S3-compatible store (MinIO, R2, AWS): presigned PUT
-// then GET, the store refusing a body that breaks the signed headers, multipart from the client,
+// (to the staging place until its completion) then GET, the store refusing a body that breaks the signed headers, multipart from the client,
 // list paging with awkward keys, head and delete, a bucket's `authorize` deciding per denextAuth
 // session and op (the sign route and the server API), `{ service: true }` outside a request, and
 // an image transform the app serves from the store's original. Opt-in — it needs a throwaway bucket:
@@ -26,6 +26,7 @@ import { credentials } from "../src/server/auth/providers.ts";
 import { issueAuthSession } from "../src/server/auth/session.ts";
 import type { AuthConfig } from "../src/server/auth/types.ts";
 import { samplePng } from "./fixtures/sample-image.ts";
+import { runtime } from "../packages/backend/src/runtime.ts";
 
 const env = (name: string) => Deno.env.get(name) || undefined;
 const ENDPOINT = env("DENEXT_TEST_S3_ENDPOINT");
@@ -115,6 +116,60 @@ Deno.test(
       assertEquals([ranged.status, await ranged.text()], [206, "world"]);
       const download = await bucket.download("docs/hello world+1.txt");
       assertEquals(await new Response(download!.body).text(), "hello world");
+    } finally {
+      await a.close();
+    }
+  },
+);
+
+Deno.test(
+  { name: "minio: a presigned PUT leaves the object alone until the completion", ignore },
+  async () => {
+    const a = await app(1024);
+    try {
+      const bucket = storage.bucket(RUN, { service: true });
+      await bucket.upload("kept.txt", "original", { contentType: "text/plain" });
+      const read = async () => await new Response((await bucket.download("kept.txt"))!.body).text();
+      const plan = await bucket.createSignedUploadUrl("kept.txt", { contentType: "text/plain" });
+      assert(new URL(plan.url).pathname.includes(`/.denext-staging/${RUN}/`), plan.url);
+      const put = await fetch(plan.url, {
+        method: "PUT",
+        headers: plan.headers,
+        body: new TextEncoder().encode("replaced"),
+      });
+      assertEquals(put.status, 200, await put.text());
+      assertEquals(await read(), "original", "the PUT did not touch the key");
+      const done = await a.sign({ op: "complete", token: plan.token });
+      assertEquals(done.status, 200, await done.clone().text());
+      await done.body?.cancel();
+      assertEquals(await read(), "replaced");
+      // Multipart parts too: the object keeps its bytes until the parts are assembled and landed.
+      const size = 5 * 1024 * 1024 + 7;
+      const planned = await a.sign({
+        op: "upload",
+        bucket: RUN,
+        key: "kept.txt",
+        contentType: "text/plain",
+        size,
+      });
+      const { multipart } = await planned.json();
+      const parts = [];
+      for (const part of multipart.parts) {
+        const start = (part.partNumber - 1) * multipart.partSize;
+        const body = new Uint8Array(Math.min(multipart.partSize, size - start)).fill(0x62);
+        const res = await fetch(part.url, { method: "PUT", body });
+        assertEquals(res.status, 200, await res.clone().text());
+        await res.body?.cancel();
+        parts.push({ partNumber: part.partNumber, etag: res.headers.get("etag")! });
+      }
+      assertEquals(await read(), "replaced");
+      const assembled = await a.sign({ op: "complete", token: multipart.token, parts });
+      assertEquals(assembled.status, 200, await assembled.clone().text());
+      await assembled.body?.cancel();
+      assertEquals((await bucket.head("kept.txt"))?.size, size);
+      // The single PUT's staged copy is gone once it landed.
+      const version = new URL(plan.url).pathname.split("/").at(-1)!;
+      assertEquals(await runtime().driver.head(".denext-staging", `${RUN}/${version}`), null);
     } finally {
       await a.close();
     }
@@ -370,6 +425,9 @@ Deno.test(
         body: new TextEncoder().encode("public"),
       });
       assertEquals(put.status, 200, await put.text());
+      const done = await a.sign({ op: "complete", token: plan.token });
+      assertEquals(done.status, 200, await done.clone().text());
+      await done.body?.cancel();
       const stored = await bucket.download("public-host.txt");
       assertEquals(await new Response(stored!.body).text(), "public");
       const url = await bucket.createSignedUrl("public-host.txt");

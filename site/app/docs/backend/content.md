@@ -341,9 +341,11 @@ policy on whatever object is there at that moment. The bytes wait in a staging a
 write is allowed, so a refused write never touches the bytes at the key. A move takes the
 destination's name before it copies anything. A signed upload token minted by a policy-checked
 caller (`/object/upload/sign`, signed TUS, `createSignedUploadUrl`) is pinned to the object's
-version when it was signed: if the object has changed since, the upload is a `409`. With S3 a
-`createSignedUploadUrl` PUT goes straight to the store, so the pin protects the row, not the bytes
-that PUT already wrote. Emptying a bucket (`POST /bucket/<id>/empty`) deletes only the objects,
+version when it was signed: if the object has changed since, the upload is a `409`. A
+`createSignedUploadUrl` PUT (or presigned part) goes to a staging place too, on S3 as on the fs
+driver: its completion checks the bytes and moves them to the key with the row, so a refused or
+abandoned upload never touches the object. Abandoned uploads are swept once they can no longer
+be completed. Emptying a bucket (`POST /bucket/<id>/empty`) deletes only the objects,
 noncurrent versions and delete markers your policies let the caller delete.
 
 `render/image` transforms take Supabase's options: `width` and `height` (any size up to

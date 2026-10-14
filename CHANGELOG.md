@@ -742,6 +742,15 @@ Hardening of the new `/auth/v1` API (unreleased) and the user store it shares wi
   token minted by a policy-checked caller (`/object/upload/sign`, signed TUS,
   `createSignedUploadUrl`) is pinned to the object's version when it was signed: if the object
   has changed since, the upload is a `409`.
+- **`@denext/backend` storage: a client's direct upload reaches the object only when it
+  completes.** The URLs `createSignedUploadUrl` and the sign route's `upload` op hand out (an S3
+  presigned PUT, presigned multipart parts, or the fs driver's signed PUT) wrote the client's
+  bytes straight to the object's key. The size, type and pin checks ran later, at completion. So
+  bytes the completion would refuse, or an upload never completed, replaced what was stored
+  there. The URLs now point at a staging place (`.denext-staging/<bucket>/<version>`). The
+  completion checks the staged bytes, then writes the row and moves the bytes to the key together
+  (`409` when a pinned object has changed since signing). An abandoned upload's staged bytes, or
+  its incomplete multipart upload, are swept once its completion window closes.
 - **`@denext/backend` storage: emptying a bucket under SQL-RLS deletes only what the caller may
   delete.** `POST /bucket/<id>/empty` purged every noncurrent version and delete marker as the
   service role. Now each one is deleted under the caller's policies, as live objects already were.

@@ -11,6 +11,8 @@ import { s3, StorageError } from "../packages/backend/mod.ts";
 import { storage } from "../packages/backend/server.ts";
 import { getFileUrl, StorageClientError, uploadFile } from "../packages/backend/client.ts";
 import { samplePng } from "./fixtures/sample-image.ts";
+import { runtime } from "../packages/backend/src/runtime.ts";
+import { signedUploadId } from "../packages/backend/src/storage-tus.ts";
 
 const CREDENTIALS = { accessKeyId: "AKIDTEST", secretAccessKey: "secret-test-key" };
 const S3_ENDPOINT = "http://s3.test";
@@ -114,6 +116,81 @@ Deno.test("s3 storage: client upload → presigned PUT → verified completion �
   }
 });
 
+Deno.test("s3 storage: a signed upload's bytes reach the key only at its completion", async () => {
+  const fake = new FakeS3();
+  const app = await backendApp({ buckets, driver: driver(fake), multipartThreshold: 1024 });
+  const text = (key: string) => new TextDecoder().decode(fake.objects.get(key)?.body);
+  const staged = () => [...fake.objects.keys()].filter((k) => k.startsWith(".denext-staging/"));
+  const putTo = (plan: { url: string; headers: Record<string, string> }, body: string) =>
+    fake.fetch(plan.url, { method: "PUT", headers: plan.headers, body }).then((r) => r.status);
+  const sign = (body: unknown) =>
+    withFetch(app, fake, () =>
+      fetch(`${ORIGIN}/_denext/storage/sign`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }));
+  try {
+    const media = storage.bucket("media", { service: true });
+    await media.upload("doc.txt", "original", { contentType: "text/plain" });
+    const opts = { contentType: "text/plain" };
+
+    // The presigned PUT lands in the staging place; the object keeps its bytes until completion.
+    const first = await media.createSignedUploadUrl("doc.txt", opts);
+    assertEquals(await putTo(first, "replaced"), 200);
+    assertEquals(text("media/doc.txt"), "original", "the PUT did not touch the key");
+    assertEquals(staged().length, 1);
+    // Abandoned with `abort`: the staged bytes go, the object is untouched.
+    const aborted = await sign({ op: "abort", token: first.token });
+    assertEquals(aborted.status, 200);
+    await aborted.body?.cancel();
+    assertEquals([text("media/doc.txt"), staged()], ["original", []]);
+
+    // Completed: the bytes move to the key with the row; nothing is left staged.
+    const second = await media.createSignedUploadUrl("doc.txt", opts);
+    assertEquals(await putTo(second, "replaced"), 200);
+    const done = await sign({ op: "complete", token: second.token });
+    assertEquals(done.status, 200, await done.clone().text());
+    await done.body?.cancel();
+    assertEquals([text("media/doc.txt"), staged()], ["replaced", []]);
+    assertEquals((await media.info("doc.txt"))?.size, 8);
+
+    // Multipart parts go to the staging place too.
+    const big = new Uint8Array(5 * 1024 * 1024 + 1).fill(0x61);
+    const planned = await sign({
+      op: "upload",
+      bucket: "media",
+      key: "doc.txt",
+      contentType: "text/plain",
+      size: big.byteLength,
+    });
+    const { multipart } = await planned.json();
+    for (const part of multipart.parts) {
+      assertStringIncludes(new URL(part.url).pathname, "/.denext-staging/media/");
+    }
+
+    // Abandoned without a word: once it can no longer be completed, the sweep (run by the next
+    // upload) frees what it left in the staging place.
+    const left = await media.createSignedUploadUrl("doc.txt", opts);
+    assertEquals(await putTo(left, "left behind"), 200);
+    const [leftKey] = staged();
+    const rt = runtime();
+    const id = signedUploadId(leftKey.split("/").at(-1)!);
+    const row = (await rt.meta.getResumable(id))!;
+    await rt.meta.deleteResumable(id); // past its completion window
+    await rt.meta.createResumable({ ...row, expires_at: Date.now() - 1 });
+    await media.createSignedUploadUrl("other.txt", opts);
+    for (let i = 0; i < 200 && fake.objects.has(leftKey); i++) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assertEquals(fake.objects.has(leftKey), false, "the abandoned upload was swept");
+    assertEquals(await rt.meta.getResumable(id), null);
+    assertEquals(text("media/doc.txt"), "replaced");
+  } finally {
+    await app.close();
+  }
+});
+
 Deno.test("s3 storage: content that contradicts its type is deleted at completion", async () => {
   const fake = new FakeS3();
   const app = await backendApp({ buckets, driver: driver(fake) });
@@ -143,7 +220,9 @@ Deno.test("s3 storage: content that contradicts its type is deleted at completio
       headers: { "content-type": "application/octet-stream", "content-length": "4" },
       body: "1234",
     });
-    fake.objects.get("media/sized.bin")!.body = new Uint8Array(9);
+    assertEquals(fake.objects.has("media/sized.bin"), false, "the PUT went to the staging place");
+    const staged = [...fake.objects.keys()].find((k) => k.startsWith(".denext-staging/media/"))!;
+    fake.objects.get(staged)!.body = new Uint8Array(9);
     const app2 = await withFetch(
       app,
       fake,
@@ -156,6 +235,7 @@ Deno.test("s3 storage: content that contradicts its type is deleted at completio
     );
     assertEquals([app2.status, (await app2.json()).error.code], [400, "bad_request"]);
     assertEquals(fake.objects.has("media/sized.bin"), false);
+    assertEquals(fake.objects.has(staged), false, "the refused bytes are removed");
   } finally {
     await app.close();
   }
@@ -414,7 +494,8 @@ Deno.test("s3 storage: presigned GETs force attachment unless the stored type is
   const app = await backendApp({ buckets, driver: driver(fake) });
   try {
     const media = storage.bucket("media", { service: true });
-    // A client PUT to its presigned URL and never completed: nothing sniffed the bytes.
+    // A client PUT to its presigned URL and never completed: its bytes, never sniffed, wait in
+    // the staging place, so nothing is served at the key.
     const plan = await media.createSignedUploadUrl("ghost.bin", {
       contentType: "application/octet-stream",
     });
@@ -426,9 +507,10 @@ Deno.test("s3 storage: presigned GETs force attachment unless the stored type is
     });
     assertEquals(put.status, 200);
     await put.body?.cancel();
+    assertEquals(fake.objects.has("media/ghost.bin"), false);
     const ghost = new URL(await media.createSignedUrl("ghost.bin"));
     assertEquals(ghost.searchParams.get("response-content-disposition"), "attachment");
-    assertEquals(ghost.searchParams.get("response-content-type"), "application/octet-stream");
+    assertEquals(ghost.searchParams.has("response-content-type"), false);
     assertStringIncludes(ghost.searchParams.get("X-Amz-SignedHeaders") ?? "", "host");
     // A raster image stays inline; a key with nothing stored is an attachment, untyped.
     await media.upload("p.png", samplePng());
@@ -473,7 +555,11 @@ Deno.test("s3: publicEndpoint signs browser URLs for the public host; server cal
     const url = new URL(upload.url);
     assertEquals(url.origin, "https://files.example");
     assertStringIncludes(url.searchParams.get("X-Amz-SignedHeaders") ?? "", "host");
-    assertEquals(url.pathname.startsWith(`/${fake.bucket}/docs/a.txt`), true, "path style");
+    assertEquals(
+      url.pathname.startsWith(`/${fake.bucket}/.denext-staging/docs/`),
+      true,
+      "path style, to the staging place",
+    );
     await bucket.upload("b.txt", "server side", { contentType: "text/plain" });
     assertEquals(new Set(seen), new Set([S3_ENDPOINT]), "the server's own calls");
     const download = new URL(await bucket.createSignedUrl("b.txt"));

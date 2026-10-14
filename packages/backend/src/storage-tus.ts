@@ -715,20 +715,84 @@ async function removeChunks(rt: StorageRuntime, row: ResumableRow): Promise<void
   if (row.tail_size > 0) await rt.driver.remove(TUS_NAMESPACE, `${row.id}/tail`);
 }
 
-/** Abandon an upload: free its parts or chunks, release its reservation, drop its state. */
+/**
+ * Abandon an upload: free its parts or chunks (and a staged upload's bytes in its staging place),
+ * release its reservation, drop its state.
+ */
 async function discard(rt: StorageRuntime, row: ResumableRow): Promise<void> {
+  const at = bytesAt(row);
   if (row.upload_id) {
-    const at = bytesAt(row);
     await rt.driver.direct?.abortMultipart(at.bucket, at.key, row.upload_id).catch(() => {});
   }
+  if (row.staged) await rt.driver.remove(at.bucket, at.key).catch(() => {});
   await removeChunks(rt, row).catch(() => {});
   if (!row.upsert) await releaseObject(rt, row.bucket_id, row.name, row.version);
   await rt.meta.deleteResumable(row.id);
 }
 
-/** Clean up a few expired uploads (in the background of a creation). */
+/** Clean up a few expired uploads (in the background of a creation, TUS or signed). */
 function sweep(rt: StorageRuntime): void {
   rt.meta.expiredResumables(Date.now(), SWEEP).then(async (rows) => {
     for (const row of rows) await discard(rt, row);
   }).catch(() => {});
+}
+
+/** A signed direct upload ({@linkcode trackSignedUpload}): its bytes wait in the staging place. */
+export interface SignedUploadState {
+  bucket: string;
+  key: string;
+  /** The version the upload will write; its bytes are staged under it. */
+  version: string;
+  /** The store's multipart upload id (a planned multipart upload), else `null`. */
+  uploadId: string | null;
+  contentType: string;
+  size?: number;
+  /** When it can no longer be completed, epoch milliseconds. */
+  expiresAt: number;
+}
+
+/**
+ * The state id of a signed upload: never a TUS upload id (those are `[A-Za-z0-9_-]`), so the
+ * TUS routes cannot reach it.
+ */
+export function signedUploadId(version: string): string {
+  return `signed.${version}`;
+}
+
+/**
+ * Record a signed direct upload (a presigned PUT, or presigned parts) whose bytes go to its
+ * staging place, so the expired-upload sweep frees what is left there once it can no longer be
+ * completed — an abandoned upload's staged object or incomplete multipart upload, or bytes PUT
+ * again after a completion — as it does a TUS upload's.
+ *
+ * @param rt The runtime.
+ * @param upload The upload.
+ */
+export async function trackSignedUpload(
+  rt: StorageRuntime,
+  upload: SignedUploadState,
+): Promise<void> {
+  sweep(rt);
+  await rt.meta.createResumable({
+    id: signedUploadId(upload.version),
+    bucket_id: upload.bucket,
+    name: upload.key,
+    upload_length: upload.size ?? 0,
+    upload_offset: 0,
+    content_type: upload.contentType,
+    cache_control: cacheControlOf(null),
+    user_metadata: null,
+    owner_id: null,
+    // Nothing was reserved for it: the sweep has no row to release.
+    upsert: true,
+    upload_id: upload.uploadId,
+    parts: [],
+    tail_size: 0,
+    chunks: [],
+    version: upload.version,
+    staged: true,
+    expires_at: upload.expiresAt,
+    lease: null,
+    lease_until: null,
+  });
 }

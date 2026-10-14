@@ -33,6 +33,7 @@ import {
 import { readTransform, STORAGE_PREFIX, type StorageTransform } from "./shared.ts";
 import { checkExpiry, nowSeconds, verifyPayload } from "./signing.ts";
 import { type SignRequest, signSchema } from "./sign-schema.ts";
+import { stagingLocation } from "./storage-versions.ts";
 import {
   abortUpload,
   completeUpload,
@@ -260,6 +261,9 @@ async function transformed(
 }
 
 /** An upload through a signed URL — the fs driver's path (a direct store takes PUTs itself). */
+/** An upload's version (a UUID), as its signed URL carries it. */
+const UPLOAD_VERSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 async function upload(
   rt: StorageRuntime,
   bucket: ResolvedBucket,
@@ -273,7 +277,8 @@ async function upload(
   const max = Number(params.get("max"));
   const n = params.get("n");
   const size = n === null ? undefined : Number(n);
-  const payload = uploadPayload(bucket.name, key, exp, ct, max, size);
+  const version = params.get("v") ?? "";
+  const payload = uploadPayload(bucket.name, key, exp, ct, max, size, version);
   if (!(await verifyPayload(payload, params.get("sig") ?? "", secretsOf(rt)))) {
     throw new StorageError("bad_signature", "signature mismatch");
   }
@@ -282,7 +287,10 @@ async function upload(
   }
   checkDeclaredLength(request, Math.min(max, bucket.maxBytes), size);
   if (!request.body) throw new StorageError("bad_request", "missing body");
-  const info = await storeChecked(
+  if (!UPLOAD_VERSION.test(version)) throw new StorageError("bad_request", "bad upload version");
+  // The bytes wait in the upload's staging place: the completion moves them to the key with the
+  // object's row, after its checks.
+  const stored = await storeChecked(
     rt,
     bucket,
     key,
@@ -290,7 +298,9 @@ async function upload(
     ct,
     Math.min(max, bucket.maxBytes),
     size,
+    stagingLocation(bucket.name, version),
   );
+  const info = { ...stored, key };
   return Response.json({ object: info }, { headers: info.etag ? { etag: `"${info.etag}"` } : {} });
 }
 

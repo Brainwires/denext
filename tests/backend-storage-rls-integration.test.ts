@@ -11,9 +11,11 @@
 //   DENEXT_TEST_POSTGRES_URL=postgres://postgres:pw@127.0.0.1:55433/postgres \
 //     deno test -A tests/backend-storage-rls-integration.test.ts
 
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { builtinSql } from "../src/server/postgres.ts";
-import { backend, fs } from "../packages/backend/mod.ts";
+import { backend, fs, StorageError } from "../packages/backend/mod.ts";
+import { completeUpload } from "../packages/backend/src/storage.ts";
+import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { db, storage } from "../packages/backend/server.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
 import { postgresEnvironment as environment } from "./helpers/postgres-env.ts";
@@ -211,6 +213,38 @@ Deno.test({
         assertEquals(ok.status, 200, await ok.clone().text());
         assertEquals(await read("b-own.txt"), "mine");
       });
+
+      await t.step(
+        "a direct signed upload's bytes stay staged when its pinned completion conflicts",
+        async () => {
+          // B signs a client upload (the plugin's own route) while the path is free…
+          const asB = new Request(`${ORIGIN}/api/x`, {
+            headers: { authorization: `Bearer ${await accessToken(USER_B)}`, apikey: ANON_KEY },
+          });
+          const plan = await runWithContext(
+            createRequestContext(asB),
+            () =>
+              storage.bucket("shared").createSignedUploadUrl("direct.txt", {
+                contentType: "text/plain",
+              }),
+          );
+          // …A creates the object, then B's PUT arrives: it must not reach A's bytes.
+          assertEquals((await put(USER_A, "direct.txt", "victim", false)).status, 200);
+          const sent = await h.handler(
+            new Request(new URL(plan.url, ORIGIN), {
+              method: "PUT",
+              headers: { "content-type": "text/plain" },
+              body: "attacker",
+            }),
+          );
+          assertEquals(sent.status, 200, await sent.clone().text());
+          await sent.body?.cancel();
+          assertEquals(await read("direct.txt"), "victim");
+          const err = await assertRejects(() => completeUpload(plan.token), StorageError);
+          assertEquals(err.code, "conflict");
+          assertEquals(await read("direct.txt"), "victim");
+        },
+      );
 
       await t.step(
         "move and copy run as the caller; a taken destination keeps its bytes",

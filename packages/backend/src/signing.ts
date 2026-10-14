@@ -173,6 +173,11 @@ export interface UploadGrant {
    * (`null`: none). The upload records its row only while the object is still at it.
    */
   cv?: string | null;
+  /**
+   * The version the upload writes: the client's bytes go to its staging place
+   * (`.denext-staging/<bucket>/<v>`) and reach the key only when the completion writes the row.
+   */
+  v: string;
   /** Expiry, epoch seconds. */
   exp: number;
 }

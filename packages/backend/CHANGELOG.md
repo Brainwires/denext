@@ -11,6 +11,9 @@
   TUS writes are judged against the object as it is when they land, with the bytes staged until
   then. Signed uploads by a policy-checked caller are pinned to the object's version when they
   were signed. Emptying a bucket deletes only the versions the caller may delete.
+- **a client's direct upload reaches the object only when it completes.** Presigned PUTs and
+  parts (S3) and signed PUTs (fs) go to a staging place; the completion checks the bytes, then
+  writes the row and moves them to the key together. Abandoned uploads are swept.
 - **the SQLite metadata store matches `list-v2` prefixes case-sensitively.**
 - **realtime `old: "full"`.** The full old row goes only to subscribers who could see
   the row before the change, unless the table has row-level security off.
