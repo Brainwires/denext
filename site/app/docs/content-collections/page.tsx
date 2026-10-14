@@ -133,9 +133,10 @@ export default async function Blog() {
         <code>await renderContent(post)</code>) from{" "}
         <code>@denext/content-collections/runtime</code>. A <code>.md</code>{" "}
         entry goes through the package's own zero-dependency Markdown renderer at request time
-        (headings with ids, lists, fenced code, blockquotes and <code>&gt; [!NOTE]</code>{" "}
-        callouts, inline and reference-style links, emphasis; raw HTML is escaped and script-scheme
-        links dropped); a <code>.mdx</code>{" "}
+        (headings with ids, nested lists, fenced and indented code, code spans, blockquotes and{" "}
+        <code>&gt; [!NOTE]</code>{" "}
+        callouts, GFM tables, inline and reference-style links and images, footnotes, emphasis; raw
+        HTML is escaped and script-scheme links and image sources dropped); a <code>.mdx</code>{" "}
         entry is compiled to a component module at build, so nothing MDX-related runs per request.
         Pass <code>components</code> to map elements or MDX components to your own.
       </p>
