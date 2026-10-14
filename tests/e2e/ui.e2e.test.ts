@@ -759,7 +759,7 @@ Deno.test("denext ui: a task's output streams into the panel's sink as it runs",
 
     await page.evaluate(
       `Array.from(document.querySelectorAll('form.op button'))` +
-        `.find((b) => b.textContent.trim() === 'deno task hello').click()`,
+        `.find((b) => b.textContent.trim() === 'denext task hello').click()`,
     );
 
     // The intercepted submit gets a `text/event-stream` back and appends each `data:` frame's
