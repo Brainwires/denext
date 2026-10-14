@@ -43,6 +43,8 @@ on:
       - "src/client/virtual/**"
       - "src/mobile/**"
       - "src/desktop/window.ts"
+      - "src/navigation/sheet.ts" # the iOS sheet modal's swipe-down drag
+      - "src/navigation/listen.ts"
       - "src/jsx/jsx-runtime.ts"
       - "src/jsx/types.ts"
       - "src/runtime/context.ts"
