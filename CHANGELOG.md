@@ -231,6 +231,17 @@ and this project adheres to
 
 ### Security
 
+- **Stateless cookie sessions can be ended early: a per-user `sessionsValidAfter`.** Every read
+  of a denextAuth cookie session (stateless or store-backed) refuses one that signed in
+  (`authTime`, else its issue time) before the user's `sessionsValidAfter`. The time is set by
+  `revokeAllSessions(userId)`, a password reset, the pre-account-hijacking eviction, account
+  deletion, and `/auth/v1`'s ban, password change (by the user or an admin) and user deletion.
+  Before, those reached only a `sessionStore`'s records, so a stolen stateless cookie outlived a
+  password reset, and a cookie from before a ban worked again once the ban was lifted. The time
+  is stored on the user by every adapter (memory, SQLite, and Postgres through migration
+  `0008_auth_sessions_valid_after`). `revokeAllSessions` now works with an adapter and no
+  `sessionStore`; it throws only when neither is configured.
+
 - **A cookie session ends at its user's next request after a ban, a deletion or an SSO
   conversion.** With an adapter, every read of a denextAuth cookie session (`auth()`,
   `requireAuth()`, `requireSession()`, the `/auth/*` endpoints) re-reads its user, once per

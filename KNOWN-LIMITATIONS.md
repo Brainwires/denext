@@ -77,11 +77,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   or your own) after the response, so delivery can be cut short where the platform freezes the
   isolate.
 - **`sqliteAuthAdapter` is single-node and additive-only** (no renames or drops).
-- **Stateless cookie sessions can't be ended early** by a password reset, a pre-account-hijacking
-  eviction, a ban, an `/auth/v1` password change or account deletion; run a `sessionStore` (or
-  `session.strategy: "database"`). A stateless session that still owes its second factor can't
-  complete it once its user is banned or deleted or the address was first proven after it signed
-  in, but a complete one lives until it expires.
+- **Without an adapter, a stateless cookie session can't be ended early:** the user's
+  `sessionsValidAfter` (set by `revokeAllSessions`, a password reset or change, a ban, a deletion
+  and the pre-account-hijacking eviction) lives on the stored user, so with no adapter there is
+  nothing to read. It is compared to the second: a session signed in during the very second it
+  is set survives it. `revokeSession(id)` (one device) needs a `sessionStore`.
 - **Sliding refresh needs a `Response` being produced** (`/session`, `requireAuth()`,
   `requireSession()`; a streamed component's headers have flushed). A store without `update`
   never slides.

@@ -32,7 +32,7 @@
 
 import { getSession } from "../session.ts";
 import { currentContext } from "../request-context.ts";
-import type { AdapterUser } from "./adapter.ts";
+import type { AdapterUser, AuthAdapter } from "./adapter.ts";
 import { isBanned } from "./ban.ts";
 import { randomToken } from "./oauth.ts";
 import { cookieSessionOptions, resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
@@ -136,23 +136,73 @@ function storedUser(options: ResolvedAuthOptions, id: string): Promise<AdapterUs
 }
 
 /**
+ * Drop `userId`'s memoized read from this request, so a later read in the same request sees a
+ * write made since (a session-ending stamp).
+ */
+function forgetStoredUser(userId: string): void {
+  (currentContext()?.memo.get(STORED_USERS) as Map<string, StoredUserRead> | undefined)
+    ?.delete(userId);
+}
+
+/**
+ * Whether the user ended this session: it signed in (`authTime`, else its issue time) before
+ * the user's `sessionsValidAfter`, to the second.
+ *
+ * @param user The stored user.
+ * @param session The session.
+ * @returns `true` when the session was ended.
+ */
+export function endedByUser(user: AdapterUser, session: AuthSession): boolean {
+  const validAfter = user.sessionsValidAfter;
+  if (typeof validAfter !== "number") return false;
+  const signedIn = session.authTime ?? session.issuedAt;
+  return typeof signedIn !== "number" || signedIn < validAfter;
+}
+
+/**
+ * End every cookie session of `userId` signed in before now — stateless ones included — by
+ * stamping the stored user's `sessionsValidAfter` (never moved back). A user that no longer
+ * exists is left alone.
+ *
+ * @param adapter The adapter (its `getUser` / `updateUser`).
+ * @param userId The user.
+ * @param nowSeconds The clock, epoch seconds.
+ */
+export async function endUserSessions(
+  adapter: Pick<AuthAdapter, "getUser" | "updateUser">,
+  userId: string,
+  nowSeconds: number = Math.floor(Date.now() / 1000),
+): Promise<void> {
+  const user = await adapter.getUser(userId);
+  if (!user) return;
+  const at = Math.max(nowSeconds, user.sessionsValidAfter ?? 0);
+  if (at !== user.sessionsValidAfter) {
+    await adapter.updateUser({ id: userId, sessionsValidAfter: at });
+  }
+  forgetStoredUser(userId);
+}
+
+/**
  * Whether a cookie session's user, read fresh, may still use it: the user exists, is not
- * banned, and — for an SSO user — its identity provider started the session (denextAuth's own
- * sign-ins never come from one, so no cookie session of an SSO user lives). Without an adapter
- * there is no user to read, and the session stands as signed.
+ * banned, has not ended the session (`sessionsValidAfter`), and — for an SSO user — its
+ * identity provider started the session (denextAuth's own sign-ins never come from one, so no
+ * cookie session of an SSO user lives). Without an adapter there is no user to read, and the
+ * session stands as signed.
  */
 async function userMayUse(options: ResolvedAuthOptions, session: AuthSession): Promise<boolean> {
   if (!options.adapter) return true;
   const user = await storedUser(options, session.user.id);
-  return !!user && !isBanned(user) && ssoSessionAllowed(user, session.amr ?? []);
+  return !!user && !isBanned(user) && !endedByUser(user, session) &&
+    ssoSessionAllowed(user, session.amr ?? []);
 }
 
 /**
  * Read the current auth session, or `null` when absent/expired/invalid/revoked — or when its
- * user, read fresh through the adapter (once per request), was deleted or banned, or is an SSO
- * user (whose identity provider never starts a cookie session). The check runs on every read,
- * so a ban, a deletion or an SSO conversion takes effect on the user's very next request, not
- * when the session next slides or expires.
+ * user, read fresh through the adapter (once per request), was deleted or banned, ended the
+ * session (it signed in before the user's `sessionsValidAfter`), or is an SSO user (whose
+ * identity provider never starts a cookie session). The check runs on every read, so a ban, a
+ * deletion, a password reset or an SSO conversion takes effect on the user's very next request,
+ * not when the session next slides or expires — a stateless cookie session included.
  *
  * @param config The app's auth config.
  * @returns The session, normalised to the current payload shape, or `null`.

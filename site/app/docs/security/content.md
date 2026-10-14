@@ -358,8 +358,8 @@ attack surface, so each ships with its own invariant:
   retires the password, every second factor and backup codes, every bearer token and
   every server-side session set up without that proof. If a step fails, the
   address stays unverified and the redeem fails generically. A stateless cookie
-  session opened earlier cannot be revoked and lives until it expires — run a
-  `sessionStore`.
+  session opened earlier ends too: the eviction stamps the user's
+  `sessionsValidAfter`, and every read refuses a session signed in before it.
 - **Resets and codes close what they open.** A completed password reset revokes
   every server-side session and bearer API token of that user. A second-factor
   code works once: a TOTP step is claimed through `claimMfaFactorStep` (not even

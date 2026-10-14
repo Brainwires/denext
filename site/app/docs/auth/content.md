@@ -428,8 +428,9 @@ denextAuth({
 });
 ```
 
-`"cookie"` (the default) keeps the whole payload in the signed cookie: stateless,
-multi-replica-safe, and only expiry ends it. `"database"` stores the payload server-side
+`"cookie"` (the default) keeps the whole payload in the signed cookie: stateless and
+multi-replica-safe; expiry ends it, and with an `adapter` so does the user's
+[`sessionsValidAfter`](#revocation). `"database"` stores the payload server-side
 and puts only a random id in the cookie, so sessions are revocable. It needs somewhere
 to put them — either `sessionStore` or an `adapter` that exposes `sessions` — and
 **throws at config time** when neither is present, because an app that asked for
@@ -502,8 +503,16 @@ await revokeAllSessions(session.user.id);
 await revokeSession(session.sessionId!);
 ```
 
-Both throw when sessions are stateless, rather than pretending to revoke something. Both
-fire the `sessionRevoked` event.
+`revokeAllSessions(userId)` ends stateless cookie sessions too, through the user record: it
+sets the user's `sessionsValidAfter` to now, and every read of a cookie session (stateless or
+store-backed) refuses one that signed in (`authTime`, else its issue time) before it. The same
+stamp is set by a password reset, the pre-account-hijacking eviction, account deletion, and
+`/auth/v1`'s ban, password change (by the user or an admin) and user deletion; a sign-in
+after it is unaffected, and the stamp never moves back. The comparison is to the second, so
+a session signed in during the very second of the stamp survives it. It needs an `adapter`
+(the time is stored on the user, in every adapter: memory, SQLite, Postgres);
+`revokeAllSessions` throws with neither an adapter nor a `sessionStore`, and `revokeSession`
+(one session by id) needs the store. Both fire the `sessionRevoked` event.
 
 A user who can no longer sign in needs no revocation to be signed out: with an `adapter`, every
 read of a cookie session — `auth()`, `requireAuth()`, `requireSession()`, the `/auth/*` endpoints —
@@ -989,8 +998,8 @@ delete — or `passkeys` configured over an adapter without `listPasskeys` — f
 closed. Passkey registration is refused (`403 email_unverified`) while an account's address is
 unverified, so a passkey can't be planted ahead of the owner in the first place. If any step fails, the
 address stays unverified and the redeem gets the generic failure. An account that was
-already verified keeps all of it. A stateless cookie session can't be revoked and lives
-until it expires — another reason to run a `sessionStore` in production.
+already verified keeps all of it. Stateless cookie sessions end too, through the user's
+`sessionsValidAfter` (see [Revocation](#revocation)).
 
 **The confirmation page.** Opening a magic link does not spend it: the link's GET renders a
 small page — "Continue as **ada@example.com**?" — whose button POSTs the token back to the
@@ -2262,7 +2271,8 @@ OAuth 2.1 server (`oauth/*`, `user/oauth/grants`, below), and the admin API — 
 `AuthApiError` with the same `code`s.
 
 Users gain Supabase's fields on every adapter: `phone`, `userMetadata` / `appMetadata` (free-form
-JSON; only the admin API writes `app_metadata`), `isAnonymous`, timestamps, `bannedUntil`, and
+JSON; only the admin API writes `app_metadata`), `isAnonymous`, timestamps, `bannedUntil`,
+`sessionsValidAfter`, and
 identity rows with `identityData`. Access tokens carry Supabase's claims (`sub`, `role`, `aud`,
 `email`, `phone`, `app_metadata`, `user_metadata`, `aal`, `amr`, `session_id`, `is_anonymous`,
 `exp`, `iat`, `iss`), so RLS policies written for Supabase work through `db()` and auto-REST.
@@ -2566,9 +2576,11 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   session of both kinds; while it lasts, the user's tokens (bearer API tokens, native tokens,
   access and refresh tokens) are refused at every use as well, and so is every denextAuth cookie
   session, a stateless one included (each read re-reads the user) — so a stateless cookie still
-  owing its second factor can't finish the step-up either. A password change through `/auth/v1` ends the user's other sessions,
-  including denextAuth cookie sessions in the `sessionStore` (a stateless cookie can't be revoked
-  and lives until it expires); an admin password change ends all of them, as in GoTrue.
+  owing its second factor can't finish the step-up either. A ban also stamps the user's
+  `sessionsValidAfter`, so a cookie session from before it stays ended once the ban is lifted. A
+  password change through `/auth/v1` ends the user's other sessions, including every denextAuth
+  cookie session, stateless ones included (`sessionsValidAfter`); an admin password change ends
+  all of them, as in GoTrue.
   `session.user.emailVerified` of an access token is read from the stored user, never from the
   user-writable `user_metadata`, whose `email_verified` / `phone_verified` are always the stored
   flags.
@@ -2781,8 +2793,8 @@ What the first-party auth layer still does not do — the full ledger is
 - **`verifyTotp` is SHA-1 only**, the algorithm every authenticator app supports.
 - **Apple's name arrives once.** Apple posts the user's name on their first authorization
   only; without an adapter to store it, later sessions carry no name.
-- **Deleting an account can't end stateless cookie sessions on other devices** — they
-  reference a user that no longer exists until they expire. Run a `sessionStore`.
+- **Without an adapter, a stateless cookie session lives until it expires** — there is no
+  user record to stamp `sessionsValidAfter` on. Configure an adapter (or a `sessionStore`).
 - **`magicLink({ confirm: false })` spends a link on its GET**, so a mail gateway that
   pre-fetches links can burn one; the default confirmation page (or `emailOtp()`) avoids it.
 - **Rotating `secret` invalidates the one-time codes in flight**: they are keyed under the

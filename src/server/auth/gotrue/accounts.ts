@@ -6,6 +6,7 @@
  * @module
  */
 
+import { endUserSessions } from "../session.ts";
 import type { AdapterUser } from "../adapter.ts";
 import { evictUnprovenAccess } from "../email.ts";
 import { emitAuthEvent } from "../events.ts";
@@ -144,9 +145,10 @@ async function deletePassword(
 
 /**
  * End a user's sessions of both kinds: the `/auth/v1` (and native) session families — all but
- * `keepFamily` — and every denextAuth cookie session in the session store. A changed password,
- * a ban and a retired password reach a stolen cookie as well as a stolen refresh token. Fires
- * `sessionRevoked` when a store was cleared.
+ * `keepFamily` — and every denextAuth cookie session: the session store's records, and through
+ * the user's `sessionsValidAfter` every cookie signed in before now, stateless ones included. A
+ * changed password, a ban, a deletion and a retired password reach a stolen cookie as well as a
+ * stolen refresh token. Fires `sessionRevoked` when a store was cleared.
  *
  * @param ctx The context.
  * @param userId The user.
@@ -158,6 +160,7 @@ export async function revokeEverySession(
   keepFamily?: string,
 ): Promise<void> {
   await nativeAdapterOf(ctx.adapter)?.revokeNativeSessionsByUser(userId, keepFamily);
+  await endUserSessions(ctx.adapter, userId);
   const options = resolveAuthOptions(ctx.config);
   if (!options.sessionStore) return;
   await options.sessionStore.deleteByUser(userId);

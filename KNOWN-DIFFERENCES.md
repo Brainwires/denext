@@ -330,10 +330,11 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
   `hsts: false`.
 - **Session cookie isn't `__Host-`-locked by default** (would log everyone out
   on upgrade). Opt in with `hostPrefix: true` on `getSession`.
-- **`denextAuth` sessions are stateless by default, so they can't be revoked before
-  they expire.** Opt in to server-side sessions with `sessionStore`
-  (`inMemorySessionStore()` / `sqliteSessionStore()` or your own) to get
-  `revokeSession`/`revokeAllSessions`. **Configuring an `AuthAdapter` does not change
+- **`denextAuth` sessions are stateless by default.** With an adapter they are still ended
+  early per user (`revokeAllSessions`, a password reset, a ban: the user's
+  `sessionsValidAfter`); to revoke one device's session (`revokeSession`), opt in to
+  server-side sessions with `sessionStore` (`inMemorySessionStore()` / `sqliteSessionStore()`
+  or your own). **Configuring an `AuthAdapter` does not change
   this** — an adapter is a persistence port (users, accounts, tokens), not a session
   mechanism; `session: { strategy: "database" }` is the switch.
 - **Multi-tenant Microsoft Entra ignores an unverified address.** Auth.js's Microsoft Entra

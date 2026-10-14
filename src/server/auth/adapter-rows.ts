@@ -148,6 +148,7 @@ export const USER_MAP: FieldMap<AdapterUser> = {
   updatedAt: ["updated_at", INT],
   lastSignInAt: ["last_sign_in_at", INT],
   bannedUntil: ["banned_until", INT],
+  sessionsValidAfter: ["sessions_valid_after", INT],
 };
 
 export const ACCOUNT_MAP: FieldMap<AdapterAccount> = {

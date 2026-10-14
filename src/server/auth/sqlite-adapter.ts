@@ -147,6 +147,7 @@ const SCHEMA: TableSpec[] = [
       ["updated_at", "INTEGER"],
       ["last_sign_in_at", "INTEGER"],
       ["banned_until", "INTEGER"],
+      ["sessions_valid_after", "INTEGER"],
     ],
     // Unique WHERE NOT NULL: one account per address, any number of address-less users.
     indexes: [{

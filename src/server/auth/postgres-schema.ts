@@ -154,6 +154,13 @@ ALTER TABLE ${p}auth_sso_providers ADD COLUMN metadata_refresh_after BIGINT;
 ALTER TABLE ${p}auth_oauth_authorizations ADD COLUMN sso_consent BIGINT;
 ALTER TABLE ${p}auth_api_tokens ADD COLUMN sso_session BOOLEAN;
 `,
+  }, {
+    // The per-user "sessions valid after" time: a cookie session signed in before it is ended
+    // (a ban, a password reset or change, a deletion, revokeAllSessions).
+    name: "0008_auth_sessions_valid_after",
+    sql: `
+ALTER TABLE ${p}auth_users ADD COLUMN sessions_valid_after BIGINT;
+`,
   }];
 }
 

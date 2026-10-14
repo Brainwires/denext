@@ -48,7 +48,7 @@ import {
 import { currentContext, headers } from "../request-context.ts";
 import { jwtBearerOf, sessionFromJwtBearer } from "./gotrue/access.ts";
 import type { SessionStore } from "./session-store.ts";
-import { readAuthSession, refreshLiveSession } from "./session.ts";
+import { endUserSessions, readAuthSession, refreshLiveSession } from "./session.ts";
 import { isOAuthProvider } from "./types.ts";
 import type { AuthConfig, AuthSession, OAuthProvider } from "./types.ts";
 
@@ -322,8 +322,9 @@ function requireSessionStore(
   if (!options?.sessionStore) {
     throw new Error(
       `${fn}: no \`sessionStore\` is configured — sessions are stateless signed cookies, ` +
-        "which can't be revoked before they expire. Pass `sessionStore` (e.g. " +
-        "`sqliteSessionStore()`) to denextAuth to enable revocation.",
+        "so one session can't be revoked by id (`revokeAllSessions(userId)` ends them all " +
+        "through an adapter). Pass `sessionStore` (e.g. `sqliteSessionStore()`) to denextAuth " +
+        "to revoke single sessions.",
     );
   }
   return { options, store: options.sessionStore };
@@ -344,24 +345,28 @@ export async function revokeSession(sessionId: string): Promise<void> {
 }
 
 /**
- * Revoke every server-side session of `userId` — "sign out everywhere", the right call
- * after a password change or a suspected cookie theft — and every native app session family
- * when the adapter has that group. Fires the `sessionRevoked` event. Requires
- * `denextAuth({ sessionStore })` or native sessions; throws when neither exists.
+ * Revoke every session of `userId` — "sign out everywhere", the right call after a password
+ * change or a suspected cookie theft: the session store's records, every native app session
+ * family when the adapter has that group, and — with an adapter — every cookie session signed
+ * in before now, stateless ones included (the user's `sessionsValidAfter`). Fires the
+ * `sessionRevoked` event. Throws when there is nothing to revoke through: no adapter and no
+ * `sessionStore`.
  *
  * @param userId The user whose sessions end.
  */
 export async function revokeAllSessions(userId: string): Promise<void> {
-  // Native app sessions (`native` config) end too — they need no session store.
-  const native = activeConfig ? nativeAdapterOf(activeConfig.adapter) : null;
-  if (native && !resolveAuthOptions(activeConfig!).sessionStore) {
-    await native.revokeNativeSessionsByUser(userId);
-    await emitAuthEvent(resolveAuthOptions(activeConfig!), "sessionRevoked", { userId });
-    return;
+  const options = activeConfig ? resolveAuthOptions(activeConfig) : undefined;
+  if (!options?.adapter && !options?.sessionStore) {
+    throw new Error(
+      "revokeAllSessions: no `adapter` or `sessionStore` is configured — stateless cookie " +
+        "sessions are ended through the user record (`sessionsValidAfter`), so pass an " +
+        "`adapter` (or a `sessionStore`) to denextAuth to enable revocation.",
+    );
   }
-  const { options, store } = requireSessionStore("revokeAllSessions");
-  await native?.revokeNativeSessionsByUser(userId);
-  await store.deleteByUser(userId);
+  // Native app sessions (`native` config) end too — they need no session store.
+  await nativeAdapterOf(options.adapter)?.revokeNativeSessionsByUser(userId);
+  if (options.adapter) await endUserSessions(options.adapter, userId);
+  await options.sessionStore?.deleteByUser(userId);
   await emitAuthEvent(options, "sessionRevoked", { userId });
 }
 

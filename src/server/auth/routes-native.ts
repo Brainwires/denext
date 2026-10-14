@@ -85,7 +85,7 @@ import {
   json,
   redirect,
 } from "./routes-shared.ts";
-import { clearAuthSession, readAuthSession } from "./session.ts";
+import { clearAuthSession, endUserSessions, readAuthSession } from "./session.ts";
 import type { AdapterAccount } from "./adapter.ts";
 import { isOAuthProvider } from "./types.ts";
 import type { AuthSession, NativeIdTokenProviderConfig, SignInFailedReason } from "./types.ts";
@@ -534,6 +534,8 @@ async function deleteAccount(ctx: AuthRouteContext, userId: string): Promise<voi
     );
   }
   await revokeNativeSessionsOf(config, userId);
+  // Stamped before the row goes, so an adapter that keeps it (a soft delete) ends them too.
+  await endUserSessions(adapter, userId);
   if (options.sessionStore) await options.sessionStore.deleteByUser(userId);
   await adapter.deleteUser!(userId);
   await emitAuthEvent(options, "sessionRevoked", { userId });

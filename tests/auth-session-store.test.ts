@@ -265,10 +265,10 @@ Deno.test("default (no sessionStore): the stateless payload cookie is unchanged"
   assertEquals(((await sessionUser(config, cookie)) as { id: string }).id, "alice");
 });
 
-Deno.test("revokeSession / revokeAllSessions throw without a sessionStore (stateless can't revoke)", async () => {
+Deno.test("revokeSession needs a sessionStore; revokeAllSessions an adapter or a store", async () => {
   denextAuth(storeConfig());
   await assertRejects(() => revokeSession("x"), Error, "no `sessionStore`");
-  await assertRejects(() => revokeAllSessions("alice"), Error, "no `sessionStore`");
+  await assertRejects(() => revokeAllSessions("alice"), Error, "no `adapter` or `sessionStore`");
 });
 
 Deno.test("denextAuth registers a teardown that closes a closable sessionStore", async () => {
