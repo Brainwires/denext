@@ -183,13 +183,65 @@ function parseSigningKeys(value: string): JsonWebKey[] {
   return Array.isArray(parsed) ? parsed as JsonWebKey[] : [parsed as JsonWebKey];
 }
 
+/** Values a template or a shell leaves behind for an unset variable — never a real key. */
+const PLACEHOLDER_KEYS = new Set(["undefined", "null", "none", "nil", "false", "true"]);
+
+/** The minimum length of a secret (service-role) API key. `sb_secret_…` keys are 42. */
+const MIN_SECRET_KEY_LENGTH = 32;
+
+/** The minimum estimated entropy, in bits, of a secret API key (a generated one has ~190). */
+const MIN_SECRET_KEY_BITS = 128;
+
+/** The Shannon entropy of `value`'s characters, times its length — an upper-bound estimate. */
+function estimatedBits(value: string): number {
+  const counts = new Map<string, number>();
+  for (const ch of value) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  let perChar = 0;
+  for (const n of counts.values()) {
+    const p = n / value.length;
+    perChar -= p * Math.log2(p);
+  }
+  return perChar * value.length;
+}
+
+/**
+ * Refuse an API key that is a placeholder (`undefined`, `null`, …) or — for a secret key, which
+ * grants `service_role` and so bypasses row-level security — too short or too predictable to be
+ * a real secret. Keys are never echoed: only the variable's position and the rule are named.
+ */
+function checkApiKeys(kind: "publishable" | "secret", keys: string[]): void {
+  const env = kind === "publishable" ? SUPABASE_KEY_ENV.publishableKey : SUPABASE_KEY_ENV.secretKey;
+  for (const [i, key] of keys.entries()) {
+    const where = `the ${kind} key${keys.length > 1 ? ` #${i + 1}` : ""} (${env})`;
+    if (PLACEHOLDER_KEYS.has(key.toLowerCase())) {
+      throw new TypeError(
+        `supabase keys: ${where} is the placeholder "${key}" — set a real key (\`denext backend keys\`) or leave it empty`,
+      );
+    }
+    if (kind === "publishable") continue;
+    if (key.length < MIN_SECRET_KEY_LENGTH) {
+      throw new TypeError(
+        `supabase keys: ${where} must be at least ${MIN_SECRET_KEY_LENGTH} characters — generate one with \`denext backend keys\``,
+      );
+    }
+    if (estimatedBits(key) < MIN_SECRET_KEY_BITS) {
+      throw new TypeError(
+        `supabase keys: ${where} is too predictable to grant service_role — generate one with \`denext backend keys\``,
+      );
+    }
+  }
+}
+
 /**
  * Resolve the configured key material (each field falling back to its environment variable).
+ * An empty value counts as unset.
  *
  * @param config The configured keys.
  * @param env Reads an environment variable.
  * @returns The resolved keys.
- * @throws {TypeError} For a malformed signing key or a legacy secret under 32 characters.
+ * @throws {TypeError} For a malformed signing key, a legacy secret under 32 characters, a
+ * placeholder API key (`undefined`, `null`, …), a secret key under 32 characters or too
+ * predictable to be one, or a key configured as both publishable and secret.
  */
 export async function resolveSupabaseKeys(
   config: SupabaseKeysConfig = {},
@@ -201,7 +253,9 @@ export async function resolveSupabaseKeys(
   if (overlap.length > 0) {
     throw new TypeError("supabase keys: a key cannot be both publishable and secret");
   }
-  const jwtSecret = config.jwtSecret ?? env(SUPABASE_KEY_ENV.jwtSecret);
+  checkApiKeys("publishable", publishable);
+  checkApiKeys("secret", secret);
+  const jwtSecret = (config.jwtSecret ?? env(SUPABASE_KEY_ENV.jwtSecret)) || undefined;
   if (jwtSecret !== undefined && jwtSecret.length < 32) {
     throw new TypeError("supabase keys: the JWT secret must be at least 32 characters");
   }

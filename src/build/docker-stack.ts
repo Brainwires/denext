@@ -484,7 +484,7 @@ function commentWrap(text: string): string[] {
 function envBlock(v: StackEnvVar): string {
   const lines = commentWrap(`${v.about}${v.required ? " Required." : ""}`);
   if (v.generate) lines.push(`# Generate: ${v.generate}`);
-  lines.push(`${v.name}=${v.required ? "" : v.example}`);
+  lines.push(`${v.name}=${v.required ? "" : v.example ?? ""}`);
   return lines.join("\n");
 }
 

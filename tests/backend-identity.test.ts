@@ -451,6 +451,49 @@ Deno.test("backend({ supabase }): installs the keys, serves the JWKS, dev keys p
   }
 });
 
+Deno.test("backend({ supabase }) in prod refuses to start on DENEXT_SECRET_KEY=undefined", async () => {
+  // The audit's bypass: a stack .env carrying the literal `undefined` as the secret key made
+  // `apikey: undefined` the service_role (every user listed, RLS bypassed). Startup fails now.
+  const g = await generateSupabaseKeys();
+  const saved = {
+    p: Deno.env.get("DENEXT_PUBLISHABLE_KEY"),
+    s: Deno.env.get("DENEXT_SECRET_KEY"),
+  };
+  const root = await Deno.makeTempDir({ prefix: "dnx-supabase-undef-" });
+  try {
+    resetPlugins();
+    installSupabaseKeys(undefined);
+    Deno.env.set("DENEXT_PUBLISHABLE_KEY", g.publishableKey);
+    Deno.env.set("DENEXT_SECRET_KEY", "undefined");
+    await assertRejects(
+      () =>
+        applyPlugins({
+          projectRoot: root,
+          appDir: `${root}/app`,
+          config: { plugins: [backend({ supabase: true })] } as DenextConfig,
+          mode: "prod",
+          load,
+        }),
+      TypeError,
+      "placeholder",
+    );
+    assertEquals(installedSupabaseKeys(), undefined, "no keys installed");
+    // With no keys installed, `apikey: undefined` is at most anon — never the service role.
+    const who = await inRequest({ apikey: "undefined" }, () => resolveIdentity()).catch((e) => e);
+    assert(isIdentityError(who) || who.role !== "service_role", "never service_role");
+  } finally {
+    for (
+      const [name, value] of [["DENEXT_PUBLISHABLE_KEY", saved.p], ["DENEXT_SECRET_KEY", saved.s]]
+    ) {
+      if (value === undefined) Deno.env.delete(name!);
+      else Deno.env.set(name!, value);
+    }
+    resetPlugins();
+    installSupabaseKeys(undefined);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("denext backend keys prints env lines, JSON, and the legacy keys", async () => {
   const lines: string[] = [];
   const command = createBackendCommand({ log: (line) => lines.push(line) });

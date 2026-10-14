@@ -546,7 +546,10 @@ With `backend({ supabase: true })` the backend also recognizes Supabase's creden
   `service_role` JWTs signed HS256 with a JWT secret. They come from `DENEXT_PUBLISHABLE_KEY`,
   `DENEXT_SECRET_KEY` and `DENEXT_JWT_SECRET` (or `backend({ supabase: { publishableKey,
   secretKey, jwtSecret } })`). The publishable and secret keys take several, comma-separated (any
-  one is accepted, so you can rotate one out); the JWT secret is a single value.
+  one is accepted, so you can rotate one out); the JWT secret is a single value. Startup refuses
+  a placeholder key (`undefined`, `null`, …), a secret key under 32 characters or too
+  predictable to grant `service_role`, and one key set as both; an empty variable counts as
+  unset.
 - **Access tokens**: JWTs with Supabase's claims, signed ES256 under `DENEXT_JWT_SIGNING_KEYS` (a
   private JWK, or a JSON array of them, current first — or `supabase: { signingKeys }`; the first
   signs, all of them verify, and the public halves are served at

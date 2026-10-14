@@ -510,6 +510,15 @@ a 3.x app to 4.0 involves. [Upgrading to 4.0](https://denext.dev/docs/upgrading)
 
 ### Fixed
 
+- **A stack `.env` can no longer turn a placeholder into the service-role key.**
+  `denext generate docker --stack` wrote the four optional Supabase key lines of `.env.example`
+  as the literal `undefined`, so `denext stack up` crash-looped, and a hand-filled `.env` that
+  left the secret-key line alone made `apikey: undefined` authenticate as `service_role`
+  (row-level security bypassed). The lines are now written empty, and `resolveSupabaseKeys` —
+  so `backend({ supabase })` at startup — refuses a placeholder key (`undefined`, `null`, …), a
+  secret key under 32 characters or too predictable to be a secret, and a key configured as both
+  publishable and secret, with an error naming the variable (never the value). An empty
+  `DENEXT_JWT_SECRET` counts as unset.
 - **A generated Dockerfile on a non-default port now listens on it.** The image's `CMD` was
   `deno task start -- --port N`; `deno task` forwards the literal `--`, so `denext start` took
   `--port` as passthrough and stayed on 3000. The Dockerfile now sets `ENV PORT=N` (which

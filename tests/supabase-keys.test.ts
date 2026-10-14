@@ -164,12 +164,15 @@ Deno.test("API keys: opaque publishable / secret, legacy JWTs, constant-time, re
   assert(g.anonKey && g.serviceRoleKey && g.jwtSecret);
   const keys = await resolveSupabaseKeys({
     publishableKey: g.publishableKey,
-    secretKey: [g.secretKey, "sb_secret_old"],
+    secretKey: [g.secretKey, "sb_secret_old-rotated-out-Xq7vT2mK9pLw4ZcR"],
     jwtSecret: g.jwtSecret,
   });
   assertEquals(await apiKeyRole(keys, g.publishableKey), "anon");
   assertEquals(await apiKeyRole(keys, g.secretKey), "service_role");
-  assertEquals(await apiKeyRole(keys, "sb_secret_old"), "service_role");
+  assertEquals(
+    await apiKeyRole(keys, "sb_secret_old-rotated-out-Xq7vT2mK9pLw4ZcR"),
+    "service_role",
+  );
   assertEquals(await apiKeyRole(keys, g.anonKey), "anon");
   assertEquals(await apiKeyRole(keys, g.serviceRoleKey), "service_role");
   assertEquals(await opaqueKeyRole(keys, "nope"), null);
@@ -240,4 +243,67 @@ Deno.test("the installed slot is process-global", async () => {
     installSupabaseKeys(undefined);
   }
   assertEquals(installedSupabaseKeys(), undefined);
+});
+
+Deno.test("resolve: placeholder, short and predictable secret keys are refused (no service_role for `undefined`)", async () => {
+  const g = await generateSupabaseKeys();
+  // The `.env.example` bug: an unfilled secret line reached the app as the literal "undefined",
+  // and `apikey: undefined` then authenticated as service_role. Startup refuses it now.
+  for (const placeholder of ["undefined", "null", "NULL", "Undefined"]) {
+    const env: Record<string, string> = {
+      [SUPABASE_KEY_ENV.publishableKey]: g.publishableKey,
+      [SUPABASE_KEY_ENV.secretKey]: placeholder,
+    };
+    const err = await assertRejects(
+      () => resolveSupabaseKeys({}, (name) => env[name]),
+      TypeError,
+      "placeholder",
+    );
+    assert(err.message.includes(SUPABASE_KEY_ENV.secretKey));
+  }
+  await assertRejects(
+    () => resolveSupabaseKeys({ publishableKey: "undefined", secretKey: g.secretKey }),
+    TypeError,
+    "placeholder",
+  );
+  // Too short to be a secret, or long but guessable.
+  await assertRejects(() => resolveSupabaseKeys({ secretKey: "sb_secret_y" }), TypeError, "32");
+  await assertRejects(
+    () => resolveSupabaseKeys({ secretKey: "a".repeat(64) }),
+    TypeError,
+    "predictable",
+  );
+  await assertRejects(
+    () => resolveSupabaseKeys({ secretKey: [g.secretKey, "abababababababababababababababab"] }),
+    TypeError,
+    "#2",
+  );
+  // The same key as both publishable and secret.
+  await assertRejects(
+    () => resolveSupabaseKeys({ publishableKey: g.secretKey, secretKey: g.secretKey }),
+    TypeError,
+    "both",
+  );
+  // An EMPTY value is unset (what the fixed .env.example writes): nothing is accepted, and
+  // neither `undefined` nor the empty string authenticates.
+  const empty: Record<string, string> = {
+    [SUPABASE_KEY_ENV.publishableKey]: g.publishableKey,
+    [SUPABASE_KEY_ENV.secretKey]: "",
+    [SUPABASE_KEY_ENV.jwtSecret]: "",
+    [SUPABASE_KEY_ENV.signingKeys]: "",
+  };
+  const keys = await resolveSupabaseKeys({}, (name) => empty[name]);
+  assertEquals(keys.secret.length, 0);
+  assertEquals(keys.hmac, null);
+  for (const presented of ["undefined", "null", ""]) {
+    assertEquals(await opaqueKeyRole(keys, presented), null);
+  }
+  await assertRejects(() => apiKeyRole(keys, "undefined"), SupabaseKeyError, "Invalid API key");
+  assertEquals(await apiKeyRole(keys, g.publishableKey), "anon");
+  // A generated key set passes.
+  const ok = await resolveSupabaseKeys({
+    publishableKey: g.publishableKey,
+    secretKey: g.secretKey,
+  });
+  assertEquals(await apiKeyRole(ok, g.secretKey), "service_role");
 });

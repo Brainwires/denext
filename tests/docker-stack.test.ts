@@ -137,8 +137,13 @@ Deno.test("STACK_ENV is the one list: .env.example comes from it, required secre
   assertEquals(vars.length, STACK_ENV.length, "the full stack needs every variable");
   const example = renderEnvExample(FULL);
   // Required secrets are written EMPTY, so a copied .env.example can never start the stack.
-  const lines = vars.map((v) => `\n${v.name}=${v.required ? "" : v.example}\n`);
+  const lines = vars.map((v) => `\n${v.name}=${v.required ? "" : v.example ?? ""}\n`);
   for (const line of lines) assertStringIncludes(example, line);
+  // An optional variable with no example is written EMPTY — never the literal `undefined`
+  // (which compose would hand the app as a real value, e.g. a guessable secret key).
+  for (const line of example.split("\n")) {
+    assert(!/=(undefined|null)$/.test(line), `no literal undefined/null value: ${line}`);
+  }
   const hints = vars.flatMap((v) => v.generate ? [`# Generate: ${v.generate}`] : []);
   for (const hint of hints) assertStringIncludes(example, hint);
   assert(!/change-me|password123|secret123/.test(example), "no placeholder secret values");
