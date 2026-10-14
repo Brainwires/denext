@@ -3,13 +3,8 @@
 // prints — the publishable key always, the secret key and passwords only with --show-secrets.
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
-import {
-  fillEnv,
-  parsePs,
-  runStack,
-  type StackIo,
-  stackStatus,
-} from "../src/cli/commands/stack.ts";
+import { fillEnv, runStack, stackStatus } from "../src/cli/commands/stack.ts";
+import { parsePs, type StackIo } from "../src/cli/commands/stack-io.ts";
 
 const PS = JSON.stringify([
   {

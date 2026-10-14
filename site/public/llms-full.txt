@@ -680,7 +680,11 @@ delivered signed + retried) from `@denext/backend/server`; the plugin adds the P
 also `denext storage ls | cp | mv | rm` (`ss:///bucket/key`), `denext functions new | list | serve |
 delete`, `denext backend token --sub <id>` (a test bearer JWT) and `denext gen types | keys |
 bearer-jwt`. `denext stack up | down | status | logs` runs the `generate docker` stack like
-`supabase start` (writes it and a generated `.env` when missing; `status --show-secrets`).
+`supabase start` (writes it and a generated `.env` when missing; `status --show-secrets`), and
+operates it: `health [--json] [--watch]`, `logs --level/--since/--until/--grep`, `passwd
+--postgres|--dashboard [--generate]` (ALTER ROLE first; a password only from stdin), `roll
+[--include-secret]`, `backup [--full]` / `restore <file> [--yes]` (`--restart` / `--no-restart`
+after a `.env` change).
 
 **A database (zero-npm, server-only module):**
 

@@ -8,6 +8,32 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Operating the self-hosted stack: `denext stack health | passwd | roll | backup | restore`, and
+  filtered `logs`.** `health` lists every service's compose health check and the app's
+  `/_denext/health` checks as a table (`--json`, `--watch [seconds]`) and exits 1 when anything
+  is unhealthy. `logs` gains `--service`, `--level`, `--since` / `--until` and `--grep` (text or
+  `/regex/flags`). `passwd --postgres` changes the superuser's and the app role's passwords with
+  `ALTER ROLE` inside the running database before it writes `.env`, and `--dashboard` sets
+  `DASHBOARD_PASSWORD`. Each password comes from stdin or `--generate`, never from an argument.
+  `roll` replaces the publishable and secret keys, and `--include-secret` (with a warning and a
+  confirmation, or `--yes`) also the JWT signing keys / `DENEXT_JWT_SECRET`. Both edit `.env`
+  in place: comments, layout and every other variable keep their bytes, and the file is replaced
+  atomically with its mode. They then restart the affected containers (`--restart`), leave them
+  (`--no-restart`), ask on a terminal, or print the command. `backup` writes a `pg_dump`
+  custom-format file. `backup --full` writes one `.tar.gz` with the roles, extensions, the dump,
+  the settings, the storage objects (the MinIO bucket or the `fs()` dir) and a `MANIFEST.txt` of
+  the restore order. `restore` recognizes either kind, refuses a database with tables unless
+  `--yes`, and rejects an archive entry with an absolute path, `..` or a link that leaves the
+  backup. Every Postgres tool runs inside the stack's `db` container, so the machine needs no
+  Postgres client.
+
+### Changed
+
+- **`.env.example` points at `denext stack passwd --postgres`** for changing `POSTGRES_PASSWORD`
+  on an existing volume. Before, it said that changing the password locked the stack out.
+
 ### Security
 
 - **A cookie session ends at its user's next request after a ban, a deletion or an SSO

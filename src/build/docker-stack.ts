@@ -109,7 +109,8 @@ export const STACK_ENV: readonly StackEnvVar[] = [
   {
     name: "POSTGRES_PASSWORD",
     about: "The superuser's password. Postgres keeps the one the data volume was created with: " +
-      "changing it here later locks the stack out (denext stack down --volumes starts over).",
+      "editing it here later locks the stack out: change it with denext stack passwd --postgres, " +
+      "which updates the database first.",
     generate: RAND_HEX,
     required: true,
     app: false,

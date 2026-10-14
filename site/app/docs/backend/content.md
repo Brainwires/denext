@@ -1689,9 +1689,17 @@ denext stack up            # writes the stack if it is missing (--stack, or your
                            # fills a missing .env with generated secrets (0600), compose up --wait
 denext stack status        # API, REST, database and S3 URLs, the publishable key (--json);
                            # --show-secrets adds the secret key and the passwords
-denext stack logs db -f    # docker compose logs
+denext stack logs db -f    # docker compose logs (--level, --since / --until, --grep filter it)
+denext stack health        # every service's health check and the app's /_denext/health
+denext stack passwd --postgres --generate   # ALTER ROLE in the database, then .env
+denext stack roll          # new publishable + secret keys (--include-secret: JWT keys too)
+denext stack backup --full # roles, extensions, dump, settings and storage in one .tar.gz
+denext stack restore <file>
 denext stack down          # --volumes also drops the data
 ```
+
+The operations commands (health, logs filters, passwords, key rolls, backup and restore):
+[Deployment › Operating the stack](/docs/deploy#operating-the-stack).
 
 `.env.example` names every secret the backend reads, with how to generate each; the compose
 file refuses to start while a required one is empty. The image runs on denext's Deno toolchain,

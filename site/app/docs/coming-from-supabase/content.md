@@ -561,7 +561,8 @@ the flags and the services.
 | `supabase storage ls` / `cp` / `mv` / `rm`                 | `denext storage ls` / `cp` / `mv` / `rm` (`ss:///bucket/key` paths, `-r`)                                                                                                      |
 | `supabase link`                                            | `denext db link --url <postgres-url>`, then `--linked` on any verb                                                                                                             |
 | `supabase secrets set / list / unset`                      | `.env` (or your host's environment), or the [vault](/docs/backend#vault)                                                                                                       |
-| `supabase start` / `stop` / `status`                       | `denext stack up` / `down` / `status` (and `logs`) over the stack `denext generate docker` writes                                                                              |
+| `supabase start` / `stop` / `status`                       | `denext stack up` / `down` / `status` (and `logs`, `health`) over the stack `denext generate docker` writes                                                                    |
+| Backing up a self-hosted stack (database + storage)        | `denext stack backup [--full]` / `denext stack restore` ([Operating the stack](/docs/deploy#operating-the-stack))                                                              |
 
 Every database verb works on the project's own database by default. `--db-url <url>` or `--linked`
 points it at another one. A project that keeps its files in `supabase/migrations/` keeps the

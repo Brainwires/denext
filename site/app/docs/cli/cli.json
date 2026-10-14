@@ -1941,9 +1941,9 @@
     },
     {
       "name": "stack",
-      "summary": "Start, stop and inspect the local Docker stack (app, Postgres, MinIO), like supabase start",
-      "usage": "denext stack <action> [service] [options]",
-      "description": "Usage: denext stack <up|down|status|logs> [flags]\n\n  up      Write the stack if missing (denext generate docker --stack, or your flags), fill a\n          missing .env with generated secrets, docker compose up -d --wait, then status\n          (--dev: the dev overlay; --build: rebuild the app image)\n  down    Stop it (--volumes also drops the database and storage data)\n  status  The API, REST, database and S3 URLs and the publishable key (--json;\n          --show-secrets adds the secret key and the passwords)\n  logs    docker compose logs [service] (--follow)",
+      "summary": "Start, stop, inspect and operate the local Docker stack (app, Postgres, MinIO), like supabase start",
+      "usage": "denext stack <action> [target] [options]",
+      "description": "Usage: denext stack <action> [flags]\n\n  up       Write the stack if missing (denext generate docker --stack, or your flags), fill\n           a missing .env with generated secrets, docker compose up -d --wait, then status\n           (--dev: the dev overlay; --build: rebuild the app image)\n  down     Stop it (--volumes also drops the database and storage data)\n  status   The API, REST, database and S3 URLs and the publishable key (--json;\n           --show-secrets adds the secret key and the passwords)\n  logs     docker compose logs [service] (--follow). Filters: --service <s> (repeatable),\n           --level debug|info|warn|error (that level and above), --since / --until\n           (2026-10-14T09:00:00Z or 30m), --grep <text> or --grep '/regex/i'\n  health   Each service's health check and the app's /_denext/health checks, as a table\n           (--json; --watch [seconds], default 5). Exits 1 when anything is unhealthy\n  passwd   New passwords: --postgres (the superuser from stdin or --generate, the app\n           role a fresh one; ALTER ROLE runs in the database first) and / or --dashboard\n           (DASHBOARD_PASSWORD). One password per line on stdin; never as an argument\n  roll     New publishable and secret keys; --include-secret also new JWT signing keys /\n           DENEXT_JWT_SECRET, which ends every issued token (confirm, or --yes)\n  backup   [file] The database (pg_dump custom format, default under .denext/backups/);\n           --full: one .tar.gz with roles, extensions, the dump, settings, storage and a\n           MANIFEST.txt of the restore order\n  restore  <file> A dump or a full backup (detected); a database with tables needs --yes\n\npasswd and roll edit .env in place, then --restart recreates the affected containers,\n--no-restart leaves them, and with neither a terminal is asked (else the command printed).\n--show-secrets prints the new secrets.",
       "flags": [
         {
           "name": "build",
@@ -1963,7 +1963,83 @@
         {
           "name": "show-secrets",
           "type": "boolean",
-          "description": "status: print the secret key and passwords"
+          "description": "status / passwd / roll: print the secret key and passwords"
+        },
+        {
+          "name": "service",
+          "type": "string",
+          "valueName": "<name>",
+          "description": "logs: only this service (repeatable)"
+        },
+        {
+          "name": "level",
+          "type": "string",
+          "valueName": "<level>",
+          "description": "logs: debug | info | warn | error and above"
+        },
+        {
+          "name": "since",
+          "type": "string",
+          "valueName": "<time>",
+          "description": "logs: from (timestamp or 30m)"
+        },
+        {
+          "name": "until",
+          "type": "string",
+          "valueName": "<time>",
+          "description": "logs: until (timestamp or 5m)"
+        },
+        {
+          "name": "grep",
+          "type": "string",
+          "valueName": "<text>",
+          "description": "logs: lines containing the text, or matching /regex/flags"
+        },
+        {
+          "name": "watch",
+          "type": "boolean",
+          "description": "health: repeat every [seconds] (default 5)"
+        },
+        {
+          "name": "dashboard",
+          "type": "boolean",
+          "description": "passwd: the dashboard password (DASHBOARD_PASSWORD)"
+        },
+        {
+          "name": "generate",
+          "type": "boolean",
+          "description": "passwd: generate strong passwords"
+        },
+        {
+          "name": "include-secret",
+          "type": "boolean",
+          "description": "roll: also the JWT signing keys / DENEXT_JWT_SECRET (ends every issued token)"
+        },
+        {
+          "name": "restart",
+          "type": "boolean",
+          "description": "passwd / roll: restart the affected containers"
+        },
+        {
+          "name": "no-restart",
+          "type": "boolean",
+          "description": "passwd / roll: leave the containers running"
+        },
+        {
+          "name": "yes",
+          "type": "boolean",
+          "description": "roll --include-secret / restore: go ahead without asking"
+        },
+        {
+          "name": "full",
+          "type": "boolean",
+          "description": "backup: roles, settings, extensions and storage too"
+        },
+        {
+          "name": "storage-dir",
+          "type": "string",
+          "valueName": "<dir>",
+          "description": "backup / restore: the fs storage driver's dir in the app container"
         },
         {
           "name": "postgres",
@@ -2041,13 +2117,13 @@
           "name": "action",
           "required": true,
           "variadic": false,
-          "description": "up | down | status | logs"
+          "description": "up | down | status | logs | health | passwd | roll | backup | restore"
         },
         {
-          "name": "service",
+          "name": "target",
           "required": false,
           "variadic": false,
-          "description": "logs: one service"
+          "description": "logs: a service; backup / restore: the file; health --watch: the seconds"
         }
       ]
     },

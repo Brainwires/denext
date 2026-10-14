@@ -163,6 +163,74 @@ In production route a public HTTPS hostname to the `minio` service and set
 images, so the service uses Bitnami's legacy build of the same server, pinned by digest;
 `MINIO_IMAGE` in `.env` swaps in any MinIO-compatible image that has `mc`.
 
+### Operating the stack
+
+`denext stack` runs the stack the way `supabase start` does, and operates it once it is up:
+
+```sh
+denext stack up | down | status        # start (writing the stack and .env when missing), stop, URLs
+denext stack health [--json] [--watch [seconds]]
+denext stack logs [service] [--service s] [--level warn] [--since 30m] [--until t] [--grep text]
+denext stack passwd --postgres [--dashboard] [--generate]
+denext stack roll [--include-secret]
+denext stack backup [file] [--full]
+denext stack restore <file> [--yes]
+```
+
+**Health.** `health` lists every service with its compose health check (a one-shot such as
+`db-init` or `migrate` counts once it has exited 0), then calls the app's own
+[`/_denext/health`](#13-health--readiness) and lists its readiness checks (`database`, …). It
+exits 1 when anything is unhealthy, so a script or a cron job can act on it. `--json` prints
+`{ ok, checkedAt, services: [{ name, state, health, ok }], app: { url, status, httpStatus,
+checks } }`. `--watch` repeats every 5 seconds, or every N with `--watch N`.
+
+**Logs.** `logs` is `docker compose logs` with filters: `--service` (repeatable, next to the
+positional service), `--since` / `--until` (a timestamp such as `2026-10-14T09:00:00Z`, or a
+relative `30m`, passed to compose), `--level debug | info | warn | error` (that level and above;
+the level is read from a JSON or logfmt `level` field or a level word such as Postgres's `ERROR:`;
+a line naming none counts as `info`) and `--grep` (plain text, case-sensitive, or `/regex/flags`).
+`--follow` works with every filter.
+
+**Passwords.** `passwd --postgres` changes the superuser's password (`POSTGRES_PASSWORD`) and the
+app role's (`POSTGRES_APP_PASSWORD`). It runs `ALTER ROLE` for both inside the running database,
+in one transaction, before it writes `.env`, so the two never disagree; if the database refuses,
+`.env` is left as it was. The superuser's new password comes from stdin (typed twice without echo
+on a terminal, or one line piped in) or `--generate`; the app role always gets a fresh random one,
+since only the app reads it. `passwd --dashboard` sets `DASHBOARD_PASSWORD`. A password is never
+accepted as an argument, where `ps` would show it, and none is printed unless you pass
+`--show-secrets`. A Postgres password may use `A-Z a-z 0-9 . _ ~ -` only (it goes into
+`DATABASE_URL`).
+
+**Keys.** `roll` replaces `DENEXT_PUBLISHABLE_KEY` and `DENEXT_SECRET_KEY` with a new pair (the
+same minting as `denext backend keys`). Clients holding the old keys need the new ones.
+`--include-secret` also replaces `DENEXT_JWT_SIGNING_KEYS`, and `DENEXT_JWT_SECRET` when it is
+set. That ends every access token, refresh session and legacy JWT key already issued, so it warns
+and asks first (`--yes` skips the question; off a terminal, `--yes` is required).
+
+**After a change.** `passwd` and `roll` edit `.env` in place. Comments, blank lines, order and
+every other variable keep their bytes, and the file is replaced atomically with its mode (0600
+for a new one). Then the containers that read the changed values have to be recreated:
+`--restart` does it at once (`docker compose up -d --wait web`), `--no-restart` leaves them, and
+with neither the command asks on a terminal and prints the restart command anywhere else.
+
+**Backups.** `backup` writes the database as a `pg_dump` custom-format file, by default to
+`.denext/backups/stack-<time>.dump` (which `.dockerignore` keeps out of the image). `--full`
+writes one `.tar.gz` holding the non-superuser roles and their memberships (no passwords),
+the extensions, the dump, the database and role settings, the storage objects (the MinIO bucket,
+or the `fs()` driver's directory: a literal `fs({ dir })` in the config, or `--storage-dir`) and
+a `MANIFEST.txt` that records the restore order. Every Postgres tool runs inside the stack's
+`db` container, so the machine needs no Postgres client. Backups are written 0600 and never
+overwrite an existing file.
+
+**Restore.** `restore <file>` recognizes a dump or a full backup by its first bytes. It refuses
+a database that already has tables unless you pass `--yes` (a stack that ran its migrations
+already has some). It then stops the app, runs `pg_restore --clean --if-exists` in one
+transaction (the full backup's steps in its manifest's order), and starts the app again. A full
+backup is extracted and checked before anything is touched: an entry with an absolute path or
+`..`, a link that leaves the backup, a hard link or a device is refused, and restore runs only
+the steps it knows, from the files the manifest names. The roles' passwords are not in a backup,
+so the restoring stack keeps the ones in its own `.env`.
+
 ### Deno Deploy
 
 Push the repo and point the entrypoint at `jsr:@denext/denext@^4.0.0/cli` with args
