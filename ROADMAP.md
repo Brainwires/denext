@@ -34,6 +34,35 @@ restart the affected containers (or does so at once with `--restart`).
   functions, logs and health. Build it on the `denext ui` Database pages (schema-driven, works
   with JavaScript off) so the local UI and the stack's dashboard are one implementation.
 
+## 4.1.0: Limitations that can be lifted
+
+Entries in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) that aren't forced by an OS, a browser
+or an upstream. Each one's limitation entry is deleted when it ships.
+
+- **React surface:** `captureOwnerStack()` returns the owner stack in development (the DevTools
+  panel already has it), and `cacheSignal()` returns the server render's cache-scope signal.
+- **GraphQL:** `fromChannel` runs the channel's `authorize` (today it bypasses it); subscriptions
+  over WebSocket (`graphql-ws`) next to SSE; a schema edit reloads in `denext dev` without a
+  restart.
+- **Auth, mail:** an `smtpMailer()` for `sendVerificationRequest`, and the `/auth/v1` SMTP
+  settings Supabase takes (`GOTRUE_SMTP_*`).
+- **Auth, sessions:** a per-user "sessions valid after" time that ends stateless cookie sessions
+  early (a ban, a password reset or a deletion); magic links default to `confirm: true`; a
+  default `native.refreshReuseInterval` (GoTrue uses 10 s); one passkey ceremony per tab, not per
+  browser.
+- **Auth, providers and factors:** a `denext auth reseal` job that moves TOTP factors off a
+  retired `secret` without waiting for a code; `microsoftEntra` with `common` / `organizations`
+  (validate the issuer against the token's `tid`); a native `id_token` sign-in that returns a
+  pending second factor instead of `403 mfa_required`; SAML for `denextAuth`'s own endpoints,
+  reusing `/auth/v1`'s implementation; optional FIDO Metadata Service attestation checks.
+- **Backend:** realtime tells subscribers to re-read on `TRUNCATE`; rate limits for the auto-REST
+  routes; AVIF image-transform sources (`@denext/avif`).
+- **Tooling:** the Markdown renderer gains nested lists, footnotes, images, indented code and
+  double-backtick spans; `denext doctor` / `probeApp` report a page an `error.tsx` rendered.
+- **React Native mode and lists:** `Image`'s `crossOrigin` / `referrerPolicy` and
+  `fadeDuration`; LegendList's `waitForInitialLayout`, `itemsAreEqual` and start insets; an iOS
+  `pageSheet` / `formSheet` modal swipes down to dismiss; `TouchableNativeFeedback`'s ripple.
+
 ## Deno toolchain
 
 - **Deno's next minor:** rebase denext's patches onto it and cut a new `-denext.N`. That release
