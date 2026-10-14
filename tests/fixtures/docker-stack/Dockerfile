@@ -28,7 +28,8 @@ RUN mkdir -p /deno-dir/toolchain-bin && \
 ENV PATH=/deno-dir/toolchain-bin:$PATH
 
 # The production server listens on 3000 and binds 0.0.0.0 by default (see
-# `deno task start`). Override the port by appending `-- --port <n>` to the CMD.
+# `deno task start`). Change the port with `ENV PORT=<n>`
+# (and EXPOSE) — `start` reads $PORT.
 EXPOSE 3000
 
 # The built-in liveness probe. Its JSON body also reports the cache store

@@ -481,6 +481,10 @@ and this project adheres to
 
 ### Fixed
 
+- **A generated Dockerfile on a non-default port now listens on it.** The image's `CMD` was
+  `deno task start -- --port N`; `deno task` forwards the literal `--`, so `denext start` took
+  `--port` as passthrough and stayed on 3000. The Dockerfile now sets `ENV PORT=N` (which
+  `start` reads) and keeps the bare `CMD ["deno", "task", "start"]`.
 - **`denext generate docker`: the MinIO bucket bootstrap no longer fails on first start.** The
   image restarts its server once after its first boot, after the health check has already passed,
   so `minio-init` could find nothing listening ("connection refused"). The bootstrap now retries.

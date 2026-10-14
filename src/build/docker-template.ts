@@ -120,11 +120,15 @@ ${DOCKER_SENTINEL}. Pinned to the Deno version this was
 # generated with — bump it deliberately.`;
 }
 
-/** The SSR image's `CMD` — the bare task, or the task plus an explicit `--port`. */
+/**
+ * The SSR image's `ENV PORT` + `CMD`. `denext start` reads `$PORT` (what a PaaS injects), so a
+ * non-default port rides in the environment: `deno task` forwards a literal `--` to the task,
+ * and `start` would then treat `--port` as passthrough and ignore it.
+ */
 function serverCmd(port: number): string {
   return port === DEFAULT_PORT
     ? `CMD ["deno", "task", "start"]`
-    : `CMD ["deno", "task", "start", "--", "--port", "${port}"]`;
+    : `ENV PORT=${port}\nCMD ["deno", "task", "start"]`;
 }
 
 /**
@@ -179,7 +183,8 @@ COPY --chown=deno:deno . .
 RUN deno task build
 ${needsToolchain(options) ? toolchainLayer(options) : ""}
 # The production server listens on ${port} and binds 0.0.0.0 by default (see
-# \`deno task start\`). Override the port by appending \`-- --port <n>\` to the CMD.
+# \`deno task start\`). Change the port with \`ENV PORT=<n>\`
+# (and EXPOSE) — \`start\` reads $PORT.
 EXPOSE ${port}
 
 # The built-in liveness probe. Its JSON body also reports the cache store

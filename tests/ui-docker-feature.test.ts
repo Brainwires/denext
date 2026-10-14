@@ -114,7 +114,7 @@ Deno.test("every rendered Docker file carries the sentinel, and options flow int
   const tuned = renderDockerfile({ mode: "server", port: 8080, denoTag: "2.5.1" });
   assertStringIncludes(tuned, "FROM denoland/deno:2.5.1");
   assertStringIncludes(tuned, "EXPOSE 8080");
-  assertStringIncludes(tuned, `CMD ["deno", "task", "start", "--", "--port", "8080"]`);
+  assertStringIncludes(tuned, `ENV PORT=8080\nCMD ["deno", "task", "start"]`);
   const spa = renderDockerfile({ mode: "static", port: 8080 });
   assertStringIncludes(spa, "RUN deno task export");
   assertStringIncludes(spa, `"--port", "8080"`);
@@ -141,7 +141,7 @@ Deno.test("the SSR Dockerfile is non-root, layer-caches dependencies, and health
   const health = at("HEALTHCHECK --interval=30s");
   assertStringIncludes(server, "http://127.0.0.1:8080/_denext/health");
   assert(!/^# HEALTHCHECK/m.test(server), "the healthcheck is live, not a commented example");
-  assert(health < at(`CMD ["deno", "task", "start", "--", "--port", "8080"]`));
+  assert(health < at(`ENV PORT=8080\nCMD ["deno", "task", "start"]`));
   // The write grant the start task must carry is spelled out next to the CMD.
   assertStringIncludes(server, "--allow-write=.denext");
   // The static image gets the same user + dependency layer, and a probe on `/`.
@@ -294,7 +294,7 @@ Deno.test("a second write with a new port regenerates the files and carries the 
     const files = await onDisk(h.dir);
     const dockerfile = files["Dockerfile"] as string;
     assertStringIncludes(dockerfile, "EXPOSE 8080");
-    assertStringIncludes(dockerfile, `CMD ["deno", "task", "start", "--", "--port", "8080"]`);
+    assertStringIncludes(dockerfile, `ENV PORT=8080\nCMD ["deno", "task", "start"]`);
     assertStringIncludes(files["docker-compose.yml"] as string, `      - "8080:8080"`);
     assert(!dockerfile.includes("EXPOSE 3000"), "the old port is gone");
 
