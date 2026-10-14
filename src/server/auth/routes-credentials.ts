@@ -45,6 +45,7 @@ import { type ResolvedSignIn, toAuthUser } from "./adapter-link.ts";
 import { resolveSessionUser } from "./routes-oauth.ts";
 import { applySignInCallback, type AuthRouteContext, isSameOrigin, json } from "./routes-shared.ts";
 import { finishSignIn } from "./sign-in-tail.ts";
+import { nonSsoUser } from "./sso-user.ts";
 import type { AuthUser, CredentialsProvider, SignInFailedReason } from "./types.ts";
 
 /** The most a credentials POST body may carry (a login form is a few hundred bytes). */
@@ -172,7 +173,8 @@ async function storedCredential(
   // a magic link created as `a@xn--bcher-kva.de`, through a custom adapter too.
   const address = emailKey(email);
   if (address === "" || !adapter?.getCredential) return undefined;
-  const user = await adapter.getUserByEmail(address);
+  // An SSO user signs in through its identity provider only: here it is an unknown address.
+  const user = nonSsoUser(await adapter.getUserByEmail(address));
   const hash = user ? await adapter.getCredential(user.id) : undefined;
   return user && hash ? { user, hash } : undefined;
 }

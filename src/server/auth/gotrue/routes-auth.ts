@@ -17,6 +17,7 @@ import {
   verificationLimiter,
 } from "../rate-limit.ts";
 import { authTrustsProxy } from "../rate-limit.ts";
+import { isSsoUser, nonSsoUser } from "../sso-user.ts";
 import { isOAuthProvider } from "../types.ts";
 import {
   checkPassword,
@@ -162,7 +163,8 @@ async function emailSignup(
   redirectTo: string,
 ): Promise<Response> {
   const existing = await ctx.adapter.getUserByEmail(email);
-  if (existing && !emailUnconfirmed(ctx, existing)) {
+  // An SSO user's address answers as a registered one: no mail, and no second account for it.
+  if (existing && (isSsoUser(existing) || !emailUnconfirmed(ctx, existing))) {
     if (ctx.options.autoconfirm) {
       throw new GoTrueError(422, "user_already_exists", "User already registered");
     }
@@ -207,7 +209,7 @@ async function phoneSignup(
     throw new GoTrueError(400, "phone_provider_disabled", "Phone signups are disabled");
   }
   const existing = await ctx.adapter.getUserByPhone?.(phone);
-  if (existing && !phoneUnconfirmed(ctx, existing)) {
+  if (existing && (isSsoUser(existing) || !phoneUnconfirmed(ctx, existing))) {
     throw new GoTrueError(422, "user_already_exists", "User already registered");
   }
   const user = existing ??
@@ -282,9 +284,10 @@ async function passwordGrant(
     })
   }`;
   if (limiter && await limiter.lockedOut(key) !== null) throw fail.rateLimited();
-  const user = email
-    ? await ctx.adapter.getUserByEmail(email)
-    : await ctx.adapter.getUserByPhone?.(phone!);
+  // An SSO user signs in through its identity provider only: here it is an unknown address.
+  const user = nonSsoUser(
+    email ? await ctx.adapter.getUserByEmail(email) : await ctx.adapter.getUserByPhone?.(phone!),
+  );
   if (!(await passwordMatches(ctx, user, password)) || !user) {
     await limiter?.fail(key);
     throw fail.credentials();
@@ -388,8 +391,9 @@ async function idTokenUser(
   if (linked) return linked;
   if (email) {
     const byEmail = await ctx.adapter.getUserByEmail(email);
-    // Link only onto a confirmed account: an unconfirmed one may be an attacker's squat.
-    if (byEmail && byEmail.emailVerified !== undefined) return byEmail;
+    // Link only onto a confirmed account: an unconfirmed one may be an attacker's squat. An SSO
+    // user's address never links (its IdP signs it in) and is not free for a second account.
+    if (byEmail && !isSsoUser(byEmail) && byEmail.emailVerified !== undefined) return byEmail;
     if (byEmail) {
       throw new GoTrueError(
         422,
@@ -419,25 +423,40 @@ async function idTokenUser(
 
 // ── otp ──────────────────────────────────────────────────────────────────────
 
-/** The user an OTP is for: found, or created when sign-ups are allowed. */
+/** The refusal an OTP for an unknown address gets when it may not sign one up, if any. */
+function otpSignupRefusal(
+  ctx: GoTrueContext,
+  phone: string | undefined,
+  createAllowed: boolean,
+): GoTrueError | undefined {
+  if (!createAllowed) return new GoTrueError(422, "otp_disabled", "Signups not allowed for otp");
+  if (ctx.options.disableSignup) {
+    return new GoTrueError(422, "signup_disabled", "Signups not allowed for this instance");
+  }
+  if (phone && !canSendSms(ctx)) {
+    return new GoTrueError(400, "phone_provider_disabled", "Phone logins are disabled");
+  }
+  return undefined;
+}
+
+/**
+ * The user an OTP is for: found, or created when sign-ups are allowed — or `undefined` for an SSO
+ * user's address, answered as a new sign-up would be with nothing sent or created.
+ */
 async function otpUser(
   ctx: GoTrueContext,
   email: string | undefined,
   phone: string | undefined,
   createAllowed: boolean,
   data: Record<string, unknown> | undefined,
-): Promise<{ user: AdapterUser; isNew: boolean }> {
+): Promise<{ user: AdapterUser; isNew: boolean } | undefined> {
   const found = email
     ? await ctx.adapter.getUserByEmail(email)
     : await ctx.adapter.getUserByPhone?.(phone!);
-  if (found) return { user: found, isNew: false };
-  if (!createAllowed) throw new GoTrueError(422, "otp_disabled", "Signups not allowed for otp");
-  if (ctx.options.disableSignup) {
-    throw new GoTrueError(422, "signup_disabled", "Signups not allowed for this instance");
-  }
-  if (phone && !canSendSms(ctx)) {
-    throw new GoTrueError(400, "phone_provider_disabled", "Phone logins are disabled");
-  }
+  if (found && !isSsoUser(found)) return { user: found, isNew: false };
+  const refusal = otpSignupRefusal(ctx, phone, createAllowed);
+  if (refusal) throw refusal;
+  if (found) return undefined;
   return { user: await createAccount(ctx, { email, phone, userMetadata: data }), isNew: true };
 }
 
@@ -463,7 +482,9 @@ export async function otp(ctx: GoTrueContext): Promise<Response> {
     address,
     email ? "over_email_send_rate_limit" : "over_sms_send_rate_limit",
   );
-  const { user, isNew } = await otpUser(ctx, email, phone, createAllowed, data);
+  const target = await otpUser(ctx, email, phone, createAllowed, data);
+  if (!target) return ok(email ? {} : { message_id: null });
+  const { user, isNew } = target;
   if (email) {
     const action = isNew ? "signup" : "magiclink";
     const issued = await issueOtp(ctx, "email", email, {
@@ -503,7 +524,9 @@ async function applyVerification(
     : kind === "sms"
     ? await ctx.adapter.getUserByPhone?.(address)
     : await ctx.adapter.getUserByEmail(address);
-  if (!user) throw fail.otpExpired();
+  // An SSO user is never verified with a one-time token (GoTrue's `validateUserForOTT`): a code
+  // issued before the account became one, or by the admin API, signs nobody in.
+  if (!user || isSsoUser(user)) throw fail.otpExpired();
   switch (kind) {
     case "email":
       if (user.email?.toLowerCase() !== address) throw fail.otpExpired();
@@ -679,7 +702,7 @@ async function resendEmailConfirmation(
   email: string,
   redirectTo: string,
 ): Promise<void> {
-  const user = await ctx.adapter.getUserByEmail(email);
+  const user = nonSsoUser(await ctx.adapter.getUserByEmail(email));
   if (!user || user.emailVerified !== undefined) return;
   const issued = await issueOtp(ctx, "email", email, {
     action: "signup",
@@ -692,7 +715,7 @@ async function resendEmailConfirmation(
 
 /** Re-send an unconfirmed phone sign-up's code (nothing for anyone else). */
 async function resendSmsConfirmation(ctx: GoTrueContext, phone: string): Promise<void> {
-  const user = await ctx.adapter.getUserByPhone?.(phone);
+  const user = nonSsoUser(await ctx.adapter.getUserByPhone?.(phone));
   if (!user || user.phoneVerified !== undefined) return;
   const issued = await issueOtp(ctx, "sms", phone, {
     action: "signup",
@@ -743,7 +766,8 @@ export async function recover(ctx: GoTrueContext): Promise<Response> {
     ctx,
     ctx.url.searchParams.get("redirect_to") ?? str(body, "redirect_to"),
   );
-  const user = await ctx.adapter.getUserByEmail(email);
+  // An SSO user's password belongs to its identity provider: nothing to recover here.
+  const user = nonSsoUser(await ctx.adapter.getUserByEmail(email));
   if (user) {
     const issued = await issueOtp(ctx, "recovery", email, {
       action: "recovery",

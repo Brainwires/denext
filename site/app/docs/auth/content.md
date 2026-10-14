@@ -2311,6 +2311,24 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   (`disableSignup`, the provider's `allowSignUp`), and have no `email` identity. An SSO user's
   password, email and phone belong to its IdP: `PUT /user` refuses to change them
   (`422 user_sso_managed`, as in GoTrue), and its last SSO identity can't be unlinked.
+- **SSO users sign in through their IdP only**, so the IdP's MFA, policies and deprovisioning
+  hold. Every other sign-in looks an SSO user up as "no such user", as GoTrue does: a magic link,
+  an email or SMS code, a password, a recovery link or a resend (on `/auth/v1` and through
+  `magicLink()`, `emailOtp()`, `phoneOtp()`, `credentials()` and `{basePath}/reset`) sends nothing
+  and answers as for an unknown address. Unlike GoTrue, an address belongs to one account, so a
+  sign-up for an SSO user's address answers as for a registered one instead of creating a second
+  account, and an OAuth, native or `id_token` sign-in with that address is refused rather than
+  linked (even with `allowDangerousEmailAccountLinking`). A code or reset link issued before the
+  account became an SSO user signs nobody in. An SSO user can't register a passkey, a passkey it
+  held before signs it in nowhere, and linking an identity to it needs a session its IdP started;
+  an identity linked that way (an OAuth account) is then a sign-in of its own, as in GoTrue. The
+  admin API's `generate_link` answers `user_not_found` for `recovery` and the email-change links,
+  and `email_exists` for `magiclink`, `signup` and `invite` (GoTrue would create a new account
+  for them), as does `POST /invite`. A user is an SSO user when its stored
+  `app_metadata.provider` is `sso:<id>` (its first SAML sign-in sets it), so linking or unlinking
+  identities never changes it — and an admin who edits `app_metadata.provider` changes it. An
+  existing account an IdP was linked to (`linkExistingAccounts`) is not an SSO user and keeps
+  its other sign-in methods.
 - **SAML endpoints.** The SingleSignOnService and SingleLogoutService URLs in IdP metadata are sent
   to the browser, so they must be `https:` (a loopback `http:` one only under
   `dangerouslyAllowInsecureProviders`); any other scheme refuses the metadata at registration, at

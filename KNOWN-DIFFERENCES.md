@@ -265,6 +265,13 @@ Where `@denext/backend` deliberately departs from Supabase. See
   address outside the provider's `domains` is never put on an account (a provider stored through
   the admin API is refused for it; a config-declared one signs in a user with no email), and an
   SSO user has no `email` identity.
+- **An SSO user's address can't start a second account.** Supabase leaves SSO users out of every
+  non-SSO lookup and lets a sign-up, a one-time code, an admin magic link or an OAuth sign-in
+  create a separate account for the same address. denext excludes SSO users from those lookups
+  the same way (nothing is sent; a password or code signs nobody in), but with one user per
+  email it answers a sign-up as for a registered address, creates nothing for a one-time code,
+  refuses an OAuth / `id_token` sign-in (`account_not_linked` / `email_exists`) and answers
+  `generate_link` `magiclink` / `signup` / `invite` and `POST /invite` with `email_exists`.
 - **A magic link, one-time code or recovery link that first confirms an account retires its
   password.** Supabase keeps a password set by an earlier unconfirmed sign-up; denext keeps only
   the one the account's own sign-up confirmation proves.

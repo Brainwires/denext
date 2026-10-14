@@ -52,6 +52,7 @@ import {
 } from "./email.ts";
 import { type AttemptKeys, subjectBucketKeys } from "./rate-limit.ts";
 import { convertOrCreateUser, hasConvertibleSession } from "./routes-anonymous.ts";
+import { isSsoUser } from "./sso-user.ts";
 import {
   errorLocation,
   noticePage,
@@ -241,6 +242,9 @@ async function findOrCreateUser(
   identifier: string,
 ): Promise<ResolvedSignIn | null> {
   const existing = await adapter.getUserByEmail(identifier);
+  // An SSO user signs in through its identity provider only — and its address is not free for
+  // a new account either.
+  if (existing && isSsoUser(existing)) return null;
   if (existing) {
     return {
       user: toAuthUser(await markVerified(ctx.config, ctx.options, adapter, existing)),

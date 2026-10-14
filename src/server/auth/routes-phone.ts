@@ -40,6 +40,7 @@ import { convertOrCreateUser, hasConvertibleSession } from "./routes-anonymous.t
 import { readSignInForm, redeemAndSignIn, sentAnswer } from "./routes-passwordless.ts";
 import { type AuthRouteContext, isSameOrigin, json, wantsJson } from "./routes-shared.ts";
 import { deliverSmsCode, smsSenderOf } from "./sms.ts";
+import { isSsoUser } from "./sso-user.ts";
 import type { PhoneProvider } from "./types.ts";
 import {
   issueVerificationCode,
@@ -172,6 +173,9 @@ async function findOrCreateUser(
   phone: string,
 ): Promise<ResolvedSignIn | null> {
   const existing = await adapter.getUserByPhone(phone);
+  // An SSO user signs in through its identity provider only — and its number is not free for a
+  // new account either.
+  if (existing && isSsoUser(existing)) return null;
   if (existing) {
     const verified = await markPhoneVerified(ctx.config, ctx.options, adapter, existing);
     return { user: toAuthUser(verified), isNewUser: false };

@@ -31,6 +31,7 @@ import {
 } from "../passkey-ceremony.ts";
 import { issueChallenge, redeemChallenge } from "../passkeys.ts";
 import { signinStartLimiter } from "../rate-limit.ts";
+import { isSsoUser } from "../sso-user.ts";
 import { WebAuthnError } from "../webauthn.ts";
 import {
   type CallerUser,
@@ -85,6 +86,18 @@ async function registrant(ctx: GoTrueContext): Promise<CallerUser> {
   return caller;
 }
 
+/**
+ * {@link registrant}, refused for an SSO user (GoTrue's rule): a passkey would be a sign-in its
+ * identity provider never sees.
+ */
+async function newPasskeyOwner(ctx: GoTrueContext): Promise<CallerUser> {
+  const caller = await registrant(ctx);
+  if (isSsoUser(caller.user)) {
+    throw new GoTrueError(422, "validation_failed", "SSO users cannot register passkeys");
+  }
+  return caller;
+}
+
 /** Issue a challenge bound to a fresh `challenge_id`. */
 async function begin(
   ctx: GoTrueContext,
@@ -120,7 +133,7 @@ function refused(error: unknown): never {
 
 /** `POST /passkeys/registration/options`. */
 export async function registrationOptions(ctx: GoTrueContext): Promise<Response> {
-  const { user } = await registrant(ctx);
+  const { user } = await newPasskeyOwner(ctx);
   const { rp, store } = requireRelyingParty(ctx);
   const existing = await store.listPasskeys(user.id);
   const started = await begin(ctx, "register", user.id);
@@ -133,7 +146,7 @@ export async function registrationOptions(ctx: GoTrueContext): Promise<Response>
 
 /** `POST /passkeys/registration/verify`. */
 export async function registrationVerify(ctx: GoTrueContext): Promise<Response> {
-  const { user } = await registrant(ctx);
+  const { user } = await newPasskeyOwner(ctx);
   const body = await readJson(ctx);
   const { rp, store } = requireRelyingParty(ctx);
   try {
@@ -187,7 +200,8 @@ export async function authenticationVerify(ctx: GoTrueContext): Promise<Response
     throw fail.credentials();
   }
   const user = await ctx.adapter.getUser(verified.record.userId);
-  if (!user) throw fail.credentials();
+  // An SSO user signs in through its identity provider only (a passkey from before it was one).
+  if (!user || isSsoUser(user)) throw fail.credentials();
   const session = await startSessionWithAal(ctx.session, user, {
     method: "webauthn",
     timestamp: nowSeconds(),

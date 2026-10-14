@@ -67,6 +67,7 @@ import {
 import { cookieSessionOptions } from "./options.ts";
 import { getSession, type SessionOptions } from "../session.ts";
 import { readAuthSession } from "./session.ts";
+import { isSsoUser } from "./sso-user.ts";
 import { finishSignIn } from "./sign-in-tail.ts";
 import type { AuthSession, SignInFailedReason } from "./types.ts";
 import { base64UrlField, parseClientData, WebAuthnError } from "./webauthn.ts";
@@ -183,6 +184,8 @@ async function registrationSession(pk: PasskeyContext): Promise<AuthSession | Re
   if (session instanceof Response) return session;
   const stored = await pk.adapter.getUser(session.user.id);
   if (!stored) return json({ error: "unauthorized" }, 401);
+  // An SSO user signs in through its identity provider only: no passkey to bypass it with.
+  if (isSsoUser(stored)) return json({ error: "sso_user" }, 403);
   if (stored.email && !isVerified(stored.emailVerified)) {
     return json({ error: "email_unverified" }, 403);
   }
@@ -353,6 +356,8 @@ async function signInOwner(
 ): Promise<Response> {
   const owner = await pk.adapter.getUser(verified.userId);
   if (!owner) return await refuse(ctx, "invalid_passkey", "owner_missing");
+  // A passkey from before the account became an SSO user signs nobody in.
+  if (isSsoUser(owner)) return await refuse(ctx, "invalid_passkey", "sso_user");
   const approved = await applySignInCallback(ctx.config, toAuthUser(owner), PASSKEY_PROVIDER);
   if (!approved) {
     await emitAuthEvent(ctx.options, "signInFailed", {

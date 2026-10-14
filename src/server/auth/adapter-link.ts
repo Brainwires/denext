@@ -28,6 +28,7 @@
 import type { AdapterAccount, AdapterUser, AuthAdapter } from "./adapter.ts";
 import { emitAuthEvent } from "./events.ts";
 import type { ResolvedAuthOptions } from "./options.ts";
+import { isSsoUser } from "./sso-user.ts";
 import type { AuthUser, OAuthProvider } from "./types.ts";
 
 /**
@@ -197,6 +198,22 @@ function assertLinkable(
 }
 
 /**
+ * Refuse to link a sign-in to an SSO user by its address: its identity provider is its only way
+ * in (GoTrue leaves SSO users out of the accounts a sign-in may link to), and its address is not
+ * free for a new account either. Not even `allowDangerousEmailAccountLinking` links one.
+ *
+ * @throws {AccountNotLinkedError} For an SSO user.
+ */
+function assertNotSso(provider: OAuthProvider, existing: AdapterUser): void {
+  if (!isSsoUser(existing)) return;
+  throw new AccountNotLinkedError(
+    `denextAuth: refusing to link the "${provider.id}" account to the existing user ` +
+      `${JSON.stringify(existing.id)} — it is an SSO user, which signs in through its identity ` +
+      "provider only.",
+  );
+}
+
+/**
  * Store the account under `user` and announce it.
  *
  * The account is persisted **with** whatever tokens the provider returned (that is what an
@@ -273,6 +290,7 @@ export async function resolveSignInUser(
 
   const existing = profile.email ? await adapter.getUserByEmail(profile.email) : undefined;
   if (existing) {
+    assertNotSso(provider, existing);
     assertLinkable(provider, profile, existing);
     if (!isVerified(existing.emailVerified) && profile.emailVerified === true) {
       await onFirstProof?.(existing);

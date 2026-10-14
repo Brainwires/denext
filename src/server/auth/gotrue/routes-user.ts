@@ -18,6 +18,7 @@ import {
   updateAccount,
 } from "./accounts.ts";
 import type { AdapterUser } from "../adapter.ts";
+import { isSsoUser } from "../sso-user.ts";
 import {
   type CallerUser,
   type GoTrueContext,
@@ -36,7 +37,7 @@ import { fail, GoTrueError } from "./errors.ts";
 import { factorsJson } from "./factors.ts";
 import { canSendSms, issueOtp, redeemOtp, sendAuthEmail, sendAuthSms } from "./otp.ts";
 import { readChallenge } from "./pkce.ts";
-import { identitiesOf, isSsoUser, userJson } from "./user.ts";
+import { identitiesOf, userJson } from "./user.ts";
 
 /** `GET /user`. */
 export async function getUser(ctx: GoTrueContext): Promise<Response> {
@@ -58,13 +59,8 @@ function changesCredentials(user: AdapterUser, body: Record<string, unknown>): b
  * identity provider, so `PUT /user` refuses to set a password, change the email or phone, or
  * present a reauthentication nonce for one.
  */
-async function changesSsoManaged(
-  ctx: GoTrueContext,
-  user: AdapterUser,
-  body: Record<string, unknown>,
-): Promise<boolean> {
-  const forbidden = changesCredentials(user, body) || !!str(body, "nonce");
-  return forbidden && await isSsoUser(ctx.adapter, user);
+function changesSsoManaged(user: AdapterUser, body: Record<string, unknown>): boolean {
+  return isSsoUser(user) && (changesCredentials(user, body) || !!str(body, "nonce"));
 }
 
 /**
@@ -100,7 +96,7 @@ export async function putUser(ctx: GoTrueContext): Promise<Response> {
       "Updating password of an anonymous user without an email or phone is not allowed",
     );
   }
-  if (await changesSsoManaged(ctx, user, body)) {
+  if (changesSsoManaged(user, body)) {
     throw new GoTrueError(
       422,
       "user_sso_managed",
@@ -335,10 +331,13 @@ export async function unlinkIdentity(ctx: GoTrueContext): Promise<Response> {
   await ctx.adapter.unlinkAccount?.({ provider: target.provider, providerAccountId: target.id });
   const remaining = await identitiesOf(ctx.adapter, (await ctx.adapter.getUser(user.id)) ?? user);
   const providers = [...new Set(remaining.map((identity) => identity.provider))];
-  // The provider the account signed up with stays while it is still linked: rewriting it to
-  // another (an `sso:` one) would change what kind of user this is.
+  // The provider the account signed up with decides what kind of user it is: an SSO user's
+  // stays `sso:` (GoTrue's `is_sso_user` never changes), and any other account keeps its own
+  // while it is still linked, else takes a remaining non-SSO one — never an `sso:` one.
   const stored = user.appMetadata?.provider;
-  const provider = typeof stored === "string" && providers.includes(stored) ? stored : providers[0];
+  const provider = isSsoUser(user) || (typeof stored === "string" && providers.includes(stored))
+    ? stored
+    : providers.find((name) => !name.startsWith("sso:")) ?? stored;
   await updateAccount(ctx, {
     id: user.id,
     appMetadata: { ...(user.appMetadata ?? {}), provider, providers },

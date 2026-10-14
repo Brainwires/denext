@@ -631,6 +631,37 @@ const FLOWS: Array<[string, Step, GoTrueOptions?, Partial<AuthConfig>?]> = [
       ],
     },
   }],
+  ["SAML SSO: an SSO user's address has no other way in", async (app) => {
+    const email = "only@sso-only.test";
+    await ssoSignIn(app, app.client(), { domain: "sso-only.test" }, { nameId: email });
+    const client = app.client();
+    const sent = app.emails.length;
+    // A magic link / code, a password, a recovery and a sign-up: answered as for an unknown
+    // address, with nothing sent and no second account.
+    assertEquals((await client.auth.signInWithOtp({ email })).error, null);
+    const noSignup = await client.auth.signInWithOtp({
+      email,
+      options: { shouldCreateUser: false },
+    });
+    assertEquals(noSignup.error?.code, "otp_disabled");
+    const password = await client.auth.signInWithPassword({ email, password: "any password" });
+    assertEquals(password.error?.code, "invalid_credentials");
+    assertEquals((await client.auth.resetPasswordForEmail(email)).error, null);
+    const signUp = await client.auth.signUp({ email, password: "a sign-up password" });
+    assertEquals(signUp.error, null);
+    assertEquals(signUp.data.session, null);
+    assertEquals(app.emails.length, sent, "nothing was sent");
+    // The admin API's links: a magic link would be a new account, a recovery has no target.
+    const admin = app.admin().auth.admin;
+    const magic = await admin.generateLink({ type: "magiclink", email });
+    assertEquals(magic.error?.code, "email_exists");
+    const recovery = await admin.generateLink({ type: "recovery", email });
+    assertEquals(recovery.error?.code, "user_not_found");
+  }, {
+    saml: {
+      providers: [{ id: "only", domains: ["sso-only.test"], metadataXml: ssoIdp.metadataXml() }],
+    },
+  }],
   ["custom access token hook and captcha", async (app) => {
     await app.admin().auth.admin.createUser({
       email: "hook@example.com",

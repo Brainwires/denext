@@ -59,6 +59,7 @@ import {
   type VerificationTokenAdapter,
 } from "./verification.ts";
 import { nativeAdapterOf } from "./native.ts";
+import { isSsoUser, nonSsoUser } from "./sso-user.ts";
 
 /** Which emailed-token flow a call belongs to. */
 export type EmailFlow = "email" | "reset";
@@ -359,7 +360,9 @@ export async function throttledDispatch(
   const retryAfter = await consumeHitBudget(verificationLimiter(config), keys);
   if (retryAfter !== null) return { ok: false, error: "throttled", retryAfter };
   const user = await input.lookup(input.identifier);
-  if (!input.shouldSend(user)) {
+  // An SSO user gets no message at all — no sign-in, reset or sign-up code — and the same dummy
+  // work as an unknown identifier: its identity provider is its only way in.
+  if ((user && isSsoUser(user)) || !input.shouldSend(user)) {
     const tokenHash = await sha256Hex(randomToken(32));
     await input.tokens.useVerificationToken?.({
       identifier: input.identifier,
@@ -791,7 +794,8 @@ export async function resetPassword(
     purpose: "reset",
     token: input.token,
   });
-  const user = record ? await adapter.getUserByEmail(record.identifier) : undefined;
+  // A reset link from before the account became an SSO user sets no password on it.
+  const user = record ? nonSsoUser(await adapter.getUserByEmail(record.identifier)) : undefined;
   if (!user) return { ok: false, error: "invalid_token" };
   const options = resolveAuthOptions(config);
   // A reset proves the mailbox too: an account that was never verified is cleared of

@@ -772,3 +772,26 @@ Deno.test("a password reset removes every passkey — a thief's key doesn't outl
   assertEquals(await b.session(), null);
   assertEquals(await listPasskeys(a.config, a.userId), []);
 });
+
+Deno.test("passkeys: an SSO user registers none, and one from before it became one signs nobody in", async () => {
+  const a = await app();
+  const auth = await Authenticator.create();
+  const owner = await registered(a, auth);
+  // The account becomes an SSO user (as a SAML sign-in leaves one): its IdP is its only way in.
+  await a.adapter.updateUser({
+    id: a.userId,
+    appMetadata: { provider: "sso:acme", providers: ["sso:acme"] },
+  });
+  const res = await owner.send("POST", "/passkey/register/options", {});
+  assertEquals([res.status, (await res.json()).error], [403, "sso_user"]);
+  const b = new Browser(a);
+  const options = await signInOptions(b);
+  const refused = await b.send("POST", "/passkey/authenticate", {
+    credential: await auth.assert(options, {
+      userHandle: b64u(new TextEncoder().encode(a.userId)),
+    }),
+  });
+  assertEquals(refused.status, 401);
+  assertEquals(await b.session(), null);
+  assert(a.failures.includes("invalid_passkey"));
+});

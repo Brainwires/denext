@@ -18,6 +18,7 @@ import { sessionFromJwtBearer } from "../src/server/auth/gotrue/access.ts";
 import type { AuthConfig } from "../src/server/auth/types.ts";
 import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp, totpCode } from "./_supabase-auth-app.ts";
+import { ACS, requestIdOf, testIdp } from "./_saml-idp.ts";
 
 interface Call {
   method?: string;
@@ -483,34 +484,36 @@ Deno.test("a banned user's access token is refused at every use, not only by the
 
 // ── SSO users: their credentials belong to the IdP ───────────────────────────
 
+const idp = await testIdp();
+
+/** A SAML provider `p1` for `corp.example` (an SSO user's only way in). */
+const SSO: GoTrueOptions = {
+  saml: { providers: [{ id: "p1", domains: ["corp.example"], metadataXml: idp.metadataXml() }] },
+};
+
 /**
- * An SSO user as a first SAML sign-in leaves it (its only identity is `sso:<provider>`), and an
- * access token for it (through a generated magic link).
+ * An SSO user, created by its first SAML sign-in (its only identity is `sso:p1`), and the access
+ * token that sign-in issued — an SSO user has no other way to a session.
  */
-async function ssoUser(app: SupabaseAuthApp, email: string, provider = "sso:p1") {
-  const adapter = app.config.adapter!;
-  const user = await adapter.createUser({
-    email,
-    emailVerified: Math.floor(Date.now() / 1000),
-    appMetadata: { provider, providers: [provider] },
+async function ssoUser(app: SupabaseAuthApp, email: string) {
+  const started = await api(app, "/sso", { body: { domain: "corp.example" } });
+  assertEquals(started.status, 200, JSON.stringify(started.json));
+  const landing = await app.fetch(ACS, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      SAMLResponse: await idp.response({
+        inResponseTo: await requestIdOf(started.json.url),
+        nameId: email,
+      }),
+      RelayState: new URL(started.json.url).searchParams.get("RelayState")!,
+    }),
+    redirect: "manual",
   });
-  await adapter.linkAccount({
-    userId: user.id,
-    provider,
-    providerAccountId: `name-id-${user.id}`,
-    identityId: crypto.randomUUID(),
-    identityData: { sub: `name-id-${user.id}`, email },
-    email,
-  });
-  const link = await api(app, "/admin/generate_link", {
-    key: app.secretKey,
-    body: { type: "magiclink", email },
-  });
-  const verified = await api(app, "/verify", {
-    body: { type: "magiclink", token_hash: link.json.hashed_token },
-  });
-  assertEquals(verified.status, 200, JSON.stringify(verified.json));
-  return { id: user.id, token: verified.json.access_token as string };
+  const fragment = new URLSearchParams(new URL(landing.headers.get("location")!).hash.slice(1));
+  const token = fragment.get("access_token");
+  assert(token, "the SAML sign-in issued a session");
+  return { id: claims(token).sub as string, token };
 }
 
 Deno.test("an SSO user can't change its password, email or phone through PUT /user", async () => {
@@ -539,7 +542,7 @@ Deno.test("an SSO user can't change its password, email or phone through PUT /us
     });
     assertEquals(same.status, 200);
     assertEquals(same.json.user_metadata.team, "a");
-  }, { autoconfirm: true });
+  }, { ...SSO, autoconfirm: true });
 });
 
 Deno.test("an existing account an IdP was linked to keeps its own password changes", async () => {
@@ -574,7 +577,7 @@ Deno.test("an SSO user's identities are its SSO identities only, and the last ca
       token,
     });
     assertEquals([unlink.status, unlink.json.error_code], [422, "single_identity_not_deletable"]);
-  }, { autoconfirm: true, manualLinking: true });
+  }, { ...SSO, autoconfirm: true, manualLinking: true });
 });
 
 // ── Sign-up on an account created by a code or an invite ─────────────────────

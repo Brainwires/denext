@@ -775,6 +775,25 @@ Hardening of the new `/auth/v1` API (unreleased) and the user store it shares wi
   or phone change, or a reauthentication nonce (`422 user_sso_managed`, as in GoTrue), and an SSO
   user's identities are its SSO identities only (no synthesized `email` identity), so its last
   one can't be unlinked.
+- **SSO users sign in through their identity provider only.** A magic link, an email or SMS
+  one-time code, a password, a recovery link or a resend for an SSO user's email or phone — on
+  `/auth/v1` and through `magicLink()`, `emailOtp()`, `phoneOtp()`, `credentials()` and
+  `{basePath}/reset` alike — now answers exactly as for an unknown address and sends nothing (as
+  GoTrue's lookups exclude SSO users); before, any of them signed an SSO user in without the
+  IdP, past its MFA, policies and deprovisioning. A sign-up for its address is answered as for a
+  registered one and creates no second account. A code or reset link issued before an account
+  became an SSO user signs nobody in. An OAuth, native or `id_token` sign-in never links onto an
+  SSO user by email (`account_not_linked` / `email_exists`), even with
+  `allowDangerousEmailAccountLinking`. An SSO user can't register a passkey (`422
+  validation_failed` on `/auth/v1`, `403 sso_user` on `{basePath}/passkey/register*`), a passkey
+  from before signs it in nowhere, and linking an identity to it needs a session its IdP started
+  (`422 user_sso_managed`). The admin API's `generate_link` answers `user_not_found` for
+  `recovery` and the email-change links and `email_exists` for `magiclink`, `signup` and
+  `invite` (GoTrue would create a second account there), and `POST /invite` is `email_exists`.
+  Being an SSO user now follows the stored `app_metadata.provider` alone (`sso:<id>`, set by its
+  first SAML sign-in), so linking or unlinking another identity no longer changes it; an existing
+  account an IdP was linked to (`linkExistingAccounts`) is not an SSO user and keeps its other
+  sign-in methods.
 - **An admin-generated sign-up link keeps the admin's password.** `generate_link` with
   `type: "signup"` and a `password` binds the code to that password, so confirming it no longer
   retires the password as a foreign one (GoTrue's behaviour).

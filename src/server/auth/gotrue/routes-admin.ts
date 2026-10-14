@@ -7,6 +7,7 @@
  */
 
 import type { AdapterUser } from "../adapter.ts";
+import { isSsoUser } from "../sso-user.ts";
 import {
   checkPassword,
   createAccount,
@@ -252,7 +253,8 @@ export async function adminInvite(ctx: GoTrueContext): Promise<Response> {
     ctx.url.searchParams.get("redirect_to") ?? str(body, "redirect_to"),
   );
   let user = await ctx.adapter.getUserByEmail(email);
-  if (user && user.emailVerified !== undefined) {
+  // An SSO user's address is taken: its IdP signs it in, and no second account takes it.
+  if (user && (isSsoUser(user) || user.emailVerified !== undefined)) {
     throw new GoTrueError(
       422,
       "email_exists",
@@ -313,9 +315,14 @@ async function linkTarget(
   /** The code is the new account's sign-up confirmation, bound to the password set with it. */
   bindPassword?: boolean;
 }> {
-  const existing = await ctx.adapter.getUserByEmail(email);
+  // An SSO user is not a target (GoTrue's lookup excludes it): `recovery` and the email-change
+  // links answer `user_not_found` as for an unknown address; `magiclink`, `signup` and `invite`
+  // (which GoTrue would turn into a new account) answer `email_exists` — its address is taken.
+  const stored = await ctx.adapter.getUserByEmail(email);
+  const sso = !!stored && isSsoUser(stored);
+  const existing = sso ? undefined : stored;
   const unconfirmed = () => {
-    if (existing && existing.emailVerified !== undefined) {
+    if (sso || (existing && existing.emailVerified !== undefined)) {
       throw new GoTrueError(
         422,
         "email_exists",
@@ -351,6 +358,9 @@ async function linkTarget(
       return { user, kind: "email", address: email, verificationType: type };
     }
     case "magiclink":
+      // GoTrue turns a magic link for an unknown address into a sign-up; an SSO user's address
+      // can't take one, so it is refused as a registered address.
+      if (sso) unconfirmed();
       return { user: known(), kind: "email", address: email, verificationType: type };
     case "recovery":
       return { user: known(), kind: "recovery", address: email, verificationType: type };
