@@ -40,6 +40,7 @@
  */
 
 import { clientAddrOf, ipBucket, limitAddrOf, remoteAddrOf } from "../remote-addr.ts";
+import { backendPostgresClient, backendRateLimitStore } from "./backend-postgres.ts";
 import { currentLimitPolicy, trustsForwardedHeaders } from "../request-context.ts";
 
 /** One key's open failure window. */
@@ -424,6 +425,19 @@ export interface RateLimitConfig {
   rateLimit?: RateLimitOptions | false;
   /** Whether a fronting proxy's `x-forwarded-for` may be believed. */
   trustForwardedHeaders?: boolean;
+  /** The auth adapter: its `rateLimits` store is the shared default on the backend's Postgres. */
+  adapter?: { rateLimits?: RateLimitStore };
+}
+
+/**
+ * The store the limiters share when `rateLimit.store` is unset: with `@denext/backend`'s
+ * Postgres set up, the adapter's own Postgres store (same schema) when it keeps one, else one on
+ * the backend's client — never a per-process count behind several replicas. `undefined` (each
+ * limiter's own in-memory store) without it.
+ */
+function defaultSharedStore(config: RateLimitConfig): RateLimitStore | undefined {
+  if (!backendPostgresClient()) return undefined;
+  return config.adapter?.rateLimits ?? backendRateLimitStore();
 }
 
 /**
@@ -472,7 +486,7 @@ function budget(
   return createRateLimiter({
     max: tuning?.max ?? max,
     windowMs: tuning?.windowMs ?? windowMs,
-    store: options.store,
+    ...(options.store ? { store: options.store } : {}),
   });
 }
 
@@ -488,7 +502,9 @@ function buildLimiters(config: RateLimitConfig): ConfigLimiters {
       captcha: null,
     };
   }
-  const options = config.rateLimit ?? {};
+  const configured = config.rateLimit ?? {};
+  const shared = configured.store ? undefined : defaultSharedStore(config);
+  const options = shared ? { ...configured, store: shared } : configured;
   return {
     credentials: createRateLimiter(options),
     signinStart: budget(options, options.signin, DEFAULT_SIGNIN_MAX, DEFAULT_WINDOW_MS),

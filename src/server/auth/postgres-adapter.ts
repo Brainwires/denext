@@ -49,6 +49,7 @@ import {
 } from "./adapter-rows.ts";
 import { emailKey } from "./email-key.ts";
 import { type AuthDb, authDb, type PostgresAuthStoreOptions } from "./postgres-schema.ts";
+import { pgRateLimitStore } from "./postgres-rate-limit.ts";
 import { pgSessionStore } from "./postgres-session-store.ts";
 import {
   numberPlaceholders,
@@ -740,6 +741,7 @@ export function postgresAuthAdapter(options: PostgresAuthAdapterOptions): AuthAd
   return Object.assign({}, ...GROUPS.map((group) => group(db)), {
     deleteUser: (id: string) => deleteUserRows(db, id),
     sessions: pgSessionStore(handle),
+    rateLimits: pgRateLimitStore(handle),
     close: () => handle.close(),
   }) as AuthAdapter;
 }

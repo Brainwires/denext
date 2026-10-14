@@ -1629,7 +1629,10 @@ the other five, which are tuned under `signin`, `session`, `verification`, `mfa`
 `captcha` (`captcha: false` turns just that one off).
 `store` is shared by all six (their keys are namespaced apart). The default store is a bounded per-process map —
 fine for a single instance, but each replica counts on its own, so pass a shared `store`
-behind several — `postgresRateLimitStore({ sql })` is one (see [Postgres](#postgres)).
+behind several — `postgresRateLimitStore({ sql })` is one (see [Postgres](#postgres)). With
+[`@denext/backend`](/docs/backend#postgres)'s Postgres (`backend({ postgres })`) and no `store`
+set, the limiters count in `auth_rate_limits` on that database (the adapter's own table with
+`backendAuthAdapter()`), so every replica already shares one budget.
 
 ## API tokens and `requireBearer`
 
@@ -2286,7 +2289,9 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   immediately and only asks the IdP to end its own — a user who never reaches the IdP's SLO page
   keeps their IdP session. A logout message is refused unless signed by the IdP's metadata
   certificate, and a replayed one is refused; its ID, like an assertion ID, is remembered in the
-  adapter so every replica shares the check.
+  adapter so every replica shares the check. An adapter without that table falls back to
+  `@denext/backend`'s Postgres when `backend({ postgres })` is set up, and to a per-process
+  cache only without either.
 - **SAML trust model.** An IdP speaks only for the email domains its provider was registered
   with. An address on one of them becomes the account's verified email; an IdP stored through the
   admin API that asserts any other address is refused (`403 email_address_not_authorized`), and a

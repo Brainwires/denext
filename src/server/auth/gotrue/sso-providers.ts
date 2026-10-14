@@ -8,7 +8,10 @@
  */
 
 import type { AuthAdapter, SsoAttributeMapping, SsoProviderRecord } from "../adapter.ts";
+import { backendPostgresClient } from "../backend-postgres.ts";
 import { sha256Hex } from "../hash.ts";
+import { postgresAuthAdapter } from "../postgres-adapter.ts";
+import type { SqlClient } from "../../postgres.ts";
 import { checkKeyPair } from "../saml/keys.ts";
 import {
   inMemorySamlReplayCache,
@@ -223,22 +226,48 @@ export async function spOf(ctx: GoTrueContext): Promise<SamlSpConfig> {
 
 const processCache = inMemorySamlReplayCache();
 
+/** One adapter per backend client, for its `auth_saml_message_ids` claim. */
+const backendClaims = new WeakMap<SqlClient, AuthAdapter>();
+
+/** Claim a message id. */
+type Claim = (id: string, expiresAt: number) => Promise<boolean>;
+
+/**
+ * Where message ids are claimed: the adapter's table when it keeps one (shared by every
+ * replica), else — with `backend({ postgres })` — the auth table on the backend's database, and
+ * only without either a process-local cache. A Postgres app never falls back to the process.
+ */
+function claimOf(adapter: AuthAdapter | undefined): Claim {
+  if (typeof adapter?.claimSamlMessageId === "function") {
+    return async (id, expiresAt) => await adapter.claimSamlMessageId!(id, expiresAt);
+  }
+  const sql = backendPostgresClient();
+  if (sql) {
+    let shared = backendClaims.get(sql);
+    if (!shared) {
+      // The plugin owns the client and closes it on drain.
+      shared = postgresAuthAdapter({ sql });
+      backendClaims.set(sql, shared);
+    }
+    return async (id, expiresAt) => await shared.claimSamlMessageId!(id, expiresAt);
+  }
+  return (id, expiresAt) => Promise.resolve(processCache.claim(id, expiresAt));
+}
+
 /**
  * The SAML message-id replay cache: the adapter's (shared by every replica) when it keeps one,
- * else a process-local one. Ids are namespaced and hashed to a fixed length.
+ * else the backend's Postgres when `backend({ postgres })` is set up, else a process-local one.
+ * Ids are namespaced and hashed to a fixed length.
  *
  * @param ctx The context.
  * @param namespace What kind of id (`assertion`, `logout`).
  * @returns The cache.
  */
 export function replayCacheOf(ctx: GoTrueContext, namespace: string): SamlReplayCache {
-  const store = ssoAdapterOf(ctx.adapter);
+  const claim = claimOf(ctx.adapter);
   return {
     async claim(id, expiresAt) {
-      const key = await sha256Hex(`gotrue-saml:${namespace}:${id}`);
-      return store
-        ? await store.claimSamlMessageId(key, expiresAt)
-        : await processCache.claim(key, expiresAt);
+      return await claim(await sha256Hex(`gotrue-saml:${namespace}:${id}`), expiresAt);
     },
   };
 }

@@ -545,6 +545,14 @@ a 3.x app to 4.0 involves. This section is the record.
   `authorize: ({ session }) => !!session` refused every supabase-js upload. The session is now
   the one `auth()` reads from the bearer (`null` for a revoked token or a pending second factor),
   or the token's verified claims when `denextAuth()` is not configured.
+- **Auth budgets and the SAML replay cache hold across replicas on `@denext/backend`'s Postgres.**
+  With `backend({ postgres })` and no `rateLimit.store`, the `denextAuth()` and `/auth/v1` limiters
+  (sign-in, session reads, email / SMS sends, second factors, captcha) counted per process, so N
+  replicas allowed N times every budget. They now count in `auth_rate_limits` on that database:
+  the adapter's own table with `backendAuthAdapter()` (the new optional `AuthAdapter.rateLimits`,
+  which `postgresAuthAdapter` provides), else one on the backend's client. The SAML message-id
+  replay cache uses the adapter's `claimSamlMessageId` whenever the adapter has it, and with the
+  backend's Postgres never falls back to a per-process cache. Without the backend nothing changes.
 - **The generated Docker image shuts down gracefully.** Its `CMD` was `deno task start`, and
   `deno task` does not forward `SIGTERM` to the server it starts: `docker stop` waited out the
   grace period and SIGKILLed the app (exit 137) — in-flight requests cut, no plugin teardowns.

@@ -26,6 +26,7 @@ import type {
   OAuthServerAdapter,
   Web3NonceAdapter,
 } from "./adapter-oauth-server.ts";
+import type { RateLimitStore } from "./rate-limit.ts";
 import type { SessionStore } from "./session-store.ts";
 
 /** A value an adapter may return directly or as a promise. */
@@ -960,6 +961,13 @@ export interface AuthAdapter extends OAuthServerAdapter, CustomProviderAdapter, 
    * `sessionStore` itself) — an adapter never silently makes sessions stateful.
    */
   sessions?: SessionStore;
+
+  /**
+   * An optional {@link ./rate-limit.ts | RateLimitStore} over the same storage. The auth
+   * limiters use it when the app runs on `@denext/backend`'s Postgres and sets no
+   * `rateLimit.store`, so every replica counts against one budget.
+   */
+  rateLimits?: RateLimitStore;
 
   /** Optional: release resources (a database handle) when the server drains. */
   close?(): MaybePromise<void>;
