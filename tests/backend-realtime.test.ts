@@ -61,6 +61,7 @@ import {
   formatFilter,
   newNonce,
   parseFilter,
+  type TableChange,
 } from "../packages/backend/src/realtime-shared.ts";
 import { type FakeRealtimeClient, fakeRealtimeClient } from "./helpers/fake-realtime-client.ts";
 import { begin, insert, relation } from "./helpers/pgoutput.ts";
@@ -1602,6 +1603,56 @@ Deno.test("realtime raw mode: every step of a key in one burst, judged by the ro
     sql.insert("notes", { id: 1, owner: A, body: "c" });
     await until(() => ops().length === 4);
     assertEquals(ops().slice(2), ["delete:1", "insert:1"]);
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime raw mode: an old row reaches only a subscriber who could see the row before", async () => {
+  const sql = fakeRealtimeClient({ notes: { policy: ownerOnly } });
+  const env = await setUp({ publication: false }, sql);
+  try {
+    const engine = realtimeEngine();
+    const bob: TableChangesFrame[] = [];
+    const alice: TableChangesFrame[] = [];
+    for (const [sub, frames] of [[B, bob], [A, alice]] as const) {
+      await engine.bind({
+        table: engine.table("notes"),
+        scope: rawScope(sub),
+        owner: `authenticated:${sub}`,
+        events: ALL_EVENTS,
+        onFrame: (frame) => frames.push(frame),
+      });
+    }
+    const changes = (frames: TableChangesFrame[]) =>
+      frames.flatMap((f) => f.changes ?? []) as Array<TableChange & { old?: unknown }>;
+    const update = (row: Record<string, unknown>, old: Record<string, unknown>) => {
+      sql.tables.get("notes")!.set(String(row.id), row);
+      sql.notify(JSON.stringify({ table: "notes", op: "update", key: String(row.id), old }));
+    };
+    // Alice's private row: Alice sees it, Bob does not.
+    const draft = { id: 7, owner: A, body: "alice-private-draft" };
+    sql.insert("notes", draft);
+    await until(() => changes(alice).length === 1);
+    // Handed to Bob, the trigger carrying the full old row (`old: "full"`): Bob gets the
+    // UPDATE, but never Alice's row as it was — `old_record` is the key alone for him.
+    update({ id: 7, owner: B, body: "public" }, draft);
+    await until(() => changes(bob).length === 1, 3_000, JSON.stringify(changes(bob)));
+    assertEquals(changes(bob)[0].op, "update");
+    assertEquals("old" in changes(bob)[0], false, JSON.stringify(changes(bob)[0]));
+    // Bob saw it now: his next update carries the row as he saw it.
+    const seen = { id: 7, owner: B, body: "public" };
+    update({ id: 7, owner: B, body: "v2" }, seen);
+    await until(() => changes(bob).length === 2);
+    assertEquals(changes(bob)[1].old, seen);
+    // Two steps in one burst: the second's old row is an intermediate state (here Alice's,
+    // which Bob never saw) — only the first step carries one.
+    const secret = { id: 7, owner: A, body: "alice-again" };
+    update(secret, { id: 7, owner: B, body: "v2" });
+    update({ id: 7, owner: B, body: "v3" }, secret);
+    await until(() => changes(bob).length === 4, 3_000, JSON.stringify(changes(bob)));
+    assertEquals(changes(bob)[2].old, { id: 7, owner: B, body: "v2" });
+    assertEquals("old" in changes(bob)[3], false, JSON.stringify(changes(bob)[3]));
   } finally {
     await env.done();
   }

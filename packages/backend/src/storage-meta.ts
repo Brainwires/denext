@@ -7,6 +7,7 @@
 // at the prefix's level, `search` matching the start of the remaining name) is shared here so
 // both stores answer the same way.
 
+import { StorageError } from "./errors.ts";
 import type { RlsScope } from "./rls.ts";
 
 /** A bucket row (`storage.buckets`). */
@@ -178,6 +179,14 @@ export interface ResumableRow {
   chunks: { offset: number; size: number }[];
   /** The object version the upload will write. */
   version: string;
+  /**
+   * The bytes are assembled in the staging namespace and moved to the key only by the write of
+   * the object's row ({@linkcode MetaStore.commitObject}): a request's user under SQL-RLS, or a
+   * signed upload pinned to the object's state when it was signed.
+   */
+  staged?: boolean;
+  /** The current version the object must still have when the upload completes (`null`: none). */
+  expect?: string | null;
   expires_at: number;
   lease: string | null;
   lease_until: number | null;
@@ -191,6 +200,55 @@ export type Actor = { kind: "service" } | { kind: "scoped"; scope: RlsScope };
 
 /** The service actor. */
 export const SERVICE: Actor = Object.freeze({ kind: "service" });
+
+/**
+ * An object row written together with its bytes ({@linkcode MetaStore.commitObject}): what the
+ * write may replace, decided against the row as it is at that moment, under the writer's role.
+ */
+export interface ObjectCommit {
+  /** The new row. */
+  row: ObjectWrite;
+  /** Whether a live object may be replaced (otherwise it is `duplicate`). */
+  upsert: boolean;
+  /**
+   * Finish the row reserved at `row.version` (a plain upload into a bucket without versioning):
+   * only its metadata is filled in, and only while it is still that version.
+   */
+  reserved: boolean;
+  /**
+   * A versioned bucket: whether the current row is kept as a noncurrent version (archived) rather
+   * than replaced; `null` for a bucket without versioning.
+   */
+  keep: ((current: ObjectRow) => boolean) | null;
+  /** The version the current row must have (`null`: there must be none); absent: any. */
+  expect?: string | null;
+}
+
+/**
+ * Why a {@linkcode ObjectCommit} may not land on `current` (the object's current row as it is
+ * now), before any policy is asked; `null` when nothing stands in its way.
+ *
+ * @param c The commit.
+ * @param current The current row, or `null`.
+ * @returns The refusal, or `null`.
+ */
+export function commitRefusal(c: ObjectCommit, current: ObjectRow | null): StorageError | null {
+  if (c.expect !== undefined && (current?.version ?? null) !== c.expect) {
+    return new StorageError("conflict", "the object changed after the upload was authorized");
+  }
+  if (c.reserved) {
+    return current?.version === c.row.version
+      ? null
+      : new StorageError("conflict", "the upload's reservation is gone");
+  }
+  const live = current !== null && !current.is_delete_marker;
+  return live && !c.upsert ? new StorageError("duplicate", "The resource already exists") : null;
+}
+
+/** Whether a commit keeps `current` as a noncurrent version (a versioned bucket's rule). */
+export function commitKeeps(c: ObjectCommit, current: ObjectRow | null): boolean {
+  return !c.reserved && current !== null && c.keep !== null && c.keep(current);
+}
 
 /** The metadata store. Every method that takes an `as` runs scoped under SQL-RLS. */
 export interface MetaStore {
@@ -216,6 +274,22 @@ export interface MetaStore {
   writeObject(row: ObjectWrite, upsert: boolean, as: Actor): Promise<ObjectRow>;
   /** Check, under `as`, that {@link writeObject} would be allowed — then roll it back. */
   checkWrite(row: ObjectWrite, upsert: boolean, as: Actor): Promise<void>;
+  /**
+   * Write an object's row and move its bytes in, in one transaction: the current row is read and
+   * locked, the write runs under `as` (so the policies judge the row that is there now — an
+   * upsert or an archive needs `update` on it, a new row `insert`), and `during` (handed the
+   * locked current row and whether it is kept) moves the bytes before the commit. A refused
+   * write runs nothing of `during`.
+   *
+   * @returns The written row.
+   * @throws {StorageError} `forbidden` (a policy), `duplicate` (no upsert, a live object),
+   *   `conflict` (not the expected version; the reservation is gone).
+   */
+  commitObject(
+    commit: ObjectCommit,
+    as: Actor,
+    during: (current: ObjectRow | null, keep: boolean) => Promise<void>,
+  ): Promise<ObjectRow>;
   /** Fill in a row's metadata once its bytes are stored — only while it is at `version`. */
   finishObject(
     bucket: string,
@@ -227,6 +301,8 @@ export interface MetaStore {
   deleteObjects(bucket: string, names: string[], as: Actor, version?: string): Promise<ObjectRow[]>;
   /**
    * Rename a row (move), checked under `as` (`update` on the source, the new row's `with check`).
+   * Not a dry run: one transaction — the row is renamed (the destination's unique name taken),
+   * then `during` copies the bytes, then it commits; a refused rename runs nothing of `during`.
    * @returns The moved row, or `null` when the source is absent or hidden.
    * @throws {StorageError} `duplicate` when the destination exists.
    */
@@ -235,6 +311,7 @@ export interface MetaStore {
     to: { bucket: string; name: string },
     as: Actor,
     dryRun: boolean,
+    during?: () => Promise<void>,
   ): Promise<ObjectRow | null>;
   listObjects(bucket: string, query: ListQuery, as: Actor): Promise<ListEntry[]>;
   /** Up to `limit` names in `bucket` after `after` (emptying a bucket), as the service. */
@@ -259,16 +336,32 @@ export interface MetaStore {
     version: string | undefined,
     as: Actor,
   ): Promise<ObjectRow | null>;
-  /** Permanently delete one version row (as the service); returns it. */
-  deleteVersion(bucket: string, name: string, version: string): Promise<ObjectRow | null>;
+  /**
+   * Permanently delete one version row — as the service, or under `as` (only when its policies
+   * let it delete the row); returns it, or `null`.
+   */
+  deleteVersion(
+    bucket: string,
+    name: string,
+    version: string,
+    as?: Actor,
+  ): Promise<ObjectRow | null>;
   /** With no current row left, make the newest archived row current; returns it. */
   promoteLatest(bucket: string, name: string): Promise<ObjectRow | null>;
   /** Store (or clear, `null`) a bucket's lifecycle policy. */
   setLifecycle(id: string, config: LifecycleConfiguration | null, as: Actor): Promise<boolean>;
   /** Every row under a prefix (no folders), in order — `listV2` without a delimiter. */
   listFlat(bucket: string, query: FlatQuery, as: Actor): Promise<ObjectRow[]>;
-  /** Delete up to `limit` archived rows and delete markers (emptying a bucket); returns them. */
+  /**
+   * Delete up to `limit` archived rows and delete markers (emptying a bucket), as the service;
+   * returns them.
+   */
   purgeVersions(bucket: string, limit: number): Promise<ObjectRow[]>;
+  /**
+   * Up to `limit` archived rows and delete markers with an id after `after` (`""`: from the
+   * start), in id order, as the service — what a scoped empty walks.
+   */
+  noncurrentVersions(bucket: string, after: string, limit: number): Promise<ObjectRow[]>;
   /**
    * Delete up to `limit` noncurrent versions older than `days` beyond each name's newest
    * `keepNewer` (a lifecycle rule); returns them.

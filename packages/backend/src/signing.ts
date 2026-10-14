@@ -168,6 +168,11 @@ export interface UploadGrant {
   u?: string;
   /** The owner to record (the signing caller's user id). */
   o?: string | null;
+  /**
+   * Pinned (a policy-checked signer): the version the object had when the upload was authorized
+   * (`null`: none). The upload records its row only while the object is still at it.
+   */
+  cv?: string | null;
   /** Expiry, epoch seconds. */
   exp: number;
 }

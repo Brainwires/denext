@@ -185,7 +185,7 @@ export async function sealSecret(
 ): Promise<{ secret: string; nonce: Uint8Array }> {
   const nonce = crypto.getRandomValues(new Uint8Array(12));
   const sealed = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: nonce, additionalData: encoder.encode(id) },
+    { name: "AES-GCM", iv: nonce, additionalData: aadOf(id) },
     key.key,
     encoder.encode(plaintext),
   );
@@ -208,7 +208,7 @@ export async function openSecret(
   for (const key of candidates) {
     try {
       const plain = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: row.nonce, additionalData: encoder.encode(row.id) },
+        { name: "AES-GCM", iv: row.nonce, additionalData: aadOf(row.id) },
         key.key,
         fromBase64(row.secret),
       );
@@ -218,6 +218,14 @@ export async function openSecret(
     }
   }
   return null;
+}
+
+/**
+ * A row id as the additional authenticated data: a UUID in Postgres's canonical text form (what
+ * `id::text` prints, and what the SQL side binds), so `C50F5012-…` and `c50f5012-…` seal alike.
+ */
+function aadOf(id: string): Uint8Array<ArrayBuffer> {
+  return encoder.encode(UUID.test(id) ? id.toLowerCase() : id);
 }
 
 function toBase64(bytes: Uint8Array): string {
@@ -406,6 +414,11 @@ export interface Vault {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Seal `plaintext` into the row `id` names. `id` must be the row's id as the database prints it
+ * (`id::text`): the ciphertext is bound to it, so a write under any other spelling could never be
+ * read back. The update is checked: it must land on exactly that row.
+ */
 async function writeSecret(
   sql: SqlClient,
   key: VaultKey,
@@ -413,11 +426,14 @@ async function writeSecret(
   plaintext: string,
 ): Promise<void> {
   const { secret, nonce } = await sealSecret(key, id, plaintext);
-  await sql.unsafe(
+  const written = await sql.unsafe<{ id: string }>(
     "UPDATE vault.secrets SET secret = $2, nonce = $3, key_id = $4::uuid, updated_at = now() " +
-      "WHERE id = $1::uuid",
+      "WHERE id = $1::uuid RETURNING id::text AS id",
     [id, secret, nonce, key.id],
   );
+  if (written.length !== 1 || written[0].id !== id.toLowerCase()) {
+    throw new VaultError("not_found", "vault: the secret changed while it was being written");
+  }
 }
 
 /**
@@ -457,7 +473,9 @@ export const vault: Vault = {
       [id, "name" in changes, changes.name ?? null, changes.description ?? null],
     );
     if (!found.length) throw new VaultError("not_found", "vault.updateSecret: no such secret");
-    if (changes.secret !== undefined) await writeSecret(sql, key, id, changes.secret);
+    // Sealed under the id as the database prints it (`id::text`, lowercase), never the caller's
+    // spelling: `$1::uuid` matches an uppercase id too, and readers bind the canonical one.
+    if (changes.secret !== undefined) await writeSecret(sql, key, found[0].id, changes.secret);
   },
   async get(name) {
     const keys = await slot().keys();

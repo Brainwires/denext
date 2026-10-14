@@ -183,8 +183,66 @@ Deno.test("pg metadata store: statements, scoping, dry runs, errors and shapes",
     );
     answers.push([/where bucket_id = \$1 and name = \$2/, json(OBJECT)]);
     assertEquals((await store.moveObject(from, to, SCOPED, true))?.id, OBJECT.id);
-    answers.push([/update storage\.objects set bucket_id/, json({ ...OBJECT, name: "m.txt" })]);
-    assertEquals((await store.moveObject(from, to, SERVICE, false))?.name, "m.txt");
+    // The real move: the source locked, renamed as the caller, read back, the bytes copied before
+    // the commit.
+    answers.push([/archived_at is null for update/, json(OBJECT)]);
+    answers.push([/where id = \$1 and bucket_id = \$2/, json({ ...OBJECT, name: "m.txt" })]);
+    let copied = 0;
+    const moved = await store.moveObject(from, to, SCOPED, false, () => {
+      copied++;
+      return Promise.resolve();
+    });
+    assertEquals([moved?.name, copied], ["m.txt", 1]);
+    const asCaller = log.findLastIndex((s) => s.text.startsWith("select set_config('role', $1"));
+    const rename = log.findLastIndex((s) => /set bucket_id = \$3, name = \$4/.test(s.text));
+    assert(asCaller >= 0 && asCaller < rename, "the rename runs as the caller");
+    // The source gone (or hidden): nothing moves, nothing is copied.
+    assertEquals(
+      await store.moveObject(from, to, SCOPED, false, () => {
+        copied++;
+        return Promise.resolve();
+      }),
+      null,
+    );
+    assertEquals(copied, 1);
+
+    // commitObject: judged against the current row as it is now.
+    const next = {
+      bucket_id: "b",
+      name: "k.txt",
+      owner_id: "u1",
+      version: "v2",
+      metadata: null,
+      user_metadata: null,
+    };
+    const commit = (c: Partial<Parameters<typeof store.commitObject>[0]>, as = SCOPED) =>
+      store.commitObject(
+        { row: next, upsert: true, reserved: false, keep: null, ...c },
+        as,
+        () => {
+          copied++;
+          return Promise.resolve();
+        },
+      );
+    answers.push([/archived_at is null for update/, json(OBJECT)]);
+    await assertRejects(() => commit({ expect: null }), StorageError, "changed");
+    answers.push([/archived_at is null for update/, json(OBJECT)]);
+    await assertRejects(() => commit({ upsert: false }), StorageError, "already exists");
+    answers.push([/archived_at is null for update/, json(OBJECT)]);
+    await assertRejects(() => commit({ reserved: true }), StorageError, "reservation");
+    // The policy refuses the write: nothing of `during` runs.
+    answers.push([/archived_at is null for update/, json(OBJECT)]);
+    failures.push([/on conflict \(bucket_id, name\)/, err("42501")]);
+    await assertRejects(() => commit({}), StorageError, "row-level security");
+    // An archive the policy silently skipped leaves the name taken: refused as well.
+    answers.push([/archived_at is null for update/, json(OBJECT)]);
+    failures.push([/insert into storage\.objects/, err("23505")]);
+    await assertRejects(() => commit({ keep: () => true }), StorageError, "row-level security");
+    // Allowed: the row read back is the new version, then the bytes move in.
+    answers.push([/archived_at is null for update/, json(OBJECT)]);
+    answers.push([/archived_at is null\) r/, json({ ...OBJECT, version: "v2" })]);
+    assertEquals((await commit({}))?.version, "v2");
+    assertEquals(copied, 2);
 
     // Listings: a column off the list falls back to `name`; the search is escaped.
     await store.listObjects("b", {

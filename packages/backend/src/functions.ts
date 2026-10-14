@@ -22,6 +22,7 @@ import { join, resolve, toFileUrl } from "@std/path";
 import {
   clientIp,
   csrf,
+  localServerOrigin,
   nativeBearerToken,
   type PluginContext,
   readCappedBody,
@@ -72,8 +73,11 @@ export interface FunctionsOptions {
   /** Environment variables every function reads from `Deno.env`, over the process's own. */
   env?: Record<string, string>;
   /**
-   * The app's public URL, which functions read as `SUPABASE_URL` (default: the origin of the
-   * request that starts the worker, plus the app's `basePath`).
+   * The URL functions read as `SUPABASE_URL` (the `SUPABASE_URL` env var wins). Default: the app's
+   * `canonicalOrigin` (or `DENEXT_CANONICAL_ORIGIN`) plus its `basePath`, else the address the
+   * server listens on as this machine reaches it (`http://127.0.0.1:<port>`) — never a request's
+   * `Host`, which a client chooses: a worker keeps its environment for life, beside the service
+   * key.
    */
   url?: string;
   /** Per-function settings, by name. */
@@ -662,20 +666,68 @@ function directoryRegistry(
   };
 }
 
-/** The env a new worker starts with: `SUPABASE_URL`, `SUPABASE_DB_URL`, then the configured. */
+/**
+ * The env a new worker starts with: `SUPABASE_URL`, `SUPABASE_DB_URL`, then the configured.
+ * `SUPABASE_URL` is never taken from the request: the worker keeps this env for its whole life,
+ * next to the service key, so a forged `Host` on the request that starts it would otherwise send
+ * every later call's `createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)` to another host.
+ */
 function workerEnv(
   config: ResolvedFunctions,
   name: string,
-  request: Request,
-  appBasePath: string,
+  serverUrl: () => string | undefined,
   readEnv: (name: string) => string | undefined,
 ): Record<string, string> {
   const env: Record<string, string> = {};
-  env.SUPABASE_URL = readEnv("SUPABASE_URL") ??
-    config.url ?? new URL(request.url).origin + appBasePath;
+  const url = readEnv("SUPABASE_URL") ?? config.url ?? serverUrl();
+  if (url !== undefined) env.SUPABASE_URL = url;
+  else warnNoUrl();
   const database = readEnv("SUPABASE_DB_URL") ?? readEnv("DATABASE_URL");
   if (database) env.SUPABASE_DB_URL = database;
   return { ...env, ...keyEnv(readEnv), ...config.env, ...config.functions[name]?.env };
+}
+
+let warnedNoUrl = false;
+
+/** Say once that functions run without `SUPABASE_URL` (no configured or listening origin). */
+function warnNoUrl(): void {
+  if (warnedNoUrl) return;
+  warnedNoUrl = true;
+  console.warn(
+    "[denext] backend(): Edge Functions get no SUPABASE_URL — set `functions.url`, the app's " +
+      "`canonicalOrigin` (DENEXT_CANONICAL_ORIGIN) or SUPABASE_URL; a request's Host is never used",
+  );
+}
+
+/**
+ * The URL functions reach the app on, by default: `canonicalOrigin` (config, then
+ * `DENEXT_CANONICAL_ORIGIN`) plus the app's `basePath`, else the server's own listen address.
+ *
+ * @param canonical The configured public origin, if any.
+ * @param appBasePath The app's `basePath` (no trailing `/`).
+ * @param local The origin this machine reaches the server on, if known.
+ * @returns A resolver (`undefined` when neither is known).
+ */
+export function defaultFunctionsUrl(
+  canonical: string | undefined,
+  appBasePath: string,
+  local: () => string | undefined,
+): () => string | undefined {
+  return () => {
+    const origin = canonical ?? local();
+    return origin === undefined ? undefined : origin.replace(/\/+$/, "") + appBasePath;
+  };
+}
+
+/** A configured origin (`https://example.com`) as a bare origin, or `undefined`. */
+function originOf(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The keys under Supabase's names, from the backend's own (the first of a rotation list). */
@@ -723,14 +775,14 @@ function routeOf(sub: string): { name: string; rest: string } | null {
  *
  * @param config The resolved options.
  * @param registry The functions.
- * @param appBasePath The app's `basePath` (for `SUPABASE_URL`).
+ * @param serverUrl The default `SUPABASE_URL` ({@linkcode defaultFunctionsUrl}).
  * @param readEnv Reads the process environment.
  * @returns The handler.
  */
 function functionsHandler(
   config: ResolvedFunctions,
   registry: FunctionRegistry,
-  appBasePath = "",
+  serverUrl: () => string | undefined,
   readEnv: (name: string) => string | undefined = readProcessEnv,
 ): (request: Request) => Promise<Response | null> {
   const prefix = `${config.basePath}/`;
@@ -753,7 +805,7 @@ function functionsHandler(
         remote: remoteAddress(),
         signal: request.signal,
       },
-      workerEnv(config, route.name, request, appBasePath, readEnv),
+      workerEnv(config, route.name, serverUrl, readEnv),
       timeoutMs,
     );
   };
@@ -871,7 +923,10 @@ export async function setupFunctions(ctx: PluginContext, config: ResolvedFunctio
   const dev = ctx.mode === "dev";
   const registry = directoryRegistry(dir, config, dev);
   const appBasePath = (ctx.config.basePath ?? "").replace(/\/$/, "");
-  ctx.addRequestHandler(functionsHandler(config, registry, appBasePath));
+  const canonical = originOf(ctx.config.canonicalOrigin) ??
+    originOf(readProcessEnv("DENEXT_CANONICAL_ORIGIN"));
+  const serverUrl = defaultFunctionsUrl(canonical, appBasePath, localServerOrigin);
+  ctx.addRequestHandler(functionsHandler(config, registry, serverUrl));
   ctx.addTeardown(() => registry.reset());
   if (dev) watchFunctions(ctx, dir, () => registry.reset(false));
 }
@@ -905,7 +960,9 @@ export async function serveFunctions(
 ): Promise<Deno.HttpServer<Deno.NetAddr>> {
   const dir = await functionsDir(projectRoot, config.dir);
   const registry = directoryRegistry(dir, config, true);
-  const handle = functionsHandler(config, registry);
+  // Its own listener: `SUPABASE_URL` defaults to it, never to a request's Host.
+  const bound: { origin?: string } = {};
+  const handle = functionsHandler(config, registry, () => bound.origin);
   let watcher: Deno.FsWatcher | undefined;
   try {
     watcher = Deno.watchFs(dir, { recursive: true });
@@ -923,6 +980,7 @@ export async function serveFunctions(
     async (request) =>
       (await handle(request)) ?? relayError(404, "NOT_FOUND", "Requested function was not found"),
   );
+  bound.origin = loopbackOrigin(server.addr);
   server.finished.then(() => {
     registry.reset();
     try {
@@ -930,6 +988,16 @@ export async function serveFunctions(
     } catch { /* closed */ }
   });
   return server;
+}
+
+/** `http://<host>:<port>` for a bound address (a wildcard bind as loopback). */
+function loopbackOrigin(addr: Deno.NetAddr): string {
+  const host = addr.hostname === "0.0.0.0"
+    ? "127.0.0.1"
+    : addr.hostname === "::"
+    ? "::1"
+    : addr.hostname;
+  return `http://${host.includes(":") ? `[${host}]` : host}:${addr.port}`;
 }
 
 /** Restart the workers after an edit under `dir` (debounced). */

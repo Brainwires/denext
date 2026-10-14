@@ -24,7 +24,7 @@ import type { RequestIdentity } from "./identity.ts";
 export type RlsRole = "anon" | "authenticated" | "service_role";
 
 /** The Postgres role `set_config('role', …)` takes for a scope: `none` resets to the connecting role. */
-function pgRole(role: RlsRole): string {
+export function pgRole(role: RlsRole): string {
   return role === "service_role" ? "none" : role;
 }
 

@@ -9,12 +9,15 @@ import { StorageError } from "./errors.ts";
 import {
   type BucketQuery,
   type BucketRow,
+  commitKeeps,
+  commitRefusal,
   type FlatQuery,
   likeEscape,
   type ListEntry,
   type ListQuery,
   matchesSearch,
   type MetaStore,
+  type ObjectCommit,
   type ObjectMetadata,
   type ObjectRow,
   type ObjectWrite,
@@ -229,12 +232,15 @@ export function sqliteMetaStore(path: string): MetaStore {
     );
     return r ? objectRow(r) : null;
   };
+  // A key prefix matches case-sensitively, as Postgres's `like` does (SQLite's ignores ASCII case,
+  // which would list `ALICE/…` to a caller scoped to `alice/`): a byte-wise compare of the head.
   const prefixed = (bucket: string, prefix: string, exact?: boolean) =>
     (exact ? all("select * from objects where bucket_id = ? and name = ?", bucket, prefix) : all(
-      "select * from objects where bucket_id = ? and name like ? escape '\\'",
+      "select * from objects where bucket_id = ? and substr(name, 1, length(?)) = ?",
       bucket,
-      `${likeEscape(prefix)}%`,
-    )).map(objectRow);
+      prefix,
+      prefix,
+    )).map(objectRow).filter((r) => exact || r.name.startsWith(prefix));
   const insertObject = (row: ObjectWrite) => {
     const t = now();
     try {
@@ -285,6 +291,30 @@ export function sqliteMetaStore(path: string): MetaStore {
       id,
     );
     return currentRow(row.bucket_id, row.name)!;
+  };
+  /** A commit's row, once its bytes are in (no row-level security here). */
+  const landRow = (c: ObjectCommit, keep: boolean): ObjectRow => {
+    const { row } = c;
+    const live = currentRow(row.bucket_id, row.name);
+    if (c.reserved) {
+      run(
+        "update objects set metadata = ?, updated_at = ? where id = ?",
+        row.metadata ? JSON.stringify(row.metadata) : null,
+        now(),
+        live!.id,
+      );
+      return currentRow(row.bucket_id, row.name)!;
+    }
+    if (live && c.keep !== null) {
+      run(
+        keep
+          ? "update objects set archived_at = ? where id = ?"
+          : "delete from objects where id = ?",
+        ...(keep ? [now(), live.id] : [live.id]),
+      );
+      return insertObject(row);
+    }
+    return live ? updateCurrent(live.id, row) : insertObject(row);
   };
   const resumable = (r: Row | undefined): ResumableRow | null =>
     r
@@ -418,6 +448,17 @@ export function sqliteMetaStore(path: string): MetaStore {
     checkWrite() {
       return Promise.resolve();
     },
+    // No row-level security here (the SQL-RLS mode needs Postgres): the same checks against the
+    // current row, then the bytes, then the row.
+    async commitObject(c, _as, during) {
+      const { row } = c;
+      const current = await later(() => currentRow(row.bucket_id, row.name));
+      const refusal = commitRefusal(c, current);
+      if (refusal) throw refusal;
+      const keep = commitKeeps(c, current);
+      await during(current, keep);
+      return await later(() => transaction(() => landRow(c, keep)));
+    },
     finishObject(bucket, name, version, metadata) {
       return later(() => {
         const changed = run(
@@ -442,23 +483,33 @@ export function sqliteMetaStore(path: string): MetaStore {
         )
       );
     },
-    moveObject(from, to, _as, dryRun) {
-      return later(() => {
+    async moveObject(from, to, _as, dryRun, during) {
+      const rename = (id: string, at: { bucket: string; name: string }) =>
+        run(
+          "update objects set bucket_id = ?, name = ?, updated_at = ? where id = ?",
+          at.bucket,
+          at.name,
+          now(),
+          id,
+        );
+      const source = await later(() => {
         const source = getObject(from.bucket, from.name);
         if (!source) return null;
         if (currentRow(to.bucket, to.name)) {
           throw new StorageError("duplicate", "The resource already exists");
         }
-        if (dryRun) return source;
-        run(
-          "update objects set bucket_id = ?, name = ?, updated_at = ? where id = ?",
-          to.bucket,
-          to.name,
-          now(),
-          source.id,
-        );
-        return getObject(to.bucket, to.name);
+        if (!dryRun) rename(source.id, to);
+        return source;
       });
+      if (!source || dryRun) return source;
+      // The destination's name is taken first, then the bytes copied; a failed copy undoes it.
+      try {
+        await during?.();
+      } catch (err) {
+        await later(() => rename(source.id, from));
+        throw err;
+      }
+      return await later(() => getObject(to.bucket, to.name));
     },
     listObjects(bucket, query: ListQuery): Promise<ListEntry[]> {
       return later(() => {
@@ -539,6 +590,17 @@ export function sqliteMetaStore(path: string): MetaStore {
         return sortRows(rows, column as keyof ObjectRow, q.order === "desc")
           .slice(q.offset, q.offset + q.limit);
       });
+    },
+    noncurrentVersions(bucket, after, limit) {
+      return later(() =>
+        all(
+          `select * from objects where bucket_id = ? and id > ?
+           and (archived_at is not null or is_delete_marker = 1) order by id limit ?`,
+          bucket,
+          after,
+          limit,
+        ).map(objectRow)
+      );
     },
     purgeVersions(bucket, limit) {
       return later(() =>

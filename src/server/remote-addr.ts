@@ -16,6 +16,39 @@ const addrs = new WeakMap<Request, string>();
  */
 const limitAddrs = new WeakMap<Request, string | null>();
 
+/** The origin the server that received a request listens on, as this machine reaches it. */
+const serverOrigins = new WeakMap<Request, string>();
+
+/**
+ * The origin a client on this machine reaches a server bound to `addr` on: its address, with a
+ * wildcard bind (`0.0.0.0` / `::`) as the loopback address and an IPv6 one bracketed.
+ *
+ * @param addr The address `Deno.serve` bound.
+ * @returns `http://<host>:<port>`, or `undefined` for a non-TCP address (a Unix socket).
+ */
+export function loopbackOrigin(addr: Deno.Addr): string | undefined {
+  if (!("hostname" in addr) || !("port" in addr)) return undefined;
+  const host = addr.hostname === "0.0.0.0"
+    ? "127.0.0.1"
+    : addr.hostname === "::"
+    ? "::1"
+    : addr.hostname;
+  return `http://${host.includes(":") ? `[${host}]` : host}:${addr.port}`;
+}
+
+/**
+ * Remember the origin the server that received `request` listens on (called once by the server
+ * loop): never derived from the request's own headers.
+ */
+export function setServerOrigin(request: Request, origin: string | undefined): void {
+  if (origin !== undefined) serverOrigins.set(request, origin);
+}
+
+/** The origin {@link setServerOrigin} recorded for `request`, or `undefined`. */
+export function serverOriginOf(request: Request): string | undefined {
+  return serverOrigins.get(request);
+}
+
 /** Remember the socket peer for `request` (called once by the server loop). */
 export function setRemoteAddr(request: Request, addr: Deno.Addr | undefined): void {
   if (addr && "hostname" in addr) addrs.set(request, addr.hostname);
@@ -345,6 +378,8 @@ export function copyRemoteAddr(from: Request, to: Request): void {
   if (addr !== undefined) addrs.set(to, addr);
   const limit = limitAddrs.get(from);
   if (limit !== undefined) limitAddrs.set(to, limit);
+  const origin = serverOrigins.get(from);
+  if (origin !== undefined) serverOrigins.set(to, origin);
 }
 
 /**

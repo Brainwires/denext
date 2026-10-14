@@ -121,6 +121,10 @@ Deno.test({
         assertEquals(await vault.get("other_key"), "fixed");
         await vault.updateSecret(id, { name: "stripe" });
         assertEquals(await vault.get("stripe"), "sk_live_123");
+        // An uppercase id names the same row; the secret stays readable (sealed under id::text).
+        await vault.updateSecret(id.toUpperCase(), { secret: "sk_live_456" });
+        assertEquals(await vault.get("stripe"), "sk_live_456");
+        await vault.updateSecret(id, { secret: "sk_live_123" });
         const decrypted = await vault.decryptedSecrets();
         assertEquals(decrypted.map((s) => [s.name, s.decryptedSecret]), [
           ["stripe", "sk_live_123"],
@@ -638,6 +642,13 @@ Deno.test({
           where name like 'app_%' order by name`,
       ]);
       assertEquals(fromSql.map((r) => r.decrypted_secret), values);
+      // Updated by the app through an uppercase id: SQL (which binds `id::text`) still opens it.
+      const upper = (await vault.list()).find((s) => s.name === "app_1")!.id.toUpperCase();
+      await vault.updateSecret(upper, { secret: "y" });
+      const reread = await vault.withKey(async (sql) => [
+        ...await sql`select decrypted_secret from vault.decrypted_secrets where name = 'app_1'`,
+      ]);
+      assertEquals(reread.map((r) => r.decrypted_secret), ["y"]);
       // SQL writes, the app reads; update_secret re-encrypts; descriptions change.
       await vault.withKey(async (sql) => {
         const [{ id }] = await sql`select vault.create_secret('sql-made', 'sql_one', 'd') as id`;

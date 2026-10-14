@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Security
+
+- **Edge Functions' default `SUPABASE_URL`** is now the app's `canonicalOrigin` (plus
+  `basePath`), else the server's own listen address. It was the `Host` of the request that
+  started the worker, which a client chooses, and the worker kept it beside the service key.
+- **storage writes under SQL-RLS land under the caller's role.** Upload, copy, move and
+  TUS writes are judged against the object as it is when they land, with the bytes staged until
+  then. Signed uploads by a policy-checked caller are pinned to the object's version when they
+  were signed. Emptying a bucket deletes only the versions the caller may delete.
+- **the SQLite metadata store matches `list-v2` prefixes case-sensitively.**
+- **realtime `old: "full"`.** The full old row goes only to subscribers who could see
+  the row before the change, unless the table has row-level security off.
+- **`vault.updateSecret()` with an uppercase id** keeps the secret readable.
+
 ### Breaking
 
 - `readRestCatalog(sql, schemas, tables)` takes the list of schemas and returns

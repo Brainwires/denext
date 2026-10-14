@@ -53,16 +53,20 @@ function vaultTable() {
     });
     return [];
   };
+  // `$1::uuid` matches any spelling of the id, as Postgres does; `id::text` prints it lowercase.
+  const byId = (id: unknown) => rows.get(String(id).toLowerCase());
   const rename = (p: unknown[]) => {
-    const row = rows.get(p[0] as string);
+    const row = byId(p[0]);
     if (!row) return [];
     if (p[1]) row.name = p[2] as string | null;
     if (p[3] !== null) row.description = p[3] as string;
     return [{ id: row.id }];
   };
   const reseal = (p: unknown[]) => {
-    Object.assign(rows.get(p[0] as string)!, { secret: p[1], nonce: p[2], key_id: p[3] });
-    return [];
+    const row = byId(p[0]);
+    if (!row) return [];
+    Object.assign(row, { secret: p[1], nonce: p[2], key_id: p[3] });
+    return [{ id: row.id }];
   };
   const byName = (name: unknown) => [...rows.values()].find((r) => r.name === name);
   const handlers: Array<[RegExp, (p: unknown[]) => unknown[]]> = [
@@ -169,6 +173,27 @@ Deno.test("vault: create, get, update, list, decrypted secrets, delete", async (
       TypeError,
       "must be a string",
     );
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("vault: an id in another case updates the secret it names, and it still reads", async () => {
+  const { rows } = setUp(KEY);
+  try {
+    const id = await vault.createSecret("before", "upper");
+    // `$1::uuid` matches the uppercase id; the ciphertext must be bound to the id the database
+    // reads it back under (`id::text`, lowercase), or the secret is lost for good.
+    await vault.updateSecret(id.toUpperCase(), { secret: "after" });
+    assertEquals(await vault.get("upper"), "after");
+    assertEquals((await vault.decryptedSecrets()).map((s) => s.decryptedSecret), ["after"]);
+    // The AAD is the canonical id however the caller spells it.
+    const key = await deriveVaultKey(KEY);
+    const sealed = await sealSecret(key, id.toUpperCase(), "x");
+    const row = { id, secret: sealed.secret, nonce: new Uint8Array(sealed.nonce), keyId: key.id };
+    assertEquals(await openSecret([key], row), "x");
+    assertEquals(await openSecret([key], { ...row, id: id.toUpperCase() }), "x");
+    assertEquals(rows.size, 1);
   } finally {
     tearDown();
   }

@@ -3,7 +3,9 @@
 // `authorize`, and — in the SQL-RLS mode — the `storage` tables' policies, through a scoped
 // client), and the writes that keep the bytes (the driver) and the rows (the metadata store) in
 // step: an upload reserves its row first (so a duplicate or a refused policy stores nothing),
-// stores the bytes through the size cap, allow-list and sniffing, then fills the row in.
+// stores the bytes through the size cap, allow-list and sniffing, then fills the row in. Under
+// SQL-RLS a request's user writes through a staging place instead: the row is written under its
+// role against the object as it is then, and only that write moves the bytes to the key.
 
 import { StorageError } from "./errors.ts";
 import { checkBucketName, normalizeKey } from "./keys.ts";
@@ -36,6 +38,7 @@ import {
 } from "./storage-meta.ts";
 import { limit, peek } from "./streams.ts";
 import {
+  commitStaged,
   deleteCurrent,
   deleteVersion,
   dropVersionBytes,
@@ -45,6 +48,8 @@ import {
   parseLifecycle,
   prepareOverwrite,
   replaceVersioned,
+  stagesWrite,
+  stagingLocation,
 } from "./storage-versions.ts";
 import type { BucketSettings, ObjectInfo, StorageOp } from "./types.ts";
 
@@ -208,6 +213,7 @@ export function checkContentType(bucket: ResolvedBucket, contentType: string): s
  * @param contentType The declared type (essence), or `undefined` to sniff one.
  * @param max The size cap.
  * @param size The exact size, if declared.
+ * @param at Where to write the bytes instead of the object's key (a staged upload's place).
  * @returns The stored object's info.
  */
 export async function storeChecked(
@@ -218,12 +224,14 @@ export async function storeChecked(
   contentType: string | undefined,
   max: number,
   size?: number,
+  at?: Location,
 ): Promise<ObjectInfo> {
   const peeked = await peek(stream, SNIFF_BYTES);
   const type = contentType ??
     checkContentType(bucket, sniffMime(peeked.head) ?? "application/octet-stream");
   checkSniffed(type, peeked.head, bucket.mime);
-  return await rt.driver.put(bucket.name, key, limit(peeked.stream, max, size), {
+  const target = at ?? { bucket: bucket.name, key };
+  return await rt.driver.put(target.bucket, target.key, limit(peeked.stream, max, size), {
     contentType: type,
     size,
   });
@@ -283,6 +291,11 @@ export interface PutOptions {
   maxBytes?: number;
   /** The owner to record instead of the caller's (a signed upload's). */
   owner?: string | null;
+  /**
+   * The version the object must still have when the write lands (`null`: none) — a signed
+   * upload pinned to what its signer was allowed to write. Absent: any.
+   */
+  expect?: string | null;
 }
 
 /** The size cap for one upload: the bucket's, tightened by the caller's. */
@@ -331,6 +344,40 @@ export async function reserveObject(
   } else if (options.upsert) await rt.meta.checkWrite(write, true, actor);
   else await rt.meta.writeObject(write, false, actor);
   return version;
+}
+
+/**
+ * Check, as a dry run under the caller's policies, an upload a signed token lets someone finish
+ * later — pinned (a scoped caller, `pin`) to the object's version as it was checked, so the
+ * upload lands only while the object still has it.
+ *
+ * @returns The pin to put in the token (`{}` when none).
+ */
+export async function checkSignedWrite(
+  rt: StorageRuntime,
+  bucket: ResolvedBucket,
+  key: string,
+  owner: string | null,
+  upsert: boolean,
+  actor: Actor,
+): Promise<{ cv?: string | null }> {
+  // Read before the check: a change after the read only makes the pin stricter.
+  const pinned = actor.kind === "scoped" && upsert
+    ? { cv: (await rt.meta.currentRow(bucket.name, key))?.version ?? null }
+    : {};
+  await rt.meta.checkWrite(
+    {
+      bucket_id: bucket.name,
+      name: key,
+      owner_id: owner,
+      version: crypto.randomUUID(),
+      metadata: null,
+      user_metadata: null,
+    },
+    upsert,
+    actor,
+  );
+  return pinned;
 }
 
 /**
@@ -401,7 +448,19 @@ export async function putObject(
   const cacheControl = cacheControlOf(options.cacheControl);
   const owner = options.owner !== undefined ? options.owner : await ownerOf(caller);
   const row = { upsert: options.upsert, owner, userMetadata: options.userMetadata };
-  const version = await reserveObject(rt, bucket, key, row, await actorFor(rt, caller));
+  const actor = await actorFor(rt, caller);
+  const version = await reserveObject(rt, bucket, key, row, actor);
+  if (stagesWrite(actor, options.expect)) {
+    // Checked above only as a dry run: the row is written under the caller's role when the
+    // bytes are in, against the object as it is then, and only then do the bytes reach the key.
+    const staged = stagingLocation(bucket.name, version);
+    const pinned = { ...row, expect: options.expect };
+    return await landStaged(rt, bucket, key, version, pinned, actor, staged, async () =>
+      metadataOf(
+        await storeChecked(rt, bucket, key, body, type, max, options.size, staged),
+        cacheControl,
+      ));
+  }
   const undo = await prepareOverwrite(rt, bucket, key);
   let info: ObjectInfo;
   try {
@@ -412,6 +471,37 @@ export async function putObject(
     throw err;
   }
   return await recordObject(rt, bucket.name, key, version, row, metadataOf(info, cacheControl));
+}
+
+/**
+ * A staged write: store the bytes in their staging place (`store`), then land them with the
+ * row ({@linkcode commitStaged}); a plain upload's reservation is released when either fails.
+ *
+ * @returns The written row.
+ */
+async function landStaged(
+  rt: StorageRuntime,
+  bucket: ResolvedBucket,
+  key: string,
+  version: string,
+  options: {
+    upsert: boolean;
+    owner: string | null;
+    userMetadata?: Record<string, unknown> | null;
+    expect?: string | null;
+  },
+  actor: Actor,
+  staged: Location,
+  store: () => Promise<ObjectMetadata>,
+): Promise<ObjectRow> {
+  try {
+    const metadata = await store();
+    return await commitStaged(rt, bucket, key, version, options, metadata, actor, staged);
+  } catch (err) {
+    await rt.driver.remove(staged.bucket, staged.key).catch(() => {});
+    if (!options.upsert) await releaseObject(rt, bucket.name, key, version);
+    throw err;
+  }
 }
 
 /**
@@ -524,14 +614,21 @@ function checkDestination(to: ResolvedBucket, info: { size: number; contentType:
   checkContentType(to, info.contentType);
 }
 
-/** Copy the bytes: the driver's own copy, else a read streamed back through the checks. */
+/**
+ * Copy the bytes: the driver's own copy, else a read streamed back through the checks — to the
+ * object's key, or to `at` (a staged copy's place).
+ */
 async function copyBytes(
   rt: StorageRuntime,
   from: Location,
   to: ResolvedBucket,
   key: string,
+  at?: Location,
 ): Promise<ObjectInfo> {
-  if (rt.driver.copy) return await rt.driver.copy(from.bucket, from.key, to.name, key);
+  const target = at ?? { bucket: to.name, key };
+  if (rt.driver.copy) {
+    return await rt.driver.copy(from.bucket, from.key, target.bucket, target.key);
+  }
   const object = await rt.driver.get(from.bucket, from.key);
   if (!object) throw new StorageError("not_found", "Object not found");
   return await storeChecked(
@@ -542,6 +639,7 @@ async function copyBytes(
     essence(object.contentType),
     to.maxBytes,
     object.size,
+    at,
   );
 }
 
@@ -571,7 +669,22 @@ export async function copyObject(
   checkDestination(to, source);
   const owner = await ownerOf(caller);
   const row = { upsert, owner, userMetadata: source.userMetadata };
-  const version = await reserveObject(rt, to, toKey, row, await actorFor(rt, caller));
+  const actor = await actorFor(rt, caller);
+  const version = await reserveObject(rt, to, toKey, row, actor);
+  if (stagesWrite(actor, undefined)) {
+    const staged = stagingLocation(to.name, version);
+    return await landStaged(
+      rt,
+      to,
+      toKey,
+      version,
+      row,
+      actor,
+      staged,
+      async () =>
+        metadataOf(await copyBytes(rt, source.location, to, toKey, staged), source.cacheControl),
+    );
+  }
   const undo = await prepareOverwrite(rt, to, toKey);
   let info: ObjectInfo;
   try {
@@ -655,10 +768,14 @@ export async function moveObject(
   const source = await rt.meta.moveObject(ends, dest, actor, true);
   if (!source?.metadata) throw new StorageError("not_found", "Object not found");
   checkDestination(to, { size: source.metadata.size, contentType: source.metadata.mimetype });
-  await copyBytes(rt, { bucket: from.name, key: fromKey }, to, toKey);
-  const moved = await rt.meta.moveObject(ends, dest, SERVICE, false);
-  await rt.driver.remove(from.name, fromKey);
+  // The rename runs as the caller, the destination's name taken before any byte is copied there
+  // (an object created there meanwhile is `duplicate`, its bytes untouched); the bytes are copied
+  // inside that transaction, and the source's removed once it commits.
+  const moved = await rt.meta.moveObject(ends, dest, actor, false, async () => {
+    await copyBytes(rt, { bucket: from.name, key: fromKey }, to, toKey);
+  });
   if (!moved) throw new StorageError("not_found", "Object not found");
+  await rt.driver.remove(from.name, fromKey);
   return moved;
 }
 
@@ -885,11 +1002,27 @@ export async function emptyBucket(rt: StorageRuntime, id: string, caller: Caller
     const rows = await rt.meta.deleteObjects(id, names, actor);
     await eachLimited(rows.map((r) => r.name), 8, (k) => rt.driver.remove(bucket.name, k));
   }
-  // Noncurrent versions and delete markers go too.
+  // Noncurrent versions and delete markers go too — under SQL-RLS only the ones the caller's
+  // policies let it delete, each as the caller (Supabase empties a bucket through the policies).
+  if (actor.kind === "scoped") return await purgeScoped(rt, id, actor);
   for (;;) {
     const rows = await rt.meta.purgeVersions(id, 200);
     if (!rows.length) return;
     await dropVersionBytes(rt, id, rows);
+  }
+}
+
+/** Delete, as `actor`, every noncurrent version and delete marker its policies let it delete. */
+async function purgeScoped(rt: StorageRuntime, id: string, actor: Actor): Promise<void> {
+  let after = "";
+  for (;;) {
+    const rows = await rt.meta.noncurrentVersions(id, after, 200);
+    if (!rows.length) return;
+    after = rows[rows.length - 1].id;
+    for (const row of rows) {
+      const gone = await rt.meta.deleteVersion(id, row.name, row.version, actor);
+      if (gone) await dropVersionBytes(rt, id, [gone]);
+    }
   }
 }
 

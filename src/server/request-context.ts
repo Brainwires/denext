@@ -20,6 +20,7 @@ import {
   ipBucket,
   limitAddrOf,
   type LimitAddrPolicy,
+  serverOriginOf,
 } from "./remote-addr.ts";
 
 /**
@@ -595,6 +596,24 @@ function clientAddressContext(api: string): RequestContext | undefined {
   if (shouldPostpone()) postponeDynamic(api);
   ctx.usedDynamicApi = true; // the client address is per-request
   return ctx;
+}
+
+/**
+ * The origin on which this machine reaches the denext server that received the current request:
+ * the address it listens on, a wildcard bind (`0.0.0.0` / `::`) as the loopback address —
+ * `http://127.0.0.1:3000`. It is never derived from the request's `Host` or forwarded headers, so
+ * server code can hand it to something that outlives the request (a worker's environment, a URL
+ * the server calls itself on) without a forged header steering it elsewhere. For the app's
+ * public origin, configure `canonicalOrigin`.
+ *
+ * Reading it does not make the render dynamic: it is the same for every request a server gets.
+ *
+ * @returns The origin, or `undefined` outside a request, or when the request did not arrive
+ *   through denext's own server loop (an embedder's `Deno.serve`, a test calling the handler).
+ */
+export function localServerOrigin(): string | undefined {
+  const ctx = storage.getStore();
+  return ctx ? serverOriginOf(ctx.request) : undefined;
 }
 
 /**

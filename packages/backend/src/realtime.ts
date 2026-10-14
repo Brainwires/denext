@@ -260,8 +260,8 @@ const ADMIT_GRACE_MS = 1_000;
  * `int8`, `timestamptz` — what Supabase's `columns` carry), by `$1::regclass`, in column order.
  */
 export const COLUMN_TYPES_SQL = "select a.attname::text as name, " +
-  "format_type(a.atttypid, null) as type, t.typname::text as udt from pg_attribute a " +
-  "join pg_type t on t.oid = a.atttypid " +
+  "format_type(a.atttypid, null) as type, t.typname::text as udt, c.relrowsecurity as rls " +
+  "from pg_attribute a join pg_type t on t.oid = a.atttypid join pg_class c on c.oid = a.attrelid " +
   "where a.attrelid = $1::regclass and a.attnum > 0 and not a.attisdropped order by a.attnum";
 
 /** A table's columns as Supabase's `postgres_changes` payload lists them. */
@@ -276,7 +276,17 @@ export interface ColumnInfo {
 interface Catalog {
   types: Map<string, string>;
   columns: ColumnInfo[];
+  /**
+   * Row-level security is off (the catalog says so): every subscriber may see every row, so an
+   * old row may go to all of them, as Supabase sends it. Unknown counts as on.
+   */
+  open: boolean;
+  /** When it was read (epoch ms): re-read after {@linkcode CATALOG_TTL_MS}. */
+  at: number;
 }
+
+/** How long a table's catalog facts are trusted (a policy switched on is seen within this). */
+const CATALOG_TTL_MS = 10_000;
 
 /** Sets the transaction's `statement_timeout` (`$1`: milliseconds, as text). */
 const STATEMENT_TIMEOUT_SQL = "select set_config('statement_timeout', $1, true)";
@@ -856,8 +866,10 @@ export class RealtimeEngine {
     const [first] = group;
     const keys = [...changes].filter(([, c]) => c.op !== "delete").map(([key]) => key);
     let rows: Map<string, unknown>;
+    let open = false;
     try {
       rows = await this.#reread(first, keys);
+      open = (await this.#catalog(first.table)).open;
     } catch (error) {
       this.#types.delete(first.table.name); // the table may have changed: read its types again
       console.error(`[@denext/backend] realtime re-read of ${first.table.name} failed`, error);
@@ -866,7 +878,7 @@ export class RealtimeEngine {
     }
     for (const audience of group) {
       const out = audience.mode === "raw"
-        ? rawChanges(audience, changes, rows, this.config.maxTrackedKeys)
+        ? rawChanges(audience, changes, rows, this.config.maxTrackedKeys, open)
         : audienceChanges(audience, changes, rows, this.config.maxTrackedKeys);
       for (const frame of toFrames(out, audience.frameBytes)) this.#enqueue(audience, frame);
     }
@@ -902,24 +914,33 @@ export class RealtimeEngine {
    * The table's column types (read once, in the root context, as the connecting role: the
    * catalog holds no user data), so keys and filters are compared in the column's own type.
    */
-  #catalog(table: ResolvedTable): Promise<Catalog> {
+  async #catalog(table: ResolvedTable): Promise<Catalog> {
     const known = this.#types.get(table.name);
-    if (known) return known;
+    if (known) {
+      const catalog = await known.catch(() => undefined);
+      if (catalog && Date.now() - catalog.at < CATALOG_TTL_MS) return catalog;
+      if (this.#types.get(table.name) === known) this.#types.delete(table.name);
+      const again = this.#types.get(table.name);
+      if (again) return await again;
+    }
     const read = inRoot(() =>
       Promise.resolve().then(() =>
-        this.#client().unsafe<{ name: string; type: string; udt?: string }>(COLUMN_TYPES_SQL, [
-          table.qualified,
-        ])
+        this.#client().unsafe<{ name: string; type: string; udt?: string; rls?: boolean }>(
+          COLUMN_TYPES_SQL,
+          [table.qualified],
+        )
       )
     ).then((rows) => ({
       types: new Map(rows.map((row) => [String(row.name), String(row.type)])),
       columns: rows.map((row) => ({ name: String(row.name), type: String(row.udt ?? row.type) })),
+      open: rows.length > 0 && rows.every((row) => row.rls === false),
+      at: Date.now(),
     }));
     this.#types.set(table.name, read);
     read.catch(() => {
       if (this.#types.get(table.name) === read) this.#types.delete(table.name);
     });
-    return read;
+    return await read;
   }
 
   /** Queue a frame and make sure the audience's pump runs. */
@@ -1518,27 +1539,58 @@ function rawChanges(
   changes: Map<string, Pending>,
   rows: Map<string, unknown>,
   maxTracked: number,
+  open: boolean,
 ): TableChange[] {
   const out: TableChange[] = [];
   for (const [key, change] of changes) {
     // The row as it is now (re-read once per burst): every step of the key is judged by it.
     const row = change.op === "delete" ? undefined : rows.get(key) as Record<string, unknown>;
-    for (const step of change.steps) {
-      const sent = step.op === "delete" || row === undefined
-        ? rawGone(audience.tracked, key, step)
-        : rawVisible(audience.tracked, key, step, row, maxTracked);
+    // A table without row-level security: every old row is everyone's (Supabase sends it). Under
+    // row-level security (or not known to be off) the old row is the subscriber's only if they
+    // could see the row before this burst (it was tracked), and only on the burst's first step: a
+    // later step's old row is an intermediate state nobody re-read for them (the row may have
+    // left their view and come back). Everyone else gets the key alone in `old_record`, as
+    // Supabase sends under row-level security.
+    const firstOld = open || sawBefore(audience.tracked, key, change);
+    change.steps.forEach((step, i) => {
+      const sent = rawStep(audience.tracked, key, step, row, maxTracked, i === 0 ? firstOld : open);
       if (sent && (audience.events?.has(step.op) ?? true)) out.push(sent);
-    }
+    });
   }
   return out;
 }
 
-/** What a raw change carries besides the row: when, and the old row. */
-function rawExtra(change: Step): Record<string, unknown> {
+/** One step of a key as a raw subscriber is sent it (or nothing), judged by the row as it is now. */
+function rawStep(
+  tracked: Set<string>,
+  key: string,
+  step: Step,
+  row: Record<string, unknown> | undefined,
+  maxTracked: number,
+  withOld: boolean,
+): TableChange | null {
+  return step.op === "delete" || row === undefined
+    ? rawGone(tracked, key, step, withOld)
+    : rawVisible(tracked, key, step, row, maxTracked, withOld);
+}
+
+/**
+ * Whether a subscriber could see a key's row before this burst (it was tracked, under its key or
+ * its old one), with the burst's first step still the first change to it (not cut off by
+ * {@linkcode MAX_STEPS}), so that step's old row is one they saw.
+ */
+function sawBefore(tracked: Set<string>, key: string, change: Pending): boolean {
+  const first = change.steps[0];
+  if (first === undefined || first.old !== change.old) return false;
+  return tracked.has(key) || (first.oldKey !== undefined && tracked.has(first.oldKey));
+}
+
+/** What a raw change carries besides the row: when, and — when `withOld` — the old row. */
+function rawExtra(change: Step, withOld: boolean): Record<string, unknown> {
   return {
     ...(change.ts === undefined ? {} : { ts: change.ts }),
-    ...(change.old ? { old: change.old } : {}),
-    ...(change.oldOverflow ? { oldOverflow: true } : {}),
+    ...(withOld && change.old ? { old: change.old } : {}),
+    ...(withOld && change.oldOverflow ? { oldOverflow: true } : {}),
   };
 }
 
@@ -1546,27 +1598,37 @@ function rawExtra(change: Step): Record<string, unknown> {
  * A row the subscriber cannot see now: untracked; a DELETE is sent when they could see it before
  * (it was tracked), an update out of their view is not.
  */
-function rawGone(tracked: Set<string>, key: string, change: Step): TableChange | null {
+function rawGone(
+  tracked: Set<string>,
+  key: string,
+  change: Step,
+  withOld: boolean,
+): TableChange | null {
   const known = tracked.delete(key) ||
     (change.oldKey !== undefined && tracked.delete(change.oldKey));
   return known && change.op === "delete"
-    ? { op: "delete", key, ...rawExtra(change) } as TableChange
+    ? { op: "delete", key, ...rawExtra(change, withOld) } as TableChange
     : null;
 }
 
-/** A row the subscriber can see: tracked, and sent with the operation the database ran. */
+/**
+ * A row the subscriber can see: tracked, and sent with the operation the database ran — its old
+ * row only when `withOld` (they could see the row before).
+ */
 function rawVisible(
   tracked: Set<string>,
   key: string,
   change: Step,
   row: Record<string, unknown>,
   maxTracked: number,
+  withOld: boolean,
 ): TableChange {
   if (change.oldKey !== undefined && change.oldKey !== key) tracked.delete(change.oldKey);
   if (!tracked.has(key) && tracked.size < maxTracked) tracked.add(key);
-  if (change.op === "insert") return { op: "insert", key, row, ...rawExtra(change) } as TableChange;
+  const extra = rawExtra(change, withOld);
+  if (change.op === "insert") return { op: "insert", key, row, ...extra } as TableChange;
   const renamed = change.oldKey === undefined ? {} : { oldKey: change.oldKey };
-  return { op: "update", key, ...renamed, row, ...rawExtra(change) } as TableChange;
+  return { op: "update", key, ...renamed, row, ...extra } as TableChange;
 }
 
 /**

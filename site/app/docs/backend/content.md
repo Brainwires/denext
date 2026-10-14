@@ -334,6 +334,18 @@ unknown key — never a silent `anon`. A write that carries the session cookie f
 the service role and signed uploads included. Signed URLs and upload tokens are HMAC-signed with the
 storage secret and checked in constant time; a signed upload URL lives two hours.
 
+Under `rls: true` a write is judged against the object as it is when the write lands, not when it
+was checked. An upload, copy, move or TUS upload by a request's user writes its row under that
+user's role, in one transaction with the current row locked, so an upsert needs your `update`
+policy on whatever object is there at that moment. The bytes wait in a staging area until that
+write is allowed, so a refused write never touches the bytes at the key. A move takes the
+destination's name before it copies anything. A signed upload token minted by a policy-checked
+caller (`/object/upload/sign`, signed TUS, `createSignedUploadUrl`) is pinned to the object's
+version when it was signed: if the object has changed since, the upload is a `409`. With S3 a
+`createSignedUploadUrl` PUT goes straight to the store, so the pin protects the row, not the bytes
+that PUT already wrote. Emptying a bucket (`POST /bucket/<id>/empty`) deletes only the objects,
+noncurrent versions and delete markers your policies let the caller delete.
+
 `render/image` transforms take Supabase's options: `width` and `height` (any size up to
 `maxTransformDimension`), `resize` (`cover`, the default, fills the box and crops the overflow;
 `contain` fits inside it; `fill` stretches to it), `quality` (1–100) and `format: "origin"` (keep
@@ -751,8 +763,12 @@ the table). Rows keep arrival order; sort them when you render. The same tables 
    "re-read" signal instead of failing the write. A `timestamptz` key travels in UTC, so sessions
    with different `TimeZone` settings agree on it. The one exception is the **old row** of a table
    configured `old: "full"`: its trigger adds the row as it was before an update or delete, when it
-   fits (about 7.5 KB of JSON — a larger one is left out and the change says so); it is delivered
-   only to subscribers who could see the row. Changing a table's `events`, `key` or `old` installs a
+   fits (about 7.5 KB of JSON — a larger one is left out and the change says so). On a table with
+   row-level security on (or not known to be off), it is delivered only to subscribers who could
+   see the row before the change, and only with the first change to that row in a burst (a later
+   change's old row is an intermediate state nobody re-read for them). Everyone else gets the key,
+   as Supabase sends under row-level security. A table with row-level security off sends it to
+   every subscriber. Changing a table's `events`, `key` or `old` installs a
    new migration that replaces its triggers; a table removed from the options keeps them until you
    `drop trigger denext_realtime on <table>` (and `denext_realtime_truncate`).
 2. **One listener per server instance.** A single connection `LISTEN`s (the driver re-listens after
@@ -877,7 +893,9 @@ security:
   sent — Supabase sends deletes to every subscriber of the table);
 - `old` holds the key column, which is what Supabase sends for a table under RLS; with
   `old: "full"` on the table it holds the whole old row, when it fitted the notification (else the
-  key, and `errors: ["Error 413: Payload Too Large"]`). A row too large to deliver (1 MiB) arrives as
+  key, and `errors: ["Error 413: Payload Too Large"]`), for a subscriber who could see the row
+  before the change. Under row-level security a row that only just entered their view, or a later
+  change in the same burst, carries the key alone. A row too large to deliver (1 MiB) arrives as
   its key with the same error;
 - `TRUNCATE` reaches subscribers who could see rows of the table;
 - every change to a row within one burst (changes 16 ms apart are one) is sent, in commit order,
@@ -1332,8 +1350,11 @@ const res = await fetch("/functions/v1/hello", { method: "POST", body: JSON.stri
   refused (`403`), as for Server Actions. `verifyJwt: false`, for the directory or one function, lets anyone call it. A CORS
   preflight (`OPTIONS`) is never checked: the function answers it, as in Supabase's `corsHeaders`
   recipe.
-- **Environment.** `Deno.env.get("SUPABASE_URL")` is the app's own URL (the origin of the request
-  that starts the worker, or `url`), and `SUPABASE_DB_URL` is `DATABASE_URL`; `SUPABASE_ANON_KEY` / `SUPABASE_PUBLISHABLE_KEY` and
+- **Environment.** `Deno.env.get("SUPABASE_URL")` is the app's own URL: `url`, else the app's
+  `canonicalOrigin` (or `DENEXT_CANONICAL_ORIGIN`) plus its `basePath`, else the address the server
+  listens on as this machine reaches it (`http://127.0.0.1:<port>`). It is never a request's
+  `Host`, which a client chooses: a worker keeps its environment for life, next to the service
+  key. With none of them known, functions get no `SUPABASE_URL`, and a warning says so. And `SUPABASE_DB_URL` is `DATABASE_URL`; `SUPABASE_ANON_KEY` / `SUPABASE_PUBLISHABLE_KEY` and
   `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_SECRET_KEY` come from `DENEXT_PUBLISHABLE_KEY` and
   `DENEXT_SECRET_KEY`; `env` adds variables
   for every function or for one. The process environment is visible too.
@@ -1368,16 +1389,16 @@ denext functions delete hello --yes
 
 There is nothing to `download` or `deploy`: the functions ship inside the app, wherever it runs.
 
-| Option         | Default            | What it does                                                                                          |
-| -------------- | ------------------ | ----------------------------------------------------------------------------------------------------- |
-| `dir`          | `"functions"`      | The functions directory (relative to the project).                                                    |
-| `basePath`     | `"/functions/v1"`  | Where the functions are served (app-relative; `basePath` is prepended).                               |
-| `verifyJwt`    | `true`             | Require a valid caller before a function runs.                                                        |
-| `timeoutMs`    | 150 000            | The longest one request may run; past it the function's request is aborted and the caller gets `504`. |
-| `maxBodyBytes` | 20 MiB             | The largest request body passed to a function.                                                        |
-| `env`          | `{}`               | Variables every function reads from `Deno.env`, over the process's own.                               |
-| `url`          | the request origin | The app's public URL, which functions read as `SUPABASE_URL`.                                         |
-| `functions`    | `{}`               | Per function, by name: `verifyJwt`, `timeoutMs`, `env`, `permissions`.                                |
+| Option         | Default           | What it does                                                                                          |
+| -------------- | ----------------- | ----------------------------------------------------------------------------------------------------- |
+| `dir`          | `"functions"`     | The functions directory (relative to the project).                                                    |
+| `basePath`     | `"/functions/v1"` | Where the functions are served (app-relative; `basePath` is prepended).                               |
+| `verifyJwt`    | `true`            | Require a valid caller before a function runs.                                                        |
+| `timeoutMs`    | 150 000           | The longest one request may run; past it the function's request is aborted and the caller gets `504`. |
+| `maxBodyBytes` | 20 MiB            | The largest request body passed to a function.                                                        |
+| `env`          | `{}`              | Variables every function reads from `Deno.env`, over the process's own.                               |
+| `url`          | see above         | The URL functions read as `SUPABASE_URL` (default: `canonicalOrigin`, else the server's own address). |
+| `functions`    | `{}`              | Per function, by name: `verifyJwt`, `timeoutMs`, `env`, `permissions`.                                |
 
 A function's worker acknowledges each abort. One that does not within a second (busy in synchronous
 code, such as a `while (true) {}`) is terminated and replaced: the requests it was still serving

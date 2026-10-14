@@ -13,16 +13,19 @@ import {
   assertThrows,
 } from "@std/assert";
 import {
+  defaultFunctionsUrl,
   discoverFunctions,
   FunctionHost,
   functionsDir,
   resolveFunctions,
+  serveFunctions,
 } from "../packages/backend/src/functions.ts";
+import { serveWithPortFallback } from "../src/server/serve-utils.ts";
 import { backend } from "../packages/backend/mod.ts";
 import { applyPlugins, resetPlugins } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
-import { cookieFor, functionsApp } from "./_functions-app.ts";
+import { cookieFor, functionsApp, ORIGIN } from "./_functions-app.ts";
 
 const USER = "6d1c4c6e-7a1e-4d43-9a0f-3c1f0c0a0001";
 
@@ -121,24 +124,29 @@ Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
-    const app = await functionsApp({
-      "functions/echo/index.ts": ECHO,
-      "functions/open.ts": `export default (req: Request) => new Response("open " + req.method);`,
-      "functions/obj.ts": `export default { fetch: (_req: Request) => new Response("obj") };`,
-      "functions/opts.ts": `Deno.serve({ port: 1234 }, () => new Response("opts"));`,
-      "functions/handler-opt.ts": `Deno.serve({ handler: () => new Response("handler-opt") });`,
-      "functions/cors.ts": `
+    const app = await functionsApp(
+      {
+        "functions/echo/index.ts": ECHO,
+        "functions/open.ts": `export default (req: Request) => new Response("open " + req.method);`,
+        "functions/obj.ts": `export default { fetch: (_req: Request) => new Response("obj") };`,
+        "functions/opts.ts": `Deno.serve({ port: 1234 }, () => new Response("opts"));`,
+        "functions/handler-opt.ts": `Deno.serve({ handler: () => new Response("handler-opt") });`,
+        "functions/cors.ts": `
 const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, x-client-info, apikey, content-type" };
 Deno.serve((req) => req.method === "OPTIONS"
   ? new Response("ok", { headers: cors })
   : new Response("hi", { headers: cors }));`,
-      "functions/_shared/util.ts": `export const x = 1;`,
-    }, {
-      functions: {
-        env: { GREETING: "hello" },
-        functions: { open: { verifyJwt: false }, obj: { verifyJwt: false } },
+        "functions/_shared/util.ts": `export const x = 1;`,
       },
-    });
+      {
+        functions: {
+          env: { GREETING: "hello" },
+          functions: { open: { verifyJwt: false }, obj: { verifyJwt: false } },
+        },
+      },
+      "prod",
+      { canonicalOrigin: ORIGIN },
+    );
     try {
       const cookie = await cookieFor(USER);
       // No identity: 401 before the function runs.
@@ -726,5 +734,94 @@ Deno.serve(async (req) => {
       for (const worker of spawned) worker.terminate();
       await Deno.remove(dir, { recursive: true });
     }
+  },
+});
+
+const URL_PROBE = `Deno.serve(() => Response.json({ url: Deno.env.get("SUPABASE_URL") ?? null }));`;
+
+/** One HTTP/1.0 GET carrying `host` as its Host header; the response body as JSON. */
+async function getWithHost(port: number, path: string, host: string): Promise<{ url: unknown }> {
+  const conn = await Deno.connect({ hostname: "127.0.0.1", port });
+  try {
+    await conn.write(new TextEncoder().encode(`GET ${path} HTTP/1.0\r\nHost: ${host}\r\n\r\n`));
+    const chunks: Uint8Array[] = [];
+    const buf = new Uint8Array(4096);
+    for (let n = await conn.read(buf); n !== null; n = await conn.read(buf)) {
+      chunks.push(buf.slice(0, n));
+    }
+    const text = new TextDecoder().decode(await new Blob(chunks as BlobPart[]).arrayBuffer());
+    assertStringIncludes(text.split("\r\n")[0], " 200 ");
+    return JSON.parse(text.slice(text.indexOf("\r\n\r\n") + 4));
+  } finally {
+    try {
+      conn.close();
+    } catch { /* closed by the server */ }
+  }
+}
+
+Deno.test({
+  name: "functions: SUPABASE_URL never comes from a request's Host (the worker keeps it for life)",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const probe = "/functions/v1/probe";
+    // `denext functions serve`: the first request forges Host; the worker must not adopt it.
+    const root = await Deno.makeTempDir();
+    try {
+      await Deno.mkdir(`${root}/functions`);
+      await Deno.writeTextFile(`${root}/functions/probe.ts`, URL_PROBE);
+      const server = await serveFunctions(root, resolveFunctions({ verifyJwt: false }), {
+        port: 0,
+      });
+      const own = `http://127.0.0.1:${server.addr.port}`;
+      try {
+        assertEquals(await getWithHost(server.addr.port, probe, "attacker.example"), { url: own });
+        const later = await fetch(`${own}${probe}`);
+        assertEquals(await later.json(), { url: own });
+      } finally {
+        await server.shutdown();
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+
+    // The app behind denext's own server loop: the address it listens on, not the Host.
+    const options = { functions: { functions: { probe: { verifyJwt: false } } } };
+    const app = await functionsApp({ "functions/probe.ts": URL_PROBE }, options);
+    try {
+      const server = serveWithPortFallback(
+        { port: 0, hostname: "127.0.0.1", onListen: () => {} },
+        app.handler,
+      ) as Deno.HttpServer<Deno.NetAddr>;
+      try {
+        const own = `http://127.0.0.1:${server.addr.port}`;
+        assertEquals(await getWithHost(server.addr.port, probe, "attacker.example"), { url: own });
+        assertEquals(await getWithHost(server.addr.port, probe, "other.example"), { url: own });
+      } finally {
+        await server.shutdown();
+      }
+    } finally {
+      await app.close();
+    }
+
+    // Called with no server loop and no configured origin: no SUPABASE_URL at all.
+    const bare = await functionsApp({ "functions/probe.ts": URL_PROBE }, options);
+    try {
+      const res = await bare.handler(new Request(`http://attacker.example${probe}`));
+      assertEquals(await res.json(), { url: null });
+    } finally {
+      await bare.close();
+    }
+
+    // The configured public origin wins (plus the app's basePath).
+    assertEquals(
+      defaultFunctionsUrl("https://app.example", "/base", () => "x")(),
+      "https://app.example/base",
+    );
+    assertEquals(
+      defaultFunctionsUrl(undefined, "", () => "http://127.0.0.1:3000")(),
+      "http://127.0.0.1:3000",
+    );
+    assertEquals(defaultFunctionsUrl(undefined, "", () => undefined)(), undefined);
   },
 });

@@ -1054,6 +1054,7 @@
     "listApiTokens:function",
     "listPasskeys:function",
     "loadEnv:function",
+    "localServerOrigin:function",
     "localeHref:function",
     "localeMiddleware:function",
     "looksLikeJwt:function",

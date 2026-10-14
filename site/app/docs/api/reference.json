@@ -9039,6 +9039,18 @@
           "denextOnly": true
         },
         {
+          "name": "localServerOrigin",
+          "slug": "localServerOrigin",
+          "kind": "function",
+          "signature": "localServerOrigin(): string | undefined",
+          "doc": "The origin on which this machine reaches the denext server that received the current request: the address it listens on, a wildcard bind (0.0.0.0 / ::) as the loopback address — http://127.0.0.1:3000. It is never derived from the request's Host or forwarded headers, so server code can hand it to something that outlives the request (a worker's environment, a URL the server calls itself on) without a forged header steering it elsewhere. For the app's public origin, configure canonicalOrigin.",
+          "docFull": "The origin on which this machine reaches the denext server that received the current request:\nthe address it listens on, a wildcard bind (`0.0.0.0` / `::`) as the loopback address —\n`http://127.0.0.1:3000`. It is never derived from the request's `Host` or forwarded headers, so\nserver code can hand it to something that outlives the request (a worker's environment, a URL\nthe server calls itself on) without a forged header steering it elsewhere. For the app's\npublic origin, configure `canonicalOrigin`.\n\nReading it does not make the render dynamic: it is the same for every request a server gets.",
+          "params": [],
+          "returns": "The origin, or undefined outside a request, or when the request did not arrive through denext's own server loop (an embedder's Deno.serve, a test calling the handler).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "looksLikeJwt",
           "slug": "looksLikeJwt",
           "kind": "function",

@@ -11,7 +11,10 @@
 // On a driver with multipart (S3) the bytes become parts of a multipart upload on the final key
 // as they arrive (a remainder below S3's 5 MiB minimum waits as a tail object); elsewhere each
 // PATCH is a chunk object, concatenated through the usual checks at the end. Both live under the
-// internal `.denext-tus` namespace, which no bucket name can reach.
+// internal `.denext-tus` namespace, which no bucket name can reach. An upload by a request's user
+// under SQL-RLS, or one pinned by its signed token, is assembled in the staging namespace instead
+// and lands with its row, written as the caller when the last byte is in (`commitStaged`): the
+// creation's policy check was only a dry run, up to a day earlier.
 
 import { StorageError } from "./errors.ts";
 import { isIdentityError } from "./identity.ts";
@@ -19,7 +22,13 @@ import { normalizeKey } from "./keys.ts";
 import { checkSniffed, essence, SNIFF_BYTES } from "./mime.ts";
 import { resolveBucket, type ResolvedBucket, secretsOf, type StorageRuntime } from "./runtime.ts";
 import { openToken } from "./signing.ts";
-import { prepareOverwrite } from "./storage-versions.ts";
+import {
+  commitStaged,
+  type Location,
+  prepareOverwrite,
+  stagesWrite,
+  stagingLocation,
+} from "./storage-versions.ts";
 import type { ResumableRow } from "./storage-meta.ts";
 import {
   actorFor,
@@ -160,6 +169,8 @@ interface SignedUpload {
   k: string;
   u: boolean;
   o: string | null;
+  /** Pinned: the version the object had when a policy-checked upsert was signed (`null`: none). */
+  cv?: string | null;
 }
 
 /** A signed upload's token names exactly this object. */
@@ -196,7 +207,7 @@ async function existing(
         }),
       });
     case "PATCH":
-      return await patch(rt, request, row);
+      return await patch(rt, request, row, caller);
     case "DELETE":
       await discard(rt, row);
       return new Response(null, { status: 204, headers: tusHeaders() });
@@ -224,6 +235,8 @@ interface Creation {
   userMetadata: Record<string, unknown> | null;
   upsert: boolean;
   owner: string | null;
+  /** The version the object must still have when the upload completes (a pinned token's). */
+  expect?: string | null;
 }
 
 /** Read and check a creation: the headers, the bucket's rules, the caller's right. */
@@ -258,13 +271,30 @@ async function creationOf(
     userMetadata: meta.metadata ? parseJsonObject(meta.metadata) : null,
     upsert: signed ? signed.u : request.headers.get("x-upsert") === "true",
     owner: signed ? signed.o : identity.role === "authenticated" ? identity.userId ?? null : null,
+    ...(signed?.cv !== undefined ? { expect: signed.cv } : {}),
   };
 }
 
+/**
+ * Where an upload's bytes are assembled: the object's key, or — a staged upload — its staging
+ * place, moved to the key only by the authorized write of its row.
+ */
+function bytesAt(row: Pick<ResumableRow, "bucket_id" | "name" | "version" | "staged">): Location {
+  return row.staged
+    ? stagingLocation(row.bucket_id, row.version)
+    : { bucket: row.bucket_id, key: row.name };
+}
+
 /** A new upload's state (an empty one is stored as a zero chunk: S3 has no empty part). */
-async function newUpload(rt: StorageRuntime, c: Creation, version: string): Promise<ResumableRow> {
+async function newUpload(
+  rt: StorageRuntime,
+  c: Creation,
+  version: string,
+  staged: boolean,
+): Promise<ResumableRow> {
+  const at = bytesAt({ bucket_id: c.bucket.name, name: c.key, version, staged });
   const uploadId = rt.driver.direct && c.length > 0
-    ? await rt.driver.direct.createMultipart(c.bucket.name, c.key, c.contentType)
+    ? await rt.driver.direct.createMultipart(at.bucket, at.key, c.contentType)
     : null;
   return {
     id: crypto.randomUUID().replaceAll("-", "") + randomTail(),
@@ -282,6 +312,8 @@ async function newUpload(rt: StorageRuntime, c: Creation, version: string): Prom
     tail_size: 0,
     chunks: [],
     version,
+    ...(staged ? { staged: true } : {}),
+    ...(c.expect !== undefined ? { expect: c.expect } : {}),
     expires_at: Date.now() + UPLOAD_TTL,
     lease: null,
     lease_until: null,
@@ -300,9 +332,10 @@ async function create(
   const reservation = { upsert: c.upsert, owner: c.owner, userMetadata: c.userMetadata };
   const actor = await actorFor(rt, caller);
   const version = await reserveObject(rt, c.bucket, c.key, reservation, actor);
+  const staged = stagesWrite(actor, c.expect);
   let row: ResumableRow | undefined;
   try {
-    row = await newUpload(rt, c, version);
+    row = await newUpload(rt, c, version, staged);
     await rt.meta.createResumable(row);
     const location = `${rt.basePath}${rt.apiBase}/upload/resumable${
       signed ? "/sign" : ""
@@ -310,7 +343,7 @@ async function create(
     const headers = tusHeaders({ location, "upload-expires": expiresHeader(row) });
     const type = request.headers.get("content-type") ?? "";
     if (c.length === 0 || (request.body && essence(type) === "application/offset+octet-stream")) {
-      const after = await receive(rt, request, row, c.bucket);
+      const after = await receive(rt, request, row, c.bucket, caller);
       headers.set("upload-offset", String(after.upload_offset));
     }
     return new Response(null, { status: 201, headers });
@@ -318,15 +351,22 @@ async function create(
     // The client never got a Location to resume from: nothing of this upload is kept.
     const current = row ? await rt.meta.getResumable(row.id).catch(() => null) : null;
     if (current) await discard(rt, current);
-    else await abandon(rt, c, version, row?.upload_id ?? null);
+    else await abandon(rt, c, version, row?.upload_id ?? null, staged);
     throw err;
   }
 }
 
 /** Undo a creation that failed before its state was stored. */
-async function abandon(rt: StorageRuntime, c: Creation, version: string, uploadId: string | null) {
+async function abandon(
+  rt: StorageRuntime,
+  c: Creation,
+  version: string,
+  uploadId: string | null,
+  staged: boolean,
+) {
   if (uploadId) {
-    await rt.driver.direct?.abortMultipart(c.bucket.name, c.key, uploadId).catch(() => {});
+    const at = bytesAt({ bucket_id: c.bucket.name, name: c.key, version, staged });
+    await rt.driver.direct?.abortMultipart(at.bucket, at.key, uploadId).catch(() => {});
   }
   if (!c.upsert) await releaseObject(rt, c.bucket.name, c.key, version);
 }
@@ -345,7 +385,12 @@ function parseJsonObject(text: string): Record<string, unknown> {
 }
 
 /** PATCH: append bytes at the upload's offset. */
-async function patch(rt: StorageRuntime, request: Request, row: ResumableRow): Promise<Response> {
+async function patch(
+  rt: StorageRuntime,
+  request: Request,
+  row: ResumableRow,
+  caller: Caller,
+): Promise<Response> {
   if (essence(request.headers.get("content-type") ?? "") !== "application/offset+octet-stream") {
     return tusError(
       415,
@@ -359,7 +404,7 @@ async function patch(rt: StorageRuntime, request: Request, row: ResumableRow): P
     return tusError(409, "Conflict", `Upload-Offset is ${row.upload_offset}`);
   }
   const bucket = await resolveBucket(rt, row.bucket_id);
-  const after = await receive(rt, request, row, bucket);
+  const after = await receive(rt, request, row, bucket, caller);
   return new Response(null, {
     status: 204,
     headers: tusHeaders({
@@ -375,6 +420,7 @@ async function receive(
   request: Request,
   row: ResumableRow,
   bucket: ResolvedBucket,
+  caller: Caller,
 ): Promise<ResumableRow> {
   const remaining = row.upload_length - row.upload_offset;
   const declared = intHeader(request, "content-length");
@@ -390,7 +436,7 @@ async function receive(
     const body = limit(request.body ?? new Blob([]).stream(), remaining);
     next = row.upload_id ? await receiveParts(rt, row, body) : await receiveChunk(rt, row, body);
     if (next.upload_offset === next.upload_length) {
-      await complete(rt, next, bucket);
+      await complete(rt, next, bucket, caller);
       return next;
     }
   } finally {
@@ -502,10 +548,11 @@ async function uploadPart(
   bytes: Uint8Array,
 ): Promise<string> {
   const direct = rt.driver.direct!;
+  const at = bytesAt(row);
   if (direct.uploadPart) {
-    return await direct.uploadPart(row.bucket_id, row.name, row.upload_id!, partNumber, bytes);
+    return await direct.uploadPart(at.bucket, at.key, row.upload_id!, partNumber, bytes);
   }
-  const url = await direct.presignPart(row.bucket_id, row.name, row.upload_id!, partNumber, 900);
+  const url = await direct.presignPart(at.bucket, at.key, row.upload_id!, partNumber, 900);
   const res = await fetch(url, { method: "PUT", body: bytes as BodyInit });
   await res.body?.cancel();
   if (!res.ok) throw new StorageError("driver_error", `part upload failed: HTTP ${res.status}`);
@@ -513,8 +560,14 @@ async function uploadPart(
 }
 
 /** The last byte is in: assemble, check (size, type, sniffed head), record the row. */
-async function complete(rt: StorageRuntime, row: ResumableRow, bucket: ResolvedBucket) {
+async function complete(
+  rt: StorageRuntime,
+  row: ResumableRow,
+  bucket: ResolvedBucket,
+  caller: Caller,
+) {
   const reservation = { upsert: row.upsert, owner: row.owner_id, userMetadata: row.user_metadata };
+  if (row.staged) return await completeStaged(rt, row, bucket, caller);
   // A versioned bucket keeps the current version's bytes before the assembly replaces them.
   const undo = await prepareOverwrite(rt, bucket, row.name);
   let info: ObjectInfo;
@@ -538,13 +591,58 @@ async function complete(rt: StorageRuntime, row: ResumableRow, bucket: ResolvedB
   );
 }
 
+/**
+ * A staged upload's last byte is in: assembled in its staging place, then landed with its row,
+ * written as the caller (the upload's creator, checked by `checkOwner`) against the object as it
+ * is now — the creation's policy check was only a dry run, up to a day ago.
+ */
+async function completeStaged(
+  rt: StorageRuntime,
+  row: ResumableRow,
+  bucket: ResolvedBucket,
+  caller: Caller,
+): Promise<void> {
+  let info: ObjectInfo;
+  try {
+    info = row.upload_id
+      ? await assembleParts(rt, row, bucket)
+      : await assembleChunks(rt, row, bucket);
+  } catch (err) {
+    await discard(rt, row);
+    throw err;
+  }
+  await rt.meta.deleteResumable(row.id);
+  const options = {
+    upsert: row.upsert,
+    owner: row.owner_id,
+    userMetadata: row.user_metadata,
+    ...(row.expect !== undefined ? { expect: row.expect } : {}),
+  };
+  try {
+    await commitStaged(
+      rt,
+      bucket,
+      row.name,
+      row.version,
+      options,
+      metadataOf(info, row.cache_control),
+      await actorFor(rt, caller),
+      bytesAt(row),
+    );
+  } catch (err) {
+    if (!row.upsert) await releaseObject(rt, row.bucket_id, row.name, row.version);
+    throw err;
+  }
+}
+
 async function assembleParts(
   rt: StorageRuntime,
   row: ResumableRow,
   bucket: ResolvedBucket,
 ): Promise<ObjectInfo> {
-  await rt.driver.direct!.completeMultipart(row.bucket_id, row.name, row.upload_id!, row.parts);
-  const info = await rt.driver.head(row.bucket_id, row.name);
+  const at = bytesAt(row);
+  await rt.driver.direct!.completeMultipart(at.bucket, at.key, row.upload_id!, row.parts);
+  const info = await rt.driver.head(at.bucket, at.key);
   try {
     if (!info) throw new StorageError("not_found", "the upload was not assembled");
     if (info.size !== row.upload_length) {
@@ -556,11 +654,11 @@ async function assembleParts(
     if (info.size > bucket.maxBytes) {
       throw new StorageError("too_large", "The object exceeded the maximum allowed size");
     }
-    const head = await rt.driver.get(row.bucket_id, row.name, { start: 0, end: SNIFF_BYTES - 1 });
+    const head = await rt.driver.get(at.bucket, at.key, { start: 0, end: SNIFF_BYTES - 1 });
     const bytes = head ? await readAll(head.body, Infinity) : new Uint8Array();
     checkSniffed(row.content_type, bytes.subarray(0, SNIFF_BYTES), bucket.mime);
   } catch (err) {
-    await rt.driver.remove(row.bucket_id, row.name);
+    await rt.driver.remove(at.bucket, at.key);
     throw err;
   }
   return { ...info, contentType: row.content_type };
@@ -606,6 +704,7 @@ async function assembleChunks(
     row.content_type,
     bucket.maxBytes,
     row.upload_length,
+    row.staged ? bytesAt(row) : undefined,
   );
   await removeChunks(rt, row);
   return info;
@@ -619,7 +718,8 @@ async function removeChunks(rt: StorageRuntime, row: ResumableRow): Promise<void
 /** Abandon an upload: free its parts or chunks, release its reservation, drop its state. */
 async function discard(rt: StorageRuntime, row: ResumableRow): Promise<void> {
   if (row.upload_id) {
-    await rt.driver.direct?.abortMultipart(row.bucket_id, row.name, row.upload_id).catch(() => {});
+    const at = bytesAt(row);
+    await rt.driver.direct?.abortMultipart(at.bucket, at.key, row.upload_id).catch(() => {});
   }
   await removeChunks(rt, row).catch(() => {});
   if (!row.upsert) await releaseObject(rt, row.bucket_id, row.name, row.version);

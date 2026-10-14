@@ -328,6 +328,7 @@ jobs:
             tests/backend-s3-minio.test.ts \
             tests/backend-supabase-functions.test.ts \
             tests/backend-storage-supabase-integration.test.ts \
+            tests/backend-storage-rls-integration.test.ts \
             tests/backend-supabase-auth.test.ts \
             tests/backend-supabase-auth-integration.test.ts \
             tests/backend-platform-integration.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"

@@ -12,16 +12,20 @@
 import { migratePostgres, type Migration, type SqlClient } from "@denext/denext/server";
 import { StorageError } from "./errors.ts";
 import { db, rlsReady, scopedFor } from "./postgres.ts";
+import { pgRole, RLS_SETUP } from "./rls.ts";
 import { ownerUuid } from "./storage-meta-sqlite.ts";
 import {
   type Actor,
   type BucketQuery,
   type BucketRow,
+  commitKeeps,
+  commitRefusal,
   type FlatQuery,
   likeEscape,
   type ListEntry,
   type ListQuery,
   type MetaStore,
+  type ObjectCommit,
   type ObjectRow,
   type ObjectWrite,
   type ResumableRow,
@@ -207,6 +211,11 @@ function mapError(err: unknown): never {
   throw err;
 }
 
+/** A write the row-level security policies refused. */
+function rlsRefusal(cause?: unknown): StorageError {
+  return new StorageError("forbidden", "new row violates row-level security policy", { cause });
+}
+
 /** Thrown inside a dry-run transaction to roll it back. */
 const DRY_RUN = Symbol("dry-run");
 
@@ -321,6 +330,78 @@ export function postgresMetaStore(): MetaStore {
   const stateJson = (row: ResumableRow) => {
     const { lease: _l, lease_until: _u, ...state } = row;
     return JSON.stringify(state);
+  };
+
+  /**
+   * Run `work` in one transaction on the connecting role, with `act` switching the transaction to
+   * `as` (its role and claims, for the statements the policies must judge) and `serve` back to the
+   * connecting role (to read what they did, which a policy without `select` would hide).
+   */
+  const transaction = async <T>(
+    as: Actor,
+    work: (
+      tx: SqlClient,
+      act: () => PromiseLike<unknown>,
+      serve: () => PromiseLike<unknown>,
+    ) => Promise<T>,
+  ): Promise<T> => {
+    await ready();
+    try {
+      return await db.service().begin((tx) =>
+        work(
+          tx,
+          () =>
+            as.kind === "scoped"
+              ? tx.unsafe(RLS_SETUP, [pgRole(as.scope.role), as.scope.claims])
+              : Promise.resolve(),
+          () =>
+            as.kind === "scoped"
+              ? tx.unsafe("select set_config('role', 'none', true)")
+              : Promise.resolve(),
+        )
+      );
+    } catch (err) {
+      if (err instanceof StorageError) throw err;
+      mapError(err);
+    }
+  };
+  /** The current row of an object inside a transaction, optionally locked (`for update`). */
+  const currentIn = async (tx: SqlClient, bucket: string, name: string, lock: boolean) =>
+    parse<ObjectRow>(
+      await tx.unsafe<JsonRow>(
+        asJson(
+          `select ${OBJECT_COLUMNS} from storage.objects
+           where bucket_id = $1 and name = $2 and archived_at is null${lock ? " for update" : ""}`,
+        ),
+        [bucket, name],
+      ) as JsonRow[],
+    )[0] ?? null;
+  /**
+   * The commit's write, under the role already set: the current row archived (`keep`, an
+   * `update` the policies judge — one they skip leaves the name taken, and the insert finds it)
+   * then the new row inserted, or the new row upserted over the current one.
+   */
+  const writeAs = async (
+    tx: SqlClient,
+    row: ObjectWrite,
+    current: ObjectRow | null,
+    keep: boolean,
+  ): Promise<void> => {
+    try {
+      if (current && keep) {
+        await tx.unsafe("update storage.objects set archived_at = now() where id = $1", [
+          current.id,
+        ]);
+      }
+      await tx.unsafe(objectWriteSql(current !== null && !keep), objectParams(row));
+    } catch (err) {
+      if ((err as { code?: unknown })?.code !== "23505") throw err;
+      // With no current row, a writer that got there first; with one, a current row the
+      // policies did not let `as` archive.
+      throw current === null
+        ? new StorageError("duplicate", "The resource already exists", { cause: err })
+        : rlsRefusal(err);
+    }
   };
 
   return {
@@ -440,6 +521,32 @@ export function postgresMetaStore(): MetaStore {
     checkWrite(row, upsert, as) {
       return dryRun(as, objectWriteSql(upsert), objectParams(row));
     },
+    commitObject(c: ObjectCommit, as, during) {
+      const { row } = c;
+      return transaction(as, async (tx, act, serve) => {
+        const current = await currentIn(tx, row.bucket_id, row.name, true);
+        const refusal = commitRefusal(c, current);
+        if (refusal) throw refusal;
+        if (c.reserved) {
+          // A plain upload's own reservation: inserted under the policies already; only its
+          // metadata is filled in, and only while it is still this upload's version.
+          await tx.unsafe(
+            "update storage.objects set metadata = $2::jsonb, updated_at = now() where id = $1",
+            [current!.id, row.metadata ? JSON.stringify(row.metadata) : null],
+          );
+          await during(current, false);
+          return (await currentIn(tx, row.bucket_id, row.name, false))!;
+        }
+        const keep = commitKeeps(c, current);
+        await act();
+        await writeAs(tx, row, current, keep);
+        await serve();
+        const written = await currentIn(tx, row.bucket_id, row.name, false);
+        if (written?.version !== row.version) throw rlsRefusal();
+        await during(current, keep);
+        return written;
+      });
+    },
     async finishObject(bucket, name, version, metadata) {
       const [row] = await query<ObjectRow>(
         { kind: "service" },
@@ -465,7 +572,7 @@ export function postgresMetaStore(): MetaStore {
         false,
       );
     },
-    async moveObject(from, to, as, isDryRun) {
+    async moveObject(from, to, as, isDryRun, during) {
       const text = `update storage.objects set bucket_id = $3, name = $4, updated_at = now()
         where bucket_id = $1 and name = $2 and ${LIVE}`;
       const params = [from.bucket, from.name, to.bucket, to.name];
@@ -477,13 +584,27 @@ export function postgresMetaStore(): MetaStore {
         await dryRun(as, text, params);
         return source;
       }
-      const [row] = await query<ObjectRow>(
-        as,
-        dml(text, OBJECT_COLUMNS),
-        params,
-        false,
-      );
-      return row ?? null;
+      // The rename first (the destination's name is then this transaction's: a concurrent
+      // writer waits on it, an existing one is `duplicate`), the bytes after, then the commit.
+      return await transaction(as, async (tx, act, serve) => {
+        const source = await currentIn(tx, from.bucket, from.name, true);
+        if (!source || source.is_delete_marker) return null;
+        await act();
+        await tx.unsafe(`${text} and id = $5`, [...params, source.id]);
+        await serve();
+        const moved = parse<ObjectRow>(
+          await tx.unsafe<JsonRow>(
+            asJson(
+              `select ${OBJECT_COLUMNS} from storage.objects
+               where id = $1 and bucket_id = $2 and name = $3`,
+            ),
+            [source.id, to.bucket, to.name],
+          ) as JsonRow[],
+        )[0];
+        if (!moved) return null;
+        await during?.();
+        return moved;
+      });
     },
     listObjects(bucket, q: ListQuery, as): Promise<ListEntry[]> {
       const column = OBJECT_SORT.has(q.column) ? q.column : "name";
@@ -602,9 +723,9 @@ export function postgresMetaStore(): MetaStore {
       }
       return (await dryRunRows<ObjectRow>(as, text, params))[0] ?? null;
     },
-    async deleteVersion(bucket, name, version) {
+    async deleteVersion(bucket, name, version, as = SERVICE) {
       return (await query<ObjectRow>(
-        SERVICE,
+        as,
         dml(
           "delete from storage.objects where bucket_id = $1 and name = $2 and version = $3",
           OBJECT_COLUMNS,
@@ -661,6 +782,16 @@ export function postgresMetaStore(): MetaStore {
         ),
         [bucket, limit],
         false,
+      );
+    },
+    noncurrentVersions(bucket, after, limit) {
+      return query<ObjectRow>(
+        SERVICE,
+        `select ${OBJECT_COLUMNS} from storage.objects
+         where bucket_id = $1 and (archived_at is not null or is_delete_marker)
+           and id::text > $2
+         order by id limit $3`,
+        [bucket, after, limit],
       );
     },
     expireNoncurrent(bucket, days, keepNewer, limit) {

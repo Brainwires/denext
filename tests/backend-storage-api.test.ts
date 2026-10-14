@@ -799,6 +799,75 @@ Deno.test("sqlite metadata: a file from before versioning is upgraded in place",
   }
 });
 
+Deno.test("sqlite metadata: a key prefix matches case-sensitively, wildcards literally", async () => {
+  const { sqliteMetaStore } = await import("../packages/backend/src/storage-meta-sqlite.ts");
+  const store = sqliteMetaStore(":memory:");
+  const S = { kind: "service" } as const;
+  try {
+    await store.createBucket(
+      { id: "docs", public: false, file_size_limit: null, allowed_mime_types: null },
+      S,
+    );
+    const metadata = {
+      eTag: '"x"',
+      size: 1,
+      mimetype: "text/plain",
+      cacheControl: "no-cache",
+      lastModified: new Date().toISOString(),
+      contentLength: 1,
+      httpStatusCode: 200,
+    };
+    for (
+      const name of [
+        "alice/a.txt",
+        "ALICE/secret.txt",
+        "Alice/other.txt",
+        "a%b/x",
+        "axb/y",
+        "a_c/z",
+      ]
+    ) {
+      await store.writeObject(
+        {
+          bucket_id: "docs",
+          name,
+          owner_id: null,
+          version: crypto.randomUUID(),
+          metadata,
+          user_metadata: null,
+        },
+        true,
+        S,
+      );
+    }
+    const flat = (prefix: string) =>
+      store.listFlat("docs", {
+        prefix,
+        limit: 100,
+        offset: 0,
+        column: "name",
+        order: "asc",
+      } as never, S).then((rows) => rows.map((r) => r.name));
+    // list-v2 (flat): another tenant's `ALICE/` / `Alice/` folder is not under `alice/`.
+    assertEquals(await flat("alice/"), ["alice/a.txt"]);
+    assertEquals(await flat("ALICE/"), ["ALICE/secret.txt"]);
+    // `%` and `_` in a prefix are characters, not patterns.
+    assertEquals(await flat("a%"), ["a%b/x"]);
+    assertEquals(await flat("a_"), ["a_c/z"]);
+    const level = await store.listObjects("docs", {
+      prefix: "alice/",
+      search: "",
+      limit: 100,
+      offset: 0,
+      column: "name",
+      order: "asc",
+    } as never, S);
+    assertEquals(level.map((r) => r.name), ["a.txt"]);
+  } finally {
+    store.close?.();
+  }
+});
+
 Deno.test({
   name: "client: listFilesV2, version-aware info and remove, signed resumable uploads",
   sanitizeResources: false,

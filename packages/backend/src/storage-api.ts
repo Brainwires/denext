@@ -61,6 +61,7 @@ import {
   cacheControlOf,
   Caller,
   capFor,
+  checkSignedWrite,
   copyObject,
   createBucket,
   deleteBucket,
@@ -874,6 +875,12 @@ interface UploadToken {
   k: string;
   u: boolean;
   o: string | null;
+  /**
+   * Pinned: the version the object had when the caller's policies allowed this upsert (`null`:
+   * none) — the upload lands only while it still has it, so a token minted to create an object
+   * cannot later replace one someone else made at that path.
+   */
+  cv?: string | null;
 }
 
 const signedUploadRoute: Handler = async ({ rt, request, params, caller }, m) => {
@@ -887,15 +894,11 @@ const signedUploadRoute: Handler = async ({ rt, request, params, caller }, m) =>
     }
     const identity = await caller.identity();
     const owner = identity.role === "authenticated" ? identity.userId ?? null : null;
-    await rt.meta.checkWrite(
-      {
-        bucket_id: bucket.name,
-        name: key,
-        owner_id: owner,
-        version: crypto.randomUUID(),
-        metadata: null,
-        user_metadata: null,
-      },
+    const pinned = await checkSignedWrite(
+      rt,
+      bucket,
+      key,
+      owner,
       upsert,
       await actorFor(rt, caller),
     );
@@ -905,6 +908,7 @@ const signedUploadRoute: Handler = async ({ rt, request, params, caller }, m) =>
       k: key,
       u: upsert,
       o: owner,
+      ...pinned,
     }, secretsOf(rt));
     return Response.json({
       url: `/object/upload/sign/${bucket.name}/${key}?token=${token}`,
@@ -921,6 +925,7 @@ const signedUploadRoute: Handler = async ({ rt, request, params, caller }, m) =>
     ...payload,
     upsert: token.u,
     owner: token.o,
+    expect: token.cv,
   }, SERVICE_CALLER);
   return uploaded(row);
 };

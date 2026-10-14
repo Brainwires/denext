@@ -23,6 +23,7 @@ import {
   type Caller,
   capFor,
   checkContentType,
+  checkSignedWrite,
   copyObject,
   createBucket,
   deleteBucket,
@@ -42,8 +43,8 @@ import {
   setLifecycle,
   updateBucket,
 } from "./storage-ops.ts";
-import type { BucketRow, ObjectRow } from "./storage-meta.ts";
-import { locationOf, prepareOverwrite } from "./storage-versions.ts";
+import { type BucketRow, type ObjectMetadata, type ObjectRow, SERVICE } from "./storage-meta.ts";
+import { isVersioned, keepsCurrent, locationOf, prepareOverwrite } from "./storage-versions.ts";
 import type {
   BucketAccessOptions,
   BucketInfo,
@@ -122,7 +123,7 @@ async function signedUpload(
   caller: Caller,
 ): Promise<SignedUpload> {
   const k = normalizeKey(key);
-  const owner = await checkUpload(rt, bucket, k, caller);
+  const { owner, pin } = await checkUpload(rt, bucket, k, caller);
   const contentType = checkContentType(bucket, options.contentType);
   const max = capFor(bucket, options.maxBytes, options.size);
   const expiresIn = clampExpiry(options.expiresIn, UPLOAD_EXPIRY);
@@ -143,6 +144,7 @@ async function signedUpload(
     exp: exp + COMPLETE_GRACE,
     n: options.size,
     o: owner,
+    ...pin,
   };
   return {
     key: k,
@@ -156,33 +158,23 @@ async function signedUpload(
 
 /**
  * Authorize a client upload now (it completes later, with only the token): the TypeScript rule,
- * and under SQL-RLS a dry run of the upsert under the caller's policies.
+ * and under SQL-RLS a dry run of the upsert under the caller's policies — pinned to the object's
+ * version as it was checked, so the completion records the row only while it still has it.
  *
- * @returns The owner to record.
+ * @returns The owner to record, and the pin (`{}` when the caller's policies were not checked).
  */
 async function checkUpload(
   rt: StorageRuntime,
   bucket: ResolvedBucket,
   key: string,
   caller: Caller,
-): Promise<string | null> {
+): Promise<{ owner: string | null; pin: { cv?: string | null } }> {
   await authorizeOp(rt, bucket, "upload", key, caller);
   const owner = caller.service || !caller.request ? null : (await caller.identity()).userId ?? null;
-  await rt.meta.checkWrite(
-    {
-      bucket_id: bucket.name,
-      name: key,
-      owner_id: owner,
-      version: crypto.randomUUID(),
-      metadata: null,
-      user_metadata: null,
-    },
-    true,
-    await actorFor(rt, caller),
-  );
+  const pin = await checkSignedWrite(rt, bucket, key, owner, true, await actorFor(rt, caller));
   // A versioned bucket keeps the current version's bytes before the client's PUT replaces them.
   await prepareOverwrite(rt, bucket, key);
-  return owner;
+  return { owner, pin };
 }
 
 async function localUploadUrl(
@@ -225,7 +217,7 @@ export async function planUpload(
     return { upload: await signedUpload(rt, bucket, key, { contentType, size }, caller) };
   }
   const k = normalizeKey(key);
-  const owner = await checkUpload(rt, bucket, k, caller);
+  const { owner, pin } = await checkUpload(rt, bucket, k, caller);
   const type = checkContentType(bucket, contentType);
   const max = capFor(bucket, undefined, size);
   const secrets = secretsOf(rt);
@@ -248,6 +240,7 @@ export async function planUpload(
     max,
     u: uploadId,
     o: owner,
+    ...pin,
     exp: exp + COMPLETE_GRACE,
   };
   return {
@@ -289,8 +282,45 @@ export async function completeUpload(token: unknown, parts?: CompletedPart[]): P
   }
   const row = { upsert: true, owner: grant.o ?? null };
   const meta = metadataOf(info, DEFAULT_CACHE);
+  if (grant.cv !== undefined) {
+    // Authorized against the object as it was when signed: the row is recorded only while it
+    // still is (an object someone else created or replaced since is `conflict`).
+    await recordPinned(rt, bucket, grant, row.owner, meta);
+    return info;
+  }
   await recordObject(rt, grant.b, grant.k, crypto.randomUUID(), row, meta);
   return info;
+}
+
+/** Record a pinned client upload's row: only while the object is at the grant's version. */
+async function recordPinned(
+  rt: StorageRuntime,
+  bucket: ResolvedBucket,
+  grant: UploadGrant,
+  owner: string | null,
+  metadata: ObjectMetadata,
+): Promise<void> {
+  const versioned = isVersioned(bucket);
+  await rt.meta.commitObject(
+    {
+      row: {
+        bucket_id: grant.b,
+        name: grant.k,
+        owner_id: owner,
+        version: crypto.randomUUID(),
+        metadata,
+        user_metadata: null,
+        ...(versioned ? { is_versioned: bucket.versioning === "ENABLED" } : {}),
+      },
+      upsert: true,
+      reserved: false,
+      keep: versioned ? (current) => keepsCurrent(bucket, current) : null,
+      expect: grant.cv ?? null,
+    },
+    SERVICE,
+    // The client's PUT already put the bytes at the key (and signing kept the old version's).
+    () => Promise.resolve(),
+  );
 }
 
 function checkParts(parts: CompletedPart[]): CompletedPart[] {

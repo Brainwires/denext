@@ -51,12 +51,14 @@ export interface FunctionsApp {
  * @param files The project's files.
  * @param options The backend options (`functions` defaults to `{}`).
  * @param mode The pipeline mode.
+ * @param app More of the app's config (`canonicalOrigin`, …).
  * @returns The app.
  */
 export async function functionsApp(
   files: Record<string, string>,
   options: BackendOptions = { functions: {} },
   mode: "dev" | "prod" = "prod",
+  app: Partial<DenextConfig> = {},
 ): Promise<FunctionsApp> {
   const root = await Deno.makeTempDir({ prefix: "dnx-functions-" });
   await Deno.mkdir(`${root}/app`);
@@ -66,7 +68,7 @@ export async function functionsApp(
     await Deno.writeTextFile(full, source);
   }
   resetPlugins();
-  const config = { plugins: [denextAuth(authConfig), backend(options)] } as DenextConfig;
+  const config = { ...app, plugins: [denextAuth(authConfig), backend(options)] } as DenextConfig;
   await applyPlugins({ projectRoot: root, appDir: `${root}/app`, config, mode, load });
   const manifest = await scanRoutes(`${root}/app`);
   const handler = createApp({

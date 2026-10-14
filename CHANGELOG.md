@@ -47,6 +47,11 @@ a 3.x app to 4.0 involves. This section is the record.
 
 ### Added
 
+- **`localServerOrigin()` (`denext/server`).** It returns the origin on which this machine
+  reaches the server that received the current request: the address it listens on, with a
+  wildcard bind as loopback (`http://127.0.0.1:3000`). The value never comes from the request's
+  headers, so server code can give it to something that outlives the request. Outside denext's
+  own server loop it is `undefined`.
 - **A captcha budget in front of the verifier (`rateLimit.captcha`).** Every captcha token
   denext is about to send to hCaptcha / Turnstile — on denext's own endpoints and `/auth/v1` —
   first spends a per-client-IP budget, 30 per minute by default (`{ max, windowMs }`, or `false`
@@ -678,6 +683,46 @@ Hardening of the new `/auth/v1` API (unreleased) and the user store it shares wi
   with another scheme (`javascript:`, `data:`) refuses the metadata, and `/auth/v1` refuses a
   plaintext one (loopback `http:` only under `dangerouslyAllowInsecureProviders`) at registration,
   at a refresh and at use, so the URL handed to the browser is always an HTTPS page.
+
+- **`@denext/backend` Edge Functions: `SUPABASE_URL` never comes from a request's `Host`.** With
+  neither `functions.url` nor a `SUPABASE_URL` env var, a function's worker took `SUPABASE_URL`
+  from the first request that started it and kept it for its whole life, beside
+  `SUPABASE_SERVICE_ROLE_KEY`. One request with a forged `Host` after a start, restart or edit
+  pointed every later `createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)` at another host,
+  sending it the service key. The default is now the app's `canonicalOrigin` (or
+  `DENEXT_CANONICAL_ORIGIN`) plus its `basePath`, else the address the server listens on as this
+  machine reaches it (`http://127.0.0.1:<port>`); with none of them known, functions get no
+  `SUPABASE_URL` and a warning says so.
+- **`@denext/backend` storage under SQL-RLS: a write is judged against the object as it is when
+  it lands.** An upload, copy, move or TUS upload by a request's user was checked by a rolled-back
+  dry run and then written as the service role once its bytes were in. So an upsert that passed
+  while the path was free could replace an object someone else created there in the meantime,
+  even though their `update` policy would refuse it. A slow body kept that window open; a TUS
+  upload kept it open for up to a day. The row is now written under the caller's role, in one
+  transaction with the current row locked, and the bytes wait in a staging area until that write
+  is allowed. A move takes the destination's name before it copies any bytes. A signed upload
+  token minted by a policy-checked caller (`/object/upload/sign`, signed TUS,
+  `createSignedUploadUrl`) is pinned to the object's version when it was signed: if the object
+  has changed since, the upload is a `409`.
+- **`@denext/backend` storage: emptying a bucket under SQL-RLS deletes only what the caller may
+  delete.** `POST /bucket/<id>/empty` purged every noncurrent version and delete marker as the
+  service role. Now each one is deleted under the caller's policies, as live objects already were.
+- **`@denext/backend` storage: the SQLite metadata store matches a `list-v2` prefix
+  case-sensitively.** SQLite's `LIKE` ignores ASCII case, so a listing scoped to `alice/` also
+  returned `ALICE/…` and `Alice/…`. Postgres was not affected.
+- **`@denext/backend` realtime: an update's full old row reaches only subscribers who could see
+  the row.** With `old: "full"`, a raw `postgres_changes` subscriber received `old_record` in full
+  even when the row only just entered their view (a row handed to them), which exposed its
+  previous contents. On a table with row-level security on, or not known to be off, the old row now
+  goes only to a subscriber who could see the row before the change, and only with the first
+  change of a burst. Everyone else gets the key alone, which is what Supabase sends under
+  row-level security. Tables with row-level security off still send it to every subscriber.
+- **`@denext/backend` vault: `updateSecret()` with an uppercase id no longer destroys the
+  secret.** The id matched the row (`::uuid` ignores case), but the new ciphertext was bound to
+  the caller's spelling while every reader binds Postgres's lowercase `id::text`, so the secret
+  could never be read again. Secrets are now sealed under the id the database returns, the
+  additional data uses the canonical form of a UUID, and the write is checked to land on that
+  row.
 
 ## [4.0.0-rc.2] - 2026-10-13
 

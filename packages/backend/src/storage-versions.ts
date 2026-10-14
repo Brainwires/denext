@@ -13,14 +13,22 @@
 import { StorageError } from "./errors.ts";
 import type { ResolvedBucket, StorageRuntime } from "./runtime.ts";
 import type {
+  Actor,
   LifecycleConfiguration,
   LifecycleRule,
+  ObjectMetadata,
   ObjectRow,
   ObjectWrite,
 } from "./storage-meta.ts";
 
 /** Where noncurrent versions' bytes are kept. */
 const VERSION_NAMESPACE = ".denext-versions";
+
+/**
+ * Where an upload's bytes wait (`<bucket>/<version>`) until its row is written: no bucket name
+ * reaches it, and nothing at the object's key changes before the write is allowed.
+ */
+const STAGING_NAMESPACE = ".denext-staging";
 
 /** A place in the driver: a bucket (or internal namespace) and a key. */
 export interface Location {
@@ -38,13 +46,87 @@ export function locationOf(bucket: string, key: string, row: ObjectRow | null): 
   return row && row.archived_at !== null ? versionLocation(bucket, row.version) : { bucket, key };
 }
 
+/** Where an upload's bytes are staged until its row is written. */
+export function stagingLocation(bucket: string, version: string): Location {
+  return { bucket: STAGING_NAMESPACE, key: `${bucket}/${version}` };
+}
+
+/**
+ * Whether a write stages its bytes and lands them with its row ({@linkcode commitStaged}): when a
+ * request's user writes under SQL-RLS (the policies must judge the row that is there when the
+ * write lands, not when it was checked), or when a signed upload is pinned to the object's state.
+ */
+export function stagesWrite(actor: Actor, expect: string | null | undefined): boolean {
+  return actor.kind === "scoped" || expect !== undefined;
+}
+
+/**
+ * Write an object whose bytes were staged: its row and its bytes land together, the row's write
+ * run as `actor` against the current row as it is at that moment ({@linkcode MetaStore.commitObject}),
+ * the bytes moved from `staged` to the key only once that write is allowed. The staged copy is
+ * removed either way.
+ *
+ * @returns The written row.
+ */
+export async function commitStaged(
+  rt: StorageRuntime,
+  bucket: ResolvedBucket,
+  key: string,
+  version: string,
+  options: {
+    upsert: boolean;
+    owner: string | null;
+    userMetadata?: Record<string, unknown> | null;
+    expect?: string | null;
+  },
+  metadata: ObjectMetadata,
+  actor: Actor,
+  staged: Location,
+): Promise<ObjectRow> {
+  const versioned = isVersioned(bucket);
+  let kept: Location | undefined;
+  try {
+    const row = await rt.meta.commitObject(
+      {
+        row: {
+          bucket_id: bucket.name,
+          name: key,
+          owner_id: options.owner,
+          version,
+          metadata,
+          user_metadata: options.userMetadata ?? null,
+          ...(versioned ? { is_versioned: bucket.versioning === "ENABLED" } : {}),
+        },
+        upsert: options.upsert,
+        reserved: !versioned && !options.upsert,
+        keep: versioned ? (current) => keepsCurrent(bucket, current) : null,
+        ...(options.expect !== undefined ? { expect: options.expect } : {}),
+      },
+      actor,
+      async (current, keep) => {
+        if (keep && current && !current.is_delete_marker && current.metadata) {
+          kept = versionLocation(bucket.name, current.version);
+          await rawCopy(rt, { bucket: bucket.name, key }, kept);
+        }
+        await rawCopy(rt, staged, { bucket: bucket.name, key });
+      },
+    );
+    kept = undefined;
+    if (versioned) sweepLifecycle(rt, bucket);
+    return row;
+  } finally {
+    if (kept) await rt.driver.remove(kept.bucket, kept.key).catch(() => {});
+    await rt.driver.remove(staged.bucket, staged.key).catch(() => {});
+  }
+}
+
 /** Whether a bucket keeps versions at all (`ENABLED`, or `SUSPENDED` with its history). */
 export function isVersioned(bucket: ResolvedBucket): boolean {
   return (bucket.versioning ?? "DISABLED") !== "DISABLED";
 }
 
 /** Whether replacing (or deleting) `current` keeps it as a noncurrent version. */
-function keepsCurrent(bucket: ResolvedBucket, current: ObjectRow): boolean {
+export function keepsCurrent(bucket: ResolvedBucket, current: ObjectRow): boolean {
   if (bucket.versioning === "ENABLED") return true;
   return bucket.versioning === "SUSPENDED" && current.is_versioned;
 }

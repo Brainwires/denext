@@ -352,6 +352,7 @@ export {
   cookies,
   draftMode,
   headers,
+  localServerOrigin,
   noStore,
   readonlyHeaders,
   requestId,

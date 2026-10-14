@@ -245,7 +245,7 @@
                   "type": "object",
                   "properties": {
                     "events": {
-                      "description": "The changes to send (default all three: `[\"insert\", \"update\", \"delete\"]`).",
+                      "description": "The changes to send (default all four: `[\"insert\", \"update\", \"delete\", \"truncate\"]`).",
                       "type": "array",
                       "items": {
                         "enum": [
@@ -500,7 +500,7 @@
                 }
               },
               "url": {
-                "description": "The app's public URL, which functions read as `SUPABASE_URL` (default: the origin of the request that starts the worker, plus the app's `basePath`).",
+                "description": "The URL functions read as `SUPABASE_URL` (the `SUPABASE_URL` env var wins). Default: the app's `canonicalOrigin` (or `DENEXT_CANONICAL_ORIGIN`) plus its `basePath`, else the address the server listens on as this machine reaches it (`http://127.0.0.1:<port>`) — never a request's `Host`, which a client chooses: a worker keeps its environment for life, beside the service key.",
                 "type": "string"
               },
               "functions": {
