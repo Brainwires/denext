@@ -155,10 +155,29 @@ export async function requireUser(
 ): Promise<CallerUser> {
   const token = bearerOf(ctx.request);
   if (!token || !looksLikeJwt(token)) throw fail.noAuthorization();
-  let claims: SupabaseJwtClaims;
-  let pending: boolean;
+  const { claims, pending, user: stored } = await verifiedCaller(ctx, token);
+  if (claims.role !== "authenticated") throw fail.badJwt("invalid JWT: not a user token");
+  if (claims.client_id !== undefined && !options.allowOAuthClient) {
+    throw fail.badJwt("invalid JWT: an OAuth client's token cannot call this endpoint");
+  }
+  const user = stored ?? await ctx.adapter.getUser(claims.sub!);
+  if (!user) {
+    throw new GoTrueError(403, "user_not_found", "User from sub claim in JWT does not exist");
+  }
+  if (pending && !options.allowPending) {
+    throw new GoTrueError(403, "insufficient_aal", "AAL2 session is required");
+  }
+  const sessionId = typeof claims.session_id === "string" ? claims.session_id : undefined;
+  return { claims, user, sessionId, pending };
+}
+
+/** The caller's verified token, its refusals as GoTrue's errors. */
+async function verifiedCaller(
+  ctx: GoTrueContext,
+  token: string,
+): Promise<{ claims: SupabaseJwtClaims; pending: boolean; user?: AdapterUser }> {
   try {
-    ({ claims, pending } = await verifyAccessTokenSession(ctx.keys, token, ctx.config));
+    return await verifyAccessTokenSession(ctx.keys, token, ctx.config);
   } catch (error) {
     if (error instanceof SupabaseKeyError && error.message.includes("session not found")) {
       throw new GoTrueError(
@@ -169,19 +188,6 @@ export async function requireUser(
     }
     throw fail.badJwt(error instanceof SupabaseKeyError ? error.message : undefined);
   }
-  if (claims.role !== "authenticated") throw fail.badJwt("invalid JWT: not a user token");
-  if (claims.client_id !== undefined && !options.allowOAuthClient) {
-    throw fail.badJwt("invalid JWT: an OAuth client's token cannot call this endpoint");
-  }
-  const user = await ctx.adapter.getUser(claims.sub!);
-  if (!user) {
-    throw new GoTrueError(403, "user_not_found", "User from sub claim in JWT does not exist");
-  }
-  if (pending && !options.allowPending) {
-    throw new GoTrueError(403, "insufficient_aal", "AAL2 session is required");
-  }
-  const sessionId = typeof claims.session_id === "string" ? claims.session_id : undefined;
-  return { claims, user, sessionId, pending };
 }
 
 /**

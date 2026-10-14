@@ -30,7 +30,7 @@ import { safeRedirectLocation } from "../config.ts";
 import { isProductionEnv, isWeakSecret } from "../session.ts";
 import { isBuildPhase } from "../phase.ts";
 import { emitAuthEvent } from "./events.ts";
-import { hasMfaAdapter } from "./mfa.ts";
+import { hasMfaAdapter, pendingSessionLive } from "./mfa.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { assertEmailProviderConfig } from "./providers-email.ts";
 import { assertPhoneProviderConfig } from "./providers-phone.ts";
@@ -415,13 +415,15 @@ export async function auth(): Promise<AuthSession | null> {
  *
  * A pending session grants nothing: {@link auth} and every guard still read it as signed
  * out, and it is never slid forward. It is short-lived, and the step-up replaces it with
- * a fresh session rather than upgrading it.
+ * a fresh session rather than upgrading it. One whose user has since been banned or deleted,
+ * or whose address was first proven after it signed in, reads as `null` too.
  *
  * @returns The pending {@link AuthSession}, or `null`.
  */
 export async function pendingMfaSession(): Promise<AuthSession | null> {
   const session = await currentSession();
-  return session?.mfaPending ? session : null;
+  if (!session?.mfaPending || !activeConfig) return null;
+  return await pendingSessionLive(activeConfig, session) ? session : null;
 }
 
 /**

@@ -20,7 +20,6 @@ import { authTrustsProxy } from "../rate-limit.ts";
 import { isOAuthProvider } from "../types.ts";
 import {
   checkPassword,
-  contestPassword,
   createAccount,
   credentialFingerprint,
   linkIdentity,
@@ -29,6 +28,7 @@ import {
   passwordMatches,
   retireChangedPassword,
   retireForeignPassword,
+  signUpExisting,
   updateAccount,
 } from "./accounts.ts";
 import {
@@ -176,8 +176,10 @@ async function emailSignup(
       userMetadata: data,
       emailVerified: ctx.options.autoconfirm,
     });
-  // An unconfirmed account: a different password from a repeated sign-up is not kept.
-  if (existing) await contestPassword(ctx, existing.id, password);
+  // An unconfirmed account: its password is this sign-up's only when it had none or the same.
+  const pw = existing
+    ? await signUpExisting(ctx, existing, password)
+    : await credentialFingerprint(ctx, user.id);
   if (ctx.options.autoconfirm) return ok(await startSession(ctx.session, user, amr("password")));
   await spend(ctx, verificationLimiter(ctx.config), "verify", email, "over_email_send_rate_limit");
   const issued = await issueOtp(ctx, "email", email, {
@@ -185,7 +187,7 @@ async function emailSignup(
     userId: user.id,
     redirectTo,
     ...(challenge ? { codeChallenge: challenge } : {}),
-    pw: await credentialFingerprint(ctx, user.id),
+    pw,
   });
   await sendAuthEmail(ctx, { email, action: "signup", issued, redirectTo, user });
   return ok({
@@ -215,8 +217,10 @@ async function phoneSignup(
       userMetadata: data,
       phoneVerified: ctx.options.phoneAutoconfirm,
     });
-  // An unconfirmed account: a different password from a repeated sign-up is not kept.
-  if (existing) await contestPassword(ctx, existing.id, password);
+  // An unconfirmed account: its password is this sign-up's only when it had none or the same.
+  const pw = existing
+    ? await signUpExisting(ctx, existing, password)
+    : await credentialFingerprint(ctx, user.id);
   if (ctx.options.phoneAutoconfirm) {
     return ok(await startSession(ctx.session, user, amr("password")));
   }
@@ -224,7 +228,7 @@ async function phoneSignup(
   const issued = await issueOtp(ctx, "sms", phone, {
     action: "signup",
     userId: user.id,
-    pw: await credentialFingerprint(ctx, user.id),
+    pw,
   });
   await sendAuthSms(ctx, {
     phone,

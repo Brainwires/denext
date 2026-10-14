@@ -34,7 +34,7 @@
 import { readCappedBody } from "../body.ts";
 import { emitAuthEvent } from "./events.ts";
 import { forgetPasskeyFactor } from "./factors.ts";
-import { completeStepUp, recentlyAuthenticated } from "./mfa.ts";
+import { completeStepUp, pendingSessionLive, recentlyAuthenticated } from "./mfa.ts";
 import { isVerified, toAuthUser } from "./adapter-link.ts";
 import {
   type ChallengeData,
@@ -253,7 +253,12 @@ async function authenticationCaller(
   if (!pk) return null;
   if (!isSameOrigin(ctx.request, ctx.config)) return json({ error: "forbidden" }, 403);
   const session = await readAuthSession(ctx.config);
-  return { pk, pending: session?.mfaPending ? session : null };
+  if (!session?.mfaPending) return { pk, pending: null };
+  // A stateless pending cookie outlives a ban or an eviction: refuse it from the stored user.
+  if (!(await pendingSessionLive(ctx.config, session))) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  return { pk, pending: session };
 }
 
 /**

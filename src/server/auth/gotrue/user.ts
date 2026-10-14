@@ -48,9 +48,35 @@ async function identityOf(account: AdapterAccount): Promise<GoTrueIdentity> {
 }
 
 /**
+ * Whether a user is an SSO user (GoTrue's `is_sso_user`): created by an SSO sign-in — its
+ * `app_metadata.provider` is the `sso:<provider>` it signed up through — and holding SSO identities
+ * only. An existing account an IdP was linked to (`linkExistingAccounts`) is not one.
+ *
+ * @param user The stored user.
+ * @param accounts The user's linked accounts.
+ * @returns `true` for an SSO user.
+ */
+function ssoOnly(user: AdapterUser, accounts: readonly AdapterAccount[]): boolean {
+  const provider = user.appMetadata?.provider;
+  return typeof provider === "string" && provider.startsWith("sso:") && accounts.length > 0 &&
+    accounts.every((account) => account.provider.startsWith("sso:"));
+}
+
+/**
+ * Whether a user is an SSO user, reading its linked accounts (see {@linkcode ssoOnly}).
+ *
+ * @param adapter The adapter.
+ * @param user The stored user.
+ * @returns `true` for an SSO user.
+ */
+export async function isSsoUser(adapter: AuthAdapter, user: AdapterUser): Promise<boolean> {
+  return ssoOnly(user, await adapter.listAccounts?.(user.id) ?? []);
+}
+
+/**
  * A user's identities: the linked accounts, plus the `email` / `phone` identity a password or
  * one-time-code user has even when no account row records it (a user created by denext auth's
- * own credentials flow).
+ * own credentials flow). An SSO user has its SSO identities only, as in GoTrue.
  */
 export async function identitiesOf(
   adapter: AuthAdapter,
@@ -58,6 +84,7 @@ export async function identitiesOf(
 ): Promise<GoTrueIdentity[]> {
   const accounts = await adapter.listAccounts?.(user.id) ?? [];
   const out = await Promise.all(accounts.map(identityOf));
+  if (ssoOnly(user, accounts)) return out;
   const has = (provider: string) => out.some((identity) => identity.provider === provider);
   if (user.email && !has("email") && !user.isAnonymous) {
     out.push(

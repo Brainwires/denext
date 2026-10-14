@@ -222,7 +222,10 @@ a 3.x app to 4.0 involves. This section is the record.
   (`403 insufficient_aal`), and a pending cookie session can't enroll or confirm one, so a first
   factor alone never adds a factor of its own. A repeated `/auth/v1` sign-up for an unconfirmed
   address keeps the account's password only when it is the same one; a different one clears it
-  (the newest confirmation goes to the owner, who sets a password after confirming).
+  for good (the newest confirmation goes to the owner, who sets a password after confirming). A
+  sign-up for an unconfirmed account that has no password yet (created by a one-time code or an
+  invite) sets its password like a new sign-up, and an account with a verified phone keeps its
+  password whatever an email sign-up sends.
 - **`/auth/v1`: the OAuth 2.1 server, stored providers and Web3 sign-in.** `oauthServer: {}` makes
   the app an authorization server: `supabase.auth.admin.oauth.*` registers clients (secrets shown
   once, stored hashed), `/oauth/authorize` sends the user to your consent page, which answers with
@@ -736,6 +739,21 @@ Hardening of the new `/auth/v1` API (unreleased) and the user store it shares wi
   account with the same email (`email_exists`, as in GoTrue) unless a config-declared provider
   sets the new `linkExistingAccounts`. SSO sign-up honours `disableSignup` and the new per-provider
   `allowSignUp`, and SSO users get no `email` identity.
+- **A ban refuses every token while it lasts.** A banned user's bearer API tokens, native access
+  and refresh tokens and `/auth/v1` access tokens are refused at each use (`requireBearer`,
+  `verifyApiToken`, `auth()`, `resolveIdentity()`, `GET /user`), not only through the revocation
+  a ban performs, so a token that revocation missed is dead too; the ban's end restores them.
+- **A stateless pending-MFA cookie can't finish the step-up after a ban or an eviction.** Without
+  a `sessionStore` a pending cookie can't be revoked, so `/mfa`, `/mfa/enroll`, `/mfa/confirm`,
+  `/mfa/challenge`, the passkey step-up and `pendingMfaSession()` refuse it when its user is
+  banned or deleted, or when the account's address was first proven after it signed in.
+- **SSO users' credentials belong to the IdP.** `PUT /user` refuses an SSO user's password, email
+  or phone change, or a reauthentication nonce (`422 user_sso_managed`, as in GoTrue), and an SSO
+  user's identities are its SSO identities only (no synthesized `email` identity), so its last
+  one can't be unlinked.
+- **An admin-generated sign-up link keeps the admin's password.** `generate_link` with
+  `type: "signup"` and a `password` binds the code to that password, so confirming it no longer
+  retires the password as a foreign one (GoTrue's behaviour).
 - **SAML metadata endpoints must be `https:`.** A SingleSignOnService / SingleLogoutService URL
   with another scheme (`javascript:`, `data:`) refuses the metadata, and `/auth/v1` refuses a
   plaintext one (loopback `http:` only under `dangerouslyAllowInsecureProviders`) at registration,

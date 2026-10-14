@@ -65,6 +65,7 @@ export type GoTrueErrorCode =
   | "user_already_exists"
   | "user_banned"
   | "user_not_found"
+  | "user_sso_managed"
   | "validation_failed"
   | "weak_password"
   | "web3_provider_disabled"

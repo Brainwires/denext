@@ -45,6 +45,7 @@ import {
   enrollTotp,
   hasFreshFactor,
   hasMfaAdapter,
+  pendingSessionLive,
   verifySecondFactor,
 } from "./mfa.ts";
 import {
@@ -139,7 +140,12 @@ async function mfaCaller(
   if (!isSameOrigin(ctx.request, ctx.config)) return json({ error: "forbidden" }, 403);
   const session = await readAuthSession(ctx.config);
   if (!session) return json({ error: "unauthorized" }, 401);
-  return accepts(session) ? session : json({ error: "forbidden" }, 403);
+  if (!accepts(session)) return json({ error: "forbidden" }, 403);
+  // A stateless pending cookie outlives a ban or an eviction: refuse it from the stored user.
+  if (session.mfaPending && !(await pendingSessionLive(ctx.config, session))) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  return session;
 }
 
 /** Enrollment is for a complete session — or a pending one when every user must enrol. */

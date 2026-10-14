@@ -38,6 +38,7 @@
 import { hmacSign, hmacVerify } from "../session.ts";
 import { bearerTokenOf } from "./bearer-header.ts";
 import type { AuthAdapter, NativeSessionRecord } from "./adapter.ts";
+import { isBanned } from "./ban.ts";
 import { emitAuthEvent } from "./events.ts";
 import { constantTimeEqualHex, sha256Hex } from "./hash.ts";
 import { base64UrlDecode, base64UrlEncode, randomToken } from "./oauth.ts";
@@ -536,7 +537,10 @@ function parseRefresh(token: string): RefreshParts | null {
 /** Why a refresh was refused (for the event log; the caller always sees `invalid_grant`). */
 export type RefreshOutcome =
   | { ok: true; tokens: NativeTokens }
-  | { ok: false; reason: "invalid" | "reuse" | "revoked" | "expired" | "user_gone" };
+  | {
+    ok: false;
+    reason: "invalid" | "reuse" | "revoked" | "expired" | "user_gone" | "banned";
+  };
 
 /** A refusal, as {@link RefreshOutcome} carries it. */
 type RefreshRefusal = Extract<RefreshOutcome, { ok: false }>;
@@ -557,7 +561,8 @@ function pastMaxAge(native: ResolvedNative, family: NativeSessionRecord, at: num
 /**
  * The checks every successful refresh shares, on a genuine, unrevoked family: unexpired, within
  * its absolute lifetime (past it the family is revoked, and the refusal reads as an expiry),
- * and its user still exists (else it is revoked). Answers the snapshot to mint for.
+ * and its user still exists (else it is revoked) and is not banned (refused while the ban
+ * lasts). Answers the snapshot to mint for.
  */
 async function liveSnapshot(
   config: AuthConfig,
@@ -578,6 +583,7 @@ async function liveSnapshot(
     await native.adapter.revokeNativeSession(family.id);
     return { ok: false, reason: "user_gone" };
   }
+  if (isBanned(user, at)) return { ok: false, reason: "banned" };
   return snapshot;
 }
 
@@ -760,6 +766,8 @@ export async function verifyNativeAccessToken(
   if (family.userId !== payload.u) return null;
   const snapshot = parseSnapshot(family.session);
   if (!snapshot) return null;
+  // A ban refuses the token at every use while it lasts, not only through the revocation.
+  if (isBanned(await resolveAuthOptions(config).adapter?.getUser(family.userId), at)) return null;
   return {
     user: snapshot.user,
     provider: snapshot.provider,

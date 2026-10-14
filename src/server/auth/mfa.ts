@@ -21,6 +21,7 @@
  */
 
 import type { AuthAdapter } from "./adapter.ts";
+import { isBanned } from "./ban.ts";
 import { backupCodeMatcher, generateBackupCodes, isBackupCodeShaped } from "./backup-codes.ts";
 import { emitAuthEvent } from "./events.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
@@ -395,6 +396,34 @@ export function recentlyAuthenticated(
   if (session.authTime === undefined) return false;
   const age = Math.floor(nowMs / 1000) - session.authTime;
   return age >= 0 && age <= Math.max(options.mfa.freshness, ENROLL_MIN_WINDOW);
+}
+
+/**
+ * Whether a session that still owes its second factor may go on toward a complete one. A
+ * stateless pending cookie can't be revoked, so what would have revoked it is checked here,
+ * from the stored user: the user still exists, is not banned, and had its first address proof
+ * (which retires every session set up before it) no later than this sign-in.
+ *
+ * @param config The app's auth config.
+ * @param session The pending session.
+ * @param nowMs The clock, in epoch ms.
+ * @returns `true` when the step-up may proceed.
+ */
+export async function pendingSessionLive(
+  config: AuthConfig,
+  session: AuthSession,
+  nowMs: number = Date.now(),
+): Promise<boolean> {
+  const adapter = resolveAuthOptions(config).adapter;
+  if (!adapter) return true;
+  const user = await adapter.getUser(session.user.id);
+  if (!user || isBanned(user, Math.floor(nowMs / 1000))) return false;
+  const proofs = [user.emailVerified, user.phoneVerified].filter((t): t is number =>
+    typeof t === "number"
+  );
+  const firstProof = proofs.length ? Math.min(...proofs) : undefined;
+  return firstProof === undefined || session.authTime === undefined ||
+    session.authTime >= firstProof;
 }
 
 /**

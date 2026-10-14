@@ -699,3 +699,40 @@ Deno.test("spendMfaAttempt spends the same per-user budget the /mfa endpoints do
   });
   assertEquals(step.res!.status, 429, "the endpoint sees the budget the action spent");
 });
+
+// ---- a stateless pending cookie after a ban / an eviction ---------------------------
+
+Deno.test("stateless: a pending cookie can't finish the step-up once its user is banned", async () => {
+  const h = await setup({ sessionStore: undefined });
+  denextAuth(h.config);
+  const { secret } = await enrol(h);
+  const pending = await pendingSignIn(h);
+  const until = Math.floor(Date.now() / 1000) + 3600;
+  await h.adapter.updateUser({ id: h.userId, bannedUntil: until });
+  const step = await post(h.config, "/mfa", {
+    cookie: pending,
+    body: { code: await totpAt(secret, nowStep()) },
+  });
+  assertEquals(step.res!.status, 401);
+  assertEquals(step.cookie, undefined, "no complete session was issued");
+  const request = new Request(`${ORIGIN}/login/2fa`, { headers: { cookie: pending } });
+  assertEquals(
+    await runWithContext(createRequestContext(request), () => pendingMfaSession()),
+    null,
+    "the /mfa page sees no pending session either",
+  );
+});
+
+Deno.test("stateless, required 'always': a pending cookie from before the address's first proof can't enrol", async () => {
+  const h = await setup({
+    sessionStore: undefined,
+    mfa: { required: "always", window: 2, backupCodes: 2 },
+  });
+  const pending = (await passwordSignIn(h)).cookie!;
+  const authTime = (await readSession(h.config, pending))!.authTime!;
+  // The owner proves the address afterwards: everything set up before that proof is retired —
+  // the stateless cookie can't be, so the step-up checks the proof's time instead.
+  await h.adapter.updateUser({ id: h.userId, emailVerified: authTime + 1 });
+  const enrolled = await post(h.config, "/mfa/enroll", { cookie: pending });
+  assertEquals(enrolled.res!.status, 401);
+});

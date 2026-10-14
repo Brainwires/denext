@@ -21,6 +21,7 @@
 import { hmacSign, hmacVerify } from "../../session.ts";
 import { authSecrets } from "../totp-seal.ts";
 import type { AdapterUser, NativeSessionRecord } from "../adapter.ts";
+import { isBanned } from "../ban.ts";
 import { type NativeAdapter, nativeAdapterOf } from "../native.ts";
 import { randomToken } from "../oauth.ts";
 import { resolveAuthOptions } from "../options.ts";
@@ -175,11 +176,6 @@ async function liveFamily(
   if (family.userId !== userId) return null;
   const snapshot = parseSnapshot(family.session);
   return snapshot ? { family, snapshot } : null;
-}
-
-/** Whether a user is banned right now. */
-function isBanned(user: AdapterUser): boolean {
-  return typeof user.bannedUntil === "number" && user.bannedUntil > now();
 }
 
 /**

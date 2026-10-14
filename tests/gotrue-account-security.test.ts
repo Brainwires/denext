@@ -444,3 +444,210 @@ Deno.test("AUTH-4: user_metadata.email_verified written by the user is not email
     assertEquals(session?.user.emailVerified, false);
   }, { phoneAutoconfirm: true });
 });
+
+// ── Bans refuse every token at use ───────────────────────────────────────────
+
+/** Ban a user in the store only — no session is revoked — as a missed revocation would leave it. */
+async function banInStore(app: SupabaseAuthApp, id: string, seconds = 3600): Promise<void> {
+  await app.config.adapter!.updateUser({
+    id,
+    bannedUntil: Math.floor(Date.now() / 1000) + seconds,
+  });
+}
+
+Deno.test("a banned user's access token is refused at every use, not only by the revocation", async () => {
+  await withApp(async (app) => {
+    const signup = await api(app, "/signup", {
+      body: { email: "banned@example.com", password: "banned-password" },
+    });
+    const id = signup.json.user.id as string;
+    const token = signup.json.access_token as string;
+    assertEquals((await api(app, "/user", { token })).status, 200);
+    await banInStore(app, id);
+    const refused = await api(app, "/user", { token });
+    assertEquals([refused.status, refused.json.error_code], [403, "bad_jwt"]);
+    assertEquals(
+      await sessionFromJwtBearer(app.config, token),
+      null,
+      "auth() reads it as signed out",
+    );
+    const refreshed = await api(app, "/token?grant_type=refresh_token", {
+      body: { refresh_token: signup.json.refresh_token },
+    });
+    assertEquals(refreshed.json.error_code, "user_banned");
+    // The ban over, the same token works again.
+    await banInStore(app, id, -1);
+    assertEquals((await api(app, "/user", { token })).status, 200);
+  }, { autoconfirm: true });
+});
+
+// ── SSO users: their credentials belong to the IdP ───────────────────────────
+
+/**
+ * An SSO user as a first SAML sign-in leaves it (its only identity is `sso:<provider>`), and an
+ * access token for it (through a generated magic link).
+ */
+async function ssoUser(app: SupabaseAuthApp, email: string, provider = "sso:p1") {
+  const adapter = app.config.adapter!;
+  const user = await adapter.createUser({
+    email,
+    emailVerified: Math.floor(Date.now() / 1000),
+    appMetadata: { provider, providers: [provider] },
+  });
+  await adapter.linkAccount({
+    userId: user.id,
+    provider,
+    providerAccountId: `name-id-${user.id}`,
+    identityId: crypto.randomUUID(),
+    identityData: { sub: `name-id-${user.id}`, email },
+    email,
+  });
+  const link = await api(app, "/admin/generate_link", {
+    key: app.secretKey,
+    body: { type: "magiclink", email },
+  });
+  const verified = await api(app, "/verify", {
+    body: { type: "magiclink", token_hash: link.json.hashed_token },
+  });
+  assertEquals(verified.status, 200, JSON.stringify(verified.json));
+  return { id: user.id, token: verified.json.access_token as string };
+}
+
+Deno.test("an SSO user can't change its password, email or phone through PUT /user", async () => {
+  await withApp(async (app) => {
+    const { token } = await ssoUser(app, "worker@corp.example");
+    for (
+      const body of [
+        { password: "a-new-password" },
+        { email: "elsewhere@example.com" },
+        { phone: "+15555550123" },
+        { nonce: "123456" },
+      ]
+    ) {
+      const changed = await api(app, "/user", { method: "PUT", token, body });
+      assertEquals(
+        [changed.status, changed.json.error_code],
+        [422, "user_sso_managed"],
+        JSON.stringify(body),
+      );
+    }
+    // Profile data and an unchanged email are not credentials.
+    const same = await api(app, "/user", {
+      method: "PUT",
+      token,
+      body: { email: "worker@corp.example", data: { team: "a" } },
+    });
+    assertEquals(same.status, 200);
+    assertEquals(same.json.user_metadata.team, "a");
+  }, { autoconfirm: true });
+});
+
+Deno.test("an existing account an IdP was linked to keeps its own password changes", async () => {
+  await withApp(async (app) => {
+    const signup = await api(app, "/signup", {
+      body: { email: "linked@corp.example", password: "first-password" },
+    });
+    await app.config.adapter!.linkAccount({
+      userId: signup.json.user.id,
+      provider: "sso:p1",
+      providerAccountId: "name-id-linked",
+      identityId: crypto.randomUUID(),
+      identityData: { sub: "name-id-linked" },
+    });
+    const changed = await api(app, "/user", {
+      method: "PUT",
+      token: signup.json.access_token,
+      body: { password: "second-password" },
+    });
+    assertEquals(changed.status, 200, JSON.stringify(changed.json));
+  }, { autoconfirm: true });
+});
+
+Deno.test("an SSO user's identities are its SSO identities only, and the last can't be unlinked", async () => {
+  await withApp(async (app) => {
+    const { token } = await ssoUser(app, "solo@corp.example");
+    const user = await api(app, "/user", { token });
+    const identities = user.json.identities as { provider: string; identity_id: string }[];
+    assertEquals(identities.map((identity) => identity.provider), ["sso:p1"]);
+    const unlink = await api(app, `/user/identities/${identities[0].identity_id}`, {
+      method: "DELETE",
+      token,
+    });
+    assertEquals([unlink.status, unlink.json.error_code], [422, "single_identity_not_deletable"]);
+  }, { autoconfirm: true, manualLinking: true });
+});
+
+// ── Sign-up on an account created by a code or an invite ─────────────────────
+
+Deno.test("a sign-up on an unconfirmed account with no password binds the sign-up's password", async () => {
+  await withApp(async (app) => {
+    // A one-time code request creates the account, with no password and nothing confirmed.
+    assertEquals((await api(app, "/otp", { body: { email: "late@example.com" } })).status, 200);
+    const signup = await api(app, "/signup", {
+      body: { email: "late@example.com", password: "chosen-password" },
+    });
+    assertEquals(signup.status, 200);
+    const confirmed = await api(app, "/verify", {
+      body: { type: "signup", email: "late@example.com", token: emailCode(app) },
+    });
+    assertEquals(confirmed.status, 200, JSON.stringify(confirmed.json));
+    assertEquals((await password(app, "late@example.com", "chosen-password")).status, 200);
+  });
+});
+
+Deno.test("a contested sign-up stays contested: a later sign-up's password is not bound", async () => {
+  await withApp(async (app) => {
+    await api(app, "/signup", { body: { email: "c@example.com", password: "owner-password" } });
+    await api(app, "/signup", { body: { email: "c@example.com", password: "other-password" } });
+    // The contest left a password nobody holds: a third sign-up can't make its own stick.
+    await api(app, "/signup", { body: { email: "c@example.com", password: "third-password" } });
+    const confirmed = await api(app, "/verify", {
+      body: { type: "signup", email: "c@example.com", token: emailCode(app) },
+    });
+    assertEquals(confirmed.status, 200);
+    for (const guess of ["owner-password", "other-password", "third-password"]) {
+      assertEquals(
+        (await password(app, "c@example.com", guess)).json.error_code,
+        "invalid_credentials",
+        guess,
+      );
+    }
+  });
+});
+
+Deno.test("a sign-up never touches the password of an account with a verified phone", async () => {
+  await withApp(async (app) => {
+    const phone = await api(app, "/signup", {
+      body: { phone: "+15555550111", password: "phone-password" },
+    });
+    await api(app, `/admin/users/${phone.json.user.id}`, {
+      method: "PUT",
+      key: app.secretKey,
+      body: { email: "unconfirmed@example.com" },
+    });
+    await api(app, "/signup", {
+      body: { email: "unconfirmed@example.com", password: "stranger-password" },
+    });
+    const grant = await api(app, "/token?grant_type=password", {
+      body: { phone: "+15555550111", password: "phone-password" },
+    });
+    assertEquals(grant.status, 200, "the owner's password still signs in");
+  }, { phoneAutoconfirm: true });
+});
+
+// ── generate_link type=signup ────────────────────────────────────────────────
+
+Deno.test("a generated sign-up link confirms the account with the password the admin set", async () => {
+  await withApp(async (app) => {
+    const link = await api(app, "/admin/generate_link", {
+      key: app.secretKey,
+      body: { type: "signup", email: "made@example.com", password: "admin-set-password" },
+    });
+    assertEquals(link.status, 200);
+    const confirmed = await api(app, "/verify", {
+      body: { type: "signup", token_hash: link.json.hashed_token },
+    });
+    assertEquals(confirmed.status, 200, JSON.stringify(confirmed.json));
+    assertEquals((await password(app, "made@example.com", "admin-set-password")).status, 200);
+  });
+});

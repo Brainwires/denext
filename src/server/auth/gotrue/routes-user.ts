@@ -36,7 +36,7 @@ import { fail, GoTrueError } from "./errors.ts";
 import { factorsJson } from "./factors.ts";
 import { canSendSms, issueOtp, redeemOtp, sendAuthEmail, sendAuthSms } from "./otp.ts";
 import { readChallenge } from "./pkce.ts";
-import { identitiesOf, userJson } from "./user.ts";
+import { identitiesOf, isSsoUser, userJson } from "./user.ts";
 
 /** `GET /user`. */
 export async function getUser(ctx: GoTrueContext): Promise<Response> {
@@ -51,6 +51,20 @@ function changesCredentials(user: AdapterUser, body: Record<string, unknown>): b
   if (email && email !== user.email?.toLowerCase()) return true;
   const phone = normalizePhone(str(body, "phone"));
   return !!phone && phone !== user.phone;
+}
+
+/**
+ * GoTrue's `user_sso_managed` rule: an SSO user's password, email and phone belong to its
+ * identity provider, so `PUT /user` refuses to set a password, change the email or phone, or
+ * present a reauthentication nonce for one.
+ */
+async function changesSsoManaged(
+  ctx: GoTrueContext,
+  user: AdapterUser,
+  body: Record<string, unknown>,
+): Promise<boolean> {
+  const forbidden = changesCredentials(user, body) || !!str(body, "nonce");
+  return forbidden && await isSsoUser(ctx.adapter, user);
 }
 
 /**
@@ -84,6 +98,13 @@ export async function putUser(ctx: GoTrueContext): Promise<Response> {
       422,
       "validation_failed",
       "Updating password of an anonymous user without an email or phone is not allowed",
+    );
+  }
+  if (await changesSsoManaged(ctx, user, body)) {
+    throw new GoTrueError(
+      422,
+      "user_sso_managed",
+      "Updating email, phone, password of a SSO account only possible via SSO",
     );
   }
   const data = obj(body, "data");
@@ -314,9 +335,13 @@ export async function unlinkIdentity(ctx: GoTrueContext): Promise<Response> {
   await ctx.adapter.unlinkAccount?.({ provider: target.provider, providerAccountId: target.id });
   const remaining = await identitiesOf(ctx.adapter, (await ctx.adapter.getUser(user.id)) ?? user);
   const providers = [...new Set(remaining.map((identity) => identity.provider))];
+  // The provider the account signed up with stays while it is still linked: rewriting it to
+  // another (an `sso:` one) would change what kind of user this is.
+  const stored = user.appMetadata?.provider;
+  const provider = typeof stored === "string" && providers.includes(stored) ? stored : providers[0];
   await updateAccount(ctx, {
     id: user.id,
-    appMetadata: { ...(user.appMetadata ?? {}), provider: providers[0], providers },
+    appMetadata: { ...(user.appMetadata ?? {}), provider, providers },
   });
   return ok({});
 }

@@ -81,7 +81,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   redeem; `emailOtp()` avoids links altogether.
 - **Stateless cookie sessions can't be ended early** by a password reset, a pre-account-hijacking
   eviction, a ban, an `/auth/v1` password change or account deletion; run a `sessionStore` (or
-  `session.strategy: "database"`).
+  `session.strategy: "database"`). A stateless session that still owes its second factor can't
+  complete it once its user is banned or deleted or the address was first proven after it signed
+  in, but a complete one lives until it expires.
 - **Sliding refresh needs a `Response` being produced** (`/session`, `requireAuth()`,
   `requireSession()`; a streamed component's headers have flushed). A store without `update`
   never slides.

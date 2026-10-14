@@ -12,6 +12,7 @@ import { safeRedirectLocation } from "../config.ts";
 import { originCandidate } from "../origin-check.ts";
 import { currentContext } from "../request-context.ts";
 import { getSession, type SessionOptions } from "../session.ts";
+import { isBannedUser } from "./ban.ts";
 import { cookieSessionOptions, type ResolvedAuthOptions } from "./options.ts";
 import type { AuthConfig, AuthProvider, AuthUser } from "./types.ts";
 
@@ -227,20 +228,6 @@ export function callbackUri(ctx: AuthRouteContext, providerId: string): string {
   return absoluteUrl(ctx.request, `${ctx.options.prefix}callback/${providerId}`, {
     canonicalOrigin: ctx.config.canonicalOrigin,
   });
-}
-
-/**
- * Whether the stored user is banned (`bannedUntil` in the future) — set by the `/auth/v1`
- * admin API (`ban_duration`), and honoured by every denextAuth sign-in too: one user store.
- *
- * @param config The auth config.
- * @param userId The user.
- * @returns `true` while the ban lasts.
- */
-async function isBannedUser(config: AuthConfig, userId: string): Promise<boolean> {
-  const stored = config.adapter ? await config.adapter.getUser(userId) : undefined;
-  const until = stored?.bannedUntil;
-  return typeof until === "number" && until > Math.floor(Date.now() / 1000);
 }
 
 /**

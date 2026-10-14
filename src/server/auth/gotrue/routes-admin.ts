@@ -10,6 +10,7 @@ import type { AdapterUser } from "../adapter.ts";
 import {
   checkPassword,
   createAccount,
+  credentialFingerprint,
   hashPassword,
   revokeEverySession,
   updateAccount,
@@ -284,6 +285,8 @@ export async function adminGenerateLink(ctx: GoTrueContext): Promise<Response> {
     userId: target.user.id,
     redirectTo,
     ...(target.newValue ? { newValue: target.newValue } : {}),
+    // A new account's own sign-up confirmation keeps the password the admin set for it.
+    ...(target.bindPassword ? { pw: await credentialFingerprint(ctx, target.user.id) } : {}),
   });
   return ok({
     ...(await fullUser(ctx, target.user)),
@@ -307,6 +310,8 @@ async function linkTarget(
   address: string;
   verificationType: string;
   newValue?: string;
+  /** The code is the new account's sign-up confirmation, bound to the password set with it. */
+  bindPassword?: boolean;
 }> {
   const existing = await ctx.adapter.getUserByEmail(email);
   const unconfirmed = () => {
@@ -327,9 +332,17 @@ async function linkTarget(
       unconfirmed();
       const password = typeof body.password === "string" ? body.password : undefined;
       if (password) checkPassword(ctx, password);
-      const user = existing ??
-        await createAccount(ctx, { email, password, userMetadata: obj(body, "data") });
-      return { user, kind: "email", address: email, verificationType: type };
+      if (existing) {
+        return { user: existing, kind: "email", address: email, verificationType: type };
+      }
+      const user = await createAccount(ctx, { email, password, userMetadata: obj(body, "data") });
+      return {
+        user,
+        kind: "email",
+        address: email,
+        verificationType: type,
+        bindPassword: !!password,
+      };
     }
     case "invite": {
       unconfirmed();

@@ -2254,13 +2254,21 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   it held when the change was requested, and an anonymous user can't set a password without an
   address. An OAuth sign-in vouches only for the address it asserts, and linking it to an
   unconfirmed account (`allowDangerousEmailAccountLinking`) clears that account the same way.
+  A sign-up for an unconfirmed account with no password yet (made by a one-time code or an invite)
+  sets its password and binds it as a new sign-up does; a sign-up with a different password than
+  the account's contests it for good (the account's password becomes one nobody holds, so no later
+  sign-up can claim it), and an account with a verified phone keeps its password. An
+  admin-generated sign-up link is the account's own sign-up confirmation: it keeps the password
+  the admin set.
 - **Assurance level.** Once a user holds a verified factor, changing the password, email or phone
   (`PUT /user`), linking or unlinking an identity, and managing factors, recovery codes and
   passkeys need an `aal2` session (`401` / `403 insufficient_aal`, GoTrue's rule). A session that
   still owes its second factor can only read the user, finish MFA and sign out; the other account
   endpoints refuse it.
 - **One user store.** A ban (`ban_duration`) refuses denextAuth's own sign-ins too and ends every
-  session of both kinds. A password change through `/auth/v1` ends the user's other sessions,
+  session of both kinds; while it lasts, the user's tokens (bearer API tokens, native tokens,
+  access and refresh tokens) are refused at every use as well, and a stateless cookie still owing
+  its second factor can't finish the step-up. A password change through `/auth/v1` ends the user's other sessions,
   including denextAuth cookie sessions in the `sessionStore` (a stateless cookie can't be revoked
   and lives until it expires); an admin password change ends all of them, as in GoTrue.
   `session.user.emailVerified` of an access token is read from the stored user, never from the
@@ -2300,7 +2308,9 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   SSO sign-in never takes over an existing account with the same email, as in GoTrue: it is
   refused with `email_exists` unless a config-declared provider sets `linkExistingAccounts` (and
   then only for addresses on its domains). SSO users are created only while sign-ups are allowed
-  (`disableSignup`, the provider's `allowSignUp`), and have no `email` identity.
+  (`disableSignup`, the provider's `allowSignUp`), and have no `email` identity. An SSO user's
+  password, email and phone belong to its IdP: `PUT /user` refuses to change them
+  (`422 user_sso_managed`, as in GoTrue), and its last SSO identity can't be unlinked.
 - **SAML endpoints.** The SingleSignOnService and SingleLogoutService URLs in IdP metadata are sent
   to the browser, so they must be `https:` (a loopback `http:` one only under
   `dangerouslyAllowInsecureProviders`); any other scheme refuses the metadata at registration, at

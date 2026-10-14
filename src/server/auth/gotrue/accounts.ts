@@ -119,9 +119,17 @@ export async function retireChangedPassword(
   await revokeEverySession(ctx, userId);
 }
 
-/** Remove a password (or, without `deleteCredential`, replace it with one nobody holds). */
-async function deletePassword(ctx: GoTrueContext, userId: string): Promise<void> {
-  if (ctx.adapter.deleteCredential) await ctx.adapter.deleteCredential(userId);
+/**
+ * Remove a password — or replace it with one nobody holds: without `deleteCredential`, and with
+ * `unusable` (a contested sign-up's marker: the account still has a password, so no later sign-up
+ * claims it).
+ */
+async function deletePassword(
+  ctx: GoTrueContext,
+  userId: string,
+  options: { unusable?: boolean } = {},
+): Promise<void> {
+  if (ctx.adapter.deleteCredential && !options.unusable) await ctx.adapter.deleteCredential(userId);
   else {
     const random = crypto.randomUUID() + crypto.randomUUID();
     await ctx.adapter.setCredential?.(userId, await hashPassword(ctx, random));
@@ -151,23 +159,45 @@ export async function revokeEverySession(
 }
 
 /**
- * A repeated sign-up for an address (or number) nobody has confirmed yet. The same password
- * keeps the account's; a different one clears it — the newest sign-up's confirmation goes to the
- * same inbox, so binding its password would let whoever signed up last keep a password on the
- * owner's account. The owner confirms (which signs them in) and sets a password then.
+ * A sign-up for an address (or number) on an existing account nobody has confirmed yet. Answers
+ * the password fingerprint the sign-up's confirmation code binds (see
+ * {@linkcode retireForeignPassword}), or `undefined` for none.
+ *
+ * - An account with a verified address is left as it is, and nothing is bound: its owner's
+ *   password is not a stranger's to replace or clear.
+ * - An account with no password yet (created by a one-time code or an invite) takes this
+ *   sign-up's password, like a new sign-up — after everything set up on it without a proof
+ *   is retired, so the binding keeps only what this sign-up chose.
+ * - The same password as the account's keeps it, and binds it.
+ * - A different password contests the account: everything set up without a proof is retired
+ *   and the password is replaced with one nobody holds, so a later sign-up can't claim it —
+ *   the newest sign-up's confirmation goes to the same inbox, so binding its password would let
+ *   whoever signed up last keep a password on the owner's account. Nothing is bound; the owner
+ *   confirms (which signs them in) and sets a password then.
  *
  * @param ctx The context.
- * @param userId The unconfirmed account.
+ * @param user The unconfirmed account.
  * @param password The password this sign-up chose.
+ * @returns The fingerprint to bind, or `undefined`.
  */
-export async function contestPassword(
+export async function signUpExisting(
   ctx: GoTrueContext,
-  userId: string,
+  user: AdapterUser,
   password: string,
-): Promise<void> {
-  const stored = await ctx.adapter.getCredential?.(userId);
-  if (!stored || await resolveAuthOptions(ctx.config).hasher.verify(password, stored)) return;
-  await deletePassword(ctx, userId);
+): Promise<string | undefined> {
+  if (user.emailVerified !== undefined || user.phoneVerified !== undefined) return undefined;
+  const options = resolveAuthOptions(ctx.config);
+  const stored = await ctx.adapter.getCredential?.(user.id);
+  if (stored && await options.hasher.verify(password, stored)) {
+    return await credentialFingerprint(ctx, user.id);
+  }
+  await evictUnprovenAccess(ctx.config, options, ctx.adapter, user.id, "revoked");
+  if (stored) {
+    await deletePassword(ctx, user.id, { unusable: true });
+    return undefined;
+  }
+  await ctx.adapter.setCredential?.(user.id, await hashPassword(ctx, password));
+  return await credentialFingerprint(ctx, user.id);
 }
 
 /** Link (or refresh) an identity row. */

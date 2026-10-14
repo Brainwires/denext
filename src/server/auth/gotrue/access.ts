@@ -10,7 +10,9 @@
  * @module
  */
 
+import type { AdapterUser } from "../adapter.ts";
 import { isVerified } from "../adapter-link.ts";
+import { isBanned } from "../ban.ts";
 import { bearerTokenOf } from "../bearer-header.ts";
 import { nativeAdapterOf } from "../native.ts";
 import type { AuthConfig, AuthSession } from "../types.ts";
@@ -58,36 +60,44 @@ export async function verifyAccessToken(
 
 /**
  * {@linkcode verifyAccessToken}, also saying whether the token's session still owes a second
- * factor (an `aal1` session of a user who must complete MFA).
+ * factor (an `aal1` session of a user who must complete MFA). A user's token is refused while its
+ * user is banned (at every use, not only through the revocation a ban performs); the stored user
+ * read for that check is returned.
  *
  * @param keys The key material.
  * @param token The JWT.
  * @param config The auth config whose adapter holds the sessions (optional).
  * @param options The clock.
- * @returns The claims, and whether the session is pending.
- * @throws {SupabaseKeyError} `bad_jwt` / `jwt_expired`, or `bad_jwt` for a dead session.
+ * @returns The claims, whether the session is pending, and the stored user (when read).
+ * @throws {SupabaseKeyError} `bad_jwt` / `jwt_expired`, or `bad_jwt` for a dead session or a
+ *   banned user.
  */
 export async function verifyAccessTokenSession(
   keys: SupabaseKeys,
   token: string,
   config?: AuthConfig | null,
   options: VerifySupabaseJwtOptions = {},
-): Promise<{ claims: SupabaseJwtClaims; pending: boolean }> {
+): Promise<{ claims: SupabaseJwtClaims; pending: boolean; user?: AdapterUser }> {
   const claims = await verifySupabaseJwt(keys, token, options);
-  if (claims.role !== "authenticated" || typeof claims.session_id !== "string") {
-    return { claims, pending: false };
-  }
-  const adapter = nativeAdapterOf(config?.adapter);
-  if (!adapter) return { claims, pending: false };
-  const family = await adapter.getNativeSession(claims.session_id);
+  if (claims.role !== "authenticated") return { claims, pending: false };
   const now = Math.floor((options.now ?? Date.now()) / 1000);
-  if (
-    !family || family.revokedAt !== undefined || family.expiresAt <= now ||
-    family.userId !== claims.sub
-  ) {
-    throw new SupabaseKeyError("bad_jwt", "invalid JWT: session not found");
+  const adapter = nativeAdapterOf(config?.adapter);
+  let pending = false;
+  if (typeof claims.session_id === "string" && adapter) {
+    const family = await adapter.getNativeSession(claims.session_id);
+    if (
+      !family || family.revokedAt !== undefined || family.expiresAt <= now ||
+      family.userId !== claims.sub
+    ) {
+      throw new SupabaseKeyError("bad_jwt", "invalid JWT: session not found");
+    }
+    pending = claims.aal !== "aal2" && snapshotPending(family.session);
   }
-  return { claims, pending: claims.aal !== "aal2" && snapshotPending(family.session) };
+  const user = typeof claims.sub === "string"
+    ? await config?.adapter?.getUser(claims.sub) ?? undefined
+    : undefined;
+  if (isBanned(user, now)) throw new SupabaseKeyError("bad_jwt", "invalid JWT: user is banned");
+  return { claims, pending, user };
 }
 
 function snapshotPending(raw: string): boolean {
@@ -178,10 +188,9 @@ export async function sessionFromJwtBearer(
   const keys = installedSupabaseKeys();
   if (!keys) return undefined;
   try {
-    const { claims, pending } = await verifyAccessTokenSession(keys, token, config);
+    const { claims, pending, user: stored } = await verifyAccessTokenSession(keys, token, config);
     if (claims.role !== "authenticated") return undefined;
     const session = sessionFromClaims(claims);
-    const stored = await config.adapter?.getUser(claims.sub!);
     if (stored) session.user.emailVerified = isVerified(stored.emailVerified);
     // A session still owing its second factor fails closed in `auth()`, as a cookie one does.
     if (pending) session.mfaPending = true;

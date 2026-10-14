@@ -23,6 +23,7 @@
  */
 
 import type { ApiTokenRecord, AuthAdapter } from "./adapter.ts";
+import { isBannedUser } from "./ban.ts";
 import { emitAuthEvent } from "./events.ts";
 import { sha256Hex } from "./hash.ts";
 import { randomToken } from "./oauth.ts";
@@ -177,7 +178,7 @@ async function touch(config: AuthConfig, adapter: ApiTokenAdapter, id: string): 
  * secret is ever compared in-process), and check it is still live.
  *
  * Every failure mode returns the same `null`: an unknown token, a revoked one, an expired
- * one, a malformed one, and "bearer tokens aren't configured at all". Callers must keep
+ * one, a malformed one, one whose owner is banned, and "bearer tokens aren't configured at all". Callers must keep
  * that uniformity in their answer — see `requireBearer`.
  *
  * @param config The app's auth config.
@@ -198,6 +199,9 @@ export async function verifyApiToken(
   if (record.expiresAt !== undefined && record.expiresAt <= Math.floor(Date.now() / 1000)) {
     return null;
   }
+  // A banned owner's tokens authenticate nothing while the ban lasts — checked here, at every
+  // use, not only by the revocation a ban performs.
+  if (await isBannedUser(config, record.userId)) return null;
   await touch(config, adapter, record.id);
   return record;
 }
