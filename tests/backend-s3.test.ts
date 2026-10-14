@@ -180,7 +180,12 @@ Deno.test("s3 storage: a signed upload's bytes reach the key only at its complet
     await rt.meta.deleteResumable(id); // past its completion window
     await rt.meta.createResumable({ ...row, expires_at: Date.now() - 1 });
     await media.createSignedUploadUrl("other.txt", opts);
-    for (let i = 0; i < 200 && fake.objects.has(leftKey); i++) {
+    // The sweep runs in the background: the bytes go first, the row last.
+    for (
+      let i = 0;
+      i < 200 && (fake.objects.has(leftKey) || await rt.meta.getResumable(id) !== null);
+      i++
+    ) {
       await new Promise((r) => setTimeout(r, 25));
     }
     assertEquals(fake.objects.has(leftKey), false, "the abandoned upload was swept");

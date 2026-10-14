@@ -958,8 +958,7 @@ and this project adheres to
 
 ### Breaking (4.0)
 
-These join the [4.0.0-rc.1 breaking changes](#400-rc1---2026-10-13); together they are what moving
-a 3.x app to 4.0 involves. This section is the record.
+These are what moving a 3.x app to 4.0 involves. This section is the record.
 
 - **Project verbs run on denext's Deno toolchain.** `dev`, `build`, `export`, `start`, `test`,
   `check`, `job`, `doctor` and the other verbs that run project code re-run themselves on the
@@ -968,7 +967,7 @@ a 3.x app to 4.0 involves. This section is the record.
   that denies `--allow-run`, or a sandbox without network on first use, stays on stock Deno (one
   warning); `DENEXT_DENO=stock` opts out.
 - **First-party plugins need their 4.0 releases.** Each plugin's 4.0-compatible release requires
-  denext 4.0, and the releases built for 3.x don't work with it: `@denext/backend` 0.3,
+  denext 4.0, and the releases built for 3.x don't work with it: `@denext/backend` 0.4,
   `@denext/content-collections` 0.5, `@denext/effect` 0.2, `@denext/graphql` 0.3, `@denext/htmx`
   2.1, `@denext/openapi` 0.4, `@denext/pages-router` 0.12, `@denext/react-router` 0.3.
   `denext upgrade` moves the denext pin, the CLI tasks and these plugins together.
@@ -992,15 +991,6 @@ a 3.x app to 4.0 involves. This section is the record.
 - **A TOTP secret kept in a pre-4.0 user's MFA record moves into the factor store** the first time
   the user's factors are read (no key needed). Keep a database backup from before the upgrade if
   you may need to roll back to 3.x.
-
-### Notes
-
-- **How denext's Deno build is kept current**: how the `2.9.7-denext.N` toolchain tracks Deno
-  releases and takes fixes between them, how each denext release pins and verifies one build, and
-  how the first command bootstraps it. See
-  [denext's Deno toolchain › Notes](https://denext.dev/docs/toolchain#notes-how-denexts-deno-build-is-kept-current).
-
-### Breaking (4.0)
 
 - **`denext task` is Deno's `deno task`.** `denext task <name> [args…]` runs a `deno.json` /
   `package.json` task on denext's Deno toolchain, every argument verbatim. Inside it every `deno`
@@ -1035,6 +1025,13 @@ a 3.x app to 4.0 involves. This section is the record.
   `--` in what it hands Deno, so `denext test a.test.ts -- --seed 1` gives the script its own
   arguments, and hands back `--quiet` (and `--json` to `lint`), which denext parses as global
   flags.
+
+### Notes
+
+- **How denext's Deno build is kept current**: how the `2.9.7-denext.N` toolchain tracks Deno
+  releases and takes fixes between them, how each denext release pins and verifies one build, and
+  how the first command bootstraps it. See
+  [denext's Deno toolchain › Notes](https://denext.dev/docs/toolchain#notes-how-denexts-deno-build-is-kept-current).
 
 ## [3.4.16] - 2026-10-12
 
