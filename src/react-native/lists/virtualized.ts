@@ -122,6 +122,8 @@ export interface EngineOptions {
   readonly snapRows?: ReadonlySet<number>;
   /** Px of room after the last item (LegendList's `anchoredEndSpace`). */
   readonly endSpace?: number;
+  /** Px of room before the content (LegendList's `contentInset` start). */
+  readonly startSpace?: number;
   /** A data row was measured: its first measurement, or a new size (the engine's report). */
   readonly onItemMeasured?: (info: { index: number; size: number; previous: number }) => void;
   /** The scroller's class (the DOM build's `className`), ahead of the style's. */
@@ -834,6 +836,7 @@ export function CoreList(props: CoreListProps): VNode {
     ...slotProps(list, engine, prim, model.inverted),
     ...chromeProps(list, prim, engine, renderScroll, host, control),
     keyboardInset: room,
+    startInset: engine.startSpace,
   });
   return outerList(renderScroll, list, control, host, scroller);
 }

@@ -10,8 +10,9 @@
  *
  * Differences, all deliberate: `recycleItems` maps to the engine's cell reuse (off by default,
  * as in LegendList); `getFixedItemSize` / `getEstimatedItemSize` / `estimatedItemSize` are
- * estimates the engine confirms by measuring; `waitForInitialLayout` and `itemsAreEqual` have no
- * effect (the first window renders at once; items re-render on their props); the state's
+ * estimates the engine confirms by measuring; `waitForInitialLayout` hides the whole list (not
+ * only its items) until the first item is measured; `itemsAreEqual` keeps an equal item's
+ * element only while its index is unchanged; the state's
  * `listen` reports `totalSize`, `headerSize`, `footerSize`, `anchoredEndSpaceSize`,
  * `isAtEnd` / `isAtStart` / `isNearEnd` / `isNearStart`,
  * `isWithinMaintainScrollAtEndThreshold`, `lastItemKeys`, `numContainers`, `otherAxisSize`,
@@ -48,6 +49,19 @@ import {
   useKeyOf,
   usePacking,
 } from "./lists/kit.ts";
+import {
+  adaptiveCtx,
+  adaptiveFrame,
+  type AdaptiveRender,
+  type AdaptiveRenderConfig,
+  initialLayoutStyle,
+  type ItemsAreEqual,
+  useAdaptiveMode,
+  useAdaptiveModeChange,
+  useAdaptiveStore,
+  useInitialLayout,
+  useItemsAreEqual,
+} from "./lists/legend-render.ts";
 import {
   type AnchoredEndSpaceConfig,
   anchorRows,
@@ -178,14 +192,21 @@ export interface LegendListProps<T>
   /** Px of room after the last item on top of the content's own end padding (the web build's). */
   readonly contentInsetEndAdjustment?: number;
   /**
-   * The content's insets: the end one (`bottom`, or `right` when horizontal) is room after the
-   * last item, as `contentInsetEndAdjustment` is; the start ones are accepted, no effect.
+   * The content's insets on the scroll axis: the start one (`top`, or `left` when horizontal) is
+   * room before the content, the end one (`bottom`, or `right`) room after the last item, as
+   * `contentInsetEndAdjustment` is.
    */
   readonly contentInset?: { top?: number; left?: number; bottom?: number; right?: number };
   /** The viewport's size before layout. */
   readonly estimatedListSize?: { height: number; width: number };
   /** Re-render the items when this changes. */
   readonly extraData?: unknown;
+  /**
+   * The adaptive render signal: `useAdaptiveRender()` in an item reads `"light"` while the list
+   * scrolls faster than `enterVelocity` px/ms (6), and `"normal"` again once it has stayed under
+   * `exitVelocity` (3) for `exitDelay` ms (250) — LegendList's web thresholds.
+   */
+  readonly experimental_adaptiveRender?: AdaptiveRenderConfig;
   /** Known item sizes (read as estimates; items are measured). */
   readonly getFixedItemSize?: (
     item: T,
@@ -208,7 +229,10 @@ export interface LegendListProps<T>
   };
   /** Start at this offset. */
   readonly initialScrollOffset?: number;
-  /** Accepted, no effect. */
+  /**
+   * Whether an item equals the one rendered under its key (with a `keyExtractor`): an equal item
+   * keeps its rendered element and is not rendered again (`extraData` still re-renders all).
+   */
   readonly itemsAreEqual?: (a: T, b: T, index: number, data: readonly T[]) => boolean;
   /** An item's key. */
   readonly keyExtractor?: (item: T, index: number) => string;
@@ -303,7 +327,7 @@ export interface LegendListProps<T>
   readonly stickyHeaderConfig?: { offset?: number; backdropComponent?: RNSlot };
   /** Scroll the page instead of the list's own element. */
   readonly useWindowScroll?: boolean;
-  /** v1: accepted, no effect (the first window renders at once). */
+  /** v1: keep the list invisible until its first items are measured. */
   readonly waitForInitialLayout?: boolean;
   /** Receives the ref methods. */
   readonly ref?: Ref<LegendListRef>;
@@ -1043,10 +1067,15 @@ export function createLegendList(prim: ListPrimitives): (props: LegendListProps<
     const { hub, notify, queue } = useListenHub(core, latest, keyOf);
     useLegendHandle(props.ref, { core, latest, keyOf, hub, dom, report });
     useLegendLoad(props);
-    const onScrollFrame = useScrollFrame(props, core, bus, data, packing, keyOf, notify);
-    const render = useLegendRender(props, data, packing, prim);
+    const { layout, adaptive, onScrollFrame, measured } = useRenderControls(
+      props,
+      data,
+      useScrollFrame(props, core, bus, data, packing, keyOf, notify),
+      queue,
+    );
+    const { render, extra } = useLegendRender(props, data, packing, prim, keyOf);
     const wrapCell = useWrapCell(bus, keyOf, data.length);
-    const extras = useLegendExtras(props, prim, core, latest, keyOf, queue);
+    const extras = useLegendExtras(props, prim, core, latest, keyOf, measured);
     latest.current.endSpace = extras.engine.endSpace;
     const engine: EngineOptions = {
       ...legendEngine(
@@ -1061,16 +1090,20 @@ export function createLegendList(prim: ListPrimitives): (props: LegendListProps<
       ...extras.engine,
       ...domEngine(props, dom),
     };
-    const extra = useMemo(() => ({}), [props.extraData, props.dataVersion, props.dataKey]);
     const list: VirtualizedListProps<unknown> = {
       ...(props as unknown as VirtualizedListProps<unknown>),
       ...packedCoreProps({ ...props, data }, initialIndexOf(props), packing, render, keyOf),
       ...extras.list,
+      style: initialLayoutStyle(props.style, props.waitForInitialLayout, layout.ready),
       extraData: extra,
       onViewableItemsChanged: undefined,
       ...legendViewability(props, bus, wanted, core, packing),
     };
-    return h(CoreList, { list, prim, engine, coreRef: core });
+    return h(
+      adaptiveCtx(),
+      { value: adaptive },
+      h(CoreList, { list, prim, engine, coreRef: core }),
+    );
   }
   return LegendList;
 }
@@ -1281,6 +1314,7 @@ function useLegendExtras(
   return {
     engine: {
       endSpace: anchor.size + endInset(props),
+      startSpace: startInset(props),
       snapRows,
       onItemMeasured: (info) => {
         report?.(info);
@@ -1293,6 +1327,12 @@ function useLegendExtras(
       onLayout: props.anchoredEndSpace ? relayout(props.onLayout, anchor.update) : props.onLayout,
     },
   };
+}
+
+/** The room `contentInset`'s start (`top`, or `left` when horizontal) adds before the content. */
+function startInset(props: LegendListProps<unknown>): number {
+  const inset = props.contentInset;
+  return Math.max(0, (props.horizontal ? inset?.left : inset?.top) ?? 0);
 }
 
 /** The room `contentInset`'s end and `contentInsetEndAdjustment` add after the last item. */
@@ -1408,20 +1448,32 @@ function useLegendRender(
   data: readonly unknown[],
   p: Packing,
   prim: ListPrimitives,
-): (info: CoreRenderInfo<unknown>) => VNodeChild {
+  keyOf: (item: unknown, i: number) => string,
+): { render: (info: CoreRenderInfo<unknown>) => VNodeChild; extra: object } {
   const { renderItem, getItemType, extraData, columnWrapperStyle } = props;
-  return useMemo(() => {
-    const one = (item: unknown, index: number): VNodeChild => {
-      if (!renderItem) return props.children === undefined ? null : item as VNodeChild;
-      return renderItem({ item, index, type: getItemType?.(item, index), data, extraData });
-    };
+  // Changes with `extraData`, `dataVersion` or `dataKey`: every item renders again.
+  const extra = useMemo(() => ({}), [extraData, props.dataVersion, props.dataKey]);
+  const childMode = props.children !== undefined;
+  const each = useMemo(() => (item: unknown, index: number): VNodeChild => {
+    if (!renderItem) return childMode ? item as VNodeChild : null;
+    return renderItem({ item, index, type: getItemType?.(item, index), data, extraData });
+  }, [renderItem, getItemType, extraData, data, childMode]);
+  const one = useItemsAreEqual(each, {
+    equal: props.itemsAreEqual as ItemsAreEqual | undefined,
+    keyed: !!props.keyExtractor,
+    keyOf,
+    data,
+    epoch: extra,
+  });
+  const render = useMemo(() => {
     if (p.cols === 1) return (info: CoreRenderInfo<unknown>) => one(info.item, info.index);
     const gap = columnWrapperStyle?.gap;
     return packedRowRender(prim.View, p, one, {
       column: columnWrapperStyle?.columnGap ?? gap,
       row: columnWrapperStyle?.rowGap ?? gap,
     });
-  }, [renderItem, getItemType, extraData, columnWrapperStyle, data, p]);
+  }, [one, columnWrapperStyle, p, prim.View]);
+  return { render, extra };
 }
 
 /** The cell this hook runs in. */
@@ -1589,17 +1641,53 @@ export function useSyncLayout(): () => void {
 }
 
 /**
- * LegendList's adaptive rendering mode: always `"normal"` (denext renders full items).
+ * The list's adaptive rendering mode (`experimental_adaptiveRender`): `"light"` while it scrolls
+ * faster than the config's `enterVelocity`, so an item can render a lighter version, else
+ * `"normal"` (always, without the config or outside a list).
  *
- * @returns `"normal"`.
+ * @returns The mode.
  */
-export function useAdaptiveRender(): "normal" | "light" {
-  return "normal";
+export function useAdaptiveRender(): AdaptiveRender {
+  return useAdaptiveMode();
 }
 
 /**
- * Called when the adaptive rendering mode changes: never (it is always `"normal"`).
+ * Called with each change of the list's adaptive rendering mode, without re-rendering the item.
  *
- * @param _callback Accepted.
+ * @param callback Receives the new mode.
  */
-export function useAdaptiveRenderChange(_callback: (mode: "normal" | "light") => void): void {}
+export function useAdaptiveRenderChange(callback: (mode: AdaptiveRender) => void): void {
+  useAdaptiveModeChange(callback);
+}
+
+/**
+ * Hook: `waitForInitialLayout`'s readiness and `experimental_adaptiveRender`'s store, the scroll
+ * frame listener that feeds it, and the measurement report (`queue` then readiness).
+ */
+function useRenderControls(
+  props: LegendListProps<unknown>,
+  data: readonly unknown[],
+  frame: EngineOptions["onScrollFrame"],
+  queue: () => void,
+) {
+  const layout = useInitialLayout(data.length);
+  const adaptive = useAdaptiveStore(props.experimental_adaptiveRender, layout.ready);
+  const onScrollFrame = useAdaptiveFrame(adaptive, frame, !!props.horizontal);
+  const measured = () => {
+    layout.measured();
+    queue();
+  };
+  return { layout, adaptive, onScrollFrame, measured };
+}
+
+/** Hook: the scroll-frame listener that also feeds the adaptive mode. */
+function useAdaptiveFrame(
+  store: ReturnType<typeof useAdaptiveStore>,
+  frame: EngineOptions["onScrollFrame"],
+  horizontal: boolean,
+): NonNullable<EngineOptions["onScrollFrame"]> {
+  return useMemo(() => (e: VirtualListScrollEvent) => {
+    adaptiveFrame(store, e, horizontal);
+    frame?.(e);
+  }, [store, frame, horizontal]);
+}

@@ -353,6 +353,7 @@ function scrollContent<T>(
   const footer = props.ListFooterComponent;
   return [
     bottomAlign ? metricsSlot(ctl, "spacer", null, null) : null,
+    startRoom(props),
     header
       ? metricsSlot(ctl, "header", "data-vl-header", slot(header), props.ListHeaderComponentStyle)
       : null,
@@ -364,15 +365,30 @@ function scrollContent<T>(
   ];
 }
 
+/** Room before the content (`startInset`: React Native's `contentInset` start). */
+function startRoom<T>(props: VirtualListProps<T>): VNode | null {
+  return room(props.startInset, props.horizontal, "start-inset", "data-vl-start-inset");
+}
+
 /** Room after the rows for an overlaying on-screen keyboard (`keyboardInset`). */
 function keyboardRoom<T>(props: VirtualListProps<T>): VNode | null {
-  const inset = Math.max(0, props.keyboardInset ?? 0);
+  return room(props.keyboardInset, props.horizontal, "keyboard", "data-vl-keyboard");
+}
+
+/** An empty block of `size` px on the scroll axis (none for a size of 0 or less). */
+function room(
+  size: number | undefined,
+  horizontal: boolean | undefined,
+  key: string,
+  attr: string,
+): VNode | null {
+  const inset = Math.max(0, size ?? 0);
   if (inset <= 0) return null;
   return h("div", {
-    key: "keyboard",
-    "data-vl-keyboard": "",
+    key,
+    [attr]: "",
     "aria-hidden": "true",
-    style: { flex: "none", [props.horizontal ? "width" : "height"]: px(inset) },
+    style: { flex: "none", [horizontal ? "width" : "height"]: px(inset) },
   });
 }
 

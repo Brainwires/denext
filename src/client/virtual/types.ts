@@ -400,6 +400,11 @@ export interface VirtualListProps<T> extends VirtualListOptions<T> {
    */
   readonly keyboardInset?: number;
   /**
+   * Px of room before the content (ahead of the header and the first row): React Native's
+   * `contentInset.top` (`left` when horizontal), as LegendList's adapter passes it.
+   */
+  readonly startInset?: number;
+  /**
    * Pull-to-refresh, React Native's way: a component (called with `refreshing`, `onRefresh`,
    * `progressViewOffset`) or an element; it is rendered AROUND the list's scroller, with the
    * list's `class` and `style`. `RefreshControl` from `denext/mobile` is one.

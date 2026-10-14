@@ -22,10 +22,13 @@ import { createUnbundledState } from "../src/build/dev-unbundled/state.ts";
 import {
   LegendList,
   type LegendListDomRef,
+  useAdaptiveRender,
+  useAdaptiveRenderChange,
   useIsLastItem,
   useRecyclingState,
 } from "../src/lists/legend-list.ts";
 import { isScrollerAttribute } from "../src/react-native/legend-list.ts";
+import { scrollVelocity } from "../src/react-native/lists/legend-render.ts";
 import { denextListSurfaces, listGaps } from "../scripts/parity/native/lists.ts";
 import { fireEventOn } from "../src/testing/dom.ts";
 import { all, measureAll, scrollerOf, scrollTo, withRO } from "./helpers/virtual-list.ts";
@@ -419,4 +422,161 @@ Deno.test("LegendList (DOM): contentInsetEndAdjustment and contentInset's end ad
     await room({ contentInset: { bottom: 30 }, contentInsetEndAdjustment: 10 }),
     "40px",
   );
+});
+
+// ── LegendList's render controls: contentInset's start, waitForInitialLayout, itemsAreEqual,
+// experimental_adaptiveRender ────────────────────────────────────────────────────────────────
+
+Deno.test("LegendList (DOM): contentInset's start adds room before the content", async () => {
+  const room = async (props: Record<string, unknown>) => {
+    const screen = await render(legend({
+      data: msgs(5),
+      getFixedItemSize: () => 40,
+      ...props,
+      renderItem: ({ item }: { item: Msg }) => h("span", { "data-text": item.text }),
+    }));
+    const spacer = all(screen).find((e) => e.getAttribute("data-vl-start-inset") !== null);
+    const style = spacer?.getAttribute("style") ?? null;
+    await screen.unmount();
+    return style;
+  };
+  assertEquals(await room({}), null);
+  assertEquals(await room({ contentInset: { bottom: 30 } }), null, "the end inset alone");
+  assertStringIncludes((await room({ contentInset: { top: 24 } }))!, "height:24px");
+  assertStringIncludes(
+    (await room({ horizontal: true, contentInset: { left: 12, top: 99 } }))!,
+    "width:12px",
+  );
+});
+
+Deno.test("LegendList (DOM): waitForInitialLayout keeps the list invisible until its first items are measured", async () => {
+  await withRO(async () => {
+    const opacity0 = (screen: Parameters<typeof scrollerOf>[0]) =>
+      (scrollerOf(screen).getAttribute("style") ?? "").replace(/\s/g, "").includes("opacity:0");
+    const screen = await render(legend({
+      data: msgs(5),
+      waitForInitialLayout: true,
+      estimatedItemSize: 40,
+      keyExtractor: (m: Msg) => m.id,
+      renderItem: ({ item }: { item: Msg }) => h("span", { "data-text": item.text }),
+    }));
+    assert(opacity0(screen), "hidden before the first measurement");
+    await measureAll(() => 40);
+    assert(!opacity0(screen), "shown once measured");
+    await screen.unmount();
+
+    const plain = await render(legend({
+      data: msgs(5),
+      renderItem: ({ item }: { item: Msg }) => h("span", { "data-text": item.text }),
+    }));
+    assert(!opacity0(plain), "without the prop the list shows at once");
+    await plain.unmount();
+
+    const empty = await render(legend({ data: [], waitForInitialLayout: true }));
+    assert(!opacity0(empty), "an empty list has nothing to wait for");
+    await empty.unmount();
+  });
+});
+
+Deno.test("LegendList (DOM): itemsAreEqual skips re-rendering an item equal to the one it rendered", async () => {
+  const run = async (extra: Record<string, unknown>) => {
+    const renders = new Map<string, number>();
+    const Row = ({ item }: { item: Msg }) => {
+      renders.set(item.id, (renders.get(item.id) ?? 0) + 1);
+      return h("span", { "data-text": item.text });
+    };
+    const props = (data: Msg[], more: Record<string, unknown> = {}) => ({
+      data,
+      getFixedItemSize: () => 40,
+      keyExtractor: (m: Msg) => m.id,
+      renderItem: ({ item }: { item: Msg }) => h(Row, { item }),
+      ...extra,
+      ...more,
+    });
+    const first = msgs(3);
+    const screen = await render(legend(props(first)));
+    // Fresh but equal objects, except the second item's text.
+    const next = first.map((m) => ({ ...m, text: m.id === "m1" ? "edited" : m.text }));
+    await screen.rerender(legend(props(next)));
+    const afterData = new Map(renders);
+    const shown = texts(screen);
+    await screen.rerender(legend(props(next, { extraData: 1 })));
+    const afterExtra = new Map(renders);
+    await screen.unmount();
+    return { afterData, afterExtra, shown };
+  };
+  const equal = (a: Msg, b: Msg) => a.text === b.text;
+  const skipped = await run({ itemsAreEqual: equal });
+  assertEquals(skipped.afterData.get("m0"), 1, "equal: not rendered again");
+  assertEquals(skipped.afterData.get("m2"), 1, "equal: not rendered again");
+  assertEquals(skipped.afterData.get("m1"), 2, "a changed item renders");
+  assertEquals(skipped.shown, ["message 0", "edited", "message 2"]);
+  assertEquals(skipped.afterExtra.get("m0"), 2, "extraData renders every item again");
+  const plain = await run({});
+  assertEquals(plain.afterData.get("m0"), 2, "without itemsAreEqual every item renders");
+  const unkeyed = await run({ itemsAreEqual: equal, keyExtractor: undefined });
+  assertEquals(unkeyed.afterData.get("m0"), 2, "LegendList compares only with a keyExtractor");
+});
+
+Deno.test("LegendList adaptive render: the velocity is LegendList's weighted recent motion", () => {
+  assertEquals(scrollVelocity([], 0), 0);
+  assertEquals(scrollVelocity([{ scroll: 0, time: 0 }, { scroll: 100, time: 10 }], 10), 10);
+  assertEquals(
+    scrollVelocity([{ scroll: 0, time: 0 }, { scroll: 100, time: 10 }], 5000),
+    0,
+    "idle for over a second",
+  );
+  const back = scrollVelocity(
+    [{ scroll: 500, time: 0 }, { scroll: 0, time: 10 }, { scroll: 30, time: 20 }],
+    20,
+  );
+  assertEquals(back, 3, "a direction change cuts the window");
+});
+
+Deno.test("LegendList (DOM): experimental_adaptiveRender turns light on a fast scroll and back to normal", async () => {
+  const run = async (exitDelay: number) => {
+    const modes: string[] = [];
+    const changes: string[] = [];
+    const Row = ({ item }: { item: Msg }) => {
+      const mode = useAdaptiveRender();
+      if (item.id === "m0") modes.push(mode);
+      useAdaptiveRenderChange((m) => item.id === "m0" && changes.push(m));
+      return h("span", { "data-text": item.text });
+    };
+    const onChange: [string, string][] = [];
+    return await withRO(async () => {
+      const screen = await render(legend({
+        data: msgs(200),
+        estimatedItemSize: 40,
+        keyExtractor: (m: Msg) => m.id,
+        alwaysRender: { indices: [0] }, // the first item's hooks stay mounted while scrolled away
+        experimental_adaptiveRender: {
+          exitDelay,
+          onChange: (m: string, reason: string) => onChange.push([m, reason]),
+        },
+        renderItem: ({ item }: { item: Msg }) => h(Row, { item }),
+      }));
+      await measureAll(() => 40);
+      const before = onChange.length;
+      await scrollTo(screen, 5000); // more than a viewport at once: light
+      await screen.unmount(); // clears a pending return to normal
+      return { modes, changes, onChange, before };
+    });
+  };
+  // A long exit delay: the items render in light mode.
+  const held = await run(60_000);
+  assertEquals(held.before, 0, "normal before and at ready: no change");
+  assertEquals(held.onChange, [["light", "scroll"]]);
+  assertEquals(held.changes, ["light"], "useAdaptiveRenderChange hears it");
+  assertEquals(held.modes.at(-1), "light", "useAdaptiveRender re-renders the item");
+  // exitDelay 0: the next slow frame returns to normal at once.
+  const quick = await run(0);
+  assertEquals(quick.onChange[0], ["light", "scroll"]);
+  assertEquals(quick.changes, ["light", "normal"]);
+  assertEquals(quick.onChange.at(-1), ["normal", "scroll"]);
+
+  const Mode = () => h("i", { "data-mode": useAdaptiveRender() });
+  const plain = await render(legend({ data: msgs(3), renderItem: () => h(Mode, null) }));
+  assert(all(plain).some((e) => e.getAttribute("data-mode") === "normal"), "no config: normal");
+  await plain.unmount();
 });

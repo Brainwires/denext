@@ -190,6 +190,7 @@ Slots and styles (React Native's names):
 | `class` / `className`, `style`                                    | The outer element. Give it a height when the list scrolls itself.                                   |
 | `refreshControl`, `refreshing`, `onRefresh`, `progressViewOffset` | [Pull-to-refresh](#pull-to-refresh).                                                                |
 | `keyboardInset`                                                   | Px of the list covered by the on-screen keyboard ([bottom-anchored lists](#bottom-anchored-lists)). |
+| `startInset`                                                      | Px of room before the content (ahead of the header), as React Native's `contentInset.top`.          |
 
 Callbacks:
 
@@ -945,7 +946,17 @@ build adds over the React Native one:
   `onKeyDown`) land on the scroll element.
 - `getScrollableNode()`, `getNativeScrollRef()`, `getAnimatableRef()`, `getScrollResponder()`
   and `refScrollView` give the scroll element itself.
-- `contentInsetEndAdjustment` and the end of `contentInset` add room after the last item.
+- `contentInsetEndAdjustment` and the end of `contentInset` add room after the last item; the
+  start of `contentInset` (`top`, or `left` when horizontal) adds room before the content.
+- `waitForInitialLayout` keeps the list invisible until its first items are measured, so it
+  never paints at estimated positions.
+- `itemsAreEqual` (with a `keyExtractor`) keeps an item's rendered element when the item equals
+  the one rendered under its key at the same index: neither `renderItem` nor the item's
+  components run again. A change of `extraData`, `dataVersion` or `dataKey` renders them all.
+- `experimental_adaptiveRender` drives `useAdaptiveRender()` / `useAdaptiveRenderChange()`:
+  `"light"` while the list scrolls faster than `enterVelocity` px/ms (or jumps more than a
+  viewport), `"normal"` once it has stayed under `exitVelocity` for `exitDelay` ms, with
+  LegendList's web defaults (6, 3, 250) and its `onChange(mode, reason)`.
 
 Bottom-anchored lists keep LegendList's behaviour: `initialScrollAtEnd` starts at the end,
 `maintainScrollAtEnd` (with `maintainScrollAtEndThreshold` and its `{ animated }` form) follows
@@ -962,8 +973,8 @@ visible range and each item's position and size. Its `listen` calls back with `t
 `listenToPosition` with an item's position; the other listener types never call back.
 
 The differences from the real DOM build: the engine's own (estimates are confirmed by
-measuring, `waitForInitialLayout` and `itemsAreEqual` have no effect, `adaptiveRender` is always
-`"normal"`), the start insets of `contentInset` have no effect, and the scroll element carries
+measuring, `waitForInitialLayout` hides the whole list rather than only its items, and
+`itemsAreEqual` re-renders an equal item that moved to another index), and the scroll element carries
 the engine's inline `height: 100%` (a `style` height, or a class with a max height, still sizes
 it). The switch applies to apps on npm React (the esbuild build path); a denext-native app uses
 `VirtualList` directly.
