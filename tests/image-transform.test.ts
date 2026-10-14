@@ -1,9 +1,15 @@
 // `transformImageBytes`: the `/_denext/image` pipeline for bytes the caller already holds — the
 // size allowlist, quality coercion, avif opt-in, fit-inside (never enlarging), the output cache,
-// SVG / decompression-bomb refusal and the concurrency gate.
+// SVG / decompression-bomb refusal, AVIF sources (sized from `ispe` before decoding) and the
+// concurrency gate.
 
-import { assertEquals, assertStringIncludes } from "@std/assert";
-import { GateOverloadError, transformImageBytes } from "../src/server/image-optimizer.ts";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import {
+  GateOverloadError,
+  probeImageDimensions,
+  transformImageBytes,
+} from "../src/server/image-optimizer.ts";
+import { isAvif, probeAvif } from "../src/server/image-avif.ts";
 import { samplePng } from "./fixtures/sample-image.ts";
 
 async function dims(
@@ -178,3 +184,81 @@ Deno.test("transformImageBytes: maxDimension takes any size and quality up to th
     400,
   );
 });
+
+/** An AVIF of `w` × `h` (solid), encoded by `@denext/avif`. */
+async function avif(w: number, h: number): Promise<Uint8Array> {
+  const { encode } = await import("@denext/avif");
+  const rgba = new Uint8Array(w * h * 4);
+  for (let i = 0; i < rgba.length; i += 4) rgba.set([40, 160, 220, 255], i);
+  return new Uint8Array(await encode({ data: rgba, width: w, height: h }, { quality: 80 }));
+}
+
+/** The offset of the first `ispe` box's payload (after its type) in an AVIF file. */
+function ispeAt(file: Uint8Array): number {
+  for (let i = 4; i + 4 <= file.length; i++) {
+    if (String.fromCharCode(...file.subarray(i, i + 4)) === "ispe") return i + 4;
+  }
+  throw new Error("no ispe box");
+}
+
+Deno.test("AVIF sources: recognised and sized from ispe without decoding", async () => {
+  const file = await avif(400, 200);
+  assertEquals(isAvif(file), true);
+  assertEquals(isAvif(await png(4, 4)), false);
+  assertEquals(isAvif(new Uint8Array(40)), false);
+  assertEquals(probeAvif(file), { width: 400, height: 200 });
+  assertEquals(probeImageDimensions(file), { width: 400, height: 200 });
+  assertEquals(probeAvif(await png(4, 4)), null);
+  // A truncated file keeps whatever boxes are whole; a box running past the end is not read.
+  assertEquals(probeAvif(file.slice(0, 40)), null);
+});
+
+Deno.test("transformImageBytes: an AVIF source is resized and re-encoded; origin keeps AVIF", async () => {
+  const file = await avif(400, 200);
+  assertEquals(await dims(await transformImageBytes(file, { width: 128 })), {
+    type: "image/webp",
+    width: 128,
+    height: 64,
+  });
+  assertEquals(
+    await dims(await transformImageBytes(file, { width: 128, height: 128, resize: "cover" })),
+    { type: "image/webp", width: 128, height: 128 },
+  );
+  const origin = await transformImageBytes(file, { width: 96, format: "origin" }, {
+    maxDimension: 2500,
+  });
+  assertEquals([origin.status, origin.headers.get("content-type")], [200, "image/avif"]);
+  const { decode } = await import("@denext/avif");
+  const back = await decode(await origin.bytes());
+  assertEquals([back.width, back.height], [96, 48]);
+  const pixel = [...back.data.subarray(0, 4)];
+  assert(Math.abs(pixel[0] - 40) < 12 && Math.abs(pixel[2] - 220) < 12, `colour ${pixel}`);
+});
+
+Deno.test("transformImageBytes: an AVIF declaring a bomb, no size or garbage is refused before decoding", async () => {
+  const file = await avif(64, 32);
+  const bomb = file.slice();
+  new DataView(bomb.buffer).setUint32(ispeAt(bomb) + 4, 50_000); // ispe image_width
+  const big = await transformImageBytes(bomb, { width: 32 });
+  assertEquals([big.status, await big.text()], [413, "image too large"]);
+  const unsized = file.slice();
+  unsized.set([0x78, 0x78, 0x78, 0x78], ispeAt(unsized) - 4); // "ispe" → "xxxx"
+  const noSize = await transformImageBytes(unsized, { width: 32 });
+  assertEquals([noSize.status, await noSize.text()], [400, "unsupported image type"]);
+  // A real header over a corrupt payload: libavif refuses it, and the error is a 400.
+  const corrupt = file.slice();
+  corrupt.fill(0, corrupt.length - 20);
+  const { value: failed } = await quietly(() => transformImageBytes(corrupt, { width: 32 }));
+  assertEquals([failed.status, await failed.text()], [400, "image transform failed"]);
+});
+
+/** Run `fn` with `console.error` silenced (the expected failure logs). */
+async function quietly<T>(fn: () => Promise<T>): Promise<{ value: T }> {
+  const { error } = console;
+  console.error = () => {};
+  try {
+    return { value: await fn() };
+  } finally {
+    console.error = error;
+  }
+}

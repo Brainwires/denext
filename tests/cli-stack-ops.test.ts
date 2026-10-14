@@ -399,6 +399,104 @@ Deno.test("stack roll: new publishable + secret keys; the JWT keys only with --i
   }
 });
 
+Deno.test("stack roll --keep-old: the new keys first, the previous ones still listed; --drop-old ends the window", async () => {
+  const root = await project();
+  try {
+    const keep = fakeIo();
+    assertEquals(
+      await runStack(ctx(root, ["roll"], { "include-secret": true, "keep-old": true }), keep.io),
+      0,
+    );
+    assertEquals(keep.errors, [], "no token stops working: no warning, no --yes needed");
+    const kept = await Deno.readTextFile(join(root, ".env"));
+    const pub = /^DENEXT_PUBLISHABLE_KEY=(\S+)$/m.exec(kept)![1].split(",");
+    const sec = /^DENEXT_SECRET_KEY=(\S+)$/m.exec(kept)![1].split(",");
+    assertEquals([pub.length, pub[1]], [2, "sb_publishable_old"]);
+    assertMatch(pub[0], /^sb_publishable_(?!old)/);
+    assertEquals([sec.length, sec[1]], [2, "sb_secret_old"]);
+    const signing = JSON.parse(/^DENEXT_JWT_SIGNING_KEYS='(.*)'$/m.exec(kept)![1]);
+    assertEquals(signing.length, 2);
+    assertEquals(signing[0].kty, "EC", "the new key signs");
+    assertEquals(signing[1], { kid: "old" }, "the previous key still verifies");
+    assertOnlyChanged(ENV, kept, [
+      "DENEXT_PUBLISHABLE_KEY",
+      "DENEXT_SECRET_KEY",
+      "DENEXT_JWT_SIGNING_KEYS",
+    ]);
+    assert(keep.lines.some((l) => l.includes("denext stack roll --drop-old")));
+    assert(keep.lines.some((l) => l === `  New publishable key: ${pub[0]}`));
+    assert(!keep.lines.join("\n").includes(sec[0]), "the secret key needs --show-secrets");
+
+    // A second --keep-old rotation keeps only the key that was current, not every old one.
+    assertEquals(await runStack(ctx(root, ["roll"], { "keep-old": true }), fakeIo().io), 0);
+    const again = await Deno.readTextFile(join(root, ".env"));
+    const pub2 = /^DENEXT_PUBLISHABLE_KEY=(\S+)$/m.exec(again)![1].split(",");
+    assertEquals([pub2.length, pub2[1]], [2, pub[0]]);
+
+    const drop = fakeIo();
+    assertEquals(await runStack(ctx(root, ["roll"], { "drop-old": true }), drop.io), 0);
+    const dropped = await Deno.readTextFile(join(root, ".env"));
+    assertMatch(dropped, new RegExp(`^DENEXT_PUBLISHABLE_KEY=${pub2[0]}$`, "m"));
+    assertMatch(dropped, /^DENEXT_SECRET_KEY=sb_secret_[^,\s]+$/m);
+    const left = JSON.parse(/^DENEXT_JWT_SIGNING_KEYS='(.*)'$/m.exec(dropped)![1]);
+    assertEquals(left, [signing[0]], "only the newest signing key is left");
+    assertOnlyChanged(again, dropped, [
+      "DENEXT_PUBLISHABLE_KEY",
+      "DENEXT_SECRET_KEY",
+      "DENEXT_JWT_SIGNING_KEYS",
+    ]);
+    assert(drop.lines.some((l) => l.startsWith("Restart to apply it: docker")));
+
+    const nothing = fakeIo();
+    assertEquals(await runStack(ctx(root, ["roll"], { "drop-old": true }), nothing.io), 0);
+    assertEquals(nothing.lines, ["Nothing to drop: .env lists one key of each kind."]);
+    assertEquals(await Deno.readTextFile(join(root, ".env")), dropped);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("stack roll --keep-old leaves the single-valued legacy JWT secret; contradicting flags are refused", async () => {
+  const root = await project(
+    ENV.replace("DENEXT_JWT_SECRET=", "DENEXT_JWT_SECRET=old-secret-old-secret-old-secret-x"),
+  );
+  try {
+    const keep = fakeIo();
+    assertEquals(
+      await runStack(ctx(root, ["roll"], { "include-secret": true, "keep-old": true }), keep.io),
+      0,
+    );
+    const kept = await Deno.readTextFile(join(root, ".env"));
+    assertMatch(kept, /^DENEXT_JWT_SECRET=old-secret-old-secret-old-secret-x$/m);
+    assert(!keep.lines.some((l) => l.includes("legacy anon key")));
+    assert(keep.lines.some((l) => l.includes("DENEXT_JWT_SECRET holds one value")));
+
+    for (
+      const [flags, message] of [
+        [{ "keep-old": true, "drop-old": true }, /contradict/],
+        [{ "drop-old": true, "include-secret": true }, /mints nothing/],
+      ] as const
+    ) {
+      const refused = fakeIo();
+      assertEquals(await runStack(ctx(root, ["roll"], flags), refused.io), 1);
+      assertMatch(refused.errors[0], message);
+      assertEquals(await Deno.readTextFile(join(root, ".env")), kept);
+    }
+    await Deno.writeTextFile(
+      join(root, ".env"),
+      kept.replace(/^DENEXT_JWT_SIGNING_KEYS=.*$/m, "DENEXT_JWT_SIGNING_KEYS='[not json'"),
+    );
+    const bad = fakeIo();
+    assertEquals(
+      await runStack(ctx(root, ["roll"], { "include-secret": true, "keep-old": true }), bad.io),
+      1,
+    );
+    assertMatch(bad.errors[0], /not valid JSON/);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("stack roll: a stack without backend keys is refused", async () => {
   const root = await project("POSTGRES_PASSWORD=x\n");
   try {

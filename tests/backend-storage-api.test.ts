@@ -334,6 +334,51 @@ Deno.test({
 });
 
 Deno.test({
+  name: "image transforms take AVIF sources: render/image and signed transform URLs",
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  const h = await harness();
+  const service = { authorization: `Bearer ${SECRET_KEY}` };
+  const call = (path: string, init: RequestInit = {}) =>
+    h.fetch(`${ORIGIN}/storage/v1${path}`, init);
+  try {
+    const { encode } = await import("@denext/avif");
+    const rgba = new Uint8Array(120 * 60 * 4).fill(180);
+    const file = new Uint8Array(await encode({ data: rgba, width: 120, height: 60 }));
+    const key = `${USER_A}/photo.avif`;
+    const put = await call(`/object/own/${key}`, {
+      method: "POST",
+      headers: { ...service, "content-type": "image/avif" },
+      body: file,
+    });
+    assertEquals(put.status, 200);
+    await put.body?.cancel();
+    const rendered = await call(`/render/image/authenticated/own/${key}?width=40`, {
+      headers: service,
+    });
+    assertEquals([rendered.status, rendered.headers.get("content-type")], [200, "image/webp"]);
+    assertEquals(new TextDecoder().decode((await rendered.bytes()).subarray(8, 12)), "WEBP");
+    const origin = await call(
+      `/render/image/authenticated/own/${key}?width=40&height=40&resize=fill&format=origin`,
+      { headers: service },
+    );
+    assertEquals([origin.status, origin.headers.get("content-type")], [200, "image/avif"]);
+    const { decode } = await import("@denext/avif");
+    const back = await decode(await origin.bytes());
+    assertEquals([back.width, back.height], [40, 40]);
+    const signed = await storage.bucket("own", { service: true }).createSignedUrl(key, {
+      transform: { width: 32 }, // the `images` sizes: the native route is allowlisted
+    });
+    const viaSigned = await h.fetch(new URL(signed, ORIGIN).href);
+    assertEquals([viaSigned.status, viaSigned.headers.get("content-type")], [200, "image/webp"]);
+    await viaSigned.body?.cancel();
+  } finally {
+    await h.close();
+  }
+});
+
+Deno.test({
   name: "TUS: version, routes, metadata, offsets, owner binding, expiry, empty uploads",
   sanitizeResources: false,
   sanitizeOps: false,

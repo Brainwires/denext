@@ -13823,7 +13823,7 @@
           "params": [
             {
               "name": "bytes",
-              "doc": "The source image (PNG, JPEG, GIF or WebP)."
+              "doc": "The source image (PNG, JPEG, GIF, WebP, or an AVIF still image)."
             },
             {
               "name": "transform",

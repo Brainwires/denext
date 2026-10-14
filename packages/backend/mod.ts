@@ -133,6 +133,7 @@ export type {
 export type { FilterOp, TableEvent } from "./src/realtime-shared.ts";
 export type { RlsOptions } from "./src/rls.ts";
 export type { RestOptions } from "./src/rest.ts";
+export type { RestRateLimitOptions } from "./src/rest-limit.ts";
 export type { FunctionConfig, FunctionsOptions } from "./src/functions.ts";
 export type { SupabaseOptions } from "./src/supabase.ts";
 export type { VaultOptions } from "./src/vault.ts";

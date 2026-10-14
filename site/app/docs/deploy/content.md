@@ -172,7 +172,7 @@ denext stack up | down | status        # start (writing the stack and .env when 
 denext stack health [--json] [--watch [seconds]]
 denext stack logs [service] [--service s] [--level warn] [--since 30m] [--until t] [--grep text]
 denext stack passwd --postgres [--dashboard] [--generate]
-denext stack roll [--include-secret]
+denext stack roll [--include-secret] [--keep-old | --drop-old]
 denext stack backup [file] [--full]
 denext stack restore <file> [--yes]
 ```
@@ -206,6 +206,26 @@ same minting as `denext backend keys`). Clients holding the old keys need the ne
 `--include-secret` also replaces `DENEXT_JWT_SIGNING_KEYS`, and `DENEXT_JWT_SECRET` when it is
 set. That ends every access token, refresh session and legacy JWT key already issued, so it warns
 and asks first (`--yes` skips the question; off a terminal, `--yes` is required).
+
+**Rotating without a cut-over.** `roll --keep-old` starts a rotation instead: the new key goes
+first and the one in effect until now stays listed after it (the backend accepts every
+comma-separated publishable or secret key, and every key in `DENEXT_JWT_SIGNING_KEYS`, signing with
+the first), so clients and tokens holding the old keys keep working. With `--include-secret` the
+old signing key stays as a verifier, so no token ends and nothing is asked. The legacy
+`DENEXT_JWT_SECRET` holds one value, so `--keep-old` leaves it as it is (`roll --include-secret`
+without `--keep-old` replaces it, ending the legacy JWTs). Finish the rotation once every client
+has the new keys and, after an `--include-secret` roll, once the access tokens the old key signed
+have expired (an hour by default):
+
+```sh
+denext stack roll --include-secret --keep-old   # new keys first, the previous ones still valid
+# …ship the new publishable key to every client, wait out the old access tokens…
+denext stack roll --drop-old                     # keep only the newest key of each kind
+```
+
+`--drop-old` mints nothing: it keeps the first publishable key, secret key and signing key and
+drops the rest. A second `roll --keep-old` also retires the previous keys, keeping the key that
+was current next to an even newer one.
 
 **After a change.** `passwd` and `roll` edit `.env` in place. Comments, blank lines, order and
 every other variable keep their bytes, and the file is replaced atomically with its mode (0600

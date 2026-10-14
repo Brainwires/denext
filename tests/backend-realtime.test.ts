@@ -1280,6 +1280,30 @@ Deno.test("realtime: truncate reaches the subscribers who could see rows; old ro
   }
 });
 
+Deno.test("realtime: a change of a kind the table does not send is dropped, whatever the source", async () => {
+  const env = await setUp();
+  try {
+    const engine = realtimeEngine();
+    const ca = env.hub.conn(env.a);
+    assert((await env.hub.subscribe(ca, "items")).ok);
+    env.sql.insert("items", { sku: "a", label: "x" });
+    await until(() => ca.frames.length === 1);
+    // What the logical source decodes from the WAL, for `items` (events: insert, delete): its
+    // update and its TRUNCATE are not sent, as its triggers would not have fired for them.
+    env.sql.tables.get("items")!.set("a", { sku: "a", label: "y" });
+    engine.ingest({ table: "items", op: "update", key: "a" });
+    engine.ingest({ table: "items", op: "truncate", ts: 1 });
+    await settle(80);
+    assertEquals(ca.frames.length, 1);
+    env.sql.tables.get("items")!.delete("a");
+    engine.ingest({ table: "items", op: "delete", key: "a" });
+    await until(() => ca.frames.length === 2);
+    assertEquals(changesOf(ca).at(-1), { op: "delete", key: "a" });
+  } finally {
+    await env.done();
+  }
+});
+
 Deno.test("realtime: operator filters narrow the re-read; a raw row over 1 MiB is truncated", async () => {
   const env = await setUp();
   try {

@@ -253,9 +253,11 @@ await storage.bucket("avatars").createSignedUrl("u1/me.png", {
 // public bucket: /_denext/storage/o/avatars/u1/me.png?w=256&h=256&q=75&fmt=webp
 ```
 
-A PNG, JPEG, GIF or WebP object is resized to fit inside the box (aspect ratio kept, never
+A PNG, JPEG, GIF, WebP or AVIF object is resized to fit inside the box (aspect ratio kept, never
 enlarged) and re-encoded through denext's [image pipeline](/docs/images), with its output cache,
-concurrency limit and decompression-bomb checks. `width` and `height` must each be one of
+concurrency limit and decompression-bomb checks. An AVIF source is decoded by the first-party
+`@denext/avif` codec (libavif, wasm) once the size its `ispe` box declares passed those checks; one
+that declares no size (an image sequence with no still image) is refused with `400`. `width` and `height` must each be one of
 `images.deviceSizes ∪ images.imageSizes`, `quality` is rounded to the nearest of
 `images.qualities`, and `format: "avif"` needs `images.formats` to list `image/avif` — so the number
 of distinct encodes per object stays bounded. Sources over 25 MiB are not transformed. On a private
@@ -354,7 +356,7 @@ noncurrent versions and delete markers your policies let the caller delete.
 `render/image` transforms take Supabase's options: `width` and `height` (any size up to
 `maxTransformDimension`), `resize` (`cover`, the default, fills the box and crops the overflow;
 `contain` fits inside it; `fill` stretches to it), `quality` (1–100) and `format: "origin"` (keep
-the source's format; the default is WebP). They run through the same image pipeline, cache and
+the source's format — an AVIF source stays AVIF, a GIF becomes PNG; the default is WebP). They run through the same image pipeline, cache and
 decompression-bomb checks as the transforms above.
 
 Without supabase-js, `@denext/backend/client` calls the same API from the browser with the page's
@@ -902,7 +904,11 @@ security:
   before the change. Under row-level security a row that only just entered their view, or a later
   change in the same burst, carries the key alone. A row too large to deliver (1 MiB) arrives as
   its key with the same error;
-- `TRUNCATE` reaches subscribers who could see rows of the table;
+- `TRUNCATE` reaches subscribers who could see rows of the table, as `eventType: "TRUNCATE"` with
+  empty `new` and `old`: clear what you show and read the table again. Supabase Realtime sends no
+  TRUNCATE at all (its change stream asks only for inserts, updates and deletes), so a `*` handler
+  written for Supabase sees an `eventType` it did not expect; a binding with `event: "TRUNCATE"`
+  (which Supabase would treat as `*`) gets only these;
 - every change to a row within one burst (changes 16 ms apart are one) is sent, in commit order,
   with the row as it is after the burst — so `new` of an INSERT followed by an UPDATE in the same
   burst is the updated row. A row inserted and deleted within one burst is sent to nobody (except
@@ -1029,7 +1035,9 @@ each server instance creates a temporary `pgoutput` slot on a reserved connectio
 `logical.maxChanges` is followed at once), for the tables of `supabase_realtime` and of
 `denext_realtime` (which holds the configured tables). No trigger runs on the write path (existing
 ones are disabled; switching back enables them), and `commit_timestamp` is the real commit time.
-The rows are still re-read as each subscriber. It needs `wal_level = logical` (a server restart),
+The rows are still re-read as each subscriber, a `TRUNCATE` arrives as the WAL's Truncate message,
+and a change of a kind the table's `events` leaves out is dropped, as the triggers would not have
+fired for it. It needs `wal_level = logical` (a server restart),
 the connecting role's `REPLICATION` attribute (`alter role app replication`) and a client with
 `reserve()`; a temporary slot ends with its connection, so a dead instance holds no WAL back, and a
 lost connection is reopened with a re-read signal. All instances must use the same source.
@@ -1201,28 +1209,41 @@ for one; an anonymous one is refused with `400` (`PGRST100`) and a hint (`exactC
 allows everyone, `"never"` no one). `count=planned` (the planner's estimate) is open to everyone,
 and `count=estimated` counts exactly only while the estimate is at most `maxRows`.
 
-The plugin does not rate-limit the routes itself. [`middleware.ts`](/docs/middleware) runs before
-them, so `rateLimit` from `denext/server` can guard them there:
+**Rate limits.** Each client has a request budget across the routes: 1200 requests a minute by
+default (20 a second on average — far above a page of supabase-js calls). A signed-in user is
+counted by their user id, so users behind one address don't share a budget; anyone else by their
+client address (`clientIpForLimits()`'s rule: the socket peer, a trusted proxy's hop or the
+`rateLimitHeader` address, an IPv6 address by its `/64`). The secret key is never limited. A
+request whose credential is refused (a `401`) counts against its address too, so forged tokens
+can't get round it. Past the budget a request is answered `429` before any statement runs, with
+`Retry-After` (seconds) and PostgREST's error shape:
 
-```ts
-// middleware.ts
-import { apiErrorResponse, isApiError, next, rateLimit } from "denext/server";
-
-// Per client address (an IPv6 /64), method and path; off for an untrusted loopback/private peer.
-const limitRest = rateLimit({ max: 300, windowMs: 60_000 });
-
-export async function middleware(request: Request) {
-  if (new URL(request.url).pathname.startsWith("/rest/v1/")) {
-    try {
-      await limitRest({ request, params: {}, ctx: {}, method: request.method as "GET" });
-    } catch (error) {
-      if (isApiError(error)) return apiErrorResponse(error); // 429 with Retry-After
-      throw error;
-    }
-  }
-  return next();
+```json
+{
+  "code": "over_request_rate_limit",
+  "details": null,
+  "hint": "Retry after the number of seconds in the Retry-After header.",
+  "message": "Too many requests: try again in 42 seconds"
 }
 ```
+
+As with every per-address limit in denext, a request from a loopback or private peer with no
+trusted proxy hop has no address of its own (it is most likely the proxy every visitor shares)
+and is not counted by address: set `trustForwardedHeaders` (or `rateLimitHeader`) behind a proxy,
+or `rateLimitLocalAddresses: true` where such peers are real clients. Counts live in memory, per
+process; behind several replicas pass a shared store:
+
+```ts
+import { postgresRateLimitStore } from "denext/server";
+
+backend({
+  postgres: {},
+  rest: { rateLimit: { max: 600, windowMs: 60_000, store: postgresRateLimitStore({ url }) } },
+});
+```
+
+`rest: { rateLimit: false }` turns the budget off (guard the routes yourself, for example with
+`rateLimit` from `denext/server` in [`middleware.ts`](/docs/middleware)).
 
 **CSRF.** A write carrying cookies follows the same rule as Server Actions and `csrf()`: a
 cross-site one is refused (`403`, `csrf_failed`). A request whose identity is a Supabase access
@@ -1292,18 +1313,19 @@ the plugin says so, keeps an earlier generated file, or writes a stub under whic
 
 ### Options
 
-| Option             | Default                       | What it does                                                                                                                                                                                     |
-| ------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `schemas`          | `["public"]`                  | The schemas served, the default first; `Accept-Profile` / `Content-Profile` pick another. `schema: "api"` is a shorthand for one.                                                                |
-| `tables`           | `"*"`                         | `"*"`: the reachable RLS tables and `security_invoker` views; or a list of names (`"notes"` or `"api.notes"`), served as named (a listed table the roles cannot reach gets no route).            |
-| `basePath`         | `"/rest/v1"`                  | Where the routes live (app-relative; `basePath` is prepended).                                                                                                                                   |
-| `maxRows`          | 1000                          | The most rows one read (or set-returning call) returns, whatever `limit` asks for.                                                                                                               |
-| `maxBodyBytes`     | 1 MiB                         | The largest request body.                                                                                                                                                                        |
-| `statementTimeout` | 5000                          | Each request's `statement_timeout`, in milliseconds.                                                                                                                                             |
-| `maxConcurrent`    | half the pool's `max`, else 5 | The most REST statements at once; past it a request waits up to 1 s, then gets `503` + `Retry-After`.                                                                                            |
-| `exactCount`       | `"authenticated"`             | Who may send `Prefer: count=exact`: `"authenticated"`, `"all"` or `"never"` (refused with `400`).                                                                                                |
-| `explain`          | `false`                       | Serve execution plans (`Accept: application/vnd.pgrst.plan`). Plans show table sizes and indexes: development only.                                                                              |
-| `aggregates`       | `false`                       | Allow aggregate functions in `select=` (PostgREST's `db-aggregates-enabled`). An aggregate reads every matching row whatever `limit` says; enable it when the statement timeout bounds the cost. |
+| Option             | Default                           | What it does                                                                                                                                                                                                      |
+| ------------------ | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schemas`          | `["public"]`                      | The schemas served, the default first; `Accept-Profile` / `Content-Profile` pick another. `schema: "api"` is a shorthand for one.                                                                                 |
+| `tables`           | `"*"`                             | `"*"`: the reachable RLS tables and `security_invoker` views; or a list of names (`"notes"` or `"api.notes"`), served as named (a listed table the roles cannot reach gets no route).                             |
+| `basePath`         | `"/rest/v1"`                      | Where the routes live (app-relative; `basePath` is prepended).                                                                                                                                                    |
+| `maxRows`          | 1000                              | The most rows one read (or set-returning call) returns, whatever `limit` asks for.                                                                                                                                |
+| `maxBodyBytes`     | 1 MiB                             | The largest request body.                                                                                                                                                                                         |
+| `statementTimeout` | 5000                              | Each request's `statement_timeout`, in milliseconds.                                                                                                                                                              |
+| `maxConcurrent`    | half the pool's `max`, else 5     | The most REST statements at once; past it a request waits up to 1 s, then gets `503` + `Retry-After`.                                                                                                             |
+| `exactCount`       | `"authenticated"`                 | Who may send `Prefer: count=exact`: `"authenticated"`, `"all"` or `"never"` (refused with `400`).                                                                                                                 |
+| `explain`          | `false`                           | Serve execution plans (`Accept: application/vnd.pgrst.plan`). Plans show table sizes and indexes: development only.                                                                                               |
+| `aggregates`       | `false`                           | Allow aggregate functions in `select=` (PostgREST's `db-aggregates-enabled`). An aggregate reads every matching row whatever `limit` says; enable it when the statement timeout bounds the cost.                  |
+| `rateLimit`        | `{ max: 1200, windowMs: 60_000 }` | Each client's request budget (a user by id, else an address; never the secret key); past it `429` `over_request_rate_limit` with `Retry-After`. `store` shares the counts between replicas; `false` turns it off. |
 
 Two features are off until you turn them on, because each can cost a lot or reveal a lot:
 aggregates (`aggregates: true`) and execution plans (`explain: true`). Everything else on this page
@@ -1692,7 +1714,8 @@ denext stack status        # API, REST, database and S3 URLs, the publishable ke
 denext stack logs db -f    # docker compose logs (--level, --since / --until, --grep filter it)
 denext stack health        # every service's health check and the app's /_denext/health
 denext stack passwd --postgres --generate   # ALTER ROLE in the database, then .env
-denext stack roll          # new publishable + secret keys (--include-secret: JWT keys too)
+denext stack roll          # new publishable + secret keys (--include-secret: JWT keys too;
+                           # --keep-old keeps the previous ones valid until --drop-old)
 denext stack backup --full # roles, extensions, dump, settings and storage in one .tar.gz
 denext stack restore <file>
 denext stack down          # --volumes also drops the data

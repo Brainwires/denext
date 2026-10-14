@@ -660,7 +660,11 @@ export class RealtimeEngine {
    * @param event The change.
    */
   ingest(event: TableNotification): void {
-    if (!this.config.tables.has(event.table)) return;
+    const table = this.config.tables.get(event.table);
+    if (!table) return;
+    // The triggers fire only for the table's `events`; the WAL carries every change, so a kind
+    // the table does not send is dropped here (a resync always passes).
+    if (event.op !== "resync" && !table.events.includes(event.op)) return;
     if (event.op === "truncate") {
       // Changes earlier in the burst are moot (the rows are gone); later ones follow it.
       const dropped = this.#pending.get(event.table)?.size ?? 0;

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.0
+
+### Added
+
+- **Rate limits for the auto-REST routes.** Each client has a request budget (`rest.rateLimit`,
+  default 1200 a minute): a signed-in user by user id, anyone else by client address
+  (`clientIpForLimits()`), the secret key never. A request with a refused credential counts
+  against its address. Past it: `429` `over_request_rate_limit` (PostgREST's error shape) with
+  `Retry-After`, before any statement. `{ max, windowMs, store }`, or `false` to turn it off.
+- **Image transforms take AVIF sources** (`render/image`, signed transform URLs), decoded by
+  `@denext/avif` once the declared size passed the decompression-bomb checks (needs denext with
+  AVIF decoding in `transformImageBytes`; an older one answers `400`).
+
+### Changed
+
+- **The logical realtime source honours a table's `events`:** a change of a kind the table leaves
+  out (a `TRUNCATE`, say) is dropped, as the triggers of the notify source never fire for it.
+
 ## 0.4.0 - 2026-10-14
 
 ### Security

@@ -680,7 +680,8 @@ bearer-jwt`. `denext stack up | down | status | logs` runs the `generate docker`
 `supabase start` (writes it and a generated `.env` when missing; `status --show-secrets`), and
 operates it: `health [--json] [--watch]`, `logs --level/--since/--until/--grep`, `passwd
 --postgres|--dashboard [--generate]` (ALTER ROLE first; a password only from stdin), `roll
-[--include-secret]`, `backup [--full]` / `restore <file> [--yes]` (`--restart` / `--no-restart`
+[--include-secret] [--keep-old | --drop-old]` (`--keep-old` keeps the previous keys valid until
+`--drop-old`), `backup [--full]` / `restore <file> [--yes]` (`--restart` / `--no-restart`
 after a `.env` change).
 
 **A database (zero-npm, server-only module):**
@@ -723,7 +724,9 @@ authenticated may EXECUTE, with PostgREST 12's wire format at `/rest/v1/<table>`
 `/rest/v1/rpc/<fn>` — embeds through foreign keys (`select=*,author:users(name),tags!inner(*)`),
 `or` / `and` trees, every operator, aliases, casts, JSON paths, upserts, `PUT`, counts, CSV,
 views, computed fields / relationships, aggregates (opt-in `rest.aggregates`), OpenAPI at `GET /rest/v1`,
-`Accept-Profile` across `rest.schemas` — each statement through `db()` under RLS. The stock
+`Accept-Profile` across `rest.schemas` — each statement through `db()` under RLS, behind a
+per-client budget (`rest.rateLimit`, default 1200/min per user or address, never the secret key;
+`429 over_request_rate_limit` + `Retry-After`; `false` turns it off). The stock
 `@supabase/supabase-js` `from()` / `rpc()` / `schema()` work against it unchanged, and so does
 `from("notes").select("id,body").eq("id", 1)` / `rpc()` from `@denext/backend/client`; the
 generated `.denext/rest.ts` is `supabase gen types`-shaped (`createClient<Database>()`).

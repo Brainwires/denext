@@ -58,6 +58,24 @@ and this project adheres to
   `maxConnectionsPerIp` keyed on `clientIpForLimits()` as Live's are (defaults: the app's
   `live.limits`, else 10 000 / 64); past a cap the request is a `429` before the upgrade or the
   response, and a slot is freed on every close path.
+- **`@denext/backend` 0.5.0: rate limits for the auto-REST routes.** `backend({ rest })` gives each
+  client a request budget, 1200 a minute by default: a signed-in user is counted by user id, anyone
+  else by client address (`clientIpForLimits()`'s rule), and the secret key never. A request whose
+  credential is refused counts against its address. Past the budget the answer is `429` with
+  PostgREST's error shape (`code: "over_request_rate_limit"`) and `Retry-After`, before any
+  statement runs. `rest.rateLimit: { max, windowMs, store }` tunes it (a shared `store` such as
+  `postgresRateLimitStore()` counts across replicas), and `false` turns it off.
+- **Image transforms take AVIF sources.** `transformImageBytes` (storage's `createSignedUrl(key, {
+  transform })` and `/storage/v1/render/image/…`, and the `/_denext/image` endpoint) decodes an
+  AVIF still image with `@denext/avif` once the size its `ispe` box declares passes the
+  decompression-bomb limits; `format: "origin"` keeps it AVIF. `@denext/avif` 0.2.0 adds
+  `decode(bytes)` (libavif's decoder from the same `@jsquash/avif@2.1.1`, compiled once and
+  instantiated per call so a large image's memory is released).
+- **`denext stack roll --keep-old` / `--drop-old`: key rotation with a window.** `--keep-old` puts
+  the new publishable, secret and (with `--include-secret`) signing key first and keeps the one in
+  effect until now listed after it, so clients and tokens holding the old keys keep working and
+  nothing has to be confirmed; the single-valued legacy `DENEXT_JWT_SECRET` is left as it is.
+  `--drop-old` finishes the rotation, keeping only the newest key of each kind.
 - **`@denext/graphql` 0.4.0: the schema reloads in `denext dev`.** `schema` takes the module path
   that exports it; an edit beside it (or under the `watch` globs) loads the schema again for the
   next request, and subscriptions on the old schema complete.
@@ -156,6 +174,16 @@ and this project adheres to
   options ask for `"direct"` attestation while it is on.
 
 ### Changed
+
+- **`@denext/backend` 0.5.0: realtime from the logical source honours a table's `events`.** A
+  change of a kind the table leaves out (a `TRUNCATE`, say) is dropped, as the notify source's
+  triggers never fire for it; before, the WAL source delivered every kind.
+
+- **The self-hosted stack's MinIO is healthy only once its setup is over.** Bitnami's image runs
+  a setup server, stops it and starts the real one; the health check passed during setup, so
+  whatever waited for it (`minio-init`, the app, `docker compose up --wait`) could hit the restart
+  gap with `connection refused`. The check now also requires that PID 1 is no longer the image's
+  `entrypoint.sh`.
 
 - **`.env.example` points at `denext stack passwd --postgres`** for changing `POSTGRES_PASSWORD`
   on an existing volume. Before, it said that changing the password locked the stack out.

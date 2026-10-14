@@ -27,8 +27,6 @@ or an upstream. Each one's limitation entry is deleted when it ships.
   early (a ban, a password reset or a deletion); magic links default to `confirm: true`; a
   default `native.refreshReuseInterval` (GoTrue uses 10 s); one passkey ceremony per tab, not per
   browser.
-- **Backend:** realtime tells subscribers to re-read on `TRUNCATE`; rate limits for the auto-REST
-  routes; AVIF image-transform sources (`@denext/avif`).
 - **Deno Desktop (runtime work):** CEF on macOS keeps cookies under a real Keychain key in a
   signed app, not Chromium's mock keychain; a share sheet (macOS `NSSharingServicePicker`,
   Windows `DataTransferManager`); Spotlight indexing and Handoff on macOS; icons and the

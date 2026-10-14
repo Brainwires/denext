@@ -123,11 +123,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **Auto-REST speaks PostgREST 12's wire format but is not PostgREST:** a request takes at most 64
   filters, 256 select items and 8 levels of embedding, and runs under a 5-second
   `statement_timeout`. The routes are not in the `@denext/openapi` document (`GET /rest/v1` serves
-  PostgREST's own Swagger 2.0 one), and the plugin does not rate-limit them (guard them in
-  `middleware.ts`).
+  PostgREST's own Swagger 2.0 one), and their request budget (`rest.rateLimit`) counts per
+  process unless it is given a shared `store`.
 - **Realtime re-reads every change as each subscriber.** With the default LISTEN/NOTIFY source the
-  trigger sends only the key, so every change costs a re-read per identity and filter; `TRUNCATE`
-  sends nothing; many concurrent writers serialize on commit (the logical-replication source
+  trigger sends only the key, so every change costs a re-read per identity and filter; many
+  concurrent writers serialize on commit (the logical-replication source
   avoids that, but needs `wal_level = logical` and a `REPLICATION` role); and a change sent while
   the listener reconnects is lost (every subscriber is told to re-read). A delete, or an update out of view, reaches only a subscription
   that tracked the key — at most `maxTrackedKeys` (default 10 000) per subscription. Subscriptions
@@ -137,7 +137,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   TypeScript decides, with no `storage` schema to join against). An S3 upload
   whose client skips the completion call was checked by nobody: record the keys completion
   returned, and give the bucket lifecycle rules for unrecorded objects and incomplete multipart
-  uploads. Image transforms take PNG, JPEG, GIF and WebP sources up to 25 MiB, at the configured
+  uploads. Image transforms take PNG, JPEG, GIF, WebP and AVIF sources up to 25 MiB (an AVIF
+  only when it declares its size: a still image, not a bare image sequence), at the configured
   `images` sizes and qualities only.
 
 ### Tooling

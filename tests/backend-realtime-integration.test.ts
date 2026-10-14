@@ -184,6 +184,26 @@ Deno.test({
         `real Postgres: 500 notifications → ${flushes} flush(es), ${rereads} re-reads, ${frames} frames`,
       );
       assert(changesOf(ca).slice(2).every((c) => c.op === "insert" && c.row?.owner === A));
+
+      // TRUNCATE: the statement-level trigger's notification tells every subscriber who could
+      // see rows to forget them (no row data), and the server hooks hear it.
+      const truncates: TableChangeEvent[] = [];
+      const off = onTableChange("notes", (event) => {
+        if (event.op === "truncate") truncates.push(event);
+      });
+      await db.service()`truncate notes`;
+      await until(
+        () => changesOf(ca).at(-1)?.op === "truncate" && changesOf(cb).at(-1)?.op === "truncate",
+        5_000,
+        "the truncate",
+      );
+      assertEquals(changesOf(ca).at(-1), { op: "truncate" });
+      assertEquals(truncates.length, 1);
+      assertEquals(truncates[0].table, "notes");
+      off();
+      // After it, both views start empty: the next row is an insert again.
+      await db.service()`insert into notes (owner, body) values (${A}, ${"after"})`;
+      await until(() => changesOf(ca).at(-1)?.op === "insert", 5_000, "the insert after");
     } finally {
       await uninstall(hub);
       await env.drop();
@@ -698,3 +718,48 @@ function usesIndex(text: string, index: string): boolean {
 function spread(query: { text: string; params: unknown[] }): [string, unknown[]] {
   return [query.text, query.params];
 }
+
+// The same TRUNCATE read from the WAL (`source: "logical"`, a pgoutput Truncate message): needs a
+// server with wal_level = logical (`DENEXT_TEST_POSTGRES_LOGICAL=1` says it has one).
+const logicalReason = reason ??
+  (Deno.env.get("DENEXT_TEST_POSTGRES_LOGICAL") === "1"
+    ? undefined
+    : "set DENEXT_TEST_POSTGRES_LOGICAL=1");
+
+Deno.test({
+  name: `realtime on a real Postgres: TRUNCATE from logical decoding reaches who could see rows${
+    logicalReason ? ` (skipped: ${logicalReason})` : ""
+  }`,
+  ignore: logicalReason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    let hub: Harness | undefined;
+    try {
+      await env.admin.unsafe(`alter role ${new URL(env.url).username} replication`);
+      hub = await install(env.app, { notes: {} }, NOTES, {
+        source: "logical",
+        logical: { pollMs: 20 },
+      });
+      const ca = hub.conn(await cookieFor(A));
+      const cb = hub.conn(await cookieFor(B));
+      assert((await hub.subscribe(ca, "notes")).ok, "A subscribed");
+      assert((await hub.subscribe(cb, "notes")).ok, "B subscribed");
+      await db({ as: { id: A } })`insert into notes (owner, body) values (${A}, ${"from the WAL"})`;
+      await until(() => ca.frames.length === 1, 10_000, "A's insert");
+      await db.service()`truncate notes`;
+      await until(() => ca.frames.length === 2, 10_000, "the truncate");
+      assertEquals(ca.frames[1].changes, [{ op: "truncate" }]);
+      await settle(150);
+      assertEquals(changesOf(cb), [], "B saw no rows: nothing to clear");
+      const triggers = await env.app.unsafe(
+        "select tgname from pg_trigger where tgname like 'denext_realtime%' and tgenabled <> 'D'",
+      );
+      assertEquals(triggers.length, 0, "no trigger on the write path");
+    } finally {
+      await uninstall(hub);
+      await env.drop();
+    }
+  },
+});

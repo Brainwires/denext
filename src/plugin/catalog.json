@@ -3,19 +3,19 @@
   "plugins": [
     {
       "name": "@denext/avif",
-      "version": "0.1.2",
-      "spec": "jsr:@denext/avif@^0.1.2",
+      "version": "0.2.0",
+      "spec": "jsr:@denext/avif@^0.2.0",
       "exports": [
         "."
       ],
       "kind": "library",
       "title": "@denext/avif",
-      "blurb": "A Deno-native AVIF encoder — denext's first-party, zero-npm replacement for the @jsquash/avif peer codec its image optimizer used to lazily import."
+      "blurb": "A Deno-native AVIF encoder and decoder — denext's first-party, zero-npm replacement for the @jsquash/avif peer codec its image optimizer used to lazily import."
     },
     {
       "name": "@denext/backend",
-      "version": "0.4.0",
-      "spec": "jsr:@denext/backend@^0.4.0",
+      "version": "0.5.0",
+      "spec": "jsr:@denext/backend@^0.5.0",
       "exports": [
         ".",
         "./client",
@@ -453,6 +453,32 @@
               "aggregates": {
                 "description": "Allow aggregate functions in `select=` (`amount.sum()`, `count()`, … grouped by the other selected columns) — PostgREST's `db-aggregates-enabled` (default `false`: a 400). An aggregate reads every matching row whatever `limit` says, so a caller could make the database scan a whole table; turn it on when the tables are small or the statement timeout bounds the cost.",
                 "type": "boolean"
+              },
+              "rateLimit": {
+                "description": "A request budget per client: a signed-in user by their user id, anyone else by their client address (`clientIpForLimits()`'s rule — skipped for an untrusted loopback/private peer), the secret key never. Past it a request is answered 429 `over_request_rate_limit` with `Retry-After`, before any statement runs. Default `{ max: 1200, windowMs: 60_000 }` — 20 requests a second on average, far above what a page of supabase-js calls needs — counted per process unless `store` is shared; `false` turns it off.",
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "max": {
+                        "description": "Requests one client (a user, or an address when signed out) may make per window. Default 1200.",
+                        "type": "number"
+                      },
+                      "windowMs": {
+                        "description": "The window, in milliseconds. Default 60 000 (one minute).",
+                        "type": "number"
+                      },
+                      "store": {
+                        "description": "Where the counts live. Default: a bounded in-memory store, per process — behind several replicas pass a shared one (`postgresRateLimitStore()` from `denext/server`)."
+                      }
+                    }
+                  },
+                  {
+                    "enum": [
+                      false
+                    ]
+                  }
+                ]
               }
             }
           },

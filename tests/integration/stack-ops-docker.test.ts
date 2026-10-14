@@ -51,8 +51,12 @@ const COMPOSE = `services:
     environment:
       MINIO_ROOT_USER: \${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: \${MINIO_ROOT_PASSWORD}
+    # The stack's check (src/build/docker-stack.ts): healthy only after the image's setup server
+    # was stopped and the real one started, so \`docker compose up --wait\` never returns inside that gap.
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      test:
+        - CMD-SHELL
+        - "! grep -qx entrypoint.sh /proc/1/comm && curl -fsS http://127.0.0.1:9000/minio/health/live"
       interval: 2s
       timeout: 5s
       retries: 30

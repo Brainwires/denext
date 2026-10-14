@@ -245,6 +245,16 @@ Where `@denext/backend` deliberately departs from Supabase. See
   reads as its owner), and lists what it skipped in a startup warning. Naming a relation in
   `rest.tables` serves it as is. A full count (`Prefer: count=exact`) is for signed-in callers by
   default (`rest.exactCount`).
+- **Auto-REST has a request budget.** PostgREST (and Supabase's Data API) applies none of its own;
+  `backend({ rest })` answers a client past 1200 requests a minute (a signed-in user by id,
+  anyone else by address; never the secret key) with `429 over_request_rate_limit` and
+  `Retry-After`, so a scraper can't take the database pool. `rest.rateLimit` tunes it, `false`
+  turns it off.
+- **Realtime tells subscribers about a `TRUNCATE`.** Supabase Realtime's `postgres_changes` never
+  delivers one (its change stream asks for inserts, updates and deletes only), leaving clients
+  showing rows that are gone. denext sends `eventType: "TRUNCATE"` (empty `new` and `old`) to a
+  `*` binding of a subscriber who could see rows of the table, and a binding with
+  `event: "TRUNCATE"` — which Supabase turns into `*` — receives only those.
 - **Server code needs no service-role key.** With `backend({ supabase })` the secret key
   (`DENEXT_SECRET_KEY`) is the `service_role`, past every policy, as on Supabase — keep it
   server-side. denext additionally gives server code `db.service()` (and a bucket's

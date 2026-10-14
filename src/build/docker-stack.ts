@@ -514,15 +514,20 @@ function storageServices(options: StackOptions): string {
       - "127.0.0.1:${ref("MINIO_PORT:-9000")}:9000"
     volumes:
       - storage-data:/bitnami/minio/data
+    # Bitnami's entrypoint runs a setup server first, stops it and starts the real one: healthy
+    # only once the setup is over (PID 1 is no longer entrypoint.sh), so nothing that waits for
+    # it lands in the restart gap.
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      test:
+        - CMD-SHELL
+        - "! grep -qx entrypoint.sh /proc/1/comm && curl -fsS http://127.0.0.1:9000/minio/health/live"
       interval: 5s
       timeout: 5s
       retries: 20
       start_period: 10s
 
-  # Creates the bucket once (idempotent), then exits; the app waits for it. The image restarts
-  # its server once after first boot (past the health check), so the alias is retried.
+  # Creates the bucket once (idempotent), then exits; the app waits for it. The alias is retried
+  # (a swapped-in image may not restart the way the health check expects).
   minio-init:
     image: ${image}
     restart: "no"
