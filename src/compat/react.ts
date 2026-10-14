@@ -56,6 +56,7 @@ import {
   useTransition,
 } from "../../mod.ts";
 import { act } from "../client/mod.ts";
+import { currentOwnerStack } from "../runtime/hooks.ts";
 import { addTransitionType as addTransitionTypeImpl } from "../client/fiber/view-transition-support.ts";
 import { lazy as lazyImpl } from "../runtime/dynamic.ts";
 import { StrictMode } from "../runtime/strict-mode.ts";
@@ -141,25 +142,38 @@ export { experimental_taintObjectReference, experimental_taintUniqueValue };
 export { Activity, cache, ViewTransition };
 
 /**
- * `React.cacheSignal` — the `AbortSignal` that aborts when the current cache scope is
- * torn down. denext has no client-side cache scope, so this returns `null` (React's
- * documented value outside a cache scope).
+ * `React.cacheSignal` — during a server render, an `AbortSignal` that aborts when the render's
+ * cache scope ends: the render finished (its last streamed byte included), failed, or was
+ * aborted (the client disconnected, the request timed out). Thread it into a `fetch()` or other
+ * cancellable work started from a `cache()`d function or a Server Component, so work the render
+ * no longer needs is cancelled.
  *
- * @returns `null` (no active cache scope).
+ * It returns `null` on the client, outside a request (a script, a job, module init) and inside a
+ * `"use cache"` scope, whose fill readers share, so one request ending never aborts it — as
+ * React returns `null` outside a render.
+ *
+ * @returns The render's signal, or `null` with no server render in progress.
  */
 export function cacheSignal(): AbortSignal | null {
-  return null;
+  return (globalThis as { __denextCacheSignal?: () => AbortSignal | null })
+    .__denextCacheSignal?.() ?? null;
 }
 
 /**
- * `React.captureOwnerStack` (dev-only) — the component owner stack at the call site, for
- * building richer dev warnings. denext surfaces owner stacks through its DevTools rather
- * than this API, so it returns `null`.
+ * `React.captureOwnerStack` (development only) — the owner stack at the call site, for richer
+ * dev warnings: called while a component renders, the components above it, nearest first,
+ * formatted as React 19 formats it (`"\n    at Parent (file:line:column)\n    at App (…)"`, the
+ * caller itself not included). It is the chain denext's DevTools panel shows; the location is
+ * where each component was declared, and a component the dev build didn't register prints as
+ * `"\n    at Name"`.
  *
- * @returns `null`.
+ * It returns `null` in production (as React's does), outside a client render (an event handler,
+ * an effect) and during a server render.
+ *
+ * @returns The owner stack, or `null`.
  */
 export function captureOwnerStack(): string | null {
-  return null;
+  return currentOwnerStack();
 }
 
 /**

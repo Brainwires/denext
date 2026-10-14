@@ -89,8 +89,8 @@ Deno.test("Activity SSR: visible renders children, hidden renders nothing", asyn
 
 Deno.test("new React 19.2 shims: cacheSignal/captureOwnerStack/addTransitionType/optimisticKey", async () => {
   const React = await import("../src/compat/react.ts");
-  assertEquals(React.cacheSignal(), null); // no client cache scope
-  assertEquals(React.captureOwnerStack(), null); // owner stacks live in DevTools
+  assertEquals(React.cacheSignal(), null); // no server render in progress
+  assertEquals(React.captureOwnerStack(), null); // not called during a render
   React.addTransitionType("navigation"); // no-op, must not throw
   assertEquals(typeof React.optimisticKey, "symbol");
   // All present on the default namespace (drop-in `import React from "react"`).

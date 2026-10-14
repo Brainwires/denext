@@ -37,6 +37,9 @@ import { setDevtoolsHooks } from "./fiber/devtools-seam.ts";
 import { setInspectorBridge } from "./devtools.ts";
 import { familyIdOf } from "./refresh-runtime.ts";
 import { componentMetaOf, type ResolvedHookName, resolveHookNames } from "./devtools-meta.ts";
+import { type SourceLocation, sourceOf } from "./owner-stack.ts";
+
+export type { SourceLocation };
 import {
   brandOf,
   componentDisplayName,
@@ -221,18 +224,6 @@ export interface InspectHook {
   debug?: SerializedValue;
 }
 
-/** Where a component was declared — the build-time position behind the panel's source link. */
-export interface SourceLocation {
-  /** The declaring module's URL (`file:///…/app/page.tsx`), cache-buster stripped. */
-  file: string;
-  /** 1-based line of the declaration, when the dev metadata pass instrumented it. */
-  line?: number;
-  /** 1-based UTF-16 column of the declaration, when known. */
-  column?: number;
-  /** The binding the component is registered under (the family id's `#` suffix). */
-  export?: string;
-}
-
 /** One prop entry — for per-prop display and live override. */
 export interface InspectProp {
   /** The prop name. */
@@ -291,28 +282,6 @@ export interface InspectNode {
   hooksNamed?: boolean;
   /** Child nodes, in order. */
   children: InspectNode[];
-}
-
-/**
- * A component's source location: its module + export from the Fast Refresh family
- * registry, overlaid with the line/column the dev metadata pass recorded for the
- * declaration. Line/column are absent when the module wasn't instrumented.
- */
-function sourceOf(type: unknown): SourceLocation | undefined {
-  const fam = familyIdOf(type);
-  if (!fam) return undefined;
-  const hash = fam.lastIndexOf("#");
-  const loc: SourceLocation = {
-    file: (hash >= 0 ? fam.slice(0, hash) : fam).replace(/\?[^#]*$/, ""),
-  };
-  const exp = hash >= 0 ? fam.slice(hash + 1) : "";
-  if (exp) loc.export = exp;
-  const meta = componentMetaOf(type);
-  if (meta) {
-    loc.line = meta.line;
-    loc.column = meta.column;
-  }
-  return loc;
 }
 
 let idCounter = 0;

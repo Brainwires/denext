@@ -339,7 +339,10 @@ disconnect) actually reclaim the work. It returns `undefined` outside denext's
 server loop, so a test that calls a handler directly is unaffected, and
 `undefined` inside a `use cache` scope — a cached fill is shared with other
 readers (single-flight followers, background refreshes), so one client's
-disconnect must not abort it. The client
+disconnect must not abort it. React 19.2's `cacheSignal()` (from the `react` alias) is the
+same signal one step later: it also aborts when the render ends (its last streamed byte
+included), so work a `cache()`d function started and the page no longer needs is cancelled; it
+is `null` on the client, outside a request and inside a `use cache` scope. The client
 IP and the correlation id are reachable the same way: `clientIp()` (the trusted
 proxy's last `x-forwarded-for` hop when `trustForwardedHeaders` is set, else the
 socket peer — never read the header yourself) and `requestId()` (the value
