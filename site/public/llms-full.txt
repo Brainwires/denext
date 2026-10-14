@@ -1416,6 +1416,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface AuthorizedCallbackInput` — What AuthCallbacks.authorized is asked about.
 - `interface AuthorizedTapOptions<T>` — Options for tapChannelAuthorized.
 - `interface AuthPasskeyConfig` — Passkeys (WebAuthn) — sign-in with a platform or roaming authenticator, as a first factor or as the second. Every field is optional; the relying party defaults to canonicalOrigin.
+- `interface AuthPasskeyMdsConfig` — passkeys.attestation.mds: where the metadata comes from and what it lets through.
 - `type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider | PhoneProvider | SamlProvider` — Any configured provider.
 - `interface AuthSession` — The signed (readable, tamper-evident) session payload. Never stores tokens/secrets.
 - `interface AuthSessionConfig` — Session lifetime + storage strategy.

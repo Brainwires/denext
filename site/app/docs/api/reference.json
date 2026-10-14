@@ -5410,6 +5410,18 @@
           "denextOnly": true
         },
         {
+          "name": "AuthPasskeyMdsConfig",
+          "slug": "AuthPasskeyMdsConfig",
+          "kind": "interface",
+          "signature": "interface AuthPasskeyMdsConfig",
+          "doc": "passkeys.attestation.mds: where the metadata comes from and what it lets through.",
+          "docFull": "`passkeys.attestation.mds`: where the metadata comes from and what it lets through.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "AuthProvider",
           "slug": "AuthProvider",
           "kind": "typeAlias",
