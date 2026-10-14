@@ -65,6 +65,8 @@ export type GoTrueErrorCode =
   | "user_not_found"
   | "validation_failed"
   | "weak_password"
+  | "web3_provider_disabled"
+  | "web3_unsupported_chain"
   | "not_found"
   | "method_not_allowed";
 

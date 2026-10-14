@@ -207,8 +207,11 @@ const web3Flow: Step = async (app) => {
   });
   assertEquals(signedIn.error, null);
   const identity = signedIn.data.user.identities[0];
-  assertEquals(identity.provider, "web3:ethereum");
-  assertEquals(identity.identity_data.address, eth.address.toLowerCase());
+  assertEquals(identity.provider, "web3");
+  assertEquals(identity.identity_data.sub, `web3:ethereum:${eth.address.toLowerCase()}`);
+  assertEquals(identity.identity_data.custom_claims.chain, "ethereum");
+  assertEquals(identity.identity_data.custom_claims.network, "1");
+  assertEquals(signedIn.data.user.app_metadata.provider, "web3");
   // The same nonce again (a replayed signature, or a fresh one) is refused.
   const replay = await app.client().auth.signInWithWeb3({
     chain: "ethereum",
@@ -231,8 +234,8 @@ const web3Flow: Step = async (app) => {
     options: { url: `${ORIGIN}/` },
   });
   assertEquals(solana.error, null);
-  assertEquals(solana.data.user.identities[0].provider, "web3:solana");
-  assertEquals(solana.data.user.identities[0].identity_data.address, sol.address);
+  assertEquals(solana.data.user.identities[0].provider, "web3");
+  assertEquals(solana.data.user.identities[0].identity_data.sub, `web3:solana:${sol.address}`);
   // Another site's URL is refused.
   const foreign = await app.client().auth.signInWithWeb3({
     chain: "ethereum",

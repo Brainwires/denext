@@ -566,7 +566,7 @@ async function codeGrant(
   const session = await startSession(
     ctx.session,
     user,
-    { method: "oauth", timestamp: nowSeconds() },
+    { method: "oauth_provider/authorization_code", timestamp: nowSeconds() },
     undefined,
     { clientId: client.id, scope: record.scope },
   );

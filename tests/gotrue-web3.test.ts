@@ -30,6 +30,11 @@ const fixtures = JSON.parse(
   keccak: Array<{ input: string; hash: string }>;
 };
 
+function claimsOf(token: string): Record<string, unknown> {
+  const part = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+  return JSON.parse(atob(part + "=".repeat((4 - (part.length % 4)) % 4)));
+}
+
 const hex = (bytes: Uint8Array) =>
   "0x" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -178,18 +183,38 @@ const ethereum = (message: string, signature: string) => ({
 Deno.test("web3 grant: an Ethereum sign-in creates the user, then signs the same one in", async () => {
   await withApp(async (app) => {
     const wallet = ethereumWallet();
-    const message = siweMessage({ address: wallet.address, statement: "Hi", nonce: "nonce0001" });
+    // supabase-js writes the address lower-case; GoTrue keys the identity on it as written.
+    const address = wallet.address.toLowerCase();
+    const message = siweMessage({ address, statement: "Hi", nonce: "nonce0001" });
     const first = await grant(app, ethereum(message, wallet.sign(message)));
     assertEquals(first.status, 200, JSON.stringify(first.json));
     assert(first.json.access_token);
+    // GoTrue's identity shape: provider "web3", sub "web3:<chain>:<address>", custom_claims.
     const identity = first.json.user.identities[0];
-    assertEquals(identity.provider, "web3:ethereum");
-    assertEquals(identity.identity_data.address, wallet.address.toLowerCase());
-    assertEquals(first.json.user.app_metadata.provider, "web3:ethereum");
-    const again = siweMessage({ address: wallet.address.toLowerCase(), nonce: "nonce0002" });
+    assertEquals(identity.provider, "web3");
+    assertEquals(identity.identity_data.sub, `web3:ethereum:${address}`);
+    assertEquals(identity.identity_data.custom_claims, {
+      address,
+      chain: "ethereum",
+      network: "1",
+      domain: "app.test",
+      statement: "Hi",
+    });
+    assertEquals(first.json.user.app_metadata.provider, "web3");
+    const amr = claimsOf(first.json.access_token).amr as Array<Record<string, unknown>>;
+    assertEquals(amr.map((entry) => entry.method), ["web3"]);
+    assertEquals(amr[0].provider, undefined);
+    const again = siweMessage({ address, nonce: "nonce0002" });
     const second = await grant(app, ethereum(again, wallet.sign(again)));
     assertEquals(second.status, 200);
     assertEquals(second.json.user.id, first.json.user.id, "the same address is the same user");
+    // As in GoTrue, the checksummed spelling is another identity (another user).
+    const checksummed = siweMessage({ address: wallet.address, nonce: "nonce0003" });
+    const third = await grant(app, ethereum(checksummed, wallet.sign(checksummed)));
+    assertEquals(
+      third.json.user.identities[0].identity_data.sub,
+      `web3:ethereum:${wallet.address}`,
+    );
   });
 });
 
@@ -252,9 +277,21 @@ Deno.test("web3 grant: off by default, per chain; disableSignup is respected", a
     const wallet = ethereumWallet();
     const message = siweMessage({ address: wallet.address });
     const res = await grant(app, ethereum(message, wallet.sign(message)));
-    assertEquals(res.status, 400);
-    assertEquals(res.json.error_code, "provider_disabled");
+    assertEquals(res.status, 422);
+    assertEquals(res.json.error_code, "web3_provider_disabled");
+    const chain = await grant(app, { chain: "bitcoin", message, signature: "0x" });
+    assertEquals(chain.json.error_code, "web3_provider_disabled", "all of Web3 is off");
   }, {});
+  await withApp(async (app) => {
+    const wallet = ethereumWallet();
+    const message = siweMessage({ address: wallet.address });
+    const res = await grant(app, ethereum(message, wallet.sign(message)));
+    assertEquals(res.status, 422);
+    assertEquals(res.json.error_code, "web3_provider_disabled", "only Solana is on");
+    const chain = await grant(app, { chain: "bitcoin", message, signature: "0x" });
+    assertEquals(chain.status, 400);
+    assertEquals(chain.json.error_code, "web3_unsupported_chain");
+  }, { web3: { solana: {} } });
   await withApp(async (app) => {
     const wallet = ethereumWallet();
     const message = siweMessage({ address: wallet.address });
@@ -277,8 +314,10 @@ Deno.test("web3 grant: Solana — Ed25519 over the SIWS message", async () => {
     const signature = base64UrlEncode(await wallet.sign(message));
     const ok = await grant(app, { chain: "solana", message, signature });
     assertEquals(ok.status, 200, JSON.stringify(ok.json));
-    assertEquals(ok.json.user.identities[0].provider, "web3:solana");
-    assertEquals(ok.json.user.identities[0].identity_data.address, wallet.address);
+    assertEquals(ok.json.user.identities[0].provider, "web3");
+    assertEquals(ok.json.user.identities[0].identity_data.sub, `web3:solana:${wallet.address}`);
+    assertEquals(ok.json.user.identities[0].identity_data.custom_claims.address, wallet.address);
+    assertEquals(ok.json.user.identities[0].identity_data.custom_claims.network, "");
     const other = await solanaWallet();
     const forged = await grant(app, {
       chain: "solana",

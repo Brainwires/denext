@@ -2003,8 +2003,13 @@ and returned but not applied: PKCE and the nonce are always used and checked.
 
 `web3: { ethereum: {}, solana: {} }` turns on `supabase.auth.signInWithWeb3({ chain, wallet })`:
 the wallet signs a Sign-In with Ethereum (EIP-4361) or Sign-In with Solana message, and the user
-whose `web3:ethereum` / `web3:solana` identity is that address is signed in (created on first
-sign-in unless `disableSignup`). Ethereum signatures are verified by recovering the signer
+whose identity is that address is signed in (created on first sign-in unless `disableSignup`).
+The identity is GoTrue's: provider `web3`, `sub` / provider id `web3:<chain>:<address>` with the
+address exactly as the message writes it (supabase-js writes Ethereum addresses lower-case, so a
+checksummed spelling is another identity, as in GoTrue), `identity_data.custom_claims`
+`{ address, chain, network, domain, statement }`, `app_metadata.provider` `web3`, and `amr`
+method `web3`. A disabled chain answers `422 web3_provider_disabled`, an unknown one
+`400 web3_unsupported_chain`. Ethereum signatures are verified by recovering the signer
 (secp256k1 and Keccak-256 in denext's own TypeScript; Web Crypto has neither), Solana's with Web
 Crypto's Ed25519. `ethereum.chainIds` restricts the `Chain ID`, `domains` allows message domains
 besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At` may be.

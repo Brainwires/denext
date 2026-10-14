@@ -1,8 +1,10 @@
 /**
  * Web3 sign-in (`supabase.auth.signInWithWeb3()` → `POST /token?grant_type=web3`): a signed
  * Sign-In with Ethereum (EIP-4361) or Sign-In with Solana message becomes a session for the
- * user whose `web3:ethereum` / `web3:solana` identity is the signing address (created on first
- * sign-in unless sign-ups are disabled).
+ * user whose `web3` identity is the signing address (created on first sign-in unless sign-ups
+ * are disabled). The identity is GoTrue's: provider `web3`, provider id / `sub`
+ * `web3:<chain>:<address>` (the address exactly as the message writes it), and `custom_claims`
+ * `{ address, chain, network, domain, statement }`; the session's `amr` method is `web3`.
  *
  * Off unless `web3.ethereum` / `web3.solana` is configured. Before the signature counts, the
  * message must name this app: its domain is the app's host (or one in `domains`), its `URI` is
@@ -150,14 +152,19 @@ async function signatureValid(
     : await verifySolana(message, text, signature);
 }
 
+/** GoTrue's identity provider for every chain. */
+const PROVIDER = "web3";
+
 /** The user an address signs in as: its linked identity, or a new user. */
 async function web3User(
   ctx: GoTrueContext,
-  provider: string,
-  address: string,
+  providerId: string,
   identityData: Record<string, unknown>,
 ): Promise<AdapterUser> {
-  const linked = await ctx.adapter.getUserByAccount({ provider, providerAccountId: address });
+  const linked = await ctx.adapter.getUserByAccount({
+    provider: PROVIDER,
+    providerAccountId: providerId,
+  });
   if (linked) return linked;
   if (ctx.options.disableSignup) {
     throw new GoTrueError(422, "signup_disabled", "Signups not allowed for this instance");
@@ -165,7 +172,7 @@ async function web3User(
   const at = nowSeconds();
   return await ctx.adapter.createUser({
     userMetadata: { ...identityData },
-    appMetadata: { provider, providers: [provider] },
+    appMetadata: { provider: PROVIDER, providers: [PROVIDER] },
     createdAt: at,
     updatedAt: at,
   });
@@ -183,8 +190,18 @@ export async function web3Grant(
   body: Record<string, unknown>,
 ): Promise<GoTrueSessionJson> {
   const chain = body.chain;
-  if (chain !== "ethereum" && chain !== "solana" || !ctx.options.web3?.[chain]) {
-    throw new GoTrueError(400, "provider_disabled", "Web3 provider is not enabled");
+  if (!ctx.options.web3) {
+    throw new GoTrueError(422, "web3_provider_disabled", "Web3 provider is disabled");
+  }
+  if (chain !== "ethereum" && chain !== "solana") {
+    throw new GoTrueError(400, "web3_unsupported_chain", "Unsupported chain");
+  }
+  if (!ctx.options.web3[chain]) {
+    throw new GoTrueError(
+      422,
+      "web3_provider_disabled",
+      `${chain === "ethereum" ? "Ethereum" : "Solana"} Web3 provider is disabled`,
+    );
   }
   await checkCaptcha(ctx, body);
   await spendIp(ctx, signinStartLimiter(ctx.config), "web3");
@@ -194,21 +211,25 @@ export async function web3Grant(
   checkMessage(ctx, chain, message);
   if (!(await signatureValid(chain, message, text, body.signature))) throw fail.credentials();
   await claimOnce(ctx, message, text);
-  const provider = `web3:${chain}`;
-  const address = chain === "ethereum" ? message.address.toLowerCase() : message.address;
+  // GoTrue's shape: the address as the message writes it (supabase-js writes it lower-case).
+  const providerId = `${PROVIDER}:${chain}:${message.address}`;
   const identityData = {
-    sub: `${provider}:${address}`,
-    provider_id: address,
-    address,
-    chain: chain === "ethereum" ? `eip155:${message.chainId}` : message.chainId ?? "solana",
-    domain: message.domain,
-    ...(message.statement ? { statement: message.statement } : {}),
+    sub: providerId,
+    custom_claims: {
+      address: message.address,
+      chain,
+      network: message.chainId ?? "",
+      domain: message.domain,
+      statement: message.statement ?? null,
+    },
+    email_verified: false,
+    phone_verified: false,
   };
-  const user = await web3User(ctx, provider, address, identityData);
-  await linkIdentity(ctx, user, { provider, providerAccountId: address, identityData });
-  return await startSession(ctx.session, user, {
-    method: "web3",
-    timestamp: nowSeconds(),
-    provider,
+  const user = await web3User(ctx, providerId, identityData);
+  await linkIdentity(ctx, user, {
+    provider: PROVIDER,
+    providerAccountId: providerId,
+    identityData,
   });
+  return await startSession(ctx.session, user, { method: "web3", timestamp: nowSeconds() });
 }

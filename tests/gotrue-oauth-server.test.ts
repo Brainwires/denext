@@ -218,6 +218,7 @@ Deno.test("oauth server: code flow, confidential client, refresh rotation, id_to
     assertEquals(claims.scope, "openid email");
     assertEquals(claims.role, "authenticated");
     assertEquals(claims.sub, user.user.id);
+    assertEquals(claims.amr[0].method, "oauth_provider/authorization_code");
     const idToken = claimsOf(tokens.json.id_token);
     assertEquals(idToken.aud, client.client_id);
     assertEquals(idToken.nonce, "n-0S6");
