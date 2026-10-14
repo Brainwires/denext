@@ -319,7 +319,7 @@
       "bench/fixtures/",
       "bench/results/",
       "bench/REPORT.md",
-      "src/mcp/docs-corpus.json",
+      "src/mcp/docs-corpus.ts",
       "tests/fixtures/capacitor8/template/",
       "tests/fixtures/docker-stack/",
       "tests/fixtures/saml/"

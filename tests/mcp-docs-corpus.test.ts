@@ -1,6 +1,6 @@
 // The offline docs corpus behind `denext_search_docs` / `denext_read_docs`: the generator's
 // chunking (Markdown + JSX pages), the reader, the `denext://docs` resources, and the staleness
-// guard that keeps the committed src/mcp/docs-corpus.json in step with its sources.
+// guard that keeps the committed src/mcp/docs-corpus.ts in step with its sources.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
@@ -14,6 +14,8 @@ import {
   VNodeMarkdown,
 } from "../scripts/lib/docs-corpus.ts";
 import { CORPUS_OUT, corpusInputs } from "../scripts/gen-docs-corpus.ts";
+import { toFileUrl } from "@std/path";
+import { decodeCorpus } from "../src/mcp/rag/corpus.ts";
 import { READ_PAGE_MAX, readDocs } from "../src/mcp/rag/read.ts";
 import { runTool, TOOL_GROUPS } from "../src/mcp/tools.ts";
 import { dispatch } from "../src/mcp/server.ts";
@@ -23,11 +25,13 @@ import { dispatch } from "../src/mcp/server.ts";
 Deno.test("docs corpus: the committed corpus matches its sources (run `deno task docs:corpus`)", async () => {
   // Every docs page, root guide, AGENTS.md, README.md, the API reference and the generator
   // itself are fingerprinted; editing any of them without regenerating fails here.
-  const committed = JSON.parse(await Deno.readTextFile(CORPUS_OUT)) as { sourceHash: string };
+  const { CORPUS_GZIP_BASE64, CORPUS_SOURCE_HASH } = await import(toFileUrl(CORPUS_OUT).href);
+  const committed = await decodeCorpus(CORPUS_GZIP_BASE64) as { sourceHash: string };
+  assertEquals(committed.sourceHash, CORPUS_SOURCE_HASH, "the shipped JSON carries the same hash");
   assertEquals(
     committed.sourceHash,
     await fingerprint(await corpusInputs()),
-    "src/mcp/docs-corpus.json is stale — run `deno task docs:corpus` (or `deno task docs:build`) and commit it",
+    "src/mcp/docs-corpus.ts is stale — run `deno task docs:corpus` (or `deno task docs:build`) and commit it",
   );
 });
 
@@ -151,9 +155,8 @@ Deno.test("VNodeMarkdown: renders a JSX page tree (components called, shell/code
 // ── the shipped corpus covers the docs site ──
 
 Deno.test("docs corpus: every docs-site page is in the corpus", async () => {
-  const corpus = JSON.parse(await Deno.readTextFile(CORPUS_OUT)) as {
-    pages: { slug: string }[];
-  };
+  const { CORPUS_GZIP_BASE64 } = await import(toFileUrl(CORPUS_OUT).href);
+  const corpus = await decodeCorpus(CORPUS_GZIP_BASE64) as { pages: { slug: string }[] };
   const slugs = new Set(corpus.pages.map((p) => p.slug));
   const docs = new URL("../site/app/docs/", import.meta.url);
   for await (const e of Deno.readDir(docs)) {

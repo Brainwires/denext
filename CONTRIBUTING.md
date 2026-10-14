@@ -303,11 +303,16 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    the release gate, `deno task doc-lint` and `deno publish --dry-run`, shows
    the diff, then commits, tags `vX.Y.Z` and pushes — the tag triggers the
    publish. The gate does not re-run the whole suite: CI's `check` job already
-   passed it on HEAD (step 2), and the publish workflow runs it again on the
-   tagged commit, so it checks only the release's own changes (`deno fmt
-   --check`, `deno lint` and `RELEASE_DELTA_TESTS` in `scripts/release.ts`).
-   `--full-gate` runs `deno task check` instead. Don't run the suite yourself
-   before cutting; the release covers it.
+   passed it on HEAD (step 2), so it checks only the release's own changes
+   (`deno fmt --check`, `deno lint` and `RELEASE_DELTA_TESTS` in
+   `scripts/release.ts`). `--full-gate` runs `deno task check` instead. Don't
+   run the suite yourself before cutting; the release covers it. The publish
+   workflow decides the same way (`scripts/publish-verify.ts`): the release
+   commit on a CI-checked parent gets the delta gate, a tagged commit CI
+   checked itself gets fmt + lint, and anything else (a plugin tag on an
+   unchecked commit) gets the whole suite. Every binary, the Mac ones
+   included, is built on Linux; a `macos-check` job runs the released Mac
+   binaries afterwards, off the release's critical path.
 4. **Before running it for a stable major/minor**, hand-edit the prose the bump
    does not: `ROADMAP.md`'s status paragraph, any `README.md` stage language, and
    any stage language on the docs-site pages (`site/app/docs/*/content.md`).
