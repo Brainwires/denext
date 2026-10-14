@@ -20,7 +20,7 @@ import { applyDefaultSecurityHeaders } from "./response-headers.ts";
 import { type AppRuntime, type CompiledRules, compileRules } from "./pipeline-state.ts";
 import { runPipeline } from "./request-pipeline.ts";
 import { resolveCors } from "./cors.ts";
-import { resolveLimitPolicy } from "./remote-addr.ts";
+import { resolveLimitPolicy, responseCompletionOf } from "./remote-addr.ts";
 import { createAppLinksHandler } from "./app-links.ts";
 import { compressEncodings, compressOrPassThrough, type ContentCoding } from "./compress.ts";
 import type { RequestContext } from "./request-context.ts";
@@ -120,10 +120,11 @@ function dispatch(
   };
   const startedAt = performance.now();
   // Per-request abort signal — fires on client disconnect or (when configured)
-  // request timeout. Exposed on the context so handlers/components can thread it
-  // into their own fetch()es for cooperative cancellation.
+  // request timeout, and once the response is done. Exposed on the context so
+  // handlers/components can thread it into their own fetch()es for cooperative cancellation.
   const controller = new AbortController();
   linkAbort(originalRequest.signal, controller);
+  linkCompletion(responseCompletionOf(originalRequest), controller);
   requestCtx.signal = controller.signal;
 
   let pipeline = runWithContext(
@@ -292,6 +293,16 @@ function linkAbort(
     return;
   }
   source.addEventListener("abort", () => controller.abort(), { once: true });
+}
+
+/**
+ * Abort `controller` once the response is done, delivered or not (the server loop's
+ * `info.completed`). Under Deno's legacy abort the request's own signal did that too; with
+ * `--unstable-no-legacy-abort` (the toolchain's) it fires only when delivery fails.
+ */
+function linkCompletion(completed: Promise<void> | undefined, controller: AbortController): void {
+  const done = () => controller.abort();
+  completed?.then(done, done);
 }
 
 /** Race a response against a timeout; on expiry, abort in-flight work and 503. */

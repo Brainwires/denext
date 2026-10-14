@@ -19,6 +19,22 @@ const limitAddrs = new WeakMap<Request, string | null>();
 /** The origin the server that received a request listens on, as this machine reaches it. */
 const serverOrigins = new WeakMap<Request, string>();
 
+/** When the server loop's response to a request was delivered (or failed to be). */
+const completions = new WeakMap<Request, Promise<void>>();
+
+/**
+ * Remember when the response to `request` is done (`Deno.serve`'s `info.completed`; called once
+ * by the server loop): it resolves once the response is delivered and rejects when it is not.
+ */
+export function setResponseCompletion(request: Request, completed: Promise<void> | undefined) {
+  if (completed) completions.set(request, completed);
+}
+
+/** The completion {@link setResponseCompletion} recorded for `request`, or `undefined`. */
+export function responseCompletionOf(request: Request): Promise<void> | undefined {
+  return completions.get(request);
+}
+
 /**
  * The origin a client on this machine reaches a server bound to `addr` on: its address, with a
  * wildcard bind (`0.0.0.0` / `::`) as the loopback address and an IPv6 one bracketed.

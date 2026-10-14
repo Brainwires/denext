@@ -601,6 +601,42 @@ export async function toolchainConfigArgs(
 }
 
 /**
+ * The runtime flags a denext CLI child on the pinned toolchain gets (the toolchain re-exec, and a
+ * compiled binary's pinned-denext child once it handed the toolchain down).
+ *
+ * `--unstable-no-legacy-abort`: Deno.serve's `request.signal` aborts only when a response is NOT
+ * delivered (the client went away), not after every delivered one. The server loop reads it on
+ * each request to cancel work when the client disconnects, and under the legacy behavior Deno
+ * prints a warning on the first such request. The request context's own signal
+ * (`requestSignal()`) still aborts once a response is delivered, from `info.completed`.
+ *
+ * @param marker The toolchain the child runs (`DENEXT_TOOLCHAIN_ACTIVE`): a version, or `path`
+ *   for a `DENEXT_DENO=<path>` binary of unknown version (which gets none: it may predate them).
+ * @returns The flags.
+ */
+export function toolchainRuntimeFlags(marker: string | undefined): string[] {
+  return marker && marker !== "path" ? ["--unstable-no-legacy-abort"] : [];
+}
+
+/**
+ * The toolchain a CLI child spawned with `denoExecutable()` runs, for
+ * {@linkcode toolchainRuntimeFlags}: the `DENEXT_TOOLCHAIN_ACTIVE` marker, else this process's own
+ * Deno when it is a toolchain build (`2.9.7-denext.N`) and no `DENO_BIN` points elsewhere.
+ *
+ * @param env Reads an environment variable.
+ * @param denoVersion This process's `Deno.version.deno`.
+ * @returns The marker, or `undefined` (not the toolchain, or not known to be).
+ */
+export function childToolchainMarker(
+  env: (name: string) => string | undefined,
+  denoVersion: string,
+): string | undefined {
+  const marker = env(TOOLCHAIN_ACTIVE_ENV);
+  if (marker) return marker;
+  return !env("DENO_BIN") && /-denext\.\d+$/.test(denoVersion) ? denoVersion : undefined;
+}
+
+/**
  * `base` (denext's own child flags) followed by `inherited` (the parent's), with every `base`
  * flag the parent set itself dropped — Deno takes the last of a repeated flag, but the parent's
  * own choice should not depend on that.

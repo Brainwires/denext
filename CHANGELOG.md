@@ -619,6 +619,12 @@ a 3.x app to 4.0 involves. This section is the record.
   terminal unless `--yes` is passed. `db reset` and `migration down --force-reset` accept a "yes"
   at the terminal as well as `--yes`, and name the remote database in the question. A local
   database (loopback host, Unix socket, SQLite) is unchanged.
+- **No more "request.signal aborts on successful responses (legacy behavior)" warning on
+  `denext start` / `dev`.** The server loop reads each request's signal to cancel work when the
+  client goes away, which made Deno print that warning on the first response. A CLI child on
+  denext's toolchain now runs with `--unstable-no-legacy-abort`, so the request's signal fires
+  only when a response is not delivered. `requestSignal()` still aborts once a response is
+  delivered (from `Deno.serve`'s `info.completed`), as before.
 - **A leading `--` no longer swallows a verb's flags.** `deno task start -- --port 4000` runs
   `denext start -- --port 4000`, and the `--` made `--port 4000` pass-through tokens that `start`
   ignored. A verb that forwards nothing (`start`, `dev`, `build`, `routes`, …) now skips a `--`

@@ -2,7 +2,12 @@
 // next few ports before giving up (matching the behavior of most dev servers).
 
 import { applyDefaultSecurityHeaders } from "./app.ts";
-import { loopbackOrigin, setRemoteAddr, setServerOrigin } from "./remote-addr.ts";
+import {
+  loopbackOrigin,
+  setRemoteAddr,
+  setResponseCompletion,
+  setServerOrigin,
+} from "./remote-addr.ts";
 import { withoutRequestContext } from "./request-context.ts";
 import { serveStatic } from "./static.ts";
 import type { HstsConfig } from "./config.ts";
@@ -221,6 +226,7 @@ function serveOn(
       withoutRequestContext(() => {
         setRemoteAddr(request, info.remoteAddr);
         setServerOrigin(request, bound.origin);
+        setResponseCompletion(request, info.completed);
         return handler(request);
       }),
   );

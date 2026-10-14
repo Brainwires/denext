@@ -16,6 +16,7 @@
 
 import { join, resolve } from "@std/path";
 import {
+  childToolchainMarker,
   entrypointArg,
   isStandaloneBinary,
   maybeReexecPinned as reexecPinned,
@@ -24,6 +25,7 @@ import {
   pinnedConfigArgs,
   toolchainApplies,
   toolchainConfigArgs,
+  toolchainRuntimeFlags,
 } from "./src/cli/self-exec.ts";
 import { loadDenoToolchainPin, resolveDenoToolchain } from "./src/build/deno-toolchain.ts";
 import { runDenoPassthrough } from "./src/cli/commands/deno-toolchain.ts";
@@ -257,7 +259,15 @@ function maybeReexecPinned(dir: string): Promise<boolean> {
     spawn: (cli) =>
       spawnCliChild(
         denoExecutable(),
-        ["-A", ...pinnedConfigArgs(dir), ...cliNpmModeArgs(dir), ...minDepAgeArgs()],
+        [
+          "-A",
+          ...toolchainRuntimeFlags(
+            childToolchainMarker((n) => Deno.env.get(n), Deno.version.deno),
+          ),
+          ...pinnedConfigArgs(dir),
+          ...cliNpmModeArgs(dir),
+          ...minDepAgeArgs(),
+        ],
         cli,
         { DENEXT_PINNED_ACTIVE: "1" },
       ),
@@ -323,7 +333,11 @@ function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boole
           // `deno task`), it found the project's deno.json from the working directory, but the
           // child runs the https URL that resolved to, which discovers no config at all.
           ...mergeRunFlags(
-            [...cliNpmModeArgs(gateDir(command, ctx)), ...minDepAgeArgs()],
+            [
+              ...toolchainRuntimeFlags(marker),
+              ...cliNpmModeArgs(gateDir(command, ctx)),
+              ...minDepAgeArgs(),
+            ],
             await toolchainConfigArgs(entrypointArg(import.meta.url)),
           ),
         ],
@@ -357,6 +371,7 @@ async function reexecWithConfig(
       // sloppy-imports so the re-exec'd process can load Next.js app route modules
       // that use extensionless imports at runtime (permissive fallback).
       "--unstable-sloppy-imports",
+      ...toolchainRuntimeFlags(childToolchainMarker((n) => Deno.env.get(n), Deno.version.deno)),
       ...await childPermissionFlags(),
       // Deno's minimum-dependency-age policy applies to the child too and the parent can't
       // read the value it was started with: forward `DENEXT_MIN_DEP_AGE` (see minDepAgeArgs),
