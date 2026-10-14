@@ -43,6 +43,7 @@ export {
   type MagicLinkOptions,
 } from "./providers-email.ts";
 export { phoneOtp, type PhoneProviderOptions } from "./providers-phone.ts";
+export { saml, type SamlProviderOptions } from "./providers-saml.ts";
 
 /**
  * Google (OIDC). Verifies the `id_token`; no userinfo round-trip needed.

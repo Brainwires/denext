@@ -10,6 +10,7 @@ import type { Hasher } from "./hasher.ts";
 import type { RateLimitOptions } from "./rate-limit.ts";
 import type { SessionStore } from "./session-store.ts";
 import type { GoTrueCaptchaOptions, GoTrueHooks, GoTrueSmsMessage } from "./gotrue/options.ts";
+import type { SamlPrivateKey } from "./saml/config.ts";
 
 /** A normalized user profile — the non-sensitive identity denext stores in the session. */
 export interface AuthUser {
@@ -282,8 +283,70 @@ export interface PhoneProvider {
   allowSignUp: boolean;
 }
 
+/**
+ * A SAML 2.0 identity provider on denextAuth's own endpoints (`saml({ … })`): `GET
+ * {basePath}/signin/:id` sends the browser to the IdP with a signed-when-configured
+ * AuthnRequest, the IdP posts its Response back to `POST {basePath}/callback/:id`, and
+ * `GET {basePath}/saml/:id/metadata` publishes this service provider's metadata. The Response is
+ * verified by the same SAML implementation `/auth/v1` uses, and the user is resolved by the same
+ * SSO rules: the account is an SSO user, signed in through this IdP only.
+ */
+export interface SamlProvider {
+  /** Provider id (the `[provider]` route segment). */
+  id: string;
+  /** Always `"saml"`. */
+  type: "saml";
+  /** Display name for a sign-in button. */
+  name?: string;
+  /** The IdP's metadata XML (entity id, SSO URL, signing certificates). */
+  metadataXml: string;
+  /**
+   * The email domains this IdP speaks for. An asserted address on one of them becomes the
+   * account's verified email; any other address is never bound to an account (the user signs in
+   * with no email). Without domains, no email is bound.
+   */
+  domains?: string[];
+  /**
+   * Map the assertion's attributes to user metadata (`{ email: "mail", name: "displayName" }`);
+   * the email defaults to the NameID when it is an address, else to `email` / `mail`.
+   */
+  attributeMapping?: Record<string, string>;
+  /**
+   * Link a first sign-in to an EXISTING account with the same email address when the address is
+   * on one of {@linkcode domains} (default `false`: such a sign-in is refused,
+   * `?error=account_not_linked`). Turn it on only for an IdP you trust to speak for every address
+   * in its domains.
+   */
+  linkExistingAccounts?: boolean;
+  /** Create a new user on a first sign-in (default `true`). */
+  allowSignUp?: boolean;
+  /** The NameID format to request (e.g. `urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress`). */
+  nameIdFormat?: string;
+  /** This service provider's entity id and keys (see {@link SamlProviderSp}). */
+  sp?: SamlProviderSp;
+}
+
+/** This service provider, as one {@link SamlProvider} presents itself to its IdP. */
+export interface SamlProviderSp {
+  /** The SP entity id (default: `{canonicalOrigin}{basePath}/saml/:id/metadata`). */
+  entityId?: string;
+  /** Signs AuthnRequests (RSA-SHA256): a PKCS #8 PEM or an RSA private JWK. */
+  signingKey?: SamlPrivateKey;
+  /** The X.509 certificate (PEM) of {@linkcode signingKey}, published in the SP metadata. */
+  signingCertificate?: string;
+  /** Decrypts encrypted assertions (RSA-OAEP): a PKCS #8 PEM or an RSA private JWK. */
+  encryptionKey?: SamlPrivateKey;
+  /** The X.509 certificate (PEM) of {@linkcode encryptionKey}, published `use="encryption"`. */
+  encryptionCertificate?: string;
+}
+
 /** Any configured provider. */
-export type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider | PhoneProvider;
+export type AuthProvider =
+  | OAuthProvider
+  | CredentialsProvider
+  | EmailProvider
+  | PhoneProvider
+  | SamlProvider;
 
 /**
  * True for an OAuth/OIDC provider (vs. Credentials or Email).
@@ -313,6 +376,16 @@ export function isEmailProvider(p: AuthProvider): p is EmailProvider {
  */
 export function isPhoneProvider(p: AuthProvider): p is PhoneProvider {
   return p.type === "phone";
+}
+
+/**
+ * True for a SAML 2.0 provider (`saml()`).
+ *
+ * @param p Any configured provider.
+ * @returns Whether `p` is a {@link SamlProvider}.
+ */
+export function isSamlProvider(p: AuthProvider): p is SamlProvider {
+  return p.type === "saml";
 }
 
 /** What {@link AuthCallbacks.authorized} is asked about. */

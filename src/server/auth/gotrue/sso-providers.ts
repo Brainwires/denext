@@ -107,7 +107,14 @@ export function samlOptions(ctx: GoTrueContext): NonNullable<GoTrueContext["opti
   return saml;
 }
 
-function fromConfig(provider: GoTrueSamlProvider): SsoProvider {
+/**
+ * A config-declared identity provider in the shape the SSO routes use — `/auth/v1`'s
+ * `saml.providers`, and a `saml()` provider on denextAuth's own endpoints.
+ *
+ * @param provider The declaration.
+ * @returns The provider (metadata parsed; freshness not checked).
+ */
+export function fromConfig(provider: GoTrueSamlProvider): SsoProvider {
   const keys: NonNullable<SsoAttributeMapping["keys"]> = {};
   for (const [field, name] of Object.entries(provider.attributeMapping ?? {})) {
     keys[field] = { name };
@@ -263,7 +270,10 @@ function claimOf(adapter: AuthAdapter | undefined): Claim {
  * @param namespace What kind of id (`assertion`, `logout`).
  * @returns The cache.
  */
-export function replayCacheOf(ctx: GoTrueContext, namespace: string): SamlReplayCache {
+export function replayCacheOf(
+  ctx: Pick<GoTrueContext, "adapter">,
+  namespace: string,
+): SamlReplayCache {
   const claim = claimOf(ctx.adapter);
   return {
     async claim(id, expiresAt) {

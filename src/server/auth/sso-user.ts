@@ -67,8 +67,9 @@ export function ssoStarted(methods: Iterable<string>): boolean {
  * an SSO user's only when its identity provider started it (`methods` include `sso/saml`; an MFA
  * step-up keeps that entry). Every other session of an SSO user — a password, code, link,
  * passkey or OAuth sign-in from before the account became an SSO user, or from before non-SSO
- * sign-ins of SSO users were refused — is refused at refresh and at use. denextAuth's own cookie
- * and native sessions never come from an identity provider, so none of an SSO user's lives.
+ * sign-ins of SSO users were refused — is refused at refresh and at use. A denextAuth cookie or
+ * native session lives for an SSO user only when a `saml()` provider's sign-in started it (its
+ * `amr` carries `sso/saml`).
  *
  * @param user The stored user, read fresh.
  * @param methods The session's authentication methods (`amr`).

@@ -557,6 +557,7 @@ export {
   oidc,
   okta,
   phoneOtp,
+  saml,
   slack,
 } from "./auth/providers.ts";
 export type {
@@ -571,6 +572,7 @@ export type {
   OidcOptions,
   OktaOptions,
   PhoneProviderOptions,
+  SamlProviderOptions,
 } from "./auth/providers.ts";
 // Password hashing for the Credentials provider (salted scrypt via node:crypto).
 export { hashPassword, verifyPassword } from "./auth/password.ts";
@@ -792,6 +794,8 @@ export type {
   OAuthProvider,
   PhoneProvider,
   ProfileInput,
+  SamlProvider,
+  SamlProviderSp,
   SendVerificationRequest,
   SignInFailedReason,
   TenantIssuer,

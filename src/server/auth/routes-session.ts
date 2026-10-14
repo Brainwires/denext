@@ -16,7 +16,7 @@ import {
 } from "./routes-shared.ts";
 import { emitAuthEvent } from "./events.ts";
 import { clearAuthSession, readAuthSession, refreshLiveSession } from "./session.ts";
-import { isEmailProvider, isPhoneProvider } from "./types.ts";
+import { isEmailProvider, isPhoneProvider, isSamlProvider } from "./types.ts";
 
 /**
  * `GET {basePath}/session` — the client's view of the session: the user and the expiry,
@@ -43,7 +43,7 @@ export async function handleSession(ctx: AuthRouteContext): Promise<Response> {
 
 /**
  * `GET {basePath}/providers` — the configured providers' ids and types (plus the display
- * `name` of an email or phone provider), so a sign-in page can render its buttons. Never exposes
+ * `name` of an email, phone or SAML provider), so a sign-in page can render its buttons. Never exposes
  * client ids, secrets, or endpoints.
  *
  * @param ctx The route context.
@@ -52,7 +52,7 @@ export async function handleSession(ctx: AuthRouteContext): Promise<Response> {
 export function handleProviders(ctx: AuthRouteContext): Response {
   return json(
     ctx.config.providers.map((p) =>
-      isEmailProvider(p) || isPhoneProvider(p)
+      isEmailProvider(p) || isPhoneProvider(p) || isSamlProvider(p)
         ? { id: p.id, name: p.name, type: p.type }
         : { id: p.id, type: p.type }
     ),
