@@ -17,6 +17,14 @@
 // and verifies. `DENEXT_DENO=stock` skips that pass with a note; any other reason the toolchain
 // is unavailable fails it. Outside CI (`CI` unset) that pass runs with `--no-check`: one
 // `DENO_DIR` holds one type-check cache, which each Deno version wipes when the other opened it.
+//
+// With `--coverage=<dir>` (the coverage gates) every pass runs on the toolchain and adds
+// `--coverage-raw-data-only`, so the profiles accumulate in `<dir>` and `deno coverage <dir>` on
+// the toolchain (`scripts/toolchain-deno.ts`) merges them: from 2.9.7-denext.17 its
+// `deno coverage` merges a module's plain-run and Vitest-run profiles per emitted form, as the
+// union of their lines. The stock files then run in one pass without `--parallel`, the serial
+// ones included (a coverage run stays deterministic). `DENEXT_DENO=stock` runs them on the
+// running Deno and skips the Vitest files, as without coverage.
 
 import { walk } from "@std/fs/walk";
 import { fromFileUrl, join, relative } from "@std/path";
@@ -95,11 +103,8 @@ function inScope(
 const VITEST_GRANTS: readonly string[] = ["--allow-read", "--allow-write"];
 
 /**
- * The Vitest pass's own flags. Coverage never reaches it: the Vitest transform changes the code a
- * module emits, and under the pinned toolchain (2.9.7-denext.16) `deno coverage` maps such a
- * profile on its own but under-reports a module whose plain-run and Vitest-run profiles it merges
- * (`src/server/auth/rate-limit.ts` 91.9% + 30.8% → 38.9% of lines), so the Vitest files stay out
- * of every coverage run (see CONTRIBUTING.md).
+ * The Vitest pass's own flags. A coverage flag stays (see the module header: the toolchain's
+ * `deno coverage` merges the Vitest run's profiles with the plain run's from 2.9.7-denext.17).
  *
  * Type-checking is skipped (`--no-check`) unless `typeCheck` — CI — or the flags already decide.
  * Deno keeps one type-check cache per `DENO_DIR` and wipes it whenever another Deno version opens
@@ -107,16 +112,23 @@ const VITEST_GRANTS: readonly string[] = ["--allow-read", "--allow-write"];
  * (~25 s for the suite) on every local run.
  */
 function vitestFlags(flags: readonly string[], typeCheck: boolean): string[] {
-  const own = flags.filter((f) => !/^--coverage(?:=|$)/.test(f));
-  const decided = own.some((f) => /^--(?:no-)?check(?:=|$)/.test(f));
-  return typeCheck || decided ? own : [...own, "--no-check"];
+  const decided = flags.some((f) => /^--(?:no-)?check(?:=|$)/.test(f));
+  return typeCheck || decided ? [...flags] : [...flags, "--no-check"];
+}
+
+/** Whether `flags` ask for coverage (`--coverage` / `--coverage=<dir>`). */
+export function wantsCoverage(flags: readonly string[]): boolean {
+  return flags.some((f) => /^--coverage(?:=|$)/.test(f));
 }
 
 /** What {@linkcode testPasses} hands back: a pass's `deno test` arguments, or null to skip it. */
 export interface TestPasses {
-  /** Every stock test file in scope except the serial ones, in parallel. */
+  /**
+   * Every stock test file in scope except the serial ones, in parallel — or, with coverage, every
+   * stock file in scope (the serial ones included) in one pass without `--parallel`.
+   */
   parallel: string[] | null;
-  /** The serial files in scope, one at a time. */
+  /** The serial files in scope, one at a time (null with coverage: the first pass ran them). */
   serial: string[] | null;
   /** The Vitest files in scope, on denext's Deno toolchain. */
   vitest: string[] | null;
@@ -138,8 +150,14 @@ export function testPasses(
   vitest: readonly string[] = [],
   typeCheckVitest = true,
 ): TestPasses {
-  const { ignores, flags, paths, rest } = splitArgs(args);
-  const serialFiles = inScope(serial, paths, ignores);
+  const split = splitArgs(args);
+  const { ignores, paths, rest } = split;
+  const coverage = wantsCoverage(split.flags);
+  // Coverage accumulates across the passes: no pass may empty the directory another wrote.
+  const flags = coverage && !split.flags.includes("--coverage-raw-data-only")
+    ? [...split.flags, "--coverage-raw-data-only"]
+    : split.flags;
+  const serialFiles = coverage ? [] : inScope(serial, paths, ignores);
   const vitestFiles = inScope(vitest, paths, ignores);
   // A `.vitest.ts` path named on its own is the Vitest pass's alone: stock Deno runs an explicitly
   // named file whatever its name, and cannot resolve `vitest`.
@@ -149,7 +167,7 @@ export function testPasses(
   return {
     parallel: paths.length > 0 && stockPaths.length === 0 ? null : [
       ...base,
-      "--parallel",
+      ...(coverage ? [] : ["--parallel"]),
       ...(ignore.length > 0 ? [`--ignore=${ignore.join(",")}`] : []),
       ...stockPaths,
       ...rest,
@@ -186,13 +204,16 @@ export async function findVitestFiles(root: string = ROOT): Promise<string[]> {
   return out.sort();
 }
 
-/** Whether `version` (`Deno.version.deno`) is a denext toolchain build (`2.9.7-denext.16`). */
+/** Whether `version` (`Deno.version.deno`) is a denext toolchain build (`2.9.7-denext.17`). */
 export function isToolchainBuild(version: string): boolean {
   return /-denext\.\d+$/.test(version);
 }
 
-/** The Deno the Vitest pass runs on, or null when `DENEXT_DENO=stock` opted out. */
-async function vitestDeno(): Promise<string | null> {
+/**
+ * denext's Deno toolchain binary (the running Deno when it already is one), or null when
+ * `DENEXT_DENO=stock` opted out. Throws when the toolchain is otherwise unavailable.
+ */
+export async function toolchainDeno(): Promise<string | null> {
   if (isToolchainBuild(Deno.version.deno)) return Deno.execPath();
   const choice = await resolveDenoToolchain();
   if (choice.kind === "toolchain") {
@@ -218,14 +239,7 @@ async function deno(args: string[], bin: string = Deno.execPath()): Promise<bool
 }
 
 /** The Vitest pass: true when it passed or was skipped on purpose. */
-async function runVitestPass(args: string[]): Promise<boolean> {
-  let bin: string | null;
-  try {
-    bin = await vitestDeno();
-  } catch (err) {
-    console.error(`test-run: ${err instanceof Error ? err.message : String(err)}`);
-    return false;
-  }
+async function runVitestPass(args: string[], bin: string | null): Promise<boolean> {
   if (bin === null) {
     console.error(`test-run: ${TOOLCHAIN_ENV}=stock — skipping the Vitest test files.`);
     return true;
@@ -233,11 +247,29 @@ async function runVitestPass(args: string[]): Promise<boolean> {
   return await deno(args, bin);
 }
 
+/** The toolchain for `need`ed passes: a path, null (`DENEXT_DENO=stock`), or false (failed). */
+async function toolchainFor(need: boolean): Promise<string | null | false> {
+  if (!need) return null;
+  try {
+    return await toolchainDeno();
+  } catch (err) {
+    console.error(`test-run: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
+}
+
 if (import.meta.main) {
   const ci = (Deno.env.get("CI") ?? "") !== "";
   const passes = testPasses(Deno.args, SERIAL_TESTS, await findVitestFiles(), ci);
-  const parallel = passes.parallel ? await deno(passes.parallel) : true;
-  const serial = passes.serial ? await deno(passes.serial) : true;
-  const vitest = passes.vitest ? await runVitestPass(passes.vitest) : true;
+  // With coverage every pass runs on the toolchain, whose `deno coverage` merges them.
+  const coverage = wantsCoverage(splitArgs(Deno.args).flags);
+  const toolchain = await toolchainFor(coverage || passes.vitest !== null);
+  // Without coverage an unavailable toolchain fails the Vitest pass alone.
+  if (toolchain === false && coverage) Deno.exit(1);
+  const stock = coverage && typeof toolchain === "string" ? toolchain : Deno.execPath();
+  const parallel = passes.parallel ? await deno(passes.parallel, stock) : true;
+  const serial = passes.serial ? await deno(passes.serial, stock) : true;
+  const vitest = !passes.vitest ||
+    (toolchain !== false && await runVitestPass(passes.vitest, toolchain));
   if (!parallel || !serial || !vitest) Deno.exit(1);
 }

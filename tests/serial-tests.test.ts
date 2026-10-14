@@ -13,7 +13,12 @@ import {
   SERIAL_SOURCES,
   SERIAL_TESTS,
 } from "./serial-tests.ts";
-import { findVitestFiles, isToolchainBuild, testPasses } from "../scripts/test-run.ts";
+import {
+  findVitestFiles,
+  isToolchainBuild,
+  testPasses,
+  wantsCoverage,
+} from "../scripts/test-run.ts";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 
@@ -289,23 +294,17 @@ Deno.test("test-run: a flag's separate value stays with its flag; `--` args reac
 Deno.test("test-run: the Vitest files run in their own pass, never in the stock ones", () => {
   const serial = ["tests/a.test.ts"];
   const vitest = ["tests/v.vitest.ts", "tests/integration/w.vitest.ts"];
-  const all = testPasses(
-    ["--ignore=tests/e2e/", "--coverage=cov", "--reporter=dot"],
-    serial,
-    vitest,
-  );
+  const all = testPasses(["--ignore=tests/e2e/", "--reporter=dot"], serial, vitest);
   // A `.vitest.ts` file is outside Deno's default discovery: the stock passes need no ignore.
   assertEquals(all.parallel, [
     "test",
     "-A",
     "--unstable-kv",
-    "--coverage=cov",
     "--reporter=dot",
     "--parallel",
     "--ignore=tests/e2e/,tests/a.test.ts",
   ]);
-  // Coverage never reaches the Vitest pass (merged with a plain run's profile it under-reports),
-  // and the pass gets only the grants its files use.
+  // The pass gets only the grants its files use.
   assertEquals(all.vitest, [
     "test",
     "--allow-read",
@@ -345,6 +344,38 @@ Deno.test("test-run: the Vitest files run in their own pass, never in the stock 
   assertEquals(one.vitest?.at(-1), "tests/v.vitest.ts");
 });
 
+Deno.test("test-run: with coverage every pass accumulates raw profiles, the stock files in one sequential pass", () => {
+  const serial = ["tests/a.test.ts"];
+  const vitest = ["tests/v.vitest.ts"];
+  const passes = testPasses(["--ignore=tests/e2e/", "--coverage=cov"], serial, vitest);
+  // No `--parallel` and no serial split: the serial files run in the same deterministic pass.
+  assertEquals(passes.parallel, [
+    "test",
+    "-A",
+    "--unstable-kv",
+    "--coverage=cov",
+    "--coverage-raw-data-only",
+    "--ignore=tests/e2e/",
+  ]);
+  assertEquals(passes.serial, null);
+  // The Vitest pass writes into the same directory, without emptying it.
+  assertEquals(passes.vitest, [
+    "test",
+    "--allow-read",
+    "--allow-write",
+    "--unstable-kv",
+    "--coverage=cov",
+    "--coverage-raw-data-only",
+    "--parallel",
+    "tests/v.vitest.ts",
+  ]);
+  // An explicit `--coverage-raw-data-only` is not doubled.
+  const raw = testPasses(["--coverage=cov", "--coverage-raw-data-only"], serial, vitest);
+  assertEquals(raw.parallel?.filter((a) => a === "--coverage-raw-data-only").length, 1);
+  assert(wantsCoverage(["--coverage"]));
+  assert(!wantsCoverage(["--coverage-raw-data-only", "--reporter=dot"]));
+});
+
 Deno.test("test-run: every Vitest file under tests/ is found, and only toolchain builds run them", async () => {
   const found = await findVitestFiles();
   assert(found.length > 0, "the repo has Vitest files");
@@ -355,7 +386,7 @@ Deno.test("test-run: every Vitest file under tests/ is found, and only toolchain
       `${f}: a Vitest file runs in its own pass, never the serial one`,
     );
   }
-  assert(isToolchainBuild("2.9.7-denext.16"));
+  assert(isToolchainBuild("2.9.7-denext.17"));
   assert(!isToolchainBuild("2.9.6"));
   assert(!isToolchainBuild("2.9.7"));
 });

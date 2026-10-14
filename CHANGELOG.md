@@ -425,6 +425,19 @@ and this project adheres to
 
 ### Changed
 
+- **denext pins Deno toolchain and Deno Desktop runtime 2.9.7-denext.17** (both pins from the same
+  release, hashes and attestations verified). Each toolchain download now carries esbuild 0.25.5
+  beside `deno` (its version and SHA-256 pinned per platform), so builds on the toolchain use it
+  instead of fetching the npm esbuild. The toolchain keeps its own type-check, code and analysis
+  caches in `DENO_DIR` (suffixed `_denext`), so alternating it with stock Deno no longer throws
+  either one's caches away. `vitest`, `vite-plus/test` and `@jest/globals` are typed when the
+  package isn't installed (no more `any` mocks; `deno check` and the editor resolve them too), and
+  the test files of a Vitest / Jest config project are type-checked. `deno bundle` uses the
+  shipped esbuild. `deno coverage` merges a module's profiles from a plain run and a
+  Vitest run (each reported through its own source map, then combined line for line), and
+  `--coverage-raw-data-only` runs keep accumulating in one directory. The minimum desktop runtime
+  stays 2.9.7-denext.14.
+
 - **`denext db` is a core verb.** `@denext/backend` no longer contributes it; it installs hooks
   the core verb uses: its own migrations, its service schemas, and the Postgres actions
   (`diff`, `dump`, `pull`, `lint`, `inspect`, `test`, `types`). `db status` prints

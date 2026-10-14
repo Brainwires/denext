@@ -170,11 +170,23 @@ project (the config, `__mocks__`, automock) and of the environment variables Vit
 grant, so a `deno test` without `-A` lists only what its tests use (`denext deno test
 --allow-read=tests/fixtures …`). `denext test` runs `deno test -A` and needs nothing more.
 
-Coverage of a suite with Vitest files: report the Vitest files' coverage on the toolchain
-(`denext deno coverage`), in a report of its own. The Vitest layer changes the code a module
-emits, and `deno coverage` under-reports a module whose profiles from a plain run and a Vitest run
-it merges; a stock Deno run's profile of a module the toolchain has since run reads as "Missing
-transpiled source".
+Coverage of a suite with Vitest files (from `2.9.7-denext.17`): run every pass on the toolchain
+into one directory, each with `--coverage-raw-data-only` so no pass empties what another wrote,
+then report that directory with the toolchain's `deno coverage`:
+
+```sh
+rm -rf cov
+denext deno test -A --coverage=cov --coverage-raw-data-only               # the Deno.test files
+denext deno test -A --coverage=cov --coverage-raw-data-only tests/**/*.vitest.ts
+denext deno coverage cov --lcov --output=cov.lcov
+```
+
+The Vitest layer changes the code a module emits, so a module run by both passes has two
+profiles of two different scripts; the toolchain's `deno coverage` reports each through its own
+source map and merges the two reports line for line (a line run by either pass counts as covered).
+Run every pass and the report on the toolchain: stock Deno's `deno coverage` merges such profiles
+range by range, offsets into two different scripts, and under-reports the module (as the
+toolchain's did before `2.9.7-denext.17`).
 
 denext never rewrites the tasks in your existing `deno.json`; `denext doctor` names the tasks that
 call `deno test` directly so you can change them, or run them with `denext task`.
