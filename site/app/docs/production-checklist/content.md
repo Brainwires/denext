@@ -82,7 +82,7 @@ Each line: what to set → where it is documented. Config keys go in
   lives at `.denext/cache.db` and job history at `.denext/jobs.db`. Without
   the grant the cache **silently falls back to memory** (one warning line at
   boot; `/_denext/health` reports `"cacheStore": "memory"`). The scaffold's
-  `deno task start` already grants it. →
+  `denext task start` already grants it. →
   [Health & readiness](/docs/deploy#13-health--readiness)
 - Back up `.denext/*.db` and any app database (`auth.db` from
   `sqliteAuthAdapter`, `.denext/sessions.db` from `sqliteSessionStore`, your own
@@ -122,7 +122,8 @@ Each line: what to set → where it is documented. Config keys go in
   private socket peer with no trusted forwarded hop (a proxy every visitor
   shares) and warns once: behind your proxy, set the app's
   `trustForwardedHeaders: true` (or `DENEXT_TRUST_PROXY=1`), name the header it
-  sets to the client address in `rateLimitHeader` (`cf-connecting-ip`), or pass a
+  sets to the client address in `rateLimitHeader` (`cf-connecting-ip`, with the
+  proxy's ranges in `rateLimitTrustedProxies`), or pass a
   `key`; `rateLimitLocalAddresses: true` limits such peers by their own address
   (a LAN deployment). An IPv6 client counts as its `/64`. →
   [Typed API](/docs/typed-api), [Auth › Rate limiting](/docs/auth#rate-limiting)
@@ -206,7 +207,7 @@ PORT=3000                                        # every PaaS injects one; --por
 ```
 
 ```sh
-deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^2/cli start .
+deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.0.0/cli start .
 ```
 
 And the config keys that belong in `denext.config.ts` rather than the

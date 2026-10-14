@@ -2,7 +2,12 @@
 // next few ports before giving up (matching the behavior of most dev servers).
 
 import { applyDefaultSecurityHeaders } from "./app.ts";
-import { setRemoteAddr } from "./remote-addr.ts";
+import {
+  loopbackOrigin,
+  setRemoteAddr,
+  setResponseCompletion,
+  setServerOrigin,
+} from "./remote-addr.ts";
 import { withoutRequestContext } from "./request-context.ts";
 import { serveStatic } from "./static.ts";
 import type { HstsConfig } from "./config.ts";
@@ -205,6 +210,9 @@ function serveOn(
   options: ServeUtilOptions,
   handler: (request: Request) => Response | Promise<Response>,
 ): Deno.HttpServer {
+  // Where this machine reaches the server (`localServerOrigin()`): from the bound address, never
+  // from a request's `Host`.
+  const bound: { origin?: string } = {};
   const server = Deno.serve(
     {
       port,
@@ -217,9 +225,12 @@ function serveOn(
     (request, info) =>
       withoutRequestContext(() => {
         setRemoteAddr(request, info.remoteAddr);
+        setServerOrigin(request, bound.origin);
+        setResponseCompletion(request, info.completed);
         return handler(request);
       }),
   );
+  bound.origin = loopbackOrigin(server.addr);
   const { signal } = options;
   if (signal) {
     const beginShutdown = () => {

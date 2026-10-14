@@ -9,7 +9,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { fromFileUrl, join, SEPARATOR } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../src/build/esbuild/mod.ts";
 import {
   analyzeBarrel,
   type AutoOptimizePackageImports,

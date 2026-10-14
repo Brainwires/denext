@@ -8,21 +8,30 @@ import { cacheStoreHealthy, cacheStoreKind } from "../../server/cache.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../../server/image-optimizer.ts";
 import { handleLiveUpgrade } from "../../server/live.ts";
 import { serveImmutableAsset } from "../../server/serve-utils.ts";
+import { runHealthChecks } from "../../server/health.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { FONTS_PUBLIC_PREFIX } from "../self-host-fonts.ts";
 import { CLIENT_PREFIX } from "./assets.ts";
 
 /**
- * Liveness probe (for load balancers / k8s). Always 200 — the site serves even when the
+ * Liveness probe (for load balancers / k8s). 200 even when the
  * cache backend is down (reads degrade to live renders) — but the body reports cache
  * reachability so operators aren't blind to an outage, and which store backs it
  * (`cacheStore`: `sqlite` | `memory` | `custom`) so a silent fallback to the per-process
- * memory store (a missing `--allow-write=.denext`) is visible from the probe.
+ * memory store (a missing `--allow-write=.denext`) is visible from the probe. A readiness
+ * check a plugin registered (`registerHealthCheck`, e.g. `@denext/backend`'s database) that
+ * fails makes it `503` with `"status": "degraded"` — the instance cannot serve.
  */
 async function healthResponse(paths: ProjectPaths, secure: boolean): Promise<Response> {
-  const cache = (await cacheStoreHealthy()) ? "ok" : "degraded";
+  const [cacheOk, ready] = await Promise.all([cacheStoreHealthy(), runHealthChecks()]);
+  const body = {
+    status: ready.ok ? "ok" : "degraded",
+    cache: cacheOk ? "ok" : "degraded",
+    cacheStore: cacheStoreKind(),
+    ...(Object.keys(ready.checks).length > 0 ? { checks: ready.checks } : {}),
+  };
   return applyDefaultSecurityHeaders(
-    Response.json({ status: "ok", cache, cacheStore: cacheStoreKind() }, { status: 200 }),
+    Response.json(body, { status: ready.ok ? 200 : 503, headers: { "cache-control": "no-store" } }),
     secure,
     paths.config?.hsts,
   );

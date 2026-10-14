@@ -27,9 +27,9 @@ would fail.
 ## Run it
 
 ```sh
-deno task dev      # http://localhost:3000
+denext task dev      # http://localhost:3000
 # or, production:
-deno task build && deno task start
+denext task build && denext task start
 ```
 
 Demo accounts (seeded on first run): `demo@denext.dev` and `alice@denext.dev`,

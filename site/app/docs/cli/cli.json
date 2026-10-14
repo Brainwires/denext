@@ -296,6 +296,151 @@
       ]
     },
     {
+      "name": "db",
+      "summary": "Migrate, roll back, push, reset, seed, diff, lint, inspect and test the app's database",
+      "usage": "denext db <action> [args...] [options]",
+      "description": "Usage: denext db <action> [flags]\n\nPostgres or SQLite:\n  migrate     Apply the pending migrations (= denext migration up; --to, --include-all)\n  rollback    Revert the newest applied migrations (= migration down; --steps, --to,\n              --force-reset --yes)\n  status      Local and applied migrations (= migration list; --json)\n  push        @denext/backend's migrations, then the app's (--dry-run, --include-seed)\n  reset       Drop the app's tables, re-apply everything, then seed (--yes; --version, --no-seed)\n  seed        Run supabase/seed.sql (or seed.sql), then create the config's buckets\n  link        Check a remote Postgres URL and store it in .env for --linked (--url)\n\nPostgres, through @denext/backend (backend({ postgres })):\n  diff        DDL for what the database has that the migrations do not (--schema, --file <name>)\n  pull [name] The database's schema as a new migration (like `supabase db pull`)\n  dump        pg_dump the database (--data-only, --schema, --file <path>)\n  lint        plpgsql_check when installed, plus checks for RLS, search_path and grants\n              (--schema, --level warning|error, --fail-on none|warning|error; --json)\n  inspect <report>  bloat | blocking | cache-hit | calls | index-usage | locks |\n              long-running-queries | outliers | replication-slots | role-connections |\n              seq-scans | table-sizes | total-index-size | unused-indexes | vacuum-stats …\n  test [files]  Run pgTAP tests (supabase/tests/**/*.sql; needs the pgtap extension)\n  types       TypeScript types for the database (--schema, --file <path>; `denext gen types`)\n\nThe database is the project's own, or --db-url <url> / --linked (see `denext db link`).",
+      "flags": [
+        {
+          "name": "dry-run",
+          "type": "boolean",
+          "description": "up / down / push: list what would run"
+        },
+        {
+          "name": "to",
+          "type": "string",
+          "valueName": "<version>",
+          "description": "up: apply up to this version; down: revert everything after it"
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "valueName": "<version>",
+          "description": "squash / reset: up to this version (also accepted by up and down)"
+        },
+        {
+          "name": "steps",
+          "altNames": [
+            "last"
+          ],
+          "type": "number",
+          "valueName": "<n>",
+          "description": "down: how many applied migrations to revert (default 1)"
+        },
+        {
+          "name": "include-all",
+          "type": "boolean",
+          "description": "up: also apply pending migrations older than the last applied one"
+        },
+        {
+          "name": "force-reset",
+          "type": "boolean",
+          "description": "down: reset the database and re-apply up to the target (no down scripts needed)"
+        },
+        {
+          "name": "yes",
+          "type": "boolean",
+          "description": "Confirm without asking: reset / down --force-reset anywhere; up / down / push / repair / squash on a remote database"
+        },
+        {
+          "name": "no-seed",
+          "type": "boolean",
+          "description": "reset: skip the seed"
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "valueName": "<applied|reverted>",
+          "description": "repair: mark the versions applied or reverted"
+        },
+        {
+          "name": "stdin",
+          "type": "boolean",
+          "description": "new: read the up SQL from stdin"
+        },
+        {
+          "name": "force",
+          "type": "boolean",
+          "description": "fetch: overwrite existing files; seed: re-run unchanged seed files"
+        },
+        {
+          "name": "db-url",
+          "type": "string",
+          "valueName": "<url>",
+          "description": "The database: a postgres:// URL, or a SQLite file (sqlite:<path>, or a .db path)"
+        },
+        {
+          "name": "linked",
+          "type": "boolean",
+          "description": "The database `denext db link` stored (DENEXT_LINKED_DATABASE_URL)"
+        },
+        {
+          "name": "local",
+          "type": "boolean",
+          "description": "The project's own database (the default)"
+        },
+        {
+          "name": "include-seed",
+          "type": "boolean",
+          "description": "push: run the seed afterwards"
+        },
+        {
+          "name": "url",
+          "type": "string",
+          "valueName": "<url>",
+          "description": "link: the remote postgres:// URL"
+        },
+        {
+          "name": "skip-check",
+          "type": "boolean",
+          "description": "link: store the URL without connecting"
+        },
+        {
+          "name": "schema",
+          "type": "string",
+          "valueName": "<name>",
+          "description": "diff / pull / dump / lint / types: the schema (repeatable; default public)"
+        },
+        {
+          "name": "file",
+          "type": "string",
+          "valueName": "<path>",
+          "description": "diff: a migration name; dump / types: an output file"
+        },
+        {
+          "name": "data-only",
+          "type": "boolean",
+          "description": "dump: data, not the schema"
+        },
+        {
+          "name": "level",
+          "type": "string",
+          "valueName": "<warning|error>",
+          "description": "lint: the lowest level reported (default warning)"
+        },
+        {
+          "name": "fail-on",
+          "type": "string",
+          "valueName": "<none|warning|error>",
+          "description": "lint: exit 1 at this level (default error)"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "action",
+          "required": true,
+          "variadic": false,
+          "description": "migrate | rollback | status | push | reset | seed | link | diff | dump | pull | lint | inspect | test | types"
+        },
+        {
+          "name": "args",
+          "required": false,
+          "variadic": true,
+          "description": "inspect: the report; pull: a name; test: files"
+        }
+      ]
+    },
+    {
       "name": "deno",
       "summary": "Run denext's Deno toolchain with the given arguments",
       "usage": "denext deno [args...] [-- <deno args>]",
@@ -601,7 +746,7 @@
       "name": "fallow",
       "summary": "Add the fallow code-health gate to a project",
       "usage": "denext fallow <action> [dir] [options]",
-      "description": "  denext fallow init [dir] [--dry-run]\n\n  init  writes fallow.toml, .githooks/pre-commit, scripts/coverage-to-istanbul.ts and\n        AGENTS.md (each only when missing), adds the fallow / fallow:audit /\n        coverage:fallow / hooks:install tasks to deno.json (npm:fallow@3.30.0)\n        and coverage/ + .fallow/ to .gitignore. Run `deno task hooks:install` to\n        enable the commit gate.",
+      "description": "  denext fallow init [dir] [--dry-run]\n\n  init  writes fallow.toml, .githooks/pre-commit, scripts/coverage-to-istanbul.ts and\n        AGENTS.md (each only when missing), adds the fallow / fallow:audit /\n        coverage:fallow / hooks:install tasks to deno.json (npm:fallow@3.30.0)\n        and coverage/ + .fallow/ to .gitignore. Run `denext task hooks:install` to\n        enable the commit gate.",
       "flags": [
         {
           "name": "dry-run",
@@ -640,20 +785,181 @@
       ]
     },
     {
+      "name": "gen",
+      "summary": "Generate database types, API keys or a test bearer JWT (supabase gen)",
+      "usage": "denext gen <what> [lang] [options]",
+      "description": "Usage: denext gen <types|keys|signing-key|bearer-jwt> [flags]\n\n  types [typescript]  The `Database` type for the schemas (= denext db types;\n                      --schema, --file <path>, --db-url / --linked)\n  keys, signing-key   A publishable key, a secret key and an ES256 signing key\n                      (= denext backend keys; --legacy, --json)\n  bearer-jwt          A signed access token (= denext backend token; --role, --sub, --exp)",
+      "flags": [
+        {
+          "name": "schema",
+          "type": "string",
+          "valueName": "<name>",
+          "description": "types: the schema (repeatable; default public)"
+        },
+        {
+          "name": "file",
+          "type": "string",
+          "valueName": "<path>",
+          "description": "types: write to this file"
+        },
+        {
+          "name": "legacy",
+          "type": "boolean",
+          "description": "keys: also mint the legacy HS256 keys"
+        },
+        {
+          "name": "role",
+          "type": "string",
+          "description": "bearer-jwt: authenticated | anon | service_role"
+        },
+        {
+          "name": "sub",
+          "type": "string",
+          "description": "bearer-jwt: the user id"
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "description": "bearer-jwt: the email claim"
+        },
+        {
+          "name": "exp",
+          "type": "number",
+          "description": "bearer-jwt: seconds until it expires"
+        },
+        {
+          "name": "claims",
+          "type": "string",
+          "description": "bearer-jwt: extra claims, a JSON object"
+        },
+        {
+          "name": "db-url",
+          "type": "string",
+          "valueName": "<url>",
+          "description": "The database: a postgres:// URL, or a SQLite file (sqlite:<path>, or a .db path)"
+        },
+        {
+          "name": "linked",
+          "type": "boolean",
+          "description": "The database `denext db link` stored (DENEXT_LINKED_DATABASE_URL)"
+        },
+        {
+          "name": "local",
+          "type": "boolean",
+          "description": "The project's own database (the default)"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "what",
+          "required": true,
+          "variadic": false,
+          "description": "types | keys | signing-key | bearer-jwt"
+        },
+        {
+          "name": "lang",
+          "required": false,
+          "variadic": false,
+          "description": "types: typescript (the only one)"
+        }
+      ]
+    },
+    {
       "name": "generate",
       "aliases": [
         "g"
       ],
-      "summary": "Scaffold a route, boundary, component, API route, action, middleware, job, test, Docker setup, migration, seed or CI workflow",
-      "usage": "denext generate <kind> [name] [dir]",
-      "description": "  denext generate page dashboard/settings\n  denext generate layout dashboard\n  denext generate loading dashboard # app/dashboard/loading.tsx (root if no path)\n  denext generate error dashboard   # app/dashboard/error.tsx (Client Component)\n  denext generate not-found         # app/not-found.tsx\n  denext generate component UserCard\n  denext generate api users\n  denext generate action createPost\n  denext generate middleware        # middleware.ts (beside app/)\n  denext generate job cleanup      # jobs/cleanup.ts (defineJob)\n  denext generate test UserCard     # tests/UserCard.test.tsx (denext/testing)\n  denext generate docker            # Dockerfile + docker-compose.yml + .dockerignore\n  denext generate docker spa        # force the static/SPA image (else auto-detected)\n  denext generate migration add_users # migrations/<UTC stamp>_add_users.sql (+ jobs/migrate.ts)\n  denext generate seed              # jobs/seed.ts (node:sqlite, or Prisma when detected)\n  denext generate ci                # .github/workflows/ci.yml (check + build)",
-      "flags": [],
+      "summary": "Scaffold a route, boundary, component, API route, action, middleware, job, Edge Function, test, Docker setup, migration, vector search, seed or CI workflow",
+      "usage": "denext generate <kind> [name] [dir] [options]",
+      "description": "  denext generate page dashboard/settings\n  denext generate layout dashboard\n  denext generate loading dashboard # app/dashboard/loading.tsx (root if no path)\n  denext generate error dashboard   # app/dashboard/error.tsx (Client Component)\n  denext generate not-found         # app/not-found.tsx\n  denext generate component UserCard\n  denext generate api users\n  denext generate action createPost\n  denext generate middleware        # middleware.ts (beside app/)\n  denext generate job cleanup      # jobs/cleanup.ts (defineJob)\n  denext generate function hello   # functions/hello/index.ts (an Edge Function)\n  denext generate test UserCard     # tests/UserCard.test.tsx (denext/testing)\n  denext generate docker            # Dockerfile + docker-compose.yml + .dockerignore\n  denext generate docker spa        # force the static/SPA image (else auto-detected)\n  denext generate docker --stack    # + Postgres 17, MinIO, migrations, .env.example\n  denext generate docker --postgres --pgvector --no-storage --dev --dry-run\n  denext generate migration add_users # migrations/<UTC stamp>_add_users.sql (+ jobs/migrate.ts)\n  denext generate vector-search documents # pgvector table + match_documents (a migration)\n  denext generate seed              # jobs/seed.ts (node:sqlite, or Prisma when detected)\n  denext generate ci                # .github/workflows/ci.yml (check + build)",
+      "flags": [
+        {
+          "name": "force",
+          "type": "boolean",
+          "description": "Overwrite files that already exist"
+        },
+        {
+          "name": "dry-run",
+          "type": "boolean",
+          "description": "Print what would be written (docker: a diff per file) and write nothing"
+        },
+        {
+          "name": "postgres",
+          "type": "boolean",
+          "description": "docker: Postgres 17 service + DATABASE_URL (detected: @denext/backend / a Postgres URL)"
+        },
+        {
+          "name": "no-postgres",
+          "type": "boolean",
+          "description": "docker: leave the postgres service out"
+        },
+        {
+          "name": "pgvector",
+          "type": "boolean",
+          "description": "docker: Use the pgvector/pgvector:pg17 image (detected: the vector extension in migrations/)"
+        },
+        {
+          "name": "no-pgvector",
+          "type": "boolean",
+          "description": "docker: leave the pgvector service out"
+        },
+        {
+          "name": "storage",
+          "type": "boolean",
+          "description": "docker: MinIO S3 store + a one-shot bucket bootstrap (detected: an s3() storage driver)"
+        },
+        {
+          "name": "no-storage",
+          "type": "boolean",
+          "description": "docker: leave the storage service out"
+        },
+        {
+          "name": "migrate",
+          "type": "boolean",
+          "description": "docker: One-shot migrations service the app waits for: `denext migration up` with @denext/backend, else `denext job migrate` (detected: migrations/ + jobs/migrate.ts or @denext/backend)"
+        },
+        {
+          "name": "no-migrate",
+          "type": "boolean",
+          "description": "docker: leave the migrate service out"
+        },
+        {
+          "name": "stack",
+          "altNames": [
+            "all"
+          ],
+          "type": "boolean",
+          "description": "docker: every service the project needs (detected), and Postgres regardless"
+        },
+        {
+          "name": "expose-db",
+          "type": "boolean",
+          "description": "docker: publish Postgres on 127.0.0.1:5432 (off: only the app reaches it)"
+        },
+        {
+          "name": "dev",
+          "type": "boolean",
+          "description": "docker: also write compose.dev.yml (denext dev on a bind mount)"
+        },
+        {
+          "name": "port",
+          "type": "number",
+          "valueName": "<port>",
+          "description": "docker: the port the app listens on (default 3000)"
+        },
+        {
+          "name": "deno-tag",
+          "type": "string",
+          "valueName": "<tag>",
+          "description": "docker: the denoland/deno image tag (default: this Deno's version)"
+        }
+      ],
       "positionals": [
         {
           "name": "kind",
           "required": true,
           "variadic": false,
-          "description": "page | route | layout | loading | error | not-found | component | api | action | middleware | job | test | docker | migration | seed | ci"
+          "description": "page | route | layout | loading | error | not-found | component | api | action | middleware | job | function | test | docker | migration | vector-search | seed | ci"
         },
         {
           "name": "name",
@@ -818,13 +1124,13 @@
       "name": "mcp",
       "summary": "Run the denext MCP server (stdio) so agents/IDEs can call denext's tooling",
       "usage": "denext mcp [action] [dir] [options]",
-      "description": "  denext mcp                     # speak MCP over stdio (configure as an MCP server)\n  denext mcp --disable rag,docs # expose fewer tools to trim the client's context\n  denext mcp init [dir] [--clients claude,vscode,cursor] [--disable <groups>] [--dry-run] [--force]\n\n  Tools: denext_check_snippet, denext_import_map, denext_generate, denext_doctor,\n  denext_codemod, denext_list_routes, denext_dev_logs, denext_render, denext_route_map,\n  denext_search_docs, denext_index_codebase, denext_query_codebase, denext_find_definition,\n  denext_find_references. Resources: denext://guide, denext://import-map.\n\n  --disable takes a comma-separated list of groups (authoring, project, inspect, profile, dev, devtools, docs, rag) and/or tool\n  names (with or without the denext_ prefix), e.g. --disable rag,docs or --disable render.\n\n  init  adds a `mcp` task to deno.json (the denext version the project pins, so the server\n        matches the framework) and registers it as the `denext` server in each client's\n        project-level config, beside any servers already there. --clients picks (or `all`):\n    claude  .mcp.json  (default)\n    vscode  .vscode/mcp.json  (default)\n    cursor  .cursor/mcp.json  (default)\n    gemini  .gemini/settings.json\n    codex   .codex/config.toml\n        --disable is baked into the task; --force rewrites an existing denext entry/task.",
+      "description": "  denext mcp                     # speak MCP over stdio (configure as an MCP server)\n  denext mcp --disable rag,docs # expose fewer tools to trim the client's context\n  denext mcp init [dir] [--clients claude,vscode,cursor] [--disable <groups>] [--dry-run] [--force]\n\n  Tools: denext_check_snippet, denext_import_map, denext_generate, denext_doctor,\n  denext_codemod, denext_list_routes, denext_dev_logs, denext_render, denext_route_map,\n  denext_search_docs, denext_index_codebase, denext_query_codebase, denext_find_definition,\n  denext_find_references. Resources: denext://guide, denext://import-map.\n\n  --disable takes a comma-separated list of groups (authoring, project, inspect, profile, dev, devtools, docs, database, rag) and/or tool\n  names (with or without the denext_ prefix), e.g. --disable rag,docs or --disable render.\n\n  init  adds a `mcp` task to deno.json (the denext version the project pins, so the server\n        matches the framework) and registers it as the `denext` server in each client's\n        project-level config, beside any servers already there. --clients picks (or `all`):\n    claude  .mcp.json  (default)\n    vscode  .vscode/mcp.json  (default)\n    cursor  .cursor/mcp.json  (default)\n    gemini  .gemini/settings.json\n    codex   .codex/config.toml\n        --disable is baked into the task; --force rewrites an existing denext entry/task.",
       "flags": [
         {
           "name": "disable",
           "type": "string",
           "valueName": "<groups|tools>",
-          "description": "Comma-separated groups (authoring, project, inspect, profile, dev, devtools, docs, rag) and/or tool names to hide"
+          "description": "Comma-separated groups (authoring, project, inspect, profile, dev, devtools, docs, database, rag) and/or tool names to hide"
         },
         {
           "name": "clients",
@@ -932,6 +1238,106 @@
           "required": false,
           "variadic": false,
           "description": "App directory to migrate (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "migration",
+      "summary": "Create, list, apply, roll back and repair SQL migrations (Postgres or SQLite)",
+      "usage": "denext migration <action> [args...] [options]",
+      "description": "Usage: denext migration <action> [flags]\n\n  new <name> [--stdin]          A timestamped file with -- migrate:up / -- migrate:down sections\n  list                          Local and applied versions side by side (--json)\n  up [--to <v>] [--include-all] Apply the pending migrations (= denext db migrate)\n  down [--steps <n> | --to <v>] Run the newest applied migrations' down scripts (= db rollback)\n       [--force-reset --yes]    …or reset the database and re-apply up to the target\n  repair --status applied|reverted <version…>  Fix the history without running SQL\n  squash [--version <v>]        Fold the local migrations into one file (--linked / --db-url\n                                also rewrite that database's history)\n  fetch [--force]               Write the Supabase history's SQL to supabase/migrations/\n\nThe files are migrations/*.sql (else supabase/migrations/*.sql). The database is the project's\nown — @denext/backend's Postgres, DATABASE_URL, else SQLite at DB_PATH (default app.db) — or\n--db-url / --linked. A Supabase project keeps its supabase_migrations.schema_migrations history.\n`denext migrate` is the framework migrator (Next.js / Vite / Expo / Remix → denext), not this.",
+      "flags": [
+        {
+          "name": "dry-run",
+          "type": "boolean",
+          "description": "up / down / push: list what would run"
+        },
+        {
+          "name": "to",
+          "type": "string",
+          "valueName": "<version>",
+          "description": "up: apply up to this version; down: revert everything after it"
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "valueName": "<version>",
+          "description": "squash / reset: up to this version (also accepted by up and down)"
+        },
+        {
+          "name": "steps",
+          "altNames": [
+            "last"
+          ],
+          "type": "number",
+          "valueName": "<n>",
+          "description": "down: how many applied migrations to revert (default 1)"
+        },
+        {
+          "name": "include-all",
+          "type": "boolean",
+          "description": "up: also apply pending migrations older than the last applied one"
+        },
+        {
+          "name": "force-reset",
+          "type": "boolean",
+          "description": "down: reset the database and re-apply up to the target (no down scripts needed)"
+        },
+        {
+          "name": "yes",
+          "type": "boolean",
+          "description": "Confirm without asking: reset / down --force-reset anywhere; up / down / push / repair / squash on a remote database"
+        },
+        {
+          "name": "no-seed",
+          "type": "boolean",
+          "description": "reset: skip the seed"
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "valueName": "<applied|reverted>",
+          "description": "repair: mark the versions applied or reverted"
+        },
+        {
+          "name": "stdin",
+          "type": "boolean",
+          "description": "new: read the up SQL from stdin"
+        },
+        {
+          "name": "force",
+          "type": "boolean",
+          "description": "fetch: overwrite existing files; seed: re-run unchanged seed files"
+        },
+        {
+          "name": "db-url",
+          "type": "string",
+          "valueName": "<url>",
+          "description": "The database: a postgres:// URL, or a SQLite file (sqlite:<path>, or a .db path)"
+        },
+        {
+          "name": "linked",
+          "type": "boolean",
+          "description": "The database `denext db link` stored (DENEXT_LINKED_DATABASE_URL)"
+        },
+        {
+          "name": "local",
+          "type": "boolean",
+          "description": "The project's own database (the default)"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "action",
+          "required": true,
+          "variadic": false,
+          "description": "new | list | up | down | repair | squash | fetch"
+        },
+        {
+          "name": "args",
+          "required": false,
+          "variadic": true,
+          "description": "new: the name; repair: the versions"
         }
       ]
     },
@@ -1530,6 +1936,118 @@
           "required": false,
           "variadic": false,
           "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "stack",
+      "summary": "Start, stop and inspect the local Docker stack (app, Postgres, MinIO), like supabase start",
+      "usage": "denext stack <action> [service] [options]",
+      "description": "Usage: denext stack <up|down|status|logs> [flags]\n\n  up      Write the stack if missing (denext generate docker --stack, or your flags), fill a\n          missing .env with generated secrets, docker compose up -d --wait, then status\n          (--dev: the dev overlay; --build: rebuild the app image)\n  down    Stop it (--volumes also drops the database and storage data)\n  status  The API, REST, database and S3 URLs and the publishable key (--json;\n          --show-secrets adds the secret key and the passwords)\n  logs    docker compose logs [service] (--follow)",
+      "flags": [
+        {
+          "name": "build",
+          "type": "boolean",
+          "description": "up: rebuild the app image"
+        },
+        {
+          "name": "volumes",
+          "type": "boolean",
+          "description": "down: remove the data volumes too"
+        },
+        {
+          "name": "follow",
+          "type": "boolean",
+          "description": "logs: keep following"
+        },
+        {
+          "name": "show-secrets",
+          "type": "boolean",
+          "description": "status: print the secret key and passwords"
+        },
+        {
+          "name": "postgres",
+          "type": "boolean",
+          "description": "docker: Postgres 17 service + DATABASE_URL (detected: @denext/backend / a Postgres URL)"
+        },
+        {
+          "name": "no-postgres",
+          "type": "boolean",
+          "description": "docker: leave the postgres service out"
+        },
+        {
+          "name": "pgvector",
+          "type": "boolean",
+          "description": "docker: Use the pgvector/pgvector:pg17 image (detected: the vector extension in migrations/)"
+        },
+        {
+          "name": "no-pgvector",
+          "type": "boolean",
+          "description": "docker: leave the pgvector service out"
+        },
+        {
+          "name": "storage",
+          "type": "boolean",
+          "description": "docker: MinIO S3 store + a one-shot bucket bootstrap (detected: an s3() storage driver)"
+        },
+        {
+          "name": "no-storage",
+          "type": "boolean",
+          "description": "docker: leave the storage service out"
+        },
+        {
+          "name": "migrate",
+          "type": "boolean",
+          "description": "docker: One-shot migrations service the app waits for: `denext migration up` with @denext/backend, else `denext job migrate` (detected: migrations/ + jobs/migrate.ts or @denext/backend)"
+        },
+        {
+          "name": "no-migrate",
+          "type": "boolean",
+          "description": "docker: leave the migrate service out"
+        },
+        {
+          "name": "stack",
+          "altNames": [
+            "all"
+          ],
+          "type": "boolean",
+          "description": "docker: every service the project needs (detected), and Postgres regardless"
+        },
+        {
+          "name": "expose-db",
+          "type": "boolean",
+          "description": "docker: publish Postgres on 127.0.0.1:5432 (off: only the app reaches it)"
+        },
+        {
+          "name": "dev",
+          "type": "boolean",
+          "description": "docker: also write compose.dev.yml (denext dev on a bind mount)"
+        },
+        {
+          "name": "port",
+          "type": "number",
+          "valueName": "<port>",
+          "description": "docker: the port the app listens on (default 3000)"
+        },
+        {
+          "name": "deno-tag",
+          "type": "string",
+          "valueName": "<tag>",
+          "description": "docker: the denoland/deno image tag (default: this Deno's version)"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "action",
+          "required": true,
+          "variadic": false,
+          "description": "up | down | status | logs"
+        },
+        {
+          "name": "service",
+          "required": false,
+          "variadic": false,
+          "description": "logs: one service"
         }
       ]
     },

@@ -245,8 +245,43 @@ Where `@denext/backend` deliberately departs from Supabase. See
   reads as its owner), and lists what it skipped in a startup warning. Naming a relation in
   `rest.tables` serves it as is. A full count (`Prefer: count=exact`) is for signed-in callers by
   default (`rest.exactCount`).
-- **There is no service-role key.** The unscoped connection is `db.service()` (and a bucket's
-  `{ service: true }`) in server code; nothing the browser holds can bypass the policies.
+- **Server code needs no service-role key.** With `backend({ supabase })` the secret key
+  (`DENEXT_SECRET_KEY`) is the `service_role`, past every policy, as on Supabase — keep it
+  server-side. denext additionally gives server code `db.service()` (and a bucket's
+  `{ service: true }`), so the key never has to leave the server; without `supabase` there is no
+  key at all.
+- **A request without the rate-limit header is still limited.** `rateLimitHeader` is Supabase
+  Auth's `GOTRUE_RATE_LIMIT_HEADER`, but where Supabase applies no limit to a request that lacks
+  the header, denext keys it on the trusted hop or the socket peer (with one warning), so a
+  client that reaches the server directly can't skip every limit by leaving the header out.
+- **The rate-limit header is believed only from a trusted proxy.** Supabase Auth trusts
+  `GOTRUE_RATE_LIMIT_HEADER` from any connection; denext believes `rateLimitHeader` only when the
+  socket peer is in `rateLimitTrustedProxies` (or, with none listed, is a loopback/private address
+  while `trustForwardedHeaders` is on), and otherwise keys the limit on the peer. Where the origin
+  is reachable directly, trusting it blindly would let a client send a fresh value per request and
+  get a fresh bucket each time.
+- **An SSO user's email is bound only on the IdP's own domains.** Supabase keeps SSO users as
+  separate accounts with whatever email the IdP asserts; denext has one user per email, so an
+  address outside the provider's `domains` is never put on an account (a provider stored through
+  the admin API is refused for it; a config-declared one signs in a user with no email), and an
+  SSO user has no `email` identity.
+- **An SSO user's address can't start a second account.** Supabase leaves SSO users out of every
+  non-SSO lookup and lets a sign-up, a one-time code, an admin magic link or an OAuth sign-in
+  create a separate account for the same address. denext excludes SSO users from those lookups
+  the same way (nothing is sent; a password or code signs nobody in), but with one user per
+  email it answers a sign-up as for a registered address, creates nothing for a one-time code,
+  refuses an OAuth / `id_token` sign-in (`account_not_linked` / `email_exists`) and answers
+  `generate_link` `magiclink` / `signup` / `invite` and `POST /invite` with `email_exists`.
+- **An SSO user signs in through its identity provider only — linked identities included.**
+  Supabase lets an OAuth identity linked to an SSO user sign it in and keeps every session it ever
+  issued. denext refuses that sign-in (`422 user_sso_managed`), refuses any session of an SSO user
+  that no SAML sign-in started (at use and at refresh), refuses `GET /reauthenticate` for an SSO
+  user (`422 user_sso_managed`, nothing sent; Supabase sends a nonce `PUT /user` then refuses),
+  and never links a `linkExistingAccounts` provider onto another provider's SSO user
+  (`email_exists`; Supabase would create a separate account).
+- **A magic link, one-time code or recovery link that first confirms an account retires its
+  password.** Supabase keeps a password set by an earlier unconfirmed sign-up; denext keeps only
+  the one the account's own sign-up confirmation proves.
 
 ## Security posture — safe defaults
 
@@ -256,6 +291,13 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
 - **Strict CSP by default** blocks external `<script>`/stylesheet/`<img>` until
   opted in per route (`csp: "strict" | "off" | {…}`; a route's `csp` export
   overrides). Applies to buffered **and** streamed/PPR responses.
+- **Metadata URLs without `metadataBase` are never built on `localhost` or the `Host`
+  header in a cacheable page.** Next.js resolves file-convention metadata (`opengraph-image`'s
+  `og:image`) against `metadataBase` and falls back to `http://localhost:<port>` (or
+  `VERCEL_URL`). denext uses `canonicalOrigin`, then `metadataBase`; with neither, a page that
+  may be cached (ISR, `force-static`, a static export) keeps `og:image` relative and omits
+  hreflang / canonical, and a per-request page uses the request's origin and is sent `no-store`.
+  Set `canonicalOrigin` or `metadataBase` for absolute URLs everywhere.
 - **HSTS is host-only by default** (no `includeSubDomains`/`preload`) so it
   can't brick non-HTTPS sibling subdomains. Strengthen via `hsts`, or
   `hsts: false`.
@@ -292,12 +334,13 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
 - **The credentials rate limiter keys on the socket peer, not `x-forwarded-for`, unless
   `trustForwardedHeaders: true`.** Behind a proxy without that flag every client shares
   one IP key, so the limit is effectively per account (an attacker can lock an account
-  they know the email of for one window); set the flag when a proxy fronts the app.
+  they know the email of for one window); set the flag when a proxy fronts the app, or name
+  the proxy's client-address header with `rateLimitHeader`.
 - **Graceful shutdown drains up to a deadline** (default 10s;
   `DENEXT_SHUTDOWN_DRAIN_MS`), then force-exits so a stuck client can't pin the
   process (plugin teardown is skipped on a forced exit).
 - **Scaffolded `dev`/`build` tasks use `-A`** (they compile/spawn tooling); the
-  generated `start` task runs least-privilege.
+  generated `start` task runs least-privilege and spawns nothing (no `--allow-run`).
 - **`@denext/og` fetches a missing non-Latin font from `fonts.googleapis.com`**
   at render time — supply a local `fonts` option, or set `offline: true` on the
   `ImageResponse` to refuse the fetch (it raises a clear error instead of

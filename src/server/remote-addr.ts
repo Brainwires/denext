@@ -16,6 +16,55 @@ const addrs = new WeakMap<Request, string>();
  */
 const limitAddrs = new WeakMap<Request, string | null>();
 
+/** The origin the server that received a request listens on, as this machine reaches it. */
+const serverOrigins = new WeakMap<Request, string>();
+
+/** When the server loop's response to a request was delivered (or failed to be). */
+const completions = new WeakMap<Request, Promise<void>>();
+
+/**
+ * Remember when the response to `request` is done (`Deno.serve`'s `info.completed`; called once
+ * by the server loop): it resolves once the response is delivered and rejects when it is not.
+ */
+export function setResponseCompletion(request: Request, completed: Promise<void> | undefined) {
+  if (completed) completions.set(request, completed);
+}
+
+/** The completion {@link setResponseCompletion} recorded for `request`, or `undefined`. */
+export function responseCompletionOf(request: Request): Promise<void> | undefined {
+  return completions.get(request);
+}
+
+/**
+ * The origin a client on this machine reaches a server bound to `addr` on: its address, with a
+ * wildcard bind (`0.0.0.0` / `::`) as the loopback address and an IPv6 one bracketed.
+ *
+ * @param addr The address `Deno.serve` bound.
+ * @returns `http://<host>:<port>`, or `undefined` for a non-TCP address (a Unix socket).
+ */
+export function loopbackOrigin(addr: Deno.Addr): string | undefined {
+  if (!("hostname" in addr) || !("port" in addr)) return undefined;
+  const host = addr.hostname === "0.0.0.0"
+    ? "127.0.0.1"
+    : addr.hostname === "::"
+    ? "::1"
+    : addr.hostname;
+  return `http://${host.includes(":") ? `[${host}]` : host}:${addr.port}`;
+}
+
+/**
+ * Remember the origin the server that received `request` listens on (called once by the server
+ * loop): never derived from the request's own headers.
+ */
+export function setServerOrigin(request: Request, origin: string | undefined): void {
+  if (origin !== undefined) serverOrigins.set(request, origin);
+}
+
+/** The origin {@link setServerOrigin} recorded for `request`, or `undefined`. */
+export function serverOriginOf(request: Request): string | undefined {
+  return serverOrigins.get(request);
+}
+
 /** Remember the socket peer for `request` (called once by the server loop). */
 export function setRemoteAddr(request: Request, addr: Deno.Addr | undefined): void {
   if (addr && "hostname" in addr) addrs.set(request, addr.hostname);
@@ -75,42 +124,104 @@ export function clientAddrOf(request: Request, trustForwardedHeaders: boolean): 
 
 /**
  * How per-address limits pick their address beyond proxy trust — the app's
- * `rateLimitHeader` / `rateLimitLocalAddresses` (or `DENEXT_RATE_LIMIT_HEADER` /
+ * `rateLimitHeader` / `rateLimitTrustedProxies` / `rateLimitLocalAddresses` (or
+ * `DENEXT_RATE_LIMIT_HEADER` / `DENEXT_RATE_LIMIT_TRUSTED_PROXIES` /
  * `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`), resolved once by {@link resolveLimitPolicy}.
  */
 export interface LimitAddrPolicy {
   /**
    * A lower-cased header a fronting proxy sets to the client address (`cf-connecting-ip`,
-   * `fly-client-ip`, `x-real-ip`), keyed on in preference to everything else. Absent: none.
+   * `fly-client-ip`, `x-real-ip`), keyed on in preference to everything else — but only on a
+   * request whose socket peer is a trusted proxy ({@link limitAddrOf}). Absent: none.
    */
   header?: string;
+  /**
+   * The socket peers whose {@link header} is believed (parsed CIDRs). Empty or absent: a
+   * loopback/private peer when the app trusts its proxy (`trustForwardedHeaders`), else none.
+   */
+  trustedProxies?: readonly Cidr[];
   /** Count a loopback/private socket peer by its own address instead of skipping the limit. */
   localAddresses?: boolean;
 }
 
+/** The app settings {@link resolveLimitPolicy} reads. */
+export interface LimitPolicySettings {
+  /** The header naming the client address. */
+  rateLimitHeader?: string;
+  /** CIDRs (or bare addresses) of the proxies whose header is believed. */
+  rateLimitTrustedProxies?: readonly string[];
+  /** Count a loopback/private peer by its own address. */
+  rateLimitLocalAddresses?: boolean;
+  /** Whether the app trusts its fronting proxy (only for the startup warning). */
+  trustForwardedHeaders?: boolean;
+}
+
 /**
  * The {@link LimitAddrPolicy} for the app's settings: the header trimmed and lower-cased (an empty
- * one is none), the local-addresses switch as a boolean.
+ * one is none), the trusted proxies parsed (an entry that is not a CIDR is dropped — the config
+ * validator and the env reader report it), the local-addresses switch as a boolean.
  *
- * @param settings The app's `rateLimitHeader` / `rateLimitLocalAddresses`.
+ * A header with no rule to trust it (neither `rateLimitTrustedProxies` nor
+ * `trustForwardedHeaders`) is never believed, and a warning says so once per process.
+ *
+ * @param settings The app's `rateLimitHeader` / `rateLimitTrustedProxies` /
+ *   `rateLimitLocalAddresses` (and `trustForwardedHeaders`).
  * @returns The policy {@link limitAddrOf} takes.
  */
-export function resolveLimitPolicy(
-  settings: { rateLimitHeader?: string; rateLimitLocalAddresses?: boolean },
-): LimitAddrPolicy {
+export function resolveLimitPolicy(settings: LimitPolicySettings): LimitAddrPolicy {
   const header = settings.rateLimitHeader?.trim().toLowerCase();
+  const trustedProxies = (settings.rateLimitTrustedProxies ?? [])
+    .map(parseCidr)
+    .filter((cidr): cidr is Cidr => cidr !== null);
+  if (header && trustedProxies.length === 0 && settings.trustForwardedHeaders !== true) {
+    warnUntrustedHeaderConfigOnce(header);
+  }
   return {
     ...(header ? { header } : {}),
+    ...(trustedProxies.length > 0 ? { trustedProxies } : {}),
     ...(settings.rateLimitLocalAddresses === true ? { localAddresses: true } : {}),
   };
+}
+
+/** Whether {@link warnUntrustedHeaderConfigOnce} has logged (once per process). */
+let warnedUntrustedHeaderConfig = false;
+
+/** Tell the operator once that the configured limit header has no rule to trust it. */
+function warnUntrustedHeaderConfigOnce(header: string): void {
+  if (warnedUntrustedHeaderConfig) return;
+  warnedUntrustedHeaderConfig = true;
+  console.warn(
+    `denext: rateLimitHeader (\`${header}\`) is ignored: per-address limits believe it only from a ` +
+      "trusted proxy. Set rateLimitTrustedProxies (DENEXT_RATE_LIMIT_TRUSTED_PROXIES) to the " +
+      "proxy's address ranges, or trustForwardedHeaders (DENEXT_TRUST_PROXY=1) when the proxy " +
+      "connects from a loopback/private address.",
+  );
+}
+
+/** Whether the socket `peer` of a request is a proxy whose limit header is believed. */
+function headerTrusted(
+  peer: string | undefined,
+  trustForwardedHeaders: boolean,
+  policy: LimitAddrPolicy,
+): boolean {
+  const proxies = policy.trustedProxies ?? [];
+  // An in-process request (a handler called directly) has no socket to check: it is believed
+  // only when the app declares some trust rule at all.
+  if (peer === undefined) return proxies.length > 0 || trustForwardedHeaders;
+  if (proxies.length > 0) return inCidrs(peer, proxies);
+  return trustForwardedHeaders && isLocalAddress(peer);
 }
 
 /**
  * The address to key a **per-address limit** on (a connection cap, a signed-out quota):
  *
- * 1. the value of {@link LimitAddrPolicy.header} when the app names one and the request carries
- *    an IP address in it (its LAST comma-separated value — the one the nearest proxy wrote), counted
- *    as it is, loopback/private or not (the operator vouched for the header);
+ * 1. the value of {@link LimitAddrPolicy.header} when the app names one, the request's socket peer
+ *    is a trusted proxy (inside {@link LimitAddrPolicy.trustedProxies}, or — with none listed — a
+ *    loopback/private address while `trustForwardedHeaders` is on), and the request carries an IP
+ *    address in it (its LAST comma-separated value — the one the nearest proxy wrote), counted as
+ *    it is, loopback/private or not (the operator vouched for the header). From any other peer
+ *    the header is ignored (a client that can reach the server directly could otherwise pick a
+ *    fresh limit bucket per request) and a warning says so once per process;
  * 2. else the client address {@link clientAddrOf} answers — unless that is the socket peer (no
  *    trusted forwarded hop) and the peer is a loopback, private, link-local or unique-local address
  *    ({@link isLocalAddress}) while {@link LimitAddrPolicy.localAddresses} is off. Such a peer is
@@ -137,9 +248,10 @@ export function limitAddrOf(
   const peer = remoteAddrOf(request);
   if (policy.header) {
     const named = headerAddr(request, policy.header);
-    if (named) return named;
+    if (named && headerTrusted(peer, trustForwardedHeaders, policy)) return named;
     // An in-process request (no recorded peer: a handler called directly) is no proxy bypass.
-    if (peer !== undefined) warnMissingLimitHeaderOnce(policy.header);
+    if (named) warnUntrustedLimitHeaderOnce(policy.header, peer);
+    else if (peer !== undefined) warnMissingLimitHeaderOnce(policy.header);
   }
   const hop = trustForwardedHeaders ? lastForwardedHop(request) : undefined;
   if (hop) return hop;
@@ -185,9 +297,95 @@ function warnMissingLimitHeaderOnce(header: string): void {
   );
 }
 
-/** Forget the once-per-process missing-header warning (tests). */
+/** Whether {@link warnUntrustedLimitHeaderOnce} has logged (once per process). */
+let warnedUntrustedLimitHeader = false;
+
+/** Tell the operator once that a request's limit header came from a peer that is not trusted. */
+function warnUntrustedLimitHeaderOnce(header: string, peer: string | undefined): void {
+  if (warnedUntrustedLimitHeader) return;
+  warnedUntrustedLimitHeader = true;
+  console.warn(
+    `denext: ignored \`${header}\` (rateLimitHeader) on a request from ${
+      peer ?? "an in-process caller"
+    }, which is not a trusted proxy; its per-address limits key on the socket peer / trusted ` +
+      "x-forwarded-for hop instead. List the proxy's ranges in rateLimitTrustedProxies " +
+      "(DENEXT_RATE_LIMIT_TRUSTED_PROXIES), or set trustForwardedHeaders when it connects from " +
+      "a loopback/private address.",
+  );
+}
+
+/** Forget the once-per-process limit-header warnings (tests). */
 export function resetLimitHeaderWarningForTesting(): void {
   warnedMissingLimitHeader = false;
+  warnedUntrustedLimitHeader = false;
+  warnedUntrustedHeaderConfig = false;
+}
+
+/** A parsed CIDR range: the network's bytes (4 for IPv4, 16 for IPv6) and its prefix length. */
+export interface Cidr {
+  /** The address bytes. */
+  readonly bytes: readonly number[];
+  /** The prefix length in bits. */
+  readonly prefix: number;
+}
+
+/**
+ * An IP address as bytes — 4 for IPv4, 16 for IPv6, with an IPv4-mapped IPv6 address
+ * (`::ffff:a.b.c.d`, how a dual-stack listener reports an IPv4 peer) as its IPv4 — or `null`.
+ */
+function addrBytes(addr: string): number[] | null {
+  const trimmed = addr.trim().replace(/^\[|\]$/g, "");
+  if (!trimmed.includes(":")) {
+    return isIpLiteral(trimmed) ? trimmed.split(".").map(Number) : null;
+  }
+  const g = parseIPv6Groups(trimmed);
+  if (!g) return null;
+  if (g.slice(0, 6).join(":") === "0:0:0:0:0:65535") {
+    return [g[6] >> 8, g[6] & 255, g[7] >> 8, g[7] & 255];
+  }
+  return g.flatMap((h) => [h >> 8, h & 255]);
+}
+
+/**
+ * Parse a CIDR range (`173.245.48.0/20`, `2400:cb00::/32`) or a bare address (a single host),
+ * or `null` when it is neither.
+ *
+ * @param text The range.
+ * @returns The parsed range, or `null`.
+ */
+export function parseCidr(text: string): Cidr | null {
+  const [addr, bits, extra] = text.trim().split("/");
+  if (extra !== undefined) return null;
+  const bytes = addrBytes(addr);
+  if (!bytes) return null;
+  const max = bytes.length * 8;
+  if (bits === undefined) return { bytes, prefix: max };
+  if (!/^\d{1,3}$/.test(bits) || Number(bits) > max) return null;
+  return { bytes, prefix: Number(bits) };
+}
+
+/**
+ * Whether `addr` is inside any of `ranges` (an IPv4 address never matches an IPv6 range, except
+ * an IPv4-mapped one, which is its IPv4).
+ *
+ * @param addr An IP address.
+ * @param ranges Parsed ranges.
+ * @returns Whether one contains it.
+ */
+export function inCidrs(addr: string, ranges: readonly Cidr[]): boolean {
+  const bytes = addrBytes(addr);
+  return bytes !== null && ranges.some((range) => inCidr(bytes, range));
+}
+
+/** Whether address `bytes` fall inside `range`. */
+function inCidr(bytes: readonly number[], range: Cidr): boolean {
+  if (bytes.length !== range.bytes.length) return false;
+  for (let bit = 0; bit < range.prefix; bit += 8) {
+    const i = bit / 8;
+    const mask = range.prefix - bit >= 8 ? 255 : (0xff << (8 - (range.prefix - bit))) & 255;
+    if ((bytes[i] & mask) !== (range.bytes[i] & mask)) return false;
+  }
+  return true;
 }
 
 /** Copy the remembered peer of `from` onto `to` (a Request rebuilt from it). */
@@ -196,6 +394,8 @@ export function copyRemoteAddr(from: Request, to: Request): void {
   if (addr !== undefined) addrs.set(to, addr);
   const limit = limitAddrs.get(from);
   if (limit !== undefined) limitAddrs.set(to, limit);
+  const origin = serverOrigins.get(from);
+  if (origin !== undefined) serverOrigins.set(to, origin);
 }
 
 /**

@@ -29,6 +29,17 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ## denext features: scope
 
+### denext's Deno toolchain
+
+- **Built for five targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64).
+  Elsewhere, and offline on first use, commands run on stock Deno, without `Deno.SQL` or
+  Vitest/Jest compatibility in `deno test`.
+- **A plain `deno task` runs a task's `deno` steps on the Deno that started it** (stock Deno);
+  `denext task` is what puts the toolchain inside a task.
+- **Coverage from a Vitest run doesn't merge with a plain run's.** The Vitest layer changes the
+  code a module emits, so `deno coverage` under-reports a module whose profiles from both kinds
+  of run it merges; report a Vitest run's coverage on its own.
+
 ### Islands, resumability and Cache Components
 
 - **Per-island hydration is a Flight-route feature.** The isomorphic path and SPA mode hydrate
@@ -69,16 +80,20 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `magicLink({ confirm: true })` puts a confirmation page (naming the account) in front of the
   redeem; `emailOtp()` avoids links altogether.
 - **Stateless cookie sessions can't be ended early** by a password reset, a pre-account-hijacking
-  eviction or account deletion; run a `sessionStore` (or `session.strategy: "database"`).
+  eviction, a ban, an `/auth/v1` password change or account deletion; run a `sessionStore` (or
+  `session.strategy: "database"`). A stateless session that still owes its second factor can't
+  complete it once its user is banned or deleted or the address was first proven after it signed
+  in, but a complete one lives until it expires.
 - **Sliding refresh needs a `Response` being produced** (`/session`, `requireAuth()`,
   `requireSession()`; a streamed component's headers have flushed). A store without `update`
   never slides.
 - **`mfa.required: "always"` is trust-on-first-use;** rotating `secret` invalidates in-flight
   one-time codes, and a retired `secret` must stay in the list until the TOTP factors sealed
-  under it are re-sealed — only when a TOTP or backup-code check passes, so never for a user who
-  signs in only by passkey with user verification, and never with an adapter lacking
-  `replaceMfaSecret` (there it stays for good); rate limiters count per node without a shared
-  `rateLimit.store`.
+  under it are re-sealed — which happens (through `updateMfaFactor`) only after a TOTP code from
+  that factor passes, so never for a user who steps up only with a backup code, a phone code or a
+  passkey with user verification; rate limiters count per node without a shared
+  `rateLimit.store`, and every per-IP budget (the captcha budget included) is skipped for a
+  loopback/private peer with no trusted proxy hop unless `rateLimitLocalAddresses` is set.
 - **One passkey ceremony per browser at a time** (the ceremony cookie is per browser), and the
   passkey endpoints are same-origin only: an extra `passkeys.origins` entry (another web origin,
   an Android `apk-key-hash`) needs that origin to serve the auth routes itself.
@@ -91,31 +106,35 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `native.refreshReuseInterval` is set; Apple token revocation needs `native.apple.clientSecret`.
 - **`cors` covers route handlers and the native auth endpoints only**, not pages, Server Actions,
   the batch endpoint or Live; middleware must let `OPTIONS` under `/auth` through.
-- **No phone / SMS sign-in, anonymous sign-in or SAML SSO** (generic `oidc()` covers OIDC
-  identity providers).
+- **No SAML SSO on denext's own sign-in endpoints** (generic `oidc()` covers OIDC identity
+  providers; `/auth/v1` serves SAML with `backend({ supabase })`).
 
 ### Backend (`@denext/backend`)
 
-- **Not hosted, and not supabase-js compatible.** There is no `createClient(url, anonKey)` drop-in;
-  client calls are rewritten. Backups, pooling and upgrades are the Postgres provider's job, and
+- **Not hosted.** The stock supabase-js client works against the app (`/auth/v1`, `/rest/v1`,
+  `/storage/v1`, `/realtime/v1`, `/functions/v1`, each once its option is on), but there is no
+  Supabase project behind it: backups, pooling and upgrades are the Postgres provider's job, and
   `denext ui`'s Database section is a local, loopback tool (no shared console, logs or metrics).
+  Moving from a Supabase project, TOTP secrets, WebAuthn credentials and OAuth-server client
+  secrets don't carry over (users enroll again, clients are re-registered).
 - **The built-in Postgres client is `Deno.SQL`, part of denext's Deno runtime.** On stock Deno pass
   `postgres: { sql: fromPostgresJs(postgres(url)) }` (the npm `postgres` package); without a client
   `db()` and realtime throw `code: "unsupported"`.
-- **Auto-REST is a subset of PostgREST:** no embedded resources (joins), aliases, casts or JSON
-  paths in `select`; no `or` / `and` groups; no upserts (`on_conflict`); no `/rpc/<function>`
-  (call it with `db()` in a route handler); no CSV bodies. The routes are not in the
-  `@denext/openapi` document, and the plugin does not rate-limit them (guard them in
+- **Auto-REST speaks PostgREST 12's wire format but is not PostgREST:** a request takes at most 64
+  filters, 256 select items and 8 levels of embedding, and runs under a 5-second
+  `statement_timeout`. The routes are not in the `@denext/openapi` document (`GET /rest/v1` serves
+  PostgREST's own Swagger 2.0 one), and the plugin does not rate-limit them (guard them in
   `middleware.ts`).
-- **Realtime is LISTEN/NOTIFY, not logical replication.** The trigger sends only the key, so every
-  change costs a re-read per identity and filter; `TRUNCATE` sends nothing; very high write
-  volumes serialize on commit; and a change sent while the listener reconnects is lost (every
-  subscriber is told to re-read). A delete, or an update out of view, reaches only a subscription
+- **Realtime re-reads every change as each subscriber.** With the default LISTEN/NOTIFY source the
+  trigger sends only the key, so every change costs a re-read per identity and filter; `TRUNCATE`
+  sends nothing; many concurrent writers serialize on commit (the logical-replication source
+  avoids that, but needs `wal_level = logical` and a `REPLICATION` role); and a change sent while
+  the listener reconnects is lost (every subscriber is told to re-read). A delete, or an update out of view, reaches only a subscription
   that tracked the key — at most `maxTrackedKeys` (default 10 000) per subscription. Subscriptions
   are capped per identity and per instance; behind a reverse proxy without
   `trustForwardedHeaders`, signed-out visitors are counted per Live connection, not per address.
-- **Storage rules are TypeScript, not SQL** (a bucket's `authorize`, no `storage` schema to join
-  against), and uploads are presigned (multipart on S3), not TUS resumable uploads. An S3 upload
+- **Storage's SQL policies need `storage: { rls: true }`** (otherwise a bucket's `authorize` in
+  TypeScript decides, with no `storage` schema to join against). An S3 upload
   whose client skips the completion call was checked by nobody: record the keys completion
   returned, and give the bucket lifecycle rules for unrecorded objects and incomplete multipart
   uploads. Image transforms take PNG, JPEG, GIF and WebP sources up to 25 MiB, at the configured
@@ -123,9 +142,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Tooling
 
-- **The compiled `denext` binary needs `deno` for every module-loading verb** (`dev`, `build`,
-  `export`, `start`, …) by design: it re-execs the denext the project pins. Without
-  `DENEXT_VERSION` the installers pick the newest non-prerelease.
+- **The compiled `denext` binary re-execs the denext the project pins** for every module-loading
+  verb (`dev`, `build`, `export`, `start`, …), on denext's Deno toolchain (downloaded on first
+  need; no Deno install required). Offline on first use, with no toolchain cached, it needs a
+  `deno` on PATH. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,

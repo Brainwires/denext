@@ -3,7 +3,8 @@
 // sign-in budget) is built, then `startProdServer` serves it on 127.0.0.1 — so every request
 // arrives from a real loopback socket peer, exactly as behind a reverse proxy on the same host.
 //
-//   1. `rateLimitHeader: "x-real-ip"` in denext.config.ts: each address the header names has its
+//   1. `rateLimitHeader: "x-real-ip"` in denext.config.ts, believed from the loopback proxy that
+//      `rateLimitTrustedProxies` lists: each address the header names has its
 //      own `rateLimit()` bucket, sign-in budget and `live.limits.maxConnectionsPerIp` slot; a
 //      request without the header falls back to the loopback rule (skipped, not one site-wide
 //      bucket) and the server warns.
@@ -43,6 +44,7 @@ const FILES: Record<string, string> = {
   "denext.config.ts": `import { denextAuth, github } from "denext/server";
 export default {
   rateLimitHeader: "x-real-ip",
+  rateLimitTrustedProxies: ["127.0.0.1", "::1"],
   live: { limits: { maxConnectionsPerIp: 1 } },
   plugins: [
     denextAuth({

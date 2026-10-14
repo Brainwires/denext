@@ -8,7 +8,7 @@
 // engine: the app installs it, as it installs react-native-web.
 
 import { dirname, join, resolve, toFileUrl } from "@std/path";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 
 /** The bare specifier the prebuilt runtime imports the engine's URLs through. */
 export const SQLITE_WASM_BRIDGE = "denext-sqlite-wasm";

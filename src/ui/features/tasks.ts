@@ -48,14 +48,14 @@ function TaskRow(
   return h(
     "div",
     { class: "field" },
-    h("p", { class: "group-summary" }, `deno task ${name}`),
+    h("p", { class: "group-summary" }, `denext task ${name}`),
     h("p", { class: "lead mono" }, command),
     h(OpForm, {
       csrf: ctx.csrf,
       // The runner, not this page: it is the only route that spawns, and it checks the name
       // against the project's own declarations before it does.
       action: "/tasks/run",
-      label: `deno task ${name}`,
+      label: `denext task ${name}`,
       fields: { task: name },
       className: "op",
       disabled: ctx.readOnly || ctx.offline === true,

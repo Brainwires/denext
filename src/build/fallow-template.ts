@@ -187,41 +187,45 @@ fi
 /** The agent instructions: denext's "Fallow local gate" + task map, through deno tasks. */
 const AGENTS_MD = `# Agent notes
 
-This is a [denext](https://denext.dev) app: Next.js's App Router for Deno. Write it the
-App Router way and import from \`denext\` instead of \`react\` / \`next\`; the full agent
-guide is https://denext.dev/llms.txt (and \`denext mcp\` serves the docs over MCP).
+This is a [denext](https://denext.dev) app: Next.js's App Router for Deno. Write
+it the App Router way and import from \`denext\` instead of \`react\` / \`next\`; the
+full agent guide is https://denext.dev/llms.txt (and \`denext mcp\` serves the
+docs over MCP).
 
 ## Fallow local gate
 
-Before any \`git commit\` or \`git push\`, run \`deno task fallow:audit --format json\` (add
-\`--coverage coverage/coverage-final.json\` when that file exists — \`deno task coverage:fallow\`
-generates it, and it turns fallow's estimated CRAP coverage into measured coverage). If the
-verdict is \`fail\`, fix the reported findings before retrying. Treat JSON runtime errors like
-\`{ "error": true, ... }\` as non-blocking. The git pre-commit hook (\`deno task hooks:install\`)
-runs the same gate.
+Before any \`git commit\` or \`git push\`, run
+\`deno task fallow:audit --format json\` (add
+\`--coverage coverage/coverage-final.json\` when that file exists —
+\`deno task coverage:fallow\` generates it, and it turns fallow's estimated CRAP
+coverage into measured coverage). If the verdict is \`fail\`, fix the reported
+findings before retrying. Treat JSON runtime errors like
+\`{ "error": true, ... }\` as non-blocking. The git pre-commit hook
+(\`deno task hooks:install\`) runs the same gate.
 
-Audit defaults to \`gate=new-only\`: only findings introduced by the current changeset affect
-the verdict. Inherited findings on touched files are reported under \`attribution\` and
-annotated with \`introduced: false\`, but do not block the commit. Set \`[audit] gate = "all"\`
-in \`fallow.toml\` to gate every finding in changed files.
+Audit defaults to \`gate=new-only\`: only findings introduced by the current
+changeset affect the verdict. Inherited findings on touched files are reported
+under \`attribution\` and annotated with \`introduced: false\`, but do not block the
+commit. Set \`[audit] gate = "all"\` in \`fallow.toml\` to gate every finding in
+changed files.
 
-A file denext loads by path (a route, \`denext.config.ts\`, \`middleware.ts\`, \`jobs/*.ts\`) is
-an entry point in \`fallow.toml\`; add a new path-loaded convention there rather than
-suppressing the "unused file" finding.
+A file denext loads by path (a route, \`denext.config.ts\`, \`middleware.ts\`,
+\`jobs/*.ts\`) is an entry point in \`fallow.toml\`; add a new path-loaded
+convention there rather than suppressing the "unused file" finding.
 
 ## Fallow task map
 
-| When the agent is about to...                                     | Run                                                                                           |
-| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| delete an "unused" export or file                                 | \`deno task fallow dead-code --trace <file>:<export>\`                                          |
-| prove a TypeScript symbol's exact consumers before refactoring    | \`deno task fallow dead-code --type-aware --symbol-impact <file>:<export-or-class.method>\`     |
-| delete an "unused" dependency                                     | \`deno task fallow dead-code --trace-dependency <name>\`                                        |
-| commit or open a PR                                               | \`deno task fallow audit --base <ref>\`                                                         |
-| prioritize refactoring                                            | \`deno task fallow health --hotspots --targets\`                                                |
-| check untested-but-reachable code                                 | \`deno task fallow health --coverage-gaps\`                                                     |
-| consolidate duplication                                           | \`deno task fallow dupes --trace dup:<fingerprint>\`                                            |
-| check which architecture rules apply to a file before changing it | \`deno task fallow guard <files>\`                                                              |
-| understand a finding                                              | \`deno task fallow explain <issue-type>\`                                                       |
+| When the agent is about to...                                     | Run                                                                                       |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| delete an "unused" export or file                                 | \`deno task fallow dead-code --trace <file>:<export>\`                                      |
+| prove a TypeScript symbol's exact consumers before refactoring    | \`deno task fallow dead-code --type-aware --symbol-impact <file>:<export-or-class.method>\` |
+| delete an "unused" dependency                                     | \`deno task fallow dead-code --trace-dependency <name>\`                                    |
+| commit or open a PR                                               | \`deno task fallow audit --base <ref>\`                                                     |
+| prioritize refactoring                                            | \`deno task fallow health --hotspots --targets\`                                            |
+| check untested-but-reachable code                                 | \`deno task fallow health --coverage-gaps\`                                                 |
+| consolidate duplication                                           | \`deno task fallow dupes --trace dup:<fingerprint>\`                                        |
+| check which architecture rules apply to a file before changing it | \`deno task fallow guard <files>\`                                                          |
+| understand a finding                                              | \`deno task fallow explain <issue-type>\`                                                   |
 `;
 
 /**

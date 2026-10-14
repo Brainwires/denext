@@ -11,7 +11,14 @@ import {
   UnsafeArchiveError,
   windowsSymlinkError,
 } from "../src/build/safe-extract.ts";
-import { sha256Hex, type TarEntry, tarGz, zip, type ZipEntry } from "./_archive-fixtures.ts";
+import {
+  canSymlink,
+  sha256Hex,
+  type TarEntry,
+  tarGz,
+  zip,
+  type ZipEntry,
+} from "./_archive-fixtures.ts";
 
 const posix = Deno.build.os !== "windows";
 
@@ -39,24 +46,6 @@ async function tgzRefused(entries: TarEntry[], match: RegExp | string) {
     await Deno.remove(base, { recursive: true });
   }
 }
-
-/**
- * Whether this process may create symlinks. Always on POSIX; on Windows only with Developer Mode
- * or elevation (a standard user gets os error 1314), where extraction must refuse clearly instead.
- */
-const canSymlink = await (async () => {
-  if (Deno.build.os !== "windows") return true;
-  const dir = await Deno.makeTempDir();
-  try {
-    await Deno.writeTextFile(join(dir, "t"), "");
-    await Deno.symlink("t", join(dir, "l"), { type: "file" });
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
-})();
 
 /** Without the symlink privilege, an archive with a link fails with a clear message, not 1314. */
 async function refusesWithoutSymlinkPrivilege(archive: string, dest: string): Promise<void> {

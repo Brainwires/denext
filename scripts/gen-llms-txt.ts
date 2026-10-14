@@ -49,7 +49,8 @@ export function llmsIndex(): string {
 - Imports come from \`denext\`, not \`react\` — \`import { useState } from "denext"\`. There is
   **no \`react\`/\`react-dom\` package** (a drop-in aliases them; new code imports \`denext\`).
 - **No \`package.json\`/npm** — a \`deno.json\` with URL/\`jsr:\`/\`npm:\` imports; run with
-  \`deno task dev|build|start\`.
+  \`denext task dev|build|start\` (the \`denext\` command brings its own Deno; \`deno task\`
+  works too).
 - Server-only helpers (\`cookies\`, \`headers\`, \`revalidatePath\`) come from
   \`denext/server\`; client-only from \`denext/client\`.
 - File conventions are **the same as the Next.js App Router** (\`app/page.tsx\`,
@@ -69,7 +70,13 @@ export function llmsIndex(): string {
   stacks that denext handles, each with the test that proves it (source:
   \`catalog/fixed-in-denext.json\`).
 - [Backend](${SITE}/docs/backend): the opt-in \`@denext/backend\` plugin — storage, Postgres
-  scoped by row-level security (\`db()\`), realtime from tables, auto-REST with a typed client.
+  scoped by row-level security (\`db()\`), realtime from tables, auto-REST with a typed client,
+  and Supabase's APIs (\`/auth/v1\`, \`/rest/v1\`, \`/storage/v1\`, realtime, \`/functions/v1\`)
+  so the stock \`@supabase/supabase-js\` client works unchanged; Vault, queues, pgvector, webhooks.
+- [Scheduled jobs](${SITE}/docs/jobs): \`defineJob\` in \`jobs/<name>.ts\`, cron schedules,
+  \`runJob()\` / \`denext job <name>\`, run history.
+- [denext's Deno toolchain](${SITE}/docs/toolchain): the pinned Deno build project verbs run on
+  (\`Deno.SQL\`, Vitest/Jest compatibility), and \`denext task\` vs \`deno task\`.
 - [Coming from Supabase](${SITE}/docs/coming-from-supabase): a concept map and migration
   checklist (schema, policies, users and files).
 - [Guide (source)](${REPO}/blob/main/AGENTS.md): AGENTS.md in the repo.

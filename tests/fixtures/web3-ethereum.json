@@ -1,0 +1,69 @@
+{
+  "_comment": "Generated with viem 2.21.0 (privateKeyToAccount().signMessage, keccak256, hashMessage), independently of denext's keccak / secp256k1.",
+  "signatures": [
+    {
+      "privateKey": "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318",
+      "address": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+      "message": "app.test wants you to sign in with your Ethereum account:\n0x2c7536E3605D9C16a7a3D7b1898e529396a65c23\n\nSign in to the app\n\nURI: https://app.test/\nVersion: 1\nChain ID: 1\nNonce: abcdef123456\nIssued At: 2026-01-01T00:00:00.000Z",
+      "signature": "0xe67d495457709e1cb5bf0f0b14a1c6d9ea3e53bac56a05e5f5361edcd7d65aae0434ea46466203ca95ada6f15d82906561b07d186d5d4d6411eafc9dfaa791021c",
+      "hash": "0x29fa690444d884667179c4cd62f1283ccaa4588c147c8bf339c15bab745093a2"
+    },
+    {
+      "privateKey": "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318",
+      "address": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+      "message": "hello",
+      "signature": "0xa5d58782075bdf09490159d634d1aae66a8f6777c7247d2f233e9511cfd7c64c34f288cdbcea5370e4863fdbe9f4d86654c2ba1d86589e9ebb64494c649008591b",
+      "hash": "0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750"
+    },
+    {
+      "privateKey": "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318",
+      "address": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+      "message": "",
+      "signature": "0x8a68b4e66cd2b575338e16069d7b65f6f67c7ceae8945dccf8cb7bdb06278d933dd9c888f3444ca4698464079a067ad3cfffe96d493b8ecf56885169d0fdfe7d1b",
+      "hash": "0x5f35dce98ba4fba25530a026ed80b2cecdaa31091ba4958b99b52ea1d068adad"
+    },
+    {
+      "privateKey": "0x0123456789012345678901234567890123456789012345678901234567890123",
+      "address": "0x14791697260E4c9A71f18484C9f997B308e59325",
+      "message": "app.test wants you to sign in with your Ethereum account:\n0x14791697260E4c9A71f18484C9f997B308e59325\n\nSign in to the app\n\nURI: https://app.test/\nVersion: 1\nChain ID: 1\nNonce: abcdef123456\nIssued At: 2026-01-01T00:00:00.000Z",
+      "signature": "0x9079511d37a462e7755015bd4134b4097be09b97e1a98a8aa26078b7ee96ee2e0a344fcab565c8c025f201382e824e42114309f06ca870ae76894e7fd1f605fb1b",
+      "hash": "0xe7d7497d0b9856f0e65c7b76e908f0565a56f207dda19fe58c393480cb842c2d"
+    },
+    {
+      "privateKey": "0x0123456789012345678901234567890123456789012345678901234567890123",
+      "address": "0x14791697260E4c9A71f18484C9f997B308e59325",
+      "message": "hello",
+      "signature": "0x0079d91efaa7ca55074617a2c255a8855bc278a3e0ca1b837f60ce000109ef8540960e193be95e38fb2f5307ca0c20108fcc420ff49e48b9a8cb11d9074deb461b",
+      "hash": "0x50b2c43fd39106bafbba0da34fc430e1f91e3c96ea2acee2bc34119f92b37750"
+    },
+    {
+      "privateKey": "0x0123456789012345678901234567890123456789012345678901234567890123",
+      "address": "0x14791697260E4c9A71f18484C9f997B308e59325",
+      "message": "",
+      "signature": "0xf93927710a3a451d0a5e5c00013078156e6e1de125513ef855322bb7cd82f8464973d0cf7adc5809004833afc97f5eb98ab3ed5a8a5ad38b2d4e10e071b36faf1b",
+      "hash": "0x5f35dce98ba4fba25530a026ed80b2cecdaa31091ba4958b99b52ea1d068adad"
+    }
+  ],
+  "keccak": [
+    {
+      "input": "",
+      "hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+    },
+    {
+      "input": "abc",
+      "hash": "0x4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "hash": "0x96ea54061def936c4be90b518992fdc6f12f535068a256229aca54267b4d084d"
+    },
+    {
+      "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "hash": "0x16570bdb055e663ea1cb57ac6f09194f4bc7b7070847971fc0b86710366dc34f"
+    },
+    {
+      "input": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+      "hash": "0x299eb9c75467c19fbc1653d67b1f49ff3bb50fc9c1c9ce98c205e5ac6a05b9c8"
+    }
+  ]
+}

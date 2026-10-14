@@ -40,6 +40,14 @@ export interface S3DriverOptions {
    * custom `endpoint` (what MinIO and most self-hosted stores expect).
    */
   pathStyle?: boolean;
+  /**
+   * The endpoint a BROWSER reaches the store at, when it differs from {@link endpoint} — the
+   * Docker stack's MinIO is `http://minio:9000` inside the containers but `http://localhost:9000`
+   * (or a public host) outside them. Every URL handed to a client (presigned uploads, downloads,
+   * multipart parts) is signed for this host; the server's own calls keep `endpoint`. Default:
+   * `S3_PUBLIC_ENDPOINT`, else `endpoint`.
+   */
+  publicEndpoint?: string;
   /** The `fetch` to call (tests, proxies). Default: the global `fetch`. */
   fetch?: typeof fetch;
 }
@@ -61,10 +69,16 @@ function env(name: string): string | undefined {
   }
 }
 
-function endpointOf(options: S3DriverOptions): Endpoint {
-  const configured = options.endpoint ?? env("AWS_ENDPOINT_URL_S3") ?? env("AWS_ENDPOINT_URL");
+/**
+ * Where the store is: for the server's own calls, or (`publicFacing`) for the URLs handed to a
+ * browser — `publicEndpoint` / `S3_PUBLIC_ENDPOINT` when set, addressed the same way.
+ */
+function endpointOf(options: S3DriverOptions, publicFacing = false): Endpoint {
+  const server = options.endpoint ?? env("AWS_ENDPOINT_URL_S3") ?? env("AWS_ENDPOINT_URL");
+  const publicUrl = publicFacing ? options.publicEndpoint ?? env("S3_PUBLIC_ENDPOINT") : undefined;
+  const configured = publicUrl ?? server;
   const base = new URL(configured ?? `https://s3.${options.region}.amazonaws.com`);
-  const pathStyle = options.pathStyle ?? configured !== undefined;
+  const pathStyle = options.pathStyle ?? (server !== undefined || publicUrl !== undefined);
   if (pathStyle) return { origin: base.origin, prefix: `/${options.bucket}` };
   return { origin: `${base.protocol}//${options.bucket}.${base.host}`, prefix: "" };
 }
@@ -130,11 +144,16 @@ export function s3(options: S3DriverOptions): StorageDriver {
   const client = new S3Client(options);
   return {
     name: "s3",
+    get location() {
+      return endpointOf(options).origin;
+    },
     put: (bucket, key, body, info) => client.put(`${bucket}/${key}`, key, body, info),
     get: (bucket, key, range) => client.get(`${bucket}/${key}`, key, range),
     head: (bucket, key) => client.head(`${bucket}/${key}`, key),
     remove: (bucket, key) => client.remove(`${bucket}/${key}`),
     list: (bucket, prefix, opts) => client.list(bucket, prefix, opts),
+    copy: (fromBucket, fromKey, toBucket, toKey) =>
+      client.copy(`${fromBucket}/${fromKey}`, `${toBucket}/${toKey}`, toKey),
     direct: client.direct(),
   };
 }
@@ -165,8 +184,8 @@ class S3Client {
     };
   }
 
-  #path(objectKey?: string): { origin: string; path: string } {
-    const { origin, prefix } = endpointOf(this.#options);
+  #path(objectKey?: string, publicFacing = false): { origin: string; path: string } {
+    const { origin, prefix } = endpointOf(this.#options, publicFacing);
     return { origin, path: objectKey === undefined ? prefix || "/" : `${prefix}/${objectKey}` };
   }
 
@@ -350,6 +369,39 @@ class S3Client {
     if (text.includes("<Error>")) throw s3ErrorFromXml(text, 500, "POST");
   }
 
+  /** `CopyObject` (up to 5 GiB): the content type travels with it. */
+  async copy(fromObjectKey: string, toObjectKey: string, key: string): Promise<ObjectInfo> {
+    const encoded = fromObjectKey.split("/").map(encodeURIComponent).join("/");
+    const res = await this.call({
+      method: "PUT",
+      key: toObjectKey,
+      headers: { "x-amz-copy-source": `/${this.#options.bucket}/${encoded}` },
+    });
+    // S3 can answer 200 with an <Error> body when the copy fails late.
+    const text = await res!.text();
+    if (text.includes("<Error>")) throw s3ErrorFromXml(text, 500, "PUT");
+    const info = await this.head(toObjectKey, key);
+    if (!info) throw new StorageError("driver_error", "s3: the copied object is missing");
+    return info;
+  }
+
+  /** Upload one part of a multipart upload from the server; returns its ETag. */
+  async uploadPart(
+    objectKey: string,
+    uploadId: string,
+    partNumber: number,
+    body: Uint8Array,
+  ): Promise<string> {
+    const res = await this.call({
+      method: "PUT",
+      key: objectKey,
+      query: { partNumber: String(partNumber), uploadId },
+      body,
+    });
+    await res!.body?.cancel();
+    return res!.headers.get("etag") ?? "";
+  }
+
   async abortMultipart(objectKey: string, uploadId: string): Promise<void> {
     const res = await this.call({ method: "DELETE", key: objectKey, query: { uploadId } }, true);
     await res?.body?.cancel();
@@ -361,7 +413,8 @@ class S3Client {
     expiresIn: number,
     extra: { query?: Record<string, string>; headers?: Record<string, string> } = {},
   ): Promise<string> {
-    const { origin, path } = this.#path(objectKey);
+    // Signed for the host the browser will send (SigV4 signs `Host`).
+    const { origin, path } = this.#path(objectKey, true);
     return await presignUrl(
       { method, origin, path, query: extra.query, headers: extra.headers },
       this.#scope(),
@@ -395,6 +448,8 @@ class S3Client {
       completeMultipart: (bucket, key, uploadId, parts) =>
         this.completeMultipart(k(bucket, key), uploadId, parts),
       abortMultipart: (bucket, key, uploadId) => this.abortMultipart(k(bucket, key), uploadId),
+      uploadPart: (bucket, key, uploadId, partNumber, body) =>
+        this.uploadPart(k(bucket, key), uploadId, partNumber, body),
     };
   }
 }

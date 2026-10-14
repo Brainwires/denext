@@ -16,7 +16,7 @@
  */
 
 import type { RateLimitStore, RateLimitWindow } from "./rate-limit.ts";
-import { authDb, type PostgresAuthStoreOptions } from "./postgres-schema.ts";
+import { type AuthDb, authDb, type PostgresAuthStoreOptions } from "./postgres-schema.ts";
 
 /** Options for {@linkcode postgresRateLimitStore}. */
 export interface PostgresRateLimitStoreOptions extends PostgresAuthStoreOptions {
@@ -39,8 +39,24 @@ export function postgresRateLimitStore(
   options: PostgresRateLimitStoreOptions,
 ): RateLimitStore & { close(): Promise<void> } {
   const handle = authDb(options, "postgresRateLimitStore");
+  return {
+    ...pgRateLimitStore(handle, options.sweepIntervalMs),
+    close: () => handle.close(),
+  };
+}
+
+/**
+ * The store over an auth handle (`postgresAuthAdapter`'s `rateLimits` shares the adapter's).
+ *
+ * @param handle The auth tables' handle.
+ * @param sweepInterval Min ms between sweeps of closed windows.
+ * @returns The store.
+ */
+export function pgRateLimitStore(
+  handle: AuthDb,
+  sweepInterval: number = SWEEP_INTERVAL,
+): RateLimitStore {
   const table = handle.table("auth_rate_limits");
-  const sweepInterval = options.sweepIntervalMs ?? SWEEP_INTERVAL;
   let lastSweep = 0;
   // `int8` arrives as a string (or a bigint) from most drivers.
   const window = (row: { hits: unknown; reset_at: unknown }): RateLimitWindow => ({
@@ -82,6 +98,5 @@ export function postgresRateLimitStore(
         [key, Date.now()],
       );
     },
-    close: () => handle.close(),
   };
 }

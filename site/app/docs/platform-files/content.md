@@ -56,9 +56,9 @@ denext builds one export per target, and only where a target is chosen:
 - `denext export --platform <target>` writes that target's export to `out/`
   (`DENEXT_PLATFORM=<target>` does the same, and the flag wins).
 - `denext mobile build ios|android` exports with its platform before `cap sync`, so the
-  Capacitor shell's `webDir` holds that platform's export. The scaffolded `deno task mobile:sync`
+  Capacitor shell's `webDir` holds that platform's export. The scaffolded `denext task mobile:sync`
   copies one web export into both shells; with `.ios` / `.android` / `.mobile` files, sync each
-  shell from its own export instead: `DENEXT_PLATFORM=ios deno task export && npx cap sync ios`.
+  shell from its own export instead: `DENEXT_PLATFORM=ios denext task export && npx cap sync ios`.
 - `denext desktop build` and `denext desktop run` export for the OS they run on; `denext desktop
   package` exports for the package's target OS, so a Windows package built on a Mac gets the
   `.windows` files.

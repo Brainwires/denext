@@ -3,7 +3,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { cliInvocation, runDeno } from "../src/ui/proc.ts";
+import { cliConfigArgs, cliInvocation, runDeno } from "../src/ui/proc.ts";
 
 Deno.test("runDeno: output with no newline arrives in bounded pieces", async () => {
   const lines: string[] = [];
@@ -86,5 +86,27 @@ Deno.test("--offline discovery: a config that spawns is refused, and its verbs a
     assertStringIncludes(control.stderr, "CONFIG-SPAWN grandchild");
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("cliConfigArgs: a remote CLI child is told the project's config; a checkout's is not", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-proc-cfg-" });
+  try {
+    const app = join(root, "app");
+    await Deno.mkdir(join(app, "src"), { recursive: true });
+    await Deno.writeTextFile(join(app, "deno.json"), "{}");
+    const url = "https://jsr.io/@denext/denext/4.0.0/cli.ts";
+    // An https module discovers no config, a jsr: one the WORKING directory's: both are told.
+    assertEquals(cliConfigArgs(url, app), ["--config", join(app, "deno.json")]);
+    assertEquals(cliConfigArgs(url, join(app, "src")), ["--config", join(app, "deno.json")]);
+    assertEquals(cliConfigArgs("jsr:@denext/denext@4.0.0/cli", app), [
+      "--config",
+      join(app, "deno.json"),
+    ]);
+    assertEquals(cliConfigArgs(url, root), [], "no config, nothing to pass");
+    assertEquals(cliConfigArgs(url, undefined), []);
+    assertEquals(cliConfigArgs("file:///checkout/cli.ts", app), [], "a checkout finds its own");
+  } finally {
+    await Deno.remove(root, { recursive: true });
   }
 });

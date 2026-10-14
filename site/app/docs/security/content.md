@@ -150,6 +150,7 @@ reimplement them — see [Known Gaps](#known-gaps--residual-risk).
 | **CVE-2026-64648**                      | Cache confusion via `fetch(new Request(init), otherInit)` — same URL, different bodies share one cache entry, leaking response data. CVSS 6.0.                                                                                | ✅ **Protected (tested)** — same body-keying fix; distinct bodies get distinct entries.                                                                                                                                                                                                                                                                                                           |
 | **CVE-2024-34350**                      | HTTP request smuggling in `rewrites` — inconsistent parsing desyncs the response queue between users. CVSS 7.5.                                                                                                               | 🟢 **Protected (by design + tested framing)** — denext never proxies rewrites; and `safeFetch`'s hand-rolled HTTP/1.1 client enforces strict `Content-Length` framing and Transfer-Encoding precedence (request-smuggling fuzz tests in `safe-fetch.test.ts`).                                                                                                                                    |
 | **CVE-2026-29057**                      | HTTP request smuggling in `rewrites` — a `Transfer-Encoding: chunked` DELETE/OPTIONS to a rewritten route desyncs the proxy↔backend request boundary, smuggling a second request to an internal/admin backend route. CWE-444. | ✅ **Protected (tested)** — denext never proxies a rewrite to a backend: it re-routes by the destination **pathname** against the local manifest and issues no outbound request, so there is no proxy↔backend framing to disagree on. A chunked DELETE/OPTIONS/POST to a rewritten path is handled locally (no `fetch`); the GET resolves to the local target. `tests/nextjs-cve-parity.test.ts`. |
+| **Host-header cache poisoning**         | A forged `Host` / `X-Forwarded-Host` becomes the origin of absolute URLs (`og:image`, hreflang, canonical, a sitemap index) in a response a cache stores, so every later visitor gets the attacker's origin.                  | ✅ **Protected (tested)** — absolute metadata URLs resolve against `canonicalOrigin`, else `metadataBase`; a cacheable page (ISR, `force-static`, Cache Components) with neither keeps them relative, and a per-request page or sitemap index built on the request's origin is sent `no-store`. `tests/metadata-cache-poisoning.test.ts`.                                                         |
 | **CVE-2023-46298**                      | Missing `Cache-Control` on prefetch responses → CDN caches empty responses and serves them to all users (DoS). CVSS 7.5.                                                                                                      | ✅ **Protected (tested)** — soft-nav / Flight responses carry `Cache-Control: private, no-store` so a shared CDN never caches a partial/empty variant, and every navigable response now carries `Vary: x-denext-nav` so a cache keys the soft/hard variants apart. `tests/flight-nav.test.ts`, `tests/security-headers.test.ts`.                                                                  |
 | **CVE-2026-44572**                      | Middleware redirect cache poisoning — injecting `x-nextjs-data` makes middleware emit an internal header instead of a `Location`, caching broken redirects. CVSS 3.7.                                                         | 🟢 **Protected (by design)** — denext strips internal `x-middleware-*` markers before responses leave and does not branch redirect behavior on a client header. _(Add a regression test.)_                                                                                                                                                                                                        |
 | **CVE-2026-44582**                      | Weak `_rsc` cache-busting hash → collisions let an attacker make users receive the wrong response variant. CVSS 3.7.                                                                                                          | ✅ **Protected (tested)** — denext partitions soft/hard navigations by the `x-denext-nav` **request header**, not a guessable URL token, and the soft variant is `private, no-store` (no shared-cache entry for a weak-hash collision to poison); a Next-style `?_rsc=…` token is ignored and does not fork the variant. `tests/nextjs-cve-parity.test.ts`.                                       |
@@ -332,7 +333,7 @@ attack surface, so each ships with its own invariant:
   `POST /auth/tokens` and `/mfa/disable` — each have a case in
   `tests/auth-mfa-bypass.test.ts`.
 - **Consume-once is an adapter contract, not a convention.**
-  `useVerificationToken`, `consumeBackupCode` and `claimTotpStep` are specified
+  `useVerificationToken`, `consumeBackupCode` and `claimMfaFactorStep` are specified
   as **atomic** delete-and-return / match-and-remove / claim operations; a
   non-atomic implementation is documented as a replay window, and both
   first-party adapters implement them atomically.
@@ -354,14 +355,14 @@ attack surface, so each ships with its own invariant:
 - **Pre-account hijacking is closed.** Registering a victim's address with a
   password and waiting for the victim to sign in by email gains nothing: before
   a first magic-link or code sign-in marks an unverified address verified, it
-  retires the password, any TOTP factor and backup codes, every bearer token and
+  retires the password, every second factor and backup codes, every bearer token and
   every server-side session set up without that proof. If a step fails, the
   address stays unverified and the redeem fails generically. A stateless cookie
   session opened earlier cannot be revoked and lives until it expires — run a
   `sessionStore`.
 - **Resets and codes close what they open.** A completed password reset revokes
   every server-side session and bearer API token of that user. A second-factor
-  code works once: a TOTP step is claimed through `claimTotpStep` (not even
+  code works once: a TOTP step is claimed through `claimMfaFactorStep` (not even
   confirm-then-step-up can reuse it), backup codes are stored only as `hasher`
   hashes and spent through `consumeBackupCode`, and every code check spends the
   per-user budget, so a correct guess cannot reset it.
@@ -374,8 +375,8 @@ attack surface, so each ships with its own invariant:
   credentials limiter (5 per client + identifier per 15 minutes) is unchanged;
   2.5 adds a send budget (3 per address per 15 minutes) and a second-factor
   budget (5 per user per 5 minutes), each with an IP-wide bucket at ten times
-  that, and `rateLimit: false` disables all five. They count per process unless
-  a shared `rateLimit.store` is supplied.
+  that, and `rateLimit: false` disables all six (with the captcha budget below).
+  They count per process unless a shared `rateLimit.store` is supplied.
 
   Three properties make the limiter dependable rather than decorative. An IPv6
   client is normalised and bucketed by **/64**, so rotating through a client's
@@ -383,14 +384,27 @@ attack surface, so each ships with its own invariant:
   key that is mid-lockout** — a flood of fresh keys cannot wash out a lockout
   that is doing its job; when every tracked key is locked out and the cap is
   reached, the new key is refused instead. And behind a reverse proxy the app
-  has **not** declared (`trustForwardedHeaders` off, a private peer, an
-  `x-forwarded-for` present) the two per-IP budgets are skipped with one warning
+  has **not** declared (`trustForwardedHeaders` off and a loopback, private,
+  link-local or unique-local peer, whether or not it sends `x-forwarded-for`)
+  the two per-IP budgets are skipped with one warning
   rather than collapsing every visitor into one bucket — which would have been
   an app-wide outage on the 21st sign-in. Setting `canonicalOrigin` without
   `trustForwardedHeaders` (on `denextAuth` or, inherited, on the app) warns once
   for the same reason. The app's `rateLimitHeader` and `rateLimitLocalAddresses`
   opt back in deliberately; a request missing the named header falls back to the
-  socket peer rather than going unlimited.
+  socket peer rather than going unlimited, and the header is believed only from a
+  trusted proxy (`rateLimitTrustedProxies`, or a loopback/private peer under
+  `trustForwardedHeaders`), so a direct client can't forge a fresh bucket per
+  request.
+- **No request stream drives unlimited calls to a third party.** Every outbound
+  provider call an unauthenticated request can cause spends a budget in the
+  limiter store first, with no I/O to the provider: a captcha token goes to the
+  verifier only within 30 per client IP per minute (`rateLimit.captcha`; past
+  it a `429`, and a missing or oversized token is refused unsent), and every
+  email or SMS send — denext's own endpoints and every `/auth/v1` send — needs
+  both its per-identifier budget (address, number or user) and the client-IP
+  bucket. `tests/auth-outbound-limits.test.ts`,
+  `tests/gotrue-outbound-limits.test.ts`, `tests/auth-captcha.test.ts`.
 - **A revoked session cannot be resurrected by a refresh in flight.** Sliding
   expiry rewrites a store-backed session through `SessionStore.update` —
   write-only-if-present — rather than `create`, which is an upsert: a session

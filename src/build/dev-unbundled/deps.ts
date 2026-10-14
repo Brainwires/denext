@@ -2,7 +2,7 @@
 // react→denext runtime, and the compat on-demand npm bundle (Vite optimizeDeps).
 
 import { denoLoaderPlugins } from "../deno-loader-plugins.ts";
-import * as esbuild from "esbuild";
+import * as esbuild from "../esbuild/mod.ts";
 import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
 import {

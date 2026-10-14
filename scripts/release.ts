@@ -12,7 +12,7 @@
 // Order of operations:
 //   0. CI: the newest ci.yml run on HEAD that ran the heavy jobs (integration, next-compat,
 //      coverage, backend-integration — a push to `development` skips them; dispatch ci.yml) is
-//      green, else ABORT
+//      green, and so is the newest desktop-ci.yml run on HEAD (every job), else ABORT
 //      (scripts/release-ci.ts)
 //   1. bump the version pins (scripts/bump-version.ts)
 //   2. roll CHANGELOG.md  [Unreleased] → [<version>] - <today>  (fresh [Unreleased] on top)
@@ -24,9 +24,9 @@
 //   3c. deno task badge:fallow — refresh the fallow health-score badge
 //   4. deno cache mod.ts   — refresh deno.lock
 //   5. the gate (ABORTS the release if it fails): step 0 already proved CI's `check` job (fmt +
-//      lint + the full suite) green on HEAD, and publish.yml re-runs the full suite on the tagged
-//      commit before it publishes, so locally only the release's own changes are re-checked —
-//      fmt, lint and RELEASE_DELTA_TESTS. `--full-gate` runs `deno task check` instead.
+//      lint + the full suite) green on HEAD, so only the release's own changes are re-checked —
+//      fmt, lint and RELEASE_DELTA_TESTS. publish.yml runs the same delta gate on the tagged
+//      release commit (scripts/publish-verify.ts). `--full-gate` runs `deno task check` instead.
 //   6. confirm  → git add -A, commit, tag v<version>, push branch + tag
 //
 // After tagging, every release gets a `development → main` PR so main catches up to the
@@ -38,7 +38,7 @@
 import { exists, walk } from "@std/fs";
 import { join, relative } from "@std/path";
 import { bumpVersion, REPO_ROOT, VERSION_RE } from "./bump-version.ts";
-import { releaseCiHint, releaseCiVerdict } from "./release-ci.ts";
+import { desktopCiVerdict, releaseCiHint, releaseCiVerdict } from "./release-ci.ts";
 
 /**
  * Regenerate the `examples/effect` migrate golden against the just-bumped framework
@@ -110,7 +110,10 @@ export async function rollChangelog(version: string, dry: boolean): Promise<Chan
   }
   const date = new Date().toISOString().slice(0, 10);
   const updated = isStable(version)
-    ? foldPrereleases(text, version, date)
+    ? rewriteInPageAnchors(
+      foldPrereleases(text, version, date),
+      foldedAnchorRewrites(text, version, date),
+    )
     : text.replace(marker, `${marker}\n\n## [${version}] - ${date}`);
   if (!dry) {
     await Deno.writeTextFile(path, withLinkRef(updated, version));
@@ -159,13 +162,24 @@ export function splitSections(text: string): Array<[string, string]> {
   return sections;
 }
 
-/** Group a section body's bullets by their `### Heading` (top-level `- ` bullets + continuations). */
+/**
+ * Group a section body's bullets by their `### Heading` (top-level `- ` bullets + continuations).
+ * A paragraph under a heading is that group's first item, never part of the heading: two rc
+ * sections' `### Breaking (4.0)`, one with an intro paragraph, are one group (4.0.0 rendered two).
+ */
 export function groupByHeading(body: string): Map<string, string[]> {
   const groups = new Map<string, string[]>();
   let heading = "### Changed";
+  const add = (item: string) => groups.set(heading, [...(groups.get(heading) ?? []), item]);
   for (const chunk of bullets(body)) {
-    if (chunk.startsWith("### ")) heading = chunk.trim();
-    else groups.set(heading, [...(groups.get(heading) ?? []), chunk]);
+    if (!chunk.startsWith("### ")) {
+      add(chunk);
+      continue;
+    }
+    const [line, ...rest] = chunk.split("\n");
+    heading = line.trim();
+    const intro = rest.join("\n").trim();
+    if (intro) add(intro);
   }
   return groups;
 }
@@ -241,7 +255,12 @@ export function foldPrereleases(text: string, version: string, date: string): st
 
 function renderRelease(version: string, date: string, groups: Map<string, string[]>): string {
   const parts = [`## [${version}] - ${date}`, ""];
-  for (const [h, list] of groups) parts.push(h, "", ...list, "");
+  for (const [h, list] of groups) {
+    parts.push(h, "");
+    // A paragraph item (a heading's intro) is set off from the bullets after it.
+    for (const item of list) parts.push(...(item.startsWith("- ") ? [item] : [item, ""]));
+    if (parts.at(-1) !== "") parts.push("");
+  }
   return parts.join("\n");
 }
 
@@ -282,6 +301,23 @@ export function rewriteFoldedAnchors(doc: string, rewrites: Map<string, string>)
     const target = rewrites.get(slug);
     return target === undefined ? whole : `${route}${target}`;
   });
+}
+
+/** An in-page link (`](#<anchor>)`), as the changelog links its own headers. */
+const IN_PAGE_LINK = /(\]\(#)([\w-]+)(\))/g;
+
+/**
+ * The changelog's own links to a folded rc header (`[rc.1 breaking changes](#400-rc1---…)`)
+ * re-pointed per `rewrites`, like {@linkcode rewriteFoldedAnchors} does for the docs pages.
+ */
+export function rewriteInPageAnchors(text: string, rewrites: Map<string, string>): string {
+  return rewriteFoldedAnchors(text, rewrites).replace(
+    IN_PAGE_LINK,
+    (whole, open: string, slug: string, close: string) => {
+      const target = rewrites.get(slug);
+      return target === undefined ? whole : `${open}${target}${close}`;
+    },
+  );
 }
 
 /** Where the docs pages live: every `.md` under here is a candidate for a changelog link. */
@@ -400,18 +436,23 @@ async function checkPreconditions(tag: string, branch: string): Promise<void> {
 
 /**
  * Step 0: the ci.yml jobs a push skips (integration, next-compat, coverage, backend-integration)
- * passed on HEAD (scripts/release-ci.ts). A real run aborts otherwise; `--dry` reports and goes on.
+ * and every desktop-ci.yml job passed on HEAD (scripts/release-ci.ts). A real run aborts
+ * otherwise; `--dry` reports and goes on.
  */
 async function checkCi(branch: string, dry: boolean): Promise<void> {
   const sha = await capture("git", "rev-parse", "HEAD");
-  const verdict = await releaseCiVerdict(sha).catch((err: Error) => ({
-    ok: false,
-    reason: `could not ask GitHub (needs the GitHub CLI, logged in): ${err.message}`,
-    run: undefined,
-  }));
-  const where = verdict.run ? ` — ${verdict.run.url}` : "";
-  if (verdict.ok) return console.log(`0. CI: ${verdict.reason}${where}`);
-  const message = `CI gate: ${verdict.reason}${where}\n  ${releaseCiHint(branch)}`;
+  const verdicts = await Promise.all(
+    [releaseCiVerdict, desktopCiVerdict].map((check) =>
+      check(sha).catch((err: Error) => ({
+        ok: false,
+        reason: `could not ask GitHub (needs the GitHub CLI, logged in): ${err.message}`,
+        run: undefined,
+      }))
+    ),
+  );
+  const lines = verdicts.map((v) => `${v.reason}${v.run ? ` — ${v.run.url}` : ""}`);
+  if (verdicts.every((v) => v.ok)) return console.log(`0. CI: ${lines.join("\n   ")}`);
+  const message = `CI gate: ${lines.join("\n  ")}\n  ${releaseCiHint(branch)}`;
   if (dry) return console.log(`0. ${message}\n   (a real run stops here)`);
   die(`${message}\nrelease aborted BEFORE any change.`);
 }
@@ -439,6 +480,8 @@ export const RELEASE_DELTA_TESTS = [
   "tests/migrate-effect-fixture.test.ts",
   "tests/cli-upgrade.test.ts",
   "tests/public-surface.test.ts",
+  // The folded CHANGELOG renders on the docs site: every in-page anchor must still resolve.
+  "tests/docs-site.test.ts",
 ];
 
 /** Steps 1–2: version pins (+ the effect example golden) and the CHANGELOG roll. */
@@ -485,7 +528,7 @@ async function runGate(fullGate: boolean): Promise<void> {
   if (await run("deno", "task", "docs:api") !== 0) {
     die("docs:api failed — release aborted (changes left in tree).");
   }
-  // The MCP docs corpus + llms*.txt ship IN the JSR package (src/mcp/docs-corpus.json) and
+  // The MCP docs corpus + llms*.txt ship IN the JSR package (src/mcp/docs-corpus.ts) and
   // embed the version, so they must be regenerated on the release commit, not after the tag.
   // docs:mcp runs first: the MCP page (mcp.json) is one of the corpus's inputs. The bump
   // re-points every packages/* plugin's `@denext/denext` range, and the plugin catalog is

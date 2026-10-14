@@ -267,6 +267,50 @@ Deno.test("resolveSignInUser: allowDangerousEmailAccountLinking links anyway", a
   );
 });
 
+Deno.test("resolveSignInUser: a dangerous link onto an unverified account retires its unproven access first", async () => {
+  const { adapter, options } = setup();
+  const existing = await seedUser(adapter, false);
+  await adapter.setCredential!(existing.id, "squatter-hash");
+  const proofs: { id: string; verified: unknown }[] = [];
+  const dangerous = provider({ allowDangerousEmailAccountLinking: true });
+  const { user } = await resolveSignInUser(
+    options,
+    dangerous,
+    profileOf(),
+    account(),
+    async (stale) => {
+      proofs.push({
+        id: stale.id,
+        verified: (await adapter.getUser(stale.id))?.emailVerified,
+      });
+      await adapter.deleteCredential!(stale.id);
+    },
+  );
+  assertEquals(user.id, existing.id);
+  assertEquals(proofs, [{ id: existing.id, verified: undefined }], "before it is marked verified");
+  assertEquals(await adapter.getCredential!(existing.id), undefined);
+  // A verified account needs no eviction.
+  const second = setup();
+  await seedUser(second.adapter, true);
+  let called = false;
+  await resolveSignInUser(second.options, dangerous, profileOf(), account(), () => {
+    called = true;
+    return Promise.resolve();
+  });
+  assertEquals(called, false);
+});
+
+Deno.test("resolveSignInUser: a provider's verified email verifies only that same address", async () => {
+  const { adapter, options } = setup();
+  const stored = await seedUser(adapter, false, { email: "victim@x.test" });
+  await adapter.linkAccount({ ...account(), userId: stored.id });
+  // The linked provider account now asserts another (verified) address.
+  await resolveSignInUser(options, provider(), profileOf({ email: "other@x.test" }), account());
+  assertEquals((await adapter.getUser(stored.id))?.emailVerified, undefined);
+  await resolveSignInUser(options, provider(), profileOf({ email: "VICTIM@x.test" }), account());
+  assertEquals(typeof (await adapter.getUser(stored.id))?.emailVerified, "number");
+});
+
 Deno.test("resolveSignInUser: a total miss creates the user and links the account", async () => {
   const { adapter, options, events } = setup();
 

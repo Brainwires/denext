@@ -14,21 +14,23 @@
     },
     {
       "name": "@denext/backend",
-      "version": "0.3.0",
-      "spec": "jsr:@denext/backend@^0.3.0",
+      "version": "0.4.0",
+      "spec": "jsr:@denext/backend@^0.4.0",
       "exports": [
         ".",
         "./client",
         "./server"
       ],
-      "denext": "^4.0.0-rc.2",
+      "denext": "^4.0.0",
       "kind": "plugin",
       "factory": "backend",
       "configKeys": [
         "storage",
         "postgres",
         "realtime",
-        "rest"
+        "rest",
+        "functions",
+        "supabase"
       ],
       "title": "@denext/backend",
       "blurb": "Backend services inside your denext app, as one opt-in plugin: no hosted service, nothing to run beside it.",
@@ -48,6 +50,10 @@
                 "properties": {
                   "name": {
                     "description": "A short name for messages (`\"s3\"`, `\"fs\"`).",
+                    "type": "string"
+                  },
+                  "location": {
+                    "description": "Where the store is, for a store reached over the network: its endpoint's origin (`https://s3.us-east-1.amazonaws.com`). Absent for one on this machine's disk (fs).",
                     "type": "string"
                   },
                   "init": {
@@ -89,6 +95,9 @@
                       },
                       "abortMultipart": {
                         "description": "Abandon a multipart upload and free its parts."
+                      },
+                      "uploadPart": {
+                        "description": "Upload one part from the server (resumable uploads); returns its ETag. Optional: without it, the part is sent to presignPart's URL."
                       }
                     },
                     "required": [
@@ -99,6 +108,9 @@
                       "completeMultipart",
                       "abortMultipart"
                     ]
+                  },
+                  "copy": {
+                    "description": "Copy an object inside the store (S3 `CopyObject`), keeping its content type. Optional: without it, a copy streams the object back in through `get` and `put`."
                   }
                 },
                 "required": [
@@ -133,6 +145,10 @@
                     },
                     "authorize": {
                       "description": "Decide one operation for the current request. Runs whenever a storage call is made inside a request (the plugin's endpoints, and the server API called from a route handler, Server Action or page); a call outside any request (a job, a script) is trusted and skips it. Absent, every operation is denied — except downloads from a public bucket."
+                    },
+                    "versioned": {
+                      "description": "Object versioning, as Supabase Storage has it: `true` keeps every overwritten or deleted object as a noncurrent version (a delete leaves a delete marker); `false` suspends it (history is kept, new writes replace). Omitted: off (`DISABLED`), or whatever the bucket's row says once it has been turned on.",
+                      "type": "boolean"
                     }
                   }
                 }
@@ -157,6 +173,37 @@
               },
               "partSize": {
                 "description": "Multipart part size in bytes (default 16 MiB, at least 5 MiB).",
+                "type": "number"
+              },
+              "authorize": {
+                "description": "The rule for buckets created at runtime (`storage.createBucket`, supabase-js `createBucket`) and for declared buckets without an `authorize` of their own. Absent, those buckets are open only to the service role (and to downloads, when public)."
+              },
+              "rls": {
+                "description": "Authorize with SQL row-level security on `storage.objects` / `storage.buckets`, as Supabase does: every operation runs its statement as the request's role (`anon` / `authenticated`, `auth.uid()` in your policies), so the policies decide; a bucket's `authorize`, when it has one, must allow it too. Needs `postgres`. Default `false` (the TypeScript rules decide).",
+                "type": "boolean"
+              },
+              "api": {
+                "description": "The Supabase-compatible Storage API (what `supabase.storage` from `@supabase/supabase-js` talks to, and TUS resumable uploads): served under `/storage/v1` by default; a path to move it, or `false` to turn it off.",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "basePath": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              },
+              "metadataPath": {
+                "description": "Where the bucket and object metadata lives without Postgres: a `node:sqlite` file (default `.denext-storage.db` in the project root). With `postgres`, it is the `storage` schema.",
+                "type": "string"
+              },
+              "maxTransformDimension": {
+                "description": "The largest width or height the API's image render routes produce (default 2500).",
                 "type": "number"
               }
             },
@@ -196,19 +243,20 @@
             "type": "object",
             "properties": {
               "tables": {
-                "description": "The tables to send changes from, by name: `{ notes: { events: [\"insert\"], key: \"id\" } }`.",
+                "description": "The tables to send changes from, by name: `{ notes: { events: [\"insert\"], key: \"id\" } }`. Optional when the publication lists them.",
                 "type": "object",
                 "additionalProperties": {
                   "type": "object",
                   "properties": {
                     "events": {
-                      "description": "The changes to send (default all three: `[\"insert\", \"update\", \"delete\"]`).",
+                      "description": "The changes to send (default all four: `[\"insert\", \"update\", \"delete\", \"truncate\"]`).",
                       "type": "array",
                       "items": {
                         "enum": [
                           "insert",
                           "update",
-                          "delete"
+                          "delete",
+                          "truncate"
                         ]
                       }
                     },
@@ -219,7 +267,48 @@
                     "schema": {
                       "description": "The table's schema (default: the connection's search path).",
                       "type": "string"
+                    },
+                    "old": {
+                      "description": "What a change carries of the row as it was before an update or a delete (Supabase's `old` record): `\"key\"` (the default) — the key column only, which is what Supabase sends for a table under row-level security; `\"full\"` — the whole old row, carried in the notification, so only when it fits (about 7.5 KB of JSON; a larger one arrives without it, with `errors: [\"Error 413: Payload Too Large\"]`). The old row reaches only subscribers who could see the row before the change.",
+                      "enum": [
+                        "key",
+                        "full"
+                      ]
                     }
+                  }
+                }
+              },
+              "publication": {
+                "description": "Also send changes from the tables in this Postgres publication — Supabase's way to opt a table in (`alter publication supabase_realtime add table notes`), so Supabase migrations work unchanged. Default `\"supabase_realtime\"` (created, empty, if it does not exist); `false` reads only tables. A table there needs a one-column primary key; its old row is the key, or the whole row when it has `REPLICA IDENTITY FULL` and no row-level security (as Supabase sends it). Re-read every 10 seconds, so a table added or dropped while the app runs follows.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "enum": [
+                      false
+                    ]
+                  }
+                ]
+              },
+              "source": {
+                "description": "Where changes come from. `\"notify\"` (the default): a trigger per table sends the key with `pg_notify`, which works everywhere but serializes committing transactions on the notification queue. `\"logical\"`: logical decoding — a temporary `pgoutput` replication slot per server instance, read over a reserved connection — no triggers, no NOTIFY, commit timestamps from the WAL. It needs `wal_level = logical`, a connecting role with the `REPLICATION` attribute and a client with `reserve()` (`Deno.SQL`, or postgres.js through `fromPostgresJs`).",
+                "enum": [
+                  "notify",
+                  "logical"
+                ]
+              },
+              "logical": {
+                "description": "`source: \"logical\"`'s tuning.",
+                "type": "object",
+                "properties": {
+                  "pollMs": {
+                    "description": "How often the slot is read when it was empty, in milliseconds (default 50).",
+                    "type": "number"
+                  },
+                  "maxChanges": {
+                    "description": "Changes read per round trip (default 10 000); a full batch is followed at once.",
+                    "type": "number"
                   }
                 }
               },
@@ -262,22 +351,59 @@
               "maxTrackedKeys": {
                 "description": "Keys tracked per subscription, so a delete reaches only subscribers who could see the row (default 10 000); see the docs for what happens past it.",
                 "type": "number"
+              },
+              "socket": {
+                "description": "Serve Supabase Realtime's protocol — `/realtime/v1/websocket` (Phoenix channels: `postgres_changes`, broadcast, presence, private channels) and the REST broadcast `/realtime/v1/api/broadcast` — so `@supabase/supabase-js`'s `supabase.channel(…)` works against the app. On by default; `false` turns it off; an object sets its limits.",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "maxConnections": {
+                        "description": "Sockets held at once on one server instance (default 10 000).",
+                        "type": "number"
+                      },
+                      "maxConnectionsPerAddress": {
+                        "description": "Sockets from one client address (`clientIpForLimits()` — set `trustForwardedHeaders` behind a proxy; default 100).",
+                        "type": "number"
+                      },
+                      "maxChannelsPerConnection": {
+                        "description": "Channels one socket may join (default 100, as Supabase).",
+                        "type": "number"
+                      },
+                      "maxEventsPerSecond": {
+                        "description": "Messages a socket may send per second, heartbeats included (default 100).",
+                        "type": "number"
+                      },
+                      "maxPayloadBytes": {
+                        "description": "The largest broadcast payload, and tracked presence state, in bytes (default 256 KiB).",
+                        "type": "number"
+                      }
+                    }
+                  }
+                ]
               }
-            },
-            "required": [
-              "tables"
-            ]
+            }
           },
           "rest": {
             "description": "Auto-REST: the schema's tables (those the `anon` / `authenticated` roles hold a privilege on) served PostgREST-style under `/rest/v1/<table>` — filters, ordering, paging, inserts, filtered updates and deletes — each statement run through `db()`, so row-level security scopes it to the request's user. Row types are generated into `.denext/rest.ts`. Needs `postgres`.",
             "type": "object",
             "properties": {
               "schema": {
-                "description": "The schema whose tables are served (default `\"public\"`).",
+                "description": "The schema whose tables are served (default `\"public\"`); `schemas` lists several.",
                 "type": "string"
               },
+              "schemas": {
+                "description": "The schemas served, the default first (`Accept-Profile` / `Content-Profile` pick another, supabase-js's `schema(\"api\")`). Overrides `schema`.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "tables": {
-                "description": "The tables to serve, by name, or `\"*\"` (the default) for every relation of the schema that the `anon` or `authenticated` role holds a privilege on AND that enforces row-level security: a table with RLS enabled, or a view created `with (security_invoker = true)`. Tables with RLS off, ordinary (owner's-rights) views, materialized views and foreign tables are skipped — one startup warning lists them — unless named here: a list exposes exactly the named relations, whatever their RLS. A listed table those roles cannot reach gets no route either.",
+                "description": "The relations to serve, by name (`\"notes\"`, or `\"api.notes\"`), or `\"*\"` (the default) for every relation of the schemas that the `anon` or `authenticated` role holds a privilege on AND that enforces row-level security: a table with RLS enabled, or a view created `with (security_invoker = true)`. Tables with RLS off, ordinary (owner's-rights) views, materialized views and foreign tables are skipped — one startup warning lists them — unless named here: a list exposes exactly the named relations, whatever their RLS. A listed table those roles cannot reach gets no route either. Functions are served when either role may EXECUTE them.",
                 "anyOf": [
                   {
                     "type": "array",
@@ -313,12 +439,232 @@
                 "type": "number"
               },
               "exactCount": {
-                "description": "Who may ask for `Prefer: count=exact` on a read — a full count, as costly as reading every matching row: `\"authenticated\"` (the default; an anonymous request is refused with 400), `\"all\"`, or `\"never\"`.",
+                "description": "Who may ask for `Prefer: count=exact` on a read — a full count, as costly as reading every matching row: `\"authenticated\"` (the default; an anonymous request is refused with 400), `\"all\"`, or `\"never\"`. `count=planned` (the planner's estimate) is open to everyone.",
                 "enum": [
                   "all",
                   "authenticated",
                   "never"
                 ]
+              },
+              "explain": {
+                "description": "Answer `Accept: application/vnd.pgrst.plan` with the statement's execution plan (default `false`: a 406). Plans reveal table sizes and indexes; turn this on in development only.",
+                "type": "boolean"
+              },
+              "aggregates": {
+                "description": "Allow aggregate functions in `select=` (`amount.sum()`, `count()`, … grouped by the other selected columns) — PostgREST's `db-aggregates-enabled` (default `false`: a 400). An aggregate reads every matching row whatever `limit` says, so a caller could make the database scan a whole table; turn it on when the tables are small or the statement timeout bounds the cost.",
+                "type": "boolean"
+              }
+            }
+          },
+          "supabase": {
+            "description": "The Supabase-compatible surface: `true` (keys from the environment) or the keys and the `/auth/v1` options (`auth`). Installs the API keys (publishable / secret, and the legacy JWT keys) and the JWT signing keys that `resolveIdentity()`, `db()` and `auth()` recognize, serves GoTrue's `/auth/v1` over the `denextAuth()` users (with the JWKS at `/auth/v1/.well-known/jwks.json`), and adds `denext backend keys`.",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "auth": {
+                    "description": "`/auth/v1` (GoTrue) options: the site URL and redirect allow-list, sign-up and confirmation policy, anonymous users, SMS delivery, captcha, hooks, MFA and SAML. The users themselves, the providers and the email delivery come from `denextAuth()`."
+                  }
+                }
+              }
+            ]
+          },
+          "functions": {
+            "description": "Edge Functions: `functions/<name>.ts` (or `functions/<name>/index.ts`) served at `/functions/v1/<name>` — what supabase-js's `functions.invoke` calls — each in a Deno Worker of its own. A module that calls `Deno.serve(handler)` or default-exports a handler runs unchanged. Callers need a valid identity unless `verifyJwt: false`. `{}` serves the directory with the defaults.",
+            "type": "object",
+            "properties": {
+              "dir": {
+                "description": "The directory holding the functions, relative to the project (default `\"functions\"`, or `\"supabase/functions\"` when only that exists). A function is `<dir>/<name>.ts` or `<dir>/<name>/index.ts`; entries starting with `_` or `.` (`_shared/`) are not functions.",
+                "type": "string"
+              },
+              "basePath": {
+                "description": "Where the functions are served, app-relative (default `\"/functions/v1\"`).",
+                "type": "string"
+              },
+              "verifyJwt": {
+                "description": "Require a valid caller for every function unless it says otherwise (default `true`).",
+                "type": "boolean"
+              },
+              "timeoutMs": {
+                "description": "The longest one request may run, in milliseconds (default 150 000, Supabase's free tier).",
+                "type": "number"
+              },
+              "maxBodyBytes": {
+                "description": "The largest request body passed to a function, in bytes (default 20 MiB).",
+                "type": "number"
+              },
+              "env": {
+                "description": "Environment variables every function reads from `Deno.env`, over the process's own.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "url": {
+                "description": "The URL functions read as `SUPABASE_URL` (the `SUPABASE_URL` env var wins). Default: the app's `canonicalOrigin` (or `DENEXT_CANONICAL_ORIGIN`) plus its `basePath`, else the address the server listens on as this machine reaches it (`http://127.0.0.1:<port>`) — never a request's `Host`, which a client chooses: a worker keeps its environment for life, beside the service key.",
+                "type": "string"
+              },
+              "functions": {
+                "description": "Per-function settings, by name.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "verifyJwt": {
+                      "description": "Require a valid caller (a signed-in session, or — once the Supabase-compatible keys are configured — a valid access token or API key) before the function runs. Default: the directory's `verifyJwt` (itself `true`).",
+                      "type": "boolean"
+                    },
+                    "timeoutMs": {
+                      "description": "The longest one request may run, in milliseconds (default: the directory's).",
+                      "type": "number"
+                    },
+                    "env": {
+                      "description": "Environment variables this function reads from `Deno.env`, over the process's own.",
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "permissions": {
+                      "description": "The worker's permissions (`Deno.PermissionOptions`, e.g. `{ net: true, env: true, read: false }`); by default the worker has the server's. Needs Deno's worker options: list `\"worker-options\"` in `deno.json`'s `unstable` (the plugin refuses to start otherwise — without it Deno would exit the process on the first request).",
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "inherit"
+                          ]
+                        },
+                        {
+                          "enum": [
+                            "none"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "vault": {
+            "description": "Vault: secrets encrypted with AES-256-GCM in the app (key: `DENEXT_VAULT_KEY`) and stored in `vault.secrets`, Supabase Vault's table shape — `vault` from `@denext/backend/server`. Needs `postgres`.",
+            "type": "object",
+            "properties": {
+              "key": {
+                "description": "The encryption key (default `DENEXT_VAULT_KEY`): at least 32 characters (a random 32-byte value, base64-encoded, is ideal). A list rotates keys: the first encrypts, every one decrypts.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ]
+              },
+              "migrate": {
+                "description": "Apply the `backend_vault_0001` migration on first use (default `true`).",
+                "type": "boolean"
+              },
+              "sql": {
+                "description": "Supabase's SQL surface too: `vault.create_secret()`, `vault.update_secret()` and the `vault.decrypted_secrets` view, for SQL and migrations written for Supabase. They read the key from a transaction-local setting the app sets — only in `vault.withKey()` transactions and `denext db push / reset / diff` — so outside those they raise an error. Needs `pgcrypto`. See the docs for what this mode trusts the database session with.",
+                "type": "boolean"
+              }
+            }
+          },
+          "queues": {
+            "description": "Queues with pgmq's SQL API (no extension) and Supabase's `pgmq_public` wrappers — `queue()`, `queues` and `queueConsumer()` from `@denext/backend/server`. Needs `postgres`.",
+            "type": "object",
+            "properties": {
+              "migrate": {
+                "description": "Apply the `backend_queues_0001` migration on first use (default `true`).",
+                "type": "boolean"
+              }
+            }
+          },
+          "webhooks": {
+            "description": "Database webhooks: `supabase_functions.http_request` triggers record changes, and the app delivers them to the configured hooks, signed and retried. Needs `postgres`.",
+            "type": "object",
+            "properties": {
+              "hooks": {
+                "description": "Targets a trigger can name: `supabase_functions.http_request('order-created')`.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "description": "Where the event is sent.",
+                      "type": "string"
+                    },
+                    "secret": {
+                      "description": "The signing secret (`whsec_<base64>` or any string); default: `webhooks.secret`.",
+                      "type": "string"
+                    },
+                    "headers": {
+                      "description": "Headers added to every request (the trigger's own come first; signing headers win).",
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "timeoutMs": {
+                      "description": "The request timeout in milliseconds (default: the trigger's, else 5000).",
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "url"
+                  ]
+                }
+              },
+              "allowUrls": {
+                "description": "URLs a trigger may name directly (Supabase's `http_request('https://…')`): each entry is a URL prefix (`\"https://hooks.example.com/\"`). Default: none — a URL in a trigger is refused.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "secret": {
+                "description": "The default signing secret (default `DENEXT_WEBHOOK_SECRET`).",
+                "type": "string"
+              },
+              "maxAttempts": {
+                "description": "Attempts before an event is marked failed (default 8).",
+                "type": "number"
+              },
+              "backoffMs": {
+                "description": "The first retry's delay in ms, doubled per attempt (default 10 000).",
+                "type": "number"
+              },
+              "maxBackoffMs": {
+                "description": "The longest retry delay in ms (default 3 600 000).",
+                "type": "number"
+              },
+              "pollIntervalMs": {
+                "description": "How often the deliverer looks for due events, in ms (default 5000; NOTIFY wakes it sooner).",
+                "type": "number"
+              },
+              "delivery": {
+                "description": "`\"auto\"` (default): `denext dev` / `denext start` deliver in the background. `\"manual\"`: only `deliverWebhooks()` does (from a job, say).",
+                "enum": [
+                  "auto",
+                  "manual"
+                ]
+              },
+              "migrate": {
+                "description": "Apply the `backend_webhooks_0001` migration on first use (default `true`).",
+                "type": "boolean"
+              },
+              "fetch": {
+                "description": "The `fetch` deliveries use (tests)."
               }
             }
           }
@@ -336,7 +682,7 @@
         "./markdown",
         "./runtime"
       ],
-      "denext": "^4.0.0-rc.2",
+      "denext": "^4.0.0",
       "kind": "plugin",
       "factory": "contentCollections",
       "verb": "content",
@@ -368,7 +714,7 @@
       "exports": [
         "."
       ],
-      "denext": "^4.0.0-rc.2",
+      "denext": "^4.0.0",
       "kind": "plugin",
       "factory": "effect",
       "configKeys": [
@@ -397,7 +743,7 @@
         "./command",
         "./subscriptions"
       ],
-      "denext": "^4.0.0-rc.2",
+      "denext": "^4.0.0",
       "kind": "plugin",
       "factory": "graphql",
       "verb": "graphql",
@@ -535,7 +881,7 @@
         "./command",
         "./types"
       ],
-      "denext": "^4.0.0-rc.2",
+      "denext": "^4.0.0",
       "kind": "plugin",
       "factory": "htmx",
       "verb": "htmx",
@@ -589,7 +935,7 @@
         "./spec",
         "./types"
       ],
-      "denext": "^4.0.0-rc.2",
+      "denext": "^4.0.0",
       "kind": "plugin",
       "factory": "openapi",
       "verb": "openapi",
@@ -749,7 +1095,7 @@
         "./link",
         "./router"
       ],
-      "denext": "^4.0.0-rc.2",
+      "denext": "^4.0.0",
       "kind": "plugin",
       "factory": "pagesRouter",
       "configKeys": [
@@ -790,7 +1136,7 @@
         "./dom",
         "./routes"
       ],
-      "denext": "^4.0.0-rc.2",
+      "denext": "^4.0.0",
       "kind": "plugin",
       "factory": "reactRouter",
       "configKeys": [

@@ -31,6 +31,7 @@ import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
 import { denoToolchainStatus } from "../../build/deno-toolchain.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { loadNativeDirs } from "../../build/capacitor-native-dirs.ts";
+import { backendChecks } from "./doctor-backend.ts";
 
 /** Whether `path` is an existing directory. */
 async function isDirectory(path: string): Promise<boolean> {
@@ -465,6 +466,7 @@ export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
   if (desktopOrigin) checks.push(desktopOrigin);
   const desktopRuntime = await desktopRuntimeCheck(dir);
   if (desktopRuntime) checks.push(desktopRuntime);
+  checks.push(...await backendChecks(paths.projectDir, paths.config));
 
   return { dir, checks, routes, bundle: await builtClientChunks(paths.outDir) };
 }

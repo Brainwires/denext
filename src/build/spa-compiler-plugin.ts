@@ -14,7 +14,7 @@
 // identity on anything it can't prove, and any parse/transform failure leaves the module
 // exactly as written — never miscompiled.
 
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import { toFileUrl } from "@std/path";
 import { featureFlags, reactCompilerEnabled } from "../server/config.ts";
 import type { ProjectPaths } from "./paths.ts";

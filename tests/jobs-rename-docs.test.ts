@@ -1,7 +1,8 @@
 // denext 4.0 renamed background/scheduled "tasks" to "jobs" with no aliases (`denext task` is
 // Deno's `deno task` now). The docs, guides, plugin READMEs and examples must not teach the old
 // names: a reader who copies `defineTask` or `scheduledTasks` gets a config that fails to load.
-// The CHANGELOG and the jobs page's own rename note are the only places allowed to say them.
+// The CHANGELOG, the jobs page's own rename note, the old /docs/tasks page that points at it and
+// the 4.0 upgrade guide are the only places allowed to say them.
 
 import { assertEquals } from "@std/assert";
 import { fromFileUrl, join, relative } from "@std/path";
@@ -27,6 +28,7 @@ const OLD = new RegExp(
 const ALLOWED = new Set([
   "CHANGELOG.md",
   "site/app/docs/jobs/page.tsx",
+  "site/app/docs/tasks/page.tsx",
   "site/app/docs/changelog/content.md",
 ]);
 

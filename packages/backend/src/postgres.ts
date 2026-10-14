@@ -4,7 +4,6 @@
 // copy of this package. `backendAuthAdapter()` puts denext auth's tables on that same client.
 
 import {
-  auth,
   type AuthAdapter,
   type AuthSession,
   postgresAuthAdapter,
@@ -12,6 +11,7 @@ import {
   postgresClient,
   type SqlClient,
 } from "@denext/denext/server";
+import { identityScope, isRequestIdentity, resolveIdentity } from "./identity.ts";
 import {
   ANON_SCOPE,
   authenticatedScope,
@@ -91,13 +91,13 @@ export function openPostgres(
   }
 }
 
-type ContextBridge = { __denextCurrentRequestContext?: () => { request?: Request } | undefined };
-
 /** The request context the code runs in, or `undefined` (a job, a script, module load). */
 function currentRequestContext(): object | undefined {
   const context = (globalThis as ContextBridge).__denextCurrentRequestContext?.();
   return context?.request ? context : undefined;
 }
+
+type ContextBridge = { __denextCurrentRequestContext?: () => { request?: Request } | undefined };
 
 /** The installed slot's client and RLS options, or the reason there is none. */
 function installed(): { sql: SqlClient; rls: RlsOptions } {
@@ -123,15 +123,17 @@ const requestScopes = new WeakMap<object, Promise<RlsScope>>();
 /**
  * The identity of the request current right now — read for each query as it is made, never when
  * the client was made, so a `db()` client kept at module scope always acts as the visitor whose
- * request makes the query, and as `anon` outside any request (fail closed). Memoized per request context; a
- * failed read is not remembered.
+ * request makes the query, and as `anon` outside any request (fail closed). The request's
+ * identity is {@linkcode resolveIdentity}'s: a Supabase access token or API key when
+ * `backend({ supabase })` is on, else the denext session. Memoized per request context; a failed
+ * read is not remembered.
  */
 function currentScope(rls: RlsOptions): Promise<RlsScope> {
-  const context = currentRequestContext();
+  const context = currentRequestContext() as { request?: Request } | undefined;
   if (!context) return Promise.resolve(ANON_SCOPE);
   let pending = requestScopes.get(context);
   if (!pending) {
-    pending = auth().then((session) => session ? sessionScope(session, rls) : ANON_SCOPE);
+    pending = resolveIdentity(context.request, { rls }).then(identityScope);
     requestScopes.set(context, pending);
     pending.catch(() => requestScopes.delete(context));
   }
@@ -148,6 +150,7 @@ function identityOf(
 ): Promise<RlsScope> {
   if (as === "anon") return Promise.resolve(ANON_SCOPE);
   if (as === undefined) return currentScope(rls);
+  if (isRequestIdentity(as)) return Promise.resolve().then(() => identityScope(as));
   return isSession(as)
     ? sessionScope(as, rls)
     : Promise.resolve().then(() => authenticatedScope(userClaims(as)));

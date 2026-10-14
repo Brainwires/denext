@@ -29,8 +29,14 @@ type Range = { start: Loc; end: Loc };
 export interface IstanbulFileCoverage {
   path: string;
   statementMap: Record<string, Range>;
-  fnMap: Record<string, { name: string; decl: Range; loc: Range; line: number }>;
-  branchMap: Record<string, { loc: Range; type: string; locations: Range[]; line: number }>;
+  fnMap: Record<
+    string,
+    { name: string; decl: Range; loc: Range; line: number }
+  >;
+  branchMap: Record<
+    string,
+    { loc: Range; type: string; locations: Range[]; line: number }
+  >;
   s: Record<string, number>;
   f: Record<string, number>;
   b: Record<string, number[]>;
@@ -122,14 +128,19 @@ function toIstanbul(rec: LcovRecord): IstanbulFileCoverage {
  * Convert lcov text to an Istanbul coverage map. Relative \`SF:\` paths are resolved
  * against \`root\` (lcov from \`deno coverage\` is already absolute).
  */
-export function lcovToIstanbul(lcov: string, root: string): IstanbulCoverageMap {
+export function lcovToIstanbul(
+  lcov: string,
+  root: string,
+): IstanbulCoverageMap {
   const map: IstanbulCoverageMap = {};
   let rec: LcovRecord | null = null;
   for (const raw of lcov.split("\\n")) {
     const line = raw.trim();
     if (line.startsWith("SF:")) {
       const p = line.slice(3);
-      rec = newRecord(p.startsWith("/") ? p : \`\${root.replace(/\\/$/, "")}/\${p}\`);
+      rec = newRecord(
+        p.startsWith("/") ? p : \`\${root.replace(/\\/$/, "")}/\${p}\`,
+      );
       continue;
     }
     if (rec !== null && readLcovLine(rec, line)) {
@@ -143,11 +154,17 @@ export function lcovToIstanbul(lcov: string, root: string): IstanbulCoverageMap 
 if (import.meta.main) {
   const [inPath, outPath, rootArg] = Deno.args;
   if (!inPath || !outPath) {
-    console.error("usage: coverage-to-istanbul.ts <in.lcov> <out.json> [projectRoot]");
+    console.error(
+      "usage: coverage-to-istanbul.ts <in.lcov> <out.json> [projectRoot]",
+    );
     Deno.exit(2);
   }
-  const map = lcovToIstanbul(await Deno.readTextFile(inPath), rootArg ?? Deno.cwd());
+  const map = lcovToIstanbul(
+    await Deno.readTextFile(inPath),
+    rootArg ?? Deno.cwd(),
+  );
   await Deno.writeTextFile(outPath, JSON.stringify(map));
-  console.log(\`coverage-to-istanbul: wrote \${Object.keys(map).length} files to \${outPath}\`);
+  const count = Object.keys(map).length;
+  console.log(\`coverage-to-istanbul: wrote \${count} files to \${outPath}\`);
 }
 `;

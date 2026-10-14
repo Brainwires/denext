@@ -17,6 +17,7 @@ import {
   TOOLCHAIN_ENV,
   unlinkDenoToolchain,
 } from "../../build/deno-toolchain.ts";
+import { esbuildBinaryStatus } from "../../build/esbuild/binary.ts";
 
 /**
  * `ensureDenoToolchain()`, or a clear refusal (exit 1) when the toolchain can't be had: `install`,
@@ -94,11 +95,14 @@ export const denoCommand: CommandSpec = {
 /** `toolchain status`. */
 async function status(ctx: CommandContext): Promise<void> {
   const s = await denoToolchainStatus({ verify: ctx.flags.verify === true });
+  const esbuild = await esbuildBinaryStatus();
   if (ctx.global.json) {
-    console.log(JSON.stringify(s, null, 2));
+    console.log(JSON.stringify({ ...s, esbuildBinary: esbuild }, null, 2));
   } else {
     console.log(`\n  ${s.ok ? "✔" : "✖"} deno toolchain  ${s.detail}`);
     if (s.path) console.log(`    path  ${s.path}`);
+    console.log(`  ${esbuild.ok ? "✔" : "✖"} esbuild         ${esbuild.detail}`);
+    if (esbuild.path) console.log(`    path  ${esbuild.path}`);
     console.log("");
   }
   const stale = await staleToolchainLink().catch(() => null);

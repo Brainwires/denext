@@ -352,10 +352,12 @@ export {
   cookies,
   draftMode,
   headers,
+  localServerOrigin,
   noStore,
   readonlyHeaders,
   requestId,
   requestSignal,
+  setRequestTimeout,
 } from "./request-context.ts";
 export type { RequestCookie } from "./request-context.ts";
 export { cappedBody, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
@@ -473,6 +475,10 @@ export type {
   SqlRow,
 } from "./postgres.ts";
 export { migratePostgres, postgresMigrationStatus } from "./postgres-migrate.ts";
+export { migrateSqlite, sqliteMigrationStatus } from "./sqlite-migrate.ts";
+export type { SqliteMigrateOptions, SqliteMigrationDb } from "./sqlite-migrate.ts";
+export { vectorSearchSql } from "./vector-sql.ts";
+export type { VectorSearchSqlOptions } from "./vector-sql.ts";
 export type {
   MigrateResult,
   Migration,
@@ -509,6 +515,7 @@ export {
   transformImageBytes,
   type TransformImageOptions,
 } from "./image-optimizer.ts";
+export { type HealthCheck, type HealthCheckOptions, registerHealthCheck } from "./health.ts";
 export {
   safeFetch,
   SafeFetchError,
@@ -546,6 +553,7 @@ export {
   microsoftEntra,
   oidc,
   okta,
+  phoneOtp,
   slack,
 } from "./auth/providers.ts";
 export type {
@@ -559,6 +567,7 @@ export type {
   OAuthClientOptions,
   OidcOptions,
   OktaOptions,
+  PhoneProviderOptions,
 } from "./auth/providers.ts";
 // Password hashing for the Credentials provider (salted scrypt via node:crypto).
 export { hashPassword, verifyPassword } from "./auth/password.ts";
@@ -574,15 +583,33 @@ export type {
   ApiTokenRecord,
   AuthAdapter,
   MaybePromise,
+  MfaFactorRecord,
   MfaRecord,
   NativeGrantRecord,
   NativeSessionRecord,
   PasskeyChallengeRecord,
   PasskeyRecord,
+  SsoAttributeMapping,
+  SsoAttributeMappingKey,
+  SsoProviderRecord,
+  SsoProviderWrite,
+  SsoSessionRecord,
   VerificationPurpose,
   VerificationTokenRecord,
   VerificationTokenRef,
 } from "./auth/adapter.ts";
+export type {
+  CustomProviderAdapter,
+  CustomProviderRecord,
+  OAuthAuthorizationExpect,
+  OAuthAuthorizationPatch,
+  OAuthAuthorizationRecord,
+  OAuthClientRecord,
+  OAuthConsentRecord,
+  OAuthServerAdapter,
+  OAuthSessionLink,
+  Web3NonceAdapter,
+} from "./auth/adapter-oauth-server.ts";
 // Brute-force protection for the credentials endpoint (`AuthConfig.rateLimit`).
 export { inMemoryRateLimitStore } from "./auth/rate-limit.ts";
 export type {
@@ -601,6 +628,57 @@ export { requireBearer } from "./auth/bearer.ts";
 export type { BearerContext, RequireBearerOptions } from "./auth/bearer.ts";
 export { issueApiToken, listApiTokens, revokeApiToken, verifyApiToken } from "./auth/api-token.ts";
 export type { IssueApiTokenOptions, IssuedApiToken } from "./auth/api-token.ts";
+// Supabase-compatible keys and access tokens (`backend({ supabase })` from @denext/backend).
+export {
+  apiKeyRole,
+  canSign,
+  generateSupabaseKeys,
+  installedSupabaseKeys,
+  installSupabaseKeys,
+  looksLikeJwt,
+  opaqueKeyRole,
+  resolveSupabaseKeys,
+  signSupabaseJwt,
+  SUPABASE_KEY_ENV,
+  supabaseJwks,
+  SupabaseKeyError,
+  verifySupabaseJwt,
+} from "./auth/gotrue/keys.ts";
+export type {
+  GeneratedSupabaseKeys,
+  SupabaseJwtClaims,
+  SupabaseKeyErrorCode,
+  SupabaseKeys,
+  SupabaseKeysConfig,
+  SupabaseRole,
+  SupabaseSigningKey,
+  VerifySupabaseJwtOptions,
+} from "./auth/gotrue/keys.ts";
+export { jwtBearerOf, sessionFromClaims, verifyAccessToken } from "./auth/gotrue/access.ts";
+export { bearerTokenOf } from "./auth/bearer-header.ts";
+// The GoTrue-compatible `/auth/v1` API (`backend({ supabase })` mounts it).
+export { handleGoTrueRequest, installGoTrue } from "./auth/gotrue/handler.ts";
+export type { GoTrueHandlerOptions } from "./auth/gotrue/handler.ts";
+export { refreshSsoMetadata } from "./auth/gotrue/sso-refresh.ts";
+export type {
+  RefreshSsoMetadataOptions,
+  SsoMetadataRefreshSummary,
+} from "./auth/gotrue/sso-refresh.ts";
+export type { RefreshOutcome } from "./auth/gotrue/sso-metadata.ts";
+export { GoTrueError } from "./auth/gotrue/errors.ts";
+export type { GoTrueErrorCode } from "./auth/gotrue/errors.ts";
+export type {
+  GoTrueAccessTokenHookInput,
+  GoTrueCaptchaOptions,
+  GoTrueHooks,
+  GoTrueOAuthServerOptions,
+  GoTrueOptions,
+  GoTrueSamlOptions,
+  GoTrueSamlProvider,
+  GoTrueSendEmailPayload,
+  GoTrueSmsMessage,
+  GoTrueWeb3Options,
+} from "./auth/gotrue/options.ts";
 export type { InMemorySessionStoreOptions, SessionStore } from "./auth/session-store.ts";
 export { sqliteSessionStore } from "./auth/sqlite-session-store.ts";
 export type { SqliteSessionStoreOptions } from "./auth/sqlite-session-store.ts";
@@ -613,6 +691,38 @@ export { postgresSessionStore } from "./auth/postgres-session-store.ts";
 export type { PostgresSessionStoreOptions } from "./auth/postgres-session-store.ts";
 export { postgresRateLimitStore } from "./auth/postgres-rate-limit.ts";
 export type { PostgresRateLimitStoreOptions } from "./auth/postgres-rate-limit.ts";
+// SAML 2.0 Service Provider primitives (IdP metadata, AuthnRequest, Response verification).
+export {
+  buildAuthnRequest,
+  buildLogoutRequest,
+  buildLogoutResponse,
+  inMemorySamlReplayCache,
+  parseIdpMetadata,
+  peekLogoutMessage,
+  SamlError,
+  spMetadataXml,
+  verifyLogoutRequest,
+  verifyLogoutResponse,
+  verifySamlResponse,
+} from "./auth/saml/mod.ts";
+export type {
+  BuildAuthnRequestOptions,
+  BuildLogoutRequestOptions,
+  BuildLogoutResponseOptions,
+  ParsedIdpMetadata,
+  PeekedLogoutMessage,
+  SamlBindingInput,
+  SamlErrorCode,
+  SamlIdpConfig,
+  SamlPrivateKey,
+  SamlReplayCache,
+  SamlSpConfig,
+  VerifiedLogoutRequest,
+  VerifiedLogoutResponse,
+  VerifiedSamlAssertion,
+  VerifyLogoutOptions,
+  VerifySamlResponseOptions,
+} from "./auth/saml/mod.ts";
 // Email verification + password reset — what `{basePath}/verify` and `/reset` run, callable
 // from your own Server Actions too.
 export {
@@ -674,6 +784,7 @@ export type {
   NativeAppleConfig,
   NativeIdTokenProviderConfig,
   OAuthProvider,
+  PhoneProvider,
   ProfileInput,
   SendVerificationRequest,
   SignInFailedReason,

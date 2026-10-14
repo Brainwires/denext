@@ -9,7 +9,7 @@
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { dirname, join } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../src/build/esbuild/mod.ts";
 import { act, render } from "../src/testing/mod.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import type { VNode } from "../src/jsx/types.ts";

@@ -25,24 +25,69 @@
 export { storage } from "./src/storage.ts";
 export { db } from "./src/postgres.ts";
 export type { Db } from "./src/postgres.ts";
-export type { DbIdentity, DbOptions, DbUser, RlsRole } from "./src/rls.ts";
+export type { DbIdentity, DbOptions, DbUser, RlsRole, RlsScope } from "./src/rls.ts";
+export {
+  ANON_IDENTITY,
+  IdentityError,
+  identityScope,
+  isIdentityError,
+  resolveIdentity,
+} from "./src/identity.ts";
+export type {
+  IdentityErrorCode,
+  IdentityRole,
+  RequestIdentity,
+  ResolveIdentityOptions,
+} from "./src/identity.ts";
 export { onTableChange, RealtimeUnsupportedError, tableChanges } from "./src/realtime.ts";
+export { broadcast } from "./src/realtime-socket.ts";
 export type { TableChangeEvent, TableChangesOptions } from "./src/realtime.ts";
 export type {
+  FilterOp,
   TableChange,
   TableChangesFrame,
   TableEvent,
   TableFilter,
+  TableFilterValue,
 } from "./src/realtime-shared.ts";
+export { vault, VaultError } from "./src/vault.ts";
+export type { DecryptedSecret, Vault, VaultSecret } from "./src/vault.ts";
+export { queue, queueConsumer, QueueError, queues } from "./src/queues.ts";
+export type {
+  Queue,
+  QueueConsumerOptions,
+  QueueConsumerResult,
+  QueueMessage,
+  QueueMetrics,
+  Queues,
+} from "./src/queues.ts";
+export {
+  fromVector,
+  matchDocuments,
+  requireVector,
+  toVector,
+  vectorSearchSql,
+  VectorUnavailableError,
+} from "./src/vector.ts";
+export type { DocumentMatch, MatchDocumentsOptions, VectorSearchSqlOptions } from "./src/vector.ts";
+export { deliverWebhooks, signWebhook, verifyWebhook, webhookEvents } from "./src/webhooks.ts";
+export type { DeliveryResult, WebhookEvent } from "./src/webhooks.ts";
 export { isStorageError, StorageError } from "./src/errors.ts";
 export type { StorageErrorCode } from "./src/errors.ts";
 export type { StorageTransform } from "./src/shared.ts";
+export type { StorageIdentity, StorageRole } from "./src/storage-identity.ts";
 export type {
   BucketAccessOptions,
+  BucketInfo,
+  BucketSettings,
+  FolderEntry,
+  FolderListOptions,
+  LifecyclePolicy,
   ListedObject,
   ListOptions,
   ListResult,
   MultipartUpload,
+  ObjectDetails,
   ObjectInfo,
   SignedUpload,
   SignedUploadOptions,
@@ -50,6 +95,8 @@ export type {
   Storage,
   StorageBucket,
   StoredObject,
+  TransferOptions,
   UploadBody,
   UploadOptions,
+  VersionOptions,
 } from "./src/types.ts";

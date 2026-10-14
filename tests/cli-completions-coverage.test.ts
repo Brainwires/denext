@@ -111,3 +111,55 @@ Deno.test("completions rejects an unknown shell with a non-zero exit", () => {
   assertEquals(logs, [], "no script is printed for a shell it does not know");
   assertStringIncludes(errs.join("\n"), "unknown shell");
 });
+
+Deno.test("completions offer a verb's actions as the second word, in every shell", async () => {
+  const { actionsOf, makeCompletionsCommand } = await import("../src/cli/commands/completions.ts");
+  const reg = buildRegistry();
+  assertEquals(actionsOf(reg.get("migration")!).slice(0, 3), ["new", "list", "up"]);
+  assertEquals(
+    actionsOf({
+      name: "x",
+      summary: "",
+      run() {},
+      positionals: [{ name: "d", help: "Project directory" }],
+    }),
+    [],
+  );
+  const scripts: Record<string, string> = {};
+  const exit = Deno.exit;
+  const log = console.log;
+  try {
+    (Deno as { exit: unknown }).exit = () => undefined;
+    for (const shell of ["bash", "zsh", "fish"]) {
+      console.log = (text: string) => (scripts[shell] = text);
+      await makeCompletionsCommand(reg).run({
+        positionals: [shell],
+        flags: {},
+        global: {} as never,
+        rest: [],
+      });
+    }
+  } finally {
+    (Deno as { exit: unknown }).exit = exit;
+    console.log = log;
+  }
+  assertStringIncludes(scripts.bash, 'db) COMPREPLY=( $(compgen -W "migrate rollback status');
+  assertStringIncludes(scripts.bash, "stack) COMPREPLY=");
+  assertStringIncludes(
+    scripts.zsh,
+    "    migration) compadd -- new list up down repair squash fetch ;;",
+  );
+  assertStringIncludes(
+    scripts.fish,
+    "complete -c denext -n '__fish_seen_subcommand_from db' -a 'migrate",
+  );
+  // The bash script parses.
+  const path = await Deno.makeTempFile({ suffix: ".bash" });
+  try {
+    await Deno.writeTextFile(path, scripts.bash);
+    const check = await new Deno.Command("bash", { args: ["-n", path] }).output();
+    assert(check.success, new TextDecoder().decode(check.stderr));
+  } finally {
+    await Deno.remove(path);
+  }
+});

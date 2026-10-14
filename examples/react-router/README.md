@@ -7,7 +7,7 @@ under `.denext/react-router/`, and feeds them to the App Router, so **Flight, st
 per-segment error boundaries, and soft navigation are all denext's**.
 
 ```sh
-deno task dev          # http://localhost:3000
+denext task dev          # http://localhost:3000
 ```
 
 ## What it shows

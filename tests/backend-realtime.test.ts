@@ -7,7 +7,13 @@
 // NOTIFY at commit, a terminated listener reconnecting) is in
 // tests/backend-realtime-integration.test.ts.
 
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { applyPlugins, resetPlugins, runPluginTeardown } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
@@ -31,10 +37,16 @@ import {
 } from "../packages/backend/server.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
 import { RLS_SETUP } from "../packages/backend/src/rls.ts";
-import { resolveRealtime } from "../packages/backend/src/realtime-sql.ts";
+import {
+  dropTriggersSql,
+  publicationTable,
+  resolveRealtime,
+  triggerArgs,
+} from "../packages/backend/src/realtime-sql.ts";
 import {
   installRealtime,
   parseNotification,
+  RAW_FRAME_BYTES,
   realtimeEngine,
   rereadQuery,
   REVALIDATE_OWNER_SQL,
@@ -46,10 +58,14 @@ import type { SqlClient } from "../src/server/postgres.ts";
 import {
   decodeSubscriptionKey,
   encodeSubscriptionKey,
+  formatFilter,
   newNonce,
   parseFilter,
+  type TableChange,
 } from "../packages/backend/src/realtime-shared.ts";
 import { type FakeRealtimeClient, fakeRealtimeClient } from "./helpers/fake-realtime-client.ts";
+import { begin, insert, relation } from "./helpers/pgoutput.ts";
+import { parseCidr } from "../src/server/remote-addr.ts";
 import {
   authConfig,
   changesOf,
@@ -61,6 +77,9 @@ import {
 } from "./helpers/realtime-harness.ts";
 
 const load = ((path: string) => import(path)) as unknown as ModuleLoader;
+
+/** A loopback reverse proxy, listed as the trusted source of the app's limit header. */
+const LOOPBACK_PROXY = [parseCidr("127.0.0.0/8")!, parseCidr("::1")!];
 const A = "0b7c3c1e-1f1a-4a57-9c39-2d0a7f1a000a";
 const B = "0b7c3c1e-1f1a-4a57-9c39-2d0a7f1a000b";
 
@@ -656,7 +675,7 @@ Deno.test("realtime: signed out, the app's rateLimitHeader / rateLimitLocalAddre
     const named = (client: string) =>
       env.hub.conn("", "127.0.0.1", {
         headers: { "cf-connecting-ip": client },
-        policy: { header: "cf-connecting-ip" },
+        policy: { header: "cf-connecting-ip", trustedProxies: LOOPBACK_PROXY },
       });
     for (
       const [first, second] of [
@@ -738,7 +757,9 @@ Deno.test("realtime: re-reads compare keys and filters in the column's type, und
     await until(() => ca.frames.length === 1);
     const { statements, parameters } = env.sql;
     // The column types are read once, by the table's (quoted) name.
-    const lookups = statements.flatMap((s, i) => /pg_attribute/.test(s) ? [parameters[i]] : []);
+    const lookups = statements.flatMap((s, i) =>
+      /from pg_attribute a .*where a\.attrelid/s.test(s) ? [parameters[i]] : []
+    );
     assertEquals(lookups, [['"notes"']]);
     const seed = statements.find((s) =>
       /^select to_jsonb\(t\."id"\) #>> '\{\}' as k from/.test(s)
@@ -805,7 +826,7 @@ Deno.test("realtime: a malformed notification is ignored; an overflow or keyless
     await env.hub.subscribe(ca, "notes");
     env.sql.notify("not json");
     env.sql.notify(JSON.stringify({ table: "elsewhere", op: "insert", key: "1" }));
-    env.sql.notify(JSON.stringify({ table: "notes", op: "truncate", key: "1" }));
+    env.sql.notify(JSON.stringify({ table: "notes", op: "upsert", key: "1" }));
     await settle(80);
     assertEquals(ca.frames.length, 0);
     env.sql.notify(JSON.stringify({ table: "notes", op: "insert", overflow: true }));
@@ -843,7 +864,22 @@ Deno.test("realtime: a failed re-read becomes a resync for that group", async ()
 });
 
 Deno.test("realtime(): options are validated; backend() needs postgres for it", () => {
-  assertThrows(() => realtime({ tables: {} }), TypeError, "names no table");
+  assertThrows(() => realtime({ tables: {}, publication: false }), TypeError, "names no table");
+  // With the publication (the default) the tables may all come from it.
+  assertEquals(realtime({}).tables, undefined);
+  assertThrows(() => realtime({ publication: "bad name" }), TypeError, "publication");
+  assertThrows(
+    () => realtime({ source: "wal" as "logical" }),
+    TypeError,
+    'source must be "notify" or "logical"',
+  );
+  assertThrows(() => realtime({ logical: { pollMs: 0 } }), TypeError, "logical.pollMs");
+  assertThrows(() => realtime({ logical: { maxChanges: 1.5 } }), TypeError, "logical.maxChanges");
+  const resolved = resolveRealtime({ source: "logical", publication: "pub_x" });
+  assertEquals(
+    [resolved.source, resolved.publication, resolved.logical],
+    ["logical", "pub_x", { pollMs: 50, maxChanges: 10_000 }],
+  );
   assertThrows(
     () => realtime({ tables: { notes: {} }, maxSubscriptionsPerIdentity: 0 }),
     TypeError,
@@ -880,34 +916,68 @@ Deno.test("realtime(): options are validated; backend() needs postgres for it", 
 });
 
 Deno.test("realtimeMigrations: the trigger function (then its UTC-key replacement), then one trigger per table named by its SQL", () => {
-  const migrations = realtimeMigrations({
+  const all = realtimeMigrations({
     tables: { notes: {}, items: { key: "sku", events: ["delete", "insert"], schema: "app" } },
   });
-  assertEquals(migrations.length, 4);
-  assertEquals(migrations.slice(0, 2).map((m) => m.name), [
+  assertEquals(all.map((m) => m.name).slice(0, 7), [
     "backend_realtime_0001",
     "backend_realtime_0002",
+    "backend_realtime_0003",
+    "backend_realtime_0004",
+    "backend_realtime_0005",
+    "backend_realtime_0006",
+    "backend_realtime_pub_supabase_realtime",
   ]);
-  for (const fn of migrations.slice(0, 2)) {
+  // 0006: send() with the stored message's id inline; the publication, created if absent.
+  assert(all[5].sql.includes("'id', message_id"));
+  assert(all[5].sql.includes("messages_topic_idx"));
+  assert(all[6].sql.includes("CREATE PUBLICATION supabase_realtime"));
+  assert(all[6].sql.includes("WHEN insufficient_privilege"));
+  // Without the publication, the order the rest of this test indexes into.
+  const migrations = realtimeMigrations({
+    tables: { notes: {}, items: { key: "sku", events: ["delete", "insert"], schema: "app" } },
+    publication: false,
+  }).filter((m) => m.name !== "backend_realtime_0006");
+  assertEquals(migrations.length, 7);
+  for (const fn of migrations.slice(0, 3)) {
     assert(fn.sql.startsWith("CREATE OR REPLACE FUNCTION denext_realtime_notify()"));
     assert(fn.sql.includes("pg_notify('denext_realtime', body)"));
     assert(fn.sql.includes("octet_length(body) > 7900"), "an oversized key never fails the write");
-    assert(!/to_jsonb\(NEW\)\s*[,)]/.test(fn.sql), "keys only, never the row");
+    assert(!/to_jsonb\(NEW\)\s*[,)]/.test(fn.sql), "keys only, never the new row");
   }
   // 0002 spells a timestamptz key in UTC, the column's type read from the catalog.
   assert(migrations[1].sql.includes("'pg_catalog.timestamptz'::pg_catalog.regtype"));
   assert(migrations[1].sql.includes("new_key::timestamptz AT TIME ZONE 'UTC'"));
-  assert(/^backend_realtime_t_notes_[0-9a-f]{8}$/.test(migrations[2].name));
+  // 0003 carries the old row only for a table that asks (its third argument), and TRUNCATE.
+  assert(migrations[2].sql.includes("TG_NARGS > 2 AND TG_ARGV[2] = 'full'"));
+  assert(migrations[2].sql.includes("'old_overflow', true"));
+  assert(migrations[2].sql.includes("CREATE OR REPLACE FUNCTION denext_realtime_truncate()"));
+  // 0004: Supabase's realtime schema surface; 0005: the shared presence tables.
+  assert(migrations[3].sql.includes("CREATE TABLE IF NOT EXISTS realtime.messages"));
+  assert(migrations[3].sql.includes("ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY"));
+  assert(migrations[3].sql.includes("FUNCTION realtime.send("));
+  assert(migrations[3].sql.includes("FUNCTION realtime.broadcast_changes("));
+  assert(migrations[3].sql.includes("FUNCTION realtime.topic()"));
+  assert(migrations[4].sql.includes("realtime.denext_presences"));
+  assert(/^backend_realtime_t_notes_[0-9a-f]{8}$/.test(migrations[5].name));
   assert(
-    migrations[2].sql.includes(
+    migrations[5].sql.includes(
       `CREATE TRIGGER denext_realtime AFTER INSERT OR UPDATE OR DELETE ON "notes"`,
     ),
   );
-  assert(migrations[3].sql.includes(`AFTER INSERT OR DELETE ON "app"."items"`));
-  assert(migrations[3].sql.includes("denext_realtime_notify('items', 'sku')"));
-  // Another event set is another migration name (it replaces the trigger).
-  const changed = realtimeMigrations({ tables: { notes: { events: ["insert"] } } });
-  assert(changed[2].name !== migrations[2].name);
+  assert(migrations[5].sql.includes(`AFTER TRUNCATE ON "notes"`));
+  assert(migrations[6].sql.includes(`AFTER INSERT OR DELETE ON "app"."items"`));
+  assert(migrations[6].sql.includes("denext_realtime_notify('items', 'sku')"));
+  assert(!migrations[6].sql.includes("CREATE TRIGGER denext_realtime_truncate"));
+  // Another event set is another migration name (it replaces the trigger); so is `old`.
+  const noPub = { publication: false as const };
+  const changed = realtimeMigrations({ tables: { notes: { events: ["insert"] } }, ...noPub })
+    .filter((m) => m.name !== "backend_realtime_0006");
+  assert(changed[5].name !== migrations[5].name);
+  const full = realtimeMigrations({ tables: { notes: { old: "full" } }, ...noPub })
+    .filter((m) => m.name !== "backend_realtime_0006");
+  assert(full[5].name !== migrations[5].name);
+  assert(full[5].sql.includes("denext_realtime_notify('notes', 'id', 'full')"));
   const sql = realtimeSetupSql({ tables: { notes: {} } });
   assert(sql.startsWith("-- @denext/backend realtime"));
   assert(sql.includes("CREATE OR REPLACE FUNCTION denext_realtime_notify()"));
@@ -963,8 +1033,47 @@ Deno.test("realtime keys, filters and notifications parse strictly", () => {
   assertEquals(parseFilter({ done: false }), { column: "done", value: "false" });
   assertThrows(() => parseFilter({ a: 1, b: 2 }), TypeError, "one column");
   assertThrows(() => parseFilter({ "a;drop": 1 }), TypeError, "plain column");
-  assertThrows(() => parseFilter({ a: {} as unknown as string }), TypeError, "string, number");
-  assertThrows(() => parseFilter("a=gt.1"), TypeError, "column=eq.value");
+  assertThrows(() => parseFilter({ a: {} as unknown as string }), TypeError, "one operator");
+  assertThrows(() => parseFilter({ a: [1] as unknown as string }), TypeError, "string, number");
+  assertThrows(() => parseFilter("a=like.1"), TypeError, "column=op.value");
+  assertEquals(parseFilter("a=gt.1"), { column: "a", op: "gt", value: "1" });
+  assertEquals(parseFilter({ a: { lte: 3 } }), { column: "a", op: "lte", value: "3" });
+  assertEquals(parseFilter('s=in.(x,"y,z",w)'), {
+    column: "s",
+    op: "in",
+    value: '["x","y,z","w"]',
+    values: ["x", "y,z", "w"],
+  });
+  assertEquals(parseFilter({ s: { in: ["x", 2] } })?.values, ["x", "2"]);
+  assertThrows(() => parseFilter({ a: { gt: 1, lt: 2 } }), TypeError, "one operator");
+  assertThrows(() => parseFilter({ a: { gt: [1, 2] } }), TypeError, "one value");
+  assertThrows(() => parseFilter("a=in.1"), TypeError, "a list");
+  assertThrows(
+    () => parseFilter({ a: { in: [...Array(101).keys()] } }),
+    TypeError,
+    "1 to 100",
+  );
+  const gtKey = encodeSubscriptionKey({ table: "notes", nonce, filter: parseFilter("n=gte.5") });
+  assertEquals(decodeSubscriptionKey(gtKey)?.filter, { column: "n", op: "gte", value: "5" });
+  const inKey = encodeSubscriptionKey({ table: "notes", nonce, filter: parseFilter("n=in.(1,2)") });
+  assertEquals(decodeSubscriptionKey(inKey)?.filter?.values, ["1", "2"]);
+  assertEquals(decodeSubscriptionKey(`notes|${nonce}|n|eq|1`), null, "eq has the short form");
+  assertEquals(decodeSubscriptionKey(`notes|${nonce}|n|like|1`), null);
+  assertEquals(decodeSubscriptionKey(`notes|${nonce}|n|in|%5B1%5D`), null, "in lists strings");
+  assertEquals(formatFilter(parseFilter('s=in.(a,"b\\"c")')!), 's=in.("a","b\\"c")');
+  assertEquals(formatFilter(parseFilter("n=neq.4")!), "n=neq.4");
+  assertEquals(
+    parseNotification(JSON.stringify({ table: "t", op: "truncate", ts: 9 })),
+    { table: "t", op: "truncate", ts: 9 },
+  );
+  assertEquals(
+    parseNotification(JSON.stringify({ table: "t", op: "delete", key: "1", old: { id: 1 } })),
+    { table: "t", op: "delete", key: "1", old: { id: 1 } },
+  );
+  assertEquals(
+    parseNotification(JSON.stringify({ table: "t", op: "delete", key: "1", old_overflow: true })),
+    { table: "t", op: "delete", key: "1", oldOverflow: true },
+  );
 
   assertEquals(
     parseNotification(JSON.stringify({ table: "t", op: "update", key: "2", old_key: "1", ts: 5 })),
@@ -1027,5 +1136,568 @@ Deno.test("realtime: a timestamptz key is spelled in UTC by the re-read and the 
   assertEquals(
     seedQuery(table, undefined, 10, plain).text,
     `select to_jsonb(t."at") #>> '{}' as k from "stamps" t limit $1`,
+  );
+});
+
+// ── Raw mode (Supabase postgres_changes), truncate, old rows, operators ─────
+
+const rawScope = (sub: string) => ({
+  role: "authenticated" as const,
+  claims: JSON.stringify({ sub, role: "authenticated" }),
+});
+const ALL_EVENTS = new Set(["insert", "update", "delete", "truncate"] as const);
+
+Deno.test("realtime raw mode: the database's operations, under the subscriber's policies", async () => {
+  const sql = fakeRealtimeClient({
+    notes: {
+      policy: ownerOnly,
+      types: { id: "bigint", owner: "uuid" },
+      udts: { id: "int8", owner: "uuid" },
+    },
+    items: { key: "sku" },
+  });
+  const env = await setUp({}, sql);
+  try {
+    const engine = realtimeEngine();
+    const notes = engine.table("notes");
+    assertEquals(await engine.columns(notes), [
+      { name: "id", type: "int8" },
+      { name: "owner", type: "uuid" },
+    ]);
+    const frames: TableChangesFrame[] = [];
+    const inserts: TableChangesFrame[] = [];
+    const binding = (await engine.bind({
+      table: notes,
+      scope: rawScope(A),
+      owner: `authenticated:${A}`,
+      events: ALL_EVENTS,
+      onFrame: (frame) => frames.push(frame),
+    }))!;
+    await engine.bind({
+      table: notes,
+      scope: rawScope(A),
+      owner: `authenticated:${A}`,
+      events: new Set(["insert"]),
+      onFrame: (frame) => inserts.push(frame),
+    });
+    const all = () => frames.flatMap((f) => f.changes ?? []);
+    env.sql.insert("notes", { id: 1, owner: A, body: "mine" });
+    env.sql.insert("notes", { id: 2, owner: B, body: "theirs" });
+    await until(() => all().length === 1);
+    assertEquals(all()[0].op, "insert");
+    assert(typeof (all()[0] as { ts?: number }).ts === "number");
+    // B's row handed to A: an UPDATE (what the database ran), not an insert.
+    env.sql.update("notes", "2", { owner: A });
+    await until(() => all().length === 2, 3_000, `2 changes: ${JSON.stringify(all())}`);
+    assertEquals([all()[1].op, all()[1].key], ["update", "2"]);
+    // Handed back: silent (A cannot see it now), and its delete is not sent either.
+    env.sql.update("notes", "2", { owner: B });
+    await settle(80);
+    env.sql.remove("notes", "2");
+    await settle(80);
+    // A's own delete, with the old row the trigger carried.
+    env.sql.tables.get("notes")!.delete("1");
+    env.sql.notify(
+      JSON.stringify({ table: "notes", op: "delete", key: "1", old: { id: 1, owner: A }, ts: 7 }),
+    );
+    await until(() => all().length === 3, 3_000, `3 changes: ${JSON.stringify(all())}`);
+    await settle(80);
+    assertEquals(all()[2] as unknown, { op: "delete", key: "1", ts: 7, old: { id: 1, owner: A } });
+    assertEquals(inserts.flatMap((f) => f.changes ?? []).map((c) => c.op), ["insert"], "events");
+    // An update whose old row did not fit.
+    env.sql.insert("notes", { id: 3, owner: A, body: "x" });
+    await until(() => all().length === 4, 3_000, `4 changes: ${JSON.stringify(all())}`);
+    env.sql.tables.get("notes")!.set("3", { id: 3, owner: A, body: "y" });
+    env.sql.notify(JSON.stringify({ table: "notes", op: "update", key: "3", old_overflow: true }));
+    await until(() => all().length === 5, 3_000, `5 changes: ${JSON.stringify(all())}`);
+    assertEquals((all()[4] as { oldOverflow?: true }).oldOverflow, true);
+    // Rescope: the same identity only.
+    assertEquals(binding.rescope(rawScope(A)), true);
+    assertEquals(binding.rescope(rawScope(B)), false);
+    binding.stop();
+    env.sql.insert("notes", { id: 4, owner: A, body: "z" });
+    await settle(120);
+    assertEquals(all().length, 5);
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime: truncate reaches the subscribers who could see rows; old rows on view changes", async () => {
+  const env = await setUp();
+  try {
+    const engine = realtimeEngine();
+    const raw: TableChangesFrame[] = [];
+    const empty: TableChangesFrame[] = [];
+    await engine.bind({
+      table: engine.table("notes"),
+      scope: rawScope(A),
+      owner: "x",
+      events: ALL_EVENTS,
+      onFrame: (frame) => raw.push(frame),
+    });
+    await engine.bind({
+      table: engine.table("notes"),
+      scope: rawScope(B),
+      owner: "y",
+      events: ALL_EVENTS,
+      onFrame: (frame) => empty.push(frame),
+    });
+    const ca = env.hub.conn(env.a);
+    assert((await env.hub.subscribe(ca, "notes")).ok);
+    env.sql.insert("notes", { id: 1, owner: A, body: "a" });
+    await until(() => raw.length === 1 && ca.frames.length === 1);
+    // A view-mode update carries the old row.
+    env.sql.tables.get("notes")!.set("1", { id: 1, owner: A, body: "b" });
+    env.sql.notify(
+      JSON.stringify({ table: "notes", op: "update", key: "1", old: { id: 1, body: "a" } }),
+    );
+    await until(() => ca.frames.length === 2);
+    assertEquals((changesOf(ca)[1] as { old?: unknown }).old, { id: 1, body: "a" });
+    // A pending change before the truncate is moot; one after it follows it.
+    env.sql.insert("notes", { id: 2, owner: A, body: "gone" });
+    env.sql.notify(JSON.stringify({ table: "notes", op: "truncate", ts: 9 }));
+    env.sql.tables.get("notes")!.clear();
+    await until(() => raw.length === 3 && ca.frames.length === 3);
+    assertEquals(raw[2].changes, [{ op: "truncate", ts: 9 } as never]);
+    assertEquals(changesOf(ca).at(-1), { op: "truncate" });
+    assertEquals(empty.length, 0, "B saw no rows: nothing to clear");
+    // After the truncate the view starts empty: a delete of an old key is not sent.
+    env.sql.notify(JSON.stringify({ table: "notes", op: "delete", key: "1", old: { id: 1 } }));
+    await settle(80);
+    assertEquals(ca.frames.length, 3);
+    // A view delete carries the old row.
+    env.sql.insert("notes", { id: 5, owner: A, body: "e" });
+    await until(() => ca.frames.length === 4);
+    env.sql.tables.get("notes")!.delete("5");
+    env.sql.notify(
+      JSON.stringify({ table: "notes", op: "delete", key: "5", old: { id: 5, body: "e" } }),
+    );
+    await until(() => ca.frames.length === 5);
+    assertEquals(changesOf(ca).at(-1), { op: "delete", key: "5", old: { id: 5, body: "e" } });
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime: operator filters narrow the re-read; a raw row over 1 MiB is truncated", async () => {
+  const env = await setUp();
+  try {
+    const engine = realtimeEngine();
+    const seen = new Map<string, string[]>();
+    for (const filter of ["list=neq.1", "list=lt.3", "list=gte.3", "list=in.(1,4)"]) {
+      seen.set(filter, []);
+      await engine.bind({
+        table: engine.table("notes"),
+        filter: parseFilter(filter),
+        scope: rawScope(A),
+        owner: "z",
+        events: ALL_EVENTS,
+        onFrame: (frame) =>
+          seen.get(filter)!.push(...(frame.changes ?? []).map((c) => String(c.key))),
+      });
+    }
+    for (let id = 1; id <= 4; id++) env.sql.insert("notes", { id, owner: A, list: id, body: "b" });
+    await until(() => seen.get("list=in.(1,4)")!.length === 2);
+    await settle(80);
+    assertEquals(seen.get("list=neq.1"), ["2", "3", "4"]);
+    assertEquals(seen.get("list=lt.3"), ["1", "2"]);
+    assertEquals(seen.get("list=gte.3"), ["3", "4"]);
+    assertEquals(seen.get("list=in.(1,4)"), ["1", "4"]);
+    const big = toFrames(
+      [{ op: "insert", key: "9", row: { body: "x".repeat(RAW_FRAME_BYTES) } }],
+      RAW_FRAME_BYTES,
+    );
+    assertEquals(big[0].changes, [{ op: "insert", key: "9", truncated: true }]);
+    const update = toFrames([{
+      op: "update",
+      key: "9",
+      row: { b: "x".repeat(200) },
+      old: { a: 1 },
+    }], 50);
+    assertEquals(update[0].changes, [{ op: "update", key: "9", truncated: true }]);
+    const del = toFrames([{ op: "delete", key: "9", old: { b: "x".repeat(200) } }], 50);
+    assertEquals(del[0].changes, [{ op: "delete", key: "9" }]);
+    assertEquals(toFrames([{ op: "truncate" }], 1)[0].changes, [{ op: "truncate" }]);
+    assertEquals(splitFrame({ seq: 1, changes: [{ op: "truncate" }] }), [{ seq: 0, resync: true }]);
+  } finally {
+    await env.done();
+  }
+});
+
+// ── The supabase_realtime publication, the trigger switch, the logical source, raw steps ────
+
+/** Capture the engine's 10-second publication re-read while `fn` starts it. */
+async function captureTick(fn: () => Promise<unknown>): Promise<() => void> {
+  const real = globalThis.setInterval;
+  let tick: (() => void) | undefined;
+  globalThis.setInterval = ((handler: () => void, ms?: number) => {
+    if (ms === 10_000) tick = handler;
+    return real(handler, ms);
+  }) as typeof setInterval;
+  try {
+    await fn();
+  } finally {
+    globalThis.setInterval = real;
+  }
+  assert(tick, "the publication re-read is armed");
+  return tick;
+}
+
+Deno.test({
+  name: "realtime publication: its tables join the registry, with triggers, and leave it",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const sql = fakeRealtimeClient({
+      notes: { policy: ownerOnly },
+      items: { key: "sku" },
+      pubnotes: {},
+      things: {},
+    });
+    sql.catalog.publication.push(
+      { schema: "public", table: "pubnotes", pk: "id", ident: "d", rls: false },
+      { schema: "app", table: "things", pk: "id", ident: "f", rls: false },
+      { schema: "public", table: "notes", pk: "id", ident: "f", rls: true }, // configured: wins
+      { schema: "public", table: "multi", pk: "a,b", ident: "d", rls: false },
+      { schema: "public", table: "nopk", pk: null, ident: "d", rls: false },
+      { schema: "my-schema", table: "odd", pk: "id", ident: "d", rls: false },
+    );
+    // pubnotes' triggers are there already, with the same arguments: not recreated.
+    sql.catalog.triggers.set(
+      "pubnotes",
+      new Map([
+        ["denext_realtime", { args: "pubnotes\\000id\\000", enabled: "O" }],
+        ["denext_realtime_truncate", { args: "pubnotes\\000", enabled: "O" }],
+      ]),
+    );
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (message: string) => void warnings.push(String(message));
+    const env = await setUp({}, sql);
+    try {
+      const engine = realtimeEngine();
+      const tick = await captureTick(() => engine.start());
+      const names = [...engine.config.tables.keys()].sort();
+      assertEquals(names, ["app.things", "items", "notes", "pubnotes"]);
+      assertEquals(engine.lookup("app.things")?.old, "full", "replica identity full, no RLS");
+      assertEquals(engine.lookup("pubnotes")?.old, "key");
+      assertEquals(engine.lookup("public.pubnotes")?.name, "pubnotes");
+      assertEquals(engine.lookup("things"), undefined, "not in public");
+      assertEquals(engine.lookup("notes")?.fromPublication, undefined, "the configured one");
+      assertEquals(warnings.length, 3, "multi, nopk, my-schema.odd skipped once each");
+      assert(warnings.some((w) => w.includes("one-column primary key")));
+      assert(warnings.some((w) => w.includes("plain (unquoted) identifiers")));
+      const creates = sql.statements.filter((s) => s.startsWith("CREATE TRIGGER"));
+      assertEquals(creates.length, 2, "only app.things' two triggers were made");
+      assertEquals(
+        sql.catalog.triggers.get("app.things")?.get("denext_realtime")?.args,
+        "app.things\\000id\\000full\\000",
+      );
+
+      // A subscriber of a publication table, by `schema.table`, and on the server by `schema`.
+      const ca = env.hub.conn(env.a);
+      assert((await env.hub.subscribe(ca, "app.things")).ok);
+      const served: TableChangesFrame[] = [];
+      const stop = await tableChanges("things", {
+        schema: "app",
+        as: { id: A },
+        onChange: (frame) => served.push(frame),
+      });
+      sql.tables.get("things")!.set("1", { id: 1, label: "a" });
+      sql.notify(JSON.stringify({ table: "app.things", op: "insert", key: "1", ts: Date.now() }));
+      await until(() => ca.frames.length === 1 && served.length === 1);
+      assertEquals((changesOf(ca)[0] as { row?: unknown }).row, { id: 1, label: "a" });
+      stop();
+      await assertRejects(() => tableChanges("nothing", { onChange: () => {} }), TypeError);
+
+      // The next read: things left (triggers dropped), pubnotes became REPLICA IDENTITY FULL.
+      sql.catalog.publication.splice(1, 1);
+      sql.catalog.publication[0].ident = "f";
+      warnings.length = 0;
+      tick();
+      await until(() => !engine.config.tables.has("app.things"));
+      await settle(50);
+      assertEquals(warnings, [], "a skipped table is warned about once");
+      assertEquals(sql.catalog.triggers.get("app.things")?.size ?? 0, 0);
+      assertEquals(engine.lookup("pubnotes")?.old, "full");
+      assertEquals(
+        sql.catalog.triggers.get("pubnotes")?.get("denext_realtime")?.args,
+        "pubnotes\\000id\\000full\\000",
+      );
+    } finally {
+      console.warn = warn;
+      await env.done();
+    }
+  },
+});
+
+Deno.test({
+  name: "realtime: a key naming a publication table is admitted once the publication is read",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const sql = fakeRealtimeClient({
+      notes: { policy: ownerOnly },
+      items: { key: "sku" },
+      late: {},
+    });
+    sql.catalog.publication.push({
+      schema: "public",
+      table: "late",
+      pk: "id",
+      ident: "d",
+      rls: false,
+    });
+    const env = await setUp({}, sql);
+    try {
+      const ca = env.hub.conn(env.a);
+      // Not started yet: authorize() reads the publication first.
+      assert((await env.hub.subscribe(ca, "late")).ok);
+      assert(!(await env.hub.subscribe(ca, "missing")).ok);
+    } finally {
+      await env.done();
+    }
+  },
+});
+
+Deno.test({
+  name: "realtime: the notify source turns realtime triggers on; the logical one turns them off",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
+    sql.catalog.triggers.set(
+      "notes",
+      new Map([["denext_realtime", { args: "notes\\000id\\000", enabled: "D" }]]),
+    );
+    sql.catalog.triggers.set(
+      "unrelated",
+      new Map([["denext_realtime", { args: "x\\000id\\000", enabled: "D" }]]),
+    );
+    const env = await setUp({ publication: false }, sql);
+    try {
+      await realtimeEngine().start();
+      assertEquals(sql.catalog.triggers.get("notes")!.get("denext_realtime")!.enabled, "O");
+      assertEquals(
+        sql.catalog.triggers.get("unrelated")!.get("denext_realtime")!.enabled,
+        "D",
+        "not a realtime table of this app",
+      );
+      assert(sql.statements.includes("ALTER TABLE notes ENABLE TRIGGER denext_realtime"));
+    } finally {
+      await env.done();
+    }
+  },
+});
+
+/** A reserved connection answering the slot statements, fed from `batches`. */
+function fakeSlot(sql: FakeRealtimeClient, batches: Uint8Array[][]) {
+  const statements: string[] = [];
+  const answer = (rows: unknown[]) => {
+    const p = Promise.resolve(rows);
+    return { then: p.then.bind(p), simple: () => p };
+  };
+  (sql as unknown as { reserve: () => Promise<unknown> }).reserve = () =>
+    Promise.resolve({
+      unsafe: (text: string) => {
+        statements.push(text);
+        if (text === "show wal_level") return answer([{ wal_level: "logical" }]);
+        if (text.includes("pg_logical_slot_get_binary_changes")) {
+          return answer((batches.shift() ?? []).map((data) => ({ data })));
+        }
+        return answer([]);
+      },
+      release: () => {},
+    });
+  return statements;
+}
+
+Deno.test({
+  name:
+    "realtime source logical: no trigger migrations, the denext_realtime publication, WAL events",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
+    sql.catalog.triggers.set(
+      "notes",
+      new Map([["denext_realtime", { args: "notes\\000id\\000", enabled: "O" }]]),
+    );
+    const batches: Uint8Array[][] = [];
+    const slot = fakeSlot(sql, batches);
+    const env = await setUp({ source: "logical", migrate: true, logical: { pollMs: 5 } }, sql);
+    try {
+      const ca = env.hub.conn(env.a);
+      assert((await env.hub.subscribe(ca, "notes")).ok);
+      assert(
+        !sql.statements.some((s) => s.includes("CREATE TRIGGER denext_realtime AFTER")),
+        "the logical source installs no row triggers",
+      );
+      assert(sql.statements.some((s) => s.includes("CREATE PUBLICATION denext_realtime")));
+      assert(
+        sql.statements.includes('ALTER PUBLICATION denext_realtime SET TABLE "notes", "items"'),
+      );
+      assertEquals(sql.catalog.triggers.get("notes")!.get("denext_realtime")!.enabled, "D");
+      assert(slot.some((s) => s.includes("pg_create_logical_replication_slot")));
+      assert(
+        sql.statements.every((s) => !s.startsWith("LISTEN denext_realtime\n")),
+        "no NOTIFY listener for changes",
+      );
+      // A change read from the slot reaches the subscriber, re-read under A's policies.
+      sql.tables.get("notes")!.set("7", { id: 7, owner: A, body: "from the WAL" });
+      batches.push([
+        begin(Date.now()),
+        relation(1, "public", "notes", [["id", 20], ["owner", 2950], ["body", 25]]),
+        insert(1, ["7", A, "from the WAL"]),
+      ]);
+      await until(() => ca.frames.length === 1, 5_000);
+      assertEquals((changesOf(ca)[0] as { row?: unknown }).row, {
+        id: 7,
+        owner: A,
+        body: "from the WAL",
+      });
+    } finally {
+      await env.done();
+    }
+    assert(slot.some((s) => s.includes("pg_drop_replication_slot")), "dropped on stop");
+  },
+});
+
+Deno.test("realtime raw mode: every step of a key in one burst, judged by the row as it is now", async () => {
+  const sql = fakeRealtimeClient({
+    notes: { policy: ownerOnly },
+    items: { key: "sku" },
+  });
+  const env = await setUp({ publication: false }, sql);
+  try {
+    const engine = realtimeEngine();
+    const frames: TableChangesFrame[] = [];
+    await engine.bind({
+      table: engine.table("notes"),
+      scope: rawScope(A),
+      owner: "steps",
+      events: ALL_EVENTS,
+      onFrame: (frame) => frames.push(frame),
+    });
+    const ops = () => frames.flatMap((f) => f.changes ?? []).map((c) => `${c.op}:${c.key}`);
+    // Inserted and updated in one burst: both reach the subscriber, with the row as it is now.
+    sql.insert("notes", { id: 1, owner: A, body: "a" });
+    sql.update("notes", "1", { body: "b" });
+    await until(() => ops().length === 2);
+    assertEquals(ops(), ["insert:1", "update:1"]);
+    assertEquals(
+      frames.flatMap((f) => f.changes!).map((c) => (c as { row?: { body?: string } }).row?.body),
+      [
+        "b",
+        "b",
+      ],
+    );
+    // Inserted and deleted in one burst: gone before it could be checked — nothing.
+    sql.insert("notes", { id: 2, owner: A, body: "x" });
+    sql.remove("notes", "2");
+    await settle(120);
+    assertEquals(ops().length, 2);
+    // Deleted and inserted again in one burst: the delete (it was known), then the insert.
+    sql.remove("notes", "1");
+    sql.insert("notes", { id: 1, owner: A, body: "c" });
+    await until(() => ops().length === 4);
+    assertEquals(ops().slice(2), ["delete:1", "insert:1"]);
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime raw mode: an old row reaches only a subscriber who could see the row before", async () => {
+  const sql = fakeRealtimeClient({ notes: { policy: ownerOnly } });
+  const env = await setUp({ publication: false }, sql);
+  try {
+    const engine = realtimeEngine();
+    const bob: TableChangesFrame[] = [];
+    const alice: TableChangesFrame[] = [];
+    for (const [sub, frames] of [[B, bob], [A, alice]] as const) {
+      await engine.bind({
+        table: engine.table("notes"),
+        scope: rawScope(sub),
+        owner: `authenticated:${sub}`,
+        events: ALL_EVENTS,
+        onFrame: (frame) => frames.push(frame),
+      });
+    }
+    const changes = (frames: TableChangesFrame[]) =>
+      frames.flatMap((f) => f.changes ?? []) as Array<TableChange & { old?: unknown }>;
+    const update = (row: Record<string, unknown>, old: Record<string, unknown>) => {
+      sql.tables.get("notes")!.set(String(row.id), row);
+      sql.notify(JSON.stringify({ table: "notes", op: "update", key: String(row.id), old }));
+    };
+    // Alice's private row: Alice sees it, Bob does not.
+    const draft = { id: 7, owner: A, body: "alice-private-draft" };
+    sql.insert("notes", draft);
+    await until(() => changes(alice).length === 1);
+    // Handed to Bob, the trigger carrying the full old row (`old: "full"`): Bob gets the
+    // UPDATE, but never Alice's row as it was — `old_record` is the key alone for him.
+    update({ id: 7, owner: B, body: "public" }, draft);
+    await until(() => changes(bob).length === 1, 3_000, JSON.stringify(changes(bob)));
+    assertEquals(changes(bob)[0].op, "update");
+    assertEquals("old" in changes(bob)[0], false, JSON.stringify(changes(bob)[0]));
+    // Bob saw it now: his next update carries the row as he saw it.
+    const seen = { id: 7, owner: B, body: "public" };
+    update({ id: 7, owner: B, body: "v2" }, seen);
+    await until(() => changes(bob).length === 2);
+    assertEquals(changes(bob)[1].old, seen);
+    // Two steps in one burst: the second's old row is an intermediate state (here Alice's,
+    // which Bob never saw) — only the first step carries one.
+    const secret = { id: 7, owner: A, body: "alice-again" };
+    update(secret, { id: 7, owner: B, body: "v2" });
+    update({ id: 7, owner: B, body: "v3" }, secret);
+    await until(() => changes(bob).length === 4, 3_000, JSON.stringify(changes(bob)));
+    assertEquals(changes(bob)[2].old, { id: 7, owner: B, body: "v2" });
+    assertEquals("old" in changes(bob)[3], false, JSON.stringify(changes(bob)[3]));
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("publicationTable / triggerArgs / dropTriggersSql: a catalog row as a realtime table", () => {
+  assertEquals(
+    publicationTable({ schema: "public", table: "notes", pk: "id", ident: "f", rls: false }),
+    {
+      name: "notes",
+      table: "notes",
+      fromPublication: true,
+      events: ["insert", "update", "delete", "truncate"],
+      key: "id",
+      schema: "public",
+      qualified: '"public"."notes"',
+      old: "full",
+    },
+  );
+  const app = publicationTable({ schema: "app", table: "t", pk: "k", ident: "f", rls: true });
+  assert(typeof app !== "string");
+  assertEquals([app.name, app.old], ["app.t", "key"], "under RLS the old row is the key");
+  assertEquals(triggerArgs(app), ["app.t", "k"]);
+  assertEquals(triggerArgs({ ...app, old: "full" }), ["app.t", "k", "full"]);
+  assertEquals(
+    dropTriggersSql(app),
+    'DROP TRIGGER IF EXISTS denext_realtime ON "app"."t";\n' +
+      'DROP TRIGGER IF EXISTS denext_realtime_truncate ON "app"."t";',
+  );
+  assertStringIncludes(
+    publicationTable({ schema: "public", table: "x", pk: "a,b", ident: "d", rls: false }) as string,
+    "one-column primary key (has 2)",
+  );
+  assertStringIncludes(
+    publicationTable({ schema: "public", table: "x", pk: null, ident: "d", rls: false }) as string,
+    "(has none)",
+  );
+  assertStringIncludes(
+    publicationTable({
+      schema: "public",
+      table: "We ird",
+      pk: "id",
+      ident: "d",
+      rls: false,
+    }) as string,
+    "plain (unquoted) identifiers",
   );
 });

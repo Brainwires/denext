@@ -15,18 +15,28 @@
  *   and gates the feature that needs it (verification tokens gate email verification /
  *   password reset / magic links, `getCredential`/`setCredential` gate first-party
  *   password storage, the api-token group gates bearer tokens, the MFA group gates TOTP,
- *   the passkey group gates WebAuthn).
+ *   the passkey group gates WebAuthn, and the groups in `./adapter-oauth-server.ts` gate the
+ *   `/auth/v1` OAuth 2.1 server, stored providers and Web3 sign-in).
  *
  * @module
  */
 
+import type {
+  CustomProviderAdapter,
+  OAuthServerAdapter,
+  Web3NonceAdapter,
+} from "./adapter-oauth-server.ts";
+import type { RateLimitStore } from "./rate-limit.ts";
 import type { SessionStore } from "./session-store.ts";
 
 /** A value an adapter may return directly or as a promise. */
 export type MaybePromise<T> = T | Promise<T>;
 
-/** What a verification token is for (one token space per purpose). */
-export type VerificationPurpose = "email" | "reset" | "magic" | "otp";
+/**
+ * What a verification token is for (one token space per purpose). `"sms"` is a `phoneOtp()`
+ * sign-in code, whose identifier is an E.164 phone number rather than an email address.
+ */
+export type VerificationPurpose = "email" | "reset" | "magic" | "otp" | "sms";
 
 /** A user record as the adapter stores it. `id` is the identity `session.user.id` carries. */
 export interface AdapterUser {
@@ -42,6 +52,30 @@ export interface AdapterUser {
   image?: string;
   /** Authorization roles — the values `requireAuth({ role })` / `requireSession({ role })` match. */
   roles?: string[];
+  /** Phone number in E.164 form (`+15551234567`), when known. */
+  phone?: string;
+  /** When the phone number was verified (epoch seconds); `undefined` while unverified. */
+  phoneVerified?: number;
+  /**
+   * Free-form profile data the user may edit (Supabase's `raw_user_meta_data`) — never use it
+   * for authorization.
+   */
+  userMetadata?: Record<string, unknown>;
+  /**
+   * Data only the server (the service role, the admin API) may write (Supabase's
+   * `raw_app_meta_data`): `provider`, `providers`, the app's own authorization claims.
+   */
+  appMetadata?: Record<string, unknown>;
+  /** An anonymous user (signed in with no identifier yet); `undefined` means `false`. */
+  isAnonymous?: boolean;
+  /** Creation time, epoch seconds (the SQL adapters stamp it; others keep what they are given). */
+  createdAt?: number;
+  /** Last change, epoch seconds. */
+  updatedAt?: number;
+  /** Last successful sign-in, epoch seconds. */
+  lastSignInAt?: number;
+  /** Banned until this time, epoch seconds: no sign-in or refresh before it. */
+  bannedUntil?: number;
 }
 
 /** A provider account linked to an {@linkcode AdapterUser}. */
@@ -66,6 +100,18 @@ export interface AdapterAccount {
   scope?: string;
   /** The raw `id_token`, when the app chose to persist it. */
   idToken?: string;
+  /** The identity's own id (Supabase's `identity_id`): a UUID, stable for the link's life. */
+  identityId?: string;
+  /** The provider's profile for this identity (Supabase's `identity_data`). */
+  identityData?: Record<string, unknown>;
+  /** The email this identity carries, when any. */
+  email?: string;
+  /** When the identity was linked, epoch seconds. */
+  createdAt?: number;
+  /** When the identity was last changed, epoch seconds. */
+  updatedAt?: number;
+  /** When the identity was last used to sign in, epoch seconds. */
+  lastSignInAt?: number;
 }
 
 /**
@@ -74,7 +120,7 @@ export interface AdapterAccount {
  * database read never yields a usable token.
  */
 export interface VerificationTokenRecord {
-  /** What the token proves control of — an email address, in practice. */
+  /** What the token proves control of — an email address, or an E.164 number for `"sms"`. */
   identifier: string;
   /** SHA-256 (hex) of the presented token, scoped by `identifier` + `purpose`. */
   tokenHash: string;
@@ -128,6 +174,39 @@ export interface MfaRecord {
   backupCodeHashes: string[];
   /** The last TOTP step already spent, for the replay guard. */
   lastStep?: number;
+}
+
+/**
+ * One MFA factor — denext's sign-in and the `/auth/v1` (GoTrue) API share them: a TOTP
+ * authenticator, a phone that receives codes by SMS, or a WebAuthn authenticator enrolled as a
+ * second factor. A user may hold several of each.
+ */
+export interface MfaFactorRecord {
+  /** The factor id (a UUID). */
+  id: string;
+  /** The owning {@linkcode AdapterUser.id}. */
+  userId: string;
+  /** `totp`, `phone` or `webauthn`. */
+  type: "totp" | "phone" | "webauthn";
+  /** `unverified` until its first successful verification. */
+  status: "unverified" | "verified";
+  /** A label the user chose (unique per user). */
+  friendlyName?: string;
+  /**
+   * The TOTP secret, sealed like {@linkcode MfaRecord.secret} (TOTP factors); the passkey's
+   * credential id (WebAuthn factors, once verified).
+   */
+  secret?: string;
+  /** The phone number, E.164 (phone factors). */
+  phone?: string;
+  /** Creation time, epoch seconds. */
+  createdAt: number;
+  /** Last change, epoch seconds. */
+  updatedAt: number;
+  /** The last TOTP step spent — the replay guard. */
+  lastStep?: number;
+  /** The last challenge, epoch seconds. */
+  lastChallengedAt?: number;
 }
 
 /**
@@ -219,6 +298,83 @@ export interface NativeGrantRecord {
   data?: string;
 }
 
+/**
+ * How a SAML attribute maps to a user field — GoTrue's `attribute_mapping.keys[field]`: the
+ * value of the attribute `name` (or the first of `names` present), else `default`; `array`
+ * keeps every value.
+ */
+export interface SsoAttributeMappingKey {
+  /** The SAML Attribute `Name`. */
+  name?: string;
+  /** Candidate Attribute names, first present wins. */
+  names?: string[];
+  /** The value when no candidate attribute is present. */
+  default?: unknown;
+  /** Keep every value of the attribute (an array) instead of the first. */
+  array?: boolean;
+}
+
+/** GoTrue's SAML `attribute_mapping`. */
+export interface SsoAttributeMapping {
+  /** User field → how it is read from the assertion's attributes. */
+  keys?: Record<string, SsoAttributeMappingKey>;
+}
+
+/**
+ * A stored SAML 2.0 identity provider of the `/auth/v1` SSO admin API
+ * (`/admin/sso/providers`). The entity id is unique across providers, and so is every domain.
+ */
+export interface SsoProviderRecord {
+  /** The provider id (a UUID). */
+  id: string;
+  /** The IdP's entity id (from its metadata) — unique. */
+  entityId: string;
+  /** The IdP metadata XML (the last fetched copy, for a `metadataUrl` provider). */
+  metadataXml: string;
+  /** Where the metadata is fetched from (HTTPS), when it was registered by URL. */
+  metadataUrl?: string;
+  /** The stored metadata's `validUntil`, epoch seconds, when it declares one. */
+  metadataValidUntil?: number;
+  /**
+   * When a {@linkcode metadataUrl} provider's metadata is next fetched, epoch seconds: the
+   * earliest of a day after the last fetch, the metadata's `cacheDuration` after it, and its
+   * `validUntil`.
+   */
+  metadataRefreshAfter?: number;
+  /** How assertion attributes map to user metadata. */
+  attributeMapping?: SsoAttributeMapping;
+  /** The NameID format to request. */
+  nameIdFormat?: string;
+  /** Email domains routed to this provider, lower-case — each unique across providers. */
+  domains: string[];
+  /** Creation time, epoch seconds. */
+  createdAt: number;
+  /** Last change, epoch seconds. */
+  updatedAt: number;
+}
+
+/** What a create / update of an {@linkcode SsoProviderRecord} came to. */
+export type SsoProviderWrite = "ok" | "not_found" | "entity_id_exists" | "domain_exists";
+
+/**
+ * An `/auth/v1` session that a SAML assertion started — what an IdP-initiated LogoutRequest
+ * (NameID + SessionIndex) is resolved to.
+ */
+export interface SsoSessionRecord {
+  /** The session family id ({@linkcode NativeSessionRecord.id}). */
+  sessionId: string;
+  /** The SSO provider id. */
+  providerId: string;
+  /** The assertion's NameID. */
+  nameId: string;
+  /** The AuthnStatement's SessionIndex, when given. */
+  sessionIndex?: string;
+  /** The user. */
+  userId: string;
+  /** When the record may be dropped (the session family's expiry), epoch seconds. */
+  expiresAt: number;
+}
+
 /** Identifies one linked provider account. */
 export interface AdapterAccountRef {
   /** The denext provider id. */
@@ -246,13 +402,13 @@ export interface VerificationTokenRef {
  * not a read followed by a write. Two racing requests must see exactly one success:
  * {@linkcode AuthAdapter.useVerificationToken} (delete-and-return),
  * {@linkcode AuthAdapter.consumeBackupCode} (match-and-remove) and
- * {@linkcode AuthAdapter.claimTotpStep} (claim a TOTP step). So are the passkey group's
+ * {@linkcode AuthAdapter.claimMfaFactorStep} (claim a TOTP step). So are the passkey group's
  * {@linkcode AuthAdapter.usePasskeyChallenge} (delete-and-return),
  * {@linkcode AuthAdapter.createPasskey} (insert unless the ID exists) and
  * {@linkcode AuthAdapter.updatePasskey} (compare-and-swap on the counter). A non-atomic
  * implementation turns each of them into a replay window.
  */
-export interface AuthAdapter {
+export interface AuthAdapter extends OAuthServerAdapter, CustomProviderAdapter, Web3NonceAdapter {
   // ---- users (required) ----------------------------------------------------
 
   /**
@@ -294,6 +450,25 @@ export interface AuthAdapter {
    * @returns The updated record.
    */
   updateUser(user: Partial<AdapterUser> & { id: string }): MaybePromise<AdapterUser>;
+
+  /**
+   * Look a user up by phone number (optional; gates phone sign-in). Numbers are stored and
+   * matched in E.164 form.
+   *
+   * @param phone The number.
+   * @returns The user, or `undefined`.
+   */
+  getUserByPhone?(phone: string): MaybePromise<AdapterUser | undefined>;
+
+  /**
+   * One page of users, oldest first (optional; gates the admin user listing).
+   *
+   * @param options The 1-based `page` and its size, `perPage`.
+   * @returns The page and the total number of users.
+   */
+  listUsers?(
+    options: { page: number; perPage: number },
+  ): MaybePromise<{ users: AdapterUser[]; total: number }>;
 
   // ---- accounts (required) -------------------------------------------------
 
@@ -441,10 +616,9 @@ export interface AuthAdapter {
 
   /**
    * **Atomically** replace a user's stored TOTP secret, only while it still equals
-   * `expected` (optional) — how a legacy plaintext secret, or one sealed under a rotated-out
-   * auth `secret`, is re-sealed when it is read. A compare-and-swap of that one field, never a
-   * whole-record write: a concurrent `claimTotpStep` or `consumeBackupCode` must not be undone.
-   * Without it, such a secret stays in its old (still readable) form.
+   * `expected` (optional) — how a pre-4.0 record's secret is cleared once it has moved into a
+   * factor. A compare-and-swap of that one field, never a whole-record write: a concurrent
+   * `consumeBackupCode` must not be undone. Without it the move falls back to `setMfa`.
    *
    * @param userId The owner.
    * @param expected The stored secret as it was read.
@@ -479,8 +653,62 @@ export interface AuthAdapter {
    * @param userId The owner.
    * @param step The TOTP step the presented code verified against.
    * @returns `true` when the step was claimed (i.e. not a replay).
+   * @deprecated No longer called: TOTP secrets live in factors, whose steps
+   * {@linkcode AuthAdapter.claimMfaFactorStep} claims (a pre-4.0 record's spent step moves with
+   * its secret).
    */
   claimTotpStep?(userId: string, step: number): MaybePromise<boolean>;
+
+  // ---- MFA factors of the /auth/v1 API (optional) ---------------------------
+
+  /**
+   * Store a new factor (optional; the factor group gates `/auth/v1/factors`).
+   *
+   * @param record The factor.
+   */
+  createMfaFactor?(record: MfaFactorRecord): MaybePromise<void>;
+
+  /**
+   * A user's factors, oldest first.
+   *
+   * @param userId The owner.
+   * @returns The factors.
+   */
+  listMfaFactors?(userId: string): MaybePromise<MfaFactorRecord[]>;
+
+  /**
+   * Change a factor's status, label, secret (a re-sealed TOTP secret, a WebAuthn factor's
+   * credential id) or challenge time.
+   *
+   * @param id The factor id.
+   * @param patch The fields to change.
+   */
+  updateMfaFactor?(
+    id: string,
+    patch: Partial<
+      Pick<
+        MfaFactorRecord,
+        "status" | "friendlyName" | "secret" | "updatedAt" | "lastChallengedAt"
+      >
+    >,
+  ): MaybePromise<void>;
+
+  /**
+   * **Atomically** claim a TOTP step on a factor: succeeds only when `step` is greater than its
+   * stored `lastStep`, and stores it in the same operation (the replay guard).
+   *
+   * @param id The factor id.
+   * @param step The step the presented code verified against.
+   * @returns `true` when claimed.
+   */
+  claimMfaFactorStep?(id: string, step: number): MaybePromise<boolean>;
+
+  /**
+   * Remove a factor. Removing an unknown one is not an error.
+   *
+   * @param id The factor id.
+   */
+  deleteMfaFactor?(id: string): MaybePromise<void>;
 
   // ---- native app sessions (optional) --------------------------------------
 
@@ -551,11 +779,13 @@ export interface AuthAdapter {
   revokeNativeSession?(id: string): MaybePromise<void>;
 
   /**
-   * Revoke every family of a user ("sign out everywhere", password reset).
+   * Revoke every family of a user ("sign out everywhere", password reset) — except `exceptId`,
+   * when given ("sign out my other sessions").
    *
    * @param userId The owner.
+   * @param exceptId A family to keep.
    */
-  revokeNativeSessionsByUser?(userId: string): MaybePromise<void>;
+  revokeNativeSessionsByUser?(userId: string, exceptId?: string): MaybePromise<void>;
 
   // ---- passkeys (optional) ---------------------------------------------------
 
@@ -626,6 +856,91 @@ export interface AuthAdapter {
    */
   usePasskeyChallenge?(hash: string): MaybePromise<PasskeyChallengeRecord | undefined>;
 
+  // ---- SAML SSO providers and sessions of the /auth/v1 API (optional) -------
+
+  /**
+   * Store a new SSO provider and its domains, **atomically** refusing a duplicate entity id or
+   * a domain another provider holds (optional; the group gates `/auth/v1/admin/sso/providers`).
+   *
+   * @param record The provider (domains lower-case).
+   * @returns `ok`, `entity_id_exists` or `domain_exists` (nothing stored then).
+   */
+  createSsoProvider?(record: SsoProviderRecord): MaybePromise<SsoProviderWrite>;
+
+  /**
+   * Replace a stored provider (and its domains) by id, with the same uniqueness rules.
+   *
+   * @param record The provider as it should now be.
+   * @returns `ok`, `not_found`, `entity_id_exists` or `domain_exists` (nothing changed then).
+   */
+  updateSsoProvider?(record: SsoProviderRecord): MaybePromise<SsoProviderWrite>;
+
+  /**
+   * A provider by id.
+   *
+   * @param id The provider id.
+   * @returns The record, or `undefined`.
+   */
+  getSsoProvider?(id: string): MaybePromise<SsoProviderRecord | undefined>;
+
+  /**
+   * The provider with this entity id.
+   *
+   * @param entityId The IdP entity id.
+   * @returns The record, or `undefined`.
+   */
+  getSsoProviderByEntityId?(entityId: string): MaybePromise<SsoProviderRecord | undefined>;
+
+  /**
+   * The provider a domain routes to.
+   *
+   * @param domain The email domain (lower-case).
+   * @returns The record, or `undefined`.
+   */
+  getSsoProviderByDomain?(domain: string): MaybePromise<SsoProviderRecord | undefined>;
+
+  /**
+   * Every stored provider, oldest first.
+   *
+   * @returns The records.
+   */
+  listSsoProviders?(): MaybePromise<SsoProviderRecord[]>;
+
+  /**
+   * Remove a provider, its domains and its SSO session records.
+   *
+   * @param id The provider id.
+   * @returns `true` when a provider was removed.
+   */
+  deleteSsoProvider?(id: string): MaybePromise<boolean>;
+
+  /**
+   * Record the SSO origin of a session family (and drop expired records).
+   *
+   * @param record The session's provider, NameID and SessionIndex.
+   */
+  createSsoSession?(record: SsoSessionRecord): MaybePromise<void>;
+
+  /**
+   * The unexpired session records of one NameID at one provider.
+   *
+   * @param providerId The provider id.
+   * @param nameId The NameID.
+   * @returns The records.
+   */
+  listSsoSessions?(providerId: string, nameId: string): MaybePromise<SsoSessionRecord[]>;
+
+  /**
+   * **Atomically** claim a SAML message id (an assertion or logout message ID, namespaced by
+   * the caller): `true` the first time, `false` for every later claim while it is kept. Kept at
+   * least until `expiresAt` (epoch seconds) — the replay cache every replica shares.
+   *
+   * @param id The id.
+   * @param expiresAt Until when it must be remembered.
+   * @returns Whether this call claimed it.
+   */
+  claimSamlMessageId?(id: string, expiresAt: number): MaybePromise<boolean>;
+
   // ---- account deletion (optional) -----------------------------------------
 
   /**
@@ -646,6 +961,13 @@ export interface AuthAdapter {
    * `sessionStore` itself) — an adapter never silently makes sessions stateful.
    */
   sessions?: SessionStore;
+
+  /**
+   * An optional {@link ./rate-limit.ts | RateLimitStore} over the same storage. The auth
+   * limiters use it when the app runs on `@denext/backend`'s Postgres and sets no
+   * `rateLimit.store`, so every replica counts against one budget.
+   */
+  rateLimits?: RateLimitStore;
 
   /** Optional: release resources (a database handle) when the server drains. */
   close?(): MaybePromise<void>;

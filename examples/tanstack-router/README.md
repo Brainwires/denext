@@ -2,18 +2,18 @@
 
 A stock **file-based TanStack Router** app running in denext **SPA mode** — no plugin, no
 server rendering. TanStack owns routing in the browser; denext owns the bundle, the CSS, the
-dev server, the HTML shell, and (via `deno task export` + `denext desktop`) native packaging.
+dev server, the HTML shell, and (via `denext task export` + `denext desktop`) native packaging.
 This is exactly the shape `denext migrate` produces for a Vite + TanStack Router app.
 
 ## Run it
 
 ```sh
-deno task install   # installs @tanstack/react-router into node_modules (once)
-deno task dev       # http://localhost:3000
-deno task build && deno task start
+denext task install   # installs @tanstack/react-router into node_modules (once)
+denext task dev       # http://localhost:3000
+denext task build && denext task start
 ```
 
-`deno task routes` regenerates `src/routeTree.gen.ts` after you add or rename a route file
+`denext task routes` regenerates `src/routeTree.gen.ts` after you add or rename a route file
 (the TanStack Router CLI, run out-of-band beside `denext dev`). `denext build` / `export`
 regenerate it too, as the Vite plugin's build does, because the example code-splits its routes
 (below). The generated file is committed and excluded from `deno fmt`/`deno lint`.

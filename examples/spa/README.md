@@ -12,10 +12,10 @@ toolchain and runtime without restructuring it into the App Router.
 ## Run it
 
 ```
-deno task dev      # dev server + live reload
-deno task build    # production build → .denext/
-deno task start    # serve the production build
-deno task export   # static export → out/  (what deno desktop packages)
+denext task dev      # dev server + live reload
+denext task build    # production build → .denext/
+denext task start    # serve the production build
+denext task export   # static export → out/  (what deno desktop packages)
 ```
 
 Open http://localhost:3000. Toggle **Home/About** (a tiny client-owned
@@ -43,11 +43,11 @@ export default {
 
 ## Package as a desktop app
 
-The `out/` from `deno task export` is a static app any host can serve — and it's
+The `out/` from `denext task export` is a static app any host can serve — and it's
 byte-compatible with what [`deno desktop`](../native) wraps in a native window:
 
 ```
-deno task export
+denext task export
 denext desktop run          # wraps out/ in a native window (see examples/native
                             # for a hand-written desktop.ts over `Deno.serve`)
 ```

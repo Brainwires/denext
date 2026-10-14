@@ -23,6 +23,24 @@ export interface FakeTableSpec {
   policy?: (claims: Claims, row: Row) => boolean;
   /** The columns' types, as the catalog reports them (default: none known). */
   types?: Record<string, string>;
+  /** The columns' type names (`int8`), as the catalog reports them (default: none). */
+  udts?: Record<string, string>;
+}
+
+/** One trigger in the fake catalog (by its table as `regclass::text` spells it). */
+export interface FakeTrigger {
+  /** The arguments, as `encode(tgargs, 'escape')` spells them. */
+  args: string;
+  /** `O` enabled, `D` disabled. */
+  enabled: string;
+}
+
+/** The fake's catalog extras: the publication's rows and the realtime triggers. */
+export interface FakeCatalog {
+  /** The rows `PUBLICATION_TABLES_SQL` answers (mutable: a test adds / removes tables). */
+  publication: Row[];
+  /** `rel → name → trigger` (rel: `notes`, `app.things`). */
+  triggers: Map<string, Map<string, FakeTrigger>>;
 }
 
 /** Seed / re-read concurrency, now and at its highest. */
@@ -57,6 +75,38 @@ export interface FakeRealtimeClient extends SqlClient {
   delay: { seed: number; reread: number };
   /** How many seed / re-read queries ran at once. */
   readonly inFlight: InFlight;
+  /** The publication rows and the triggers, as the catalog would hold them. */
+  readonly catalog: FakeCatalog;
+}
+
+/** `"app"."things"` / `"notes"` as `regclass::text` spells it (`app.things` / `notes`). */
+function relOf(qualified: string): string {
+  const parts = qualified.split(".").map((part) => part.replaceAll('"', ""));
+  return parts.length === 2 && parts[0] === "public" ? parts[1] : parts.join(".");
+}
+
+/** A filter as the fake evaluates it: numbers compare as numbers, `in` takes a JSON list. */
+function compare(value: unknown, op: string, param: unknown): boolean {
+  if (op === "in" || op === "= any") {
+    return (JSON.parse(String(param)) as string[]).includes(String(value));
+  }
+  const numeric = typeof value === "number";
+  const a = numeric ? value : String(value);
+  const b = numeric ? Number(param) : String(param);
+  switch (op) {
+    case "<>":
+      return a !== b;
+    case "<":
+      return a < b;
+    case "<=":
+      return a <= b;
+    case ">":
+      return a > b;
+    case ">=":
+      return a >= b;
+    default:
+      return a === b;
+  }
 }
 
 /**
@@ -72,6 +122,47 @@ export function fakeRealtimeClient(
 ): FakeRealtimeClient {
   const statements: string[] = [];
   const parameters: unknown[][] = [];
+  const catalog: FakeCatalog = { publication: [], triggers: new Map() };
+
+  /** The catalog statements: publication tables, trigger args, the toggle, trigger DDL. */
+  const catalogAnswer = (text: string, params: unknown[]): Row[] | null => {
+    if (/from pg_publication_tables pt/.test(text)) {
+      return catalog.publication.map((r) => ({ ...r }));
+    }
+    if (/encode\(tgargs, 'escape'\)/.test(text)) {
+      const triggers = catalog.triggers.get(relOf(String(params[0])));
+      return [...(triggers ?? new Map())].map(([name, t]) => ({ name, args: t.args }));
+    }
+    if (/tgenabled::text as enabled/.test(text)) {
+      return [...catalog.triggers].flatMap(([rel, map]) =>
+        [...map].map(([name, t]) => ({ rel, name, enabled: t.enabled }))
+      );
+    }
+    const create =
+      /^CREATE TRIGGER (\w+) AFTER .* ON (\S+)\s+FOR EACH \w+ EXECUTE FUNCTION \w+\((.*)\)$/s
+        .exec(text);
+    if (create) {
+      const args = create[3].split(",").map((a) => a.trim().replace(/^'|'$/g, "") + "\\000").join(
+        "",
+      );
+      const rel = relOf(create[2]);
+      if (!catalog.triggers.has(rel)) catalog.triggers.set(rel, new Map());
+      catalog.triggers.get(rel)!.set(create[1], { args, enabled: "O" });
+      return [];
+    }
+    const drop = /^DROP TRIGGER IF EXISTS (\w+) ON (\S+?);?$/.exec(text);
+    if (drop) {
+      catalog.triggers.get(relOf(drop[2]))?.delete(drop[1]);
+      return [];
+    }
+    const toggle = /^ALTER TABLE (\S+) (ENABLE|DISABLE) TRIGGER (\w+)$/.exec(text);
+    if (toggle) {
+      const t = catalog.triggers.get(relOf(toggle[1]))?.get(toggle[3]);
+      if (t) t.enabled = toggle[2] === "ENABLE" ? "O" : "D";
+      return [];
+    }
+    return null;
+  };
   const tables = new Map<string, Map<string, Row>>(
     Object.keys(specs).map((name) => [name, new Map()]),
   );
@@ -83,17 +174,28 @@ export function fakeRealtimeClient(
   /** The column-type lookup: the spec's `types` of the table `$1` names. */
   const typesOf = (params: unknown[]): Row[] => {
     const table = /^(?:"\w+"\.)?"(\w+)"$/.exec(String(params[0]))?.[1] ?? "";
-    return Object.entries(specs[table]?.types ?? {}).map(([name, type]) => ({ name, type }));
+    return Object.entries(specs[table]?.types ?? {}).map(([name, type]) => ({
+      name,
+      type,
+      ...(specs[table]?.udts?.[name] ? { udt: specs[table].udts![name] } : {}),
+    }));
   };
 
   const answer = (text: string, params: unknown[], claims: Claims): Row[] => {
     statements.push(text);
     parameters.push(params);
-    const reread = /to_jsonb\(t\)::text as r from "(\w+)" t/.exec(text);
-    const seed = /^select to_jsonb\(t\."(\w+)"\) #>> '\{\}' as k from "(\w+)" t/.exec(text);
-    const filter = /t\."(\w+)"(?:::text)? = \$2/.exec(text);
-    if (/from pg_attribute a where a\.attrelid = \$1::regclass/.test(text)) return typesOf(params);
-    const filterOk = (row: Row) => !filter || String(row[filter[1]]) === String(params[1]);
+    const fromCatalog = catalogAnswer(text, params);
+    if (fromCatalog) return fromCatalog;
+    const reread = /to_jsonb\(t\)::text as r from (?:"\w+"\.)?"(\w+)" t/.exec(text);
+    const seed = /^select to_jsonb\(t\."(\w+)"\) #>> '\{\}' as k from (?:"\w+"\.)?"(\w+)" t/
+      .exec(text);
+    const filter =
+      /t\."(\w+)"(?:::text)? (=|<>|<=|<|>=|>|in|= any)[ (]+(?:select jsonb_array_elements_text\()?\$2/
+        .exec(text);
+    if (/from pg_attribute a .*where a\.attrelid = \$1::regclass/s.test(text)) {
+      return typesOf(params);
+    }
+    const filterOk = (row: Row) => !filter || compare(row[filter[1]], filter[2], params[1]);
     if (reread) {
       const table = reread[1];
       const keys = new Set(JSON.parse(String(params[0])) as string[]);
@@ -196,6 +298,7 @@ export function fakeRealtimeClient(
     };
   }
   Object.assign(client, {
+    catalog,
     statements,
     parameters,
     tables,

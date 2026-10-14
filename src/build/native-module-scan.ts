@@ -26,7 +26,7 @@
 // the next loader still runs. A module it cannot parse is skipped.
 
 import { SEPARATOR } from "@std/path";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import { lineIndex, type Node, positionAt, txt } from "./swc-ast.ts";
 import { parseModuleForPath } from "./swc-parse.ts";
 

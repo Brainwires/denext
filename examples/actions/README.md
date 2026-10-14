@@ -31,6 +31,6 @@ server-only, and wires the client's calls to the secure endpoint.
 
 ```sh
 # from this directory
-deno task dev             # http://localhost:3000
-deno task build && deno task start
+denext task dev             # http://localhost:3000
+denext task build && denext task start
 ```

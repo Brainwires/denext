@@ -18,7 +18,7 @@
 // writes).
 
 import { dirname, join } from "@std/path";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import { type DenextConfig, reactNativeOptions } from "../server/config.ts";
 import { findInstalledPackage } from "./installed-package.ts";
 import { uniwindCss } from "./react-native-uniwind-css.ts";

@@ -40,7 +40,8 @@ const pinRuntimeMain = (args: string[], out: string, toolchainOut = `${out}.tool
     toolchainOut,
   );
 import { desktopRuntimeCheck } from "../src/cli/commands/doctor.ts";
-import { sha256Hex, tarGz } from "./_archive-fixtures.ts";
+import { canSymlink, sha256Hex, tarGz, zip } from "./_archive-fixtures.ts";
+import { ESBUILD_VERSION } from "../src/build/esbuild/version.ts";
 
 const TARGET = "x86_64-unknown-linux-gnu";
 const LIB = "libdenort.so";
@@ -477,7 +478,11 @@ function ensureMac(f: Fixture, target: string, capture: CaptureRunner) {
 
 type CaptureRunner = (cmd: string, args: string[]) => Promise<{ code: number; text: string }>;
 
-Deno.test("ensureDesktopRuntime ad-hoc signs an unsigned CEF app inside-out before the re-sign", async () => {
+// Its runtime archive carries symlinks: a standard Windows user cannot extract it.
+Deno.test({
+  name: "ensureDesktopRuntime ad-hoc signs an unsigned CEF app inside-out before the re-sign",
+  ignore: !canSymlink,
+}, async () => {
   // The pinned x86_64 CEF archive carries no signature at all (Apple's linker signs only arm64
   // Mach-Os), and codesign refuses its main executable ("code object is not signed at all / In
   // subcomponent: …laufey Helper (Renderer).app"). The install signs framework libraries →
@@ -486,7 +491,11 @@ Deno.test("ensureDesktopRuntime ad-hoc signs an unsigned CEF app inside-out befo
   const archive = await tarGz(cefAppEntries(macho));
   const signed = new Set<string>();
   const order: string[] = [];
-  const rel = (p: string) => p.slice(p.indexOf("laufey.app/") + "laufey.app/".length);
+  // Windows hands back `\` paths; the recorded order is always in `/` form.
+  const rel = (p: string) => {
+    const posix = p.replaceAll("\\", "/");
+    return posix.slice(posix.indexOf("laufey.app/") + "laufey.app/".length);
+  };
   const entries = (dir: string) => {
     try {
       return [...Deno.readDirSync(dir)].map((e) => join(dir, e.name));
@@ -510,7 +519,7 @@ Deno.test("ensureDesktopRuntime ad-hoc signs an unsigned CEF app inside-out befo
       );
     }
     const main = "/MacOS/laufey";
-    const bundle = path.endsWith(main) ? path.slice(0, -main.length) : path;
+    const bundle = path.replaceAll("\\", "/").endsWith(main) ? path.slice(0, -main.length) : path;
     const missing = nestedCode(bundle).filter((p) => !signed.has(p));
     if (missing.length > 0) {
       return Promise.resolve({
@@ -707,7 +716,11 @@ async function windowsArchive(): Promise<Uint8Array> {
   ]);
 }
 
-Deno.test("resolveDesktopRuntimeEnv: a Windows target from macOS gets a cross-host LAUFEY_DEV_DIR", async () => {
+// Its runtime archive carries symlinks: a standard Windows user cannot extract it.
+Deno.test({
+  name: "resolveDesktopRuntimeEnv: a Windows target from macOS gets a cross-host LAUFEY_DEV_DIR",
+  ignore: !canSymlink,
+}, async () => {
   const win = "x86_64-pc-windows-msvc";
   const f = await fixture(await windowsArchive());
   const project = await Deno.makeTempDir();
@@ -768,7 +781,11 @@ Deno.test("resolveDesktopRuntimeEnv: a Windows target from macOS gets a cross-ho
   }
 });
 
-Deno.test("resolveDesktopRuntimeEnv: a cross-host symlink the OS refuses becomes a copy of its file", async () => {
+// Its runtime archive carries symlinks: a standard Windows user cannot extract it.
+Deno.test({
+  name: "resolveDesktopRuntimeEnv: a cross-host symlink the OS refuses becomes a copy of its file",
+  ignore: !canSymlink,
+}, async () => {
   const win = "x86_64-pc-windows-msvc";
   const f = await fixture(await windowsArchive());
   const project = await Deno.makeTempDir();
@@ -1508,6 +1525,11 @@ Deno.test("the checked-in toolchain pin: the runtime pin's release, every target
     assertEquals(a.format, "zip", key);
     assert(/^[0-9a-f]{64}$/.test(a.sha256), `${key}: sha256`);
     assert(Number.isSafeInteger(a.size) && a.size! > 0, `${key}: size`);
+    // From denext.17 the zip carries esbuild: it must be the version denext's API speaks.
+    if (a.esbuild) {
+      assertEquals(a.esbuild.version, ESBUILD_VERSION, `${key}: esbuild`);
+      assert(/^[0-9a-f]{64}$/.test(a.esbuild.sha256), `${key}: esbuild sha256`);
+    }
     assertEquals(
       a.url,
       `https://github.com/Brainwires/deno/releases/download/${rt.tag}/${a.file}`,
@@ -1568,4 +1590,92 @@ Deno.test("the checked-in pin passes pinFromRelease's own checks, for every targ
     (["webview", "cef"] as const).flatMap((b) => t[b] ? [`${t[b]!.sha256}  ${t[b]!.file}`] : [])
   ).join("\n");
   assertEquals(pinFromRelease(pin.tag, manifest, sums), pin as unknown as PinFile);
+});
+
+Deno.test("toolchainPinFromRelease pins each CLI zip's esbuild (denext.17 on), and only denext's version", () => {
+  const sha = "a".repeat(64);
+  const withEsbuild = () => {
+    const r = releaseWithCli();
+    // deno-lint-ignore no-explicit-any
+    for (const t of Object.values(r.manifest.cli.targets) as any[]) {
+      t.esbuild = { version: ESBUILD_VERSION, sha256: sha };
+    }
+    return r;
+  };
+  const r = withEsbuild();
+  const pin = toolchainPinFromRelease(TAG, r.manifest, r.sums)!;
+  assertEquals(pin.targets["darwin-aarch64"].esbuild, { version: ESBUILD_VERSION, sha256: sha });
+  // Absent before denext.17: no esbuild key at all.
+  const plain = releaseWithCli();
+  const before = toolchainPinFromRelease(TAG, plain.manifest, plain.sums)!;
+  assertEquals("esbuild" in before.targets["darwin-aarch64"], false);
+  // deno-lint-ignore no-explicit-any
+  const cases: Array<[string, (e: any) => void]> = [
+    ["esbuild 0.24.2, but denext's esbuild API speaks 0.25.5", (e) => (e.version = "0.24.2")],
+    ["bad esbuild sha256", (e) => (e.sha256 = "nope")],
+  ];
+  for (const [msg, mutate] of cases) {
+    const bad = withEsbuild();
+    mutate(bad.manifest.cli.targets["aarch64-apple-darwin"].esbuild);
+    const err = (() => {
+      try {
+        toolchainPinFromRelease(TAG, bad.manifest, bad.sums);
+      } catch (e) {
+        return e;
+      }
+    })();
+    assert(err instanceof Error, msg);
+    assertStringIncludes(err.message, msg);
+  }
+});
+
+Deno.test("attestPin checks the esbuild inside each CLI zip against its pinned SHA-256", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const esbuild = new TextEncoder().encode("#!/bin/sh\necho 0.25.5\n");
+    const bytes = await zip([
+      { name: "deno", data: "deno", unixMode: 0o100755 },
+      { name: "esbuild", data: esbuild, unixMode: 0o100755 },
+      { name: "esbuild.LICENSE", data: "MIT" },
+    ]);
+    const file = "deno-cli-2.9.7-denext.1-x86_64-unknown-linux-gnu.zip";
+    await Deno.writeFile(join(dir, file), bytes);
+    const pin: PinFile = {
+      schema: 1,
+      version: "2.9.7-denext.1",
+      tag: TAG,
+      repository: "https://github.com/Brainwires/deno",
+      deno: "2.9.7",
+      denoSha: "",
+      laufeySha: "",
+      laufeyApiVersion: null,
+      targets: {},
+    };
+    const cli = async (esbuildSha: string) => ({
+      schema: 1 as const,
+      version: "2.9.7-denext.1",
+      tag: TAG,
+      repository: "https://github.com/Brainwires/deno",
+      deno: "2.9.7",
+      targets: {
+        "linux-x86_64": {
+          file,
+          url: `https://example.invalid/${file}`,
+          sha256: await sha256Hex(bytes),
+          size: bytes.length,
+          format: "zip" as const,
+          esbuild: { version: "0.25.5", sha256: esbuildSha },
+        },
+      },
+    });
+    const ok = () => Promise.resolve(0);
+    await attestPin(pin, { archives: dir, cli: await cli(await sha256Hex(esbuild)), run: ok });
+    const tampered = await cli("0".repeat(64));
+    const err = await assertRejects(() =>
+      attestPin(pin, { archives: dir, cli: tampered, run: ok })
+    );
+    assertStringIncludes((err as Error).message, "esbuild sha256");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

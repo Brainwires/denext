@@ -22,7 +22,7 @@ fire at boot and `onRequestError` fire when you trigger an error.
 ## Run it
 
 ```sh
-deno task dev        # http://localhost:3000   (or: deno task build && deno task start)
+denext task dev        # http://localhost:3000   (or: denext task build && denext task start)
 ```
 
 Then:
@@ -49,4 +49,4 @@ production); the _real_ error reaches `onRequestError` for your backend.
 - [`app/telemetry/page.tsx`](./app/telemetry/page.tsx) — renders the recorded
   events.
 
-End-to-end test: `tests/e2e/instrumentation.e2e.test.ts` (`deno task test:e2e`).
+End-to-end test: `tests/e2e/instrumentation.e2e.test.ts` (`denext task test:e2e`).

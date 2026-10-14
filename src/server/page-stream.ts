@@ -94,7 +94,7 @@ async function streamHtmlRoute(pr: PageRequest, prepared: PageContext): Promise<
   // Report the shell's boundary catches (holes stream after the response, so their
   // late catches are logged by H1, not reported here).
   await reportBoundaryErrors(pr, "server-rendering");
-  augmentPageMetadata(pr, shellResult.metadata); // og:image + icon conventions
+  augmentPageMetadata(pr, shellResult.metadata, false); // streamed: per-request, never ISR
   const doc = {
     metadata: shellResult.metadata,
     viewport: shellResult.viewport,
@@ -148,7 +148,7 @@ async function streamFlightRoute(pr: PageRequest, prepared: PageContext): Promis
     prepared,
   );
   await reportBoundaryErrors(pr, "react-server-components");
-  augmentPageMetadata(pr, shellResult.metadata); // og:image + icon conventions
+  augmentPageMetadata(pr, shellResult.metadata, false); // streamed: per-request, never ISR
   const doc = {
     metadata: shellResult.metadata,
     viewport: shellResult.viewport,

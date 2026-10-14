@@ -10,6 +10,7 @@
 import type { RouteManifest } from "../router/manifest.ts";
 import { matchSegments, parsePattern, type RouteParams } from "../router/segments.ts";
 import type { ModuleLoader } from "./types.ts";
+import { warnNoStableOrigin } from "./absolute-url.ts";
 import type { VNode } from "../jsx/types.ts";
 import { escapeHtml, renderToString } from "../jsx/render-to-string.ts";
 import { contentType } from "@std/media-types";
@@ -296,6 +297,10 @@ const ROUTES: Record<string, { path: string; contentType: string }> = {
  * @param manifest The scanned route manifest.
  * @param pathname The request pathname.
  * @param load The module loader (for the code-based conventions).
+ * @param origin The origin a sitemap index's absolute `<loc>`s are built on.
+ * @param originFromRequest `origin` came from the request's Host / forwarded headers (no
+ *   `canonicalOrigin`): a response built on it is per-request, so it is sent `no-store`
+ *   and never reaches a shared cache (web cache poisoning).
  * @returns A Response, or null when this request is not a metadata file.
  */
 export function serveMetadataFile(
@@ -303,12 +308,13 @@ export function serveMetadataFile(
   pathname: string,
   load: ModuleLoader,
   origin?: string,
+  originFromRequest = false,
 ): Promise<Response | null> {
   if (pathname === ROUTES.favicon.path && manifest.favicon) return serveFavicon(manifest.favicon);
   const shard = pathname.match(SITEMAP_SHARD_RE);
   if (manifest.sitemap && (pathname === ROUTES.sitemap.path || shard)) {
     if (isCodeModule(manifest.sitemap)) {
-      return serveSitemap(manifest.sitemap, pathname, shard?.[1], load, origin);
+      return serveSitemap(manifest.sitemap, pathname, shard?.[1], load, origin, originFromRequest);
     }
     return shard
       ? Promise.resolve(null)
@@ -363,6 +369,7 @@ async function serveSitemap(
   shardId: string | undefined,
   load: ModuleLoader,
   origin?: string,
+  originFromRequest = false,
 ): Promise<Response | null> {
   const xml = (body: string) => textResponse(body, ROUTES.sitemap.contentType);
   const mod = (await load(modulePath)) as SitemapModule;
@@ -373,7 +380,15 @@ async function serveSitemap(
   if (pathname === ROUTES.sitemap.path) {
     // The index: one <sitemap> per shard, absolute when an origin is known.
     const base = origin ?? "";
-    return xml(serializeSitemapIndex(shards.map((s) => ({ url: `${base}/sitemap/${s.id}.xml` }))));
+    const res = xml(
+      serializeSitemapIndex(shards.map((s) => ({ url: `${base}/sitemap/${s.id}.xml` }))),
+    );
+    // Built on a request-derived origin: per-request, never stored by a shared cache.
+    if (origin && originFromRequest) {
+      warnNoStableOrigin("the sitemap index");
+      res.headers.set("cache-control", "private, no-store");
+    }
+    return res;
   }
   const match = shards.find((s) => String(s.id) === shardId);
   if (!match) return null;

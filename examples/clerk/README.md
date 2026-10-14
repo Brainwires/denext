@@ -36,7 +36,7 @@ Nothing here imports `next` itself.
 | Session kept across a relaunch | the cookie                                  | the client JWT in the OS keychain (`secure-store`)                                                                 | the client JWT in the Keychain / Keystore                        |
 | Protected page / API           | cookie session                              | `Authorization: Bearer` session token (the window's `/api/*` is proxied to the web server)                         | `Authorization: Bearer` to `NEXT_PUBLIC_CLERK_API_ORIGIN` (CORS) |
 
-Every Deno Desktop row needs dashboard step 3 (allowed origins). `deno task test:desktop` automates
+Every Deno Desktop row needs dashboard step 3 (allowed origins). `denext task test:desktop` automates
 email code, the relaunch and sign-out once it is set.
 
 The Capacitor column needs dashboard steps 2 and 3 (the redirect and the shell's origins) and has
@@ -50,9 +50,9 @@ not been run on a device yet (README → Capacitor).
    its keys. `.env` and `.env.local` are git-ignored; never commit keys. Without keys the app shows
    a setup screen. Optionally add `CLERK_JWT_KEY` (the dashboard's JWT public key, PEM): the
    middleware then verifies session tokens without a network call.
-3. `deno task dev` → <http://localhost:3000>.
+3. `denext task dev` → <http://localhost:3000>.
 
-`deno task build && deno task start` is the production server. The keys are read from the
+`denext task build && denext task start` is the production server. The keys are read from the
 environment or `.env` / `.env.local` here; only `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` reaches the
 page.
 
@@ -100,7 +100,7 @@ the dev server on your Mac's MagicDNS name with `tailscale serve`:
 ```sh
 # on the Mac
 echo "DENEXT_CLERK_DEV_HOST=mac.tail1234.ts.net" >> .env.local   # your machine's name
-deno task dev                       # http://localhost:3000
+denext task dev                       # http://localhost:3000
 tailscale serve --bg 3000           # https://mac.tail1234.ts.net → localhost:3000
 ```
 
@@ -110,20 +110,20 @@ on the tailnet:
 
 - **iPhone / Android browser, Windows, Linux:** open `https://mac.tail1234.ts.net`. Email code,
   password and OAuth work as on the Mac; a passkey made there belongs to that host (step 4 above).
-- **Deno Desktop on Windows / Linux:** package on that machine (`deno task desktop:package`) and
+- **Deno Desktop on Windows / Linux:** package on that machine (`denext task desktop:package`) and
   launch it with `DENEXT_CLERK_API_ORIGIN=https://mac.tail1234.ts.net`: the window's `/api/*` goes
   to the Mac.
 - **Capacitor shell:** build it with `NEXT_PUBLIC_CLERK_API_ORIGIN=https://mac.tail1234.ts.net`
   (README → Capacitor): the app's pages are its own, its API calls go to the Mac.
 
-Without Tailscale, `deno task dev:lan` serves on the LAN (plain HTTP: email code and password work
+Without Tailscale, `denext task dev:lan` serves on the LAN (plain HTTP: email code and password work
 from other devices; passkeys and some Clerk features need HTTPS).
 
 ## Deno Desktop
 
 ```sh
-deno task build && deno task start   # the API the window calls (http://127.0.0.1:3000)
-DENEXT_APP_NAME=ClerkExample deno task desktop:package   # dist/ClerkExample.app (macOS)
+denext task build && denext task start   # the API the window calls (http://127.0.0.1:3000)
+DENEXT_APP_NAME=ClerkExample denext task desktop:package   # dist/ClerkExample.app (macOS)
 open dist/ClerkExample.app
 ```
 
@@ -154,7 +154,7 @@ server's `cors` lets those origins in.
 
 ```sh
 deno install
-# The API the app calls: the Mac over Tailscale (tailscale serve --bg 3000 + deno task start).
+# The API the app calls: the Mac over Tailscale (tailscale serve --bg 3000 + denext task start).
 echo "NEXT_PUBLIC_CLERK_API_ORIGIN=https://mac.tail1234.ts.net" >> .env.local
 deno run -A --node-modules-dir=none ../../cli.ts export .
 ./node_modules/.bin/cap add ios                                     # once (and/or android)
@@ -165,7 +165,7 @@ cd ios/App && xcodebuild -scheme App -sdk iphoneos -configuration Debug \
 xcrun devicectl device install app --device <device id> ../build/Build/Products/Debug-iphoneos/App.app
 ```
 
-`deno task mobile:export` repeats the export + `cap sync` after an edit. Clerk side: dashboard step
+`denext task mobile:export` repeats the export + `cap sync` after an edit. Clerk side: dashboard step
 2 (`denextclerk://app/`) and step 3 (`capacitor://localhost`, `https://localhost`).
 
 ## Tests
@@ -192,7 +192,7 @@ xcrun devicectl device install app --device <device id> ../build/Build/Products/
   passes on Linux (WebKitGTK) and macOS:
 
   ```sh
-  deno task test:desktop                        # from examples/clerk, in a logged-in session
+  denext task test:desktop                        # from examples/clerk, in a logged-in session
   # Linux, headless: a display and an unlocked Secret Service (gnome-keyring; the runtime loads libsecret)
   sh ../desktop-kitchen-sink/e2e/linux-session.sh deno task test:desktop
   ```

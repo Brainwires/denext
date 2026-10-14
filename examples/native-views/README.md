@@ -9,18 +9,18 @@ has a DOM "Recenter" button drawn over it (the slot's `overlay`), and the
 header's "Open sheet" covers the page with a sheet, to show how a covered view
 behaves.
 
-In a desktop browser (`deno task dev`) the slots render their children, the web
+In a desktop browser (`denext task dev`) the slots render their children, the web
 fallback: a placeholder for the maps and a `<video>` element.
 
 ## Run it
 
 ```sh
 npm install            # the Capacitor packages (package.json)
-deno task dev          # the UI in a browser: http://localhost:3000
-deno task cap:sync     # export + `cap sync` into ios/ and android/
-DENEXT_IOS_TEAM=ABCDE12345 deno task ios   # a signed Debug build (xcodebuild)
-deno task ios:check    # an unsigned compile check
-deno task android      # android/app/build/outputs/apk/debug/app-debug.apk
+denext task dev          # the UI in a browser: http://localhost:3000
+denext task cap:sync     # export + `cap sync` into ios/ and android/
+DENEXT_IOS_TEAM=ABCDE12345 denext task ios   # a signed Debug build (xcodebuild)
+denext task ios:check    # an unsigned compile check
+denext task android      # android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ## How it was made
@@ -28,7 +28,7 @@ deno task android      # android/app/build/outputs/apk/debug/app-debug.apk
 ```sh
 npm install --save-exact @capacitor/core@8.5.2 @capacitor/ios@8.5.2 @capacitor/android@8.5.2
 npm install --save-exact -D @capacitor/cli@8.5.2
-deno task export && npx cap add ios && npx cap add android
+denext task export && npx cap add ios && npx cap add android
 deno run -A --node-modules-dir=none ../../cli.ts mobile add native-map
 ```
 
@@ -59,7 +59,7 @@ The `Scanner` native module (`ScannerPlugin.swift` / `ScannerPlugin.kt`, from
 
 ## Device checklist (iPhone)
 
-Build with `deno task cap:sync` then `deno task ios`, and on the phone:
+Build with `denext task cap:sync` then `denext task ios`, and on the phone:
 
 1. **Embed.** London's map shows inside its card with rounded corners. Scroll
    the list slowly and in a fast fling: the map stays glued to the card with no
@@ -99,7 +99,7 @@ card by a frame or two during a fast fling.
 
 ## Probe build (device tests)
 
-`NV_PROBE=1 deno task export` builds a version that posts every native view
+`NV_PROBE=1 denext task export` builds a version that posts every native view
 event and, each second, each slot's DOM box next to where the native side put
 its view (the plugin's `__frame` debug command) to `http://172.20.10.2:3999/nv`
 (`src/probe.ts`). A normal build compiles the probe out (`feature("NV_PROBE")`).

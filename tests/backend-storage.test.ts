@@ -120,6 +120,47 @@ Deno.test("fs storage: sign → PUT → complete → signed GET (full, Range, HE
   }
 });
 
+Deno.test("fs storage: a signed PUT waits in the staging place until its completion", async () => {
+  const app = await backendApp({ buckets: { docs } });
+  try {
+    const bucket = storage.bucket("docs", { service: true });
+    await bucket.upload("kept.txt", "original", { contentType: "text/plain" });
+    const read = async () => await new Response((await bucket.download("kept.txt"))!.body).text();
+    const { plan, put } = await uploadVia(app, "docs", "kept.txt", "replaced", "text/plain", 8);
+    assertEquals(put.status, 200);
+    assertEquals((await put.json()).object.key, "kept.txt");
+    assertEquals(await read(), "original", "the PUT did not touch the key");
+    assert((await storedFiles(app.root)).some((f) => f.startsWith(".denext-staging/docs/")));
+    const done = await app.sign({ op: "complete", token: plan.upload.token });
+    assertEquals(done.status, 200);
+    await done.body?.cancel();
+    assertEquals(await read(), "replaced");
+    assertEquals(
+      (await storedFiles(app.root)).filter((f) => f.startsWith(".denext-staging/")),
+      [],
+    );
+    // The staging version is signed into the URL: another one is refused.
+    const again = await (await app.sign({
+      op: "upload",
+      bucket: "docs",
+      key: "kept.txt",
+      contentType: "text/plain",
+      size: 4,
+    })).json();
+    const url = new URL(again.upload.url, ORIGIN);
+    url.searchParams.set("v", crypto.randomUUID());
+    const swapped = await app.call(url.pathname + url.search, {
+      method: "PUT",
+      headers: { "content-type": "text/plain" },
+      body: "evil",
+    });
+    assertEquals(swapped.status, 403);
+    await swapped.body?.cancel();
+  } finally {
+    await app.close();
+  }
+});
+
 Deno.test("fs storage: a tampered, expired or unsigned download URL is refused", async () => {
   const app = await backendApp({ buckets: { docs } });
   try {
@@ -167,7 +208,7 @@ Deno.test("fs storage: upload refusals store nothing (type, size, sniffing, sign
   const app = await backendApp({ buckets: { docs } });
   try {
     // Sent with another content type than the one signed.
-    let { put } = await uploadVia(app, "docs", "a.txt", "hello", "text/plain", 5);
+    let { put, plan: first } = await uploadVia(app, "docs", "a.txt", "hello", "text/plain", 5);
     const wrongType = await app.call(
       (await (await app.sign({
         op: "upload",
@@ -184,6 +225,9 @@ Deno.test("fs storage: upload refusals store nothing (type, size, sniffing, sign
     );
     assertEquals([put.status, wrongType.status], [200, 415]);
     await wrongType.body?.cancel();
+    const completed = await app.sign({ op: "complete", token: first.upload.token });
+    assertEquals(completed.status, 200);
+    await completed.body?.cancel();
     // A declared image that is really HTML.
     ({ put } = await uploadVia(
       app,
@@ -241,9 +285,13 @@ Deno.test("fs storage: upload refusals store nothing (type, size, sniffing, sign
     });
     assertEquals([tampered.status, (await tampered.json()).error.code], [403, "bad_signature"]);
     const exp = Math.floor(Date.now() / 1000) - 1;
-    const sig = await signPayload(uploadPayload("docs", "g.txt", exp, "text/plain", 64), [SECRET]);
+    const v = crypto.randomUUID();
+    const sig = await signPayload(
+      uploadPayload("docs", "g.txt", exp, "text/plain", 64, undefined, v),
+      [SECRET],
+    );
     const old = await app.call(
-      `/_denext/storage/o/docs/g.txt?exp=${exp}&ct=text%2Fplain&max=64&sig=${sig}`,
+      `/_denext/storage/o/docs/g.txt?exp=${exp}&ct=text%2Fplain&max=64&v=${v}&sig=${sig}`,
       { method: "PUT", headers: { "content-type": "text/plain" }, body: "x" },
     );
     assertEquals(old.status, 403);
@@ -727,11 +775,11 @@ Deno.test("fs storage: server API — upload kinds, sniffed types, list paging, 
       contentType: "application/octet-stream",
     });
     await bucket.upload("stream", new Blob(["streamed"]).stream(), { contentType: "text/plain" });
-    await assertRejects(() => bucket.upload("big", "x".repeat(1001)), StorageError, "exceeds");
+    await assertRejects(() => bucket.upload("big", "x".repeat(1001)), StorageError, "exceed");
     await assertRejects(
       () => bucket.upload("big", new Blob(["x".repeat(1001)]).stream()),
       StorageError,
-      "exceeds",
+      "exceed",
     );
     await assertRejects(
       () => bucket.upload("html", "<b>", { contentType: "text/html" }),
@@ -778,7 +826,7 @@ Deno.test("fs storage: server API — upload kinds, sniffed types, list paging, 
     await assertRejects(
       () => bucket.createSignedUploadUrl("x", { contentType: "text/plain", maxBytes: 5, size: 6 }),
       StorageError,
-      "exceeds",
+      "exceed",
     );
   } finally {
     await app.close();
@@ -787,10 +835,17 @@ Deno.test("fs storage: server API — upload kinds, sniffed types, list paging, 
 
 Deno.test("backend(): setup validates options; no storage → no handler; basePath and the dev secret", async () => {
   assertThrows(() => backend({ storage: { buckets: { a: {} } } as never }), TypeError, "driver");
+  // No declared bucket is fine: buckets can be created at runtime.
+  backend({ storage: { driver: fs({ dir: "x" }), buckets: {} } });
   assertThrows(
-    () => backend({ storage: { driver: fs({ dir: "x" }), buckets: {} } }),
+    () => backend({ storage: { driver: fs({ dir: "x" }), buckets: {}, rls: true } }),
     TypeError,
-    "no bucket",
+    "needs `postgres`",
+  );
+  assertThrows(
+    () => backend({ storage: { driver: fs({ dir: "x" }), buckets: {}, api: { basePath: "x" } } }),
+    TypeError,
+    "basePath",
   );
   assertThrows(
     () => backend({ storage: { driver: fs({ dir: "x" }), buckets: { Bad: {} } } }),

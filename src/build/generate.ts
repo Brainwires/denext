@@ -6,8 +6,9 @@
 // Build-time only; never imported by a shipped bundle.
 
 import { dirname, join, relative } from "@std/path";
-import { detectDockerMode, dockerPlan } from "./docker-template.ts";
-import { ciPlan, migrationPlan, seedPlan } from "./generate-ops.ts";
+import { type DockerRequest, resolveDocker } from "./docker-detect.ts";
+import { type DockerOptions, dockerPlan } from "./docker-template.ts";
+import { ciPlan, migrationPlan, seedPlan, vectorSearchPlan } from "./generate-ops.ts";
 import { resolveProject } from "./paths.ts";
 
 /**
@@ -27,9 +28,11 @@ export const GENERATE_KINDS = [
   "action",
   "middleware",
   "job",
+  "function",
   "test",
   "docker",
   "migration",
+  "vector-search",
   "seed",
   "ci",
 ] as const;
@@ -44,6 +47,7 @@ export type GenerateKind = typeof GENERATE_KINDS[number];
  * to name.
  */
 export const OPTIONAL_NAME_KINDS: ReadonlySet<GenerateKind> = new Set<GenerateKind>([
+  "vector-search",
   "docker",
   "middleware",
   "loading",
@@ -54,7 +58,7 @@ export const OPTIONAL_NAME_KINDS: ReadonlySet<GenerateKind> = new Set<GenerateKi
 ]);
 
 /** The kinds that write project-root ops files (no App Router `app/` dir needed). */
-type OpsKind = "docker" | "migration" | "seed" | "ci";
+type OpsKind = "docker" | "migration" | "vector-search" | "seed" | "ci";
 
 /** One file a generate run would produce. */
 export interface GeneratePreviewFile {
@@ -62,6 +66,8 @@ export interface GeneratePreviewFile {
   readonly path: string;
   /** The file's full contents. */
   readonly contents: string;
+  /** Replace an existing file (an outdated generated one) even without `--force`. */
+  readonly overwrite?: boolean;
 }
 
 /** How a generate run treats the filesystem. */
@@ -70,6 +76,11 @@ export interface GenerateOptions {
   readonly force?: boolean;
   /** Compute the plan without touching disk; the result carries `preview`. */
   readonly dryRun?: boolean;
+  /**
+   * `docker` only: the resolved template options (`resolveDocker()`), or a request to resolve
+   * against the project. Absent: the stack is auto-detected, as with no flags.
+   */
+  readonly docker?: DockerOptions | DockerRequest;
 }
 
 /** Result of a generate run (for the CLI to print). */
@@ -225,6 +236,32 @@ export default defineJob({
 `;
 }
 
+/**
+ * An Edge Function in Supabase's shape, for `backend({ functions })` from `@denext/backend`:
+ * what `denext generate function <name>` and `denext functions new <name>` write.
+ *
+ * @param name The function's name (a slug).
+ * @returns The module's source.
+ */
+export function edgeFunctionSource(name: string): string {
+  return `// Edge Function: /functions/v1/${name} — call it with supabase.functions.invoke("${name}", { body })
+// or fetch(). Served by backend({ functions: {} }) from @denext/backend, in a worker of its own.
+// Callers need a valid identity unless denext.config.ts sets functions.functions["${name}"].verifyJwt
+// to false.
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  const { name } = await req.json().catch(() => ({ name: "world" }));
+  return Response.json({ message: \`Hello \${name}!\` }, { headers: corsHeaders });
+});
+`;
+}
+
 function actionSource(name: string): string {
   const fn = (pascal(name)[0]?.toLowerCase() ?? "d") + pascal(name).slice(1) || "action";
   return `"use server";
@@ -318,12 +355,13 @@ async function planArtifacts(
   projectDir: string,
   kind: GenerateKind,
   name: string,
+  docker?: DockerOptions | DockerRequest,
 ): Promise<GeneratePreviewFile[]> {
   // Docker, migration, seed and CI files live at the project root and don't need an App
   // Router `app/` dir (a SPA app may not have one), so handle them before `resolveProject`.
   // `name`, when present, is the override (`server` | `spa`, the data flavor, the provider) —
   // or, for a migration, its name.
-  if (isOpsKind(kind)) return await opsPlan(projectDir, kind, name);
+  if (isOpsKind(kind)) return await opsPlan(projectDir, kind, name, docker);
   const paths = await resolveProject(projectDir);
   const segment = name.replace(/^[\\/]+|[\\/]+$/g, "");
   // Reject `..` path components early with a clear message (safeJoin also guards).
@@ -335,7 +373,8 @@ async function planArtifacts(
 }
 
 function isOpsKind(kind: GenerateKind): kind is OpsKind {
-  return kind === "docker" || kind === "migration" || kind === "seed" || kind === "ci";
+  return kind === "docker" || kind === "migration" || kind === "vector-search" || kind === "seed" ||
+    kind === "ci";
 }
 
 /** The project-root ops scaffolds (Docker, migrations, seeds, CI); `name` is the override. */
@@ -343,17 +382,23 @@ async function opsPlan(
   projectDir: string,
   kind: OpsKind,
   name: string,
+  docker?: DockerOptions | DockerRequest,
 ): Promise<GeneratePreviewFile[]> {
   switch (kind) {
     case "docker": {
-      const mode = await detectDockerMode(projectDir, name || undefined);
-      return (await dockerPlan(projectDir, { mode })).map(({ path, contents }) => ({
+      const options = docker && "mode" in docker
+        ? docker
+        : (await resolveDocker(projectDir, { ...docker, target: name || docker?.target }))
+          .options;
+      return (await dockerPlan(projectDir, options)).map(({ path, contents }) => ({
         path,
         contents,
       }));
     }
     case "migration":
       return await migrationPlan(projectDir, name);
+    case "vector-search":
+      return vectorSearchPlan(projectDir, name);
     case "seed":
       return await seedPlan(projectDir, name);
     case "ci":
@@ -379,7 +424,7 @@ export async function generateArtifact(
   name: string,
   options: GenerateOptions = {},
 ): Promise<GenerateResult> {
-  const plan = await planArtifacts(projectDir, kind, name);
+  const plan = await planArtifacts(projectDir, kind, name, options.docker);
   const force = options.force === true;
   const written: string[] = [];
   const skipped: string[] = [];
@@ -390,7 +435,7 @@ export async function generateArtifact(
     return { written, skipped, preview: plan };
   }
   for (const file of plan) {
-    await writeIfAbsent(file.path, file.contents, written, skipped, force);
+    await writeIfAbsent(file.path, file.contents, written, skipped, force || file.overwrite);
   }
   return { written, skipped };
 }
@@ -428,6 +473,17 @@ function artifactTarget(
     case "job": {
       const base = segment.replace(/\.ts$/, "") || "job";
       return { path: safeJoin(projectDir, "jobs", base + ".ts"), content: jobSource(name) };
+    }
+    case "function": {
+      if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(segment)) {
+        throw new Error(
+          `denext: function name "${name}" must be a slug (letters, digits, "-" and "_").`,
+        );
+      }
+      return {
+        path: safeJoin(projectDir, "functions", segment, "index.ts"),
+        content: edgeFunctionSource(segment),
+      };
     }
     case "component":
       return {

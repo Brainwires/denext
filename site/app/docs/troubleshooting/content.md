@@ -52,12 +52,15 @@ See [Migrating from Remix](/docs/migrating-remix) § 1.
 
 ## A freshly published `@denext/*` version is refused ("minimum dependency age")
 
-**Cause.** Deno's minimum-dependency-age policy refuses a JSR version for
-roughly its first 24 hours. A supply-chain delay, not an error.
+**Cause.** Deno's minimum-dependency-age policy refuses a JSR version for its
+first two days (Deno 2.9's default cutoff is 48 hours back, although its error hint
+says 24). A supply-chain delay, not an error.
 
 **Fix.** Projects made by `denext create` or `denext migrate` (3.0 and later) already
-exempt denext's own packages, and only those, keeping the 24-hour hold for every
-other dependency. For an older project, add the same to its `deno.json`:
+exempt denext's own packages, and only those, keeping the hold for every
+other dependency (a compiled `denext` binary passes that `deno.json` to the
+pinned CLI it starts, also when run from outside the project). For an older project,
+add the same to its `deno.json`:
 
 ```json
 "minimumDependencyAge": { "exclude": ["jsr:@denext/*"] }
@@ -68,7 +71,7 @@ For a one-off run, pass the flag on `deno run`, or set the env var so the
 
 ```sh
 deno run --min-dep-age=0 -A jsr:@denext/denext/cli build
-DENEXT_MIN_DEP_AGE=0 deno task build
+DENEXT_MIN_DEP_AGE=0 denext task build
 ```
 
 See [Contributing](/docs/contributing) → release gotchas.
@@ -88,20 +91,19 @@ See the [changelog](/docs/changelog) entry for 2.4.2.
 
 ## "denext needs Deno 2.9+" / `deno bundle` not found
 
-**Cause.** `build` and `dev` bundle client code by shelling out to Deno's own
-`deno bundle` subcommand, which needs Deno ≥ 2.9; the binary on `PATH` is older
-or missing.
+**Cause.** `build` and `dev` bundle client code with Deno's own `deno bundle` subcommand, which
+needs Deno ≥ 2.9. Normally they run on [denext's Deno toolchain](/docs/toolchain) and this never
+comes up; it does when the toolchain can't be had (offline on first use, `DENEXT_DENO=stock`, a
+platform with no build) and the stock `deno` they fall back to is older or missing.
 
-**Fix.** Upgrade Deno, or point denext at a 2.9+ binary.
+**Fix.** Fetch the toolchain once you are online, or point denext at a Deno 2.9+ binary.
 
 ```sh
-deno upgrade
+denext toolchain install
+denext toolchain status      # which Deno a command runs on, and why
 # or
-DENO_BIN=/path/to/deno deno task build
+DENO_BIN=/path/to/deno denext task build
 ```
-
-See the [Quick start](https://github.com/Brainwires/denext#quick-start) in the README
-for the Deno version denext needs.
 
 ## "no dispatcher installed" / hooks throwing inside an npm React library
 
@@ -284,7 +286,7 @@ after the first `denext_component_tree`, `denext_why_render` or
 `denext_hook_state` call.
 
 **Fix.** Call the tool again after the page's next render, or start
-`deno task dev` with `DENEXT_DEV_INSPECT=1` so pages push from the start.
+`denext task dev` with `DENEXT_DEV_INSPECT=1` so pages push from the start.
 
 ## `denext: hydration mismatch — …`
 
@@ -425,20 +427,15 @@ The entries below are for an app in a Capacitor shell. The full guide is
 
 ### The app stays on its splash screen under `denext mobile dev`
 
-**Cause.** One of two things stops the page before it hides the splash:
+**Cause.** On iOS 14 and later, a WebView reaches a server on the local network only when the
+app's `Info.plist` has an `NSLocalNetworkUsageDescription` (and `NSAppTransportSecurity` →
+`NSAllowsLocalNetworking` for plain `http`); without them iOS denies the requests silently, and
+the page never loads far enough to hide the splash.
 
-1. denext before 2.10.0 sent a SPA's own CSS import (`import "./styles.css"`)
-   through the JavaScript transform in unbundled dev, which failed the page.
-2. On iOS 14 and later, a WebView reaches a server on the local network only
-   when the app's `Info.plist` has an `NSLocalNetworkUsageDescription` (and
-   `NSAppTransportSecurity` → `NSAllowsLocalNetworking` for plain `http`);
-   without them iOS denies the requests silently.
-
-**Fix.** Upgrade to denext 2.10.0 or later. `denext mobile dev` adds both
-`Info.plist` keys for the session, but a changed `Info.plist` is a native
-change: rebuild and run the app from Xcode after the first session. Allow the
-app when iOS asks for local network access (or turn it on under Settings →
-Privacy & Security → Local Network).
+**Fix.** `denext mobile dev` adds both `Info.plist` keys for the session, but a changed
+`Info.plist` is a native change: rebuild and run the app from Xcode after the first session.
+Allow the app when iOS asks for local network access (or turn it on under Settings → Privacy &
+Security → Local Network).
 
 See [Live reload on a device](/docs/mobile#live-reload-on-a-device).
 
@@ -453,7 +450,7 @@ in the native config copies (`ios/App/App/capacitor.config.json`,
 
 ```sh
 denext mobile dev --restore   # capacitor.config, Info.plist, the dev URL in the native copies
-deno task export
+denext task export
 npx cap copy
 ```
 
@@ -588,6 +585,47 @@ branch.
 `"web"`) or `runtimePlatform()` from `denext/mobile`, or use `Platform.select`, which picks the
 shell's `ios` / `android` key when the spec has no `web` key. See
 [Platform.OS in the shell](/docs/react-native#platformos-in-the-shell).
+
+## Docker: `required variable … is missing a value: set it in .env`
+
+**Cause.** The self-hosted compose file from `denext generate docker` reads every secret as
+`${NAME:?…}`, and `.env` doesn't set this one (or there is no `.env` yet). `.env.example` leaves
+the required secrets empty on purpose.
+
+**Fix.** `cp .env.example .env`, then fill in each empty value with the command its comment names
+(`openssl rand -base64 32`, …). Compose reads `.env` from the directory you run it in.
+
+See [Deployment › Self-hosted stack](/docs/deploy#self-hosted-stack-postgres-storage-migrations).
+
+## Docker: `dependency failed to start: container …-db-1 is unhealthy`
+
+**Cause.** Postgres never passed `pg_isready`. Usually the `db-data` volume was initialised
+earlier with another `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` (Postgres only reads
+them on the first start), or the volume holds a different major version's data.
+
+**Fix.** `docker compose logs db` says which. For a throwaway database, `docker compose down -v`
+deletes the volume so the next `up` initialises it with `.env`'s values; for real data, set
+`.env` back to the credentials the volume was created with.
+
+## Docker: `service "migrate" didn't complete successfully: exit 1`
+
+**Cause.** The one-shot migrations service (`denext migration up` with `@denext/backend`, else
+`denext job migrate`) failed, so the app is never
+started. A migration's SQL failed (it ran in a transaction and was rolled back), or the database
+lacks an extension it uses — `create extension vector` needs the pgvector image.
+
+**Fix.** `docker compose logs migrate` shows the failing file and the database's error. Fix the
+SQL (or regenerate with `--pgvector`) and run `docker compose up -d` again; applied migrations
+are recorded, so only the pending ones run.
+
+## Docker: the app answers `PostgresUnsupportedError` / "this Deno has no built-in Postgres client"
+
+**Cause.** `backend({ postgres })` uses `Deno.SQL`, which only denext's Deno toolchain has, and
+the image's `deno task start` ran on the stock `denoland/deno` runtime — a Dockerfile written
+before the stack generator, or one generated without Postgres or `@denext/backend`.
+
+**Fix.** Regenerate the Dockerfile with `denext generate docker --postgres --force` (it adds the
+layer that puts the toolchain first on `PATH`), or pass a client: `sql: fromPostgresJs(postgres(url))`.
 
 ## Still stuck?
 

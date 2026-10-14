@@ -323,7 +323,8 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
 ## Backend (opt-in plugin: `@denext/backend`)
 
 Backend services inside the app — no hosted service, nothing to run beside it, zero npm:
-`plugins: [backend({ storage, postgres, realtime, rest })]`, each key opt-in
+`plugins: [backend({ storage, postgres, realtime, rest, supabase, functions, vault, queues,
+webhooks })]`, each key opt-in
 (`packages/backend`). The Postgres primitives it builds on are in core (`denext/server`), so an
 app without the plugin uses them too. See [the backend guide](https://denext.dev/docs/backend)
 and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
@@ -376,13 +377,17 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   `revalidateTag("table:<name>")`, so existing `<Live>` / `useLive` / `useApi({ tags })` code
   follows the table, and `revalidate: { owner: "one" }` elects one instance per database to do
   it (a session-level advisory lock). Subscriptions are capped per identity
-  (`maxSubscriptionsPerIdentity`) and per instance (`maxSubscribers`). —
-  `packages/backend/src/realtime.ts`, `realtime-sql.ts`, `table-changes-client.ts`.
-- **Auto-REST** ⚑ — `backend({ rest: {} })` serves a schema's tables as PostgREST-style routes
-  (`GET` / `HEAD` / `POST` / `PATCH` / `DELETE` on `/rest/v1/<table>`: column selection,
-  filters and `not`, ordering, paging and `Range`, `Prefer: count=exact`, single-object
-  responses, inserts, filtered updates and deletes), every statement run through `db()` so RLS
-  scopes it. By default only RLS-enabled tables and `security_invoker` views that the `anon` /
+  (`maxSubscriptionsPerIdentity`) and per instance (`maxSubscribers`). The same option serves
+  **Supabase Realtime** at `/realtime/v1` (Phoenix channels: `postgres_changes`, broadcast,
+  presence, private channels authorized by `realtime.messages` policies), and
+  `source: "logical"` reads changes from a logical-replication slot instead of triggers. —
+  `packages/backend/src/realtime.ts`, `realtime-sql.ts`, `realtime-phoenix.ts`,
+  `realtime-logical.ts`, `table-changes-client.ts`.
+- **Auto-REST** ⚑ — `backend({ rest: {} })` serves a schema's tables in **PostgREST 12's wire
+  format** at `/rest/v1` (so supabase-js's `from()` / `rpc()` work unchanged): embedded
+  resources through foreign keys, `or` / `and` trees, every operator, aliases, casts and JSON
+  paths, upserts and `PUT`, `/rpc/<function>`, CSV, counts and the OpenAPI document — every
+  statement run through `db()` so RLS scopes it. By default only RLS-enabled tables and `security_invoker` views that the `anon` /
   `authenticated` roles were granted get a route; everything skipped is listed in a startup
   warning. Names come only from the catalog (never request text), values are typed `$n`
   parameters, each request has a `statement_timeout`, REST statements are capped at a share of
@@ -391,6 +396,23 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   and `restClient({ url })` from `@denext/backend/client`, a supabase-js-shaped builder that
   resolves to `{ data, error, count, status }` — is typed by `.denext/rest.ts`, generated from
   the live catalog at `denext dev` and `denext build`. — `packages/backend/src/rest*.ts`.
+- **Supabase's APIs** ⚑ — `backend({ supabase })` installs Supabase-style API keys (publishable =
+  `anon`, secret = `service_role`, ES256 access tokens with a JWKS) and resolves every request
+  to one identity (`resolveIdentity()`), and serves GoTrue's **`/auth/v1`** over the
+  `denextAuth()` users: password, OTP and magic links, phone, anonymous, OAuth and stored custom
+  providers, Web3, MFA (TOTP, SMS, WebAuthn), passkeys, SAML SSO, the OAuth 2.1 server and the
+  admin API. With `storage`, `/storage/v1` speaks Supabase's Storage API (TUS uploads,
+  versioning, `storage: { rls: true }` SQL policies). — `src/server/auth/gotrue/`,
+  `packages/backend/src/identity.ts`, `storage-api.ts`, `storage-tus.ts`.
+- **Edge Functions, Vault, Queues, vector search, webhooks** — `functions: {}` serves
+  `functions/<name>.ts` at `/functions/v1/<name>`, each in its own Deno Worker; `vault: {}`
+  keeps AES-256-GCM secrets in `vault.secrets`; `queues: {}` is pgmq's SQL API without the
+  extension; `vectorSearchSql()` / `matchDocuments()` over pgvector; `webhooks` delivers signed,
+  retried table-change hooks. — `packages/backend/src/functions.ts`, `vault.ts`, `queues.ts`,
+  `vector.ts`, `webhooks.ts`.
+- **`denext db`** — migrations on SQLite or Postgres (`push`, `status`, `reset`, `seed`, and the
+  Supabase CLI's history table), plus `diff`, `dump`, `pull`, `lint`, `inspect`, `test` and
+  `types` against Postgres with the plugin. — `src/cli/db/`, `packages/backend/src/db-command.ts`.
 - **The Database section of `denext ui`** — for a project on Postgres: tables with their
   columns, indexes and keys; rows (keyset-paged, editable, each write previewed as its exact SQL
   first); row-level security policies; migrations (applied, pending, edited since); the storage
@@ -714,7 +736,8 @@ Hardened by default — secure cookie defaults, **hash-based CSP** on buffered
 responses, opinionated hardening headers (nosniff, frame-options, HSTS over
 HTTPS), error redaction, correlation ids (`x-request-id`), config validation,
 SSRF-pinned image fetch, per-address limits (`rateLimit()`, Live's connection cap,
-`clientIpForLimits()`) that switch off rather than go site-wide behind an untrusted proxy, and a
+`clientIpForLimits()`) that switch off rather than go site-wide behind an untrusted proxy (or key on
+the proxy's client-address header, `rateLimitHeader`), and a
 continuously-run **CVE-defense** probe suite. The
 full mechanism ledger is **Part 2 §1**; the threat-by-threat posture is in
 [the CVE-defense guide](https://denext.dev/docs/security).
@@ -881,8 +904,30 @@ cache uses Deno's built-in `node:sqlite`.)
   `<title>`, no server crash — classifying each route static (0 KB JS) or
   interactive. A CI gate that turns "every route renders" from a claim into a
   checked assertion.
+- **Vitest suites on denext's Deno toolchain** — under `denext test`, a test file that imports
+  `vitest` gets Vitest's API from the toolchain's `deno test`: fake timers and a fake `Date`
+  (`vi.useFakeTimers()`, `vi.advanceTimersByTimeAsync()`, `vi.setSystemTime()`), module mocks
+  (`vi.mock()`), fresh module instances (`vi.resetModules()`) and `vi.stubGlobal` /
+  `vi.stubEnv`, with no runner to install and no permission of its own; an existing Vitest or
+  Jest suite runs as it is. See [Testing](https://denext.dev/docs/testing#vitest).
 
 ## Build, tooling & CLI
+
+- **denext's own Deno build (the toolchain)** — the verbs that run project code re-run
+  themselves on a pinned `2.9.7-denext.N` Deno (stock Deno plus `Deno.SQL` and Vitest/Jest
+  compatibility in `deno test`), downloaded on first need into `<DENO_DIR>/denext-deno/`,
+  SHA-256-verified before it is extracted or run, and never replacing the `deno` on `PATH`.
+  The compiled `denext` binary needs no Deno installed: the installer fetches the toolchain (and
+  links it as `deno` only when none is on `PATH`), and every child the CLI starts finds it first
+  on `PATH`. `denext toolchain install|status|path|link|unlink`; `DENEXT_DENO=stock` opts out,
+  and a failed download falls back to stock Deno with one warning. See
+  [the toolchain](https://denext.dev/docs/toolchain). — `src/cli/self-exec.ts`,
+  `src/build/deno-executable.ts`.
+- **Every Deno verb through `denext`** — a verb denext doesn't define (`compile`, `run`, `x`,
+  `bench`, `install`, …) runs on the toolchain exactly as `denext deno <verb>` would, arguments
+  verbatim; `denext main.ts` is `deno run`; `denext task` is `deno task` with every `deno` inside
+  the task on the toolchain. Built-in verbs win, then the project's own, then Deno's. —
+  `src/cli/deno-verbs.ts`.
 
 - Build via **`deno bundle`** on the native path (`esbuild` on the next-compat /
   SPA-compat path) with **code splitting** (shared runtime chunk), the CSS
@@ -935,8 +980,9 @@ cache uses Deno's built-in `node:sqlite`.)
   **`doctor --report`** prints one markdown health report — the checks, every
   route's conformance result, and the last build's client bundle by chunk and
   role, read from `.denext/client` without building — and `--json` emits the same
-  data structurally), `audit` (dependency inventory + zero-npm proof + CycloneDX
-  SBOM), `desktop run|dev|build|package|add|publish-update`,
+  data structurally; `info <module>` is Deno's `deno info`), `audit` (dependency inventory +
+  zero-npm proof + CycloneDX SBOM, then `deno audit` over the lockfile; `--skip-deno-audit`),
+  `job` (run, list and inspect background jobs), `toolchain`, `desktop run|dev|build|package|add|publish-update`,
   `mobile add|add-ota|dev|fingerprint|assets|build|submit|doctor|privacy|inspect`, `ota
   keygen|manifest`, `migrate`, `codemod`, `mcp` / `mcp init` (the agent
   server below), `fallow init`, `version`. **A project can add its own verbs two ways**: a
@@ -1182,7 +1228,16 @@ is in [the CVE-defense guide](https://denext.dev/docs/security).
   middleware's default key, Live's per-address connection cap
   (`live.limits.maxConnectionsPerIp`, default 64, a `429` past it) and
   `@denext/backend` realtime's signed-out quota follow it, each warning once
-  when it switches itself off. — `clientIpForLimits` in
+  when it switches itself off. **`rateLimitHeader`** (`DENEXT_RATE_LIMIT_HEADER`) names the
+  header the fronting proxy writes the client address to (`cf-connecting-ip`,
+  `fly-client-ip`, `x-real-ip`): every per-address limit keys on it, and a request without it
+  falls back to the trusted hop or socket peer (never unlimited). The header is believed only
+  from a trusted proxy — a peer in **`rateLimitTrustedProxies`** (CIDRs), or with none listed a
+  loopback/private peer under `trustForwardedHeaders` — and from any other peer the limit keys on
+  that peer (warned once; a header with no trust rule at all is warned at boot). A typed-API batch item and a
+  server-side self-call inherit that header from the parent request, so the batch endpoint can't
+  skip a per-route limit. **`rateLimitLocalAddresses: true`** counts a loopback or private peer
+  as itself instead of skipping it. — `clientIpForLimits` in
   `src/server/request-context.ts`, `limitAddrOf` / `ipBucket` in
   `src/server/remote-addr.ts`, `connectionsFull` in `src/server/live.ts`.
 - **Open-redirect neutralization** — `safeRedirectLocation` collapses
@@ -1395,8 +1450,8 @@ default").
 - **Zero runtime npm dependencies** **[default — CI-enforced]** — the served
   runtime rides only Deno built-ins, `@std/*`, `Intl.*`, and `node:sqlite`. A
   guard fails on any `npm:` specifier in compat modules. `deno.json`'s remaining
-  `npm:` deps — `esbuild` (core) plus the opt-in `sass` / `@mdx-js/mdx` / `ws` /
-  `@tanstack/router-plugin` —
+  `npm:` deps — the opt-in `sass` / `@mdx-js/mdx` / `ws` / `@tanstack/router-plugin` (esbuild's
+  JS API is vendored in `src/build/esbuild/` and runs the toolchain's or a verified npm binary) —
   are build/dev-time only and never enter a shipped bundle (the CSS + swc-AST
   tooling is now the first-party `@denext/lightningcss` / `@denext/swc` wasm, not
   npm); the image/og codecs are now first-party JSR packages

@@ -12,7 +12,9 @@
 // map, so a package can't reintroduce an npm dependency the root guard wouldn't see.
 //
 // Out of scope: `src/build` (build-time tooling — esbuild plus the first-party
-// @denext/swc / @denext/lightningcss wasm — never ships in the runtime). The image/og/sqlite codecs are denext's own first-party JSR
+// @denext/swc / @denext/lightningcss wasm — never ships in the runtime). esbuild itself is no
+// longer an npm import there either: its JS API is vendored (src/build/esbuild/) and spawns the
+// toolchain's binary or the verified npm one — the last test below holds that line. The image/og/sqlite codecs are denext's own first-party JSR
 // packages, lazily imported at call time — they resolve to JSR, not npm, so allowed.
 // `node:*` built-ins are Deno built-ins and allowed.
 //
@@ -105,5 +107,23 @@ Deno.test("no npm dependencies in the shipped packages/* workspace members", asy
   assert(
     offenders.length === 0,
     `shipped packages must not depend on npm — found:\n${offenders.join("\n")}`,
+  );
+});
+
+Deno.test("esbuild is vendored: nothing in src/ imports npm esbuild, and deno.json maps none", async () => {
+  const importMap = await loadImportMap(new URL("../deno.json", import.meta.url));
+  assert(!("esbuild" in importMap), `deno.json still maps esbuild → ${importMap["esbuild"]}`);
+  const offenders: string[] = [];
+  for await (const entry of walk(new URL("../src/", import.meta.url), { exts: [".ts"] })) {
+    const text = await Deno.readTextFile(entry.path);
+    for (const m of text.matchAll(SPEC_RE)) {
+      if (m[1] === "esbuild" || m[1].startsWith("npm:esbuild")) {
+        offenders.push(`${entry.path}: ${m[1]}`);
+      }
+    }
+  }
+  assert(
+    offenders.length === 0,
+    `import src/build/esbuild/mod.ts instead:\n${offenders.join("\n")}`,
   );
 });

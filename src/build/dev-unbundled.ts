@@ -28,7 +28,7 @@
 // @module
 
 import { devPlatformOf, type Platform } from "./platform-extensions.ts";
-import * as esbuild from "esbuild";
+import * as esbuild from "./esbuild/mod.ts";
 import type { RouteManifest } from "../router/manifest.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
 import { ensureDeps, refreshReactNativeDeps } from "./dev-unbundled/deps.ts";

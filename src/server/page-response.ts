@@ -32,6 +32,7 @@ import {
 } from "./page-document.ts";
 import { cacheAndServeBuffered, pageCacheKey, serveFromPageCache } from "./page-cache-flow.ts";
 import { servePrerendered } from "./page-prerender.ts";
+import { pageCacheTiming } from "./cache.ts";
 import { serveStreamed } from "./page-stream.ts";
 import { CHILDREN_SLOT, readSlotState, recordSlotState } from "./slot-state.ts";
 
@@ -247,7 +248,12 @@ async function bufferedResponse(pr: PageRequest, rendered: RenderedPage): Promis
 /** Turn a completed render into its response: soft-nav payload, cached document, or buffered document. */
 async function serveRendered(pr: PageRequest, rendered: RenderedPage): Promise<Response> {
   await reportBoundaryErrors(pr, renderSourceOf(pr));
-  augmentPageMetadata(pr, rendered.metadata);
+  // A render the ISR cache may store must never carry a request-derived origin.
+  augmentPageMetadata(
+    pr,
+    rendered.metadata,
+    pr.cacheable && pageCacheTiming(rendered.config) !== null,
+  );
   const nav = flightNavResponse(pr, rendered) ?? isoNavResponse(pr, rendered);
   if (nav) return nav;
   return (await cacheAndServeBuffered(pr, rendered)) ?? bufferedResponse(pr, rendered);

@@ -19,6 +19,9 @@
 //
 // Build-time only; never imported by a shipped bundle.
 
+import { projectMigrationsDir } from "../server/migration-files.ts";
+import { isLegacyMigrateJob } from "../server/legacy-migrate-job.ts";
+import { vectorSearchSql } from "../server/vector-sql.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { join } from "@std/path";
 import { detectDockerMode } from "./docker-template.ts";
@@ -30,6 +33,8 @@ export interface OpsPlanFile {
   readonly path: string;
   /** Full contents. */
   readonly contents: string;
+  /** Replace an existing file (an outdated generated one) even without `--force`. */
+  readonly overwrite?: boolean;
 }
 
 /** The ORM a project's migrations and seeds belong to. */
@@ -81,8 +86,16 @@ function migrationStamp(now: Date): string {
   return now.toISOString().replace(/[-:T]/g, "").slice(0, 14);
 }
 
-/** The SQL file one migration starts as, in the project's dialect. */
-function migrationSql(slug: string, postgres: boolean): string {
+/**
+ * The SQL file one migration starts as, in the project's dialect: an up section and the down
+ * section `denext migration down` runs.
+ *
+ * @param slug The migration's name.
+ * @param postgres Postgres SQL (else SQLite).
+ * @param up The up SQL, when given (`denext migration new --stdin`); the example otherwise.
+ * @returns The file's text.
+ */
+function migrationSql(slug: string, postgres: boolean, up?: string): string {
   const example = postgres
     ? `CREATE TABLE IF NOT EXISTS example (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -93,16 +106,19 @@ function migrationSql(slug: string, postgres: boolean): string {
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );`;
   const transaction = postgres
-    ? "-- Write forward-only SQL; each file runs once, inside a transaction of its own (so no\n" +
-      "-- BEGIN / COMMIT here)."
-    : "-- Write forward-only SQL; each file runs once, inside a transaction (one that begins and commits\n" +
-      "-- its own transaction runs as written).";
-  return `${sentinel("migration", "--")} — applied in file-name order by \`denext job migrate\`.
+    ? "-- Each file runs once, inside a transaction of its own (so no BEGIN / COMMIT here)."
+    : "-- Each file runs once, inside a transaction (one that begins and commits its own\n" +
+      "-- transaction runs as written).";
+  const body = up === undefined
+    ? `${example}\n\n-- migrate:down\nDROP TABLE IF EXISTS example;\n`
+    : `${up.replace(/\s*$/, "")}\n\n-- migrate:down\n`;
+  return `${sentinel("migration", "--")} — applied in file-name order by \`denext migration up\`
+-- (or \`denext job migrate\`); \`denext migration down\` runs the down section.
 ${transaction}
 
+-- migrate:up
 -- ${slug}
-${example}
-`;
+${body}`;
 }
 
 /** A `postgres://` / `postgresql://` URL. */
@@ -153,7 +169,8 @@ const MIGRATE_JOB = `${sentinel("migration", "//")} — run it with \`denext job
 //
 // Applies every \`migrations/*.sql\` not yet recorded in the \`_migrations\` table, in file-name
 // order, each inside its own transaction. \`denext job migrate --payload '{"dryRun":true}'\`
-// lists what would run; \`--payload '{"status":true}'\` shows what ran.
+// lists what would run; \`--payload '{"status":true}'\` shows what ran. \`denext migration up\`
+// and \`denext migration down\` (a file's \`-- migrate:down\` section) do the same from the CLI.
 //
 // Postgres when DATABASE_URL is a postgres:// URL: migratePostgres takes an advisory lock, so two
 // instances deploying at once never apply a migration twice. postgresClient() uses Deno.SQL, the
@@ -168,14 +185,13 @@ import {
   defineJob,
   isPostgresUrl,
   migratePostgres,
+  migrateSqlite,
   postgresClient,
   postgresMigrationStatus,
+  sqliteMigrationStatus,
 } from "denext/server";
 
 const DIR = new URL("../migrations/", import.meta.url);
-// A transaction statement of the file's own (a trigger's BEGIN … END; body is not one).
-const OWN_TRANSACTION =
-  /^\\s*(?:BEGIN(?:\\s+(?:DEFERRED|IMMEDIATE|EXCLUSIVE))?(?:\\s+TRANSACTION)?|COMMIT(?:\\s+TRANSACTION)?|END\\s+TRANSACTION)\\s*;/im;
 
 /** What to do instead of applying: list pending (\`dryRun\`) or everything (\`status\`). */
 interface MigratePayload {
@@ -230,50 +246,25 @@ async function onPostgres(
 async function onSqlite(options: MigratePayload): Promise<string> {
   const db = new DatabaseSync(Deno.env.get("DB_PATH") ?? "app.db");
   try {
-    db.exec(
-      "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
-    );
-    const done = new Set(
-      db.prepare("SELECT name FROM _migrations").all().map((r) =>
-        String(r.name)
-      ),
-    );
-    const files: string[] = [];
-    for await (const entry of Deno.readDir(DIR)) {
-      if (entry.isFile && entry.name.endsWith(".sql")) files.push(entry.name);
-    }
-    const pending = files.sort().filter((name) => !done.has(name));
     if (options.status) {
-      return files.map((name) =>
-        \`\${done.has(name) ? "applied" : "pending"}  \${name}\`
-      )
+      const status = await sqliteMigrationStatus(db, { dir: DIR });
+      return status.migrations
+        .map((m) => \`\${m.applied ? "applied" : "pending"}  \${m.name}\`)
+        .concat(status.unknown.map((name) => \`unknown  \${name}\`))
         .join("\\n") || "no migrations";
     }
-    if (options.dryRun) {
-      return pending.length
-        ? \`would apply \${pending.join(", ")}\`
+    const result = await migrateSqlite(db, {
+      dir: DIR,
+      dryRun: options.dryRun === true,
+    });
+    if (result.dryRun) {
+      return result.pending.length
+        ? \`would apply \${result.pending.join(", ")}\`
         : "up to date";
     }
-    for (const name of pending) {
-      // Encoded: a \`#\`, \`?\` or \`%\` in a file name is part of the name, not URL syntax.
-      const sql = await Deno.readTextFile(
-        new URL(encodeURIComponent(name), DIR),
-      );
-      const own = OWN_TRANSACTION.test(sql);
-      if (!own) db.exec("BEGIN");
-      try {
-        db.exec(sql);
-        db.prepare("INSERT INTO _migrations (name, applied_at) VALUES (?, ?)")
-          .run(name, new Date().toISOString());
-        if (!own) db.exec("COMMIT");
-      } catch (err) {
-        try {
-          db.exec("ROLLBACK");
-        } catch { /* the file's own transaction already ended */ }
-        throw new Error(\`migration \${name} failed: \${(err as Error).message}\`);
-      }
-    }
-    return pending.length ? \`applied \${pending.join(", ")}\` : "up to date";
+    return result.applied.length
+      ? \`applied \${result.applied.join(", ")}\`
+      : "up to date";
   } finally {
     db.close();
   }
@@ -285,9 +276,13 @@ async function onSqlite(options: MigratePayload): Promise<string> {
  * in a project that uses Postgres), plus the `jobs/migrate.ts` runner — Postgres or
  * `node:sqlite`, chosen by `DATABASE_URL` when it runs — when the project has none.
  *
+ * The file goes in `migrations/`, or in `supabase/migrations/` when only that one exists (a
+ * Supabase project; no runner job then — `denext migration up` applies it).
+ *
  * @param projectDir The project root.
  * @param name The migration's name (`add_users`).
  * @param now The clock (tests pin it).
+ * @param up The up SQL (`denext migration new --stdin`); an example table otherwise.
  * @returns The files, in write order.
  * @throws For a Prisma or Drizzle project (their own tools own migrations), or an empty name.
  */
@@ -295,6 +290,7 @@ export async function migrationPlan(
   projectDir: string,
   name: string,
   now: Date = new Date(),
+  up?: string,
 ): Promise<OpsPlanFile[]> {
   const flavor = await detectDataFlavor(projectDir);
   if (flavor === "prisma") {
@@ -310,13 +306,53 @@ export async function migrationPlan(
   }
   const slug = slugName(name);
   if (!slug) throw new Error(`denext: migration name "${name}" has no letters or digits.`);
+  const dir = await projectMigrationsDir(projectDir);
+  const supabase = dir !== "migrations";
   const plan: OpsPlanFile[] = [{
-    path: join(projectDir, "migrations", `${migrationStamp(now)}_${slug}.sql`),
-    contents: migrationSql(slug, await usesPostgres(projectDir)),
+    path: join(projectDir, ...dir.split("/"), `${migrationStamp(now)}_${slug}.sql`),
+    contents: migrationSql(slug, supabase || await usesPostgres(projectDir), up),
   }];
   const runner = join(projectDir, "jobs", "migrate.ts");
-  if (!(await exists(runner))) plan.push({ path: runner, contents: MIGRATE_JOB });
+  if (!supabase) {
+    const current = await readText(runner);
+    if (current === undefined) plan.push({ path: runner, contents: MIGRATE_JOB });
+    // An older generated runner ran whole files: it would apply the down section too.
+    else if (isLegacyMigrateJob(current)) {
+      plan.push({ path: runner, contents: MIGRATE_JOB, overwrite: true });
+    }
+  }
   return plan;
+}
+
+/**
+ * `denext generate vector-search [table]`: a Postgres migration with Supabase's pgvector recipe —
+ * the `vector` extension, the table (`id`, `content`, `metadata`, `embedding vector(1536)`), its
+ * HNSW index, row-level security, and `match_<table>(query_embedding, match_threshold,
+ * match_count)`. Apply it with `denext db push` (or `denext job migrate`).
+ *
+ * @param projectDir The project.
+ * @param name The table (default `documents`).
+ * @param now The clock (for the file name's stamp).
+ * @returns The migration.
+ */
+export function vectorSearchPlan(
+  projectDir: string,
+  name: string,
+  now: Date = new Date(),
+): OpsPlanFile[] {
+  const table = name || "documents";
+  if (!/^[a-z_][a-z0-9_]{0,55}$/.test(table)) {
+    throw new Error(
+      `denext: vector-search table "${name}" must be a lowercase SQL name (letters, digits, _).`,
+    );
+  }
+  const sql = vectorSearchSql({ table, fn: `match_${table}` });
+  return [{
+    path: join(projectDir, "migrations", `${migrationStamp(now)}_${table}_vector_search.sql`),
+    contents:
+      `-- Generated by \`denext generate vector-search ${table}\`. Change vector(1536) to your\n` +
+      `-- embedding model's dimensions (in both places) before applying it.\n${sql}`,
+  }];
 }
 
 /** `jobs/seed.ts` on `node:sqlite`. */

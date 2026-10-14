@@ -16,7 +16,8 @@ Four pillars, in order:
    least-privilege packaging). The same `denext/mobile` call reaches Capacitor on a phone, the
    native runtime in a desktop window and a web fallback in a browser, so a component does not
    need to know where it runs. One CLI takes the app from `create` to a signed store build or a
-   signed, distributable desktop app.
+   signed, distributable desktop app, and it is all a machine needs: the `denext` command brings
+   its own pinned, verified Deno build.
 
 2. **Every accepted web-framework feature, in one unified framework.** The features a product
    otherwise assembles from several frameworks and libraries are built in and designed together:

@@ -1,0 +1,86 @@
+// Every `denext create` output is `deno fmt`- and `deno lint`-clean as written: a fresh project
+// passes `deno fmt --check` and `deno lint` with the config it was given (Deno's default fmt
+// options — the scaffold carries no `fmt` block), for each template and each feature, alone and
+// all together.
+
+import { assert } from "@std/assert";
+import { join, toFileUrl } from "@std/path";
+import {
+  SCAFFOLD_TEMPLATES,
+  type ScaffoldOptions,
+  scaffoldProject,
+} from "../../src/build/scaffold.ts";
+
+/** The feature switches `denext create` offers. */
+const FEATURES = [
+  "tailwind",
+  "srcDir",
+  "compiler",
+  "desktop",
+  "capacitor",
+  "compatibilityMode",
+  "fallow",
+  "mcp",
+] as const satisfies readonly (keyof ScaffoldOptions)[];
+
+/** This checkout's lint plugin, so the lint run is hermetic and checks the current rules. */
+const LOCAL_LINT_PLUGIN = toFileUrl(
+  join(import.meta.dirname!, "../../src/lint/denext-plugin.ts"),
+).href;
+
+/** Each template with no features, each feature alone, every feature, and no `.vscode`. */
+function combos(): { name: string; opts: Omit<ScaffoldOptions, "dir"> }[] {
+  const out: { name: string; opts: Omit<ScaffoldOptions, "dir"> }[] = [];
+  for (const template of SCAFFOLD_TEMPLATES) {
+    out.push({ name: `${template}`, opts: { template } });
+    out.push({ name: `${template}+no-vscode`, opts: { template, vscode: false } });
+    for (const feature of FEATURES) {
+      out.push({ name: `${template}+${feature}`, opts: { template, [feature]: true } });
+    }
+    const all = Object.fromEntries(FEATURES.map((f) => [f, true]));
+    out.push({ name: `${template}+all`, opts: { template, ...all } });
+  }
+  return out;
+}
+
+/** Run `deno <args>` in `cwd`; the combined output when it fails. */
+async function deno(args: string[], cwd: string): Promise<{ ok: boolean; output: string }> {
+  const r = await new Deno.Command(Deno.execPath(), {
+    args,
+    cwd,
+    stdout: "piped",
+    stderr: "piped",
+    env: { NO_COLOR: "1" },
+  }).output();
+  const text = new TextDecoder();
+  // The exit code and signal too: a run killed from outside (a loaded CI host, a timeout) prints
+  // nothing of its own, and the failure should say so rather than look like a lint finding.
+  const status = `[exit ${r.code}${r.signal ? `, signal ${r.signal}` : ""}]`;
+  return { ok: r.success, output: `${text.decode(r.stdout)}${text.decode(r.stderr)}\n${status}` };
+}
+
+/** Point the scaffold's lint plugin at this checkout's copy (the scaffold pins the JSR one). */
+async function pointLintAtCheckout(dir: string): Promise<void> {
+  const path = join(dir, "deno.json");
+  const config = JSON.parse(await Deno.readTextFile(path));
+  config.lint = { ...config.lint, plugins: [LOCAL_LINT_PLUGIN] };
+  await Deno.writeTextFile(path, JSON.stringify(config, null, 2) + "\n");
+}
+
+for (const { name, opts } of combos()) {
+  Deno.test(`scaffold ${name}: deno fmt --check and deno lint pass`, async () => {
+    // A temp dir outside the repository, so no parent deno.json lends the project its options.
+    const root = await Deno.makeTempDir({ prefix: "denext-scaffold-fmt-" });
+    try {
+      const dir = join(root, "my-app");
+      await scaffoldProject({ ...opts, dir });
+      const fmt = await deno(["fmt", "--check"], dir);
+      assert(fmt.ok, `deno fmt --check failed for ${name}:\n${fmt.output}`);
+      await pointLintAtCheckout(dir);
+      const lint = await deno(["lint"], dir);
+      assert(lint.ok, `deno lint failed for ${name}:\n${lint.output}`);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+}

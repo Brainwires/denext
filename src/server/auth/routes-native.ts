@@ -412,7 +412,7 @@ async function signInWithIdToken(
   if (!user) return await refusedSignIn(ctx, id, "access_denied", 403);
   // A native sheet can't run the second-factor step: an enrolled user signs in through the
   // browser flow (/native/authorize), which does.
-  if (await mfaPendingFor(ctx.options, user)) return json({ error: "mfa_required" }, 403);
+  if (await mfaPendingFor(ctx.config, user)) return json({ error: "mfa_required" }, 403);
   const snapshot = await snapshotFor(ctx.config, user, id, ["ext"]);
   const tokens = await startNativeSession(ctx.config, native, snapshot);
   await emitAuthEvent(ctx.options, "signIn", { user, provider: id, isNewUser: resolved.isNewUser });

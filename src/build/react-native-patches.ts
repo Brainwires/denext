@@ -46,7 +46,7 @@
 // CommonJS builds) and leaves a module it does not recognise unchanged.
 
 import { basename, dirname, extname, join } from "@std/path";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 
 /** The prebuilt runtime the patches call into. */
 const OVERLAY = "denext/react-native";

@@ -11,7 +11,8 @@
 - Imports come from `denext`, not `react` — `import { useState } from "denext"`. There is
   **no `react`/`react-dom` package** (a drop-in aliases them; new code imports `denext`).
 - **No `package.json`/npm** — a `deno.json` with URL/`jsr:`/`npm:` imports; run with
-  `deno task dev|build|start`.
+  `denext task dev|build|start` (the `denext` command brings its own Deno; `deno task`
+  works too).
 - Server-only helpers (`cookies`, `headers`, `revalidatePath`) come from
   `denext/server`; client-only from `denext/client`.
 - File conventions are **the same as the Next.js App Router** (`app/page.tsx`,
@@ -31,7 +32,13 @@
   stacks that denext handles, each with the test that proves it (source:
   `catalog/fixed-in-denext.json`).
 - [Backend](https://denext.dev/docs/backend): the opt-in `@denext/backend` plugin — storage, Postgres
-  scoped by row-level security (`db()`), realtime from tables, auto-REST with a typed client.
+  scoped by row-level security (`db()`), realtime from tables, auto-REST with a typed client,
+  and Supabase's APIs (`/auth/v1`, `/rest/v1`, `/storage/v1`, realtime, `/functions/v1`)
+  so the stock `@supabase/supabase-js` client works unchanged; Vault, queues, pgvector, webhooks.
+- [Scheduled jobs](https://denext.dev/docs/jobs): `defineJob` in `jobs/<name>.ts`, cron schedules,
+  `runJob()` / `denext job <name>`, run history.
+- [denext's Deno toolchain](https://denext.dev/docs/toolchain): the pinned Deno build project verbs run on
+  (`Deno.SQL`, Vitest/Jest compatibility), and `denext task` vs `deno task`.
 - [Coming from Supabase](https://denext.dev/docs/coming-from-supabase): a concept map and migration
   checklist (schema, policies, users and files).
 - [Guide (source)](https://github.com/Brainwires/denext/blob/main/AGENTS.md): AGENTS.md in the repo.
@@ -41,7 +48,7 @@
 
 - **MCP server** — `denext mcp` (with nothing installed:
   `deno run -A jsr:@denext/denext/cli mcp`). Tools (derived from the live
-  registry so this never drifts): `denext_check_snippet`, `denext_import_map`, `denext_generate`, `denext_doctor`, `denext_codemod`, `denext_list_routes`, `denext_dev_logs`, `denext_render`, `denext_route_map`, `denext_profile`, `denext_search_docs`, `denext_read_docs`, `denext_index_codebase`, `denext_query_codebase`, `denext_find_definition`, `denext_find_references`, `denext_component_tree`, `denext_why_render`, `denext_hook_state`. It can lint a
+  registry so this never drifts): `denext_check_snippet`, `denext_import_map`, `denext_generate`, `denext_doctor`, `denext_codemod`, `denext_list_routes`, `denext_dev_logs`, `denext_render`, `denext_route_map`, `denext_profile`, `denext_search_docs`, `denext_read_docs`, `denext_index_codebase`, `denext_query_codebase`, `denext_find_definition`, `denext_find_references`, `denext_component_tree`, `denext_why_render`, `denext_hook_state`, `denext_migrations`, `denext_gen_types`. It can lint a
   snippet for Next-isms, map imports, scaffold, run doctor/codemod, list an app's routes, read a
   running dev server's errors + console, render a route/component server-side, and search or
   read every docs page and API symbol offline (`denext_search_docs` / `denext_read_docs`).

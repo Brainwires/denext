@@ -504,10 +504,10 @@ await runDesktop({
         <a href="/docs/desktop#desktop-capabilities">Desktop apps › Native capabilities</a>.
       </p>
       <Code lang="bash">
-        {`deno task desktop   # runs \`export\`, then packages out/ in a native window`}
+        {`denext task desktop   # runs \`export\`, then packages out/ in a native window`}
       </Code>
       <Callout kind="note">
-        Use the generated <code>deno task desktop</code> — not a bare{" "}
+        Use the generated <code>denext task desktop</code> — not a bare{" "}
         <code>deno desktop desktop.ts</code>. The task bakes the flags a working, distributable
         bundle needs: <code>--include out</code>{" "}
         (embed the static export, else the packaged app serves nothing on another machine),{" "}

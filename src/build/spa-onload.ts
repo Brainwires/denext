@@ -6,7 +6,7 @@
 // correctness-first: an unreadable file or a throwing transform leaves the module exactly as
 // written. Factored here so each plugin only supplies its per-module transform.
 
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import { SEPARATOR } from "@std/path";
 import { hasPathSegment, inNodeModules } from "./path-segments.ts";
 

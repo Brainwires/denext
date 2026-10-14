@@ -26,7 +26,7 @@ import {
   sqliteWasmBridgeSource,
 } from "../src/build/sqlite-wasm.ts";
 import { join } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../src/build/esbuild/mod.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

@@ -42,6 +42,7 @@ import {
   type ProviderEndpoints,
   resolveProviderEndpoints,
 } from "./discovery.ts";
+import { evictUnprovenAccess } from "./email.ts";
 import { emailKey } from "./email-key.ts";
 import { emitAuthEvent } from "./events.ts";
 import {
@@ -74,6 +75,25 @@ import {
   type OAuthProvider,
   type SignInFailedReason,
 } from "./types.ts";
+
+/** The `/auth/v1` OAuth completion, when the GoTrue API is mounted. */
+type GoTrueCallback = (
+  ctx: AuthRouteContext,
+  provider: OAuthProvider,
+  params: URLSearchParams,
+) => Promise<Response | null>;
+
+let gotrueCallback: GoTrueCallback | undefined;
+
+/**
+ * Route `/auth/v1` OAuth callbacks to the GoTrue handler (`backend({ supabase })` does). The
+ * hook answers `null` for a callback that is not one of its flows.
+ *
+ * @param hook The completion, or `undefined` to remove it.
+ */
+export function setGoTrueOAuthCallback(hook: GoTrueCallback | undefined): void {
+  gotrueCallback = hook;
+}
 
 /**
  * Refuse a sign-in: emit `signInFailed`, then redirect to the sign-in page carrying a
@@ -145,7 +165,10 @@ function providerErrorCode(ctx: AuthRouteContext, providerId: string, raw: strin
  * @param provider The OAuth/OIDC provider.
  * @returns The resolved endpoints.
  */
-function endpointsFor(ctx: AuthRouteContext, provider: OAuthProvider): Promise<ProviderEndpoints> {
+export function endpointsFor(
+  ctx: AuthRouteContext,
+  provider: OAuthProvider,
+): Promise<ProviderEndpoints> {
   return resolveProviderEndpoints(provider, {
     allowInsecure: ctx.config.dangerouslyAllowInsecureProviders,
     onDiscoveryError: (error) =>
@@ -298,6 +321,10 @@ async function completeCallback(
   provider: OAuthProvider,
   params: URLSearchParams,
 ): Promise<Response> {
+  // An `/auth/v1` (GoTrue) flow finishes in its own handler: it lands on the client's
+  // `redirect_to` with tokens or a code, not on a cookie session.
+  const gotrue = gotrueCallback ? await gotrueCallback(ctx, provider, params) : null;
+  if (gotrue) return gotrue;
   const providerError = params.get("error");
   if (providerError) {
     return await refuseProviderError(ctx, provider.id, providerError);
@@ -340,7 +367,7 @@ async function completeCallback(
 }
 
 /** The posted fields besides the response parameters the callback reads itself. */
-function extraParams(params: URLSearchParams): Record<string, string> {
+export function extraParams(params: URLSearchParams): Record<string, string> {
   const extra: Record<string, string> = {};
   for (const [key, value] of params) if (!RESPONSE_FIELDS.has(key)) extra[key] = value;
   return extra;
@@ -446,6 +473,7 @@ export async function resolveSessionUser(
       provider as OAuthProvider,
       keyedProfile(ctx, profile),
       account,
+      (user) => evictUnprovenAccess(ctx.config, ctx.options, ctx.options.adapter!, user.id),
     );
   } catch (error) {
     if (!accountNotLinkedCode(error)) throw error;
@@ -482,7 +510,7 @@ function keyedProfile(ctx: AuthRouteContext, profile: AuthUser): AuthUser {
  * @param tokens The token endpoint's response.
  * @returns The account to link, minus the `userId` the linking rules decide.
  */
-function accountFromTokens(
+export function accountFromTokens(
   ctx: AuthRouteContext,
   provider: OAuthProvider,
   profile: AuthUser,
@@ -527,7 +555,7 @@ function expiryAt(expiresIn: number | undefined): number | undefined {
 }
 
 /** What one provider round-trip produced. */
-interface OAuthProfileResult {
+export interface OAuthProfileResult {
   /** The provider-mapped session user. */
   profile: AuthUser;
   /** The token endpoint's response — what an adapter persists on the account row. */
@@ -544,7 +572,7 @@ interface OAuthProfileResult {
  * @param params The authorization code, the transaction it belongs to, and the redirect URI.
  * @returns The provider-mapped {@link AuthUser} and the tokens it was mapped from.
  */
-async function fetchOAuthProfile(
+export async function fetchOAuthProfile(
   ctx: AuthRouteContext,
   provider: OAuthProvider,
   params: {

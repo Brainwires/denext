@@ -48,7 +48,7 @@ an unmarked or mutating action over the socket.
 ## Run it
 
 ```sh
-deno task dev     # or: deno task build && deno task start
+denext task dev     # or: denext task build && denext task start
 ```
 
 Open the page in **two browser tabs**: clicking **+1** updates the count in

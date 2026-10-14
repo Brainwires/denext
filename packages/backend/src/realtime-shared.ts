@@ -3,7 +3,8 @@
 //
 // A browser subscribes to the backend's one channel with a key naming the table, a random nonce
 // that makes the subscription its own (the server binds it to the subscriber's identity), and an
-// optional one-column equality filter: `notes|Q2xhdWRlIGlzIGhlcmU|list_id|42`.
+// optional one-column filter: `notes|Q2xhdWRlIGlzIGhlcmU|list_id|42` (equality), or
+// `notes|Q2xhdWRlIGlzIGhlcmU|list_id|lt|42` for another operator (`in` carries a JSON array).
 
 /** The channel every `useTableChanges` subscription rides (one per app). */
 export const REALTIME_CHANNEL_ID = "denext.backend.realtime";
@@ -12,7 +13,16 @@ export const REALTIME_CHANNEL_ID = "denext.backend.realtime";
 export const REALTIME_NOTIFY_CHANNEL = "denext_realtime";
 
 /** A change kind a table can be opted in for. */
-export type TableEvent = "insert" | "update" | "delete";
+export type TableEvent = "insert" | "update" | "delete" | "truncate";
+
+/** A filter operator: Supabase Realtime's set (`eq neq lt lte gt gte in`). */
+export type FilterOp = "eq" | "neq" | "lt" | "lte" | "gt" | "gte" | "in";
+
+/** Every {@linkcode FilterOp}. */
+const FILTER_OPS: readonly FilterOp[] = ["eq", "neq", "lt", "lte", "gt", "gte", "in"];
+
+/** The most values an `in` filter takes (Supabase's limit). */
+const MAX_IN_VALUES = 100;
 
 /** One change to one row, as a subscriber receives it. */
 export type TableChange<Row = Record<string, unknown>> =
@@ -38,6 +48,11 @@ export type TableChange<Row = Record<string, unknown>> =
     oldKey?: string;
     /** The row as this subscriber's SELECT policies return it (absent when `truncated`). */
     row?: Row;
+    /**
+     * The row before the update — only for a table configured with `old: "full"`, and only when
+     * it fitted the notification (see the docs' size limits).
+     */
+    old?: Partial<Row>;
     /** The row was too large for one frame: re-read it yourself. */
     truncated?: true;
   }
@@ -49,6 +64,16 @@ export type TableChange<Row = Record<string, unknown>> =
     op: "delete";
     /** The row's key. */
     key: string;
+    /** The deleted row — only for a table configured with `old: "full"` (see `update.old`). */
+    old?: Partial<Row>;
+  }
+  | {
+    /** The table was truncated: every row this subscriber had is gone. */
+    op: "truncate";
+    /** No key: every row went. */
+    key?: undefined;
+    /** No row. */
+    row?: undefined;
   };
 
 /** One frame on the realtime channel. */
@@ -61,58 +86,164 @@ export interface TableChangesFrame<Row = Record<string, unknown>> {
   resync?: true;
 }
 
-/** A one-column equality filter: `{ list_id: 42 }`, or Supabase's `"list_id=eq.42"`. */
-export type TableFilter = Record<string, string | number | boolean | bigint> | string;
+/** A value a filter compares against. */
+export type TableFilterValue = string | number | boolean | bigint;
+
+/**
+ * A one-column filter: `{ list_id: 42 }` (equality), `{ priority: { gte: 3 } }`,
+ * `{ status: { in: ["open", "blocked"] } }`, or Supabase's string form — `"list_id=eq.42"`,
+ * `"priority=gte.3"`, `"status=in.(open,blocked)"`.
+ */
+export type TableFilter =
+  | Record<string, TableFilterValue | { [op in FilterOp]?: TableFilterValue | TableFilterValue[] }>
+  | string;
 
 /** A parsed filter. */
 export interface ParsedFilter {
   /** The column. */
   column: string;
-  /** The value, compared as text (`column::text = value`). */
+  /** The operator; absent means `eq`. */
+  op?: Exclude<FilterOp, "eq">;
+  /** The value, as text (cast to the column's type when compared). For `in`, its JSON list. */
   value: string;
+  /** The values of an `in` filter. */
+  values?: string[];
 }
 
 /** A plain, unquoted SQL identifier. */
 export const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/;
 
+/** A realtime table's name in a key: `table`, or `schema.table` outside `public`. */
+const TABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,62}(?:\.[A-Za-z_][A-Za-z0-9_]{0,62})?$/;
+
+/**
+ * The name a table is subscribed under: `table`, or `schema.table` for a schema other than
+ * `public`.
+ *
+ * @param table The table.
+ * @param schema Its schema (default `public`).
+ * @returns The name.
+ */
+export function qualifiedTableName(table: string, schema?: string): string {
+  return schema && schema !== "public" ? `${schema}.${table}` : table;
+}
+
 /** The longest subscription key the Live hub accepts. */
 const MAX_KEY = 128;
 
-/**
- * Parse a filter.
- *
- * @param filter The filter, or `undefined`.
- * @returns The column and value, or `undefined` for no filter.
- * @throws {TypeError} For anything but one column compared for equality.
- */
-export function parseFilter(filter: TableFilter | undefined): ParsedFilter | undefined {
-  if (filter === undefined) return undefined;
-  if (typeof filter === "string") {
-    const match = /^([A-Za-z_][A-Za-z0-9_]{0,62})=eq\.(.*)$/s.exec(filter);
-    if (!match) {
-      throw new TypeError(`realtime filter ${JSON.stringify(filter)}: use "column=eq.value"`);
+/** Build a parsed filter (validating the operator and an `in` list). */
+function filterOf(column: string, op: FilterOp, value: string | string[]): ParsedFilter {
+  if (op === "in") {
+    const values = Array.isArray(value) ? value : [value];
+    if (values.length === 0 || values.length > MAX_IN_VALUES) {
+      throw new TypeError(`realtime filter: in takes 1 to ${MAX_IN_VALUES} values`);
     }
-    return { column: match[1], value: match[2] };
+    return { column, op, value: JSON.stringify(values), values };
   }
-  const entries = Object.entries(filter ?? {});
-  if (entries.length !== 1) {
-    throw new TypeError("realtime filter: one column, compared for equality ({ column: value })");
+  if (Array.isArray(value)) throw new TypeError(`realtime filter: ${op} takes one value`);
+  return op === "eq" ? { column, value } : { column, op, value };
+}
+
+/**
+ * The values of Supabase's `in.(a,b,"c,d")` list: comma-separated, a value may be double-quoted
+ * (to hold a comma or a parenthesis; `\"` escapes a quote inside one).
+ */
+function inValues(list: string): string[] {
+  const match = /^\((.*)\)$/s.exec(list);
+  if (!match) throw new TypeError(`realtime filter: in takes a list, "in.(a,b)"`);
+  // Each value: a quoted one (`\"` escapes a quote) or a bare run without a comma, then a comma
+  // or the end. Anything else (a quote left open, text after a closing quote) is malformed.
+  const item = /\s*(?:"((?:[^"\\]|\\.)*)"|([^,"]*))\s*(,|$)/sy;
+  const values: string[] = [];
+  const body = match[1];
+  item.lastIndex = 0;
+  while (item.lastIndex <= body.length) {
+    const start = item.lastIndex;
+    const part = item.exec(body);
+    if (!part) throw new TypeError("realtime filter: malformed in list");
+    values.push(part[1] !== undefined ? part[1].replace(/\\(.)/gs, "$1") : part[2].trim());
+    if (part[3] === "" || item.lastIndex === start) break;
   }
-  const [column, value] = entries[0];
-  if (!IDENTIFIER.test(column)) {
-    throw new TypeError(`realtime filter: ${JSON.stringify(column)} is not a plain column name`);
-  }
+  return values;
+}
+
+/** One filter value, checked. */
+function filterText(column: string, value: unknown): string {
   if (!["string", "number", "boolean", "bigint"].includes(typeof value)) {
     throw new TypeError(
       `realtime filter: the value of ${column} must be a string, number or boolean`,
     );
   }
-  return { column, value: String(value) };
+  return String(value);
+}
+
+/** The object form: `{ column: value }` or `{ column: { op: value } }`. */
+function objectFilter(filter: Exclude<TableFilter, string>): ParsedFilter {
+  const entries = Object.entries(filter ?? {});
+  if (entries.length !== 1) {
+    throw new TypeError(
+      "realtime filter: one column ({ column: value } or { column: { op: value } })",
+    );
+  }
+  const [column, spec] = entries[0];
+  if (!IDENTIFIER.test(column)) {
+    throw new TypeError(`realtime filter: ${JSON.stringify(column)} is not a plain column name`);
+  }
+  if (spec === null || typeof spec !== "object" || Array.isArray(spec)) {
+    return filterOf(column, "eq", filterText(column, spec));
+  }
+  const ops = Object.entries(spec);
+  const [op, value] = ops[0] ?? [];
+  if (ops.length !== 1 || !FILTER_OPS.includes(op as FilterOp)) {
+    throw new TypeError(`realtime filter: one operator of ${FILTER_OPS.join(", ")} per filter`);
+  }
+  return filterOf(
+    column,
+    op as FilterOp,
+    Array.isArray(value) ? value.map((v) => filterText(column, v)) : filterText(column, value),
+  );
+}
+
+/**
+ * Parse a filter.
+ *
+ * @param filter The filter, or `undefined`.
+ * @returns The column, operator and value, or `undefined` for no filter.
+ * @throws {TypeError} For anything but one column compared with one of {@linkcode FILTER_OPS}.
+ */
+export function parseFilter(filter: TableFilter | undefined): ParsedFilter | undefined {
+  if (filter === undefined) return undefined;
+  if (typeof filter !== "string") return objectFilter(filter);
+  const match = /^([A-Za-z_][A-Za-z0-9_]{0,62})=([a-z]+)\.(.*)$/s.exec(filter);
+  if (!match || !FILTER_OPS.includes(match[2] as FilterOp)) {
+    throw new TypeError(
+      `realtime filter ${JSON.stringify(filter)}: use "column=op.value" (op: ${
+        FILTER_OPS.join(", ")
+      })`,
+    );
+  }
+  const op = match[2] as FilterOp;
+  return filterOf(match[1], op, op === "in" ? inValues(match[3]) : match[3]);
+}
+
+/**
+ * A filter in Supabase's string form (`column=op.value`; `in` quotes every value).
+ *
+ * @param filter The parsed filter.
+ * @returns The string.
+ */
+export function formatFilter(filter: ParsedFilter): string {
+  const op = filter.op ?? "eq";
+  if (op !== "in") return `${filter.column}=${op}.${filter.value}`;
+  const quoted = (filter.values ?? []).map((v) =>
+    `"${v.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
+  );
+  return `${filter.column}=in.(${quoted.join(",")})`;
 }
 
 /** A subscription key's parts. */
 export interface SubscriptionKey {
-  /** The table, as configured in `realtime({ tables })`. */
+  /** The table, as configured in `realtime({ tables })` (`schema.table` outside `public`). */
   table: string;
   /** The subscriber's random nonce. */
   nonce: string;
@@ -129,9 +260,12 @@ export interface SubscriptionKey {
  */
 export function encodeSubscriptionKey(parts: SubscriptionKey): string {
   const head = `${parts.table}|${parts.nonce}`;
-  const key = parts.filter
-    ? `${head}|${parts.filter.column}|${encodeURIComponent(parts.filter.value)}`
-    : head;
+  const filter = parts.filter;
+  const key = !filter
+    ? head
+    : filter.op
+    ? `${head}|${filter.column}|${filter.op}|${encodeURIComponent(filter.value)}`
+    : `${head}|${filter.column}|${encodeURIComponent(filter.value)}`;
   if (key.length > MAX_KEY) {
     throw new RangeError(
       `realtime: the table, filter column and filter value must fit ${MAX_KEY} characters`,
@@ -149,13 +283,26 @@ export function encodeSubscriptionKey(parts: SubscriptionKey): string {
 export function decodeSubscriptionKey(key: string): SubscriptionKey | null {
   if (typeof key !== "string" || key.length > MAX_KEY) return null;
   const parts = key.split("|");
-  if (parts.length !== 2 && parts.length !== 4) return null;
-  const [table, nonce, column, encoded] = parts;
-  if (!IDENTIFIER.test(table) || !/^[A-Za-z0-9_-]{16,43}$/.test(nonce)) return null;
+  if (parts.length < 2 || parts.length > 5 || parts.length === 3) return null;
+  const [table, nonce] = parts;
+  if (!TABLE_NAME.test(table) || !/^[A-Za-z0-9_-]{16,43}$/.test(nonce)) return null;
   if (parts.length === 2) return { table, nonce };
-  if (!IDENTIFIER.test(column)) return null;
+  const filter = decodeFilter(parts.slice(2));
+  return filter ? { table, nonce, filter } : null;
+}
+
+/** A key's filter parts — `column|value` (eq) or `column|op|value` — or `null` when malformed. */
+function decodeFilter(parts: string[]): ParsedFilter | null {
+  const [column] = parts;
+  const op = (parts.length === 3 ? parts[1] : "eq") as FilterOp;
+  if (!IDENTIFIER.test(column) || !FILTER_OPS.includes(op)) return null;
+  if (op === "eq" && parts.length === 3) return null; // eq has the short form only
   try {
-    return { table, nonce, filter: { column, value: decodeURIComponent(encoded) } };
+    const value = decodeURIComponent(parts[parts.length - 1]);
+    if (op !== "in") return filterOf(column, op, value);
+    const values = JSON.parse(value);
+    if (!Array.isArray(values) || !values.every((v) => typeof v === "string")) return null;
+    return filterOf(column, op, values);
   } catch {
     return null;
   }

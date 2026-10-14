@@ -3,7 +3,7 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../../src/build/esbuild/mod.ts";
 import { type ScaffoldFile, scaffoldFiles, scaffoldProject } from "../../src/build/scaffold.ts";
 import { FALLOW_VERSION } from "../../src/build/fallow-template.ts";
 import {
@@ -278,7 +278,7 @@ Deno.test("scaffoldFiles: the macOS script says deno desktop's ad-hoc pass is a 
   const resign = src.indexOf(
     'console.log(`Re-signing ${app} with identity "${s.identity ?? "-"}"`);',
   );
-  assert(resign > 0 && resign < src.indexOf("await sign(app, s.identity"), "logged before sign()");
+  assert(resign > 0 && resign < src.indexOf("await sign(\n        app,"), "logged before sign()");
 });
 
 /** What the generated script's sign() ran, and each `--entitlements` plist's text by target. */

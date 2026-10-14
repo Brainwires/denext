@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_logout1" Version="2.0" IssueInstant="2026-10-13T12:00:00Z" Destination="https://sp.example.com/auth/v1/sso/saml/slo" NotOnOrAfter="2026-10-13T12:05:00Z">
+  <saml:Issuer>https://idp.example.org/metadata</saml:Issuer><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><ds:Reference URI="#_logout1"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>nlYxUefh1vr39tKaSpI3NBxh4biA9syPe5+ExnEsjtA=</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue>NzFs+hXkwZZsJvTmLW1F80RFas7g6AS2UEjbTIjUTZjKDvl9ZV8NyB+IeNPy+pRz
+Kq99c4QS4ypaHgvux0U/CF88W6uo9/yZfENnIEJBkglFYziB6N0FP6aUC6SNc4gg
+Wdx0/9KslW1n/jqskUpkTFInTm9b/bcwzBZcbFWqlcGff97leymL9nnYi99RIWB8
+kvEA7cS08ZH3Fd8TsB+UhgPkLwFWwRj1iY5+2lzmy1qH/g6hkcjuTtZ5Hcbtf2/Y
+X2/BwX1tGZSmaq1ORXxJ8EV9spVYqthAbgyieFxMKQn5UBgg+m4Sy157i0HaHSKW
++c/kO+H/FKGCpmN/E5X1Kw==</ds:SignatureValue><ds:KeyInfo><ds:X509Data>
+<ds:X509Certificate>MIIDPTCCAiWgAwIBAgIUIuBQKjV8jdL2zHL31o4ACFmZ9YswDQYJKoZIhvcNAQEL
+BQAwLTErMCkGA1UEAwwiZGVuZXh0IFNBTUwgdGVzdCBJZFAgKEVuY3J5cHRlZElE
+KTAgFw0yNjEwMTQwMTA3MjRaGA8yMTI2MDkyMDAxMDcyNFowLTErMCkGA1UEAwwi
+ZGVuZXh0IFNBTUwgdGVzdCBJZFAgKEVuY3J5cHRlZElEKTCCASIwDQYJKoZIhvcN
+AQEBBQADggEPADCCAQoCggEBAKL/0tZT4Tm+aXnvU2ZK400tkciusEXWJ1lUIS+9
+w5Z6SR6vYzU5zIV/rEcpe3cH+gM0s2X7He8bQA8sX8L17drTfDiqu+svI40T/8yl
+d4DMeM8j8temFx8N9Y05X8fjEAfBoM7msaY/+sdv6GnZkz9BnptoF2U/tF0ut7A5
+VX49g0gF02CCR05CjeFo+bLwjJbCPmgoFvWMpedEcf1wHUCv5lDOv3GWB/T8Skbo
+diGqM8j/a8FNrb6XQsSXERz9q/SgMj5jMOgfJoPfonp6y06RHrRUSLjTsMD88WU/
+lG90heEU2AnG3xx3/V8xSBvLbIjQtyzocPwtOcWS3LgkrMkCAwEAAaNTMFEwHQYD
+VR0OBBYEFCNG73Xwg4miwxi8BQDeDl+CXh2cMB8GA1UdIwQYMBaAFCNG73Xwg4mi
+wxi8BQDeDl+CXh2cMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggEB
+AC55u51tJWbOWxD/PXI3IG022J/N8KiOxeDGOIyJCkyyoI45N8WnIPLtkxfFBCIc
+z8ZV7as3UovTAVDK+Oa8w+NeEHM+sQCurDV6pLyxqZPv6Jc1x4wNERYEWSpjITmG
+FFicxw61k+KeV42OiHlAExXM6ivZ5ZCRIWxKjukujs9otMSqg2ZVlYsq2xHcg5oF
+/QmHuGOKEOmIXRDMHQp07rQJvQu479Tccic70TgwWqWGlZqdAmruMcmE6LIzWd3Y
+aOrHarh6wy3X/oriJVbtwu2SWSQmz69g/lWG3IEPPIgZ88wL9MVBUihETjOltI97
+ajJsyJ+xU7ff1yoFyhSeNpU=
+</ds:X509Certificate>
+</ds:X509Data></ds:KeyInfo></ds:Signature>
+  <saml:EncryptedID><xenc:EncryptedData xmlns:xenc="http://www.w3.org/2001/04/xmlenc#" Type="http://www.w3.org/2001/04/xmlenc#Element"><xenc:EncryptionMethod Algorithm="http://www.w3.org/2009/xmlenc11#aes256-gcm"/><ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><xenc:EncryptedKey><xenc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"><ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/></xenc:EncryptionMethod><xenc:CipherData><xenc:CipherValue>CNEH+Qo7f6gD+aP3ch0yxarAiAv6ZY3pHi/Ag1RmL+oh0M1Bqom+aa5zu9pKaQ5I
+aKBEf7fAOiEwCnNm9FaOeM0bCZUnEDlVg1aWxaoWEq+c50zpMe2/1to+OazwgAn4
+IJNCxFB1IEv9IKa7qL9Ar8pyT5i32RBnwebH6pAuw1rxYS1UF1GVsR+sUWeD3K0E
+LYkVgwOvm22UG1b1rhy36LPH5FDJldtmoGcEQmLiBgpEmXUkRMY2qua7lCYaOHz7
+uOEwMeT2sbUNN/3G7yyYTmpAQDq2TSLm12AiAQvS8ysM2wuhc1HnPe5dMe+uKUn9
+TYaVSmq8zpSbsu7kwMlAgg==</xenc:CipherValue></xenc:CipherData></xenc:EncryptedKey></ds:KeyInfo><xenc:CipherData><xenc:CipherValue>Xv8UNLpFoNdwNgzLw5qksyN1WaeMbZLAYVFc1ms8ynxnuZGgbEvNS7CHJASYl32D
+gXF3+TmgBH7XSxKtJhnDCw3EeNV8LloClna+vFy9Sdl/x+5sNuBOrPG+tGYaEWra
+3hL+n+LJqqyIIYA9YyqMgR0Q9OgGcOCOh+Ll5hGZU9Rq5QSZEFcV1Q==</xenc:CipherValue></xenc:CipherData></xenc:EncryptedData></saml:EncryptedID>
+  <samlp:SessionIndex>_session1</samlp:SessionIndex>
+</samlp:LogoutRequest>

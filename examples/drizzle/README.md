@@ -14,15 +14,15 @@ SQL, and the form works with **no client JavaScript**.
 ## Run it
 
 ```sh
-deno task install   # deno install — resolves drizzle-orm + the better-sqlite3 shim
-deno task dev        # http://localhost:3000   (or: deno task build && deno task start)
+denext task install   # deno install — resolves drizzle-orm + the better-sqlite3 shim
+denext task dev        # http://localhost:3000   (or: denext task build && denext task start)
 ```
 
 By default it uses an in-memory database (seeded on boot). Set `DB_PATH` to
 persist:
 
 ```sh
-DB_PATH=notes.db deno task start
+DB_PATH=notes.db denext task start
 ```
 
 ## How the `better-sqlite3` resolution works

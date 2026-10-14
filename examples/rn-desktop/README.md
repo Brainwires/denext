@@ -9,10 +9,10 @@ iOS and Android.
 ## Run it
 
 ```
-npm install          # react-native-web (the app's own dependency; denext ships none)
-deno task dev        # in the browser
-deno task desktop    # export + open in a native window (Deno 2.9+)
-deno task desktop:dev    # live reload inside the window
+npm install            # react-native-web (the app's own dependency; denext ships none)
+denext task dev        # in the browser
+denext task desktop    # export + open in a native window
+denext task desktop:dev  # live reload inside the window
 ```
 
 ## How it's wired

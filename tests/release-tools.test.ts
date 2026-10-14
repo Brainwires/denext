@@ -4,7 +4,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { renderMarkdown } from "../packages/content-collections/markdown.ts";
-import { bumpVersion, printBumpResult } from "../scripts/bump-version.ts";
+import { bumpVersion, docSpecifierPattern, printBumpResult } from "../scripts/bump-version.ts";
 import {
   foldedAnchorRewrites,
   foldPrereleases,
@@ -12,6 +12,7 @@ import {
   prepareRelease,
   relinkDocsPages,
   rewriteFoldedAnchors,
+  rewriteInPageAnchors,
   rollChangelog,
 } from "../scripts/release.ts";
 
@@ -39,6 +40,35 @@ Deno.test("bumpVersion (dry) finds the current version in the target files and r
   assertStringIncludes(out, `Bumping ${result.oldVersion} → 99.0.0-test.1  (dry run)`);
   assertStringIncludes(out, "Would change");
   assertStringIncludes(out, "Reminders");
+});
+
+Deno.test("a stable bump rewrites the docs' prerelease specifiers of its own line only", () => {
+  assertEquals(docSpecifierPattern("4.0.0-rc.3"), null, "an rc bump leaves the docs alone");
+  const re = docSpecifierPattern("4.0.0")!;
+  const text = [
+    `"denext": "jsr:@denext/denext@^4.0.0-rc.1",`,
+    "deno run -A jsr:@denext/denext@^4.0.0-rc.12/cli start .",
+    "jsr:@denext/denext@^3.4.0-rc.1 and jsr:@denext/denext@^4.0.0 and jsr:@denext/denext@^14.0.0-rc.1",
+  ].join("\n");
+  assertEquals(
+    text.replace(re, "4.0.0"),
+    [
+      `"denext": "jsr:@denext/denext@^4.0.0",`,
+      "deno run -A jsr:@denext/denext@^4.0.0/cli start .",
+      "jsr:@denext/denext@^3.4.0-rc.1 and jsr:@denext/denext@^4.0.0 and jsr:@denext/denext@^14.0.0-rc.1",
+    ].join("\n"),
+  );
+});
+
+Deno.test("bumpVersion (dry) to a stable release lists the docs that teach an rc specifier", async () => {
+  const current = (await bumpVersion("99.0.0-test.1", { dry: true })).oldVersion;
+  const core = current.split("-")[0];
+  if (core === current) return; // already on a stable release: nothing to fold
+  const result = await bumpVersion(core, { dry: true });
+  assert(
+    result.changed.some((c) => c.file === "README.md" || c.file.startsWith("site/app/docs/")),
+    "the README / docs pages' rc specifiers move to the release",
+  );
 });
 
 Deno.test("rollChangelog (dry) counts the unreleased entries without touching the file", async () => {
@@ -147,6 +177,49 @@ Deno.test("a stable fold maps every rc anchor to the release header's, and nothi
   assertEquals(rewriteFoldedAnchors(longer, rewrites), longer);
 });
 
+Deno.test("a stable fold keeps one group per heading, intros and all, and relinks its own anchors", () => {
+  // 4.0.0's shape: two rc sections with the same `###` heading, one opening with a paragraph that
+  // links the other rc's header. The fold rendered two `### Breaking (4.0)` sections and left that
+  // link pointing at a header it had removed.
+  const text = [
+    "# Changelog",
+    "",
+    "## [Unreleased]",
+    "",
+    "## [4.0.0-rc.2] - 2026-10-13",
+    "",
+    "### Breaking (4.0)",
+    "",
+    "These join the [rc.1 breaking changes](#400-rc1---2026-10-13).",
+    "",
+    "- two",
+    "",
+    "## [4.0.0-rc.1] - 2026-10-13",
+    "",
+    "### Breaking (4.0)",
+    "",
+    "- one",
+    "",
+    "## [3.4.16] - 2026-10-12",
+    "",
+    "- old",
+    "",
+  ].join("\n");
+  const folded = rewriteInPageAnchors(
+    foldPrereleases(text, "4.0.0", "2026-10-14"),
+    foldedAnchorRewrites(text, "4.0.0", "2026-10-14"),
+  );
+  assertEquals(folded.split("\n").filter((l) => l === "### Breaking (4.0)").length, 1, folded);
+  assertStringIncludes(
+    folded,
+    "### Breaking (4.0)\n\nThese join the [rc.1 breaking changes](#400---2026-10-14).\n\n- two\n- one\n",
+  );
+  assert(!folded.includes("#400-rc"), "no link to a folded rc header survives");
+  // A link to a header that was not folded is untouched.
+  const kept = "[3.4.16](#3416---2026-10-12)";
+  assertEquals(rewriteInPageAnchors(kept, foldedAnchorRewrites(text, "4.0.0", "2026-10-14")), kept);
+});
+
 Deno.test("relinkDocsPages rewrites the pages that link a folded anchor, and honours --dry", async () => {
   const root = await Deno.makeTempDir({ prefix: "denext_release_docs_" });
   try {
@@ -202,4 +275,25 @@ Deno.test("the release gate re-checks only the release's own changes unless --fu
     assertStringIncludes(script, file);
     assert((await Deno.stat(new URL(`../${file}`, import.meta.url))).isFile, `${file} exists`);
   }
+});
+
+Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async () => {
+  // JSR refuses a package over 20 MiB at upload, after the tag is pushed (4.0.0's first two
+  // publishes). Sum what `deno publish` sends: tracked files minus `publish.exclude` and the
+  // workspace members (published on their own), with 1 MiB of headroom for the next release.
+  const root = new URL("../", import.meta.url);
+  const deno = JSON.parse(await Deno.readTextFile(new URL("deno.json", root)));
+  const excluded: string[] = [...deno.publish.exclude, "packages/"];
+  const out = await new Deno.Command("git", {
+    args: ["ls-files", "-z", "-co", "--exclude-standard"],
+    cwd: root,
+  }).output();
+  if (!out.success) return; // not a git checkout: nothing to measure
+  let bytes = 0;
+  for (const file of new TextDecoder().decode(out.stdout).split("\0")) {
+    if (!file || excluded.some((e) => e.endsWith("/") ? file.startsWith(e) : file === e)) continue;
+    bytes += (await Deno.stat(new URL(file, root)).catch(() => ({ size: 0 }))).size;
+  }
+  const mib = bytes / 1024 / 1024;
+  assert(mib < 19, `the package is ${mib.toFixed(2)} MiB; JSR refuses anything over 20 MiB`);
 });

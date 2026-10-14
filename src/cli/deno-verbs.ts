@@ -169,3 +169,54 @@ export function shadowNotice(name: string): string {
   return `denext: running this project's "${name}" verb, which shadows Deno's \`deno ${name}\` ` +
     `(\`denext deno ${name}\` runs Deno's).`;
 }
+
+/**
+ * Deno verbs a project's own verb may never take: each runs, serves, compiles, installs or
+ * upgrades code, so `denext <name>` must always mean Deno's. A `commands:` entry or a plugin
+ * `addCommand` under one of these names is refused when it is defined.
+ */
+const RESERVED_DENO_VERBS: ReadonlySet<string> = new Set([
+  "run",
+  "x",
+  "eval",
+  "serve",
+  "compile",
+  "install",
+  "uninstall",
+  "upgrade",
+  "task",
+]);
+
+/**
+ * Whether a project verb may not take `name` (see {@linkcode reservedVerbError}).
+ *
+ * @param name A verb name.
+ * @returns Whether it is one of Deno's code-running verbs.
+ */
+export function isReservedDenoVerb(name: string): boolean {
+  return RESERVED_DENO_VERBS.has(name);
+}
+
+/**
+ * Why a project verb named `name` is refused.
+ *
+ * @param name The reserved name.
+ * @returns The one-line reason.
+ */
+export function reservedVerbError(name: string): string {
+  return `"${name}" is reserved: a project verb may not take the name of Deno's \`deno ${name}\`, ` +
+    `which runs or installs code, so \`denext ${name}\` always means Deno's (or denext's own). ` +
+    "Pick another name.";
+}
+
+/**
+ * The stderr line printed when `denext <name>` ran Deno's verb in a project whose verb listing
+ * is missing or stale, so a project verb of that name (if there is one) was not considered.
+ *
+ * @param name The Deno verb that ran.
+ * @returns The one-line hint.
+ */
+export function unlistedVerbHint(name: string): string {
+  return `denext: ran Deno's \`deno ${name}\`. If this project defines its own "${name}" verb, ` +
+    "run `denext commands` once to list it; until then a name Deno also has runs Deno's.";
+}

@@ -5,9 +5,9 @@ PostCSS config. denext downloads and runs the Tailwind standalone binary itself,
 compiling `styles/tailwind.css` → `app/globals.css` on `dev`/`build`.
 
 ```sh
-deno task dev      # → http://localhost:3000  (Tailwind recompiles on change)
-deno task build    # compile Tailwind + bundle
-deno task start    # serve the production build
+denext task dev      # → http://localhost:3000  (Tailwind recompiles on change)
+denext task build    # compile Tailwind + bundle
+denext task start    # serve the production build
 ```
 
 ## What it shows

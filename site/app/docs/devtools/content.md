@@ -512,13 +512,13 @@ capped when it posted it says so, and so does one the tool's own `depth` /
 Three things can be missing, and each gets its own answer rather than one vague
 error:
 
-| Situation                      | What the tool says                                                                   |
-| ------------------------------ | ------------------------------------------------------------------------------------ |
-| No dev server                  | `no dev server running (deno task dev) for <dir>` — it looked for `.denext/dev.json` |
-| Dev server, but nothing pushed | `open the app in a browser — the DevTools sink has posted nothing yet`               |
-| A tree, but no such component  | `no component named "X" in this snapshot. Components present: …`                     |
+| Situation                      | What the tool says                                                                     |
+| ------------------------------ | -------------------------------------------------------------------------------------- |
+| No dev server                  | `no dev server running (denext task dev) for <dir>` — it looked for `.denext/dev.json` |
+| Dev server, but nothing pushed | `open the app in a browser — the DevTools sink has posted nothing yet`                 |
+| A tree, but no such component  | `no component named "X" in this snapshot. Components present: …`                       |
 
-So both preconditions hold at once: the tools need **`deno task dev` running AND
+So both preconditions hold at once: the tools need **`denext task dev` running AND
 the app open in a browser**. You do not have to open the panel — an agent
 inspecting a page the developer never opened the panel on is the normal case.
 

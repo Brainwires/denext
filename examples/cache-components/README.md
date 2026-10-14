@@ -25,9 +25,9 @@ page.
 ## Run
 
 ```sh
-deno task dev      # http://localhost:3000
+denext task dev      # http://localhost:3000
 # or
-deno task build && deno task start
+denext task build && denext task start
 ```
 
 ## How it works

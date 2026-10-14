@@ -202,8 +202,17 @@ Deno.test("production-server keys: a bare origin, a boolean, whole numbers in ra
     Error,
     "`trustForwardedHeaders` must be a boolean",
   );
-  // rateLimitHeader is a header name; rateLimitLocalAddresses a boolean.
+  // rateLimitHeader is a header name; rateLimitLocalAddresses a boolean; rateLimitTrustedProxies
+  // CIDR ranges or addresses.
   validateDenextConfig({ rateLimitHeader: "CF-Connecting-IP", rateLimitLocalAddresses: true });
+  validateDenextConfig({ rateLimitTrustedProxies: ["173.245.48.0/20", "2400:cb00::/32", "::1"] });
+  for (const bad of [["10.0.0.0/33"], ["proxy.internal"], [7], "10.0.0.0/8"] as never[]) {
+    assertThrows(
+      () => validateDenextConfig({ rateLimitTrustedProxies: bad }),
+      Error,
+      "`rateLimitTrustedProxies` must be an array of CIDR ranges",
+    );
+  }
   for (const bad of ["x real ip", "", "x-ip:", 7 as never]) {
     assertThrows(
       () => validateDenextConfig({ rateLimitHeader: bad }),

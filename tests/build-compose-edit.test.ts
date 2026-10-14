@@ -12,6 +12,13 @@ import { renderCompose } from "../src/build/docker-template.ts";
 const GEN = renderCompose({ mode: "server" });
 const GEN_STATIC = renderCompose({ mode: "static", port: 8080 });
 const GEN_PG = renderCompose({ mode: "server", postgres: true });
+const GEN_STACK = renderCompose({
+  mode: "server",
+  postgres: true,
+  storage: true,
+  migrate: true,
+  backend: true,
+});
 
 /** The edited source of a successful call (fails the test on a refusal). */
 function edit(text: string, ops: ComposeOp[]): string {
@@ -37,14 +44,14 @@ function changedLines(a: string, b: string): number[] {
 }
 
 Deno.test("readCompose: every generated variant parses, sentinel set", () => {
-  for (const text of [GEN, GEN_STATIC, GEN_PG]) {
+  for (const text of [GEN, GEN_STATIC, GEN_PG, GEN_STACK]) {
     const model = readCompose(text);
     assert(model, "generated compose is editable");
     assertEquals(model.sentinel, true);
     const web: ComposeService | undefined = model.services.find((s) => s.name === "web");
     assertEquals(web?.build, ".");
     assertEquals(web?.restart, "unless-stopped");
-    assertEquals(web?.envForm, "list");
+    assertEquals(web?.envForm, text === GEN || text === GEN_STATIC ? "list" : "map");
     assertEquals(web?.environment[0], { key: "NODE_ENV", value: "production" });
   }
   const plain = readCompose(GEN)!;
@@ -53,12 +60,26 @@ Deno.test("readCompose: every generated variant parses, sentinel set", () => {
   assertEquals(plain.volumes, []);
   assertEquals(readCompose(GEN_STATIC)!.services[0].ports, ["8080:8080"]);
   const pg = readCompose(GEN_PG)!;
-  assertEquals(pg.volumes, ["denext-db"]);
+  assertEquals(pg.volumes, ["db-data"]);
   const db = pg.services.find((s) => s.name === "db")!;
   assertEquals(db.commented, false);
   assertEquals(db.envForm, "map");
   assertEquals(db.dependsOn, []);
-  assertEquals(pg.services[0].dependsOn, ["db"]);
+  assertEquals(pg.services[0].dependsOn, ["db", "db-init"]);
+  // The full stack: every service and its start order, both volumes.
+  const stack = readCompose(GEN_STACK)!;
+  assertEquals(
+    stack.services.map((s) => [s.name, s.dependsOn]),
+    [
+      ["web", ["db", "db-init", "minio-init", "migrate"]],
+      ["migrate", ["db-init"]],
+      ["db", []],
+      ["db-init", ["db"]],
+      ["minio", []],
+      ["minio-init", ["minio"]],
+    ],
+  );
+  assertEquals(stack.volumes, ["db-data", "storage-data"]);
   assertEquals(readCompose("services:\n  a:\n    image: x\n")!.sentinel, false);
 });
 
@@ -67,7 +88,7 @@ Deno.test("readCompose: line numbers point at each service's name line", () => {
   const model = readCompose(GEN)!;
   assertEquals(model.services[0].line, lines.indexOf("  web:") + 1);
   assertEquals(model.services[1].line, lines.indexOf("  # db:") + 1);
-  assertEquals(model.services[1].image, "postgres:16-alpine", "commented service is described");
+  assertEquals(model.services[1].image, "postgres:17-alpine", "commented service is described");
 });
 
 Deno.test("readCompose: unsupported shapes are opaque (null)", () => {
@@ -445,12 +466,12 @@ Deno.test("set image: one line changes; comments and neighbours are byte-identic
     op: "set",
     service: "db",
     field: "image",
-    value: "postgres:17-alpine",
+    value: "postgres:18-alpine",
   }]);
   const changed = changedLines(GEN_PG, next);
   assertEquals(changed.length, 1);
-  assertEquals(next.split("\n")[changed[0]], "    image: postgres:17-alpine");
-  assertStringIncludes(next, "    # env_file: .env");
+  assertEquals(next.split("\n")[changed[0]], "    image: postgres:18-alpine");
+  assertStringIncludes(next, "    # Anything else the app reads at runtime");
   // an inline comment survives an in-place rewrite; a missing image lands first
   const src = "services:\n  api:\n    build: .\n    restart: always # keep\n";
   assertEquals(
@@ -522,7 +543,8 @@ Deno.test("env: map form and list form are preserved; delete works in both", () 
   ]);
   assertStringIncludes(
     map,
-    "    environment:\n      POSTGRES_PASSWORD: denext\n      POSTGRES_DB: app\n      PGDATA: /data\n",
+    "    environment:\n      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env (see .env.example)}\n" +
+      "      POSTGRES_DB: app\n      PGDATA: /data\n",
   );
   // list form (web)
   const list = edit(GEN, [
@@ -601,7 +623,7 @@ Deno.test("dependsOn / volumes: add and remove by value, in the short or the lon
     { op: "volumes", service: "web", action: "add", value: "./data:/data" },
   ]);
   const web = readCompose(next)!.services[0];
-  assertEquals(web.dependsOn, ["db", "cache"]);
+  assertEquals(web.dependsOn, ["db", "db-init", "cache"]);
   assertEquals(web.volumes, ["./data:/data"]);
   assertEquals(
     edit(next, [

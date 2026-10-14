@@ -26,6 +26,7 @@
  */
 
 import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "../body.ts";
+import { captchaRefusal } from "./captcha.ts";
 import { emailKey } from "./email-key.ts";
 import { emitAuthEvent } from "./events.ts";
 import {
@@ -44,6 +45,7 @@ import { type ResolvedSignIn, toAuthUser } from "./adapter-link.ts";
 import { resolveSessionUser } from "./routes-oauth.ts";
 import { applySignInCallback, type AuthRouteContext, isSameOrigin, json } from "./routes-shared.ts";
 import { finishSignIn } from "./sign-in-tail.ts";
+import { nonSsoUser } from "./sso-user.ts";
 import type { AuthUser, CredentialsProvider, SignInFailedReason } from "./types.ts";
 
 /** The most a credentials POST body may carry (a login form is a few hundred bytes). */
@@ -171,7 +173,8 @@ async function storedCredential(
   // a magic link created as `a@xn--bcher-kva.de`, through a custom adapter too.
   const address = emailKey(email);
   if (address === "" || !adapter?.getCredential) return undefined;
-  const user = await adapter.getUserByEmail(address);
+  // An SSO user signs in through its identity provider only: here it is an unknown address.
+  const user = nonSsoUser(await adapter.getUserByEmail(address));
   const hash = user ? await adapter.getCredential(user.id) : undefined;
   return user && hash ? { user, hash } : undefined;
 }
@@ -265,7 +268,8 @@ async function persistSignIn(
 }
 
 /**
- * `POST {basePath}/callback/:provider` for a Credentials provider: rate-limit, authorize
+ * `POST {basePath}/callback/:provider` for a Credentials provider: the captcha check (with
+ * `captcha` configured: a solved token before anything else is spent), rate-limit, authorize
  * (the provider's `authorize`, or the adapter-backed default), resolve through the adapter
  * (when one is configured), then issue a session. Failures
  * are counted per client key (IP + identifier by default) and, past the limit, answered
@@ -283,6 +287,9 @@ export async function handleCredentials(
   if (!isSameOrigin(ctx.request, ctx.config)) return json({ error: "forbidden" }, 403);
 
   const creds = await readCredentials(ctx);
+  // With `captcha` configured, a solved challenge comes before any budget or adapter work.
+  const refused = await captchaRefusal(ctx, creds, provider.id);
+  if (refused) return refused;
   const limiter = credentialsLimiter(ctx.config);
   // Two buckets: the app's key (IP + identifier by default) and an IP-wide one, so varying
   // the identifier / identifier field per attempt can't dodge the limiter.

@@ -242,8 +242,8 @@ function reportPrisma(p: NonNullable<MigrateResult["prisma"]>): void {
   );
   printReviewNotes(p.warnings, 8);
   console.log(
-    `    ‼️  run \`deno task ${p.setupTask}\` ONCE (bundles the compat, installs, ` +
-      "`prisma generate` + `db push`) before `deno task build`/`dev`.",
+    `    ‼️  run \`denext task ${p.setupTask}\` ONCE (bundles the compat, installs, ` +
+      "`prisma generate` + `db push`) before `denext task build`/`dev`.",
   );
 }
 
@@ -758,7 +758,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
         );
       }
       console.log(
-        "  Next: `deno install` (or ensure node_modules), then `deno task dev`.\n",
+        "  Next: `denext install` (or ensure node_modules), then `denext task dev`.\n",
       );
     },
   };

@@ -16,7 +16,13 @@
 //      a mismatch deletes it and refuses (never executed, never extracted);
 //   3. extracts `deno` from a verified zip (or takes a verified bare binary), marks it executable,
 //      renames it into place atomically and writes the stamp last — under the Cargo-style cache
-//      lock, so two first runs download once and the second adopts the first's binary.
+//      lock, so two first runs download once and the second adopts the first's binary;
+//   4. when the pin names an esbuild for the target (2.9.7-denext.17 on: the zip carries
+//      `esbuild[.exe]` + `esbuild.LICENSE` beside `deno`), installs it next to `deno` only when it
+//      hashes to the pinned SHA-256 and is the esbuild version denext's vendored API speaks, and
+//      records it — or why it was refused — in the stamp. A refused esbuild never fails the
+//      toolchain: denext's esbuild API (src/build/esbuild/) then uses the npm binary, with one
+//      warning ({@linkcode toolchainEsbuild}).
 //
 // `DENEXT_DENO=stock` opts out; `DENEXT_DENO=<path>` uses that binary unverified (a warning).
 // `DENEXT_TOOLCHAIN_PIN_FILE=<json>` replaces the built-in pin (tests and fork development).
@@ -26,7 +32,16 @@ import { acquireCacheLock } from "./project-locks.ts";
 import { denoCacheDir, renameRetrying } from "./desktop-runtime.ts";
 import { extractArchive } from "./safe-extract.ts";
 import { readJsonFile, sha256File, streamHashed, sweepLeftovers } from "./verified-download.ts";
+import { ESBUILD_VERSION } from "./esbuild/version.ts";
 import pinJson from "./deno-toolchain-pin.json" with { type: "json" };
+
+/** The esbuild a toolchain archive carries beside `deno` (2.9.7-denext.17 on). */
+export interface DenoToolchainEsbuild {
+  /** The esbuild release (`0.25.5`). */
+  readonly version: string;
+  /** Lowercase hex SHA-256 of the archive's `esbuild[.exe]`. */
+  readonly sha256: string;
+}
 
 /** One pinned toolchain download for a host target. */
 export interface DenoToolchainArtifact {
@@ -39,6 +54,8 @@ export interface DenoToolchainArtifact {
   readonly size?: number;
   /** `zip` (a release archive holding `deno[.exe]`, the default) or a bare `binary`. */
   readonly format?: "zip" | "binary";
+  /** The esbuild inside the zip, when the release ships one. */
+  readonly esbuild?: DenoToolchainEsbuild;
 }
 
 /** The pinned toolchain release (`deno-toolchain-pin.json`). */
@@ -158,6 +175,11 @@ function exeName(os: string): string {
   return os === "windows" ? "deno.exe" : "deno";
 }
 
+/** The esbuild executable's file name on `os`. */
+function esbuildExeName(os: string): string {
+  return os === "windows" ? "esbuild.exe" : "esbuild";
+}
+
 /** The cached binary's directory for (version, target). */
 function binaryDir(root: string, version: string, target: string): string {
   return join(root, version, target);
@@ -179,13 +201,25 @@ function pinnedArtifact(pin: DenoToolchainPin, target: string): DenoToolchainArt
   );
 }
 
+/** A stamped file: what it was when installed. */
+interface StampedFile {
+  size: number;
+  sha256: string;
+  mtimeMs: number | null;
+}
+
+/** The stamp's record of the archive's esbuild: installed (verified), or why it was refused. */
+type StampedEsbuild = (StampedFile & { version: string }) | { refused: string };
+
 /** The stamp's contents. */
 interface ToolchainStamp {
   schema: 1;
   version: string;
   target: string;
   archive: { file: string; sha256: string };
-  binary: { size: number; sha256: string; mtimeMs: number | null };
+  binary: StampedFile;
+  /** Present exactly when the pin names an esbuild for this archive. */
+  esbuild?: StampedEsbuild;
 }
 
 function readStamp(dir: string): Promise<ToolchainStamp | null> {
@@ -195,7 +229,9 @@ function readStamp(dir: string): Promise<ToolchainStamp | null> {
 /** Whether the stamp records a binary from exactly this pin's artifact. */
 function stampArchiveIs(s: ToolchainStamp, a: DenoToolchainArtifact): boolean {
   return s.archive?.file === a.file && s.archive.sha256 === a.sha256 &&
-    typeof s.binary?.sha256 === "string" && typeof s.binary.size === "number";
+    typeof s.binary?.sha256 === "string" && typeof s.binary.size === "number" &&
+    // A stamp written without the esbuild step (an older denext) re-installs to run it.
+    (a.esbuild === undefined || (typeof s.esbuild === "object" && s.esbuild !== null));
 }
 
 /** Whether the stamp names exactly this pin's artifact for `target`. */
@@ -238,11 +274,21 @@ async function binaryVerdict(
   stamp: ToolchainStamp,
   rehash: boolean,
 ): Promise<Verdict> {
-  if (!info?.isFile || info.size !== stamp.binary.size) return "bad";
+  return await fileVerdict(path, info, stamp.binary, rehash);
+}
+
+/** Judge a stamped file: its recorded size + mtime, else (with `rehash`) its SHA-256. */
+async function fileVerdict(
+  path: string,
+  info: Deno.FileInfo | null,
+  stamped: StampedFile,
+  rehash: boolean,
+): Promise<Verdict> {
+  if (!info?.isFile || info.size !== stamped.size) return "bad";
   const mtime = info.mtime?.getTime() ?? null;
-  if (mtime !== null && mtime === stamp.binary.mtimeMs) return "ok";
+  if (mtime !== null && mtime === stamped.mtimeMs) return "ok";
   if (!rehash) return "bad";
-  return await sha256File(path) === stamp.binary.sha256 ? "rehashed" : "bad";
+  return await sha256File(path) === stamped.sha256 ? "rehashed" : "bad";
 }
 
 /** GET `artifact`, mapping a network failure / HTTP error to a download error. */
@@ -307,20 +353,23 @@ function checkDownload(artifact: DenoToolchainArtifact, got: { size: number; sha
   }
 }
 
-/** The verified binary out of a verified download: a zip's `deno[.exe]`, or the file itself. */
+/**
+ * The verified binary out of a verified download: a zip's `deno[.exe]`, or the file itself — and
+ * the directory the zip was extracted into (`null` for a bare binary).
+ */
 async function binaryFrom(
   artifact: DenoToolchainArtifact,
   downloaded: string,
   scratch: string,
   exe: string,
-): Promise<string> {
-  if ((artifact.format ?? "zip") === "binary") return downloaded;
+): Promise<{ binary: string; extracted: string | null }> {
+  if ((artifact.format ?? "zip") === "binary") return { binary: downloaded, extracted: null };
   const out = join(scratch, "x");
   const result = await extractArchive(downloaded, "zip", out);
   if (!result.files[exe]) {
     throw new Error(`denext: the toolchain archive ${artifact.file} has no top-level ${exe}`);
   }
-  return join(out, exe);
+  return { binary: join(out, exe), extracted: out };
 }
 
 /** Options for {@linkcode ensureDenoToolchain}. */
@@ -356,25 +405,94 @@ async function writeStamp(dir: string, stamp: ToolchainStamp): Promise<void> {
   await renameRetrying(tmp, join(dir, TOOLCHAIN_STAMP));
 }
 
-/** The stamp for the binary at `path`, as installed. */
+/** What `path` is now, for a stamp. */
+async function stampFile(path: string): Promise<StampedFile> {
+  const info = await Deno.stat(path);
+  return {
+    size: info.size,
+    sha256: await sha256File(path),
+    mtimeMs: info.mtime?.getTime() ?? null,
+  };
+}
+
+/** The stamp for the binary at `path`, as installed (`esbuild`: the esbuild step's record). */
 async function stampFor(
   path: string,
   version: string,
   target: string,
   artifact: DenoToolchainArtifact,
+  esbuild?: StampedEsbuild,
 ): Promise<ToolchainStamp> {
-  const info = await Deno.stat(path);
   return {
     schema: 1,
     version,
     target,
     archive: { file: artifact.file, sha256: artifact.sha256 },
-    binary: {
-      size: info.size,
-      sha256: await sha256File(path),
-      mtimeMs: info.mtime?.getTime() ?? null,
-    },
+    binary: await stampFile(path),
+    ...(esbuild ? { esbuild } : {}),
   };
+}
+
+/** A re-stamp of a binary that only moved in time keeps the esbuild record it had. */
+async function restamp(
+  dir: string,
+  exe: string,
+  version: string,
+  target: string,
+  artifact: DenoToolchainArtifact,
+): Promise<void> {
+  const old = await readStamp(dir);
+  await writeStamp(dir, await stampFor(join(dir, exe), version, target, artifact, old?.esbuild));
+}
+
+/**
+ * Install the archive's esbuild beside `deno` when the pin names one: only a file that hashes to
+ * the pinned SHA-256 and is the version denext's esbuild API speaks; anything else is refused and
+ * recorded, never installed. Returns the stamp's record (`undefined` when the pin names none).
+ */
+async function installEsbuild(
+  artifact: DenoToolchainArtifact,
+  extracted: string | null,
+  dir: string,
+  os: string,
+): Promise<StampedEsbuild | undefined> {
+  const exe = esbuildExeName(os);
+  // Whatever an earlier install left goes first: a refused esbuild must not linger runnable.
+  await Deno.remove(join(dir, exe)).catch(() => {});
+  const pinned = artifact.esbuild;
+  if (!pinned) return undefined;
+  const why = await archiveEsbuildProblem(pinned, extracted, exe);
+  if (why !== null) {
+    return {
+      refused: `the esbuild in denext's Deno toolchain (${artifact.file}) was refused: ${why}`,
+    };
+  }
+  const path = join(extracted!, exe);
+  if (os !== "windows") await Deno.chmod(path, 0o755);
+  const license = join(extracted!, "esbuild.LICENSE");
+  if ((await Deno.stat(license).catch(() => null))?.isFile) {
+    await renameRetrying(license, join(dir, "esbuild.LICENSE"));
+  }
+  await renameRetrying(path, join(dir, exe));
+  return { version: pinned.version, ...(await stampFile(join(dir, exe))) };
+}
+
+/** Why the extracted archive's esbuild can't be installed (`null`: it is the pinned one). */
+async function archiveEsbuildProblem(
+  pinned: DenoToolchainEsbuild,
+  extracted: string | null,
+  exe: string,
+): Promise<string | null> {
+  if (pinned.version !== ESBUILD_VERSION) {
+    return `it is esbuild ${pinned.version}, and denext speaks ${ESBUILD_VERSION}`;
+  }
+  if (extracted === null) return "a bare-binary toolchain pin carries no esbuild";
+  const path = join(extracted, exe);
+  if (!(await Deno.stat(path).catch(() => null))?.isFile) {
+    return `the archive has no top-level ${exe}`;
+  }
+  const got = await sha256File(path);
+  return got === pinned.sha256 ? null : `SHA-256 mismatch (pinned ${pinned.sha256}, got ${got})`;
 }
 
 /** Download, verify and atomically install the binary into `dir` (the write lock is held). */
@@ -401,13 +519,15 @@ async function install(
       await Deno.remove(downloaded).catch(() => {});
       throw err;
     }
-    const binary = await binaryFrom(artifact, downloaded, scratch, exe);
-    if ((opts.os ?? Deno.build.os) !== "windows") await Deno.chmod(binary, 0o755);
+    const os = opts.os ?? Deno.build.os;
+    const { binary, extracted } = await binaryFrom(artifact, downloaded, scratch, exe);
+    if (os !== "windows") await Deno.chmod(binary, 0o755);
     // A stale stamp goes first: a crash between here and the new stamp leaves NO stamp, which
     // the next run treats as missing (a fresh download), never as a verified binary.
     await Deno.remove(join(dir, TOOLCHAIN_STAMP)).catch(() => {});
+    const esbuild = await installEsbuild(artifact, extracted, dir, os);
     await renameRetrying(binary, join(dir, exe));
-    await writeStamp(dir, await stampFor(join(dir, exe), version, target, artifact));
+    await writeStamp(dir, await stampFor(join(dir, exe), version, target, artifact, esbuild));
   } finally {
     await Deno.remove(scratch, { recursive: true }).catch(() => {});
   }
@@ -444,7 +564,7 @@ export async function ensureDenoToolchain(
   const verdict = await cacheVerdict(dir, exe, version, target, artifact, true);
   if (verdict === "ok") return resolved(true);
   if (verdict === "rehashed") {
-    await writeStamp(dir, await stampFor(join(dir, exe), version, target, artifact));
+    await restamp(dir, exe, version, target, artifact);
     return resolved(true);
   }
   if (verdict === "bad") {
@@ -648,6 +768,8 @@ export interface DenoToolchainStatus {
   readonly ok: boolean;
   /** One line for a report. */
   readonly detail: string;
+  /** The toolchain's esbuild (what denext's esbuild API spawns when it is `ok`). */
+  readonly esbuild: ToolchainEsbuildStatus;
 }
 
 /** Options for {@linkcode denoToolchainStatus}. */
@@ -661,6 +783,11 @@ export interface DenoToolchainStatusOptions {
   readonly verify?: boolean;
   /** This process's Deno version (default `Deno.version.deno`). */
   readonly running?: string;
+  /**
+   * Whether this process is a compiled `denext` executable (default: `Deno.build.standalone`).
+   * Its own embedded Deno never runs a command: every child it starts runs on the toolchain.
+   */
+  readonly standalone?: boolean;
 }
 
 const STATE_TEXT: Record<DenoToolchainStatus["state"], string> = {
@@ -695,6 +822,36 @@ async function cacheState(
   return { state: "cached", path };
 }
 
+/** A compiled executable fetches the toolchain before any command but `toolchain` / `completions`. */
+const MISSING_STANDALONE_TEXT = "not cached yet (downloaded on the first denext command)";
+
+/**
+ * What a compiled `denext` executable says about the Deno that runs: never its own embedded one
+ * (which runs only the CLI itself) but the one it hands every child — the toolchain, a
+ * `DENEXT_DENO=<path>` binary, or with `DENEXT_DENO=stock` the `deno` on PATH.
+ */
+function executableText(mode: "pinned" | "stock" | "path", embedded: string): string {
+  const own = `this executable embeds deno ${embedded} for itself only`;
+  if (mode === "stock") return `commands run on the \`deno\` on PATH (${own})`;
+  return `denext runs every command on it (${own})`;
+}
+
+/** What status says about the Deno running: this process's, or a compiled executable's children's. */
+function runningLine(
+  standalone: boolean,
+  mode: "pinned" | "stock" | "path",
+  active: boolean,
+  running: string,
+): string {
+  if (standalone) return executableText(mode, running);
+  return active ? `running on it (deno ${running})` : `running on deno ${running}`;
+}
+
+/** The cache state's text; a compiled executable downloads a missing toolchain sooner. */
+function stateLine(state: DenoToolchainStatus["state"], standalone: boolean): string {
+  return standalone && state === "missing" ? MISSING_STANDALONE_TEXT : STATE_TEXT[state];
+}
+
 /**
  * Report denext's Deno toolchain on this machine: the pinned version, whether it is cached and
  * verified, whether this process runs on it, and why not. Never downloads.
@@ -716,8 +873,11 @@ export async function denoToolchainStatus(
   const active = mode.mode === "path"
     ? env(TOOLCHAIN_ACTIVE_ENV) === "path"
     : pin.version !== null && running === pin.version;
-  const runningText = active ? `running on it (deno ${running})` : `running on deno ${running}`;
-  const base = { version: pin.version, target, active, running, state: "n/a" as const };
+  const standalone = options.standalone ??
+    (Deno.build as { standalone?: boolean }).standalone === true;
+  const runningText = runningLine(standalone, mode.mode, active, running);
+  const esbuild = await toolchainEsbuild({ ...options, env, pin, target });
+  const base = { version: pin.version, target, active, running, state: "n/a" as const, esbuild };
   if (mode.mode === "stock") {
     return {
       ...base,
@@ -753,8 +913,98 @@ export async function denoToolchainStatus(
     path,
     ok: state !== "invalid",
     detail: `${pin.version ? `toolchain ${pin.version} for ${target}` : "toolchain"}; ` +
-      `${STATE_TEXT[state]}; ${runningText}`,
+      `${stateLine(state, standalone)}; ${runningText}`,
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// The toolchain's esbuild (what src/build/esbuild/binary.ts spawns before the npm fallback).
+
+/** The toolchain's esbuild on this machine. */
+export interface ToolchainEsbuildStatus {
+  /**
+   * `ok` = installed and verified (denext's esbuild API runs it); `missing` = the toolchain is not
+   * cached; `refused` = it failed verification (the npm esbuild runs, with a warning); `none` =
+   * this pin's toolchain ships no esbuild (before 2.9.7-denext.17: the npm esbuild runs); `n/a` =
+   * `DENEXT_DENO=stock` or a path (the npm esbuild runs).
+   */
+  readonly state: "ok" | "missing" | "refused" | "none" | "n/a";
+  /** The binary (`ok` only). */
+  readonly path: string | null;
+  /** The esbuild version the pin names (`null`: none). */
+  readonly version: string | null;
+  /** One line for a report. */
+  readonly detail: string;
+}
+
+/**
+ * Whether denext's Deno toolchain has a verified esbuild for this host — the second choice of
+ * denext's esbuild API after `ESBUILD_BINARY_PATH`. Never downloads: the toolchain is installed by
+ * the command that re-runs itself on it. A binary whose size or mtime moved since its stamp is
+ * re-hashed against the pin.
+ *
+ * @param options Seams; all default to the process.
+ * @returns The state, and the binary when it is `ok`.
+ */
+export async function toolchainEsbuild(
+  options: DenoToolchainStatusOptions = {},
+): Promise<ToolchainEsbuildStatus> {
+  const env = options.env ?? processEnv;
+  const mode = toolchainMode(env).mode;
+  if (mode !== "pinned") {
+    const what = mode === "stock" ? "stock" : "<path>";
+    return esbuildState("n/a", null, `${TOOLCHAIN_ENV}=${what}: the npm esbuild runs`);
+  }
+  const pin = options.pin ?? loadDenoToolchainPin(env);
+  const target = options.target ?? denoToolchainTarget();
+  const artifact = pin.version === null ? undefined : pin.targets[target];
+  if (!artifact?.esbuild) {
+    return esbuildState("none", null, "this toolchain ships no esbuild: the npm esbuild runs");
+  }
+  const dir = binaryDir(options.cacheRoot ?? denoToolchainCacheRoot(env), pin.version!, target);
+  const stamp = await readStamp(dir);
+  const pinned = artifact.esbuild;
+  if (!stampMatches(stamp, pin.version!, target, artifact)) {
+    return esbuildState("missing", pinned, `esbuild ${pinned.version} arrives with the toolchain`);
+  }
+  const rec = stamp.esbuild!;
+  if ("refused" in rec) return esbuildState("refused", pinned, rec.refused);
+  const path = join(dir, esbuildExeName(options.os ?? Deno.build.os));
+  const why = await installedEsbuildProblem(path, rec, pinned, options.verify === true);
+  return why === null
+    ? esbuildState("ok", pinned, `esbuild ${pinned.version} (verified)`, path)
+    : esbuildState(
+      "refused",
+      pinned,
+      `the esbuild in denext's Deno toolchain (${path}) was refused: ${why}`,
+    );
+}
+
+/** A {@linkcode ToolchainEsbuildStatus}. */
+function esbuildState(
+  state: ToolchainEsbuildStatus["state"],
+  pinned: DenoToolchainEsbuild | null,
+  detail: string,
+  path: string | null = null,
+): ToolchainEsbuildStatus {
+  return { state, path, version: pinned?.version ?? null, detail };
+}
+
+/** Why the installed esbuild at `path` can't run (`null`: it verifies against stamp and pin). */
+async function installedEsbuildProblem(
+  path: string,
+  rec: StampedFile & { version: string },
+  pinned: DenoToolchainEsbuild,
+  verify: boolean,
+): Promise<string | null> {
+  if (rec.version !== pinned.version || rec.version !== ESBUILD_VERSION) {
+    return `it is esbuild ${rec.version}, and denext speaks ${ESBUILD_VERSION}`;
+  }
+  if (rec.sha256 !== pinned.sha256) return "its stamp does not match the pin";
+  const verdict = await fileVerdict(path, await Deno.lstat(path).catch(() => null), rec, true);
+  const changed = verdict === "bad" ||
+    (verify && verdict === "ok" && await sha256File(path) !== pinned.sha256);
+  return changed ? "it changed since it was installed" : null;
 }
 
 // ---------------------------------------------------------------------------------------------

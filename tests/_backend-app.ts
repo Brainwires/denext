@@ -30,6 +30,28 @@ export interface BackendApp {
   close(): Promise<void>;
 }
 
+/**
+ * `fetch` against an app's handler at {@link ORIGIN}: a write is same-origin unless `crossSite`,
+ * and `cookie` rides along.
+ *
+ * @param handler The app's handler.
+ * @returns The caller.
+ */
+export function pipelineCaller(
+  handler: (request: Request) => Promise<Response>,
+): BackendApp["call"] {
+  return (path, init = {}) => {
+    const { cookie, crossSite, ...rest } = init;
+    const headers = new Headers(rest.headers);
+    headers.set("host", new URL(ORIGIN).host);
+    if (cookie) headers.set("cookie", cookie);
+    if (rest.method && rest.method !== "GET" && rest.method !== "HEAD" && !headers.has("origin")) {
+      headers.set("origin", crossSite ? "https://evil.test" : ORIGIN);
+    }
+    return handler(new Request(new URL(path, ORIGIN), { ...rest, headers }));
+  };
+}
+
 /** Build the app with `backend({ storage })` (fs driver in a temp dir unless given). */
 export async function backendApp(
   storage: Partial<StorageOptions> & Pick<StorageOptions, "buckets">,
@@ -60,16 +82,7 @@ export async function backendApp(
     matchExternal: getPluginRequestHandler(),
     basePath: config.basePath,
   });
-  const call: BackendApp["call"] = (path, init = {}) => {
-    const { cookie, crossSite, ...rest } = init;
-    const headers = new Headers(rest.headers);
-    headers.set("host", new URL(ORIGIN).host);
-    if (cookie) headers.set("cookie", cookie);
-    if (rest.method && rest.method !== "GET" && rest.method !== "HEAD" && !headers.has("origin")) {
-      headers.set("origin", crossSite ? "https://evil.test" : ORIGIN);
-    }
-    return handler(new Request(new URL(path, ORIGIN), { ...rest, headers }));
-  };
+  const call = pipelineCaller(handler);
   return {
     root,
     handler,

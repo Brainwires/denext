@@ -69,6 +69,7 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "trustForwardedHeaders",
     // Which address the per-address limits key on behind a proxy (or on a LAN).
     "rateLimitHeader",
+    "rateLimitTrustedProxies",
     "rateLimitLocalAddresses",
     // Response compression: a proxy that compresses in front of the server turns it off.
     "compress",

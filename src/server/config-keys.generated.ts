@@ -40,6 +40,7 @@ export const CONFIG_KEYS = [
   "canonicalOrigin",
   "trustForwardedHeaders",
   "rateLimitHeader",
+  "rateLimitTrustedProxies",
   "rateLimitLocalAddresses",
   "allowedDevOrigins",
   "requestTimeout",

@@ -197,7 +197,7 @@ async function storageOp(request: DbRequest, readOnly: boolean): Promise<DbReply
   const r = request as unknown as Record<string, unknown>;
   switch (request.op) {
     case "buckets":
-      return { ok: true, ...listBuckets() };
+      return { ok: true, ...await listBuckets() };
     case "objects":
       return {
         ok: true,

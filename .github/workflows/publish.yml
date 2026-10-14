@@ -51,12 +51,15 @@ on:
 permissions:
   contents: read
   id-token: write # required for JSR provenance / OIDC publishing
+  actions: read # scripts/publish-verify.ts asks for ci.yml's runs on the tagged commit
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 2 # the release commit's parent, for scripts/publish-verify.ts
 
       - name: Set up Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
@@ -105,15 +108,23 @@ jobs:
           echo "config=$cfg" >> "$GITHUB_OUTPUT"
           echo "Publishing package configured by $cfg"
 
+      # The whole suite runs only when CI hasn't already passed it: on the tagged commit itself
+      # (fmt + lint only), or on the parent of the release script's own `release: denext <v>`
+      # commit (the release's delta gate). Anything else, a failure to ask CI included, runs the
+      # whole-workspace gate. See scripts/publish-verify.ts.
+      - name: Decide how much to re-verify
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: deno run -A scripts/publish-verify.ts "$GITHUB_SHA"
+
       - name: Verify (fmt, lint, types, tests)
-        # The whole-workspace gate (mirrors the `check` task); the e2e suite runs
-        # separately (`deno task test:e2e`). scripts/test-run.ts runs the files that change
+        # The full gate mirrors the `check` task; the e2e suite runs separately
+        # (`deno task test:e2e`). scripts/test-run.ts runs the files that change
         # process-wide state (tests/serial-tests.ts) after the parallel pass, one at a time.
-        run: |
-          deno fmt --check
-          deno lint
-          deno check cli.ts mod.ts
-          deno run -A scripts/test-run.ts --ignore=tests/e2e/,tests/migration-bed/
+        env:
+          VERIFY: ${{ steps.verify.outputs.commands }}
+        run: sh -ec "$VERIFY"
 
       - name: Publish exactly the tagged source
         # `deno publish` refuses a dirty tree. A test that leaves a file behind must not block
@@ -149,16 +160,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # `smoke` is whether the runner can EXECUTE the binary it built: macos-latest is
-          # arm64 (an x86_64 Mach-O needs Rosetta, which the image is not guaranteed to carry)
-          # and ubuntu-latest is x86_64 (no aarch64, no Windows), so those legs cross-compile
-          # blind and the smoke runs on the two native legs.
+          # `smoke` is whether the runner can EXECUTE the binary it built. Every leg builds on
+          # ubuntu-latest (x86_64): `deno compile --target` cross-compiles and the Mach-O legs
+          # are signed with rcodesign, so no leg waits for a macOS runner. The `macos-check` job
+          # runs the released Mac binaries after the release.
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: ubuntu-latest
             smoke: false
           - target: aarch64-apple-darwin
-            os: macos-latest
-            smoke: true
+            os: ubuntu-latest
+            smoke: false
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             smoke: true
@@ -209,9 +220,16 @@ jobs:
       # Unsigned macOS binaries are quarantined by Gatekeeper on download. Signing needs an
       # Apple Developer ID; notarisation needs an App Store Connect key. Both are repository
       # secrets — when they are absent the step is skipped and the artifact ships unsigned,
-      # which the install script and the docs call out.
-      - name: Sign and notarise (macOS)
-        if: runner.os == 'macOS'
+      # which the install script and the docs call out. Signing runs on Linux with rcodesign
+      # (apple-codesign, pinned by SHA-256), so the Mac legs need no macOS runner.
+      # Every Mac binary is signed here, on Linux, with rcodesign (apple-codesign, pinned by
+      # SHA-256). Without the Developer ID secrets the signature is ad-hoc — what `deno compile`
+      # gives a Mac binary built on a Mac (Apple Silicon refuses to run an unsigned one, and
+      # a cross-compiled x86_64 Mach-O comes out unsigned) — and Gatekeeper still quarantines
+      # the download, which the install script strips and the docs call out. With them it is a
+      # Developer ID signature with the hardened runtime, then notarised.
+      - name: Sign (and notarise) the Mac binary
+        if: contains(matrix.target, 'apple-darwin')
         env:
           APPLE_CERT: ${{ secrets.APPLE_DEVELOPER_ID_CERT }}
           APPLE_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
@@ -220,33 +238,30 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
           set -eu
-          # `secrets` is not a context a step-level `if` can read, so the guard lives here in
-          # the shell. With no Developer ID configured the job still ships a binary — unsigned,
-          # which the install script strips quarantine for and the docs call out.
+          rcs=apple-codesign-0.29.0-x86_64-unknown-linux-musl
+          curl -fsSLo rcs.tar.gz \
+            "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F0.29.0/$rcs.tar.gz"
+          echo "dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002  rcs.tar.gz" | sha256sum -c -
+          tar xzf rcs.tar.gz && rcodesign="$PWD/$rcs/rcodesign"
+          # `secrets` is not a context a step-level `if` can read, so the guard lives here.
           if [ -z "${APPLE_CERT:-}" ]; then
-            echo "denext: no Developer ID secrets — shipping this binary UNSIGNED" >&2
+            echo "denext: no Developer ID secrets — signing this binary ad-hoc" >&2
+            "$rcodesign" sign denext
+            rm -rf rcs.tar.gz "$rcs"
             exit 0
           fi
           echo "$APPLE_CERT" | base64 --decode > cert.p12
-          security create-keychain -p actions build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p actions build.keychain
-          security import cert.p12 -k build.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k actions build.keychain
-          # The identity is "Developer ID Application: <Name> (<TEAMID>)" — take the SHA-1 the
-          # keychain reports rather than trying to reconstruct that string from the team ID.
-          identity="$(security find-identity -v -p codesigning build.keychain |
-            awk '/Developer ID Application/ { print $2; exit }')"
-          [ -n "$identity" ] || { echo "no Developer ID Application identity imported" >&2; exit 1; }
-          codesign --force --options runtime --timestamp --sign "$identity" denext
-          codesign --verify --strict --verbose=2 denext
+          printf '%s' "$APPLE_CERT_PASSWORD" > cert.pw
+          # --for-notarization: the hardened runtime and a secure timestamp, as notarisation needs.
+          "$rcodesign" sign --p12-file cert.p12 --p12-password-file cert.pw --for-notarization denext
           echo "$APPLE_API_KEY" | base64 --decode > key.p8
-          ditto -c -k --keepParent denext denext.zip
+          "$rcodesign" encode-app-store-connect-api-key -o key.json \
+            "$APPLE_API_ISSUER" "$APPLE_API_KEY_ID" key.p8
+          zip -q denext.zip denext
           # A bare executable cannot be stapled (stapler takes .app/.dmg/.pkg only), so the
           # notarisation ticket is checked online by Gatekeeper on first run.
-          xcrun notarytool submit denext.zip --wait \
-            --key key.p8 --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER"
-          rm -f cert.p12 key.p8 denext.zip
+          "$rcodesign" notary-submit --api-key-file key.json --wait denext.zip
+          rm -rf cert.p12 cert.pw key.p8 key.json denext.zip rcs.tar.gz "$rcs"
 
       # Asset names — the installers (scripts/install.sh, scripts/install.ps1) and the docs depend
       # on these exactly:
@@ -329,3 +344,30 @@ jobs:
           make_latest: ${{ !contains(github.ref_name, '-') }}
           files: dist/*
           fail_on_unmatched_files: true
+
+  # The Mac binaries are built and signed on Linux; this runs the RELEASED ones on a Mac (the
+  # signature verifies, the arm64 one starts and knows its version). It is off the release's
+  # critical path on purpose — a macOS runner can queue for half an hour — so a failure here
+  # means the shipped Mac archives need a follow-up release.
+  macos-check:
+    needs: release
+    if: startsWith(github.ref_name, 'v')
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Run the released Mac binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+          for t in aarch64-apple-darwin x86_64-apple-darwin; do
+            gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p "denext-$t.tar.gz*"
+            shasum -a 256 -c "denext-$t.tar.gz.sha256"
+            mkdir "$t" && tar xzf "denext-$t.tar.gz" -C "$t"
+            codesign --verify --strict --verbose=2 "$t/denext"
+          done
+          ./aarch64-apple-darwin/denext --version | tee /dev/stderr |
+            grep -Fx "denext $version (binary)"
+          ./aarch64-apple-darwin/denext --help | grep -F "Usage" >/dev/null

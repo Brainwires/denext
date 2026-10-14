@@ -17,10 +17,10 @@ stays bounded and no request errors out.
 cd examples/postgres-load
 cp .env.example .env         # DATABASE_URL + POOL_SIZE
 
-deno task db:up              # start Postgres in Docker (or point .env anywhere)
+denext task db:up              # start Postgres in Docker (or point .env anywhere)
                              # it publishes 127.0.0.1:5432 — this machine only
-deno task build              # build the app
-deno task start              # serve on http://localhost:3005
+denext task build              # build the app
+denext task start              # serve on http://localhost:3005
 ```
 
 Open <http://localhost:3005> — the homepage reads the live count from Postgres
@@ -29,7 +29,7 @@ no client JS). Then, in another terminal, apply load:
 
 ```sh
 # 5000 requests, 100 concurrent, against POOL_SIZE=10
-CONCURRENCY=100 REQUESTS=5000 deno task load
+CONCURRENCY=100 REQUESTS=5000 denext task load
 ```
 
 ```
@@ -76,7 +76,7 @@ required**. The Postgres integration is what you run here, with a real database.
 - The driver (`jsr:@db/postgres`) is standard Deno usage; swap in
   `npm:postgres`, `npm:mysql2`, or any other by editing `lib/db.ts`. Keep the
   pool a module singleton.
-- `deno task db:down` stops Postgres and deletes its volume.
+- `denext task db:down` stops Postgres and deletes its volume.
 - This is the multi-instance counterpart to [`examples/notes`](../notes) (which
   uses zero-npm `node:sqlite` for the single-process case). See
   [the database guide](https://denext.dev/docs/database) for the full decision guide.

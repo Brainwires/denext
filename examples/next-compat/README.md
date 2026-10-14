@@ -13,8 +13,8 @@ Run from the **denext repo root** (this in-repo example imports denext's build
 layer by relative path, so it needs the framework's `deno.json`):
 
 ```
-deno task example:next-compat          # build once, serve (production-like)
-deno task example:next-compat --dev    # rebuild on each request
+denext task example:next-compat          # build once, serve (production-like)
+denext task example:next-compat --dev    # rebuild on each request
 ```
 
 (equivalently: `deno run -A --config deno.json examples/next-compat/serve.ts`)

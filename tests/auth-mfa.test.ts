@@ -243,7 +243,7 @@ Deno.test("confirmTotp: a wrong code is refused and the enrolment stays unconfir
   });
   assertEquals((await h.adapter.getMfa!(h.userId))?.confirmedAt, undefined);
   assertEquals((await mfaStatus(h.config, h.userId)).enrolled, false);
-  assertEquals(await mfaPendingFor(resolveAuthOptions(h.config), user), false);
+  assertEquals(await mfaPendingFor(h.config, user), false);
 });
 
 // ---- the pending session ---------------------------------------------------------
@@ -445,7 +445,7 @@ Deno.test("POST /mfa/disable needs a fresh factor: refused without one, accepted
     backupCodesRemaining: 0,
   });
   const user = { id: h.userId, email: EMAIL };
-  assertEquals(await mfaPendingFor(resolveAuthOptions(h.config), user), false);
+  assertEquals(await mfaPendingFor(h.config, user), false);
   assertEquals((await passwordSignIn(h)).res!.status, 200, "sign-in no longer steps up");
 });
 
@@ -499,6 +499,116 @@ Deno.test("required 'always': an unenrolled user is pending; enrol + confirm dur
   assertEquals(h.events, ["signIn"]);
 });
 
+// ---- phone factors -----------------------------------------------------------------
+
+Deno.test("a verified phone factor: sign-in is pending, /mfa/challenge texts a code, /mfa steps up with it once", async () => {
+  const sms: Array<{ phone: string; otp: string }> = [];
+  const h = await setup({ sendSms: (message) => void sms.push(message) });
+  const now = Math.floor(Date.now() / 1000);
+  const factorId = crypto.randomUUID();
+  await h.adapter.createMfaFactor!({
+    id: factorId,
+    userId: h.userId,
+    type: "phone",
+    status: "verified",
+    phone: "+15555550123",
+    createdAt: now,
+    updatedAt: now,
+  });
+  assertEquals(await mfaPendingFor(h.config, { id: h.userId }), true, "a phone factor enrolls");
+  const cookie = await pendingSignIn(h);
+  // Another factor id (or none) is refused without sending anything.
+  assertEquals(
+    (await post(h.config, "/mfa/challenge", { cookie, body: { factorId: "nope" } })).res!.status,
+    404,
+  );
+  assertEquals(sms.length, 0);
+  const opened = await post(h.config, "/mfa/challenge", { cookie, body: { factorId } });
+  const { challengeId } = await opened.res!.json();
+  assertEquals(sms.length, 1);
+  assertEquals(sms[0].phone, "+15555550123");
+  // A wrong code spends the challenge.
+  const wrong = sms[0].otp === "000000" ? "111111" : "000000";
+  const refused = await post(h.config, "/mfa", {
+    cookie,
+    body: { code: wrong, challengeId, factorId },
+  });
+  assertEquals(refused.res!.status, 401);
+  const spent = await post(h.config, "/mfa", {
+    cookie,
+    body: { code: sms[0].otp, challengeId, factorId },
+  });
+  assertEquals(spent.res!.status, 401, "the challenge was single-use");
+  // A fresh challenge and its code complete the sign-in.
+  const again = await post(h.config, "/mfa/challenge", { cookie, body: { factorId } });
+  const second = await again.res!.json();
+  const done = await post(h.config, "/mfa", {
+    cookie,
+    body: { code: sms[1].otp, challengeId: second.challengeId, factorId },
+  });
+  assertEquals(done.res!.status, 200);
+  const session = (await readSession(h.config, done.cookie))!;
+  assertEquals(session.mfaPending, undefined);
+  assert(session.amr?.includes("sms"), JSON.stringify(session.amr));
+  // Without a pending session there is no challenge to ask for.
+  assertEquals(
+    (await post(h.config, "/mfa/challenge", { cookie: done.cookie, body: { factorId } })).res!
+      .status,
+    403,
+  );
+});
+
+Deno.test("/mfa/challenge: a burst texts at most the per-user send budget (3), spent before the gateway", async () => {
+  const sms: Array<{ phone: string; otp: string }> = [];
+  const h = await setup({ sendSms: (message) => void sms.push(message) });
+  const now = Math.floor(Date.now() / 1000);
+  const factorId = crypto.randomUUID();
+  await h.adapter.createMfaFactor!({
+    id: factorId,
+    userId: h.userId,
+    type: "phone",
+    status: "verified",
+    phone: "+15555550124",
+    createdAt: now,
+    updatedAt: now,
+  });
+  const cookie = await pendingSignIn(h);
+  const statuses: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    statuses.push(
+      (await post(h.config, "/mfa/challenge", { cookie, body: { factorId } })).res!.status,
+    );
+  }
+  assertEquals(statuses, [200, 200, 200, 429, 429, 429]);
+  assertEquals(sms.length, 3);
+});
+
+Deno.test('mfa.required "always": a pending session can\'t enroll (or confirm) a TOTP factor next to a verified phone factor', async () => {
+  const h = await setup({ mfa: { window: 2, backupCodes: 2, required: "always" } });
+  const now = Math.floor(Date.now() / 1000);
+  // An unverified TOTP factor left over from before, and a verified phone factor.
+  const leftover = await enrollTotp(h.config, freshSession({ id: h.userId, email: EMAIL }));
+  assert(leftover.ok);
+  await h.adapter.createMfaFactor!({
+    id: crypto.randomUUID(),
+    userId: h.userId,
+    type: "phone",
+    status: "verified",
+    phone: "+15555550124",
+    createdAt: now,
+    updatedAt: now,
+  });
+  const cookie = await pendingSignIn(h);
+  const enrolled = await post(h.config, "/mfa/enroll", { cookie });
+  assertEquals(enrolled.res!.status, 409);
+  const confirmed = await post(h.config, "/mfa/confirm", {
+    cookie,
+    body: { code: await totpAt(leftover.secret, nowStep()) },
+  });
+  assertEquals(confirmed.res!.status, 409, "the leftover enrollment can't complete the step-up");
+  assertEquals((await readSession(h.config, cookie))?.mfaPending, true);
+});
+
 // ---- no MFA group ----------------------------------------------------------------
 
 Deno.test("without the adapter's MFA group nobody is pending and every /mfa* row falls through", async () => {
@@ -506,14 +616,14 @@ Deno.test("without the adapter's MFA group nobody is pending and every /mfa* row
     inMemoryAuthAdapter();
   const h = await setup({}, bare as AuthAdapter);
   const user = { id: h.userId, email: EMAIL };
-  assertEquals(await mfaPendingFor(resolveAuthOptions(h.config), user), false);
+  assertEquals(await mfaPendingFor(h.config, user), false);
   const { res, cookie } = await passwordSignIn(h);
   assertEquals(res!.status, 200);
   for (const route of mfaRoutes) {
     const sent = await post(h.config, route.pattern, { cookie, body: { code: "123456" } });
     assertEquals(sent.res, null, `${route.pattern} does not exist`);
   }
-  await assertRejects(() => enrollTotp(h.config, freshSession(user)), Error, "no MFA group");
+  await assertRejects(() => enrollTotp(h.config, freshSession(user)), Error, "no MFA factor store");
 });
 
 // ---- pendingMfaSession() ---------------------------------------------------------
@@ -588,4 +698,41 @@ Deno.test("spendMfaAttempt spends the same per-user budget the /mfa endpoints do
     body: { code: "123456" },
   });
   assertEquals(step.res!.status, 429, "the endpoint sees the budget the action spent");
+});
+
+// ---- a stateless pending cookie after a ban / an eviction ---------------------------
+
+Deno.test("stateless: a pending cookie can't finish the step-up once its user is banned", async () => {
+  const h = await setup({ sessionStore: undefined });
+  denextAuth(h.config);
+  const { secret } = await enrol(h);
+  const pending = await pendingSignIn(h);
+  const until = Math.floor(Date.now() / 1000) + 3600;
+  await h.adapter.updateUser({ id: h.userId, bannedUntil: until });
+  const step = await post(h.config, "/mfa", {
+    cookie: pending,
+    body: { code: await totpAt(secret, nowStep()) },
+  });
+  assertEquals(step.res!.status, 401);
+  assertEquals(step.cookie, undefined, "no complete session was issued");
+  const request = new Request(`${ORIGIN}/login/2fa`, { headers: { cookie: pending } });
+  assertEquals(
+    await runWithContext(createRequestContext(request), () => pendingMfaSession()),
+    null,
+    "the /mfa page sees no pending session either",
+  );
+});
+
+Deno.test("stateless, required 'always': a pending cookie from before the address's first proof can't enrol", async () => {
+  const h = await setup({
+    sessionStore: undefined,
+    mfa: { required: "always", window: 2, backupCodes: 2 },
+  });
+  const pending = (await passwordSignIn(h)).cookie!;
+  const authTime = (await readSession(h.config, pending))!.authTime!;
+  // The owner proves the address afterwards: everything set up before that proof is retired —
+  // the stateless cookie can't be, so the step-up checks the proof's time instead.
+  await h.adapter.updateUser({ id: h.userId, emailVerified: authTime + 1 });
+  const enrolled = await post(h.config, "/mfa/enroll", { cookie: pending });
+  assertEquals(enrolled.res!.status, 401);
 });

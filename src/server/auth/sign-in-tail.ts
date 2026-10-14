@@ -64,7 +64,7 @@ export async function finishSignIn(
   options: FinishSignInOptions,
 ): Promise<Response> {
   const asJson = options.json ?? wantsJson(ctx.request);
-  const pending = !options.satisfiesMfa && await mfaPendingFor(ctx.options, user);
+  const pending = !options.satisfiesMfa && await mfaPendingFor(ctx.config, user);
   await issueAuthSession(ctx.config, user, provider, {
     mfaPending: pending,
     amr: options.amr,

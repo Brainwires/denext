@@ -90,7 +90,7 @@ document (`{ h1: Heading, Callout }`).
 ## Notes
 
 - **Store:** the built store is `.denext/content-data.json`, read at request time from
-  `<cwd>/.denext`. Run your app from the project root (as `deno task dev` / `start` do).
+  `<cwd>/.denext`. Run your app from the project root (as `denext task dev` / `start` do).
 - **Rendering:** `body` is the raw MD/MDX source (render it yourself if you like), and the
   runtime renders it for you: `await renderContent(entry)` or `<Content entry={entry} />`
   (server-only). A `.md` entry renders through the package's first-party, zero-dependency

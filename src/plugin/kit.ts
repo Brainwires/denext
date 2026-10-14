@@ -84,6 +84,9 @@ export { revalidatePath, revalidateTag } from "../server/mod.ts";
 export { cappedBody, readCappedBody, STALLED, TOO_LARGE } from "../server/mod.ts";
 // Re-wrap a request around the bytes `readCappedBody` produced (keeps method/headers/remote addr).
 export { bufferedRequest } from "../server/body.ts";
+// Re-enter a request later (a WebSocket the plugin upgraded): `auth()` / `cookies()` /
+// `clientIpForLimits()` answer as they did for the captured request.
+export { captureRequestContext } from "../server/request-context.ts";
 // Route-handler introspection: the definition (schemas, error codes, summary) a `defineApi`
 // endpoint declares — what an OpenAPI / docs plugin walks to describe an app's API.
 export { apiDefinitionOf } from "../server/mod.ts";
@@ -160,3 +163,8 @@ export { enableFastRefresh, registerFamily } from "../client/refresh-runtime.ts"
  * an app whose sources stay untouched.
  */
 export * as remixCodegen from "../build/remix-codegen.ts";
+
+// ── Scaffolding ─────────────────────────────────────────────────────────────
+// The Edge Function `denext generate function` writes, for a plugin verb that scaffolds one
+// into its own directory (`denext functions new <name>`).
+export { edgeFunctionSource } from "../build/generate.ts";

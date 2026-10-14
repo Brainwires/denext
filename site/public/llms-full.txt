@@ -34,8 +34,10 @@ emit correct denext instead of Next.js.
    the `mobile:*` tasks, `spa.precompress: false` + `mobile.icon`, Capacitor 8 installed with the
    app's package manager, and review items for what it can't know (a hosted-mode env switch, a
    backend URL a phone can reach, CORS for `capacitor://localhost` / `https://localhost`).
-   `denext upgrade [--to <v>] [--dry-run | --check]` moves the `jsr:@denext/denext` pin, the
-   pinned CLI tasks and every first-party `@denext/*` package together.
+   `denext upgrade [--to <v>] [--dry-run | --check] [--allow-major] [--allow-downgrade]` moves
+   the `jsr:@denext/denext` pin, the pinned CLI tasks and every first-party `@denext/*` package
+   together (`--allow-major` also lets a package that imports no denext cross a major; an older
+   `--to` needs `--allow-downgrade`). From 3.x: https://denext.dev/docs/changelog
 3. **File conventions are the same as Next App Router:** `app/page.tsx`,
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server
@@ -308,7 +310,10 @@ inherits the app's `trustForwardedHeaders` unless it sets its own. Per-address l
 (`rateLimit()`, auth's per-IP budgets, `live.limits.maxConnectionsPerIp`, `clientIpForLimits()`)
 skip a loopback/private peer with no trusted hop; `rateLimitHeader: "cf-connecting-ip"` keys them on
 the address a proxy writes there (Supabase's `GOTRUE_RATE_LIMIT_HEADER`; a request without it falls
-back, never unlimited) and `rateLimitLocalAddresses: true` counts such a peer as itself.
+back, never unlimited), believed only from a trusted proxy — a peer in `rateLimitTrustedProxies`
+(CIDRs, e.g. Cloudflare's ranges), or with none listed a loopback/private peer under
+`trustForwardedHeaders` (any other peer is keyed as itself) — and `rateLimitLocalAddresses: true`
+counts such a peer as itself.
 
 **A project-local CLI verb (no plugin):** put it in `denext.config.ts` and run it as a verb.
 
@@ -337,7 +342,8 @@ page — schema-driven `denext.config.ts` editing (a comment-preserving splice: 
 value span it replaces, the file keeps its bytes), a Cron page (every schedule, when it
 next fires, an editor with a shape builder, and run history when `jobs.history` is on),
 plugins with option forms for the first-party ones and JSR search, every `generate` kind,
-Docker files plus in-place `docker-compose.yml` editing, a Desktop panel that composes the
+Docker files (with the self-hosted stack's toggles) plus in-place `docker-compose.yml`
+editing, a Desktop panel that composes the
 signing setup from the identities the keychain holds, a Setup page that readies a fresh
 clone, a Dev page that starts and stops the dev server, a Tasks page for the scripts
 `deno.json` declares, and the project's own verbs. It works with JavaScript disabled, and
@@ -526,7 +532,7 @@ A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
 packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS bridge to the app
 origin; `desktop.app.bridgeOrigins` adds others). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.16 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.17 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -637,11 +643,44 @@ https://denext.dev/docs/native-sdk-recipes. Docs: https://denext.dev/docs/react-
 **File storage (the `@denext/backend` plugin):** `plugins: [backend({ storage: { driver:
 s3({ region, bucket, endpoint? }) | fs({ dir }), buckets: { avatars: { public?, maxBytes?, mime?,
 authorize: ({ session, op, key }) => boolean } } } })]` (S3 / R2 / MinIO via SigV4, zero npm). Server:
-`storage.bucket(n).createSignedUploadUrl / createSignedUrl(key, { transform }) / upload / download /
-head / list / remove` from `@denext/backend/server` — inside a request `authorize` runs with its
-session and its absence denies; outside a request only `{ service: true }` (which skips it) works.
-Browser: `uploadFile(bucket, file, { onProgress })` / `getFileUrl` from `@denext/backend/client`. Set `DENEXT_STORAGE_SECRET` (≥ 32
-chars). Docs: https://denext.dev/docs/backend
+`storage.bucket(n).createSignedUploadUrl / createSignedUrl(key, { transform }) / upload(key, body,
+{ upsert?, cacheControl?, metadata? }) / download / info / exists / copy / move / listFolder / list /
+remove` and `storage.createBucket / updateBucket / deleteBucket / emptyBucket` from
+`@denext/backend/server` — inside a request `authorize` (`{ session, identity, op, key }`) runs and its
+absence denies; outside a request only `{ service: true }` (which skips it) works. Browser:
+`uploadFile(bucket, file, { onProgress })` / `getFileUrl` from `@denext/backend/client`. It also serves
+Supabase's Storage API at `/storage/v1` — stock `supabase.storage` (supabase-js v2) works unchanged,
+plus TUS uploads at `/storage/v1/upload/resumable` (`/sign` + `x-signature` for a signed upload),
+`listV2`, and Supabase-style object versioning (`versioned: true` / `versioningStatus`, `versionId`
+reads and deletes, lifecycle rules); with `backend({ supabase })` keys the secret key is the service
+role. Object/bucket rows live in Supabase's `storage.objects` / `storage.buckets` (Postgres) or a
+`node:sqlite` file; `storage: { rls: true }` authorizes with SQL policies on them
+(`storage.foldername(name)`, `auth.uid()`). Set `DENEXT_STORAGE_SECRET` (≥ 32 chars). Docs:
+https://denext.dev/docs/backend
+Supabase clients: `backend({ supabase: true | { auth: { … } } })` installs the API keys
+(`DENEXT_PUBLISHABLE_KEY` / `DENEXT_SECRET_KEY`, ES256 `DENEXT_JWT_SIGNING_KEYS`, legacy
+`DENEXT_JWT_SECRET`; `denext backend keys` mints them) and serves GoTrue's `/auth/v1` over the
+`denextAuth()` users, so stock `supabase.auth.*` works (password, OTP / magic link, phone via
+`sendSms`, anonymous, OAuth incl. stored `custom:` providers, Web3 (`web3`), MFA with TOTP / SMS /
+WebAuthn factors, passkeys, SAML SSO, the OAuth 2.1 server (`oauthServer`), admin API). `resolveIdentity()` from
+`@denext/backend/server` resolves any request (access token → secret key → denext session → anon);
+`db()` uses it.
+Edge Functions: `backend({ functions: {} })` serves `functions/<name>/index.ts` (a Supabase
+`Deno.serve(handler)` module, unchanged; `denext generate function <name>`) at
+`/functions/v1/<name>` for `supabase.functions.invoke`, each in its own Worker; callers need a
+valid identity (anon key, access token or session) unless `functions: { functions: { <name>: { verifyJwt: false } } }`.
+With `postgres`, `vault: {}` (`vault.createSecret` / `vault.get`, AES-GCM under `DENEXT_VAULT_KEY`,
+server-only; `vault: { sql: true }` adds `vault.create_secret()` / `vault.decrypted_secrets`
+inside `vault.withKey(fn)` and `denext db push`), `queues: {}` (pgmq's SQL API + `pgmq_public`, no extension; `queue(name).send/read`,
+`queueConsumer({ queue, handler })` as a job), `denext generate vector-search <table>` + `matchDocuments()` (pgvector)
+and `webhooks: { hooks: { name: { url } } }` (`supabase_functions.http_request('name')` triggers,
+delivered signed + retried) from `@denext/backend/server`; the plugin adds the Postgres half of
+`denext db`: `diff | pull | dump | lint | inspect <report> | test` (pgTAP) `| types` (whole-schema
+`Database` type, `supabase gen types`-shaped), and applies its own migrations first on `db push`;
+also `denext storage ls | cp | mv | rm` (`ss:///bucket/key`), `denext functions new | list | serve |
+delete`, `denext backend token --sub <id>` (a test bearer JWT) and `denext gen types | keys |
+bearer-jwt`. `denext stack up | down | status | logs` runs the `generate docker` stack like
+`supabase start` (writes it and a generated `.env` when missing; `status --show-secrets`).
 
 **A database (zero-npm, server-only module):**
 
@@ -665,20 +704,42 @@ tables by migration on first use. With `@denext/backend`, `backend({ postgres: {
 (signed out, or outside a request), transaction-locally; `db({ as: { id } })` acts for a user in a
 task, and `db.service()` bypasses RLS (maintenance only). Tables need `grant … to authenticated`.
 Realtime from the database: `backend({ postgres, realtime: realtime({ tables: { notes: {} } }) })`
-installs triggers that NOTIFY keys only; `useTableChanges("notes", { initial, filter? })` from
-`@denext/backend/client` keeps rows live, each change re-read AS the subscriber under RLS (a
-delete only to subscribers who could see the row); `onTableChange(table, fn)` /
-`tableChanges(table, { as, onChange })` from `@denext/backend/server`, and `revalidate: true` pushes
-`table:<name>` tags. Needs a client with `listen` (`Deno.SQL`, or `fromPostgresJs`).
+installs triggers that NOTIFY keys only; `useTableChanges("notes", { initial, filter?, events? })`
+from `@denext/backend/client` keeps rows live (filters `eq neq lt lte gt gte in`), each change
+re-read AS the subscriber under RLS (a delete only to subscribers who could see the row);
+`onTableChange(table, fn)` / `tableChanges(table, { as, onChange })` from `@denext/backend/server`,
+and `revalidate: true` pushes `table:<name>` tags. The same option serves Supabase Realtime at
+`/realtime/v1/websocket`: stock `supabase.channel()` — `postgres_changes`, broadcast (also
+`realtime.send()` / `realtime.broadcast_changes()` in SQL, `broadcast()` on the server), presence
+across instances, private channels under `realtime.messages` policies, replay — works unchanged;
+tables also opt in by `alter publication supabase_realtime add table …`; `useBroadcast` /
+`useRealtimePresence` from `@denext/backend/client` reach the same channels natively;
+`realtime({ source: "logical" })` reads the WAL (pgoutput) instead of triggers + NOTIFY. Needs a
+client with `listen` (`Deno.SQL`, or `fromPostgresJs`).
 Auto-REST: `backend({ postgres: {}, rest: {} })` serves granted tables with RLS on (and
-`security_invoker` views; others only when named in `rest.tables`) PostgREST-style at `/rest/v1/<table>` (`select=`, `col=eq.x`, `order=`, `limit`; POST / filtered PATCH / DELETE), each
-statement through `db()` under RLS; `from("notes").select("id,body").eq("id", 1)` from
-`@denext/backend/client`, typed by the generated `.denext/rest.ts`. No embeds, `or`, upserts or RPC.
-`denext generate migration <name>` writes `migrations/<timestamp>_<name>.sql` and a
-`jobs/migrate.ts` that applies pending ones on `node:sqlite` (`denext job migrate`; a Prisma or
-Drizzle project is pointed at its own tool); `generate seed` an idempotent `jobs/seed.ts`;
-`generate ci` a GitHub Actions workflow. `denext routes [--json]` lists the app's pages and API
-routes.
+`security_invoker` views; others only when named in `rest.tables`) and the functions anon /
+authenticated may EXECUTE, with PostgREST 12's wire format at `/rest/v1/<table>` and
+`/rest/v1/rpc/<fn>` — embeds through foreign keys (`select=*,author:users(name),tags!inner(*)`),
+`or` / `and` trees, every operator, aliases, casts, JSON paths, upserts, `PUT`, counts, CSV,
+views, computed fields / relationships, aggregates (opt-in `rest.aggregates`), OpenAPI at `GET /rest/v1`,
+`Accept-Profile` across `rest.schemas` — each statement through `db()` under RLS. The stock
+`@supabase/supabase-js` `from()` / `rpc()` / `schema()` work against it unchanged, and so does
+`from("notes").select("id,body").eq("id", 1)` / `rpc()` from `@denext/backend/client`; the
+generated `.denext/rest.ts` is `supabase gen types`-shaped (`createClient<Database>()`).
+`denext generate migration <name>` (= `denext migration new`) writes
+`migrations/<timestamp>_<name>.sql` with `-- migrate:up` / `-- migrate:down` sections and a
+`jobs/migrate.ts` runner (`migrateSqlite` / `migratePostgres`; a Prisma or Drizzle project is
+pointed at its own tool). The Supabase CLI's verbs, on SQLite or Postgres, no plugin needed:
+`denext migration list | up [--to v] | down [--steps n | --to v | --force-reset --yes] | repair
+--status applied|reverted <v> | squash | fetch`, `denext db migrate | rollback | status | push |
+reset --yes | seed | link --url <pg-url>` (`--db-url <url>` / `--linked` pick another database; a
+`supabase/migrations/` project keeps `supabase_migrations.schema_migrations`). `denext migrate`
+is the framework migrator, not these; `generate seed` an idempotent `jobs/seed.ts`;
+`generate ci` a GitHub Actions workflow; `generate docker` the Dockerfile and a compose stack
+detected from the project (`--stack`: Postgres 17, MinIO with a bucket bootstrap when the storage
+driver is `s3()`, a one-shot `denext job migrate`, `.env.example` listing every secret;
+`--postgres`/`--no-postgres`, `--pgvector`, `--storage`, `--migrate`, `--expose-db`, `--dev`,
+`--dry-run`, `--force`). `denext routes [--json]` lists the app's pages and API routes.
 
 **A scheduled / background job (cron):** put it in `jobs/<name>.ts`; schedule it in
 `denext.config.ts` (`scheduledJobs`) or per-job; run it on demand with `runJob(name)`
@@ -790,6 +851,11 @@ await screen.fireEvent.click(screen.getByRole("button"));
 // getByRole/getByText/getByLabelText/getByTestId; fireEvent.change wires to onChange.
 ```
 
+A test that needs a fake clock or a module mock imports `vitest` (`vi.useFakeTimers()`,
+`vi.mock()`, `vi.stubEnv`) and runs under `denext test` — the toolchain's `deno test` has
+Vitest's API; stock Deno can't resolve `vitest`, so name such files `*.vitest.ts` if a plain
+`deno test` also runs. Keep a Vitest run's coverage in its own report.
+
 **Conformance-probing every route (CI gate):**
 
 ```ts
@@ -840,7 +906,8 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   fields; denext's own `experimental.compiler` / `asyncContext` / `features` /
   `nodeResolve` were removed in 3.0 and are a config error.
 - **denext's Deno toolchain**: the verbs that run project code (`dev`, `build`, `export`,
-  `start`, `test`, `check`, `job`, `doctor`, `desktop run|dev|build|package`, `mobile dev|build`,
+  `start`, `test`, `check`, `job`, `analyze`, `profile`, `doctor`, `desktop run|dev|build|package`,
+  `mobile dev|build`,
   project verbs) re-run themselves on denext's pinned Deno build (`2.9.7-denext.N`: `Deno.SQL`,
   Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
   `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced. `DENEXT_DENO=stock`
@@ -855,13 +922,21 @@ the [plugin guide](https://denext.dev/docs/plugins) and
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
   bench`), and `denext main.ts` / `denext https://…/x.ts` is `deno run`. Precedence: denext's
-  built-in verbs, then the project's own (`commands:` / plugins; shadowing a Deno verb prints one
-  notice), then Deno's. `task` is Deno's; background work is `denext job`. `info <module>` is
+  built-in verbs, then the project's own (`commands:` / plugins), then Deno's. A script or a Deno
+  verb never imports `denext.config.ts` first (only a name that may be a project verb does); a
+  project verb may not be named `run`, `x`, `eval`, `serve`, `compile`, `install`, `uninstall`,
+  `upgrade` or `task` (refused), and one named after another Deno verb (`bench`, `doc`, …) runs
+  in its place only once `denext commands` has listed it (`.denext/commands.json`, matching the
+  current config / `deno.json` / `deno.lock`; one notice). `task` is Deno's; background work is
+  `denext job`. `info <module>` is
   Deno's info; `audit` runs denext's checks and `deno audit`. For Deno's meaning of a verb denext
   keeps (`test`, `fmt`, `upgrade`, `desktop`, `create`, `init`, `completions`): `denext deno <verb>`.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
-  (CI-enforced). The build-time toolchain still uses a few npm tools — `esbuild`
-  (core) plus opt-in `sass` / `@mdx-js/mdx` / `ws` / `@tanstack/router-plugin`; the CSS + swc-AST tooling is
+  (CI-enforced). esbuild is not an npm import either: denext vendors esbuild's JS API and runs the
+  esbuild 0.25.5 binary its Deno toolchain ships (verified by SHA-256), else
+  (`DENEXT_DENO=stock`, stock Deno) the official `@esbuild/<platform>` binary, integrity-checked;
+  `ESBUILD_BINARY_PATH` overrides both. The build-time toolchain still uses a few opt-in npm tools —
+  `sass` / `@mdx-js/mdx` / `ws` / `@tanstack/router-plugin`; the CSS + swc-AST tooling is
   the first-party `@denext/lightningcss` / `@denext/swc` wasm. Your app may still
   use `npm:`/`jsr:` libraries.
 - Run checks with `deno task check` (fmt `--check` + lint + tests; type-checking
@@ -893,12 +968,13 @@ denext ships tooling so agents get it right the first time:
   the HTML/error — SEE what your edit produces), `denext_route_map` (the full render
   tree at a path: layouts, boundaries, server/client split), `denext_component_tree` /
   `denext_why_render` / `denext_hook_state` (the LIVE component tree from a running dev
-  page — props, named hooks, why a component re-rendered; these need `deno task dev`
+  page — props, named hooks, why a component re-rendered; these need `denext task dev`
   AND the app open in a browser, and each answer states how stale its snapshot is. The
   page starts pushing only once one of them has been called, so the FIRST call may say
   "posted nothing yet" — call it again after the page's next commit, or start dev with
   `DENEXT_DEV_INSPECT=1`. String values arrive redacted as `string(n)`),
-  `denext_profile` (build
+  `denext_migrations` / `denext_gen_types` (the project's migrations — list, up, down — and its
+  database types, run as CLI children), `denext_profile` (build
   unminified, serve, and profile a route in headless Chromium — CPU self-time by
   function + heap growth + a leak check; pass `interact` to profile a re-render, `budget`
   to gate a regression), `denext_search_docs` (BM25
@@ -1237,7 +1313,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 4.0.0-rc.2` — The denext framework version.
+- `VERSION: 4.0.0` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -1295,6 +1371,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ApiHandler = (request: Request, context: ApiContext) => Response | Promise<Response>` — A single-method API route handler.
 - `interface ApiHandlerInput<D, Ctx>` — What a defineApi handler receives: parsed input, the request, the middleware context.
 - `type ApiHandlerResult<D> = conditional` — What a handler may return: a value matching def.response (or anything), or a Response.
+- `apiKeyRole(keys: SupabaseKeys, value: string, options?: VerifySupabaseJwtOptions): Promise<anon | service_role>` — The role an API key grants — an opaque publishable / secret key, or a legacy anon / service_role JWT signed by these keys. A user's access token is not an API key.
 - `interface ApiMatch` — An API route matched against a pathname, with its extracted params.
 - `type ApiMiddleware<Ctx, Ext> = (input: ApiMiddlewareInput<Ctx>) => Ext | Response | void | Promise<Ext | Response | void>` — A "before" middleware: return an object to extend the context (typed), a Response to short-circuit, or nothing. Throw (unauthorized(), an ApiError) to fail.
 - `interface ApiMiddlewareDocs` — OpenAPI metadata a middleware contributes to every endpoint it guards (read by @denext/openapi).
@@ -1305,7 +1382,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ApiRouteHandler<D, R>` — The route handler defineApi returns: a plain ApiHandler at runtime, carrying the definition and the handler's result type as a phantom for the typed-API-client generator.
 - `interface ApiRouteMeta` — The metadata attached to a defineApi handler (what handleApi and plugins read).
 - `interface ApiTokenRecord` — A long-lived bearer API token. The presented secret is never stored, only its hash.
-- `type ApiTokenRevokedReason = revoked | password_reset | email_verified` — Why an API token was revoked, as apiTokenRevoked reports it.
+- `type ApiTokenRevokedReason = revoked | password_reset | email_verified | phone_verified` — Why an API token was revoked, as apiTokenRevoked reports it.
 - `class ApiValidationError` — A request that failed schema validation: a 400 with code "validation", the per-field messages, and data.source naming the offending part of the request.
 - `type ApiValidationSource = params | query | body` — Which part of the request a validation failure came from.
 - `interface ApnsConfig` — Token-based APNs credentials (a .p8 key from the Apple Developer portal).
@@ -1332,7 +1409,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface Author` — A named author (<meta name="author">, optional <link rel="author">).
 - `interface AuthorizedCallbackInput` — What AuthCallbacks.authorized is asked about.
 - `interface AuthPasskeyConfig` — Passkeys (WebAuthn) — sign-in with a platform or roaming authenticator, as a first factor or as the second. Every field is optional; the relying party defaults to canonicalOrigin.
-- `type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider` — Any configured provider.
+- `type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider | PhoneProvider` — Any configured provider.
 - `interface AuthSession` — The signed (readable, tamper-evident) session payload. Never stores tokens/secrets.
 - `interface AuthSessionConfig` — Session lifetime + storage strategy.
 - `interface AuthUser` — A normalized user profile — the non-sensitive identity denext stores in the session.
@@ -1342,7 +1419,14 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `backupCodeMatcher(hasher: Hasher, code: string): (hash: string) => Promise<boolean>` — Build the matches predicate the adapter's consumeBackupCode walks the stored hashes with. The presented code is normalised (spaces and hyphens stripped, lowercased); a malformed one yields a predicate that matches nothing — yet still runs one hasher.verify per stored hash, so a garbage submission costs what a wrong code does.
 - `interface BackupCodes` — A fresh set of backup codes: show codes once, store only hashes.
 - `interface BearerContext` — What requireBearer adds to the handler's ctx.
+- `bearerTokenOf(header: string | null | undefined): string | undefined` — The bearer token of an Authorization header (scheme case-insensitive, token trimmed).
 - `broadcastChannelTransport(name?: string): ChannelTransport` — A transport over the Web BroadcastChannel API: every instance that shares the channel name (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies.
+- `buildAuthnRequest(options: BuildAuthnRequestOptions): Promise<object>` — Build an AuthnRequest and the IdP URL that carries it (HTTP-Redirect binding: the XML is DEFLATE-compressed, base64-encoded and URL-encoded into SAMLRequest). The request names this SP's HTTP-POST ACS URL, and is signed (SigAlg + Signature) when sp.signingKey is set. Remember the returned id (with the RelayState) and pass it as expectedInResponseTo when the Response arrives.
+- `interface BuildAuthnRequestOptions` — Options for buildAuthnRequest.
+- `buildLogoutRequest(options: BuildLogoutRequestOptions): Promise<object>` — Build an SP-initiated LogoutRequest, signed over the HTTP-Redirect binding (RSA-SHA256), and the IdP URL that carries it. Remember the returned id: the LogoutResponse must answer it.
+- `interface BuildLogoutRequestOptions` — Options for buildLogoutRequest.
+- `buildLogoutResponse(options: BuildLogoutResponseOptions): Promise<string>` — Build the LogoutResponse answering an IdP-initiated LogoutRequest, signed over the HTTP-Redirect binding, and the IdP URL that carries it.
+- `interface BuildLogoutResponseOptions` — Options for buildLogoutResponse.
 - `type BuiltinApiErrorCode = validation | bad_request | unauthorized | forbidden | not_found | method_not_allowed | payload_too_large | request_timeout | rate_limited | internal` — The error codes the framework itself may produce for any endpoint. An endpoint's declared errors (see defineApi) are unioned with these on the client. Two are reserved rather than emitted as envelopes today: a 405 is plain text and a batch 408 is { error: string }, so a client sees them as http_error.
 - `cache<A, R>(fn: (...args: A) => R): (...args: A) => R` — Memoize fn for the duration of the current request: repeated calls with the same arguments return the first computed value (React's cache). Outside a request the function runs uncached. Define the wrapper once (e.g. at module scope) so its identity is stable.
 - `interface CacheConfig` — Cache Components / ISR cache-store configuration (DenextConfig.cache).
@@ -1356,6 +1440,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CacheStore` — The pluggable backend behind denext's data cache and page (ISR) cache.
 - `cacheStoreHealthy(): Promise<boolean>` — Probe the active CacheStore for reachability with a guarded no-op read (returns false if the store is unreachable). The health endpoint uses this to report cache status without ever throwing.
 - `cacheTag(...tags: string[]): void` — Tag the enclosing use cache entry (Next.js cacheTag) so revalidateTag / updateTag can purge it, and propagate the tags to the enclosing page render so revalidateTag purges the page too. Safe to call outside a cache scope (then it only does the page propagation).
+- `canSign(keys: SupabaseKeys): boolean` — Whether these keys can mint access tokens (a signing key or a legacy secret).
 - `cappedBody(request: Request, maxBytes: number): Request` — request with its body wrapped so that reading past maxBytes errors the stream (the consumer — formData(), json(), a multipart parser — then throws). For streaming consumers that cannot use readCappedBody; a declared content-length over the cap is refused up front.
 - `interface CdnCacheHeadersConfig` — Shared-cache headers on ISR pages with options (DenextConfig.cdnCacheHeaders as an object: the headers on, with these settings).
 - `interface Channel<T>` — A channel on the server.
@@ -1374,8 +1459,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `composeMiddleware(entries: MiddlewareEntry[], moduleConfig?: MiddlewareConfig): MiddlewareRunner` — Compose an ordered list of entries into a single MiddlewareRunner.
 - `interface CompressConfig` — Response compression settings (DenextConfig.compress as an object: compression on, with these settings).
-- `confirmTotp(config: AuthConfig, input: object): Promise<ConfirmTotpResult>` — Confirm a pending enrollment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up.
-- `type ConfirmTotpResult = object | object` — The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once. "invalid_code": a wrong or replayed code. "not_pending": no enrollment awaits confirmation (none started, already confirmed, or replaced meanwhile).
+- `confirmTotp(config: AuthConfig, input: object): Promise<ConfirmTotpResult>` — Confirm a pending TOTP enrollment with a code from the authenticator app. On success the factor is verified and — for a user's first verified factor — mfa.backupCodes backup codes are minted, returned here in plaintext exactly once and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up.
+- `type ConfirmTotpResult = object | object` — The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once (empty when the user already had a verified factor, whose codes stay valid). "invalid_code": a wrong or replayed code. "not_pending": no enrollment awaits confirmation.
 - `connection(): Promise<void>` — connection() (Next.js) — an explicit dynamic-rendering signal. Awaiting it marks the current render as dynamic (per-request), opting the route out of static generation/caching, without reading any specific request data (unlike cookies()/headers()). Resolves once the runtime is ready to handle the request; outside a request it resolves immediately.
 - `cookies(): AwaitableCookieStore` — Access the current request's cookies (reads incoming, writes Set-Cookie).
 - `interface CookieSetOptions` — Options accepted when setting a cookie.
@@ -1398,6 +1483,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CsrfDoubleSubmitOptions` — The double-submit half of CsrfOptions.
 - `interface CsrfOptions` — Options for csrf.
 - `currentContext(): RequestContext | undefined` — The current request context, or undefined if none is active.
+- `interface CustomProviderAdapter` — The stored-provider group.
+- `interface CustomProviderRecord` — One stored OAuth / OIDC identity provider (custom:<name>).
 - `interface DataEntry` — A cached data entry (the value returned by an unstable_cache loader).
 - `defaultLoader(filePath: unknown): Promise<unknown>` — Default module loader: dynamic import by absolute file path. A module is shared by every request, so it is loaded outside the request that first asks for it: its top-level code, and anything that code schedules, never runs as that request.
 - `defineAction<Out, In>(config: object): TypedAction<Out>` — Define a typed Server Action. Put it in a "use server" module and pass it to useActionState; denext dispatches the form submission to the server, where this runs.
@@ -1433,7 +1520,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopWindowConfig` — The initial window (DesktopConfig.window), applied when the runtime adopts it.
 - `detectLocale(request: Request, i18n: I18nConfig): string` — Pick the best supported locale for a request from the NEXT_LOCALE cookie (highest priority) then the Accept-Language header, falling back to the default locale. Matches on both exact tags and the primary subtag (fr-CA matches a supported fr).
 - `type Directive = client | server | null` — Which boundary a module declares, or null when it declares none.
-- `disableTotp(config: AuthConfig, userId: string): Promise<void>` — Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled. Callers must have proved a fresh factor first — see the /mfa/disable endpoint.
+- `disableTotp(config: AuthConfig, userId: string): Promise<void>` — Remove a user's TOTP factors — and their backup codes when no other verified factor remains. A no-op for a user without one. Callers must have proved a fresh factor first — see the /mfa/disable endpoint.
 - `discord(options: OAuthClientOptions): OAuthProvider` — Discord (OAuth 2.0). Reads the profile from /users/@me; only an address Discord reports as verified reaches the session.
 - `interface DocumentOptions` — Inputs to renderDocument for assembling the full HTML page.
 - `documentsSecurity<M>(mw: M, security: Record<string, string[]>[]): M` — Tag a middleware so applying it also DOCUMENTS its OpenAPI requirement: an endpoint built with createApi().use(documentsSecurity(mw, [{ bearerAuth: [] }])).define(...) is marked secured in the generated document with no security on the definition — one declaration both enforces (the middleware) and documents (this tag). A security on the definition still overrides it, and @denext/openapi must declare the scheme (securitySchemes) for the "Authorize" button.
@@ -1445,8 +1532,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface EmailProviderOptions` — Options for magicLink and emailOtp.
 - `type EmailRequestResult = object | object` — What a verification or reset request reports — never whether the address exists.
 - `interface EmittedAsset` — A generated file a build step publishes with PluginBuildContext.emitFile.
-- `enrollTotp(config: AuthConfig, session: AuthSession): Promise<EnrollTotpResult>` — Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.
-- `type EnrollTotpResult = parenthesized | object` — The outcome of enrollTotp: the fresh secret and its URI, or why none was minted — "already_enrolled" (a confirmed factor exists; disable it first) or "reauth_required" (a complete session that didn't sign in recently).
+- `enrollTotp(config: AuthConfig, session: AuthSession): Promise<EnrollTotpResult>` — Start a TOTP enrollment: mint a secret, store it as an **unverified** TOTP factor, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). Earlier unverified TOTP factors are replaced. While a verified TOTP factor exists another one is added only from a session that proved a second factor recently (hasFreshFactor), and a pending session adds none while any verified factor exists; otherwise the answer is already_enrolled — a first factor alone must never add a factor next to one.
+- `type EnrollTotpResult = parenthesized | object` — The outcome of enrollTotp: the fresh secret and its URI, or why none was minted — "already_enrolled" (a verified TOTP factor exists and this session did not just prove a second factor) or "reauth_required" (a complete session that didn't sign in recently).
 - `type ErrorSpec = number | object` — How a declared error code maps to HTTP: a status, or a status with a default message.
 - `interface ExperimentalConfig` — Next.js's experimental block, as a migrated next.config carries it into denext.config.ts. Each member is Next.js's own spelling of a top-level DenextConfig field, kept as an obsolete alias for migrated Next apps: honored (with a dev warning) when the top-level field is absent, and ignored when both are set. Next 16's experimental.cacheComponents is honored the same way (see resolveCacheComponents) but is not a typed member. denext's own former experimental.* keys (compiler, asyncContext, features, nodeResolve) were removed in 3.0; the config validator rejects them.
 - `facebook(options: OAuthClientOptions): OAuthProvider` — Facebook (OAuth 2.0, Graph API v19.0). The Graph /me response carries no verification flag, so the mapped user's emailVerified is always undefined, and Facebook may omit the email entirely (an account registered with a phone number, or a revoked permission).
@@ -1475,6 +1562,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type FormFields = Record<string, FormDataEntryValue>` — The form fields of a submission as a plain object (the default input shape).
 - `fromPostgresJs(pg: PostgresJsLike): SqlClient` — Adapt an npm postgres (postgres.js) client to a SqlClient — the stock-Deno path for every denext Postgres feature. denext does not depend on the package: import it in your app (npm:postgres) and pass the wrapped client as sql.
 - `generateBackupCodes(hasher: Hasher, count?: number): Promise<BackupCodes>` — Generate a set of unique backup codes and hash each through hasher. The hash covers the normalised form (no hyphen, lowercase), so a user may type a code with or without the hyphen, in any case.
+- `interface GeneratedSupabaseKeys` — A freshly generated key set, as generateSupabaseKeys returns it.
+- `generateSupabaseKeys(options?: object): Promise<GeneratedSupabaseKeys>` — Generate a new key set: a publishable key, a secret key and an ES256 signing key — plus, with legacy, a JWT secret and the anon / service_role JWTs signed with it (valid ten years, like Supabase's).
 - `generateTotpSecret(bytes?: number): string` — Generate a fresh TOTP secret: bytes of CSPRNG output as unpadded, uppercase RFC 4648 base32 — the form authenticator apps expect.
 - `getCacheStats(): CacheStats` — A snapshot of cache activity: page (ISR) cache hit/miss/set counts and the recent revalidateTag/revalidatePath invalidations (with timing). The observable layer a cache glass-box / devtools reads — and usable for production monitoring.
 - `getCacheStore(): CacheStore` — The CacheStore currently backing the data + page cache.
@@ -1484,6 +1573,20 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `gitlab(options: GitLabOptions): OAuthProvider` — GitLab (OIDC, gitlab.com or self-managed). Claims come from the verified id_token.
 - `interface GitLabOptions` — Options for gitlab.
 - `google(options: OAuthClientOptions): OAuthProvider` — Google (OIDC). Verifies the id_token; no userinfo round-trip needed.
+- `interface GoTrueAccessTokenHookInput` — What GoTrueHooks.customAccessToken receives.
+- `interface GoTrueCaptchaOptions` — Captcha verification for sign-up, sign-in, OTP, recovery and anonymous sign-in.
+- `class GoTrueError` — A GoTrue-shaped refusal; goTrueErrorResponse renders it.
+- `type GoTrueErrorCode = anonymous_provider_disabled | bad_code_verifier | bad_json | bad_jwt | bad_oauth_callback | bad_oauth_state | captcha_failed | custom_provider_not_found | email_address_invalid | email_address_not_authorized | email_exists | email_not_confirmed | email_provider_disabled | flow_state_expired | flow_state_not_found | identity_already_exists | identity_not_found | insufficient_aal | invalid_credentials | manual_linking_disabled | mfa_challenge_expired | mfa_factor_not_found | mfa_verification_failed | mfa_verification_rejected | mfa_phone_enroll_not_enabled | no_authorization | oauth_authorization_not_found | oauth_client_not_found | not_admin | otp_disabled | otp_expired | over_email_send_rate_limit | over_request_rate_limit | over_sms_send_rate_limit | phone_exists | phone_provider_disabled | provider_disabled | reauthentication_needed | reauthentication_not_valid | refresh_token_already_used | refresh_token_not_found | same_password | saml_entity_id_mismatch | saml_idp_already_exists | saml_metadata_expired | saml_metadata_fetch_failed | saml_provider_disabled | session_not_found | signup_disabled | single_identity_not_deletable | sms_send_failed | sso_domain_already_exists | sso_provider_not_found | unexpected_failure | user_already_exists | user_banned | user_not_found | user_sso_managed | validation_failed | weak_password | web3_provider_disabled | web3_unsupported_chain | not_found | method_not_allowed` — A GoTrue error code (the subset denext answers with).
+- `interface GoTrueHandlerOptions` — What the handler needs besides the request.
+- `interface GoTrueHooks` — Supabase's auth hooks, as functions.
+- `interface GoTrueOAuthServerOptions` — GoTrueOptions.oauthServer.
+- `interface GoTrueOptions` — The /auth/v1 options.
+- `interface GoTrueSamlOptions` — The /auth/v1 SAML 2.0 options.
+- `interface GoTrueSamlProvider` — A SAML 2.0 identity provider for signInWithSSO.
+- `interface GoTrueSendEmailPayload` — What GoTrueHooks.sendEmail receives — Supabase's Send Email Hook payload.
+- `interface GoTrueSmsMessage` — What GoTrueOptions.sendSms delivers.
+- `interface GoTrueWeb3Options` — GoTrueOptions.web3.
+- `handleGoTrueRequest(request: Request, handler: GoTrueHandlerOptions): Promise<Response | null>` — Handle an /auth/v1 request.
 - `interface Hasher` — How denext hashes and checks user-supplied secrets. An implementation MUST compare in constant time and MUST NOT throw on a malformed stored value — return false, so a corrupted row can never surface as a 500 or a stack trace.
 - `hashPassword(password: string, options?: HashPasswordOptions): Promise<string>` — Hash a password for storage: a fresh random salt + scrypt, encoded as scrypt$N=…,r=…,p=…$salt$hash. Store the returned string; verify later with verifyPassword.
 - `interface HashPasswordOptions` — Tunable scrypt cost for hashPassword.
@@ -1491,6 +1594,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface HeaderRule` — A response-header rule applied to paths matching source.
 - `headers(): AwaitableHeaders` — Read the current request's headers. Read-only, as in Next.js: set/append/delete throw (the request's headers are shared by middleware, auth and the rest of the pipeline).
 - `interface HeadTag` — One hoisted <meta>/<link> in a HeadCollector.
+- `type HealthCheck = () => boolean | object | Promise<boolean | object>` — A check's verdict: true / { ok: true } is healthy; anything else (or a throw) is down.
+- `interface HealthCheckOptions` — Options for registerHealthCheck.
 - `interface HstsConfig` — Strict-Transport-Security (HSTS) header options.
 - `interface HtmlFlight` — Result of a unified render: SSR HTML plus the serializable Flight tree.
 - `interface HtmlFlightOptions` — Options for renderToHtmlFlight.
@@ -1513,10 +1618,14 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `inMemoryChannelTransport(): ChannelTransport` — The default transport: loopback, this instance only.
 - `inMemoryRateLimitStore(options?: InMemoryRateLimitStoreOptions): RateLimitStore` — The default per-process RateLimitStore: a bounded Map of fixed windows. Expired windows are dropped on read; past maxKeys expired windows go first, then the least-recently-incremented quiet keys — never a key mid-lockout — so a flood of distinct identifiers can't grow memory without bound.
 - `interface InMemoryRateLimitStoreOptions` — Options for inMemoryRateLimitStore.
+- `inMemorySamlReplayCache(): SamlReplayCache` — A process-local SamlReplayCache. Right for one server process (and for tests); use a shared store when several replicas receive SAML Responses.
 - `inMemorySessionStore(options?: InMemorySessionStoreOptions): SessionStore` — The per-process, in-memory SessionStore. Bounded: past maxEntries expired sessions are dropped first, then the least recently used live ones; expired ones are also swept on a throttled schedule. Sessions don't survive a restart and aren't shared across replicas — use sqliteSessionStore (or your own) for that.
 - `interface InMemorySessionStoreOptions` — Options for inMemorySessionStore.
 - `inOtaRollout(channel: string, candidateVersion: string, installId: string | null | undefined, percent: number): Promise<boolean>` — Whether an install falls inside a rollout of percent for candidateVersion on channel. No (or an invalid) install id is never in a rollout: such a device always gets the stable release.
 - `type InputSpec<In> = parenthesized | StandardSchemaV1<In>` — How an action validates FormData into its typed input: a function or a Standard Schema.
+- `installedSupabaseKeys(): SupabaseKeys | undefined` — The installed key material, or undefined when backend({ supabase }) is not configured.
+- `installGoTrue(handler: GoTrueHandlerOptions | undefined, serving?: boolean): void` — Mount the /auth/v1 flows that finish outside its own paths — an OAuth callback arrives at denext's {basePath}/callback/:provider — and start the background SAML metadata refresh (saml.metadataRefresh), or remove them with undefined. backend({ supabase }) calls it at setup and with undefined at teardown.
+- `installSupabaseKeys(keys: SupabaseKeys | undefined): void` — Install the process's key material (backend({ supabase }) does at setup), or clear it with undefined. Process-global, so a bundled copy of this module sees the same keys.
 - `interface Instrumentation` — The shape of a project's instrumentation module.
 - `interface InstrumentationRequest` — The request info passed to OnRequestError — Next's shape (a plain object, NOT a Request), so instrumentation reading request.path/.method (Sentry, OpenTelemetry) works unchanged.
 - `interface Intercept` — An intercepting-route marker parsed from a folder name like (.)photo, (..)photo, (..)(..)photo, or (...)photo.
@@ -1556,6 +1665,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface JobsConfig` — Scheduled/background job behaviour (DenextConfig.jobs).
 - `json<T>(data: T, init?: ResponseInit): TypedResponse<T>` — Like Response.json, but the returned response remembers T. Use it in route handlers so callers of the route get a typed body back through the generated apiClient. The body goes through the wire codec: a Date / Map / Set / BigInt / undefined survives, and the response carries x-denext-wire: 1 only when a tag was needed (a plain-JSON body is byte-identical to Response.json).
 - `type JsonLd = object` — A JSON-LD structured-data object (schema.org), serialized to a <script type="application/ld+json"> in the document head. A lightweight structural type: @context/@type are hinted, any other schema.org field is allowed. Provide one object or an array of them via Metadata.jsonLd.
+- `jwtBearerOf(header: string | null | undefined): string | undefined` — The JWT an Authorization: Bearer header carries, or undefined for none (another scheme, a native nat_… token, an opaque API key).
 - `type Key = string | number | bigint | null | undefined` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
 - `keycloak(options: KeycloakOptions): OAuthProvider` — Keycloak (OIDC). Endpoints follow the modern (Keycloak 17+) /realms/<realm> layout; a legacy instance served under /auth is configured with the generic oidc() provider.
 - `interface KeycloakOptions` — Options for keycloak.
@@ -1573,6 +1683,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `localeHref(locale: string, rest: string, i18n: I18nConfig): string` — Build the pathname that serves locale for a locale-free path rest — the inverse of peelLocale. With localePrefix: "as-needed" (default) the default locale is served unprefixed and every other locale is prefixed; with localePrefix: "always" the default locale is prefixed too. Used to generate hreflang alternates and locale-switch links.
 - `localeMiddleware(i18n: I18nConfig): Middleware` — A middleware entry that redirects an unprefixed request to the visitor's detected locale when it differs from the default. Compose it into the middleware chain to get automatic locale routing:
 - `interface LocalPattern` — An allowed **local** image source pattern (Next.js images.localPatterns). A local source (/… under public/) matches when its pathname matches pathname (a glob: * = one path segment, ** = any) and, if search is given, its query string equals it exactly (search: "" ⇒ only a query-less URL). When localPatterns is set, a local source matching none is refused — an enumeration guard for query-string variants.
+- `localServerOrigin(): string | undefined` — The origin on which this machine reaches the denext server that received the current request: the address it listens on, a wildcard bind (0.0.0.0 / ::) as the loopback address — http://127.0.0.1:3000. It is never derived from the request's Host or forwarded headers, so server code can hand it to something that outlives the request (a worker's environment, a URL the server calls itself on) without a forged header steering it elsewhere. For the app's public origin, configure canonicalOrigin.
+- `looksLikeJwt(value: string): boolean` — Whether a string has the shape of a compact JWS (three base64url segments).
 - `magicLink(options?: MagicLinkOptions): EmailProvider` — Passwordless sign-in by **magic link**: POST {basePath}/callback/email with { email } mails a single-use link (10 minutes by default, email.magicMaxAge); opening it signs the user in. By default the link is consumed by its GET, so a mail gateway that pre-fetches links can spend it — pass confirm: true to open a confirmation page whose button POSTs the token instead, or prefer emailOtp.
 - `interface MagicLinkOptions` — Options for magicLink.
 - `makeTranslate(messages: Messages): TranslateFn` — Build a TranslateFn over messages (missing keys return the key).
@@ -1586,7 +1698,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type Messages = Record<string, string>` — A flat message catalog for one locale: message key → template string.
 - `interface Metadata` — Page metadata a page or layout module may export as metadata/generateMetadata.
 - `type MfaAttemptResult = object | object` — The outcome of spendMfaAttempt.
-- `type MfaMethod = totp | bcp | hwk` — A second factor a step-up can be completed with: a TOTP code, a backup code, or a passkey ("hwk", RFC 8176's proof of possession of a hardware-secured key).
+- `interface MfaFactorRecord` — One MFA factor — denext's sign-in and the /auth/v1 (GoTrue) API share them: a TOTP authenticator, a phone that receives codes by SMS, or a WebAuthn authenticator enrolled as a second factor. A user may hold several of each.
+- `type MfaMethod = totp | bcp | hwk | sms` — A second factor a step-up can be completed with: a TOTP code, a backup code, an SMS code ("sms"), or a passkey ("hwk", RFC 8176's proof of possession of a hardware-secured key).
 - `interface MfaRecord` — A user's TOTP factor plus their single-use backup codes.
 - `mfaStatus(config: AuthConfig, userId: string): Promise<MfaStatus>` — A user's second-factor state — for an account-settings page.
 - `interface MfaStatus` — A user's second-factor state, as mfaStatus reports it.
@@ -1603,6 +1716,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type MiddlewareRunner = parenthesized | null` — A resolved, request-ready middleware runner (null when there is none). matchPath is the pathname matchers are evaluated against when it differs from the request's (an i18n locale prefix stripped, as Next does before running middleware).
 - `migratePostgres(sql: SqlClient, options?: PostgresMigrateOptions): Promise<MigrateResult>` — Apply every pending migration, in name order, each in its own transaction under a transaction-scoped advisory lock (so concurrent runners never apply one twice). A failing migration rolls back on its own and stops the run; the ones before it stay applied.
 - `interface MigrateResult` — What migratePostgres did.
+- `migrateSqlite(db: SqliteMigrationDb, options: SqliteMigrateOptions): Promise<MigrateResult>` — Apply every pending migration in dir, in file-name order.
 - `interface Migration` — One migration: a unique, ordered name and its SQL (one or more statements).
 - `interface MigrationState` — One migration's state, as postgresMigrationStatus reports it.
 - `interface MigrationStatus` — What postgresMigrationStatus found.
@@ -1620,14 +1734,22 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface NextCommand` — Command returned by next to continue routing, optionally adding headers.
 - `noStore(): void` — Opt the current render out of the page cache (Next's unstable_noStore() / connection() intent): a route with export const revalidate = N that calls this is rendered per request instead of being stored and served to other visitors.
 - `notFound(): never` — Throw to render the nearest not-found UI with a 404 status.
+- `interface OAuthAuthorizationExpect` — What OAuthServerAdapter.updateOAuthAuthorization requires of the stored row.
+- `type OAuthAuthorizationPatch = Partial<Pick<OAuthAuthorizationRecord, userId | status | codeHash | sessionId | expiresAt>>` — The fields OAuthServerAdapter.updateOAuthAuthorization may change.
+- `interface OAuthAuthorizationRecord` — A pending (then settled) authorization request — /oauth/authorize creates one.
 - `interface OAuthClientOptions` — The client credentials every OAuth preset needs.
+- `interface OAuthClientRecord` — One registered OAuth client (Supabase's OAuthClient, secret hashed).
+- `interface OAuthConsentRecord` — A user's consent to a client (Supabase's OAuthGrant).
 - `interface OAuthProvider` — An OAuth 2.0 / OIDC provider (Authorization Code + PKCE).
+- `interface OAuthServerAdapter` — The OAuth 2.1 authorization-server group.
+- `interface OAuthSessionLink` — A session family issued to a client on a user's behalf.
 - `oidc(options: OidcOptions): OAuthProvider` — A generic OIDC provider (Authorization Code + PKCE, id_token verified via JWKS).
 - `interface OidcOptions` — Options for a generic oidc provider.
 - `okta(options: OktaOptions): OAuthProvider` — Okta (OIDC, custom authorization server). Claims come from the verified id_token.
 - `interface OktaOptions` — Options for okta.
 - `type OnRequest = (info: RequestLogInfo) => void` — The onRequest export: per-request observability, called once after every response with the method, path, final status, duration and request id (a denext extension — Next has no equivalent; it is the same hook a custom server passes to createApp()). A throw from it is swallowed: observability never breaks the response.
 - `type OnRequestError = (error: unknown, request: InstrumentationRequest, context: RequestErrorContext) => void | Promise<void>` — The onRequestError export: report a server-side request error.
+- `opaqueKeyRole(keys: SupabaseKeys, value: string): Promise<anon | service_role | null>` — The role an opaque API key grants: anon for a publishable key, service_role for a secret key, null for anything else (a JWT included — verify those with verifySupabaseJwt). Constant-time over the key's SHA-256.
 - `interface OpenGraphImage` — A single Open Graph image (og:image plus optional dimensions/alt).
 - `type OpenGraphImageResult = VNode | Uint8Array | Response` — What an opengraph-image module's default export may return:
 - `interface OpenGraphMedia` — A single Open Graph video/audio (og:video / og:audio).
@@ -1647,15 +1769,22 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PageProps<P>` — Props passed to a page component (and to metadata/generateMetadata/ generateViewport).
 - `interface PageRoute` — A rendered page route discovered by scanning the app directory.
 - `parseAcceptLanguage(header: string | null): string[]` — Parse an Accept-Language header into an ordered list of locale codes.
+- `interface ParsedIdpMetadata` — An IdP's metadata, read: the IdP plus what the document says about itself.
+- `parseIdpMetadata(xml: string): ParsedIdpMetadata` — Read an IdP's SAML 2.0 metadata (an EntityDescriptor, or an EntitiesDescriptor holding exactly one IdP). The metadata's own signature is NOT checked — fetch it over HTTPS from a URL you trust, or pin the certificate it yields.
 - `parsePattern(pattern: string): Segment[]` — Parse a route pattern like "blog/[slug]" into an ordered segment list.
 - `parseRange(header: string, size: number): object | null | undefined` — One bytes=start-end / bytes=start- / bytes=-suffix range against size: undefined = ignore the header (unsupported form or multiple ranges → serve the whole file), null = unsatisfiable (416).
 - `interface PasskeyChallengeRecord` — A single-use WebAuthn challenge (§13.4.3): only the SHA-256 of the challenge is stored, with the ceremony it belongs to.
 - `interface PasskeyRecord` — A registered passkey — a WebAuthn credential record (WebAuthn L3 §4, "credential record"): what verifying its later assertions needs. Nothing in it is secret: the public key verifies, it cannot sign.
 - `interface PasskeySummary` — A passkey as the app may show it — no key material.
+- `interface PeekedLogoutMessage` — What a logout message says before anything is verified — only to choose the IdP.
+- `peekLogoutMessage(input: SamlBindingInput): Promise<PeekedLogoutMessage>` — Read a logout message's kind, Issuer and RelayState WITHOUT verifying it — enough to pick the IdP whose certificates then verify it. Never act on what this returns.
 - `interface PeeledLocale` — The result of peeling a locale prefix off a pathname.
 - `peelLocale(pathname: string, i18n: I18nConfig | undefined, host?: string): PeeledLocale` — Peel a leading locale segment off pathname. If the first path segment is a configured locale it is stripped and returned; otherwise the default locale is used and the pathname is returned unchanged.
 - `pendingMfaSession(): Promise<AuthSession | null>` — The current request's session **only while it still owes a second factor** — null for a complete session, and for none. For the app's pages.mfa page: render the code form (or, under mfa.required: "always" for a user with no factor yet, the enrollment step) when this returns a session, and redirect onward when it doesn't.
 - `permanentRedirect(url: Href | parenthesized, type?: RedirectType): never` — Throw to issue a permanent (308) redirect to url.
+- `phoneOtp(options?: PhoneProviderOptions): PhoneProvider` — Passwordless sign-in by **SMS one-time code**: POST {basePath}/callback/phone with { phone } texts a numeric code (email.otpDigits, default 6; valid 5 minutes by default, email.otpMaxAge) through sendSms / hooks.sendSms; posting { phone, code } to the same endpoint signs the user in (amr: ["sms"]). Wrong codes count against a failure budget (5 per 5 minutes per number). There is no GET: a code never rides a URL.
+- `interface PhoneProvider` — A passwordless **phone** provider: phoneOtp() texts a one-time numeric code through the SMS sender (AuthConfig.sendSms, or hooks.sendSms) and needs an adapter with the verification-token group plus getUserByPhone / createUser / updateUser.
+- `interface PhoneProviderOptions` — Options for phoneOtp.
 - `interface PlatformExtensionsConfig` — The object form of DenextConfig.platformExtensions.
 - `interface PluginBuildContext` — Context passed to a PluginBuildStep.
 - `type PluginBuildStep = (context: PluginBuildContext) => void | Promise<void>` — A build-time step that emits the plugin's client bundles/assets into outDir, and publishes generated files at the site root with PluginBuildContext.emitFile. Runs at denext build and at denext export (App Router, SPA and Pages Router alike).
@@ -1707,8 +1836,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RedirectRule` — A URL-path redirect rule (source → destination).
 - `enum RedirectType` — next/navigation's RedirectType — how a client-side (soft) navigation applies the redirect: push a new history entry or replace the current one. Server responses ignore it (they always issue an HTTP redirect).
 - `refresh(): void` — Request a refresh of the **uncached** data on the current route from inside a Server Action (Next.js 16 refresh). It doesn't touch the cache — it flags the request so the action response tells the client router to re-fetch, keeping cached shells/static content fast while dynamic data (notification counts, live metrics) updates. A no-op outside a request context.
+- `type RefreshOutcome = refreshed | unchanged | failed | not_due | backoff` — How a refresh of one provider ended.
+- `refreshSsoMetadata(config?: AuthConfig, options?: RefreshSsoMetadataOptions): Promise<SsoMetadataRefreshSummary>` — Fetch the metadata of every stored SSO provider registered by metadata_url whose refresh is due (a day after the last fetch, or sooner by its cacheDuration / validUntil), one at a time — the same single-flight, backed-off fetch a sign-in uses, so a job and the sign-ins never fetch one URL twice in a window. Run it from a scheduled job: defineJob({ schedule: "0 * * * *", handler: () => refreshSsoMetadata() }).
+- `interface RefreshSsoMetadataOptions` — Options for refreshSsoMetadata.
 - `registerCacheLifeProfiles(profiles: Record<string, CacheLifeProfile>): void` — Register named cacheLife profiles (typically from denext.config). A custom profile whose name collides with a built-in overrides it. Idempotent-ish: a later call with the same name wins.
 - `type RegisterFn = () => void | Promise<void>` — The register export: run once at server startup.
+- `registerHealthCheck(name: string, check: HealthCheck, options?: HealthCheckOptions): () => void` — Register a readiness check /_denext/health runs on every probe. While it fails the probe answers 503 with "status": "degraded" and checks: { [name]: "down" } (never the error itself — the probe is public). Registering a name again replaces the check.
 - `registerJob(name: string, job: Job): void` — Register (or replace) a job by name — used by the jobs/ loader and by app code.
 - `interface RemotePattern` — An allowed remote image source for the optimizer (Next.js-style). A source URL matches when its protocol equals protocol (if given), its host matches hostname (a literal, or a leading-*. wildcard suffix), and its path starts with pathname (if given).
 - `renderDocument(opts: DocumentOptions): string` — Render a complete HTML document string: <!DOCTYPE> + <html> with the head content (metadata/viewport/styles), the hydration root wrapping bodyHtml, and the body scripts. The non-streaming counterpart to streamPprDocument.
@@ -1742,6 +1875,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ResolvedMetadata = Metadata` — The merged metadata of the segments ABOVE the current one (what parent resolves to).
 - `interface ResolvedRules` — The config's rule functions resolved to concrete arrays (evaluated once).
 - `resolveMessages(i18n: I18nConfig | undefined, locale: string): Messages` — Resolve the message catalog for locale from an I18nConfig, falling back to the default locale's catalog, then an empty catalog.
+- `resolveSupabaseKeys(config?: SupabaseKeysConfig, env?: (name: string) => string | undefined): Promise<SupabaseKeys>` — Resolve the configured key material (each field falling back to its environment variable). An empty value counts as unset.
 - `type ResolvingMetadata = Promise<ResolvedMetadata>` — Next.js ResolvingMetadata: the parent segments' merged metadata, awaitable.
 - `type ResolvingViewport = Promise<Viewport>` — Next.js ResolvingViewport: the parent segments' merged viewport, awaitable.
 - `type Revalidate = number | false` — Revalidation period in seconds, or false to cache indefinitely.
@@ -1773,13 +1907,20 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type SafeFetchErrorCode = unsupported-protocol | host-not-allowed | blocked-address | dns | network | bad-response | too-many-redirects` — Error codes surfaced by safeFetch.
 - `interface SafeFetchOptions` — Options for safeFetch.
 - `safeRedirectLocation(location: string): string` — Make a redirect Location safe against open redirects. An explicit http(s):// absolute URL is preserved (a deliberately-configured external redirect); anything else is forced to a single-slash, same-origin path so a protocol-relative (//host) or backslash (/\host) prefix — which browsers resolve cross-origin — cannot escape the current origin.
+- `type SamlBindingInput = object | object` — How a logout message arrived: the raw query (HTTP-Redirect) or the posted form.
+- `class SamlError` — A refused SAML message or bad SAML configuration. code is a stable machine code (see SamlErrorCode); the message is human-readable detail for logs. Never echo the message to an end user — report a generic sign-in failure.
+- `type SamlErrorCode = malformed_xml | doctype_forbidden | malformed_response | unexpected_markup | unsigned | bad_signature | signature_wrapping | multiple_assertions | encrypted_assertion_unsupported | decryption_failed | status_not_success | bad_destination | bad_recipient | bad_subject_confirmation | bad_audience | bad_issuer | expired | not_yet_valid | in_response_to_mismatch | idp_initiated_disallowed | replay | unsupported_algorithm | bad_certificate | bad_metadata | bad_key | bad_binding` — The stable machine codes a SamlError carries. Switch on code, never on the message (which is for logs and may change between versions).
+- `interface SamlIdpConfig` — A trusted SAML 2.0 Identity Provider.
+- `type SamlPrivateKey = string | JsonWebKey` — An SP private key: a PKCS #8 PEM (-----BEGIN PRIVATE KEY-----) or an RSA private JWK. Only RSA keys are supported (RSA-SHA256 signatures, RSA-OAEP key transport).
+- `interface SamlReplayCache` — Where assertion IDs are remembered so each is accepted once. Back it with something every replica shares (a database table, a KV store) when the SP runs on more than one process.
+- `interface SamlSpConfig` — This SAML 2.0 Service Provider.
 - `scanRoutes(appDir: string): Promise<RouteManifest>` — Scan appDir recursively and produce a sorted route manifest.
 - `type SchemaInput<S> = conditional` — The value a Standard Schema accepts (what a client must send); its output when unknown.
 - `type SchemaOutput<S> = conditional` — The value a Standard Schema produces.
 - `scryptHasher(options?: HashPasswordOptions): Hasher` — The default Hasher: salted **scrypt** through node:crypto, encoded as scrypt$N=…,r=…,p=…$salt$hash. Pass it explicitly to raise the cost: ``ts denextAuth({ hasher: scryptHasher({ cost: 2 ** 16 }), … }) `` Hashes stay self-describing, so raising the cost never invalidates existing ones.
 - `type SearchParams = object` — Next.js's searchParams record: repeated keys become arrays, absent keys undefined.
 - `searchParamsRecord(usp: URLSearchParams, raw?: URLSearchParams): SearchParams & object` — Next.js's searchParams record for a query string, with the underlying URLSearchParams reachable as the non-enumerable raw property (raw may be a read-tracking wrapper of usp; the record itself is built from the plain usp).
-- `type SecondFactorResult = object | object` — The outcome of verifySecondFactor: the method that verified, or why nothing did — "invalid_code" (wrong, replayed or spent) or "not_enrolled" (no confirmed factor).
+- `type SecondFactorResult = object | object` — The outcome of verifySecondFactor: the method that verified, or why nothing did — "invalid_code" (wrong, replayed or spent) or "not_enrolled" (no verified factor).
 - `interface Segment` — A single parsed route pattern segment.
 - `interface SegmentConfig` — The resolved route segment configuration for a module.
 - `interface SegmentConfigExports` — Optional route-segment-config exports a module may declare.
@@ -1792,7 +1933,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `serializeSitemap(entries: Sitemap): string` — Serialize sitemap entries to an XML urlset document.
 - `serializeSitemapIndex(items: SitemapIndexEntry[]): string` — Serialize a sitemap index (<sitemapindex>) pointing at child sitemaps.
 - `serve(options: ServeOptions): Deno.HttpServer` — Create an app and serve it over HTTP via Deno.serve.
-- `serveMetadataFile(manifest: RouteManifest, pathname: string, load: ModuleLoader, origin?: string): Promise<Response | null>` — Serve a metadata file if pathname matches one of the conventions and the corresponding file exists in the manifest; otherwise return null.
+- `serveMetadataFile(manifest: RouteManifest, pathname: string, load: ModuleLoader, origin?: string, originFromRequest?: boolean): Promise<Response | null>` — Serve a metadata file if pathname matches one of the conventions and the corresponding file exists in the manifest; otherwise return null.
 - `interface ServeOptions` — Options for serve: app configuration plus HTTP listen settings.
 - `serverAction<A, R>(id: string, handler: (...args: A) => R | Promise<R>): ServerActionRef<A, R>` — Define a server action. Give it a **stable, explicit id** (unique per app) so the client stub and the server handler agree across the boundary.
 - `interface ServerActionRef<A, R>` — A reference to a server action: callable, and tagged with its stable id.
@@ -1800,12 +1941,15 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ServeUtilOptions` — Options for serveWithPortFallback.
 - `serveWithPortFallback(options: ServeUtilOptions, handler: (request: Request) => Response | Promise<Response>): Deno.HttpServer` — Like Deno.serve, but if the port is in use it retries on port + 1, port + 2, … up to maxAttempts times. Returns the bound server.
 - `interface Session<T>` — A request's session. data is the verified payload (or null when absent/invalid).
+- `sessionFromClaims(claims: SupabaseJwtClaims): AuthSession` — The denext session an authenticated access token stands for. user.emailVerified is left unset: the token's user_metadata is user-writable, so it is no evidence — read the stored user for it (auth() does).
 - `interface SessionOptions` — Options for getSession.
 - `interface SessionStore` — Where store-backed sessions live. Every method may be sync or async; get must return only an **unexpired** session (treat expiresAt in the past as a miss).
 - `setCacheStore(store: CacheStore): void` — Replace the CacheStore backing the data cache and page (ISR) cache. Use this to share cached data and rendered pages across instances — back it with a custom or shared store (Redis, etc.) so a render or data entry produced on one replica is served by another, and revalidateTag/revalidatePath invalidate every instance. Called explicitly, this overrides the smart default (resolveDefaultCacheStore).
 - `setChannelTransport(t: ChannelTransport): void` — Install the transport that carries channel events between instances (default: in-memory, single instance). The Live hub re-subscribes to the new transport.
+- `setRequestTimeout(ms: number): void` — Give the current request a deadline of its own, replacing the app's requestTimeout (30 s by default) — for a surface with its own time budget: an Edge Function's timeoutMs, a large upload or download, a long statement. 0 removes the deadline (the work must then bound itself). Counted from the request's start; a no-op outside a request.
 - `interface SignalSink` — The status a caught control signal asks for (0 = none caught).
-- `type SignInFailedReason = invalid_credentials | invalid_mfa_code | invalid_passkey | rate_limited | access_denied | account_not_linked | adapter_error | invalid_state | invalid_request | config | oauth_failed | provider_error | invalid_nonce | invalid_token` — Why a sign-in attempt was refused, as signInFailed reports it — a closed set, so an app can switch over it exhaustively:
+- `type SignInFailedReason = invalid_credentials | invalid_mfa_code | invalid_passkey | rate_limited | access_denied | account_not_linked | adapter_error | invalid_state | invalid_request | config | oauth_failed | provider_error | invalid_nonce | invalid_token | captcha_failed` — Why a sign-in attempt was refused, as signInFailed reports it — a closed set, so an app can switch over it exhaustively:
+- `signSupabaseJwt(keys: SupabaseKeys, claims: Record<string, unknown>): Promise<string>` — Sign claims as a compact JWT: ES256 under the current signing key, else HS256 under the legacy secret.
 - `type Sitemap = SitemapEntry[]` — A sitemap: the array a sitemap.ts default export returns.
 - `interface SitemapEntry` — One entry in a sitemap (Next.js MetadataRoute.Sitemap element).
 - `interface SitemapIndexEntry` — One entry in a sitemap index (a reference to a child sitemap).
@@ -1819,6 +1963,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SpaTanstackRouterConfig` — TanStack Router build settings under SpaConfig.tanstackRouter.
 - `specificity(pattern: Segment[]): number` — Specificity score for ordering routes: more specific (static) patterns should be tried before less specific (dynamic/catch-all) ones. Higher wins. Position-blind (a sum) — prefer compareSpecificity for ordering.
 - `spendMfaAttempt(config: AuthConfig, input: object): Promise<MfaAttemptResult>` — Spend one second-factor attempt from the user's MFA budget — the one the POST {basePath}/mfa* endpoints spend — before a Server Action checks a code with verifySecondFactor or confirmTotp, which spend nothing themselves. Every attempt counts, right or wrong, so a correct guess never resets the count. The per-user budget is rateLimit.mfa (5 per 5 minutes by default), and the client IP's bucket counts too when a request is in scope. Pass the config you passed to denextAuth() so the endpoints and your actions share one budget.
+- `spMetadataXml(sp: SamlSpConfig, options?: object): string` — This SP's SAML 2.0 metadata (an EntityDescriptor with one SPSSODescriptor), for the IdP administrator to import: its signing and encryption certificates (when configured), its SingleLogoutService (HTTP-Redirect and HTTP-POST, when sp.sloUrl is set), the NameID format and the HTTP-POST AssertionConsumerService.
 - `interface SqlClient` — The minimal Postgres client denext needs. Deno.SQL (denext's runtime) satisfies it as is; on stock Deno, fromPostgresJs adapts the npm postgres package.
 - `sqliteAuthAdapter(options?: SqliteAuthAdapterOptions): AuthAdapter` — Build the durable AuthAdapter on Deno's built-in node:sqlite: every method group (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions, passkeys, account deletion) plus a sessions store over the **same** database handle and an idempotent close().
 - `interface SqliteAuthAdapterOptions` — Options for sqliteAuthAdapter.
@@ -1827,12 +1972,21 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SqliteDb` — The minimal SQLite handle this store drives (node:sqlite, or a test stub).
 - `sqliteJobHistoryStore(options: SqliteJobHistoryStoreOptions): JobHistoryStore` — The default JobHistoryStore: a SQLite file (.denext/jobs.db when denext installs it), on Deno's built-in node:sqlite.
 - `interface SqliteJobHistoryStoreOptions` — Options for sqliteJobHistoryStore.
+- `interface SqliteMigrateOptions` — Options for migrateSqlite and sqliteMigrationStatus.
+- `interface SqliteMigrationDb` — The parts of node:sqlite's DatabaseSync the SQLite history uses.
+- `sqliteMigrationStatus(db: SqliteMigrationDb, options: Omit<SqliteMigrateOptions, dryRun>): Promise<MigrationStatus>` — Which migrations in dir are applied, which are pending, and which applied ones have no file.
 - `sqliteSessionStore(options?: SqliteSessionStoreOptions): SessionStore` — A durable SessionStore on Deno's built-in node:sqlite.
 - `interface SqliteSessionStoreOptions` — Options for sqliteSessionStore.
 - `interface SqlListener` — A subscription made with SqlClient.listen.
 - `interface SqlQuery<T>` — A query that may also run as a simple-protocol query (several statements, no parameters).
 - `type SqlRow = Record<string, unknown>` — One row, keyed by column name.
 - `type SqlValue = null | number | bigint | string | Uint8Array` — A value bindable as a SQLite statement parameter.
+- `interface SsoAttributeMapping` — GoTrue's SAML attribute_mapping.
+- `interface SsoAttributeMappingKey` — How a SAML attribute maps to a user field — GoTrue's attribute_mapping.keys[field]: the value of the attribute name (or the first of names present), else default; array keeps every value.
+- `interface SsoMetadataRefreshSummary` — What refreshSsoMetadata did.
+- `interface SsoProviderRecord` — A stored SAML 2.0 identity provider of the /auth/v1 SSO admin API (/admin/sso/providers). The entity id is unique across providers, and so is every domain.
+- `type SsoProviderWrite = ok | not_found | entity_id_exists | domain_exists` — What a create / update of an SsoProviderRecord came to.
+- `interface SsoSessionRecord` — An /auth/v1 session that a SAML assertion started — what an IdP-initiated LogoutRequest (NameID + SessionIndex) is resolved to.
 - `STALLED: Symbol` — Sentinel returned by readCappedBody when the body stalls (idle).
 - `interface StandardIssue` — One Standard Schema issue: a message and an optional path to the offending field.
 - `type StandardResult<Output> = object | object` — A Standard Schema validation result: a parsed value, or a list of issues.
@@ -1843,6 +1997,15 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SubscriptionDef` — The hub-facing half of a defineSubscription: validate, gate, compute.
 - `interface SubscriptionRef<In, Out>` — The reference defineSubscription returns: callable on the server (validate → authorize → resolve), an opaque id on the client; typed for useSubscription.
 - `interface SubscriptionRunContext` — What a subscription's authorize / resolve receive besides the parsed input.
+- `SUPABASE_KEY_ENV: object` — Environment variables the keys default to.
+- `supabaseJwks(keys: SupabaseKeys): object` — The JWKS document — the public halves of the ES256 keys (empty under HS256 only: a symmetric secret is never published).
+- `interface SupabaseJwtClaims` — Verified JWT claims.
+- `class SupabaseKeyError` — A refused token or API key. Its message never contains the presented value.
+- `type SupabaseKeyErrorCode = bad_jwt | jwt_expired | invalid_api_key` — Why a token or key was refused — GoTrue / PostgREST-shaped codes.
+- `interface SupabaseKeys` — Resolved key material. Build it with resolveSupabaseKeys.
+- `interface SupabaseKeysConfig` — The key material for backend({ supabase }). Every field defaults to its environment variable.
+- `type SupabaseRole = anon | authenticated | service_role` — The roles a Supabase JWT or API key can carry.
+- `interface SupabaseSigningKey` — One ES256 key: its id, the private key (signing) and the public JWK (JWKS + verifying).
 - `interface TailwindConfig` — Tailwind CSS integration. When set, denext compiles input (which contains the raw @import "tailwindcss"; directives) into output using the Tailwind v4 standalone binary — which denext downloads and manages itself — before its own CSS pipeline runs. The output file is what your layout imports.
 - `tapChannel<T>(channel: Channel<T> | string, key: string, handlers: ChannelTapHandlers<T>): () => void` — Observe a channel's publishes on the SERVER: every payload published to key on any instance — through the installed transport, decoded, in seq order per instance — until the returned disposer runs. The seam a plugin uses to bridge channel pushes into another protocol (a GraphQL subscription in @denext/graphql, an SSE stream, a queue) without a second event bus. Survives setChannelTransport (re-binds to the new transport).
 - `interface ThemeColorDescriptor` — <meta name="theme-color"> with an optional media query.
@@ -1864,22 +2027,35 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface TypedResponse<T>` — A Response that remembers the type of the JSON body it carries. Structurally a plain Response at runtime; the __body phantom exists only in the type system so the typed-API-client generator can recover T.
 - `unauthorized(): never` — Throw to render the nearest unauthorized.tsx UI with a 401 status.
 - `unstable_cache<A, R>(fn: (...args: A) => Promise<R> | R, keyParts?: string[], options?: CacheOptions): (...args: A) => Promise<R>` — Wrap an async data-loading function in a cross-request cache with an optional TTL and tags (Next.js unstable_cache). Results are keyed by keyParts plus the call arguments. Tags propagate to the enclosing page render, so revalidateTag purges both the data and any page that read it.
-- `updateAuthSession(): Promise<AuthSession | null>` — Read the session **and** slide its expiry forward when session.updateAge has elapsed — the explicit version of what GET {basePath}/session, requireAuth and requireSession() do for you. Call it from a Server Action or a route.ts handler (anywhere the response has not been sent yet); the refreshed cookie rides that response. In a streamed Server Component use auth instead — a Set-Cookie written after the headers flush is dropped silently.
+- `updateAuthSession(): Promise<AuthSession | null>` — Read the session **and** slide its expiry forward when session.updateAge has elapsed — the explicit version of what GET {basePath}/session, requireAuth and requireSession() do for you. Call it from a Server Action or a route.ts handler (anywhere the response has not been sent yet); the refreshed cookie rides that response. In a streamed Server Component use auth instead — a Set-Cookie written after the headers flush is dropped silently. A session due to slide whose user is an SSO user is ended instead (its identity provider is that user's only way in).
 - `updateTag(tag: string): Promise<void>` — **Read-your-writes** tag invalidation for use inside a Server Action (Next.js 16 updateTag). Unlike revalidateTag, it expires the tag **immediately and synchronously for the rest of this request**: a later cache read in the same action whose entry carries tag recomputes, so the acting user sees their own write right away. It also hard-purges the store (for other requests/replicas) and records the tag so the client router can refresh the affected content.
 - `userAgent(request: object): UserAgent` — Parse the request's user-agent header into structured details.
 - `interface UserAgent` — Parsed User-Agent details.
 - `userAgentFromString(ua?: string): UserAgent` — Parse a raw user-agent string into structured details (Next's userAgentFromString).
-- `type VerificationPurpose = email | reset | magic | otp` — What a verification token is for (one token space per purpose).
+- `vectorSearchSql(o?: VectorSearchSqlOptions): string` — The SQL for Supabase's semantic-search recipe, for a migration: the vector extension, a documents table (id, content, metadata, embedding vector(N)) with an HNSW index, and a match_documents(query_embedding, match_threshold, match_count) function returning the closest rows with their similarity — callable with matchDocuments() from @denext/backend/server, db(), or REST /rpc.
+- `interface VectorSearchSqlOptions` — Options for vectorSearchSql.
+- `type VerificationPurpose = email | reset | magic | otp | sms` — What a verification token is for (one token space per purpose). "sms" is a phoneOtp() sign-in code, whose identifier is an E.164 phone number rather than an email address.
 - `interface VerificationRequestParams` — What AuthConfig.sendVerificationRequest is handed for each outbound token.
 - `interface VerificationTokenRecord` — A single-use token proving control of an identifier (an email verification link, a password-reset link, a magic link, a one-time code). Only the **hash** is stored, so a database read never yields a usable token.
 - `interface VerificationTokenRef` — Identifies one verification token (the tuple its uniqueness is scoped by).
+- `interface VerifiedLogoutRequest` — A LogoutRequest that passed every check.
+- `interface VerifiedLogoutResponse` — A LogoutResponse that passed every check.
+- `interface VerifiedSamlAssertion` — The claims of a Response that passed every check.
+- `verifyAccessToken(keys: SupabaseKeys, token: string, config?: AuthConfig | null, options?: VerifySupabaseJwtOptions): Promise<SupabaseJwtClaims>` — Verify a Supabase JWT and, for a user's access token, that its session is still live (when the adapter keeps sessions): not revoked, not expired, the same user.
 - `verifyApiToken(config: AuthConfig, presented: string): Promise<ApiTokenRecord | null>` — Verify a presented bearer token: hash it, look the hash up (an indexed exact match — no secret is ever compared in-process), and check it is still live.
 - `verifyEmail(config: AuthConfig, input: object): Promise<VerifyEmailResult>` — Redeem an email-verification token and mark the address verified (emailVerified, epoch seconds, through adapter.updateUser). Fires emailVerified.
 - `type VerifyEmailResult = object | object` — What verifyEmail reports.
+- `interface VerifyLogoutOptions` — Options for verifyLogoutRequest / verifyLogoutResponse.
+- `verifyLogoutRequest(options: VerifyLogoutOptions): Promise<VerifiedLogoutRequest>` — Verify an IdP-initiated LogoutRequest.
+- `verifyLogoutResponse(options: VerifyLogoutOptions & object): Promise<VerifiedLogoutResponse>` — Verify the LogoutResponse answering an SP-initiated LogoutRequest.
 - `verifyPassword(password: string, stored: string, options?: HashPasswordOptions): Promise<boolean>` — Verify a password against a hash produced by hashPassword. The comparison is constant-time (timingSafeEqual), and a malformed/unsupported stored value — an empty column, a legacy format, a corrupted row — returns false rather than throwing, so an authorize callback can't leak a stack trace or a 500. That rejection still runs a full scrypt derivation, so an unknown account takes as long to reject as a wrong password for a known one (no user-enumeration timing oracle).
 - `verifyRevenueCatWebhook(request: Request, options: VerifyRevenueCatWebhookOptions): Promise<RevenueCatWebhookBody>` — Verify a RevenueCat webhook request and parse its event.
 - `interface VerifyRevenueCatWebhookOptions` — Options for verifyRevenueCatWebhook.
-- `verifySecondFactor(config: AuthConfig, input: object): Promise<SecondFactorResult>` — Check a second-factor code for a user with a confirmed factor: first as a TOTP code (claiming its step — a replay is refused), else as a backup code (spent on a match).
+- `verifySamlResponse(options: VerifySamlResponseOptions): Promise<VerifiedSamlAssertion>` — Verify an HTTP-POST-binding SAML 2.0 Response and return its Assertion's claims.
+- `interface VerifySamlResponseOptions` — Options for verifySamlResponse.
+- `verifySecondFactor(config: AuthConfig, input: object): Promise<SecondFactorResult>` — Check a second-factor proof for a user with a verified factor: a TOTP code from any of their TOTP factors (its step claimed — a replay is refused), the code of an open SMS challenge (challengeId), or a backup code (spent on a match).
+- `verifySupabaseJwt(keys: SupabaseKeys, token: string, options?: VerifySupabaseJwtOptions): Promise<SupabaseJwtClaims>` — Verify a JWT signed by these keys: the signature (ES256 by kid, or HS256 under the legacy secret), exp (required), nbf / iat (not in the future) and the role (one of Supabase's three; an authenticated token needs a sub).
+- `interface VerifySupabaseJwtOptions` — Options for verifySupabaseJwt.
 - `verifyTotp(secret: string, code: string, options?: TotpVerifyOptions): Promise<TotpVerifyResult>` — Verify a TOTP code (RFC 6238 over RFC 4226 HOTP, HMAC-SHA-1) against a base32 secret, accepting any step within ±window of the current one. Whitespace in the code is stripped ("123 456"); anything else malformed — non-digits, the wrong length, a secret that isn't base32 — is { ok: false }, never a throw. Every candidate step is computed and compared in constant time; the loop never exits early on a match.
 - `interface Viewport` — Viewport + theme metadata (Next.js viewport/generateViewport).
 - `interface VNode` — A single virtual DOM node.
@@ -1887,6 +2063,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type VNodeChildren = VNodeChild | VNodeChild[]` — One child or an array of children, as accepted by JSX.
 - `type VNodeType = string | Component<any> | FRAGMENT` — The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker.
 - `interface VProps` — Props passed to a virtual node. children is normalized separately.
+- `interface Web3NonceAdapter` — The Web3 sign-in group.
 - `withHeaders(response: Response, extra?: Headers): Response` — Merge extra headers into a response (returning a new Response if needed).
 
 ### `denext/client`
@@ -2377,6 +2554,109 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `sidecarStatus(name: string): Promise<SidecarStatus>` — The status of one of the app's sidecars (desktop.sidecars): its state (starting, ready, backoff, failed, …), port, attempts and how its last run ended.
 - `interface SidecarStatus` — A sidecar's status: what sidecar(name).status, sidecarStatus and onSidecarStatus report.
 
+### `denext/desktop/window`
+
+- `type CloseRequestHandler = () => boolean | void | Promise<boolean | void>` — A close-request handler: return (or resolve) false to keep the window open.
+- `closeWindow(): Promise<void>` — Close the window now, without asking the onCloseRequested handlers (the app quits: a denext desktop app has one window).
+- `interface DesktopBridgeError` — A failed desktop bridge call. Narrow with isDesktopBridgeError.
+- `type DesktopErrorCode = unavailable | forbidden | validation | timeout | too_large | bridge_error | parenthesized` — Why a desktop call failed:
+- `interface DraggableElement` — The slice of a DOM element makeWindowDraggable uses.
+- `interface DragOutItem` — A file to drag out of the window: a picked item ({ directory: { picked: handle } }, with path relative to a picked folder), or a file in the app's own folders.
+- `type DragOutResult = dropped | cancelled | failed` — What a drag-out ended with.
+- `interface DroppedFile` — One file dropped on the window.
+- `interface FileDrop` — Files dropped on the window (onFileDrop).
+- `focusWindow(): Promise<void>` — Bring the window to the front and focus it. @returns Once requested.
+- `getScreens(): Promise<WindowScreen[]>` — The connected displays, primary first.
+- `getTitleBarPreferences(): Promise<TitleBarPreferences>` — How the user set up title bars: the window buttons' side and order, the double-click action, the colour scheme and accent colour. For a page that hides the title bar (desktop.titleBar: "hidden") and draws its own; windows with the OS's frame already follow these settings. On Linux it is the desktop's own setting (Plasma's button order, GNOME's button-layout), read by the runtime from xdg-desktop-portal; makeWindowDraggable uses the double-click action.
+- `getWindowState(): Promise<WindowState>` — The window's state: maximized / minimized / fullscreen / visible, its bounds, and its display.
+- `hideWindow(): Promise<void>` — Hide the window (the app keeps running). @returns Once hidden.
+- `isDesktopBridgeError(value: unknown): value is DesktopBridgeError` — Whether value is a DesktopBridgeError.
+- `makeWindowDraggable(element: DraggableElement): () => void` — Make element a window drag region — what a page needs once the title bar is hidden (desktop.titleBar: "hidden"): pressing and dragging it moves the window, like the OS title bar, and a double click does what a double click on a title bar does for this user (TitleBarPreferences.doubleClick: maximize / restore, minimize, or nothing). Interactive children (buttons, links, inputs, [data-no-window-drag]) keep working.
+- `maximizeWindow(): Promise<void>` — Maximize the window (zoom on macOS). @returns Once requested (the OS may animate it).
+- `minimizeWindow(): Promise<void>` — Minimize the window. @returns Once requested.
+- `onCloseRequested(handler: CloseRequestHandler): () => void` — Ask before the window closes (its close button, Cmd+W / Alt+F4, or quitApp). While a handler is registered the runtime holds every close and calls the handlers; the window closes unless one returns (or resolves) false. A page that stops answering cannot keep the window open: a close requested again after 5 seconds without an answer goes through. Quitting from the macOS app menu (Cmd+Q) is not asked. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called and the window closes.
+- `onDisplayChanged(handler: (screens: WindowScreen[]) => void): () => void` — Call handler with the displays whenever one is added, removed, rearranged or rescaled.
+- `onFileDrop(handler: (drop: FileDrop) => void): () => void` — Call handler when files or folders are dropped on the window, with a READ-ONLY handle for each (the dropped item is untrusted input: the page reads it through the handle, never by path). The page still gets its own DOM dragenter / dragover / drop events (with File objects, for a hover style); this is where the native handles are. Needs denext's pinned runtime (fileDrop in windowCapabilities).
+- `onTitleBarPreferencesChange(handler: (preferences: TitleBarPreferences) => void): () => void` — Call handler with the new preferences whenever the user changes them (moves the window buttons, picks another double-click action, colour scheme or accent colour). Needs runtime 2.9.7-denext.12; earlier the handler is never called.
+- `onWindowStateChange(handler: (state: WindowState) => void): () => void` — Call handler with the window's state whenever it is maximized, unmaximized, minimized, restored, or enters or leaves fullscreen.
+- `quitApp(): Promise<boolean>` — Quit the app, like Electron's app.quit(): the onCloseRequested handlers are asked first, so a guarded close keeps it running.
+- `restoreWindow(): Promise<void>` — Bring the window back from minimized. @returns Once requested.
+- `setAlwaysOnTop(alwaysOnTop: boolean): Promise<void>` — Keep the window above other windows.
+- `setFullScreen(fullscreen: boolean): Promise<void>` — Enter or leave fullscreen.
+- `setMaximumWindowSize(width: number, height: number): Promise<void>` — Limit how large the window can get (0 = no limit on that axis).
+- `setMinimumWindowSize(width: number, height: number): Promise<void>` — Limit how small the window can get (0 = no limit on that axis).
+- `setTitleBarStyle(style: TitleBarStyle): Promise<boolean>` — Change the title bar style (macOS only): "hidden" / "hiddenInset" draw the page under a transparent title bar with the traffic lights on top — give the page a drag region (makeWindowDraggable).
+- `setWindowBackdrop(backdrop: WindowBackdrop, options?: object): Promise<boolean>` — Put a backdrop behind the page: Mica / Acrylic / tabbed Mica on Windows 11, vibrancy on macOS. It shows where the page's background is transparent; "none" removes it.
+- `setWindowBounds(bounds: Partial<WindowBounds>): Promise<void>` — Move and / or resize the frame; missing fields keep their value. To reopen a window where the user left it, save normalBounds (and maximized / fullscreen) from getWindowState, then restore them here on the next launch.
+- `setWindowButtonPosition(position: object | null): Promise<boolean>` — Move the macOS traffic lights (the close button's top-left corner, in points from the window's top-left); null puts them back.
+- `setWindowPosition(x: number, y: number): Promise<void>` — Move the window's frame (see the module docs for the units).
+- `setWindowResizable(resizable: boolean): Promise<void>` — Allow or forbid resizing by the user.
+- `setWindowSize(width: number, height: number): Promise<void>` — Resize the window's page area.
+- `setWindowTitle(title: string): Promise<void>` — Set the native window title.
+- `showWindow(): Promise<void>` — Show the window. @returns Once shown.
+- `startFileDrag(items: typeOperator, options?: object): Promise<DragOutResult>` — Drag files out of the window to another app or the desktop, as a copy. Call it while the mouse button is held: from the page's dragstart (call event.preventDefault() there) or a pointerdown followed by a move. Needs denext's pinned runtime (fileDragOut in windowCapabilities).
+- `type TitleBarButton = close | minimize | maximize | appmenu | menu | icon` — A window button, as GTK's decoration layout names them.
+- `type TitleBarDoubleClick = maximize | minimize | shade | lower | menu | none` — What a double click on a title bar does: "maximize" (toggle), "minimize", "shade" (roll up), "lower", "menu" (the window menu) or "none".
+- `interface TitleBarPreferences` — How the user set up title bars (getTitleBarPreferences), for a page that hides the title bar and draws its own: put the window buttons where the user's other windows have them, and make a double click on the drag region do what a double click on a title bar does.
+- `type TitleBarStyle = default | hidden | hiddenInset` — A title bar style: "hidden" draws the page under a transparent title bar.
+- `unmaximizeWindow(): Promise<void>` — Leave the maximized state. @returns Once requested.
+- `type VibrancyMaterial = titlebar | selection | menu | popover | sidebar | header | sheet | window | hud | fullscreen-ui | tooltip | content | under-window | under-page` — A macOS vibrancy material (NSVisualEffectMaterial, Electron's names).
+- `type WindowBackdrop = none | mica | acrylic | tabbed | vibrancy` — A backdrop behind the page, showing where the page's background is transparent: Windows 11's "mica", "acrylic", "tabbed", or macOS "vibrancy"; "none" removes it.
+- `interface WindowBounds` — A rectangle in screen coordinates (see the module docs for the units).
+- `windowCapabilities(): Promise<WindowCapabilities>` — What this OS and backend support.
+- `interface WindowCapabilities` — What this OS and backend support (Deno.desktop.windowCapabilities() plus closeGuard). A call for a feature reported false changes nothing (or rejects unsupported).
+- `interface WindowScreen` — A display.
+- `interface WindowState` — The window's state (getWindowState).
+
+### `denext/desktop/app`
+
+- `appCapabilities(): Promise<AppCapabilities>` — What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12). A fact an older runtime cannot report reads "unknown".
+- `interface AppCapabilities` — What this OS and runtime can do (appCapabilities).
+- `interface AppMenuAction` — A clickable menu item.
+- `type AppMenuItem = AppMenuAction | AppSubmenu | AppMenuRoleItem | separator` — One entry of an application, tray or Dock menu.
+- `type AppMenuRole = about | hide | hideOthers | unhide | quit | undo | redo | cut | copy | paste | selectAll | minimize | zoom | close | front | toggleFullScreen` — A standard menu item the OS draws and handles itself.
+- `interface AppMenuRoleItem` — A standard item (copy, paste, quit, …).
+- `interface AppSubmenu` — A submenu.
+- `interface AppTray` — A tray icon the page created.
+- `bounce(options?: object): Promise<void>` — Ask for the user's attention: bounce the Dock icon (macOS), flash the taskbar button (Windows), or mark the window urgent (Linux). Nothing happens while the app is focused.
+- `createTray(options: TrayOptions): Promise<AppTray>` — Add an icon to the system tray (the macOS menu bar's status items, the Windows notification area, Linux's AppIndicator area).
+- `interface DesktopBridgeError` — A failed desktop bridge call. Narrow with isDesktopBridgeError.
+- `type DesktopErrorCode = unavailable | forbidden | validation | timeout | too_large | bridge_error | parenthesized` — Why a desktop call failed:
+- `getLaunchAtLogin(): Promise<LaunchAtLoginState>` — Whether the app starts when the user logs in. Needs denext desktop add launch-at-login and denext's pinned runtime.
+- `isDesktopBridgeError(value: unknown): value is DesktopBridgeError` — Whether value is a DesktopBridgeError.
+- `type LaunchAtLoginState = enabled | disabled | requires-approval | not-supported` — Whether the app starts at login. requires-approval: registered, but the user has to allow it in the system settings (macOS Login Items, or a Windows startup entry the user turned off).
+- `listShortcuts(): Promise<string[]>` — The shortcuts this app holds, canonical, in registration order.
+- `onAppCapabilitiesChanged(handler: (capabilities: AppCapabilities) => void): () => void` — Call handler with fresh appCapabilities whenever the runtime says what the session provides may have changed (runtime 2.9.7-denext.10 and later, Linux: a tray host started or went away, as when the GNOME AppIndicator extension is enabled while the app runs). Create the tray icon again when tray turns true. Older runtimes never call it.
+- `onAppMenuItem(handler: (id: string) => void): () => void` — Call handler with the id of each application-menu item the user chooses (by click or accelerator).
+- `type PlatformUnknown = unknown` — A session fact the runtime could not report (a runtime before 2.9.7-denext.10, or no answer).
+- `interface RegisteredShortcut` — A registered shortcut (registerShortcut).
+- `registerShortcut(accelerator: string, handler: () => void): Promise<RegisteredShortcut>` — Bind a key combination system-wide: handler runs whichever app has the keyboard focus. Needs denext desktop add global-shortcuts and denext's pinned runtime.
+- `type SecretServiceState = available | locked | activatable | absent | no-session-bus | os` — The Secret Service's state, as the runtime reads it without starting or unlocking it: "os" on macOS and Windows (Keychain, DPAPI); on Linux "locked" also covers a missing default keyring and "activatable" is installed but not running.
+- `setAppMenu(menu: typeOperator): Promise<void>` — Replace the application menu: the macOS menu bar, the window's menu bar on Windows and Linux. Chosen items reach onAppMenuItem; roles are handled by the OS.
+- `setBadge(badge: string | number | null): Promise<void>` — Show a badge: on the Dock icon on macOS, and as a "(N) " prefix of the window titles on Windows. On Linux a count shows on the app's launcher where a dock reads launcher badges (runtime 2.9.7-denext.11: Ubuntu's dock, Dash to Dock, Plasma's task manager), else as the same title prefix; appCapabilities().badgeShows says which. null, "" or 0 removes it.
+- `setLaunchAtLogin(enabled: boolean): Promise<LaunchAtLoginState>` — Start the app when the user logs in (or stop): a macOS login item, a Windows Run value, a Linux XDG autostart entry. Turn it on only when the user asks.
+- `shortcutCapabilities(): Promise<ShortcutCapabilities>` — What global shortcuts can do on this OS and runtime.
+- `interface ShortcutCapabilities` — What global shortcuts can do here (shortcutCapabilities).
+- `interface TrayBounds` — Where a tray icon is on screen.
+- `type TrayIcon = Uint8Array | string` — A tray icon's image: PNG bytes, or base64 PNG.
+- `interface TrayOptions` — The settings of a tray icon (createTray).
+- `unregisterAllShortcuts(): Promise<void>` — Release every shortcut this app registered.
+- `unregisterShortcut(accelerator: string): Promise<boolean>` — Release a shortcut this app registered (any spelling of it).
+
+### `denext/desktop/clerk`
+
+- `interface ClerkBrowserSignInOptions` — Options for the hosted (browser) sign-in.
+- `interface ClerkDesktopBridge` — What installClerkDesktopBridge installed.
+- `interface ClerkDesktopBridgeOptions` — Options for installClerkDesktopBridge.
+- `interface ClerkLike` — The slice of a clerk-js Clerk instance the hosted sign-in uses (what @clerk/expo's useHostedAuth uses).
+- `interface ClerkOAuthTransport` — @clerk/electron's OAuth transport shape.
+- `interface ClerkPasskeyBridge` — @clerk/electron's passkey bridge shape (__clerk_internal_electron_passkeys).
+- `interface ClerkPasskeysAdapter` — A WebAuthn adapter clerk-js accepts (passkeys from @clerk/electron/passkeys): the shape @clerk/electron/react attaches to its instance.
+- `interface ClerkTokenCache` — @clerk/electron's token cache shape.
+- `installClerkDesktopBridge(options?: ClerkDesktopBridgeOptions): ClerkDesktopBridge | undefined` — Fill window.__clerk_internal_electron (and, with passkeys: true, window.__clerk_internal_electron_passkeys) for @clerk/electron on Deno Desktop. Call it from the app's desktop.preload, so the globals exist before the page's Clerk code reads them. Outside a Deno Desktop window it installs nothing.
+- `type PasskeyEnvelope = object | object` — A passkey result envelope.
+- `startClerkBrowserSignIn(clerk: ClerkLike, options: ClerkBrowserSignInOptions): Promise<object>` — Sign in through Clerk's hosted pages in the system browser and activate the session here: the protocol of @clerk/expo's useHostedAuth, over openAuthSession's custom-scheme flow. A fresh state and PKCE pair are made per call; the hosted-auth record is created with the S256 challenge, the callback must come back to redirectUrl with the same state, and its rotating_token_nonce is redeemed ONLY together with the verifier, which never leaves this page — so a callback intercepted by another app is useless to it.
+
 ### `denext/mobile`
 
 - `type AppFileDirectory = documents | data | cache` — The app's own folders:
@@ -2767,6 +3047,19 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `writeFile(path: string, data: string, options?: WriteFileOptions): Promise<void>` — Write a file, replacing it when it exists.
 - `interface WriteFileOptions` — Options for writeFile.
 
+### `denext/mobile/clerk`
+
+- `interface ClerkBrowserSignInOptions` — Options for the hosted (browser) sign-in.
+- `interface ClerkLike` — The slice of a clerk-js Clerk instance the hosted sign-in uses (what @clerk/expo's useHostedAuth uses).
+- `interface ClerkMobileBridge` — What installClerkMobileBridge installed.
+- `interface ClerkMobileBridgeOptions` — Options for installClerkMobileBridge.
+- `interface ClerkMobileBrowserSignInOptions` — Options for startClerkMobileBrowserSignIn.
+- `interface ClerkOAuthTransport` — @clerk/electron's OAuth transport shape.
+- `interface ClerkPasskeysAdapter` — A WebAuthn adapter clerk-js accepts (passkeys from @clerk/electron/passkeys): the shape @clerk/electron/react attaches to its instance.
+- `interface ClerkTokenCache` — @clerk/electron's token cache shape.
+- `installClerkMobileBridge(options: ClerkMobileBridgeOptions): ClerkMobileBridge | undefined` — Install Clerk's native bridge in the Capacitor shell (see the module docs). Call it once, before the page's Clerk code loads clerk-js — from instrumentation-client.ts in an App Router app, or at the top of a SPA entry. Outside the shell (the web, Deno Desktop) it installs nothing.
+- `startClerkMobileBrowserSignIn(clerk: ClerkLike, options: ClerkMobileBrowserSignInOptions): Promise<object>` — Sign in through Clerk's hosted pages in the shell's auth session and activate the session here: @clerk/expo's useHostedAuth protocol over openAuthSession, with a fresh state and S256 PKCE pair; the callback's nonce is redeemed only with the verifier, which never leaves this page. The passkey path of installClerkMobileBridge, and any method Clerk's hosted pages offer.
+
 ### `denext/updates`
 
 - `applyUpdates(config?: UpdatesConfig, onProgress?: UpdateProgressListener): Promise<UpdatesResult>` — Install every update on offer, reporting each step to onProgress: on a phone the new UI, on Deno Desktop the whole app (or, when no newer app is on offer, the UI overlay), in a browser the newer deploy. It never throws; a target that failed is listed in failures (and reported as stage: "failed").
@@ -2883,6 +3176,95 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `suggest(input: string, candidates: typeOperator): string | undefined` — The closest name in candidates to input within a small edit-distance threshold (scaled to the input length), or undefined when nothing is close — powering "did you mean" hints for both unknown verbs and unknown flags.
 - `VERB_NAME: RegExp` — A project CLI verb name: lowercase, digits and dashes, starting with a letter. The grammar denext.config.ts's commands: validation enforces (src/server/config-validate.ts), and what the help cache accepts back from disk.
 - `verbIndex(argv: typeOperator): number` — Index of the first bare token in argv — the verb — or -1 when there is none. The separate value of a valued global flag (--cwd <dir>) is skipped, not taken as the verb.
+
+### `denext/plugin-kit`
+
+- `interface ApiDefinition` — What an endpoint declares: its schemas, error codes, and per-method body cap.
+- `apiDefinitionOf(handler: unknown): ApiRouteMeta | undefined` — The definition + middleware attached to a defineApi handler, or undefined for a plain function. The seam handleApi reads (body cap, error redaction) and the accessor an OpenAPI/docs plugin uses to describe an app's endpoints.
+- `interface ApiRouteMeta` — The metadata attached to a defineApi handler (what handleApi and plugins read).
+- `interface AppCss` — Result of buildAppCss: everything needed by server + client + docs.
+- `bufferedRequest(request: Request, body: Uint8Array): Request` — Rebuild a request from already-buffered body bytes (headers/method preserved).
+- `buildAppCss(opts: object): Promise<AppCss | null>` — Build the whole project's CSS assets: scan for .css files, transform each, write a JS shim per file, and emit a merged deno config (framework + project imports normalized to absolute, plus the CSS redirects) so the module loader — and deno bundle (via CssAssets.importMap) — can resolve every .css import.
+- `buildNextCompatModules(options: BuildNextCompatModulesOptions): Promise<Map<string, string>>` — Build react→denext-rewritten SSR bundles for a set of route source modules, each RE-EXPORTING the source module's shape (default + named exports: metadata/generateMetadata/segment-config/…) rather than wrapping it in a render(). The main SSR loader (createNextCompatServerLoader) returns these instead of the raw source, so the whole route subtree — including npm React libraries imported inside it — runs on denext's single React.
+- `interface BuildNextCompatModulesOptions` — Options for buildNextCompatModules.
+- `bundleRoutes(routeEntries: Array<object>, opts: BundleOptions): Promise<MultiBundleOutput>` — Bundle several browser entries in a **single** code-split pass, so any module imported by more than one entry — chiefly the denext client runtime, which every route entry imports — is hoisted into one shared chunk they all reference (downloaded once, cached across client navigations) instead of being inlined into each entry. Contrast bundleRoute, which bundles one route in isolation and therefore cannot share a chunk with its siblings.
+- `cappedBody(request: Request, maxBytes: number): Request` — request with its body wrapped so that reading past maxBytes errors the stream (the consumer — formData(), json(), a multipart parser — then throws). For streaming consumers that cannot use readCappedBody; a declared content-length over the cap is refused up front.
+- `captureRequestContext(): (fn: () => T) => T` — Capture the current request so its session can be read again later, outside it — what a plugin holding a long-lived connection (a WebSocket it upgraded) uses to re-check who is on the other end: the returned function runs fn in a fresh request context for a copy of this request (its URL, its headers — cookies included — and its client address, with the app's proxy trust and limit policy), so auth(), cookies() and clientIpForLimits() answer as they did for the original. Capture BEFORE Deno.upgradeWebSocket, which consumes the request. Outside a request the function runs fn as it is.
+- `interface Channel<T>` — A channel on the server.
+- `interface ChannelTapHandlers<T>` — What tapChannel reports.
+- `interface CommandContext` — The parsed invocation handed to a command's CommandSpec.run.
+- `interface CommandSpec` — A first-class denext CLI verb.
+- `compareSpecificity(a: Segment[], b: Segment[]): number` — Order two patterns by specificity the way Next.js does: compare segment by segment from the left, and at the first position that differs the more specific kind wins (static > dynamic > catch-all > optional catch-all). A pattern that has run out of segments (its catch-all consumed the rest) ranks below one that still has a concrete segment there. Returns negative when a should be tried first.
+- `compileMdxSource(path: string, source: string, opts?: MdxBuildOptions): Promise<string>` — Compile one MDX/Markdown source to a JS module string (React automatic runtime, jsxImportSource: "react" → aliased to denext downstream). With no opts this is the baseline plain-MDX/CommonMark path; when the app configures mdx in denext.config.ts, its unified remark/rehype/recma plugin lists (e.g. Codehike, GFM) are forwarded verbatim to MDX's compile. Exported for unit testing the plugin wiring.
+- `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
+- `createNextCompatServerLoader(base: ModuleLoader, opts: NextCompatServerLoaderOptions): ModuleLoader` — Wrap a base ModuleLoader so route source modules that have a react→denext rewritten server bundle load from that bundle instead of source (a keyed ref resolves to the module's namespace inside the single server bundle).
+- `interface DenextConfig` — Project configuration exported from denext.config.{ts,js} (as default or named).
+- `interface DenextPlugin` — A denext plugin. Declared in denext.config.ts as plugins: [myPlugin()]; its setup runs once per process, before the first route scan.
+- `edgeFunctionSource(name: string): string` — An Edge Function in Supabase's shape, for backend({ functions }) from @denext/backend: what denext generate function <name> and denext functions new <name> write.
+- `interface EmittedAsset` — A generated file a build step publishes with PluginBuildContext.emitFile.
+- `enableFastRefresh(): void` — Install the family-identity check and hook-signature guard into the reconciler. Idempotent; called once by the dev route entry before its first render. A no-op in production (this module is never imported there).
+- `extractRouteCss(routeFiles: string[], assets: AppCss): Promise<string>` — Extract the CSS a single route needs: crawl the route's source files, keep the transformed CSS for those reachable .css files (in path order), and concatenate. Returns "" when the route pulls in no CSS.
+- `fromBase64Url(s: string): Uint8Array` — Decode URL-safe base64 (no padding) back to bytes. Shared with the Remix session compat.
+- `type GenerateBundleHook = parenthesized | object` — A generateBundle hook: a function, or Rollup's { handler } object form.
+- `hmacSign(payload: string, secret: string, domain?: unknown): Promise<string>` — HMAC-SHA256 sign payload with secret, returned URL-safe base64. domain separates the token spaces that share one secret (the denext session cookie, a Remix cookie session): a token minted for one can never verify as the other.
+- `hmacVerify(payload: string, sig: string, secrets: string[], domain?: unknown): Promise<boolean>` — Verify payload against sig for any of secrets (constant-time via subtle.verify).
+- `hydrateRoot(container: Element, vnode: VNode, options?: RootOptions): Root` — Hydrate vnode against server-rendered markup already in container.
+- `interface I18nConfig` — Internationalization configuration.
+- `matchSegments(pattern: Segment[], pathname: string): RouteParams | null` — Attempt to match a request pathname against a parsed pattern. Returns extracted params on success, or null if the pattern doesn't match.
+- `interface MdxBuildOptions` — MDX build options threaded from denext.config.ts (mdx). Mirrors the compile-time subset of the app's MDX config; typed loosely so this build module stays decoupled from the server config types. Plugin lists are unified PluggableLists.
+- `interface NextCompatServerLoaderOptions` — Options for createNextCompatServerLoader.
+- `interface OriginCheckOptions` — What verifyOrigin needs from the app config.
+- `class PageCache` — The rendered-page store for Incremental Static Regeneration. A thin façade over the active CacheStore: the prod server consults it before rendering and populates it afterward for cacheable routes. Injecting a shared store via setCacheStore makes ISR work across replicas transparently (replicas of one build share its build id).
+- `parsePattern(pattern: string): Segment[]` — Parse a route pattern like "blog/[slug]" into an ordered segment list.
+- `peelLocale(pathname: string, i18n: I18nConfig | undefined, host?: string): PeeledLocale` — Peel a leading locale segment off pathname. If the first path segment is a configured locale it is stripped and returned; otherwise the default locale is used and the pathname is returned unchanged.
+- `platformClientRedirects(projectDir: string, config: DenextConfig | null | undefined, platform?: Platform): Promise<Record<string, string>>` — The redirects that make a plugin's client bundle resolve the app's [platform-specific files](https://denext.dev/docs/platform-files) (Button.web.tsx) as the server render does: pass them to bundleRoutes' redirects (with projectDir), which follows them through relative imports and the app's import-map aliases alike. Empty when the app has no platform files or turned them off.
+- `interface PluginBuildContext` — Context passed to a PluginBuildStep.
+- `type PluginBuildStep = (context: PluginBuildContext) => void | Promise<void>` — A build-time step that emits the plugin's client bundles/assets into outDir, and publishes generated files at the site root with PluginBuildContext.emitFile. Runs at denext build and at denext export (App Router, SPA and Pages Router alike).
+- `interface PluginContext` — The seams a plugin's DenextPlugin.setup may extend.
+- `type PluginMode = dev | build | prod | export` — Where denext is running when a plugin's DenextPlugin.setup fires.
+- `interface PluginPrepareContext` — Context passed to a PluginPrepareStep (and the base of a build step's).
+- `type PluginPrepareStep = (context: PluginPrepareContext) => void | Promise<void>` — A step that prepares generated inputs (typed accessors, a data artifact) BEFORE the app is bundled or served — the seam a plugin uses to generate code the app then imports. Unlike a PluginBuildStep (which runs only at denext build / export), a prepare step runs in **both** lifecycles: once at denext build and once at denext dev startup, and again during dev whenever a file under its PrepareStepOptions.watch globs changes — so its generated output stays live as you edit. Its PluginPrepareContext is a build step's context without the emit seam: a prepare step generates inputs, not published output.
+- `type PluginRequestHandler = (request: Request) => Response | null | undefined | Promise<Response | null | undefined>` — Claim and handle a request the core router did not match. Return a Response to serve it, or null/undefined to pass (letting denext fall through to static assets and the 404). Runs AFTER App-Router page/API matching, so core routes always win.
+- `type PluginTeardown = () => void | Promise<void>` — A disposer that releases resources a plugin opened in DenextPlugin.setup (watchers, connections, timers). Registered with PluginContext.addTeardown and run — most-recently-registered first — when the server drains.
+- `interface PrepareStepOptions` — Options for PluginContext.addPrepareStep.
+- `readCappedBody(request: Request, maxBytes: number, idleMs?: number): Promise<Uint8Array | TOO_LARGE | STALLED>` — Read a request body into memory, refusing anything over maxBytes (hard-caps even a chunked body with no Content-Length) and aborting a body that stalls for longer than idleMs. Returns the bytes, TOO_LARGE, or STALLED.
+- `registerFamily(type: unknown, id: string): void` — Register a component type under a stable family id (e.g. moduleUrl#Export). Re-registering the same id with a new function ref binds that ref to the same family and marks it current — the mechanism that lets an edited module's fresh references reconcile onto existing fibers.
+- `remixCodegen` — The Remix route-module codegen denext migrate --from remix uses, as a namespace: the swc-based split of a route module into a "use client" component + a server data module (remixCodegen.analyzeModule analyzeModule) and the generated denext wrappers (remixCodegen.pageWrapperSource pageWrapperSource and siblings). A router plugin (@denext/react-router) uses it to generate the same wrappers into .denext/ for an app whose sources stay untouched.
+- `revalidatePath(path: string, _type?: layout | page): Promise<void>` — Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store.
+- `revalidateTag(tag: string, profile?: string | CacheLifeProfile): Promise<void>` — Invalidate every cached data entry and page carrying tag.
+- `type RouteParams = Record<string, string | string[]>` — Extracted dynamic route parameters, keyed by segment name. A [slug] segment yields a string; a [...rest] / [[...rest]] catch-all yields the remaining parts as a string[] (Next.js's shape — params.rest.join("/") for the path form).
+- `type RouteSynthesizer = (manifest: RouteManifest) => void | Promise<void>` — A hook run over the scanned manifest before it is returned. May add, remove, or adjust routes — the extension point behind synthesized/derived routes. May be async (e.g. a plugin scanning its own route tree off disk).
+- `interface Segment` — A single parsed route pattern segment.
+- `specificity(pattern: Segment[]): number` — Specificity score for ordering routes: more specific (static) patterns should be tried before less specific (dynamic/catch-all) ones. Higher wins. Position-blind (a sum) — prefer compareSpecificity for ordering.
+- `STALLED: Symbol` — Sentinel returned by readCappedBody when the body stalls (idle).
+- `interface TailwindConfig` — Tailwind CSS integration. When set, denext compiles input (which contains the raw @import "tailwindcss"; directives) into output using the Tailwind v4 standalone binary — which denext downloads and manages itself — before its own CSS pipeline runs. The output file is what your layout imports.
+- `tapChannel<T>(channel: Channel<T> | string, key: string, handlers: ChannelTapHandlers<T>): () => void` — Observe a channel's publishes on the SERVER: every payload published to key on any instance — through the installed transport, decoded, in seq order per instance — until the returned disposer runs. The seam a plugin uses to bridge channel pushes into another protocol (a GraphQL subscription in @denext/graphql, an SSE stream, a queue) without a second event bus. Survives setChannelTransport (re-binds to the new transport).
+- `toBase64Url(bytes: Uint8Array): string` — Encode bytes as URL-safe base64 (no padding). Shared with the Remix session compat.
+- `TOO_LARGE: Symbol` — Sentinel returned by readCappedBody when the body exceeds the cap.
+- `verifyOrigin(request: Request, options: OriginCheckOptions): boolean` — Is this request from the app's own origin (or an explicitly allowed one)?
+- `interface ViteEmittedFile` — A Rollup emitFile argument (only type: "asset" with a fileName is supported).
+- `interface ViteEmitterBuildContext` — The parts of a plugin build step's context the emitter uses (a subset of PluginBuildContext).
+- `interface ViteEmitterContext` — The plugin context (this) the hook runs with: the parts of Rollup's an emitter uses.
+- `interface ViteEmitterDenextPlugin` — The denext plugin viteEmitterPlugin returns (assignable to DenextPlugin).
+- `viteEmitterPlugin(vitePlugin: VitePluginLike): ViteEmitterDenextPlugin` — Wrap a Vite plugin whose generateBundle emits files (this.emitFile({ type: "asset", fileName, source })) as a denext plugin: the hook runs as a build step at denext build and denext export, and each file it emits is published at the site root.
+- `interface ViteEmitterSetupContext` — The setup context viteEmitterPlugin's plugin uses (a subset of PluginContext).
+- `interface VitePluginLike` — The slice of a Vite plugin viteEmitterPlugin runs.
+- `interface VNode` — A single virtual DOM node.
+- `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
+- `type VNodeChildren = VNodeChild | VNodeChild[]` — One child or an array of children, as accepted by JSX.
+- `type VNodeType = string | Component<any> | FRAGMENT` — The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker.
+- `interface VProps` — Props passed to a virtual node. children is normalized separately.
+
+### `denext/plugin-kit/vite-emitter`
+
+- `type GenerateBundleHook = parenthesized | object` — A generateBundle hook: a function, or Rollup's { handler } object form.
+- `interface ViteEmittedFile` — A Rollup emitFile argument (only type: "asset" with a fileName is supported).
+- `interface ViteEmitterBuildContext` — The parts of a plugin build step's context the emitter uses (a subset of PluginBuildContext).
+- `interface ViteEmitterContext` — The plugin context (this) the hook runs with: the parts of Rollup's an emitter uses.
+- `interface ViteEmitterDenextPlugin` — The denext plugin viteEmitterPlugin returns (assignable to DenextPlugin).
+- `viteEmitterPlugin(vitePlugin: VitePluginLike): ViteEmitterDenextPlugin` — Wrap a Vite plugin whose generateBundle emits files (this.emitFile({ type: "asset", fileName, source })) as a denext plugin: the hook runs as a build step at denext build and denext export, and each file it emits is published at the site root.
+- `interface ViteEmitterSetupContext` — The setup context viteEmitterPlugin's plugin uses (a subset of PluginContext).
+- `interface VitePluginLike` — The slice of a Vite plugin viteEmitterPlugin runs.
 
 ### `denext/expo/apple-authentication`
 

@@ -1,6 +1,6 @@
 // `denext <deno verb>` and `denext <script>`: every Deno verb denext does not own runs on denext's
-// Deno exactly like `denext deno <verb>`, a script runs as `deno run`, a project verb shadows a
-// Deno verb (with a notice), and an unknown verb keeps its did-you-mean — now over Deno's verbs
+// Deno exactly like `denext deno <verb>`, a script runs as `deno run`, a listed project verb shadows
+// a Deno verb (with a notice), and an unknown verb keeps its did-you-mean — now over Deno's verbs
 // too. Unit tests over the pure pieces, then the real CLI as a subprocess.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
@@ -354,7 +354,7 @@ Deno.test("a typo is never run: did-you-mean over denext and Deno verbs", async 
   }
 });
 
-Deno.test("a project verb shadows a Deno verb, with one notice on stderr", async () => {
+Deno.test("a listed project verb shadows a Deno verb, with one notice on stderr", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_shadow_" });
   try {
     await Deno.writeTextFile(join(dir, "deno.json"), "{}");
@@ -363,6 +363,11 @@ Deno.test("a project verb shadows a Deno verb, with one notice on stderr", async
       'export default { commands: [{ name: "bench", summary: "Mine", ' +
         'run: () => console.log("project bench") }] };\n',
     );
+    // Not yet listed by `denext commands`: Deno's bench runs, the config is never imported.
+    const unlisted = await runCli(["bench"], dir);
+    assert(!unlisted.out.includes("project bench"), unlisted.out);
+    assertStringIncludes(unlisted.err, "`denext commands`");
+    assertEquals((await runCli(["commands", "--timeout", "30000"], dir)).code, 0);
     const res = await runCli(["bench"], dir);
     assertEquals(res.code, 0, res.err);
     assertEquals(res.out.trim(), "project bench");
@@ -373,8 +378,13 @@ Deno.test("a project verb shadows a Deno verb, with one notice on stderr", async
     const again = await runCli(["bench"], dir);
     assertEquals(again.code, 0, again.err);
     assert(!again.err.includes("shadows Deno's"), again.err);
+    // A changed config file makes the listing stale: Deno's again until it is re-listed.
     await Deno.writeTextFile(join(dir, "deno.json"), '{ "tasks": {} }');
+    const stale = await runCli(["bench"], dir);
+    assert(!stale.out.includes("project bench"), stale.out);
+    assertEquals((await runCli(["commands", "--timeout", "30000"], dir)).code, 0);
     const changed = await runCli(["bench"], dir);
+    assertEquals(changed.out.trim(), "project bench");
     assertStringIncludes(changed.err, "shadows Deno's");
   } finally {
     await Deno.remove(dir, { recursive: true });
@@ -464,9 +474,32 @@ Deno.test("a forwarding verb keeps `--` so script arguments stay the script's", 
   const out = buildRegistry().parse(["test", "a.test.ts", "--", "--seed", "1"]);
   assert(out.kind === "run");
   assertEquals(out.ctx.rest, ["a.test.ts", "--", "--seed", "1"]);
-  const dev = buildRegistry().parse(["routes", "--", "x"]);
+  const dev = buildRegistry().parse(["routes", ".", "--", "x"]);
   assert(dev.kind === "run");
   assertEquals(dev.ctx.rest, ["x"], "a non-forwarding verb still drops it");
+});
+
+Deno.test("real verbs: a leading -- (a task runner's) is ignored unless the verb forwards", () => {
+  const reg = buildRegistry();
+  for (
+    const [argv, flag, value] of [
+      [["start", "--", "--port", "4000"], "port", 4000],
+      [["dev", "--", "--port", "4100", "--host", "0.0.0.0"], "host", "0.0.0.0"],
+      [["build", "--", "--json"], "json", true],
+      [["routes", "--", "--json"], "json", true],
+    ] as const
+  ) {
+    const out = reg.parse([...argv]);
+    assert(out.kind === "run", argv.join(" "));
+    assertEquals(out.ctx.flags[flag], value, argv.join(" "));
+    assertEquals(out.ctx.rest, [], argv.join(" "));
+  }
+  // Forwarding verbs keep today's meaning: the separator goes to Deno.
+  for (const verb of ["test", "task", "fmt"]) {
+    const out = reg.parse([verb, "--", "--seed", "1"]);
+    assert(out.kind === "run", verb);
+    assertEquals(out.ctx.rest, ["--", "--seed", "1"], verb);
+  }
 });
 
 Deno.test("a relative DENEXT_DENO resolves against the starting directory", async () => {

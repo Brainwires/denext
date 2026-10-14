@@ -275,10 +275,18 @@ export interface AppConfig {
    * `fly-client-ip`, `x-real-ip`) that per-address limits key on — `rateLimit()`,
    * `denextAuth`'s per-IP budgets, `live.limits.maxConnectionsPerIp` and
    * `clientIpForLimits()` (never `clientIp()`). A request without an IP address in it falls back
-   * to the socket peer / trusted hop. `denext start`/`dev` take it from the config's
+   * to the socket peer / trusted hop. Believed only from a trusted proxy:
+   * a peer in {@linkcode AppConfig.rateLimitTrustedProxies}, or (none listed) a loopback/private
+   * peer with `trustForwardedHeaders`. `denext start`/`dev` take it from the config's
    * `rateLimitHeader` (or `DENEXT_RATE_LIMIT_HEADER`).
    */
   rateLimitHeader?: string;
+  /**
+   * CIDR ranges (or addresses) of the proxies whose `rateLimitHeader` is believed; a request
+   * from any other peer keys its limits on that peer. `denext start`/`dev` take it from the
+   * config's `rateLimitTrustedProxies` (or `DENEXT_RATE_LIMIT_TRUSTED_PROXIES`).
+   */
+  rateLimitTrustedProxies?: string[];
   /**
    * Apply per-address limits to a loopback/private socket peer too, counted by its own address,
    * instead of skipping them (the default, since such a peer is usually a proxy every visitor

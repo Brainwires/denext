@@ -103,13 +103,40 @@ failed download, the command prints one warning saying why and continues on stoc
 that lacks the grants to install and run it (`--allow-run`, and read/write on the cache
 directory) stays on the Deno that launched it without a warning: that is the least-privilege
 `start` task `denext create` scaffolds (`deno run --allow-net --allow-read --allow-env
---allow-write=.denext …`), so production `start` runs on whichever `deno` started it. Run `start`
+--allow-write=.denext …`), so production `start` runs on whichever `deno` started it. That
+`start` spawns no child process (the build already wrote what it serves), so it needs no
+`--allow-run` either. Run `start`
 with `-A` (or add `--allow-run` and write access to the cache) to serve on the toolchain, or
 start the server with `denext deno run …`. `denext toolchain status` says which Deno a command
 runs on. Only `denext toolchain install` fails when the toolchain can't be had, since installing
 it is all it does.
 
 `DENO_BIN`, when you set it, still decides which `deno` the CLI's own child processes run.
+
+## esbuild
+
+denext's bundling (the SPA and compatibility builds, dev's dependency pre-bundle, `analyze`,
+plugins) runs esbuild 0.25.5 through a copy of esbuild's own JavaScript API that denext vendors, so
+there is no `npm:esbuild` import. The binary it starts is, in order:
+
+1. `ESBUILD_BINARY_PATH`, when you set it. It must report `0.25.5`; any other version is refused
+   by name.
+2. The `esbuild` the toolchain ships beside `deno` (2.9.7-denext.17 and later). Each toolchain zip
+   carries `esbuild` (`esbuild.exe` on Windows) and its `esbuild.LICENSE`; the pin records its
+   version and SHA-256, the install extracts it from the already-verified zip, checks that hash,
+   and records it in the stamp. Later runs re-hash it whenever its size or modification time
+   changed.
+3. Otherwise — `DENEXT_DENO=stock`, plain stock Deno, a toolchain from before denext.17, or a
+   process that hasn't installed the toolchain — the official `@esbuild/<platform>` 0.25.5 npm
+   package's binary, cached in `<DENO_DIR>/denext-esbuild/`. It is copied from Deno's npm cache
+   when a copy there hashes to the pin, and otherwise downloaded from the registry
+   (`NPM_CONFIG_REGISTRY`, default `registry.npmjs.org`) with the tarball checked against its
+   pinned npm integrity and the binary against its pinned SHA-256 before it is made executable.
+
+A toolchain esbuild that does not match its pin (or is missing from the zip) is never installed:
+builds use the npm one and print one warning saying why. `denext toolchain status` shows which
+esbuild the next build runs and where it comes from. An idle esbuild process never keeps a command
+alive.
 
 ## `denext task`, `deno task` and tests
 
@@ -131,7 +158,7 @@ instead, or write the step itself as a denext verb:
 {
   "tasks": {
     // denext's own test verb (`deno test -A` on the toolchain); what `denext create` scaffolds
-    "test": "deno run -A jsr:@denext/denext@^3/cli test",
+    "test": "deno run -A jsr:@denext/denext@^4.0.0/cli test",
     // or run any deno subcommand on it, arguments verbatim
     "test:raw": "denext deno test -A"
   }
@@ -143,11 +170,23 @@ project (the config, `__mocks__`, automock) and of the environment variables Vit
 grant, so a `deno test` without `-A` lists only what its tests use (`denext deno test
 --allow-read=tests/fixtures …`). `denext test` runs `deno test -A` and needs nothing more.
 
-Coverage of a suite with Vitest files: report the Vitest files' coverage on the toolchain
-(`denext deno coverage`), in a report of its own. The Vitest layer changes the code a module
-emits, and `deno coverage` under-reports a module whose profiles from a plain run and a Vitest run
-it merges; a stock Deno run's profile of a module the toolchain has since run reads as "Missing
-transpiled source".
+Coverage of a suite with Vitest files (from `2.9.7-denext.17`): run every pass on the toolchain
+into one directory, each with `--coverage-raw-data-only` so no pass empties what another wrote,
+then report that directory with the toolchain's `deno coverage`:
+
+```sh
+rm -rf cov
+denext deno test -A --coverage=cov --coverage-raw-data-only               # the Deno.test files
+denext deno test -A --coverage=cov --coverage-raw-data-only tests/**/*.vitest.ts
+denext deno coverage cov --lcov --output=cov.lcov
+```
+
+The Vitest layer changes the code a module emits, so a module run by both passes has two
+profiles of two different scripts; the toolchain's `deno coverage` reports each through its own
+source map and merges the two reports line for line (a line run by either pass counts as covered).
+Run every pass and the report on the toolchain: stock Deno's `deno coverage` merges such profiles
+range by range, offsets into two different scripts, and under-reports the module (as the
+toolchain's did before `2.9.7-denext.17`).
 
 denext never rewrites the tasks in your existing `deno.json`; `denext doctor` names the tasks that
 call `deno test` directly so you can change them, or run them with `denext task`.
@@ -160,14 +199,27 @@ A verb denext does not define itself is Deno's, run on the toolchain exactly as
 `denext deno`, a forwarded verb falls back to stock Deno (with the usual one warning) when the
 toolchain can't be had. A script or URL in the verb's place (`denext main.ts`,
 `denext https://example.com/x.ts`) is `deno run`. denext's built-in verbs come first, then the
-project's own verbs (a project verb that shadows a Deno verb prints one line saying so), then
-Deno's; the full list is in the [CLI reference](/docs/cli#deno-verbs).
+project's own verbs, then Deno's; the full list is in the [CLI reference](/docs/cli#deno-verbs).
+
+Finding a project's verbs means importing its `denext.config.ts` (and running every plugin
+`setup()`) with the CLI's own permissions, so denext does that only for a name that can be one:
+
+- A script or URL (`denext main.ts`) never imports the config: Deno runs it with Deno's own
+  permission rules, exactly as `deno run main.ts` would.
+- `run`, `x`, `eval`, `serve`, `compile`, `install`, `uninstall`, `upgrade` and `task` always mean
+  Deno's (or denext's own `upgrade`). A project verb or plugin `addCommand` with one of these
+  names is refused when it is defined.
+- Any other Deno verb (`bench`, `doc`, …) runs the project's verb of that name only when the
+  project's last `denext commands` listing (`.denext/commands.json`, fingerprinted against the
+  config, `deno.json` and `deno.lock`) names it — and prints one line saying it shadows Deno's.
+  With no listing, or a stale one, Deno's verb runs and the config is not imported; inside a
+  denext project one hint says to run `denext commands`.
 
 ## Commands
 
 ```sh
 denext toolchain install       # download + verify now (fails when it can't)
-denext toolchain status        # pinned version, cache state, whether this run is on it (--json, --verify)
+denext toolchain status        # pinned version, cache state, whether this run is on it, which esbuild builds use (--json, --verify)
 denext toolchain path          # the binary's path (installs it first)
 denext toolchain link          # opt-in: ~/.denext/bin/deno → the toolchain, and the PATH line to add
 denext toolchain unlink        # removes that link, and only a link it created
@@ -182,3 +234,27 @@ and `link` replaces it (commands switch to the pinned build either way).
 
 `denext doctor` reports the toolchain as one check: the pinned version, whether it is cached and
 verified, and whether the run is on it or on stock Deno, and why.
+
+## Notes: how denext's Deno build is kept current
+
+**Tracking Deno.** The toolchain is Deno's latest release (2.9.7) plus denext's patches — `Deno.SQL`,
+Vitest/Jest compatibility in `deno test` and the [Deno Desktop runtime](/docs/desktop-runtime) work —
+published as `2.9.7-denext.N` with SHA-256 sums and build attestations. Between Deno releases we
+review what Deno's main branch has gained and take the fixes that matter: `2.9.7-denext.16` took the
+read-permission check for a compiled program's dynamic import, two Node-API fixes, coverage runs
+skipping V8's code cache, the HTTP connection-pool fix and the `rand` security update. Each new Deno
+release is adopted by rebasing the patches onto it and cutting a new `-denext.N`. Deno's next minor
+replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
+
+**Support across denext releases.** The patches are carried forward from release to release. Each
+denext release pins exactly one build (a SHA-256 per target, checked on download), so a project
+always runs the build its denext version was tested with, and upgrading denext moves the build with
+it. `DENEXT_DENO=stock` always works: what needs the build (`Deno.SQL`, Vitest/Jest compatibility,
+the bundled esbuild) falls back or says why it can't.
+
+**Bootstrapping.** The first command that runs project code — or the installer, ahead of time —
+downloads the pinned build for the platform into `<DENO_DIR>/denext-deno/`, verifies its SHA-256
+against the pin, records a stamp and re-runs itself on it. Every child process it starts (tasks,
+the UI, the MCP server, builds) finds that `deno` first on `PATH`. The `deno` on your `PATH` is never
+replaced (`denext toolchain link` opts in), and a failed download falls back to stock Deno with one
+warning. From `2.9.7-denext.17` the same download also carries esbuild 0.25.5.

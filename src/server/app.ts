@@ -20,7 +20,7 @@ import { applyDefaultSecurityHeaders } from "./response-headers.ts";
 import { type AppRuntime, type CompiledRules, compileRules } from "./pipeline-state.ts";
 import { runPipeline } from "./request-pipeline.ts";
 import { resolveCors } from "./cors.ts";
-import { resolveLimitPolicy } from "./remote-addr.ts";
+import { resolveLimitPolicy, responseCompletionOf } from "./remote-addr.ts";
 import { createAppLinksHandler } from "./app-links.ts";
 import { compressEncodings, compressOrPassThrough, type ContentCoding } from "./compress.ts";
 import type { RequestContext } from "./request-context.ts";
@@ -120,10 +120,11 @@ function dispatch(
   };
   const startedAt = performance.now();
   // Per-request abort signal — fires on client disconnect or (when configured)
-  // request timeout. Exposed on the context so handlers/components can thread it
-  // into their own fetch()es for cooperative cancellation.
+  // request timeout, and once the response is done. Exposed on the context so
+  // handlers/components can thread it into their own fetch()es for cooperative cancellation.
   const controller = new AbortController();
   linkAbort(originalRequest.signal, controller);
+  linkCompletion(responseCompletionOf(originalRequest), controller);
   requestCtx.signal = controller.signal;
 
   let pipeline = runWithContext(
@@ -135,7 +136,9 @@ function dispatch(
   // signal-aware, so the abort actually reclaims the work. `requestTimeout: 0`
   // disables; a background regen has no client deadline.
   const requestTimeout = isBackgroundRegen ? 0 : (config.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT);
-  if (requestTimeout > 0) pipeline = withRequestTimeout(pipeline, requestTimeout, controller);
+  if (requestTimeout > 0) {
+    pipeline = withRequestTimeout(pipeline, requestTimeout, controller, requestCtx);
+  }
   pipeline = pipeline.then((res) => echoRequestId(res, requestCtx.requestId));
   const secure = isSecureRequest(config, originalRequest);
   pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure, config.hsts));
@@ -292,16 +295,36 @@ function linkAbort(
   source.addEventListener("abort", () => controller.abort(), { once: true });
 }
 
+/**
+ * Abort `controller` once the response is done, delivered or not (the server loop's
+ * `info.completed`). Under Deno's legacy abort the request's own signal did that too; with
+ * `--unstable-no-legacy-abort` (the toolchain's) it fires only when delivery fails.
+ */
+function linkCompletion(completed: Promise<void> | undefined, controller: AbortController): void {
+  const done = () => controller.abort();
+  completed?.then(done, done);
+}
+
 /** Race a response against a timeout; on expiry, abort in-flight work and 503. */
 function withRequestTimeout(
   pipeline: Promise<Response>,
   ms: number,
   controller: AbortController,
+  ctx: { timeoutMs?: number; rearmTimeout?: () => void },
 ): Promise<Response> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timedOut = false;
+  const startedAt = Date.now();
   const timeout = new Promise<Response>((resolve) => {
-    timer = setTimeout(() => {
+    // A handler may replace the deadline (`setRequestTimeout`): arm for what is left of the
+    // current one, or stop watching when it is `0`.
+    const arm = () => {
+      clearTimeout(timer);
+      const limit = ctx.timeoutMs ?? ms;
+      if (limit === 0 || timedOut) return;
+      timer = setTimeout(fire, Math.max(0, limit - (Date.now() - startedAt)));
+    };
+    const fire = () => {
       timedOut = true;
       controller.abort();
       resolve(
@@ -310,18 +333,26 @@ function withRequestTimeout(
           headers: { "content-type": "text/plain; charset=utf-8" },
         }),
       );
-    }, ms);
+    };
+    ctx.rearmTimeout = arm;
+    arm();
   });
   return Promise.race([pipeline, timeout]).then(
     (res) => timedOut || !res.body ? clear(res) : deadlineBody(res),
     (err) => {
-      clearTimeout(timer);
+      done();
       throw err;
     },
   );
 
-  function clear(res: Response): Response {
+  /** The deadline no longer applies: stop the timer, and a later `setRequestTimeout` too. */
+  function done(): void {
     clearTimeout(timer);
+    ctx.rearmTimeout = undefined;
+  }
+
+  function clear(res: Response): Response {
+    done();
     return res;
   }
 
@@ -334,8 +365,8 @@ function withRequestTimeout(
   function deadlineBody(res: Response): Response {
     const body = res.body!.pipeThrough(
       new TransformStream<Uint8Array, Uint8Array>({
-        flush: () => clearTimeout(timer),
-        cancel: () => clearTimeout(timer),
+        flush: done,
+        cancel: done,
       }),
     );
     return new Response(body, {

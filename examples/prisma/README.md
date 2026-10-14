@@ -13,11 +13,11 @@ through the same Prisma client — no client JavaScript.
 ## Run it
 
 ```sh
-deno task setup   # one-time: bundle the shim, install, prisma generate + db push
-deno task dev      # http://localhost:3000   (or: deno task build && deno task start)
+denext task setup   # one-time: bundle the shim, install, prisma generate + db push
+denext task dev      # http://localhost:3000   (or: denext task build && denext task start)
 ```
 
-`deno task setup` is required first (and again whenever the schema changes).
+`denext task setup` is required first (and again whenever the schema changes).
 It's also network + codegen heavy — it installs `@prisma/*` and runs the
 `prisma` CLI.
 
@@ -54,4 +54,4 @@ the Drizzle / Postgres variants.
   install/generate/push.
 
 An opt-in end-to-end test lives at `tests/e2e/prisma.e2e.test.ts`
-(`deno task test:e2e`).
+(`denext task test:e2e`).

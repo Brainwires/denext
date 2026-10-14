@@ -278,7 +278,7 @@ Deno.test({
         assertEquals([res.status, (await res.json()).code], [404, "PGRST205"], name);
       }
       const skipped: string[] = [];
-      const catalog = await readRestCatalog(db.service(), "public", "*", (list) => {
+      const catalog = await readRestCatalog(db.service(), ["public"], "*", (list) => {
         skipped.push(...list.map((s) => `${s.name}:${s.kind}`));
       });
       assertEquals(skipped.sort(), [
@@ -286,17 +286,17 @@ Deno.test({
         "mat:materialized view",
         "open_table:table",
       ]);
-      const named = await readRestCatalog(db.service(), "public", ["open_table", "definer_view"]);
-      assertEquals([...named.keys()].sort(), ["definer_view", "open_table"]);
+      const named = await readRestCatalog(db.service(), ["public"], ["open_table", "definer_view"]);
+      assertEquals([...named.tables.get("public")!.keys()].sort(), ["definer_view", "open_table"]);
 
       // The row types, from the live catalog.
-      assertEquals([...catalog.keys()].sort(), ["notes", "slow"]);
-      const types = generateRestTypes(catalog, "public");
-      assertStringIncludes(types, `"tags": string[] | null;`);
-      assertStringIncludes(types, `"meta": Json | null;`);
-      assertStringIncludes(types, `"is_public"?: boolean;`);
+      assertEquals([...catalog.tables.get("public")!.keys()].sort(), ["notes", "slow"]);
+      const types = generateRestTypes(catalog);
+      assertStringIncludes(types, `tags: string[] | null;`);
+      assertStringIncludes(types, `meta: Json | null;`);
+      assertStringIncludes(types, `is_public?: boolean;`);
       const insert = types.slice(types.indexOf("Insert:"), types.indexOf("Update:"));
-      assert(!insert.includes(`"words"`), "a generated column is never written");
+      assert(!insert.includes(`words`), "a generated column is never written");
     } finally {
       resetPlugins();
       installPostgres(undefined);

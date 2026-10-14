@@ -5,8 +5,39 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> denext **3.4.x** ships continuously from `development` as patch releases; what each one added is in
-> the changelog.
+> denext **4.0** is in release candidates (`4.0.0-rc.N`) from `development`, then ships 4.x patch
+> and minor releases from there; what each one added is in the changelog.
+
+## 4.1.0: Additional Supabase features
+
+Operations commands for the self-hosted stack (`denext generate docker --stack` /
+`denext stack`). Each one edits `.env` in place, keeping its comments and layout, and offers to
+restart the affected containers (or does so at once with `--restart`).
+
+- **Change passwords:** a `denext stack passwd` changes `POSTGRES_PASSWORD` and/or the dashboard
+  password. `--generate` makes strong ones. It keeps the database's superuser and app role
+  (`POSTGRES_APP_USER`) in sync with `.env`.
+- **Roll the keys:** a `denext stack roll` regenerates the publishable and secret keys
+  (`DENEXT_PUBLISHABLE_KEY`, `DENEXT_SECRET_KEY`). `--include-secret` also regenerates the JWT
+  signing keys / `DENEXT_JWT_SECRET`, which invalidates every token already issued; say so
+  before doing it.
+- **Backup and restore:** a `denext stack backup` / `restore` for the database and storage. A
+  `--full` backup is one tar file with the roles, settings, extensions, the database dump, the
+  storage objects and a `MANIFEST.txt` that records the restore order; `restore` recognises a
+  full backup on its own.
+- **Health:** a `denext stack health` shows each service's health (the stack's health checks and
+  the app's `/_denext/health` checks), with a `--watch` mode and `--json` output.
+- **Logs with filtering:** `denext stack logs` gains filters (service, level, time window, text
+  match) on top of the per-service output it prints today.
+- **A dashboard:** a Supabase Studio-style web dashboard for the stack, behind the dashboard
+  password: tables and rows, RLS policies, auth users, storage buckets and objects, realtime,
+  functions, logs and health. Build it on the `denext ui` Database pages (schema-driven, works
+  with JavaScript off) so the local UI and the stack's dashboard are one implementation.
+
+## Deno toolchain
+
+- **Deno's next minor:** rebase denext's patches onto it and cut a new `-denext.N`. That release
+  replaces Deno's TypeScript fork with stock TypeScript 6, so this rebase is larger than usual.
 
 ## Deno Desktop
 
@@ -117,10 +148,6 @@ Each is documented as a manual recipe today (the
   served by `denext openapi types`).
 - **CLI distribution:** publish the Homebrew / Scoop / winget manifests each release generates
   to a tap, a bucket and winget-pkgs; a Windows Arm64 `denext` binary.
-- **`@denext/backend` database type generator:** row types for every table of the schema, for
-  server-side `db()` queries (auto-REST's `.denext/rest.ts` types only the tables it serves).
-- **`@denext/backend` realtime over logical replication,** for the very high write volumes that
-  LISTEN/NOTIFY serializes on commit.
 
 ## `denext ui` and DevTools
 
@@ -146,7 +173,8 @@ Each is documented as a manual recipe today (the
 
 ## Build toolchain: waiting on `deno bundle`
 
-`npm:esbuild` stays at build time because `deno bundle` exposes no plugin surface. The
+esbuild's plugin API (vendored, running the toolchain's esbuild binary — no longer `npm:esbuild`)
+stays at build time because `deno bundle` exposes no plugin surface. The
 next-compat and SPA-compat builds and the unbundled dev loop's dependency pre-bundle must
 rewrite imports inside `node_modules` (the "two Reacts" fix) and run about 20 transforms
 (`?url` assets, CSS shims, MDX, `use cache`, Node-builtin stubs, `import.meta.env`, pnpm

@@ -8,11 +8,19 @@
 import { isAbsolute, relative, resolve } from "@std/path";
 import { realPathOfNearestSync, within } from "../ui/security.ts";
 import { GENERATE_KINDS, generateArtifact, type GenerateKind } from "../build/generate.ts";
+import {
+  dockerPortAndTag,
+  type DockerRequest,
+  STACK_FEATURE_HELP,
+  STACK_FEATURES,
+  type StackOverrides,
+} from "../build/docker-detect.ts";
 import { collectDoctorReport, doctorReportMarkdown } from "../cli/commands/doctor.ts";
 import { runCodemod } from "../build/codemod.ts";
 import { collectRoutes, formatRouteListText } from "../build/route-list.ts";
 import type { DevEvent } from "../build/dev-events.ts";
 import { fetchDevState } from "./dev-client.ts";
+import { databaseTools } from "./database.ts";
 import { devtoolsTools } from "./devtools.ts";
 import { renderComponent, renderRoute, routeMap } from "./inspect.ts";
 import { profileApp } from "../profile/core.ts";
@@ -71,6 +79,62 @@ const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : 
  * from {@link GENERATE_KINDS} so the enum can never drift from what the generator supports.
  */
 const GENERATE_KIND_LIST = GENERATE_KINDS.join("|");
+
+/** The `denext_generate` parameters for kind `docker` — `denext generate docker`'s flags. */
+const DOCKER_SCHEMA: Record<string, Record<string, unknown>> = {
+  ...Object.fromEntries(STACK_FEATURES.map((f) => [f, {
+    type: "boolean",
+    description: `docker only (--${f} / --no-${f}): ${STACK_FEATURE_HELP[f]}. true adds it, ` +
+      "false leaves it out, omitted follows the detection.",
+  }])),
+  stack: {
+    type: "boolean",
+    description: "docker only (--stack): every service the project needs, and Postgres regardless.",
+  },
+  exposeDb: {
+    type: "boolean",
+    description: "docker only (--expose-db): publish Postgres on 127.0.0.1:5432 (off: only the " +
+      "app reaches it).",
+  },
+  dev: {
+    type: "boolean",
+    description: "docker only (--dev): also write compose.dev.yml (denext dev on a bind mount).",
+  },
+  port: {
+    type: "integer",
+    minimum: 1,
+    maximum: 65535,
+    description: "docker only (--port): the port the app listens on (default 3000).",
+  },
+  denoTag: {
+    type: "string",
+    description: "docker only (--deno-tag): the denoland/deno image tag (default: this Deno's " +
+      "version).",
+  },
+};
+
+/**
+ * The {@linkcode DockerRequest} a `denext_generate` call asks for (the `name` stays the target).
+ *
+ * @param args The tool arguments.
+ * @returns The request.
+ * @throws When `port` or `denoTag` is invalid.
+ */
+export function dockerRequestOf(args: Record<string, unknown>): DockerRequest {
+  const overrides: StackOverrides = {};
+  for (const f of STACK_FEATURES) {
+    if (typeof args[f] === "boolean") overrides[f] = args[f] as boolean;
+  }
+  const { port, tag } = dockerPortAndTag(args.port, args.denoTag);
+  return {
+    overrides,
+    all: args.stack === true,
+    ...(port !== undefined ? { port } : {}),
+    ...(tag !== undefined ? { denoTag: tag } : {}),
+    exposeDb: args.exposeDb === true,
+    dev: args.dev === true,
+  };
+}
 
 /**
  * The directory every tool's `dir` is confined to once the stdio server arms it (the project
@@ -178,7 +242,7 @@ async function devLogs(dir: string, kind?: string, limit?: number): Promise<stri
   const state = await fetchDevState(dir, { kind, limit });
   if (!state) {
     return `No running dev server found for ${dir} (looked for .denext/dev.json). ` +
-      "Start it with `deno task dev`, then reload the app in a browser to capture events.";
+      "Start it with `denext task dev`, then reload the app in a browser to capture events.";
   }
   if (state.events.length === 0) {
     return `The dev server is running but has recorded no ${kind ?? ""} events yet.`.replace(
@@ -247,16 +311,22 @@ export const TOOLS: readonly Tool[] = [
         dir: { type: "string", description: "Project directory (default: current directory)." },
         force: { type: "boolean", description: "Overwrite files that already exist." },
         dryRun: { type: "boolean", description: "Plan only: print what would be written." },
+        ...DOCKER_SCHEMA,
       },
       required: ["kind"],
     },
     run: async (args) => {
       const dryRun = args.dryRun === true;
+      const kind = str(args.kind) as GenerateKind;
       const { written, skipped, preview } = await generateArtifact(
         projectDir(args.dir),
-        str(args.kind) as GenerateKind,
+        kind,
         str(args.name),
-        { force: args.force === true, dryRun },
+        {
+          force: args.force === true,
+          dryRun,
+          ...(kind === "docker" ? { docker: dockerRequestOf(args) } : {}),
+        },
       );
       const lines = [
         ...written.map((p) => `${dryRun ? "~ would write:" : "+"} ${p}`),
@@ -313,7 +383,7 @@ export const TOOLS: readonly Tool[] = [
     description:
       "Read the RUNNING dev server's recent events — server errors (with codeframes), server + " +
       "browser console, completed requests (method/path/status/ms), and HMR events. Use it to " +
-      "see what actually happened at runtime. Requires `deno task dev` to be running.",
+      "see what actually happened at runtime. Requires `denext task dev` to be running.",
     inputSchema: {
       type: "object",
       properties: {
@@ -573,6 +643,8 @@ export const TOOLS: readonly Tool[] = [
   // The DevTools bridge: the component tree / render reasons / hook cells a RUNNING dev
   // page pushed to the dev server (see ./devtools.ts).
   ...devtoolsTools(projectDir),
+  // The project's database: migrations and generated types (child processes).
+  ...databaseTools(projectDir),
 ];
 
 /**
@@ -595,6 +667,8 @@ export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
   devtools: ["denext_component_tree", "denext_why_render", "denext_hook_state"],
   /** denext's own docs, offline: search + read every guide page and the API reference. */
   docs: ["denext_search_docs", "denext_read_docs"],
+  /** The project's database: its migrations, and its generated TypeScript types. */
+  database: ["denext_migrations", "denext_gen_types"],
   /** Project-codebase search: index, query, find-definition, find-references. */
   rag: [
     "denext_index_codebase",

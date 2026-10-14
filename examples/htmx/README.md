@@ -8,9 +8,9 @@ JS** — htmx (served from this origin by the plugin) does all the interactivity
 ## Run
 
 ```sh
-deno task dev      # http://localhost:3000
-deno task build    # static/prod build (emits the runtime into the output)
-deno task start    # serve the build
+denext task dev      # http://localhost:3000
+denext task build    # static/prod build (emits the runtime into the output)
+denext task start    # serve the build
 ```
 
 ## What it shows

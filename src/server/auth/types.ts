@@ -1,6 +1,6 @@
 /**
  * Shared types for denext auth: the normalized user/session shapes and the
- * provider contracts (OAuth 2.0 / OIDC, Credentials, and passwordless Email).
+ * provider contracts (OAuth 2.0 / OIDC, Credentials, passwordless Email and Phone).
  *
  * @module
  */
@@ -9,6 +9,7 @@ import type { AdapterAccount, AdapterUser, AuthAdapter, VerificationPurpose } fr
 import type { Hasher } from "./hasher.ts";
 import type { RateLimitOptions } from "./rate-limit.ts";
 import type { SessionStore } from "./session-store.ts";
+import type { GoTrueCaptchaOptions, GoTrueHooks, GoTrueSmsMessage } from "./gotrue/options.ts";
 
 /** A normalized user profile — the non-sensitive identity denext stores in the session. */
 export interface AuthUser {
@@ -34,6 +35,12 @@ export interface AuthUser {
    * means "no roles", so a role check on a session without them always refuses.
    */
   roles?: string[];
+  /**
+   * `true` for an anonymous user (`POST {basePath}/anonymous`, `signInAnonymously()`): signed
+   * in with no email or phone yet. It becomes permanent — and loses the flag — by redeeming an
+   * email link / code or a phone code for an identifier no other account has. Absent otherwise.
+   */
+  isAnonymous?: true;
 }
 
 /** The signed (readable, tamper-evident) session payload. Never stores tokens/secrets. */
@@ -237,8 +244,27 @@ export interface EmailProvider {
   confirm?: boolean;
 }
 
+/**
+ * A passwordless **phone** provider: `phoneOtp()` texts a one-time numeric code through the
+ * SMS sender ({@link AuthConfig.sendSms}, or `hooks.sendSms`) and needs an adapter with the
+ * verification-token group plus `getUserByPhone` / `createUser` / `updateUser`.
+ */
+export interface PhoneProvider {
+  /** Provider id (the `[provider]` route segment): `"phone"` by default. */
+  id: string;
+  /** Display name for a sign-in button — `GET {basePath}/providers` echoes it. */
+  name: string;
+  /** Discriminant marking this as a phone provider. */
+  type: "phone";
+  /**
+   * Whether a number with no account may sign up by proving it. With `false` an unknown
+   * number is sent nothing — and answered exactly as if it had been.
+   */
+  allowSignUp: boolean;
+}
+
 /** Any configured provider. */
-export type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider;
+export type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider | PhoneProvider;
 
 /**
  * True for an OAuth/OIDC provider (vs. Credentials or Email).
@@ -258,6 +284,16 @@ export function isOAuthProvider(p: AuthProvider): p is OAuthProvider {
  */
 export function isEmailProvider(p: AuthProvider): p is EmailProvider {
   return p.type === "email";
+}
+
+/**
+ * True for a passwordless phone provider (`phoneOtp()`).
+ *
+ * @param p Any configured provider.
+ * @returns Whether `p` is a {@link PhoneProvider}.
+ */
+export function isPhoneProvider(p: AuthProvider): p is PhoneProvider {
+  return p.type === "phone";
 }
 
 /** What {@link AuthCallbacks.authorized} is asked about. */
@@ -300,7 +336,8 @@ export interface AuthLogger {
  * Why a sign-in attempt was refused, as `signInFailed` reports it — a closed set, so an app can
  * switch over it exhaustively:
  *
- * - `"invalid_credentials"` — a wrong password, or a wrong, spent or expired email link / code;
+ * - `"invalid_credentials"` — a wrong password, or a wrong, spent or expired email link / code
+ *   or phone code;
  * - `"invalid_mfa_code"` — a wrong TOTP or backup code (or passkey) at the second-factor step;
  * - `"invalid_passkey"` — a passkey assertion that failed verification (the WebAuthn reason
  *   goes to the logger);
@@ -313,7 +350,9 @@ export interface AuthLogger {
  * - `"config"` — the provider could not be resolved (discovery, a malformed endpoint);
  * - `"oauth_failed"` — the code exchange, the `id_token` or the profile failed;
  * - `"provider_error"` — the provider itself answered `?error=` (its code in `providerError`);
- * - `"invalid_nonce"` / `"invalid_token"` — a native `id_token` sign-in's nonce or token.
+ * - `"invalid_nonce"` / `"invalid_token"` — a native `id_token` sign-in's nonce or token;
+ * - `"captcha_failed"` — `captcha` is configured and the request carried no token the
+ *   provider confirmed.
  */
 export type SignInFailedReason =
   | "invalid_credentials"
@@ -329,10 +368,15 @@ export type SignInFailedReason =
   | "oauth_failed"
   | "provider_error"
   | "invalid_nonce"
-  | "invalid_token";
+  | "invalid_token"
+  | "captcha_failed";
 
 /** Why an API token was revoked, as `apiTokenRevoked` reports it. */
-export type ApiTokenRevokedReason = "revoked" | "password_reset" | "email_verified";
+export type ApiTokenRevokedReason =
+  | "revoked"
+  | "password_reset"
+  | "email_verified"
+  | "phone_verified";
 
 /**
  * Side-effect hooks on the auth lifecycle. A handler may be async; it is awaited, and a
@@ -396,7 +440,8 @@ export interface AuthEvents {
   /**
    * A bearer API token was revoked: by `revokeApiToken` / `DELETE {basePath}/tokens/:id`
    * (`"revoked"`), by a password reset (`"password_reset"`), or by the first proof of an
-   * unverified account's mailbox (`"email_verified"`, the pre-account-hijacking eviction).
+   * unverified account's mailbox (`"email_verified"`) or phone number (`"phone_verified"`) —
+   * the pre-account-hijacking eviction.
    */
   apiTokenRevoked?: (payload: {
     /** The token's id. */
@@ -432,9 +477,10 @@ export interface AuthEvents {
     account: Pick<AdapterAccount, "userId" | "provider" | "providerAccountId" | "type">;
   }) => Promise<void> | void;
   /**
-   * A verification token was delivered through `sendVerificationRequest` (an
+   * A verification token was delivered through `sendVerificationRequest` / `hooks.sendEmail` (an
    * email-verification or password-reset email, or a `magicLink()` / `emailOtp()` sign-in
-   * link or code). Fires only for a real send — never for
+   * link or code), or a `phoneOtp()` code through the SMS sender (`purpose: "sms"`, the number as
+   * `identifier`). Fires only for a real send — never for
    * an unknown address, a throttled request or a failed delivery — and never carries the
    * token or the link.
    */
@@ -455,6 +501,27 @@ export interface AuthEvents {
   emailVerified?: (payload: {
     /** The user record, with `emailVerified` set. */
     user: AdapterUser;
+  }) => Promise<void> | void;
+  /**
+   * A user proved control of their phone number by a first `phoneOtp()` sign-in into an
+   * existing account whose number was unverified — whose password, second factors, passkeys,
+   * bearer tokens and server-side sessions were retired first (`sessionRevoked` fired for the
+   * sessions).
+   */
+  phoneVerified?: (payload: {
+    /** The user record, with `phoneVerified` set. */
+    user: AdapterUser;
+  }) => Promise<void> | void;
+  /**
+   * An anonymous user became permanent: a complete anonymous session redeemed an email link /
+   * code or a phone code for an identifier no account had, so the proof was attached to the
+   * anonymous user (same id, `isAnonymous` cleared) instead of creating a new one.
+   */
+  userConverted?: (payload: {
+    /** The user record, now carrying the proven email or phone. */
+    user: AdapterUser;
+    /** The provider whose proof converted it. */
+    provider: string;
   }) => Promise<void> | void;
   /**
    * A user set a new password by redeeming a password-reset token. Their server-side
@@ -552,9 +619,12 @@ export interface AuthEmailConfig {
   resetMaxAge?: number;
   /** How long a magic sign-in link stays valid, in seconds. Default `600` (10 minutes). */
   magicMaxAge?: number;
-  /** How long a one-time code stays valid, in seconds. Default `300` (5 minutes). */
+  /**
+   * How long a one-time code stays valid, in seconds — an emailed one and a `phoneOtp()` text
+   * alike. Default `300` (5 minutes).
+   */
   otpMaxAge?: number;
-  /** How many digits a one-time code has. Default `6`; clamped to `6..10`. */
+  /** How many digits a one-time code (email or SMS) has. Default `6`; clamped to `6..10`. */
   otpDigits?: number;
   /**
    * The same-origin path an email-verification link opens (the link adds `?token=…&email=…`).
@@ -850,6 +920,38 @@ export interface AuthConfig {
    * denext ships no mailer; the flows that need one refuse to start without this.
    */
   sendVerificationRequest?: SendVerificationRequest;
+  /**
+   * Deliver an SMS — phone sign-in codes (`phoneOtp()`), phone MFA codes and phone changes, for
+   * denext's own endpoints and for `/auth/v1` (`backend({ supabase })`) alike. denext ships no
+   * SMS gateway; the phone flows refuse to start without this (or `hooks.sendSms`).
+   */
+  sendSms?: (message: GoTrueSmsMessage) => Promise<void> | void;
+  /**
+   * Verify a captcha token (hCaptcha or Turnstile) on the endpoints that create sessions or
+   * send messages — sign-up, password sign-in, one-time codes, recovery, anonymous sign-in —
+   * on denext's endpoints and `/auth/v1` alike. Off by default. denext's endpoints (the
+   * credentials POST, an email or phone SEND, `POST /anonymous`, `POST /reset`) read the token
+   * from `captchaToken`, `captcha_token`, `cf-turnstile-response` or `h-captcha-response` in the
+   * body, or the `x-captcha-token` header, and refuse without one the provider confirms
+   * (`400 { error: "captcha_failed" }`, or a form's `303 ?error=CaptchaFailed`) before any
+   * adapter work or rate-limit spend. Redeeming a code or link needs no token.
+   */
+  captcha?: GoTrueCaptchaOptions;
+  /**
+   * Supabase's auth hooks, shared by denext's endpoints and `/auth/v1`: `customAccessToken`
+   * shapes the claims of every session (an `/auth/v1` access token, and the
+   * `request.jwt.claims` a cookie session's queries run with), `sendEmail` delivers every auth
+   * email (instead of `sendVerificationRequest`), `sendSms` every SMS (instead of `sendSms`).
+   */
+  hooks?: GoTrueHooks;
+  /**
+   * Anonymous sign-in: a user with no identifier yet (`POST {basePath}/anonymous`,
+   * `supabase.auth.signInAnonymously()`), who becomes permanent by adding a confirmed email or
+   * phone — on denext's endpoints by redeeming an email link / code or a `phoneOtp()` code for
+   * an identifier no account has, from the anonymous session. Default `false`: the endpoint does
+   * not exist.
+   */
+  anonymous?: boolean;
   /** Token lifetimes and link targets for email verification, password reset, magic links and one-time codes. */
   email?: AuthEmailConfig;
   /** Second-factor (TOTP) policy. */

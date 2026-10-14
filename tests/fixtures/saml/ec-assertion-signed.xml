@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:unused="urn:example:unused" ID="_resp1" Version="2.0" IssueInstant="2026-10-13T12:00:00Z" Destination="https://sp.example.com/auth/v1/sso/saml/acs" InResponseTo="_req1">
+  <saml:Issuer>https://idp.example.org/metadata</saml:Issuer>
+  
+  <samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>
+  <saml:Assertion ID="_assert1" Version="2.0" IssueInstant="2026-10-13T12:00:00.123Z">
+    <saml:Issuer>https://idp.example.org/metadata</saml:Issuer>
+    <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+    <ds:SignedInfo>
+      <ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+      <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256"/>
+      <ds:Reference URI="#_assert1">
+        <ds:Transforms>
+          <ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>
+          <ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"><ec:InclusiveNamespaces xmlns:ec="http://www.w3.org/2001/10/xml-exc-c14n#" PrefixList="xs xsi"/></ds:Transform>
+        </ds:Transforms>
+        <ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
+        <ds:DigestValue>dQehe6dnGnsylQYdpillOskudHamif27zVjlhTeygMo=</ds:DigestValue>
+      </ds:Reference>
+    </ds:SignedInfo>
+    <ds:SignatureValue>mTQpl1jG0TG4m08S2zPRRUP3P44TkGmkJ5MKv0Wu/FpOegiTRqBKXqD7F9lc8K/3
+V0vJbvsxYOMZygUwikHOFA==</ds:SignatureValue>
+    <ds:KeyInfo><ds:X509Data>
+<ds:X509Certificate>MIIBoDCCAUWgAwIBAgIUNd9j8Fa93A2JJJ/kX3Jx3aHgSI0wCgYIKoZIzj0EAwIw
+JDEiMCAGA1UEAwwZZGVuZXh0IFNBTUwgdGVzdCBJZFAgKEVDKTAgFw0yNjEwMTMx
+NzI4MDVaGA8yMTI2MDkxOTE3MjgwNVowJDEiMCAGA1UEAwwZZGVuZXh0IFNBTUwg
+dGVzdCBJZFAgKEVDKTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABIaoq6/DEoqI
+LJPBpsspMdsZu/gcT1+Uk/UqLo0HPIdkcxSTS5/z9mgAVc41QdVa3MInfMDbhagt
+L96l9+WjkumjUzBRMB0GA1UdDgQWBBSDYpzXKRxp/0oys9paRkzYWMAjcDAfBgNV
+HSMEGDAWgBSDYpzXKRxp/0oys9paRkzYWMAjcDAPBgNVHRMBAf8EBTADAQH/MAoG
+CCqGSM49BAMCA0kAMEYCIQDAamvRv4ohFfQjgyPF6EV7DOunv4k/YIPM9PZAXxNh
+LgIhAOdekSk2dytQSOUTGK+g8OXjJPOnLN4YYJRQ9W4yysRo
+</ds:X509Certificate>
+</ds:X509Data></ds:KeyInfo>
+  </ds:Signature>
+    <saml:Subject>
+      <saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">alice@example.com</saml:NameID>
+      <saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+        <saml:SubjectConfirmationData InResponseTo="_req1" NotOnOrAfter="2026-10-13T12:05:00Z" Recipient="https://sp.example.com/auth/v1/sso/saml/acs"/>
+      </saml:SubjectConfirmation>
+    </saml:Subject>
+    <saml:Conditions NotBefore="2026-10-13T11:59:30Z" NotOnOrAfter="2026-10-13T12:05:00Z">
+      <saml:AudienceRestriction><saml:Audience>https://sp.example.com/auth/v1/sso/saml/metadata</saml:Audience></saml:AudienceRestriction>
+    </saml:Conditions>
+    <saml:AuthnStatement AuthnInstant="2026-10-13T12:00:00Z" SessionIndex="_session1" SessionNotOnOrAfter="2026-10-13T20:00:00Z">
+      <saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef></saml:AuthnContext>
+    </saml:AuthnStatement>
+    <!-- a comment the digest must not cover -->
+    <saml:AttributeStatement>
+      <saml:Attribute Name="email" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:basic"><saml:AttributeValue xsi:type="xs:string">alice@example.com</saml:AttributeValue></saml:Attribute>
+      <saml:Attribute Name="groups"><saml:AttributeValue xsi:type="xs:string">admins</saml:AttributeValue><saml:AttributeValue xsi:type="xs:string">R&amp;D &lt;team&gt; "q" 	tab</saml:AttributeValue></saml:Attribute>
+      <saml:Attribute Name="display name" FriendlyName="cn"><saml:AttributeValue>Alice Ålesund 𝔄</saml:AttributeValue></saml:Attribute>
+    </saml:AttributeStatement>
+  </saml:Assertion>
+</samlp:Response>

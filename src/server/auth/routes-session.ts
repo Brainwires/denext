@@ -15,18 +15,19 @@ import {
   wantsJson,
 } from "./routes-shared.ts";
 import { emitAuthEvent } from "./events.ts";
-import { clearAuthSession, readAuthSession, refreshIfStale } from "./session.ts";
-import { isEmailProvider } from "./types.ts";
+import { clearAuthSession, readAuthSession, refreshLiveSession } from "./session.ts";
+import { isEmailProvider, isPhoneProvider } from "./types.ts";
 
 /**
  * `GET {basePath}/session` — the client's view of the session: the user and the expiry,
  * or nulls when signed out. `no-store`, so no cache ever holds one user's answer.
  *
  * This is the canonical sliding-expiry path: it owns its response, so a session aged past
- * `session.updateAge` is re-issued here ({@link refreshIfStale}) and the client's polling
- * keeps an active user signed in. A session still owing a second factor answers
- * `{ user: null, mfa: "required" }` — the user is never exposed before MFA completes, but
- * the client can tell "finish your second factor" from "signed out".
+ * `session.updateAge` is re-issued here ({@link refreshLiveSession}) and the client's polling
+ * keeps an active user signed in (an SSO user's session, due to slide, ends instead). A
+ * session still owing a second factor answers `{ user: null, mfa: "required" }` — the user is
+ * never exposed before MFA completes, but the client can tell "finish your second factor" from
+ * "signed out".
  *
  * @param ctx The route context.
  * @returns The JSON session response.
@@ -35,13 +36,14 @@ export async function handleSession(ctx: AuthRouteContext): Promise<Response> {
   const session = await readAuthSession(ctx.config);
   if (!session) return json({ user: null, expires: null });
   if (session.mfaPending) return json({ user: null, expires: null, mfa: "required" });
-  const live = await refreshIfStale(ctx.config, session);
+  const live = await refreshLiveSession(ctx.config, session);
+  if (!live) return json({ user: null, expires: null });
   return json({ user: live.user, expires: live.expiresAt });
 }
 
 /**
  * `GET {basePath}/providers` — the configured providers' ids and types (plus the display
- * `name` of an email provider), so a sign-in page can render its buttons. Never exposes
+ * `name` of an email or phone provider), so a sign-in page can render its buttons. Never exposes
  * client ids, secrets, or endpoints.
  *
  * @param ctx The route context.
@@ -50,7 +52,9 @@ export async function handleSession(ctx: AuthRouteContext): Promise<Response> {
 export function handleProviders(ctx: AuthRouteContext): Response {
   return json(
     ctx.config.providers.map((p) =>
-      isEmailProvider(p) ? { id: p.id, name: p.name, type: p.type } : { id: p.id, type: p.type }
+      isEmailProvider(p) || isPhoneProvider(p)
+        ? { id: p.id, name: p.name, type: p.type }
+        : { id: p.id, type: p.type }
     ),
   );
 }

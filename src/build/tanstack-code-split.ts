@@ -13,7 +13,7 @@
 // esbuild `suffix` (so each is its own module). `@tanstack/router-plugin` is a build-time npm tool
 // (loaded only when the option is on); nothing of it reaches the browser.
 
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import { extname, SEPARATOR } from "@std/path";
 import type { SpaTanstackRouterConfig } from "../server/config.ts";
 import { inNodeModules } from "./path-segments.ts";

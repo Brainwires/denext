@@ -5,7 +5,7 @@
 // keeps the framework source external, as it does for every other denext module. The unbundled
 // dev loop maps the same specifiers through `UnbundledDevOptions.specAliases`.
 
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import { frameworkFileUrl } from "./bundle.ts";
 
 /** One DOM list package specifier denext takes over. */

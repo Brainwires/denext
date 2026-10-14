@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:unused="urn:example:unused" ID="_resp1" Version="2.0" IssueInstant="2026-10-13T12:00:00Z" Destination="https://sp.example.com/auth/v1/sso/saml/acs" InResponseTo="_req1">
+  <saml:Issuer>https://idp.example.org/metadata</saml:Issuer>
+  <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+    <ds:SignedInfo>
+      <ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+      <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha512"/>
+      <ds:Reference URI="#_resp1">
+        <ds:Transforms>
+          <ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>
+          <ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+        </ds:Transforms>
+        <ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha512"/>
+        <ds:DigestValue>ebMmJy5IuRZkit9jQiaUFwzPCPPcIS4mkLZgHGiO3MAmHSDJmU4Z11s3roYQPYlx
+2FEf4UKZU1TdodTrRwFZpw==</ds:DigestValue>
+      </ds:Reference>
+    </ds:SignedInfo>
+    <ds:SignatureValue>Uia9VDWjdMUwgl7sVKFyFdLyASPRDwcimXfGebY2buIxM0iAwjpEn4uuKg539i5E
+AmE+iSUke3T21NfEZc9nL59AHa/j7yZTqIk04AXpIR6arrJey3cvoAtBHXIkxfss
+bPVvuhbtOeeaHaxQF8gdokRwNAK4vy/bNzPmp9yVOUyz/VR6kNjpZjHHHDHPDHAO
+HBzePzLv9zaPOz1M0hp8gZzPmcg5WnyBme8HOBxZADQN2RGZONyBoeDpas7/dBra
+s9qAB5olysT+1kg3MGxfPl2Gvsh4O9sAcg5P30us2Iheyj559EwWXuDRIbD9vsVa
+X0YXKjdkeHRdtk0R8eKTgg==</ds:SignatureValue>
+    <ds:KeyInfo><ds:X509Data>
+<ds:X509Certificate>MIIDLTCCAhWgAwIBAgIUS8IWjV8aDii4ob4U8OiW1O4epUkwDQYJKoZIhvcNAQEL
+BQAwJTEjMCEGA1UEAwwaZGVuZXh0IFNBTUwgdGVzdCBJZFAgKFJTQSkwIBcNMjYx
+MDEzMTcyODA1WhgPMjEyNjA5MTkxNzI4MDVaMCUxIzAhBgNVBAMMGmRlbmV4dCBT
+QU1MIHRlc3QgSWRQIChSU0EpMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC
+AQEApng5W0w1llcSr19roQ5T9rtHNw4oxWjCr077rxBmK1lm+dAY6LO7eYJU9W9E
+UGFHnCKpBXeuRvM2fiILGAcNH/B1+HGiKUlBr03buVhncQneESyM8UDEZ9kyxZW9
+S727rpuUCdy4kF0Sz0ZjG2QNG1ZLGQ19tEJ7R2glvmF+Qq3XSf0GZZi4IcRz9fD5
+3b7MG2t7ZLdSS8tJb6YEAigAXVg4+Yhj6+QNtEP4Tkvd2/D0OlPi78IhKulUbGX3
+IT7lp2XRMaHpwFf1zoEdOnTdGr9MDbXZT53xjS1SjJ6b9bXFH0ypS0R2f6Pu6HY+
+mM7iGDbrgzvBkkeqSft2JkAACwIDAQABo1MwUTAdBgNVHQ4EFgQUL3id6yJXRFnR
+ZkTmYf05H6jDbP0wHwYDVR0jBBgwFoAUL3id6yJXRFnRZkTmYf05H6jDbP0wDwYD
+VR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAISWTS2aHrF30fSsW/gYw
+I3tyHQAJov/IScHqgmEtzbYxCxorF48ujU/UlmhvzcC9rMswuiw2nNqtE44jc3nc
++aRWwbZ1qLf0aAWWu+rO6uefRwvb6/9JctLahOzMZA/k+uzxjngEAt2FaVfWzl4i
+8FsiS/55QbjvSV001+sGo7mrpsPiintorb6i4YN8PAezV0ejn2/csHQ+dcMWJCAL
+ydE2Lc56apm8K4mnVCKYjmAbR4S0+ixF67UUC8UJK06DkaRNjoMqxy4GPAPOJzUY
+GirShjnDKqReslNOaSImlGtgGLzm2+27L+qvKL9M0h3qvBMtT47PbPWfFjTn0gG6
+ZA==
+</ds:X509Certificate>
+</ds:X509Data></ds:KeyInfo>
+  </ds:Signature>
+  <samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>
+  <saml:Assertion ID="_assert1" Version="2.0" IssueInstant="2026-10-13T12:00:00.123Z">
+    <saml:Issuer>https://idp.example.org/metadata</saml:Issuer>
+    
+    <saml:Subject>
+      <saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">alice@example.com</saml:NameID>
+      <saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+        <saml:SubjectConfirmationData InResponseTo="_req1" NotOnOrAfter="2026-10-13T12:05:00Z" Recipient="https://sp.example.com/auth/v1/sso/saml/acs"/>
+      </saml:SubjectConfirmation>
+    </saml:Subject>
+    <saml:Conditions NotBefore="2026-10-13T11:59:30Z" NotOnOrAfter="2026-10-13T12:05:00Z">
+      <saml:AudienceRestriction><saml:Audience>https://sp.example.com/auth/v1/sso/saml/metadata</saml:Audience></saml:AudienceRestriction>
+    </saml:Conditions>
+    <saml:AuthnStatement AuthnInstant="2026-10-13T12:00:00Z" SessionIndex="_session1" SessionNotOnOrAfter="2026-10-13T20:00:00Z">
+      <saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef></saml:AuthnContext>
+    </saml:AuthnStatement>
+    <!-- a comment the digest must not cover -->
+    <saml:AttributeStatement>
+      <saml:Attribute Name="email" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:basic"><saml:AttributeValue xsi:type="xs:string">alice@example.com</saml:AttributeValue></saml:Attribute>
+      <saml:Attribute Name="groups"><saml:AttributeValue xsi:type="xs:string">admins</saml:AttributeValue><saml:AttributeValue xsi:type="xs:string">R&amp;D &lt;team&gt; "q" 	tab</saml:AttributeValue></saml:Attribute>
+      <saml:Attribute Name="display name" FriendlyName="cn"><saml:AttributeValue>Alice Ålesund 𝔄</saml:AttributeValue></saml:Attribute>
+    </saml:AttributeStatement>
+  </saml:Assertion>
+</samlp:Response>

@@ -13,7 +13,7 @@ export const fallowCommand: CommandSpec = {
     `  init  writes fallow.toml, .githooks/pre-commit, scripts/coverage-to-istanbul.ts and\n` +
     `        AGENTS.md (each only when missing), adds the fallow / fallow:audit /\n` +
     `        coverage:fallow / hooks:install tasks to deno.json (npm:fallow@${FALLOW_VERSION})\n` +
-    `        and coverage/ + .fallow/ to .gitignore. Run \`deno task hooks:install\` to\n` +
+    `        and coverage/ + .fallow/ to .gitignore. Run \`denext task hooks:install\` to\n` +
     `        enable the commit gate.`,
   positionals: [
     { name: "action", help: "init", required: true },
@@ -39,7 +39,7 @@ export const fallowCommand: CommandSpec = {
     for (const p of skipped) console.log(`   • already present: ${p}`);
     if (!dryRun && written.length > 0) {
       console.log(
-        "\n  Next: `deno task fallow:audit` runs the gate; `deno task hooks:install` runs it" +
+        "\n  Next: `denext task fallow:audit` runs the gate; `denext task hooks:install` runs it" +
           " before every commit.",
       );
     }

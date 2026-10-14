@@ -17,6 +17,7 @@ import {
 import { JOB_HISTORY_DB, type JobHistoryStore, sqliteJobHistoryStore } from "./job-history.ts";
 import type { JobHistoryConfig } from "./config.ts";
 import { inRootContext } from "./root-context.ts";
+import { guardLegacyMigrateJob } from "./legacy-migrate-job.ts";
 
 /**
  * Discover `jobs/**` under `jobsDir`, import each module, and register the job it
@@ -50,7 +51,16 @@ export async function discoverJobs(jobsDir: string): Promise<string[]> {
     }
     const job = mod.default ?? mod.job;
     if (isJob(job)) {
-      registerJob(name, job);
+      registerJob(
+        name,
+        name === "migrate"
+          ? guardLegacyMigrateJob(
+            job,
+            await Deno.readTextFile(entry.path),
+            join(jobsDir, "..", "migrations"),
+          )
+          : job,
+      );
       found.push(name);
     } else {
       console.error(

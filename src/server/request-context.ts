@@ -14,7 +14,14 @@ import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 import type { SegmentConfig } from "./segment-config.ts";
 import type { CorsPolicy } from "./cors.ts";
 import { currentCacheScope } from "./cache-scope.ts";
-import { clientAddrOf, ipBucket, limitAddrOf, type LimitAddrPolicy } from "./remote-addr.ts";
+import {
+  clientAddrOf,
+  copyRemoteAddr,
+  ipBucket,
+  limitAddrOf,
+  type LimitAddrPolicy,
+  serverOriginOf,
+} from "./remote-addr.ts";
 
 /**
  * Reading request-specific data (`cookies()`/`headers()`/`connection()`) inside a
@@ -162,6 +169,13 @@ export interface RequestContext {
    * request handler; absent when running outside a request.
    */
   signal?: AbortSignal;
+  /**
+   * This request's deadline in ms from its start, when {@linkcode setRequestTimeout} replaced
+   * the app's `requestTimeout` (`0`: none). Read by `createApp`'s timeout when it fires.
+   */
+  timeoutMs?: number;
+  /** Re-arms `createApp`'s timer for a new {@linkcode RequestContext.timeoutMs}. */
+  rearmTimeout?: () => void;
   /**
    * Whether the app trusts `x-forwarded-for` for the client address — mirrors
    * {@linkcode AppConfig.trustForwardedHeaders}. Read by {@linkcode clientIp}; set by
@@ -592,6 +606,24 @@ function clientAddressContext(api: string): RequestContext | undefined {
 }
 
 /**
+ * The origin on which this machine reaches the denext server that received the current request:
+ * the address it listens on, a wildcard bind (`0.0.0.0` / `::`) as the loopback address —
+ * `http://127.0.0.1:3000`. It is never derived from the request's `Host` or forwarded headers, so
+ * server code can hand it to something that outlives the request (a worker's environment, a URL
+ * the server calls itself on) without a forged header steering it elsewhere. For the app's
+ * public origin, configure `canonicalOrigin`.
+ *
+ * Reading it does not make the render dynamic: it is the same for every request a server gets.
+ *
+ * @returns The origin, or `undefined` outside a request, or when the request did not arrive
+ *   through denext's own server loop (an embedder's `Deno.serve`, a test calling the handler).
+ */
+export function localServerOrigin(): string | undefined {
+  const ctx = storage.getStore();
+  return ctx ? serverOriginOf(ctx.request) : undefined;
+}
+
+/**
  * The correlation id for the current request — the value logged with the request and its
  * errors, and echoed as the `x-request-id` response header on an error. Honors an inbound
  * `x-request-id` only when the app trusts its proxy (`trustForwardedHeaders` /
@@ -622,6 +654,21 @@ export function requestId(): string {
 export function requestSignal(): AbortSignal | undefined {
   if (currentCacheScope()) return undefined;
   return currentContext()?.signal;
+}
+
+/**
+ * Give the current request a deadline of its own, replacing the app's `requestTimeout` (30 s by
+ * default) — for a surface with its own time budget: an Edge Function's `timeoutMs`, a large
+ * upload or download, a long statement. `0` removes the deadline (the work must then bound
+ * itself). Counted from the request's start; a no-op outside a request.
+ *
+ * @param ms The deadline, ms from the request's start (`0`: none).
+ */
+export function setRequestTimeout(ms: number): void {
+  const ctx = currentContext();
+  if (!ctx || !Number.isFinite(ms) || ms < 0) return;
+  ctx.timeoutMs = ms;
+  ctx.rearmTimeout?.();
 }
 
 /**
@@ -682,6 +729,43 @@ export function withoutRequestContext<T>(fn: () => T): T {
 /** The current request context, or undefined if none is active. */
 export function currentContext(): RequestContext | undefined {
   return storage.getStore();
+}
+
+/** Headers a captured request does not keep: the upgrade handshake's and the body's. */
+const UNCAPTURED_HEADERS =
+  /^(?:upgrade|connection|sec-websocket-.*|content-length|content-type|transfer-encoding)$/i;
+
+/**
+ * Capture the current request so its session can be read again later, outside it — what a
+ * plugin holding a long-lived connection (a WebSocket it upgraded) uses to re-check who is on
+ * the other end: the returned function runs `fn` in a fresh request context for a copy of this
+ * request (its URL, its headers — cookies included — and its client address, with the app's
+ * proxy trust and limit policy), so `auth()`, `cookies()` and `clientIpForLimits()` answer as
+ * they did for the original. Capture BEFORE `Deno.upgradeWebSocket`, which consumes the request.
+ * Outside a request the function runs `fn` as it is.
+ *
+ * @returns A runner: `(fn) => fn()` in a context equivalent to the captured request's.
+ */
+export function captureRequestContext(): <T>(fn: () => T) => T {
+  const ctx = currentContext();
+  if (!ctx) return (fn) => fn();
+  const headers = new Headers();
+  for (const [name, value] of ctx.request.headers) {
+    if (!UNCAPTURED_HEADERS.test(name)) headers.append(name, value);
+  }
+  const template = new Request(ctx.request.url, { headers });
+  copyRemoteAddr(ctx.request, template);
+  const trust: RequestContextTrust = {
+    ...(ctx.trustForwardedHeaders !== undefined
+      ? { trustForwardedHeaders: ctx.trustForwardedHeaders }
+      : {}),
+    ...(ctx.limitPolicy !== undefined ? { limitPolicy: ctx.limitPolicy } : {}),
+  };
+  return (fn) => {
+    const request = new Request(template);
+    copyRemoteAddr(template, request);
+    return runWithContext(createRequestContext(request, undefined, trust), fn);
+  };
 }
 
 /**

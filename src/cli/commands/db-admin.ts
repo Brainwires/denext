@@ -10,12 +10,11 @@
 
 import { resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { resolveProject } from "../../build/paths.ts";
-import { applyPlugins, runPluginTeardown } from "../../plugin/mod.ts";
-import { defaultLoader } from "../../server/mod.ts";
+import { runPluginTeardown } from "../../plugin/mod.ts";
 import type { DbEnvelope, DbReply } from "../../ui/database/protocol.ts";
 import { openConnection } from "../db-admin/connection.ts";
 import { failureOf, handleDbRequest } from "../db-admin/handle.ts";
+import { setUpProject } from "../db/project.ts";
 
 /** The most a request may carry on stdin. */
 const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
@@ -45,19 +44,6 @@ function env(name: string): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-/** Load the project and set its plugins up, so `@denext/backend` installs what it declares. */
-async function setUpProject(projectDir: string): Promise<void> {
-  const paths = await resolveProject(projectDir);
-  if (!paths.config?.plugins?.length) return;
-  await applyPlugins({
-    projectRoot: projectDir,
-    appDir: paths.appDir,
-    config: paths.config,
-    mode: "build",
-    load: defaultLoader,
-  });
 }
 
 /**

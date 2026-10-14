@@ -29,6 +29,8 @@ recipes; this page is the map.
 ```sh
 denext generate docker   # Dockerfile + docker-compose.yml + .dockerignore
 docker build -t my-app . && docker run -p 3000:3000 -e SESSION_SECRET=… my-app
+# or the whole stack the project needs (Postgres, MinIO, migrations) behind docker compose:
+denext generate docker --stack && cp .env.example .env && docker compose up -d --build
 ```
 
 The generated image builds in the image, runs as the unprivileged `deno` user,
@@ -39,13 +41,14 @@ starts with the least-privilege flags
 container (they are regenerable — losing them costs a cold cache, not data), and
 put your app database (`app.db`, `auth.db`) on a volume too, because those are
 **not** regenerable. Every managed-container platform below starts from this
-image. Full recipe: [Deployment › Docker](/docs/deploy#docker).
+image. Full recipe: [Deployment › Docker](/docs/deploy#docker); the compose stack with a
+database, an object store and a migrations step:
+[Deployment › Self-hosted stack](/docs/deploy#self-hosted-stack-postgres-storage-migrations).
 
 ## Deno Deploy
 
-Point the entrypoint at `jsr:@denext/denext@^2/cli` with `start .` (or run
-`deno task
-build` in a build step). What the platform changes:
+Point the entrypoint at `jsr:@denext/denext@^4.0.0/cli` with `start .` (or run
+`deno task build` in a build step). What the platform changes:
 
 - **No persistent disk**: the cache is per-isolate memory (`/_denext/health`
   reports `"cacheStore": "memory"`), job history is a fragment that resets when
@@ -68,9 +71,9 @@ Recipe: [Deployment › Deno Deploy](/docs/deploy#deno-deploy).
 
 A unit that runs
 `deno run --allow-net --allow-read --allow-env --allow-write=.denext
-jsr:@denext/denext@^2/cli start .`
+jsr:@denext/denext@^4.0.0/cli start .`
 with `Restart=always`, `Environment=PORT=3000` and the secrets;
-`deno task build` in the deploy step, then `systemctl restart my-app`. Front it
+`denext task build` (or `deno task build`) in the deploy step, then `systemctl restart my-app`. Front it
 with nginx or Caddy for TLS and the connection ceiling. For a zero-downtime
 restart run two units on two ports and switch the upstream, or accept the drain
 window (below). Recipe:

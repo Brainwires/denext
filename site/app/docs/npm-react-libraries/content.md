@@ -21,7 +21,7 @@ renders once and never updates.
 
 `deno bundle` (esbuild without its plugin surface) has no hook to rewrite that
 import. denext's **next-compat build** — the same pipeline that runs unmodified
-Next.js apps — bundles with `npm:esbuild` and resolver plugins that redirect
+Next.js apps — bundles with esbuild ([its own binary](/docs/toolchain#esbuild), not an npm import) and resolver plugins that redirect
 `react`, `react-dom`, `react/jsx-runtime`, `react-is` and `next/*` for **every
 module in the graph**, node_modules included, to denext's single prebuilt
 runtime. That is the "one React" guarantee, and it is a build-time property: the
@@ -72,13 +72,13 @@ other.
     "skipLibCheck": true
   },
   "imports": {
-    "denext": "jsr:@denext/denext@^2",
-    "denext/": "jsr:@denext/denext@^2/",
-    "react": "jsr:@denext/denext@^2/react",
-    "react/jsx-runtime": "jsr:@denext/denext@^2/react/jsx-runtime",
-    "react-dom": "jsr:@denext/denext@^2/react-dom",
-    "react-dom/client": "jsr:@denext/denext@^2/react-dom/client",
-    "react-is": "jsr:@denext/denext@^2/react-is"
+    "denext": "jsr:@denext/denext@^4.0.0",
+    "denext/": "jsr:@denext/denext@^4.0.0/",
+    "react": "jsr:@denext/denext@^4.0.0/react",
+    "react/jsx-runtime": "jsr:@denext/denext@^4.0.0/react/jsx-runtime",
+    "react-dom": "jsr:@denext/denext@^4.0.0/react-dom",
+    "react-dom/client": "jsr:@denext/denext@^4.0.0/react-dom/client",
+    "react-is": "jsr:@denext/denext@^4.0.0/react-is"
   }
 }
 ```
@@ -101,8 +101,8 @@ export default {
 Then install and run as usual:
 
 ```sh
-deno install          # populates node_modules from package.json
-deno task dev
+denext install        # deno install: populates node_modules from package.json
+denext task dev
 ```
 
 `denext add npm:zod` / `denext remove` / `denext update` wrap the matching
@@ -181,7 +181,7 @@ entirely and a class then throws a guided error.
 
 | Native                                                     | With an npm React library (compat build)                                                                                                           |
 | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Bundler: `deno bundle`, no npm anywhere                    | Bundler: `npm:esbuild` + the Deno loader, **at build time only**; the runtime stays npm-free                                                       |
+| Bundler: `deno bundle`, no npm anywhere                    | Bundler: esbuild + the Deno loader, **at build time only**; the runtime stays npm-free                                                             |
 | Dependencies: `deno.json` imports, no `node_modules`       | `package.json` + `nodeModulesDir: "auto"` + `deno install`; `node_modules` on disk                                                                 |
 | `deno check` needs no extra flags                          | `skipLibCheck: true` and the `react` type aliases                                                                                                  |
 | Dev: unbundled per-module HMR over your own modules        | The same loop, plus an on-demand pre-bundle of npm dependencies (Vite's optimizeDeps idea) with `react` external                                   |

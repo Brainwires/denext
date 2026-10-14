@@ -19,7 +19,6 @@ ignoreDependencies = [
   "react-native-maps",
   "react-native-video",
   "@mdx-js/mdx", # deno.json: npm:@mdx-js/mdx@^3 — MDX compilation on the compat build
-  "esbuild", # deno.json: npm:esbuild@^0.24.0 — the compat/SPA bundler
   "@std/http", # deno.json: jsr:@std/http@^1.0.0 — std HTTP (file-server, etc.)
   "@std/fs", # deno.json: jsr:@std/fs@^1.0.0
   "@std/encoding", # deno.json: jsr:@std/encoding@^1.0.0
@@ -28,7 +27,9 @@ ignoreDependencies = [
   "@tanstack/router-plugin", # deno.json: npm:@tanstack/router-plugin — spa.tanstackRouter's route splitter (build-time)
   "ws", # deno.json: npm:ws@^8 — dev proxy WebSocket relay
   "jsqr", # deno.json: npm:jsqr@1.4.0 — test-only: the independent QR reader in tests/qr-code.test.ts
+  "tus-js-client", # deno.json: npm:tus-js-client@4.3.1 — test-only: TUS resumable uploads in the storage parity suite
   "playwright-core", # deno.json: npm:playwright-core@1.63.0 — test-only: Chromium + WebKit in tests/e2e/spa-shell.e2e.test.ts
+  "@supabase/supabase-js", # deno.json: npm:@supabase/supabase-js@2.117.2 — test-only: the REST and Storage parity suites
   # Workspace packages and examples import the published framework by its JSR name
   # (their own deno.json maps it); there is no package.json for fallow to read.
   "denext",
@@ -118,6 +119,8 @@ entry = [
   "scripts/*.ts",
   # CI-only scripts run via `deno run` from a workflow (e.g. the desktop secureStore round-trip).
   "scripts/ci/*.ts",
+  # An example's script run by its own `deno task` (the supabase-js walk-through).
+  "examples/backend-storage/scripts/*.ts",
   # The timer-stress preload, loaded by `deno test --preload` from scripts/test-stress.ts.
   "tests/stress/timer-jitter.ts",
   # More file conventions denext loads by PATH, not import: the project config, the
@@ -209,6 +212,8 @@ entry = [
   "bench/layer2-ssr/*.mjs",
   "bench/load/denext-server.ts",
   "bench/packages/*_bench.ts",
+  # The realtime sources' write-path benchmark (`deno run -A bench/realtime-source.ts`).
+  "bench/realtime-source.ts",
 ]
 
 # The docs site (site) is a satellite static-export app, not shipped framework code, and
@@ -223,6 +228,10 @@ ignorePatterns = [
   "packages/avif/lib/*.js",
   "packages/lightningcss/lib/*.js",
   "packages/swc/lib/*.js",
+  # esbuild's own JS API protocol files (lib/shared/*.ts), vendored near-verbatim from esbuild
+  # 0.25.5 (MIT) so a version bump is a re-copy; refactoring them would defeat that. denext's
+  # host half (src/build/esbuild/mod.ts, binary.ts) is analyzed as usual.
+  "src/build/esbuild/vendor/**",
   # Fixture trees the migrate tests READ AS TEXT (never imported), so reachability can't see
   # them; CONTRIBUTING.md documents this as the place to exclude such fixtures.
   "tests/fixtures/**",
@@ -366,6 +375,12 @@ exports = ["redirect"]
 [[ignoreExports]]
 file = "src/build/bundle.ts"
 exports = ["ensureBundleSupport"]
+
+# denext's vendored esbuild API (`src/build/esbuild/mod.ts`) exports esbuild's own names —
+# `transform`, `version`, `build` — which the dev loop's unrelated `transform()` shares by name.
+[[ignoreExports]]
+file = "src/build/esbuild/mod.ts"
+exports = ["transform", "version"]
 
 # The `denext/remix` barrel re-exports the Remix runtime's same-named APIs (`Link`,
 # `LinkProps`, `useParams`, `useSearchParams`) — Remix-shaped twins of denext's own

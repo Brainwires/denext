@@ -148,7 +148,7 @@ Deno.test("compatModuleList: middleware.ts is bundled with the routes (compat)",
 });
 
 Deno.test("serverStubPlugin: an npm `use server` file outside the boundary never ships", async () => {
-  const esbuild = await import("esbuild");
+  const esbuild = await import("../src/build/esbuild/mod.ts");
   const { serverStubPlugin } = await import("../src/build/next-compat.ts");
   const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-npm-stub-" }));
   try {
@@ -175,7 +175,7 @@ Deno.test("serverStubPlugin: an npm `use server` file outside the boundary never
     assert(!code.includes("db-password"), "the server code is stubbed out");
     assertEquals(stubs, ["unregistered:ui-lib/esm/actions.js act"]);
   } finally {
-    await (await import("esbuild")).stop();
+    await (await import("../src/build/esbuild/mod.ts")).stop();
     removeTempDirSync(root);
   }
 });

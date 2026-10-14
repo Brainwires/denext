@@ -43,7 +43,7 @@ env:
   # The denext CLI. Pin it to the version your app uses (or use `deno task denext`).
   # --node-modules-dir=none: next to a package.json (the Capacitor project's), Deno would
   # otherwise resolve the CLI's own npm: imports from node_modules and fail.
-  DENEXT: deno run -A --node-modules-dir=none jsr:@denext/denext@^2.10.0/cli
+  DENEXT: deno run -A --node-modules-dir=none jsr:@denext/denext@^4.0.0/cli
   # Crash reporting (`denext mobile add sentry`): the upload steps run only when the
   # SENTRY_AUTH_TOKEN secret is set. Set SENTRY_ORG / SENTRY_PROJECT as repository variables.
   SENTRY_ORG: ${{ vars.SENTRY_ORG }}

@@ -6,7 +6,7 @@
 
 import type { ImportAliases, Platform, PlatformResolution } from "../platform-extensions.ts";
 import { join } from "@std/path";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "../esbuild/mod.ts";
 import type { ServerModuleRef } from "../client-imports.ts";
 
 /** Dev URL prefixes (see the `dev-unbundled.ts` module header). */

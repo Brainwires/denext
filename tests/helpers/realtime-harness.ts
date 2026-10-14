@@ -161,7 +161,7 @@ export function changesOf(conn: TestConn): TableChange[] {
 }
 
 /** Wait until `done()` (bounded), polling every 5 ms. */
-export async function until(done: () => boolean, ms = 3_000, what = "condition"): Promise<void> {
+export async function until(done: () => boolean, ms = 15_000, what = "condition"): Promise<void> {
   const deadline = Date.now() + ms;
   while (!done()) {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);

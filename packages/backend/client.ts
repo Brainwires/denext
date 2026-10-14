@@ -15,6 +15,10 @@
  * }
  * ```
  *
+ * `listFiles`, `getFileInfo`, `removeFiles`, `moveFile`, `copyFile`, `getSignedUrls`,
+ * `getPublicUrl` and `uploadResumable` (TUS, resumes after a dropped connection) call the
+ * Supabase-compatible Storage API (`/storage/v1`).
+ *
  * Both call the plugin's `POST /_denext/storage/sign` with the page's cookies, so the bucket's
  * `authorize` sees the signed-in user. `useTableChanges` rides denext's Live socket; every row it
  * receives was re-read under this viewer's row-level security. This module imports no server
@@ -26,20 +30,71 @@
 import { STORAGE_PREFIX, type StorageTransform } from "./src/shared.ts";
 
 export type { StorageTransform } from "./src/shared.ts";
-export { applyTableChanges, useTableChanges } from "./src/table-changes-client.ts";
-export { from, restClient, RestClientError } from "./src/rest-client.ts";
+export {
+  copyFile,
+  getFileInfo,
+  getPublicUrl,
+  getSignedUrls,
+  listFiles,
+  listFilesV2,
+  moveFile,
+  removeFiles,
+  StorageApiClientError,
+  uploadResumable,
+} from "./src/storage-client.ts";
 export type {
+  FileEntry,
+  FileInfo,
+  FileMetadata,
+  FilePage,
+  ImageTransformOptions,
+  ResumableUploadOptions,
+  StorageApiOptions,
+} from "./src/storage-client.ts";
+export { applyTableChanges, useTableChanges } from "./src/table-changes-client.ts";
+export {
+  RealtimeClient,
+  realtimeClient,
+  SharedChannel,
+  useBroadcast,
+  useRealtimePresence,
+} from "./src/realtime-client.ts";
+export type {
+  BroadcastListener,
+  BroadcastMessage,
+  BroadcastState,
+  ChannelMessage,
+  ClientSocket,
+  Presence,
+  PresenceListener,
+  PresenceState,
+  RealtimeChannelOptions,
+  RealtimePresenceResult,
+  RealtimeStatus,
+  SocketFactory,
+  StatusListener,
+  UseBroadcastOptions,
+  UsePresenceOptions,
+} from "./src/realtime-client.ts";
+export { from, restClient, RestClientError, rpc } from "./src/rest-client.ts";
+export type {
+  ExplainOptions,
   RegisteredRest,
   RestClient,
   RestClientOptions,
+  RestColumnName,
+  RestCount,
+  RestFilterValue,
   RestNegatable,
   RestQuery,
+  RestReferenced,
   RestResult,
   RestTableName,
   RestTableQuery,
   RestTables,
   RestTableShape,
   RestTableShapeOf,
+  RpcOptions,
   SelectColumns,
   Selected,
 } from "./src/rest-client.ts";
@@ -49,10 +104,12 @@ export type {
   UseTableChangesOptions,
 } from "./src/table-changes-client.ts";
 export type {
+  FilterOp,
   TableChange,
   TableChangesFrame,
   TableEvent,
   TableFilter,
+  TableFilterValue,
 } from "./src/realtime-shared.ts";
 
 /** Upload progress, in bytes. */

@@ -82,10 +82,10 @@ disabled (`tests/auth-example.test.ts` drives the app that way in CI).
 ## Run it
 
 ```sh
-deno task dev      # http://localhost:3000
+denext task dev      # http://localhost:3000
 # or, production:
 AUTH_SECRET=$(openssl rand -base64 32) CANONICAL_ORIGIN=https://app.example.com \
-  deno task build && deno task start
+  denext task build && denext task start
 ```
 
 Demo account: `demo@denext.dev` / `password` — seeded on first run and, as the

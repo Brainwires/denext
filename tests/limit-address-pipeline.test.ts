@@ -9,12 +9,15 @@ import { assertEquals } from "@std/assert";
 import { createApi } from "../src/server/define-api.ts";
 import { rateLimit } from "../src/server/api-middleware.ts";
 import { inMemoryRateLimitStore } from "../src/server/auth/rate-limit.ts";
-import { setRemoteAddr } from "../src/server/remote-addr.ts";
+import { parseCidr, setRemoteAddr } from "../src/server/remote-addr.ts";
 import { synthesizeSubRequest } from "../src/server/sub-request.ts";
 import { createRequestContext } from "../src/server/request-context.ts";
 import { limitAddrOf } from "../src/server/remote-addr.ts";
 import { API_BATCH_HEADER, API_BATCH_PATH } from "../src/runtime/api-batch-protocol.ts";
 import { batchApp, ORIGIN } from "./helpers/batch-app.ts";
+
+/** A loopback reverse proxy, listed as the trusted source of the app's limit header. */
+const LOOPBACK_PROXY = [parseCidr("127.0.0.0/8")!, parseCidr("::1")!];
 
 /** A `load` that serves every API route as a GET limited to one request per client per minute. */
 function limitedLoad() {
@@ -51,7 +54,11 @@ async function itemStatus(res: Response): Promise<number> {
 }
 
 Deno.test("batch item + rateLimitHeader behind a loopback proxy: each named client is limited", async () => {
-  const app = batchApp({ load: limitedLoad(), rateLimitHeader: "cf-connecting-ip" });
+  const app = batchApp({
+    load: limitedLoad(),
+    rateLimitHeader: "cf-connecting-ip",
+    rateLimitTrustedProxies: ["127.0.0.1"],
+  });
   const a = { "cf-connecting-ip": "203.0.113.9" };
   assertEquals(await itemStatus(await app(batchFrom("127.0.0.1", a))), 200);
   assertEquals(await itemStatus(await app(batchFrom("127.0.0.1", a))), 429, "the same client");
@@ -74,7 +81,7 @@ Deno.test("batch item + rateLimitLocalAddresses: a LAN peer is limited by its ow
 });
 
 Deno.test("synthesizeSubRequest: the child inherits the parent's rateLimitHeader value — a caller's extra header cannot replace it", () => {
-  const policy = { header: "cf-connecting-ip" };
+  const policy = { header: "cf-connecting-ip", trustedProxies: LOOPBACK_PROXY };
   const parent = new Request(`${ORIGIN}/`, { headers: { "cf-connecting-ip": "203.0.113.9" } });
   setRemoteAddr(parent, { transport: "tcp", hostname: "127.0.0.1", port: 1 });
   const parentCtx = createRequestContext(parent, undefined, { limitPolicy: policy });
@@ -101,6 +108,49 @@ Deno.test("synthesizeSubRequest: the child inherits the parent's rateLimitHeader
     extraHeaders: { "cf-connecting-ip": "1.2.3.4" },
   });
   assertEquals(bareChild.headers.get("cf-connecting-ip"), null);
+});
+
+Deno.test("synthesizeSubRequest: a child of a request from an untrusted peer keys on that peer, not the header", async () => {
+  const policy = { header: "cf-connecting-ip", trustedProxies: LOOPBACK_PROXY };
+  const parent = new Request(`${ORIGIN}/`, { headers: { "cf-connecting-ip": "203.0.113.9" } });
+  setRemoteAddr(parent, { transport: "tcp", hostname: "198.51.100.200", port: 1 });
+  const parentCtx = createRequestContext(parent, undefined, { limitPolicy: policy });
+  const original = console.warn;
+  console.warn = () => {};
+  try {
+    const child = synthesizeSubRequest({
+      method: "GET",
+      url: new URL(`${ORIGIN}/api/x`),
+      parent,
+      parentCtx,
+      idSuffix: "#0",
+      extraHeaders: { "cf-connecting-ip": "1.2.3.4" },
+    });
+    // The child carries the parent's header and peer, so it reaches the same verdict.
+    assertEquals(limitAddrOf(parent, false, policy), "198.51.100.200");
+    assertEquals(limitAddrOf(child, false, policy), "198.51.100.200");
+    assertEquals(limitAddrOf(child, true, policy), "198.51.100.200", "trust-proxy adds no trust");
+  } finally {
+    console.warn = original;
+  }
+  // Through the batch endpoint: a direct client forging the header per request shares one bucket.
+  const app = batchApp({
+    load: limitedLoad(),
+    rateLimitHeader: "cf-connecting-ip",
+    rateLimitTrustedProxies: ["127.0.0.1"],
+  });
+  console.warn = () => {};
+  try {
+    const forged = (value: string) => batchFrom("198.51.100.201", { "cf-connecting-ip": value });
+    assertEquals(await itemStatus(await app(forged("203.0.113.20"))), 200);
+    assertEquals(
+      await itemStatus(await app(forged("203.0.113.21"))),
+      429,
+      "a fresh header, same peer",
+    );
+  } finally {
+    console.warn = original;
+  }
 });
 
 /** A direct GET to `path` from `peer`. */

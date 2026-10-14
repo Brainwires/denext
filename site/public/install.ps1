@@ -74,7 +74,7 @@ function Install-Denext {
     Assert-SafeInstallRoot $root
     # The `deno` link `toolchain link` made (only a link of its own; anything else is left).
     $installed = Join-Path $bin 'denext.exe'
-    if (Test-Path -LiteralPath $installed -PathType Leaf) {
+    if ((Test-Path -LiteralPath $installed -PathType Leaf) -and (Test-ToolchainVerb $installed)) {
       Invoke-Denext $installed @('toolchain', 'unlink') | Out-Null
     }
     Remove-DenextPath $bin
@@ -157,6 +157,11 @@ function Install-Denext {
 # when Path has none, and `toolchain link` itself refuses to overwrite a file it did not create.
 function Install-DenoToolchain([string]$exe) {
   if ($env:DENEXT_NO_TOOLCHAIN -eq '1') { return }
+  if (-not (Test-ToolchainVerb $exe)) {
+    Write-Host ("denext: $(& $exe --version) predates denext's Deno toolchain (denext 4.0); " +
+      'skipping that step - this release runs on the deno on your Path.')
+    return
+  }
   Write-Host "denext: installing denext's Deno toolchain"
   if ((Invoke-Denext $exe @('toolchain', 'install')) -ne 0) {
     Write-Warning ('denext: the Deno toolchain could not be installed now; it downloads on the ' +
@@ -172,6 +177,19 @@ function Install-DenoToolchain([string]$exe) {
   if ((Invoke-Denext $exe @('toolchain', 'link')) -ne 0) {
     Write-Warning 'denext: could not link `deno` to the toolchain (`denext deno ...` still runs it).'
   }
+}
+
+# Whether the binary at $exe has the `toolchain` verb, which denext 4.0 added: an older release
+# (DENEXT_VERSION=v3.x) answers it with `unknown command`. A version it cannot read is assumed new.
+function Test-ToolchainVerb([string]$exe) {
+  $ErrorActionPreference = 'Continue'
+  try {
+    $version = "$(& $exe --version 2>$null)"
+  } catch {
+    return $true
+  }
+  if ($version -match '^denext (\d+)\.') { return [int]$Matches[1] -ge 4 }
+  return $true
 }
 
 # Run the installed binary with $arguments, its output on the console; returns its exit code (1

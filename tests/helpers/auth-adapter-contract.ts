@@ -8,8 +8,13 @@
 // next test.
 
 import { assert, assertEquals, assertNotEquals, assertRejects } from "@std/assert";
-import type { AuthAdapter } from "../../src/server/auth/adapter.ts";
+import type {
+  AuthAdapter,
+  VerificationTokenRecord,
+  VerificationTokenRef,
+} from "../../src/server/auth/adapter.ts";
 import type { AuthSession } from "../../src/server/auth/types.ts";
+import { OAUTH_SERVER_CASES } from "./auth-adapter-contract-oauth-server.ts";
 
 /** One contract case: exercise a fresh adapter, throw to fail. */
 type Case = (adapter: AuthAdapter) => Promise<void>;
@@ -31,6 +36,17 @@ const token = (expires = at(3600)) => ({
   expires,
   purpose: "email" as const,
 });
+
+/** The verification-token pair, bound to `adapter`. */
+function tokenMethods(adapter: AuthAdapter) {
+  const create = adapter.createVerificationToken;
+  const use = adapter.useVerificationToken;
+  assert(create && use);
+  return {
+    create: (record: VerificationTokenRecord) => create.call(adapter, record),
+    use: (ref: VerificationTokenRef) => use.call(adapter, ref),
+  };
+}
 
 /** An API-token record for `userId`. */
 const apiToken = (id: string, userId: string, expiresAt?: number) => ({
@@ -239,6 +255,16 @@ const VERIFICATION_CASES: Record<string, Case> = {
       "none of those misses consumed the real token",
     );
   },
+  "a newer token for the same identifier and purpose replaces the older": async (adapter) => {
+    const { create, use } = tokenMethods(adapter);
+    await create(token());
+    await create({ ...token(), tokenHash: "c".repeat(64) });
+    assertEquals(await use(token()), undefined, "the older token is gone");
+    assertEquals(
+      (await use({ ...token(), tokenHash: "c".repeat(64) }))?.tokenHash,
+      "c".repeat(64),
+    );
+  },
   "one identifier can hold a token per purpose": async (adapter) => {
     const create = adapter.createVerificationToken;
     const use = adapter.useVerificationToken;
@@ -247,6 +273,14 @@ const VERIFICATION_CASES: Record<string, Case> = {
     await create.call(adapter, { ...token(), purpose: "reset" });
     assertEquals((await use.call(adapter, { ...token(), purpose: "reset" }))?.purpose, "reset");
     assertEquals((await use.call(adapter, token()))?.purpose, "email");
+  },
+  "an SMS code is stored against an E.164 number in its own space": async (adapter) => {
+    const { create, use } = tokenMethods(adapter);
+    const sms = { ...token(), identifier: "+15550100001", purpose: "sms" as const };
+    await create(sms);
+    assertEquals(await use({ ...sms, purpose: "otp" }), undefined, "another space is a miss");
+    const redeemed = await use(sms);
+    assertEquals([redeemed?.identifier, redeemed?.purpose], ["+15550100001", "sms"]);
   },
 };
 
@@ -616,6 +650,261 @@ const SESSION_CASES: Record<string, Case> = {
   },
 };
 
+const PROFILE_CASES: Record<string, Case> = {
+  // fallow-ignore-next-line complexity -- one adapter scenario; each `?.` in its asserts counts as a branch
+  "Supabase fields round-trip: phone, metadata, anonymous, timestamps, ban": async (adapter) => {
+    // Fixed once: `at()` reads the clock, so calling it again for the comparison can cross a second.
+    const phoneVerified = at(-10), lastSignInAt = at(-1), bannedUntil = at(3600);
+    const user = await adapter.createUser({
+      phone: "+15555550100",
+      phoneVerified,
+      userMetadata: { name: "Ada", nested: { a: [1, 2] } },
+      appMetadata: { provider: "phone", providers: ["phone"] },
+      isAnonymous: true,
+      updatedAt: at(-5),
+      lastSignInAt,
+      bannedUntil,
+    });
+    const read = await adapter.getUser(user.id);
+    assertEquals(read?.phone, "+15555550100");
+    assertEquals(read?.phoneVerified, phoneVerified);
+    assertEquals(read?.userMetadata, { name: "Ada", nested: { a: [1, 2] } });
+    assertEquals(read?.appMetadata, { provider: "phone", providers: ["phone"] });
+    assertEquals(read?.isAnonymous, true);
+    assertEquals(read?.lastSignInAt, lastSignInAt);
+    assertEquals(read?.bannedUntil, bannedUntil);
+    assert(typeof read?.createdAt === "number", "createdAt is stamped");
+    assertEquals((await adapter.getUserByPhone!("+15555550100"))?.id, user.id);
+    assertEquals(await adapter.getUserByPhone!("+15555550199"), undefined);
+    const plain = await adapter.createUser({ email: "plain@x.test" });
+    assertEquals((await adapter.getUser(plain.id))?.isAnonymous, undefined, "false reads absent");
+    const promoted = await adapter.updateUser({ id: user.id, isAnonymous: false });
+    assert(!promoted.isAnonymous);
+    assert(!(await adapter.getUser(user.id))?.isAnonymous);
+  },
+  "listUsers pages oldest first and counts every user": async (adapter) => {
+    for (let i = 0; i < 5; i++) await adapter.createUser({ email: `u${i}@x.test` });
+    const page1 = await adapter.listUsers!({ page: 1, perPage: 2 });
+    assertEquals(page1.total, 5);
+    assertEquals(page1.users.length, 2);
+    const page3 = await adapter.listUsers!({ page: 3, perPage: 2 });
+    assertEquals(page3.users.length, 1);
+    const ids = new Set([
+      ...page1.users,
+      ...(await adapter.listUsers!({ page: 2, perPage: 2 })).users,
+      ...page3.users,
+    ].map((u) => u.id));
+    assertEquals(ids.size, 5);
+  },
+  "identity fields round-trip on linked accounts": async (adapter) => {
+    const user = await adapter.createUser({ email: "id@x.test" });
+    const lastSignInAt = at(-1);
+    await adapter.linkAccount({
+      userId: user.id,
+      provider: "github",
+      providerAccountId: "42",
+      identityId: "0b7c3c1e-1f1a-4a57-9c39-2d0a7f1a0001",
+      identityData: { sub: "42", login: "ada" },
+      email: "id@x.test",
+      updatedAt: at(-2),
+      lastSignInAt,
+    });
+    const [account] = await adapter.listAccounts!(user.id);
+    assertEquals(account.identityId, "0b7c3c1e-1f1a-4a57-9c39-2d0a7f1a0001");
+    assertEquals(account.identityData, { sub: "42", login: "ada" });
+    assertEquals(account.email, "id@x.test");
+    assertEquals(account.lastSignInAt, lastSignInAt);
+    assert(typeof account.createdAt === "number", "createdAt is stamped");
+  },
+  "MFA factors: create, list, update, claim a step once, delete": async (adapter) => {
+    const user = await adapter.createUser({ email: "f@x.test" });
+    await adapter.createMfaFactor!({
+      id: "f1",
+      userId: user.id,
+      type: "totp",
+      status: "unverified",
+      friendlyName: "app",
+      secret: "sealed",
+      createdAt: at(-10),
+      updatedAt: at(-10),
+    });
+    await adapter.createMfaFactor!({
+      id: "f2",
+      userId: user.id,
+      type: "phone",
+      status: "unverified",
+      phone: "+15555550100",
+      createdAt: at(-5),
+      updatedAt: at(-5),
+    });
+    const listed = await adapter.listMfaFactors!(user.id);
+    assertEquals(listed.map((f) => f.id), ["f1", "f2"]);
+    assertEquals(listed[0].secret, "sealed");
+    assertEquals(listed[1].phone, "+15555550100");
+    await adapter.updateMfaFactor!("f1", { status: "verified", lastChallengedAt: at(-1) });
+    await adapter.updateMfaFactor!("f1", {});
+    const [f1] = await adapter.listMfaFactors!(user.id);
+    assertEquals(f1.status, "verified");
+    assertEquals(f1.lastChallengedAt, at(-1));
+    assertEquals(f1.friendlyName, "app");
+    assertEquals(await adapter.claimMfaFactorStep!("f1", 100), true);
+    assertEquals(await adapter.claimMfaFactorStep!("f1", 100), false);
+    assertEquals(await adapter.claimMfaFactorStep!("f1", 99), false);
+    assertEquals(await adapter.claimMfaFactorStep!("f1", 101), true);
+    assertEquals(await adapter.claimMfaFactorStep!("nope", 1), false);
+    await adapter.deleteMfaFactor!("f2");
+    await adapter.deleteMfaFactor!("nope");
+    assertEquals((await adapter.listMfaFactors!(user.id)).map((f) => f.id), ["f1"]);
+    await adapter.deleteUser!(user.id);
+    assertEquals(await adapter.listMfaFactors!(user.id), []);
+  },
+  "revokeNativeSessionsByUser can keep one family": async (adapter) => {
+    const family = (id: string) => ({
+      id,
+      userId: "u1",
+      generation: 0,
+      salt: "s",
+      session: "{}",
+      createdAt: at(0),
+      expiresAt: at(3600),
+    });
+    await adapter.createNativeSession!(family("keep"));
+    await adapter.createNativeSession!(family("drop"));
+    await adapter.revokeNativeSessionsByUser!("u1", "keep");
+    assertEquals((await adapter.getNativeSession!("keep"))?.revokedAt, undefined);
+    assert((await adapter.getNativeSession!("drop"))?.revokedAt !== undefined);
+  },
+};
+
+/** A stored SAML provider record. */
+const ssoProvider = (id: string, entityId: string, domains: string[]) => ({
+  id,
+  entityId,
+  metadataXml: `<md:EntityDescriptor entityID="${entityId}"/>`,
+  domains,
+  createdAt: at(-10),
+  updatedAt: at(-10),
+});
+
+const SSO_CASES: Record<string, Case> = {
+  "SSO providers: create, read by id / entity id / domain, list, update, delete": async (
+    adapter,
+  ) => {
+    const a = {
+      ...ssoProvider("p1", "https://idp-a", ["a.test", "b.test"]),
+      metadataUrl: "https://idp-a/metadata",
+      attributeMapping: { keys: { email: { name: "mail" }, groups: { name: "g", array: true } } },
+      nameIdFormat: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+    };
+    assertEquals(await adapter.createSsoProvider!(a), "ok");
+    assertEquals(await adapter.createSsoProvider!(ssoProvider("p2", "https://idp-b", [])), "ok");
+    assertEquals(await adapter.getSsoProvider!("p1"), a);
+    assertEquals((await adapter.getSsoProviderByEntityId!("https://idp-b"))?.id, "p2");
+    assertEquals((await adapter.getSsoProviderByDomain!("b.test"))?.id, "p1");
+    assertEquals(await adapter.getSsoProviderByDomain!("c.test"), undefined);
+    assertEquals(await adapter.getSsoProvider!("nope"), undefined);
+    assertEquals((await adapter.listSsoProviders!()).map((p) => p.id), ["p1", "p2"]);
+    const moved = { ...a, domains: ["c.test"], updatedAt: at(0) };
+    assertEquals(await adapter.updateSsoProvider!(moved), "ok");
+    assertEquals(await adapter.getSsoProviderByDomain!("a.test"), undefined);
+    assertEquals((await adapter.getSsoProvider!("p1"))?.domains, ["c.test"]);
+    assertEquals(
+      await adapter.updateSsoProvider!(ssoProvider("nope", "https://x", [])),
+      "not_found",
+    );
+    assertEquals(await adapter.deleteSsoProvider!("p1"), true);
+    assertEquals(await adapter.deleteSsoProvider!("p1"), false);
+    assertEquals(await adapter.getSsoProviderByDomain!("c.test"), undefined);
+    assertEquals((await adapter.listSsoProviders!()).map((p) => p.id), ["p2"]);
+  },
+  "SSO providers: the metadata validity round-trips, and is cleared by a replace": async (
+    adapter,
+  ) => {
+    const record = {
+      ...ssoProvider("pv", "https://idp-v", ["v.test"]),
+      metadataUrl: "https://idp-v/metadata",
+      metadataValidUntil: at(86_400),
+      metadataRefreshAfter: at(3600),
+    };
+    assertEquals(await adapter.createSsoProvider!(record), "ok");
+    assertEquals(await adapter.getSsoProvider!("pv"), record);
+    const next = { ...record, metadataRefreshAfter: at(7200) };
+    assertEquals(await adapter.updateSsoProvider!(next), "ok");
+    assertEquals((await adapter.listSsoProviders!()).find((p) => p.id === "pv"), next);
+    const { metadataValidUntil: _v, metadataRefreshAfter: _r, ...inline } = next;
+    assertEquals(await adapter.updateSsoProvider!(inline), "ok");
+    assertEquals(await adapter.getSsoProvider!("pv"), inline);
+  },
+  "SSO providers: entity ids and domains are unique across providers": async (adapter) => {
+    assertEquals(
+      await adapter.createSsoProvider!(ssoProvider("p1", "https://idp", ["a.test"])),
+      "ok",
+    );
+    assertEquals(
+      await adapter.createSsoProvider!(ssoProvider("p2", "https://idp", ["z.test"])),
+      "entity_id_exists",
+    );
+    assertEquals(
+      await adapter.createSsoProvider!(ssoProvider("p3", "https://other", ["z.test", "a.test"])),
+      "domain_exists",
+    );
+    // Nothing of a refused create is stored.
+    assertEquals(await adapter.getSsoProviderByDomain!("z.test"), undefined);
+    assertEquals(await adapter.createSsoProvider!(ssoProvider("p4", "https://four", [])), "ok");
+    assertEquals(
+      await adapter.updateSsoProvider!(ssoProvider("p4", "https://idp", [])),
+      "entity_id_exists",
+    );
+    assertEquals(
+      await adapter.updateSsoProvider!(ssoProvider("p4", "https://four", ["a.test"])),
+      "domain_exists",
+    );
+    assertEquals((await adapter.getSsoProvider!("p4"))?.domains, []);
+    // A provider keeps (and re-saves) its own domains.
+    assertEquals(
+      await adapter.updateSsoProvider!(ssoProvider("p1", "https://idp", ["a.test", "b.test"])),
+      "ok",
+    );
+  },
+  "SSO sessions: recorded, listed by NameID, dropped with the provider and the user": async (
+    adapter,
+  ) => {
+    await adapter.createSsoProvider!(ssoProvider("p1", "https://idp", []));
+    const user = await adapter.createUser({ email: "s@x.test" });
+    const record = (sessionId: string, nameId: string, expiresAt = at(3600)) => ({
+      sessionId,
+      providerId: "p1",
+      nameId,
+      sessionIndex: `_${sessionId}`,
+      userId: user.id,
+      expiresAt,
+    });
+    await adapter.createSsoSession!(record("f1", "alice"));
+    await adapter.createSsoSession!(record("f2", "alice"));
+    await adapter.createSsoSession!(record("f3", "bob"));
+    await adapter.createSsoSession!(record("f4", "alice", at(-1)));
+    const alice = await adapter.listSsoSessions!("p1", "alice");
+    assertEquals(alice.map((s) => s.sessionId).sort(), ["f1", "f2"]);
+    assertEquals(alice.find((s) => s.sessionId === "f1"), record("f1", "alice"));
+    assertEquals(await adapter.listSsoSessions!("p2", "alice"), []);
+    await adapter.deleteUser!(user.id);
+    assertEquals(await adapter.listSsoSessions!("p1", "alice"), []);
+    await adapter.createSsoSession!(record("f5", "carol"));
+    await adapter.deleteSsoProvider!("p1");
+    assertEquals(await adapter.listSsoSessions!("p1", "carol"), []);
+  },
+  "claimSamlMessageId claims an id once until it expires": async (adapter) => {
+    assertEquals(await adapter.claimSamlMessageId!("m1", at(60)), true);
+    assertEquals(await adapter.claimSamlMessageId!("m1", at(60)), false);
+    assertEquals(await adapter.claimSamlMessageId!("m2", at(60)), true);
+    assertEquals(await adapter.claimSamlMessageId!("old", at(-5)), true);
+    // An expired claim is reclaimed by the next write, so the id can be claimed again.
+    assertEquals(await adapter.claimSamlMessageId!("m3", at(60)), true);
+    assertEquals(await adapter.claimSamlMessageId!("old", at(60)), true);
+    assertEquals(await adapter.claimSamlMessageId!("m1", at(60)), false);
+  },
+};
+
 const LIFECYCLE_CASES: Record<string, Case> = {
   "close() is idempotent": async (adapter) => {
     await adapter.createUser({ email: "ada@x.test" });
@@ -648,8 +937,8 @@ async function runCases(
 /**
  * Run the shared {@link ../../src/server/auth/adapter.ts | AuthAdapter} contract against
  * one implementation: users, accounts, verification tokens, credentials, API tokens, MFA
- * (including the consume-once guarantees), native app sessions + `deleteUser`, the
- * `sessions` store, and `close()`.
+ * (including the consume-once guarantees), native app sessions + `deleteUser`, SAML SSO
+ * providers / sessions / message ids, the `sessions` store, and `close()`.
  *
  * denext's own adapters implement every optional group, so a missing method fails the
  * suite rather than skipping the case.
@@ -671,5 +960,8 @@ export async function adapterContract(
   await runCases(t, make, MFA_CASES);
   await runCases(t, make, NATIVE_CASES);
   await runCases(t, make, SESSION_CASES);
+  await runCases(t, make, PROFILE_CASES);
+  await runCases(t, make, SSO_CASES);
   await runCases(t, make, LIFECYCLE_CASES);
+  await runCases(t, make, OAUTH_SERVER_CASES);
 }

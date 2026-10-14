@@ -2,7 +2,7 @@
 // `?query`) and need the REAL module resolved through the full plugin chain.
 
 import { dirname } from "@std/path";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 
 /**
  * Resolve `path` on behalf of `args` (an `onResolve` callback's arguments): same kind,

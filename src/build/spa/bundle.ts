@@ -7,7 +7,7 @@ import {
   projectPlatformRedirects,
 } from "../platform-extensions.ts";
 import { join, resolve, toFileUrl } from "@std/path";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "../esbuild/mod.ts";
 import {
   type DenextConfig,
   domListsEnabled,

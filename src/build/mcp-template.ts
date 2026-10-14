@@ -119,27 +119,31 @@ export function mcpClientFile(client: McpClient, denoConfig = "deno.json"): stri
   return JSON.stringify({ [rootKey]: { [MCP_SERVER_NAME]: entry } }, null, 2) + "\n";
 }
 
-/** The README task row `--mcp` adds. */
-export const MCP_README_ROWS =
-  "| `deno task mcp` | denext's MCP server for coding agents (`.mcp.json`, `.vscode/`, `.cursor/` run it) |\n";
+/** The README task row `--mcp` adds (command, what it does). */
+export const MCP_README_ROWS: readonly (readonly [string, string])[] = [
+  [
+    "`deno task mcp`",
+    "denext's MCP server for coding agents (`.mcp.json`, `.vscode/`, `.cursor/` run it)",
+  ],
+];
 
 /** The `AGENTS.md` section a scaffold with both `--fallow` and `--mcp` appends. */
 export const MCP_AGENTS_SECTION = `
 ## denext MCP server
 
-This project registers denext's MCP server (\`deno task mcp\`, the denext version \`deno.json\`
-pins) in \`.mcp.json\`, \`.vscode/mcp.json\` and \`.cursor/mcp.json\`. Prefer its tools over
-guessing from Next.js:
+This project registers denext's MCP server (\`deno task mcp\`, the denext version
+\`deno.json\` pins) in \`.mcp.json\`, \`.vscode/mcp.json\` and \`.cursor/mcp.json\`.
+Prefer its tools over guessing from Next.js:
 
-| When the agent is about to...                    | Call                                                   |
-| ------------------------------------------------ | ------------------------------------------------------ |
-| write a component, page or route                 | \`denext_check_snippet\` (lints the code for Next-isms)  |
-| import from \`react\` / \`next/*\`                   | \`denext_import_map\`                                    |
-| answer a denext question                         | \`denext_search_docs\`, then \`denext_read_docs\`          |
-| add a page, component, route or test             | \`denext_generate\`                                      |
-| see what a route renders, or why it fails        | \`denext_render\`, \`denext_route_map\`                    |
-| debug the running dev server                     | \`denext_dev_logs\`                                      |
-| check the toolchain                              | \`denext_doctor\`                                        |
+| When the agent is about to...             | Call                                                  |
+| ----------------------------------------- | ----------------------------------------------------- |
+| write a component, page or route          | \`denext_check_snippet\` (lints the code for Next-isms) |
+| import from \`react\` / \`next/*\`            | \`denext_import_map\`                                   |
+| answer a denext question                  | \`denext_search_docs\`, then \`denext_read_docs\`         |
+| add a page, component, route or test      | \`denext_generate\`                                     |
+| see what a route renders, or why it fails | \`denext_render\`, \`denext_route_map\`                   |
+| debug the running dev server              | \`denext_dev_logs\`                                     |
+| check the toolchain                       | \`denext_doctor\`                                       |
 `;
 
 /** Options for {@linkcode addMcp} / {@linkcode writeMcpClientConfigs}. */

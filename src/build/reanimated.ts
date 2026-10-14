@@ -57,7 +57,7 @@
 // to a FLIP runtime. Both runtimes load from their own namespace.
 
 import { basename, dirname, extname, SEPARATOR, toFileUrl } from "@std/path";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import {
   applyEdits,
   type Ctx,

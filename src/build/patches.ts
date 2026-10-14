@@ -23,7 +23,7 @@
 // copy to `patches/.work/denext/…`; `denext patch create denext` diffs the working copies
 // against pristine, writes the patch and materializes it.
 
-import type { Plugin } from "esbuild";
+import type { Plugin } from "./esbuild/mod.ts";
 import { walk } from "@std/fs";
 import { dirname, fromFileUrl, isAbsolute, join, relative, resolve, SEPARATOR } from "@std/path";
 import { denoExecutable } from "./deno-executable.ts";

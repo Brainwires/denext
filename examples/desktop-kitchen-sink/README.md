@@ -18,10 +18,10 @@ CI runs it on Linux, macOS (Apple silicon and Intel) and Windows
 ## Run it
 
 ```
-deno task desktop            # export + open the window (denext's pinned runtime, Deno 2.9.7)
-deno task desktop:package    # write scripts/package-*.ts from the scaffold, then package
-deno task test:window        # package, launch and assert every check (exits 1 on a failure)
-deno task drive start        # launch the last build in drive mode (the manual checks, scripted)
+denext task desktop            # export + open the window (denext's pinned runtime, Deno 2.9.7)
+denext task desktop:package    # write scripts/package-*.ts from the scaffold, then package
+denext task test:window        # package, launch and assert every check (exits 1 on a failure)
+denext task drive start        # launch the last build in drive mode (the manual checks, scripted)
 ```
 
 ### `test:window` flags
@@ -48,7 +48,7 @@ The results document (`e2e/.run/results.json`, `--results`, `--json`) is the mac
   "schema": 1,
   "os": "linux", "arch": "x86_64", "target": "x86_64-unknown-linux-gnu",
   "backend": "cef",
-  "runtime": { "mode": "pinned", "version": "2.9.7-denext.16", "dir": null },
+  "runtime": { "mode": "pinned", "version": "2.9.7-denext.17", "dir": null },
   "flags": { "noPackage": false, "backend": "cef", … },
   "ok": false,
   "summary": { "pass": 70, "skip": 3, "fail": 1, "problems": 1 },
@@ -97,23 +97,23 @@ person at the screen. Nothing in the panel runs until you click.
 The checks a person answers (a file dialog, a notification click, the secure store's keyring, the
 tray, the title bar, the window states, deep links) can also be driven from a command queue, so a
 session reached over SSH, a nested X server or CI runs them without a screen or input injection (no
-xdotool). `deno task drive start` launches the build `test:window` left in `dist/` (or
+xdotool). `denext task drive start` launches the build `test:window` left in `dist/` (or
 `--exe <app>`) in drive mode; every other verb queues one command, waits for the page's answer and
 prints it as JSON:
 
 ```
-deno task drive start                         # {"started": true, "pid": …}
-deno task drive probe                         # platformFeatures(), appCapabilities(), windowCapabilities()
-deno task drive maximize                      # each window command answers with the new state
-deno task drive size '{"width":800,"height":600}'
-deno task drive secure                        # secureStore set / get / delete, step by step
-deno task drive native-dialog '{"kind":"open","cancelAfterMs":2000}'
-deno task drive notify && deno task drive click-notification   # clicks it, prints its TAPPED event
-deno task drive events --wait TRAY --since 2026-10-07T12:00:00Z  # the first one since then
-deno task drive tray-on                       # tray clicks and menu items are TRAY events
-deno task drive titlebar-watch                # each preference change is a TITLEBAR event
-deno task drive commands                      # every command, with its arguments
-deno task drive stop                          # quit the app and leave drive mode
+denext task drive start                         # {"started": true, "pid": …}
+denext task drive probe                         # platformFeatures(), appCapabilities(), windowCapabilities()
+denext task drive maximize                      # each window command answers with the new state
+denext task drive size '{"width":800,"height":600}'
+denext task drive secure                        # secureStore set / get / delete, step by step
+denext task drive native-dialog '{"kind":"open","cancelAfterMs":2000}'
+denext task drive notify && denext task drive click-notification   # clicks it, prints its TAPPED event
+denext task drive events --wait TRAY --since 2026-10-07T12:00:00Z  # the first one since then
+denext task drive tray-on                       # tray clicks and menu items are TRAY events
+denext task drive titlebar-watch                # each preference change is a TITLEBAR event
+denext task drive commands                      # every command, with its arguments
+denext task drive stop                          # quit the app and leave drive mode
 ```
 
 A command exits 0 with its result, 1 when the page answered an error, and 2 on a timeout
@@ -131,7 +131,7 @@ command (`{ "id", "cmd", "args"? }`; write it as `.tmp`, then rename), writes it
 `<folder>/results/<id>.json` and appends events (`TAPPED`, `TRAY`, `DEEPLINK`, `TITLEBAR`, `WINDOW`)
 to `<folder>/events.jsonl`. The CLI's folder is `e2e/.drive` (`--dir`).
 
-`deno task test:window` needs a display and a desktop session:
+`denext task test:window` needs a display and a desktop session:
 
 - **macOS**: a logged-in session. The clipboard checks put your clipboard text back afterwards.
 - **Linux**: a window manager (maximize is a window-manager request on X11), an unlocked Secret
@@ -153,7 +153,7 @@ e2e/wm-session.sh --wm i3 -- deno task test:window              # tiling, i3bar'
 e2e/wm-session.sh --wm openbox -- deno task test:window --backend cef
 e2e/wm-session.sh --wm xfwm4 --display xephyr -- deno task test:window   # watch it in a window
 e2e/wm-session.sh --wayland weston -- sh -c \
-  'deno task drive start && deno task drive probe && deno task drive secure; deno task drive stop'
+  'denext task drive start && denext task drive probe && denext task drive secure; denext task drive stop'
 ```
 
 X11 sessions run on a private Xvfb (`--display xvfb`, the default, headless) or a Xephyr window on

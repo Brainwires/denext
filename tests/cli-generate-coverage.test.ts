@@ -179,7 +179,132 @@ Deno.test("a forced dry run counts an existing file as written, and still writes
 Deno.test("GENERATE_KINDS is the CLI verb's kind list, in order", () => {
   const help = (generateCommand.positionals ?? []).find((p) => p.name === "kind")?.help ?? "";
   assertEquals(help, GENERATE_KINDS.join(" | "));
-  assertEquals(GENERATE_KINDS.length, 16);
+  assertEquals(GENERATE_KINDS.length, 18);
   assertEquals(GENERATE_KINDS[0], "page");
   assertEquals(GENERATE_KINDS[GENERATE_KINDS.length - 1], "ci");
+});
+
+// ---- docker flags ------------------------------------------------------------
+
+/** Run `generate docker` with flags; return the output and any exit code. */
+async function runDocker(
+  dir: string,
+  flags: Record<string, string | number | boolean>,
+  kind = "docker",
+): Promise<{ out: string; err: string; exit?: number }> {
+  const cap = capture();
+  const exit = stubExit();
+  try {
+    await generateCommand.run(
+      makeCtx({ positionals: [kind, kind === "docker" ? "" : "x", dir], flags }),
+    );
+  } catch (e) {
+    if (!String(e).includes("__exit__")) throw e;
+  } finally {
+    exit.restore();
+    cap.restore();
+  }
+  return { out: cap.logs.join("\n"), err: cap.errs.join("\n"), exit: exit.calls[0] };
+}
+
+Deno.test("generate docker --postgres --storage --migrate --dev writes the stack and reports why", async () => {
+  const dir = await project();
+  try {
+    const { out, exit } = await runDocker(dir, {
+      postgres: true,
+      storage: true,
+      "no-migrate": true,
+      dev: true,
+      port: 8080,
+      "deno-tag": "2.9.7",
+    });
+    assertEquals(exit, undefined);
+    assertStringIncludes(out, "postgres  on   (--postgres)");
+    assertStringIncludes(out, "migrate   off  (--no-migrate)");
+    assertStringIncludes(out, "pgvector  off  (not detected)");
+    assertStringIncludes(out, "cp .env.example .env");
+    assertStringIncludes(out, ".gitignore does not ignore .env");
+    const compose = await Deno.readTextFile(join(dir, "docker-compose.yml"));
+    assertStringIncludes(compose, "minio-init:");
+    assertStringIncludes(compose, `"8080:8080"`);
+    assert(!compose.includes("  migrate:"), "--no-migrate");
+    assertStringIncludes(await Deno.readTextFile(join(dir, "Dockerfile")), "deno:2.9.7");
+    assert((await Deno.stat(join(dir, "compose.dev.yml"))).isFile);
+    assert((await Deno.stat(join(dir, ".env.example"))).isFile);
+    await assertRejects(() => Deno.stat(join(dir, ".env")), Deno.errors.NotFound);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("generate docker --dry-run prints diffs and writes nothing; a re-run diffs, --force overwrites", async () => {
+  const dir = await project();
+  try {
+    const dry = await runDocker(dir, { stack: true, "dry-run": true });
+    assertStringIncludes(dry.out, "+++ docker-compose.yml");
+    assertStringIncludes(dry.out, "would write");
+    await assertRejects(() => Deno.stat(join(dir, "Dockerfile")), Deno.errors.NotFound);
+
+    await runDocker(dir, {});
+    const same = await runDocker(dir, {});
+    assertEquals(same.exit, undefined, "an identical re-run is not a failure");
+    assertStringIncludes(same.out, "exists, skipped");
+
+    const port = await runDocker(dir, { port: 8080 });
+    assertEquals(port.exit, 1, "nothing written, and the files on disk differ");
+    assertStringIncludes(port.out, '+      - "8080:8080"');
+    assertStringIncludes(port.out, "rerun with --force");
+
+    // A new file (.env.example) is still written beside the skipped, differing ones.
+    const differs = await runDocker(dir, { postgres: true });
+    assertEquals(differs.exit, undefined);
+    assertStringIncludes(differs.out, "+  db:");
+    assertStringIncludes(differs.out, ".env.example");
+    assert(!(await Deno.readTextFile(join(dir, "docker-compose.yml"))).includes("pg_isready"));
+
+    const forced = await runDocker(dir, { postgres: true, force: true });
+    assertEquals(forced.exit, undefined);
+    assertStringIncludes(await Deno.readTextFile(join(dir, "docker-compose.yml")), "pg_isready");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("generate docker refuses contradictory or invalid flags, and docker flags on other kinds", async () => {
+  const dir = await project();
+  try {
+    const both = await runDocker(dir, { postgres: true, "no-postgres": true });
+    assertEquals(both.exit, 1);
+    assertStringIncludes(both.err, "contradict");
+    const port = await runDocker(dir, { port: 70000 });
+    assertEquals(port.exit, 1);
+    assertStringIncludes(port.err, "invalid --port");
+    const tag = await runDocker(dir, { "deno-tag": "x;rm" });
+    assertEquals(tag.exit, 1);
+    assertStringIncludes(tag.err, "invalid --deno-tag");
+    await Deno.writeTextFile(join(dir, "denext.config.ts"), `export default { mode: "spa" };\n`);
+    const spa = await runDocker(dir, { postgres: true });
+    assertEquals(spa.exit, 1);
+    assertStringIncludes(spa.err, "static (SPA) image has no server");
+    const other = await runDocker(dir, { postgres: true }, "page");
+    assertEquals(other.exit, 1);
+    assertStringIncludes(other.err, "only apply to `docker`");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("generate --dry-run and --force work for every kind", async () => {
+  const dir = await project();
+  try {
+    const dry = await runDocker(dir, { "dry-run": true }, "page");
+    assertStringIncludes(dry.out, "would write");
+    await assertRejects(() => Deno.stat(join(dir, "app/x/page.tsx")), Deno.errors.NotFound);
+    await runDocker(dir, {}, "page");
+    await Deno.writeTextFile(join(dir, "app/x/page.tsx"), "mine");
+    await runDocker(dir, { force: true }, "page");
+    assert((await Deno.readTextFile(join(dir, "app/x/page.tsx"))) !== "mine");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

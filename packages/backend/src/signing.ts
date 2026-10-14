@@ -166,6 +166,18 @@ export interface UploadGrant {
   max: number;
   /** Multipart upload id (S3). */
   u?: string;
+  /** The owner to record (the signing caller's user id). */
+  o?: string | null;
+  /**
+   * Pinned (a policy-checked signer): the version the object had when the upload was authorized
+   * (`null`: none). The upload records its row only while the object is still at it.
+   */
+  cv?: string | null;
+  /**
+   * The version the upload writes: the client's bytes go to its staging place
+   * (`.denext-staging/<bucket>/<v>`) and reach the key only when the completion writes the row.
+   */
+  v: string;
   /** Expiry, epoch seconds. */
   exp: number;
 }
@@ -201,4 +213,50 @@ export async function openGrant(token: unknown, secrets: readonly string[]): Pro
   const grant = JSON.parse(new TextDecoder().decode(fromBase64Url(body)!)) as UploadGrant;
   checkExpiry(String(grant.exp));
   return grant;
+}
+
+/**
+ * Seal a JSON payload into a token (`<base64url body>.<HMAC>`), bound to `kind` so a token minted
+ * for one purpose (a signed download) is never accepted for another (a signed upload). The payload
+ * must carry `exp` (epoch seconds).
+ *
+ * @param kind What the token is for.
+ * @param payload The payload.
+ * @param secrets The signing secrets (current first).
+ * @returns The token.
+ */
+export async function sealToken(
+  kind: string,
+  payload: { exp: number } & Record<string, unknown>,
+  secrets: readonly string[],
+): Promise<string> {
+  const body = toBase64Url(encoder.encode(JSON.stringify(payload)));
+  return `${body}.${await signPayload(`token:${kind}\n${body}`, secrets)}`;
+}
+
+/**
+ * Open a token sealed by {@linkcode sealToken} for `kind`: the signature (constant-time, any
+ * listed secret) and the expiry are checked.
+ *
+ * @param kind What the token must be for.
+ * @param token The token.
+ * @param secrets The signing secrets.
+ * @returns The payload.
+ * @throws {StorageError} `bad_signature` or `expired`.
+ */
+export async function openToken<T extends { exp: number }>(
+  kind: string,
+  token: unknown,
+  secrets: readonly string[],
+): Promise<T> {
+  const [body, sig, extra] = typeof token === "string" ? token.split(".") : [];
+  if (!body || !sig || extra !== undefined) {
+    throw new StorageError("bad_signature", "malformed token");
+  }
+  if (!(await verifyPayload(`token:${kind}\n${body}`, sig, secrets))) {
+    throw new StorageError("bad_signature", "invalid signature");
+  }
+  const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(body)!)) as T;
+  checkExpiry(String(payload.exp));
+  return payload;
 }

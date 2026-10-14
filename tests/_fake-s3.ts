@@ -1,6 +1,6 @@
 // An in-memory S3 for the backend storage tests: the REST calls the `s3()` driver makes
 // (path-style), including presigned URLs, ranges, ListObjectsV2 paging with `encoding-type=url`
-// and multipart uploads. It checks that every request is SigV4-signed (header or query form)
+// multipart uploads and CopyObject. It checks that every request is SigV4-signed (header or query form)
 // and that a presigned request carries the headers it signed; it does not recompute signatures
 // (the signer is verified against AWS's own vectors in backend-sigv4.test.ts).
 
@@ -86,6 +86,8 @@ export class FakeS3 {
   }
 
   async #put(request: Request, key: string): Promise<Response> {
+    const source = request.headers.get("x-amz-copy-source");
+    if (source !== null) return this.#copy(source, key);
     const body = new Uint8Array(await request.arrayBuffer());
     const etag = `etag${++this.#seq}`;
     this.objects.set(key, {
@@ -95,6 +97,22 @@ export class FakeS3 {
       modified: new Date(),
     });
     return new Response(null, { headers: { etag: `"${etag}"` } });
+  }
+
+  /** CopyObject: the source's bytes and type (S3's default `COPY` metadata directive). */
+  #copy(source: string, key: string): Response {
+    const prefix = `/${this.bucket}/`;
+    if (!source.startsWith(prefix)) return xml(404, "<Error><Code>NoSuchBucket</Code></Error>");
+    const from = this.objects.get(decodeURIComponent(source.slice(prefix.length)));
+    if (!from) return xml(404, "<Error><Code>NoSuchKey</Code></Error>");
+    const etag = `etag${++this.#seq}`;
+    const modified = new Date();
+    this.objects.set(key, { ...from, body: from.body.slice(), etag, modified });
+    return xml(
+      200,
+      `<CopyObjectResult><ETag>"${etag}"</ETag><LastModified>${modified.toISOString()}` +
+        `</LastModified></CopyObjectResult>`,
+    );
   }
 
   async #putPart(request: Request, q: URLSearchParams): Promise<Response> {

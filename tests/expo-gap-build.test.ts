@@ -7,7 +7,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { dirname, fromFileUrl, join } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../src/build/esbuild/mod.ts";
 import { reactNativeBundleOptions } from "../src/build/react-native.ts";
 import { expoShimName } from "../src/build/expo-shims.ts";
 import { EXPO_SHIMS } from "../src/expo/manifest.ts";

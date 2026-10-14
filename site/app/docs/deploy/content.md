@@ -30,7 +30,7 @@ denext export .   # writes out/ — pure HTML, 0 KB JS on static pages
 ### Docker
 
 ```dockerfile
-FROM denoland/deno:2.9.6
+FROM denoland/deno:2.9.7
 
 # Build and run as the image's unprivileged `deno` user — /app must be its own, because
 # the build writes .denext/ and the durable cache (.denext/cache.db) lives there too.
@@ -50,10 +50,19 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
   CMD deno eval "fetch('http://127.0.0.1:3000/_denext/health').then((r)=>Deno.exit(r.ok?0:1)).catch(()=>Deno.exit(1))"
 
-# `deno task start` = --allow-net --allow-read --allow-env --allow-write=.denext (the
-# least-privilege task `denext create` writes; the write grant keeps the cache durable).
-CMD ["deno", "task", "start"]
+# tini (PID 1) signals the whole process group, and the CMD is the `start` task's own
+# `deno run` line: `deno task` does not forward SIGTERM, so `docker stop` would otherwise
+# wait out its grace period and SIGKILL the server (no drain, no plugin teardowns).
+# --allow-net --allow-read --allow-env --allow-write=.denext is the least-privilege task
+# `denext create` writes; the write grant keeps the cache durable.
+ENTRYPOINT ["/tini", "-g", "--", "docker-entrypoint.sh"]
+CMD ["deno", "run", "--allow-net", "--allow-read", "--allow-env", "--allow-write=.denext", "jsr:@denext/denext@^4.0.0/cli", "start", "."]
 ```
+
+`denext build` / `denext export` set `DENEXT_PHASE=build` while they run: a `RUN deno task build`
+layer has no runtime secrets, so `denextAuth({ secret: Deno.env.get("AUTH_SECRET")! })` builds
+with a throwaway secret, and its OAuth client credentials and production `canonicalOrigin` are
+checked when the server starts instead. Nothing else needs a build-time `.env`.
 
 `docker build -t my-app . && docker run -p 3000:3000 -e SESSION_SECRET=… my-app`.
 Put a concurrency ceiling / TLS in front (§1) — a reverse proxy or your
@@ -67,19 +76,96 @@ refused as cross-origin (`403`).
 the project's `check` task — else `deno fmt --check`, `deno lint`, `deno test` —
 and its `build` task, or `export` for a SPA). `denext generate docker` writes the `Dockerfile`,
 `docker-compose.yml` and `.dockerignore` for you — SSR or static image
-auto-detected from your config — and the [Project UI](/docs/ui)'s Docker panel
-regenerates the same three files with options (image mode `server` | `static`,
-port, `denoland/deno` tag, an optional Postgres service that publishes
-`127.0.0.1:5432`) and shows a per-file diff before it writes. Both are the same
-templates, and a file you edited by hand (one without the generated-file
-sentinel header) is never overwritten. The generator is the source of truth: the
-snippet above is a readable illustration and can lag it in details like the
-dependency-cache layer, the exact run flags and whether the port comes from
-`PORT` or `--port`.
+auto-detected from your config — plus, when the project needs them, a database, an object store
+and a migrations step (the [self-hosted stack](#self-hosted-stack-postgres-storage-migrations)
+below). The [Project UI](/docs/ui)'s Docker panel regenerates the same files with the same
+options and shows a per-file diff before it writes. Both are the same templates, and an existing
+file is never overwritten: the CLI skips it and prints its diff (`--force` overwrites, `--dry-run`
+writes nothing), and the UI refuses a file you edited by hand (one without the generated-file
+sentinel header). The generator is the source of truth: the snippet above is a readable
+illustration and can lag it in details like the dependency-cache layer, the exact run flags and
+whether the port comes from `PORT` or `--port`.
+
+### Self-hosted stack (Postgres, storage, migrations)
+
+`denext generate docker` reads your project and adds the services it needs to the compose
+file — Supabase's self-hosted layout, on denext:
+
+```sh
+denext generate docker            # detect: report what the project needs, write it
+denext generate docker --stack    # everything detected, and Postgres even if nothing asked
+denext generate docker --postgres --pgvector --no-storage --dev --dry-run
+cp .env.example .env              # then fill in every secret it lists
+docker compose up -d --build
+```
+
+| Service      | Added when (detected)                                         | Flag                           | What it is                                                                                                                                                                                                                                                                                                   |
+| ------------ | ------------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `web`        | always                                                        | `--port`, `--deno-tag`         | the app image; waits for every service below                                                                                                                                                                                                                                                                 |
+| `db`         | `@denext/backend` in the config, or a Postgres `DATABASE_URL` | `--postgres` / `--no-postgres` | Postgres 17 (`postgres:17-alpine`), `DATABASE_URL` wired into the app, a `db-data` volume                                                                                                                                                                                                                    |
+| `db-init`    | with `db`                                                     |                                | one-shot, as the superuser: creates the app's own role (`POSTGRES_APP_USER`, the database's owner, never a superuser), sets its password from `.env`, with pgvector creates the extension, and with `realtime({ source: "logical" })` gives the role `REPLICATION` (`db` then runs with `wal_level=logical`) |
+| (`db` image) | `create extension … vector` in `migrations/`                  | `--pgvector`                   | `pgvector/pgvector:pg17` instead                                                                                                                                                                                                                                                                             |
+| `minio`      | an `s3()` storage driver in `backend({ storage })`            | `--storage` / `--no-storage`   | an S3 store with a `storage-data` volume; the app gets `AWS_*` / `S3_*`                                                                                                                                                                                                                                      |
+| `minio-init` | with `minio`                                                  |                                | one-shot `mc mb --ignore-existing` for the bucket (the literal `s3({ bucket })`, or `S3_BUCKET`)                                                                                                                                                                                                             |
+| `migrate`    | `migrations/` and `jobs/migrate.ts` (or `@denext/backend`)    | `--migrate` / `--no-migrate`   | one-shot before the app starts: with `@denext/backend`, `denext migration up` (the backend's own migrations — the `anon` / `authenticated` roles, the storage and realtime schemas — then yours); else `denext job migrate` (your `migrate` task when you have one)                                          |
+
+Every long-running service has a health check, the app's `depends_on` waits for
+`service_healthy` / `service_completed_successfully`, every service has a restart policy, and
+data lives in named volumes. The database publishes no host port: the app reaches it as
+`db:5432`. `--expose-db` publishes it on `127.0.0.1:5432` (`DB_PORT` in `.env` moves it).
+MinIO is published on `127.0.0.1:9000` (`MINIO_PORT`) so the default presigned URLs work for a
+browser on that machine.
+`--dev` also writes `compose.dev.yml`, an overlay that runs `denext dev` on a bind mount of the
+project (as your user: `export UID GID=$(id -g)` first) and publishes Postgres on loopback: `docker compose -f docker-compose.yml -f compose.dev.yml up --build`. The dev server
+asks a browser on another address for its per-run token, so open the URL it logs.
+
+**Secrets.** `.env.example` lists every variable the stack reads — `POSTGRES_PASSWORD`,
+`POSTGRES_APP_PASSWORD`,
+`AUTH_SECRET` (with `denextAuth`); with `@denext/backend` the Supabase keys
+`DENEXT_PUBLISHABLE_KEY`, `DENEXT_SECRET_KEY` and `DENEXT_JWT_SIGNING_KEYS` (from `denext backend
+keys`; the legacy `DENEXT_JWT_SECRET` only for HS256 keys), `DENEXT_VAULT_KEY` (required only
+with `vault`) and `DENEXT_WEBHOOK_SECRET` (read only with `webhooks`); `DENEXT_STORAGE_SECRET`
+(with backend storage), `MINIO_ROOT_PASSWORD`, … — each with the command that generates a value
+(`openssl rand -base64 32`). Required ones are left
+empty, and the compose file reads them as `${NAME:?…}`, so `docker compose` refuses to start
+until `.env` sets them; nothing is ever written with a real secret. `.dockerignore` keeps `.env`
+out of the image — keep it out of git too (the generator warns when `.gitignore` doesn't).
+
+**The database role.** The app and the `migrate` service connect as `POSTGRES_APP_USER`
+(default `denext_app`): the owner of the database and its `public` schema with `CREATEROLE` —
+what the backend's own DDL needs (its schemas, tables and triggers, and the `anon` /
+`authenticated` roles) — and never a superuser, so neither `db.service()` nor a SQL injection
+runs with superuser rights. The superuser (`POSTGRES_USER`) is used only by `db-init` and the
+database's health check. `db-init` runs on every `up`, so a changed `POSTGRES_APP_PASSWORD` takes
+effect on the next one. Realtime with `source: "logical"` also needs
+`ALTER ROLE denext_app REPLICATION` (run it as the superuser). A stack whose tables were created
+before this (owned by the superuser) has to start over (`denext stack down --volumes`) or move
+them to the app role with `ALTER TABLE … OWNER TO denext_app`.
+
+**Per-IP limits.** Inside Docker every client reaches the app from the bridge's private address,
+which per-address limits skip by default, so the stack sets
+`DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`: sign-in, sign-up and code budgets stay on. Behind a
+reverse proxy also set `DENEXT_TRUST_PROXY=1` (or `DENEXT_RATE_LIMIT_TRUSTED_PROXIES`), so each
+client gets its own budget instead of sharing the proxy's.
+
+**The runtime.** With Postgres or `@denext/backend`, the image runs on denext's Deno toolchain
+(the build already downloaded it; a layer puts it first on `PATH`), because
+`@denext/backend`'s Postgres client is `Deno.SQL`, which stock Deno does not have.
+
+**Object storage from the browser.** The app talks to the store at `S3_ENDPOINT` (default
+`http://minio:9000`, which only the containers can resolve), and signs every URL it hands a
+browser — presigned uploads, downloads, multipart parts — for `S3_PUBLIC_ENDPOINT` instead
+(`s3({ publicEndpoint })`; SigV4 signs the host, so the URL must be signed for the name the
+browser uses). Its default, `http://localhost:9000`, is the port the stack publishes MinIO on
+(loopback only), so uploads and downloads work from a browser on the machine running the stack.
+In production route a public HTTPS hostname to the `minio` service and set
+`S3_PUBLIC_ENDPOINT` to it. MinIO no longer publishes pullable
+images, so the service uses Bitnami's legacy build of the same server, pinned by digest;
+`MINIO_IMAGE` in `.env` swaps in any MinIO-compatible image that has `mc`.
 
 ### Deno Deploy
 
-Push the repo and point the entrypoint at `jsr:@denext/denext@^2/cli` with args
+Push the repo and point the entrypoint at `jsr:@denext/denext@^4.0.0/cli` with args
 `start .`, or add a build step running `deno task build`. Deno Deploy provides
 TLS and autoscaling; still set a per-instance `maxConcurrency` (§1) and your
 secrets (`SESSION_SECRET`, etc.) as environment variables.
@@ -99,13 +185,15 @@ WorkingDirectory=/srv/my-app
 Environment=PORT=3000
 Environment=SESSION_SECRET=…
 Environment=DENEXT_CANONICAL_ORIGIN=https://example.com
-ExecStart=/usr/local/bin/deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^2/cli start .
+ExecStart=/usr/local/bin/deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.0.0/cli start .
 Restart=always
 [Install]
 WantedBy=multi-user.target
 ```
 
-Run `deno task build` in your deploy step, then `systemctl restart my-app`.
+Run `denext task build` (or `deno task build`) in your deploy step, then
+`systemctl restart my-app`. The least-privilege `start` spawns no child process, so it runs
+on whichever `deno` the unit names; it needs no `--allow-run` and no toolchain download.
 Front it with nginx/Caddy for TLS + the concurrency limit (§1).
 
 ## 1. Put a concurrency ceiling in front of denext (required)
@@ -145,7 +233,7 @@ misconfigured — the edge ceiling above is still required.
 ```ts
 // denext.config.ts
 export default { maxConcurrency: 100 } satisfies DenextConfig;
-// or, per deployment: DENEXT_MAX_CONCURRENCY=100 deno task start
+// or, per deployment: DENEXT_MAX_CONCURRENCY=100 denext task start
 ```
 
 **`slotBackstop` (with `requestTimeout: 0`).** If you disable the request
@@ -167,6 +255,13 @@ work is cooperative — i.e. it awaits I/O and threads the per-request
 JavaScript is single-threaded, so a synchronous hot loop blocks the event loop
 until it returns. Keep render/handler code free of unbounded synchronous work,
 and rely on the edge concurrency ceiling (§1) to contain the blast radius.
+
+A surface with a time budget of its own replaces the deadline for its requests with
+`setRequestTimeout(ms)` from `denext/server` (from the request's start; `0` removes it; it may
+also shorten it). `@denext/backend` does this for its surfaces, so the app's 30 s never cuts
+them: an Edge Function gets its `timeoutMs` (150 s by default) plus 10 s, a storage upload or
+download (`/storage/v1`, `/_denext/storage`, TUS) an hour, and an auto-REST request
+`rest.statementTimeout` plus 6 s when that is longer than the app's deadline.
 
 Reach the signal from anywhere in the request with `requestSignal()` from
 `denext/server` — a route handler already has `request.signal`, but a Server
@@ -326,6 +421,15 @@ A client can spoof `Host`, so for a fixed public origin set `canonicalOrigin` �
 it overrides the header and is the robust choice for canonical and `og:image`
 URLs.
 
+Generated metadata URLs (the `og:image` an `opengraph-image` file adds, automatic hreflang and
+canonical links) go further: they resolve against `canonicalOrigin`, else the page's
+`metadataBase`, and never take the request's origin in a page that may be cached. A client
+controls `Host`, so an origin read from it and stored by the ISR cache or a CDN would be served
+to every later visitor (web cache poisoning). Without either setting, a cacheable page
+(`revalidate`, `force-static`) keeps `og:image` relative and omits hreflang / canonical; a
+per-request page uses the request's origin and is sent `no-store`, as is a `generateSitemaps`
+sitemap index built on it. Production logs one warning when neither is set.
+
 ### Per-address limits behind a proxy
 
 Every per-address limit — `rateLimit()`'s default key, `denextAuth`'s per-IP
@@ -347,18 +451,31 @@ change that:
   warning — Supabase Auth applies no limit to such a request, which would let a
   client that reaches the server directly skip every limit by leaving the header
   out. The header names the limit key only: `clientIp()` still follows
-  `trustForwardedHeaders`. Set it only when clients cannot reach denext except
-  through a proxy that **overwrites** the header.
+  `trustForwardedHeaders`. The proxy must **overwrite** the header.
+- **`rateLimitTrustedProxies: ["173.245.48.0/20", …]`** (env
+  `DENEXT_RATE_LIMIT_TRUSTED_PROXIES`, comma-separated) — the socket peers
+  whose `rateLimitHeader` is believed. From any other peer the header is ignored
+  (one warning) and the limit keys on that peer. With none listed, a
+  loopback/private peer is trusted while `trustForwardedHeaders` is on (an nginx
+  or `cloudflared` on the same host or network); with neither set the header is
+  never believed and the server warns at boot. Supabase Auth trusts
+  `GOTRUE_RATE_LIMIT_HEADER` from anyone; denext does not, because where the
+  origin is reachable directly (a leaked origin IP, an exposed app port) a client
+  could send a fresh value on every request and get a fresh bucket each time —
+  defeating `denextAuth`'s IP-wide lockout, `rateLimit()` and the Live cap
+  silently.
 - **`rateLimitLocalAddresses: true`** (env `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`)
   — count a loopback/private socket peer by its own address instead of skipping
   it: a LAN, VPN or container-network deployment where those peers are the real
   clients.
 
 ```ts
-// denext.config.ts — behind Cloudflare
+// denext.config.ts — behind Cloudflare (its edge connects from its published ranges;
+// copy the full current list from https://www.cloudflare.com/ips/)
 export default {
   canonicalOrigin: "https://example.com",
   rateLimitHeader: "cf-connecting-ip",
+  rateLimitTrustedProxies: ["173.245.48.0/20", "103.21.244.0/22", "2400:cb00::/32" /* … */],
 } satisfies DenextConfig;
 ```
 
@@ -420,7 +537,10 @@ deadline (default **10s**): set `DENEXT_SHUTDOWN_DRAIN_MS` to tune it, or `0` to
 drain indefinitely. If the deadline elapses with requests still in flight the
 process force-exits (and plugin teardown is skipped). Size it above your longest
 expected request and below your orchestrator's kill grace (e.g. k8s
-`terminationGracePeriodSeconds`, typically 30s).
+`terminationGracePeriodSeconds`, typically 30s; the generated compose file sets
+`stop_grace_period: 30s`). The signal must reach the server process itself: run
+`deno run … start` directly (as the generated Dockerfile does), not under `deno task`, which
+does not forward `SIGTERM`.
 
 ## 11. The ISR page-cache key omits the Host (multi-tenant caveat)
 
@@ -474,13 +594,28 @@ export default { cacheKeyParams: ["page", "sort"] } satisfies DenextConfig;
 
 The production server answers a built-in liveness probe at **`/_denext/health`**
 (GET/HEAD only — other methods get a `405`), meant for load balancers and k8s
-probes. It always returns `200` — the site serves even when the cache backend is
-down, since reads degrade to live renders — and the JSON body reports cache
+probes. It returns `200` even when the cache backend is down — the site serves,
+since reads degrade to live renders — and the JSON body reports cache
 reachability so operators aren't blind to an outage:
 
 ```json
 { "status": "ok", "cache": "ok", "cacheStore": "sqlite" }
 ```
+
+A dependency the app cannot serve without registers a readiness check with
+`registerHealthCheck(name, check)` from `denext/server`; `@denext/backend` registers
+`database` (`select 1` on its Postgres client). While any check fails (or takes over 2 s) the
+probe answers **`503`** with `"status": "degraded"` and the check named — never its error, the
+probe is public — so a load balancer or the generated compose healthcheck stops routing to an
+instance that could only answer errors:
+
+```json
+{ "status": "degraded", "cache": "ok", "cacheStore": "sqlite", "checks": { "database": "down" } }
+```
+
+`denext doctor` runs the backend's checks too: its setup accepts the configuration (API keys,
+storage secret), the database answers, the backend's and the app's migrations are applied, and
+the storage driver answers.
 
 `"cache": "degraded"` means the active cache store failed its probe.
 `cacheStore` is what backs it: `"sqlite"` (the durable default), `"memory"`

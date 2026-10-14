@@ -437,7 +437,9 @@ Deno.test("the flip adds exactly the three view modules to the UI server's graph
     all.length <= without.size + 3,
     `the view layer added ${all.length - without.size} modules (budget: 3)`,
   );
-  assertEquals(all.filter((s) => /esbuild|^npm:/.test(s)), []);
+  // esbuild/version.ts is a string constant the toolchain status reads, not the bundler.
+  const bundler = (s: string) => /esbuild|^npm:/.test(s) && !s.endsWith("/esbuild/version.ts");
+  assertEquals(all.filter(bundler), []);
 });
 
 Deno.test("the client module is unchanged by the flip: no JSX, no hydration", () => {

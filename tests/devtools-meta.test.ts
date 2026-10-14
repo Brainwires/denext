@@ -11,7 +11,7 @@
 // it can be switched off entirely with `DENEXT_DEV_META=0`.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "../src/build/esbuild/mod.ts";
 import { join, toFileUrl } from "@std/path";
 import {
   collectComponentMeta,

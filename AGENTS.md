@@ -30,8 +30,10 @@ emit correct denext instead of Next.js.
    the `mobile:*` tasks, `spa.precompress: false` + `mobile.icon`, Capacitor 8 installed with the
    app's package manager, and review items for what it can't know (a hosted-mode env switch, a
    backend URL a phone can reach, CORS for `capacitor://localhost` / `https://localhost`).
-   `denext upgrade [--to <v>] [--dry-run | --check]` moves the `jsr:@denext/denext` pin, the
-   pinned CLI tasks and every first-party `@denext/*` package together.
+   `denext upgrade [--to <v>] [--dry-run | --check] [--allow-major] [--allow-downgrade]` moves
+   the `jsr:@denext/denext` pin, the pinned CLI tasks and every first-party `@denext/*` package
+   together (`--allow-major` also lets a package that imports no denext cross a major; an older
+   `--to` needs `--allow-downgrade`). From 3.x: https://denext.dev/docs/changelog
 3. **File conventions are the same as Next App Router:** `app/page.tsx`,
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server
@@ -304,7 +306,10 @@ inherits the app's `trustForwardedHeaders` unless it sets its own. Per-address l
 (`rateLimit()`, auth's per-IP budgets, `live.limits.maxConnectionsPerIp`, `clientIpForLimits()`)
 skip a loopback/private peer with no trusted hop; `rateLimitHeader: "cf-connecting-ip"` keys them on
 the address a proxy writes there (Supabase's `GOTRUE_RATE_LIMIT_HEADER`; a request without it falls
-back, never unlimited) and `rateLimitLocalAddresses: true` counts such a peer as itself.
+back, never unlimited), believed only from a trusted proxy — a peer in `rateLimitTrustedProxies`
+(CIDRs, e.g. Cloudflare's ranges), or with none listed a loopback/private peer under
+`trustForwardedHeaders` (any other peer is keyed as itself) — and `rateLimitLocalAddresses: true`
+counts such a peer as itself.
 
 **A project-local CLI verb (no plugin):** put it in `denext.config.ts` and run it as a verb.
 
@@ -333,7 +338,8 @@ page — schema-driven `denext.config.ts` editing (a comment-preserving splice: 
 value span it replaces, the file keeps its bytes), a Cron page (every schedule, when it
 next fires, an editor with a shape builder, and run history when `jobs.history` is on),
 plugins with option forms for the first-party ones and JSR search, every `generate` kind,
-Docker files plus in-place `docker-compose.yml` editing, a Desktop panel that composes the
+Docker files (with the self-hosted stack's toggles) plus in-place `docker-compose.yml`
+editing, a Desktop panel that composes the
 signing setup from the identities the keychain holds, a Setup page that readies a fresh
 clone, a Dev page that starts and stops the dev server, a Tasks page for the scripts
 `deno.json` declares, and the project's own verbs. It works with JavaScript disabled, and
@@ -522,7 +528,7 @@ A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
 packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS bridge to the app
 origin; `desktop.app.bridgeOrigins` adds others). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.16 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.17 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -633,11 +639,44 @@ https://denext.dev/docs/native-sdk-recipes. Docs: https://denext.dev/docs/react-
 **File storage (the `@denext/backend` plugin):** `plugins: [backend({ storage: { driver:
 s3({ region, bucket, endpoint? }) | fs({ dir }), buckets: { avatars: { public?, maxBytes?, mime?,
 authorize: ({ session, op, key }) => boolean } } } })]` (S3 / R2 / MinIO via SigV4, zero npm). Server:
-`storage.bucket(n).createSignedUploadUrl / createSignedUrl(key, { transform }) / upload / download /
-head / list / remove` from `@denext/backend/server` — inside a request `authorize` runs with its
-session and its absence denies; outside a request only `{ service: true }` (which skips it) works.
-Browser: `uploadFile(bucket, file, { onProgress })` / `getFileUrl` from `@denext/backend/client`. Set `DENEXT_STORAGE_SECRET` (≥ 32
-chars). Docs: https://denext.dev/docs/backend
+`storage.bucket(n).createSignedUploadUrl / createSignedUrl(key, { transform }) / upload(key, body,
+{ upsert?, cacheControl?, metadata? }) / download / info / exists / copy / move / listFolder / list /
+remove` and `storage.createBucket / updateBucket / deleteBucket / emptyBucket` from
+`@denext/backend/server` — inside a request `authorize` (`{ session, identity, op, key }`) runs and its
+absence denies; outside a request only `{ service: true }` (which skips it) works. Browser:
+`uploadFile(bucket, file, { onProgress })` / `getFileUrl` from `@denext/backend/client`. It also serves
+Supabase's Storage API at `/storage/v1` — stock `supabase.storage` (supabase-js v2) works unchanged,
+plus TUS uploads at `/storage/v1/upload/resumable` (`/sign` + `x-signature` for a signed upload),
+`listV2`, and Supabase-style object versioning (`versioned: true` / `versioningStatus`, `versionId`
+reads and deletes, lifecycle rules); with `backend({ supabase })` keys the secret key is the service
+role. Object/bucket rows live in Supabase's `storage.objects` / `storage.buckets` (Postgres) or a
+`node:sqlite` file; `storage: { rls: true }` authorizes with SQL policies on them
+(`storage.foldername(name)`, `auth.uid()`). Set `DENEXT_STORAGE_SECRET` (≥ 32 chars). Docs:
+https://denext.dev/docs/backend
+Supabase clients: `backend({ supabase: true | { auth: { … } } })` installs the API keys
+(`DENEXT_PUBLISHABLE_KEY` / `DENEXT_SECRET_KEY`, ES256 `DENEXT_JWT_SIGNING_KEYS`, legacy
+`DENEXT_JWT_SECRET`; `denext backend keys` mints them) and serves GoTrue's `/auth/v1` over the
+`denextAuth()` users, so stock `supabase.auth.*` works (password, OTP / magic link, phone via
+`sendSms`, anonymous, OAuth incl. stored `custom:` providers, Web3 (`web3`), MFA with TOTP / SMS /
+WebAuthn factors, passkeys, SAML SSO, the OAuth 2.1 server (`oauthServer`), admin API). `resolveIdentity()` from
+`@denext/backend/server` resolves any request (access token → secret key → denext session → anon);
+`db()` uses it.
+Edge Functions: `backend({ functions: {} })` serves `functions/<name>/index.ts` (a Supabase
+`Deno.serve(handler)` module, unchanged; `denext generate function <name>`) at
+`/functions/v1/<name>` for `supabase.functions.invoke`, each in its own Worker; callers need a
+valid identity (anon key, access token or session) unless `functions: { functions: { <name>: { verifyJwt: false } } }`.
+With `postgres`, `vault: {}` (`vault.createSecret` / `vault.get`, AES-GCM under `DENEXT_VAULT_KEY`,
+server-only; `vault: { sql: true }` adds `vault.create_secret()` / `vault.decrypted_secrets`
+inside `vault.withKey(fn)` and `denext db push`), `queues: {}` (pgmq's SQL API + `pgmq_public`, no extension; `queue(name).send/read`,
+`queueConsumer({ queue, handler })` as a job), `denext generate vector-search <table>` + `matchDocuments()` (pgvector)
+and `webhooks: { hooks: { name: { url } } }` (`supabase_functions.http_request('name')` triggers,
+delivered signed + retried) from `@denext/backend/server`; the plugin adds the Postgres half of
+`denext db`: `diff | pull | dump | lint | inspect <report> | test` (pgTAP) `| types` (whole-schema
+`Database` type, `supabase gen types`-shaped), and applies its own migrations first on `db push`;
+also `denext storage ls | cp | mv | rm` (`ss:///bucket/key`), `denext functions new | list | serve |
+delete`, `denext backend token --sub <id>` (a test bearer JWT) and `denext gen types | keys |
+bearer-jwt`. `denext stack up | down | status | logs` runs the `generate docker` stack like
+`supabase start` (writes it and a generated `.env` when missing; `status --show-secrets`).
 
 **A database (zero-npm, server-only module):**
 
@@ -661,20 +700,42 @@ tables by migration on first use. With `@denext/backend`, `backend({ postgres: {
 (signed out, or outside a request), transaction-locally; `db({ as: { id } })` acts for a user in a
 task, and `db.service()` bypasses RLS (maintenance only). Tables need `grant … to authenticated`.
 Realtime from the database: `backend({ postgres, realtime: realtime({ tables: { notes: {} } }) })`
-installs triggers that NOTIFY keys only; `useTableChanges("notes", { initial, filter? })` from
-`@denext/backend/client` keeps rows live, each change re-read AS the subscriber under RLS (a
-delete only to subscribers who could see the row); `onTableChange(table, fn)` /
-`tableChanges(table, { as, onChange })` from `@denext/backend/server`, and `revalidate: true` pushes
-`table:<name>` tags. Needs a client with `listen` (`Deno.SQL`, or `fromPostgresJs`).
+installs triggers that NOTIFY keys only; `useTableChanges("notes", { initial, filter?, events? })`
+from `@denext/backend/client` keeps rows live (filters `eq neq lt lte gt gte in`), each change
+re-read AS the subscriber under RLS (a delete only to subscribers who could see the row);
+`onTableChange(table, fn)` / `tableChanges(table, { as, onChange })` from `@denext/backend/server`,
+and `revalidate: true` pushes `table:<name>` tags. The same option serves Supabase Realtime at
+`/realtime/v1/websocket`: stock `supabase.channel()` — `postgres_changes`, broadcast (also
+`realtime.send()` / `realtime.broadcast_changes()` in SQL, `broadcast()` on the server), presence
+across instances, private channels under `realtime.messages` policies, replay — works unchanged;
+tables also opt in by `alter publication supabase_realtime add table …`; `useBroadcast` /
+`useRealtimePresence` from `@denext/backend/client` reach the same channels natively;
+`realtime({ source: "logical" })` reads the WAL (pgoutput) instead of triggers + NOTIFY. Needs a
+client with `listen` (`Deno.SQL`, or `fromPostgresJs`).
 Auto-REST: `backend({ postgres: {}, rest: {} })` serves granted tables with RLS on (and
-`security_invoker` views; others only when named in `rest.tables`) PostgREST-style at `/rest/v1/<table>` (`select=`, `col=eq.x`, `order=`, `limit`; POST / filtered PATCH / DELETE), each
-statement through `db()` under RLS; `from("notes").select("id,body").eq("id", 1)` from
-`@denext/backend/client`, typed by the generated `.denext/rest.ts`. No embeds, `or`, upserts or RPC.
-`denext generate migration <name>` writes `migrations/<timestamp>_<name>.sql` and a
-`jobs/migrate.ts` that applies pending ones on `node:sqlite` (`denext job migrate`; a Prisma or
-Drizzle project is pointed at its own tool); `generate seed` an idempotent `jobs/seed.ts`;
-`generate ci` a GitHub Actions workflow. `denext routes [--json]` lists the app's pages and API
-routes.
+`security_invoker` views; others only when named in `rest.tables`) and the functions anon /
+authenticated may EXECUTE, with PostgREST 12's wire format at `/rest/v1/<table>` and
+`/rest/v1/rpc/<fn>` — embeds through foreign keys (`select=*,author:users(name),tags!inner(*)`),
+`or` / `and` trees, every operator, aliases, casts, JSON paths, upserts, `PUT`, counts, CSV,
+views, computed fields / relationships, aggregates (opt-in `rest.aggregates`), OpenAPI at `GET /rest/v1`,
+`Accept-Profile` across `rest.schemas` — each statement through `db()` under RLS. The stock
+`@supabase/supabase-js` `from()` / `rpc()` / `schema()` work against it unchanged, and so does
+`from("notes").select("id,body").eq("id", 1)` / `rpc()` from `@denext/backend/client`; the
+generated `.denext/rest.ts` is `supabase gen types`-shaped (`createClient<Database>()`).
+`denext generate migration <name>` (= `denext migration new`) writes
+`migrations/<timestamp>_<name>.sql` with `-- migrate:up` / `-- migrate:down` sections and a
+`jobs/migrate.ts` runner (`migrateSqlite` / `migratePostgres`; a Prisma or Drizzle project is
+pointed at its own tool). The Supabase CLI's verbs, on SQLite or Postgres, no plugin needed:
+`denext migration list | up [--to v] | down [--steps n | --to v | --force-reset --yes] | repair
+--status applied|reverted <v> | squash | fetch`, `denext db migrate | rollback | status | push |
+reset --yes | seed | link --url <pg-url>` (`--db-url <url>` / `--linked` pick another database; a
+`supabase/migrations/` project keeps `supabase_migrations.schema_migrations`). `denext migrate`
+is the framework migrator, not these; `generate seed` an idempotent `jobs/seed.ts`;
+`generate ci` a GitHub Actions workflow; `generate docker` the Dockerfile and a compose stack
+detected from the project (`--stack`: Postgres 17, MinIO with a bucket bootstrap when the storage
+driver is `s3()`, a one-shot `denext job migrate`, `.env.example` listing every secret;
+`--postgres`/`--no-postgres`, `--pgvector`, `--storage`, `--migrate`, `--expose-db`, `--dev`,
+`--dry-run`, `--force`). `denext routes [--json]` lists the app's pages and API routes.
 
 **A scheduled / background job (cron):** put it in `jobs/<name>.ts`; schedule it in
 `denext.config.ts` (`scheduledJobs`) or per-job; run it on demand with `runJob(name)`
@@ -786,6 +847,11 @@ await screen.fireEvent.click(screen.getByRole("button"));
 // getByRole/getByText/getByLabelText/getByTestId; fireEvent.change wires to onChange.
 ```
 
+A test that needs a fake clock or a module mock imports `vitest` (`vi.useFakeTimers()`,
+`vi.mock()`, `vi.stubEnv`) and runs under `denext test` — the toolchain's `deno test` has
+Vitest's API; stock Deno can't resolve `vitest`, so name such files `*.vitest.ts` if a plain
+`deno test` also runs. Keep a Vitest run's coverage in its own report.
+
 **Conformance-probing every route (CI gate):**
 
 ```ts
@@ -836,7 +902,8 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   fields; denext's own `experimental.compiler` / `asyncContext` / `features` /
   `nodeResolve` were removed in 3.0 and are a config error.
 - **denext's Deno toolchain**: the verbs that run project code (`dev`, `build`, `export`,
-  `start`, `test`, `check`, `job`, `doctor`, `desktop run|dev|build|package`, `mobile dev|build`,
+  `start`, `test`, `check`, `job`, `analyze`, `profile`, `doctor`, `desktop run|dev|build|package`,
+  `mobile dev|build`,
   project verbs) re-run themselves on denext's pinned Deno build (`2.9.7-denext.N`: `Deno.SQL`,
   Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
   `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced. `DENEXT_DENO=stock`
@@ -851,13 +918,21 @@ the [plugin guide](https://denext.dev/docs/plugins) and
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
   bench`), and `denext main.ts` / `denext https://…/x.ts` is `deno run`. Precedence: denext's
-  built-in verbs, then the project's own (`commands:` / plugins; shadowing a Deno verb prints one
-  notice), then Deno's. `task` is Deno's; background work is `denext job`. `info <module>` is
+  built-in verbs, then the project's own (`commands:` / plugins), then Deno's. A script or a Deno
+  verb never imports `denext.config.ts` first (only a name that may be a project verb does); a
+  project verb may not be named `run`, `x`, `eval`, `serve`, `compile`, `install`, `uninstall`,
+  `upgrade` or `task` (refused), and one named after another Deno verb (`bench`, `doc`, …) runs
+  in its place only once `denext commands` has listed it (`.denext/commands.json`, matching the
+  current config / `deno.json` / `deno.lock`; one notice). `task` is Deno's; background work is
+  `denext job`. `info <module>` is
   Deno's info; `audit` runs denext's checks and `deno audit`. For Deno's meaning of a verb denext
   keeps (`test`, `fmt`, `upgrade`, `desktop`, `create`, `init`, `completions`): `denext deno <verb>`.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
-  (CI-enforced). The build-time toolchain still uses a few npm tools — `esbuild`
-  (core) plus opt-in `sass` / `@mdx-js/mdx` / `ws` / `@tanstack/router-plugin`; the CSS + swc-AST tooling is
+  (CI-enforced). esbuild is not an npm import either: denext vendors esbuild's JS API and runs the
+  esbuild 0.25.5 binary its Deno toolchain ships (verified by SHA-256), else
+  (`DENEXT_DENO=stock`, stock Deno) the official `@esbuild/<platform>` binary, integrity-checked;
+  `ESBUILD_BINARY_PATH` overrides both. The build-time toolchain still uses a few opt-in npm tools —
+  `sass` / `@mdx-js/mdx` / `ws` / `@tanstack/router-plugin`; the CSS + swc-AST tooling is
   the first-party `@denext/lightningcss` / `@denext/swc` wasm. Your app may still
   use `npm:`/`jsr:` libraries.
 - Run checks with `deno task check` (fmt `--check` + lint + tests; type-checking
@@ -889,12 +964,13 @@ denext ships tooling so agents get it right the first time:
   the HTML/error — SEE what your edit produces), `denext_route_map` (the full render
   tree at a path: layouts, boundaries, server/client split), `denext_component_tree` /
   `denext_why_render` / `denext_hook_state` (the LIVE component tree from a running dev
-  page — props, named hooks, why a component re-rendered; these need `deno task dev`
+  page — props, named hooks, why a component re-rendered; these need `denext task dev`
   AND the app open in a browser, and each answer states how stale its snapshot is. The
   page starts pushing only once one of them has been called, so the FIRST call may say
   "posted nothing yet" — call it again after the page's next commit, or start dev with
   `DENEXT_DEV_INSPECT=1`. String values arrive redacted as `string(n)`),
-  `denext_profile` (build
+  `denext_migrations` / `denext_gen_types` (the project's migrations — list, up, down — and its
+  database types, run as CLI children), `denext_profile` (build
   unminified, serve, and profile a route in headless Chromium — CPU self-time by
   function + heap growth + a leak check; pass `interact` to profile a re-render, `budget`
   to gate a regression), `denext_search_docs` (BM25
@@ -921,7 +997,11 @@ All work lands on `development`, and releases are cut there with
 first refuses unless ci.yml's heavy jobs (`integration`, `next-compat`, `coverage`,
 with `check`, `backend-integration`, `ios-export-router` and `windows-resolve`) are green on HEAD: a push to `development`
 skips them, so dispatch ci.yml on the commit first
-(`gh workflow run ci.yml --ref development`, then wait for it). Active
+(`gh workflow run ci.yml --ref development`, then wait for it). It also refuses unless the newest
+desktop-ci.yml run on HEAD (Windows / macOS / Linux desktop suites, installers, install.ps1 /
+install.sh) finished with every job green (`DESKTOP_CI_JOBS` in `scripts/release-ci.ts` names the
+ones that must exist): a push runs desktop-ci only when its `paths` filter matches, so dispatch it
+too (`gh workflow run desktop-ci.yml --ref development`) and wait for both. Active
 `development` runs ahead of `main` by design.
 
 **`main` must always be exactly what is published.** So **cutting a version is not

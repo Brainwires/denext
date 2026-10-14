@@ -46,6 +46,6 @@ work; whatever remains open for the plugin is tracked in
 
 ```sh
 # from this directory
-deno task dev             # http://localhost:3000
-deno task build && deno task start
+denext task dev             # http://localhost:3000
+denext task build && denext task start
 ```

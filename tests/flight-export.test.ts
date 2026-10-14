@@ -146,6 +146,30 @@ Deno.test("staticExport emits hreflang + JSON-LD into per-locale static HTML", a
   }
 });
 
+// Cache poisoning: an export has no request, so absolute metadata URLs come only from
+// `metadataBase`. Without one, og:image stays relative and hreflang/canonical are skipped —
+// the export's synthetic `http://localhost` request origin never reaches the HTML.
+Deno.test("staticExport never bakes a request origin into metadata URLs", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_origin_export_" });
+  try {
+    await scaffoldApp(dir, {
+      "page.tsx": `export default function Page(){ return <main><h1>HOME</h1></main>; }\n`,
+      "opengraph-image.tsx": `export default function Og(){ return <div>og</div>; }\n`,
+    });
+    const result = await staticExport(dir, {
+      i18n: { locales: ["en", "fr"], defaultLocale: "en" },
+    });
+    for (const file of ["index.html", join("fr", "index.html")]) {
+      const html = await Deno.readTextFile(join(result.outDir, file));
+      assert(!html.includes("localhost"), `${file}: no request-derived origin`);
+      assertStringIncludes(html, `<meta property="og:image" content="/opengraph-image">`);
+      assert(!html.includes("hreflang="), `${file}: hreflang needs metadataBase`);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 /** Every client JS file of an export, concatenated. */
 async function clientJsOf(outDir: string): Promise<string> {
   let js = "";

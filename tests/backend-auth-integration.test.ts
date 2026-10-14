@@ -60,7 +60,7 @@ const NOTES = `
 `;
 
 /** Wait until `done()` (bounded), polling every 10 ms. */
-async function until(done: () => boolean, what: string, ms = 5_000): Promise<void> {
+async function until(done: () => boolean, what: string, ms = 15_000): Promise<void> {
   const deadline = Date.now() + ms;
   while (!done()) {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);

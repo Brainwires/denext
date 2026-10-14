@@ -4,7 +4,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../src/build/esbuild/mod.ts";
 import { registerSqliteWasmBridge } from "../src/build/sqlite-wasm.ts";
 
 /** A temp app with a fake `@sqlite.org/sqlite-wasm` and a `denext/mobile`-shaped module. */

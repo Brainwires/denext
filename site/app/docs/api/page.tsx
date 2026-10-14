@@ -17,6 +17,12 @@ const BLURB: Record<string, string> = {
   "denext/lazy": "Lazy / deferred module + island hydration helpers.",
   "denext/desktop": "Desktop packaging runtime.",
   "denext/desktop/updater": "Signed over-the-air UI updates for a Deno Desktop app.",
+  "denext/desktop/client": "The page side of a Deno Desktop app: OS events, sidecars, extensions.",
+  "denext/desktop/window":
+    "The Deno Desktop window: state, bounds, title bar, backdrop, file drops.",
+  "denext/desktop/app": "App menu, tray, Dock badge and bounce for a Deno Desktop app.",
+  "denext/desktop/clerk": "Clerk's Electron provider and passkeys in a Deno Desktop window.",
+  "denext/mobile/clerk": "Clerk sign-in in the Capacitor iOS / Android shell.",
   "denext/mobile": "Client runtime for apps in a Capacitor iOS/Android shell.",
   "denext/updates":
     "checkForUpdates / applyUpdates: one update API for phones, Deno Desktop and the web.",
@@ -25,6 +31,9 @@ const BLURB: Record<string, string> = {
   "denext/feature": "feature(): compile-time feature flags, folded and dead-code eliminated.",
   "denext/jsx-directives": "ClientDirectives: the client:* props, for apps typed by @types/react.",
   "denext/cli/command": "The CLI command contract (for plugins contributing verbs).",
+  "denext/plugin-kit": "The semver-stable plugin toolkit: route synthesizers, build steps, verbs.",
+  "denext/plugin-kit/vite-emitter":
+    "viteEmitterPlugin: run a Vite generateBundle emitter as a build step.",
 };
 
 /** The `denext/expo/*` shims get their own section, after the core entry points. */

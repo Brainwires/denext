@@ -8,7 +8,7 @@
 // (a local export shadows the same name from `export *`, so the curated ones stay
 // correct). esbuild tree-shakes the ~1,900 unused loaders away.
 
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import { GOOGLE_FONT_FAMILIES } from "../compat/next/font/google-families.ts";
 
 const SPECIFIER = "next/font/google";

@@ -9,6 +9,7 @@ import type { CacheStore } from "./cache.ts";
 import type { JobHistoryStore } from "./job-history.ts";
 import { envGet } from "../runtime/env-safe.ts";
 import { parseDesktopAppOrigin } from "../desktop/app-origin.ts";
+import { parseCidr } from "./remote-addr.ts";
 // Type-only (erased at runtime) — `src/cli/command.ts` is a dependency-free leaf whose
 // only import is a pure util, so naming it here adds no runtime edge and no cycle.
 import type { CommandContext, FlagSpec, PositionalSpec } from "../cli/command.ts";
@@ -1684,12 +1685,29 @@ export interface DenextConfig {
    * applies no limit at all to it, which would let anyone who reaches the server directly skip
    * every limit by leaving the header out.
    *
-   * It only names the LIMIT address: `clientIp()` still follows `trustForwardedHeaders`. Set it
-   * ONLY when clients cannot reach denext except through a proxy that overwrites the header —
-   * a client that can reach it directly picks its own bucket. Unset, the
-   * `DENEXT_RATE_LIMIT_HEADER` env var is read at boot (config > env > none).
+   * The header is believed only from a **trusted proxy**: a socket peer inside
+   * {@link DenextConfig.rateLimitTrustedProxies}, or — with none listed — a loopback/private peer
+   * while {@link DenextConfig.trustForwardedHeaders} is on. From any other peer it is ignored and
+   * the limit keys on that peer (one warning), so a client that reaches the server directly (a
+   * leaked origin IP, an exposed app port) cannot pick a fresh bucket per request by sending its
+   * own value. Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER` trusts the header from anyone; denext
+   * does not, because that one misconfiguration fails open silently. With neither trust rule set
+   * the header is never believed and a warning says so at boot.
+   *
+   * It only names the LIMIT address: `clientIp()` still follows `trustForwardedHeaders`. Unset,
+   * the `DENEXT_RATE_LIMIT_HEADER` env var is read at boot (config > env > none).
    */
   rateLimitHeader?: string;
+  /**
+   * The proxies whose {@link DenextConfig.rateLimitHeader} is believed: CIDR ranges or single
+   * addresses (`["173.245.48.0/20", "2400:cb00::/32"]` for Cloudflare's published ranges,
+   * `["10.0.0.0/8"]` for an nginx or Fly proxy on a private network). A request whose socket peer
+   * is outside every range keys its per-address limits on that peer instead. Unset (or empty):
+   * a loopback/private peer when `trustForwardedHeaders` is on, else none. Unset, the
+   * `DENEXT_RATE_LIMIT_TRUSTED_PROXIES` env var (comma-separated) is read at boot
+   * (config > env > none).
+   */
+  rateLimitTrustedProxies?: string[];
   /**
    * Apply per-address limits (`rateLimit()`, `denextAuth`'s per-IP budgets,
    * `live.limits.maxConnectionsPerIp`, `@denext/backend` realtime's signed-out quota,
@@ -2038,7 +2056,15 @@ export interface DenextConfig {
    * points at `denext commands`). A **built-in verb always wins a name collision**:
    * an entry named `dev` or `build` is ignored, never shadowing the core verb.
    * Loading them costs one config read, paid only when the CLI must enumerate every
-   * verb (`commands`, `completions`) or hits a verb it doesn't recognize.
+   * verb (`commands`, `completions`) or hits a verb it doesn't recognize — never for
+   * a script (`denext main.ts`) or a Deno verb, which run without importing the config.
+   *
+   * An entry may not take the name of a Deno verb that runs or installs code (`run`,
+   * `x`, `eval`, `serve`, `compile`, `install`, `uninstall`, `upgrade`, `task`): the
+   * config is refused. One named after another Deno verb (`bench`, `doc`, …) runs in
+   * its place only once `denext commands` has listed it (the listing in
+   * `.denext/commands.json` must match the current config, `deno.json` and
+   * `deno.lock`); until then `denext <name>` runs Deno's.
    */
   commands?: DenextCommand[];
 }
@@ -2318,10 +2344,11 @@ export function resolveCacheComponents(
 /**
  * The production-server knobs `denext start` / `denext dev` hand to `createApp()`: the
  * config's `canonicalOrigin`, `trustForwardedHeaders`, `rateLimitHeader`,
- * `rateLimitLocalAddresses`, `requestTimeout`, `maxConcurrency`, `slotBackstop`,
+ * `rateLimitTrustedProxies`, `rateLimitLocalAddresses`, `requestTimeout`, `maxConcurrency`, `slotBackstop`,
  * `actionMaxBodyBytes`, `cacheKeyParams`, `cdnCacheHeaders` and `compress`, each falling back
  * to its env var when the config leaves it unset (`DENEXT_CANONICAL_ORIGIN`,
- * `DENEXT_TRUST_PROXY=1`, `DENEXT_RATE_LIMIT_HEADER`, `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`,
+ * `DENEXT_TRUST_PROXY=1`, `DENEXT_RATE_LIMIT_HEADER`, `DENEXT_RATE_LIMIT_TRUSTED_PROXIES`,
+ * `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`,
  * `DENEXT_REQUEST_TIMEOUT_MS`, `DENEXT_MAX_CONCURRENCY`), else
  * `undefined` so `createApp`'s own default applies — config > env > default. A malformed env value (a non-numeric
  * timeout, a non-origin) is ignored with one warning rather than failing the boot, since
@@ -2335,6 +2362,8 @@ export interface ServerOptions {
   trustForwardedHeaders?: boolean;
   /** The header naming the client address for per-address limits. */
   rateLimitHeader?: string;
+  /** The CIDRs of the proxies whose `rateLimitHeader` is believed. */
+  rateLimitTrustedProxies?: string[];
   /** Whether per-address limits count a loopback/private peer by its own address. */
   rateLimitLocalAddresses?: boolean;
   /** The per-request deadline (ms; `0` = none). */
@@ -2395,6 +2424,21 @@ function envHeaderName(name: string): string | undefined {
 }
 
 /**
+ * A comma-separated CIDR-list env value (`DENEXT_RATE_LIMIT_TRUSTED_PROXIES`), or `undefined`
+ * when unset; an entry that is not a CIDR range or address is dropped with a warning.
+ */
+function envCidrList(name: string): string[] | undefined {
+  const raw = envValue(name);
+  if (raw === undefined) return undefined;
+  const entries = raw.split(",").map((v) => v.trim()).filter(Boolean);
+  const bad = entries.filter((v) => parseCidr(v) === null);
+  if (bad.length > 0) {
+    console.warn(`denext: ignoring ${name} entries ${bad.join(", ")} — expected CIDR ranges`);
+  }
+  return entries.filter((v) => parseCidr(v) !== null);
+}
+
+/**
  * Whether `value` is an HTTP header name (an RFC 9110 token), the shape `rateLimitHeader`
  * accepts.
  */
@@ -2424,6 +2468,8 @@ export function resolveServerOptions(config: DenextConfig | null | undefined): S
     canonicalOrigin: config?.canonicalOrigin ?? envOrigin("DENEXT_CANONICAL_ORIGIN"),
     trustForwardedHeaders: config?.trustForwardedHeaders ?? envFlag("DENEXT_TRUST_PROXY"),
     rateLimitHeader: config?.rateLimitHeader ?? envHeaderName("DENEXT_RATE_LIMIT_HEADER"),
+    rateLimitTrustedProxies: config?.rateLimitTrustedProxies ??
+      envCidrList("DENEXT_RATE_LIMIT_TRUSTED_PROXIES"),
     rateLimitLocalAddresses: config?.rateLimitLocalAddresses ??
       envFlag("DENEXT_RATE_LIMIT_LOCAL_ADDRESSES"),
     requestTimeout: config?.requestTimeout ?? envInteger("DENEXT_REQUEST_TIMEOUT_MS", 0),

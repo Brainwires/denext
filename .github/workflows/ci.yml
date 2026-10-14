@@ -223,11 +223,25 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:17
+        # Postgres 17 with the pgvector extension available (the vector search tests create it).
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_PASSWORD: pw
         ports:
           - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+      postgis:
+        # Only tests/backend-rest-supabase-integration.test.ts's GeoJSON case uses this one
+        # (`Accept: application/geo+json` needs PostGIS); everything else runs on postgres:17.
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_PASSWORD: pw
+        ports:
+          - 5433:5432
         options: >-
           --health-cmd "pg_isready -U postgres"
           --health-interval 2s
@@ -244,14 +258,17 @@ jobs:
           - 9100:9000
     env:
       DENEXT_TEST_POSTGRES_URL: postgres://postgres:pw@127.0.0.1:5432/postgres
+      DENEXT_TEST_POSTGIS_URL: postgres://postgres:pw@127.0.0.1:5433/postgres
       DENEXT_TEST_POSTGRES_JS: "1" # the stock-Deno path (npm:postgres via fromPostgresJs) too
+      DENEXT_TEST_POSTGRES_LOGICAL: "1" # wal_level = logical (set below): realtime's logical source
+      DENEXT_TEST_SUPABASE_JS: "1" # the stock @supabase/supabase-js client against the app
       DENEXT_TEST_S3_ENDPOINT: http://127.0.0.1:9100
       DENEXT_TEST_S3_ACCESS_KEY: dnxtest
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
-      DENEXT_DENO_RELEASE: denext-runtime-v2.9.7-denext.16
-      DENEXT_DENO_ZIP: deno-cli-2.9.7-denext.16-x86_64-unknown-linux-gnu.zip
-      DENEXT_DENO_SHA256: fe8938a162715eafc891a01b0eeb2f724ae6c5b6bcb773c960396af379d34455
+      DENEXT_DENO_RELEASE: denext-runtime-v2.9.7-denext.17
+      DENEXT_DENO_ZIP: deno-cli-2.9.7-denext.17-x86_64-unknown-linux-gnu.zip
+      DENEXT_DENO_SHA256: 8bc6da66a864858c6a39a5571f6bf849ae2a4099c8803c3e217839760f626e0f
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -282,7 +299,18 @@ jobs:
           done
           exit 1
 
-      - name: Backend + Postgres integration tests (real Postgres and MinIO)
+      - name: Enable logical decoding on the Postgres service (wal_level = logical)
+        run: |
+          pg=${{ job.services.postgres.id }}
+          docker exec "$pg" psql -U postgres -c "alter system set wal_level = logical"
+          docker restart "$pg"
+          for i in $(seq 1 60); do
+            docker exec "$pg" pg_isready -U postgres && break
+            sleep 1
+          done
+          docker exec "$pg" psql -U postgres -tAc "show wal_level" | grep -qx logical
+
+      - name: Backend + Postgres integration tests (real Postgres, PostGIS and MinIO)
         env:
           NO_COLOR: "1" # plain test names for the grep below
         run: |
@@ -290,11 +318,20 @@ jobs:
           deno test -A --unstable-kv \
             tests/backend-rls-integration.test.ts \
             tests/backend-rest-integration.test.ts \
+            tests/backend-rest-supabase-integration.test.ts \
             tests/backend-realtime-integration.test.ts \
+            tests/backend-supabase-realtime-integration.test.ts \
             tests/backend-auth-integration.test.ts \
             tests/db-admin-integration.test.ts \
+            tests/db-migrations-integration.test.ts \
             tests/postgres-integration.test.ts \
-            tests/backend-s3-minio.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
+            tests/backend-s3-minio.test.ts \
+            tests/backend-supabase-functions.test.ts \
+            tests/backend-storage-supabase-integration.test.ts \
+            tests/backend-storage-rls-integration.test.ts \
+            tests/backend-supabase-auth.test.ts \
+            tests/backend-supabase-auth-integration.test.ts \
+            tests/backend-platform-integration.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
 
       - name: No test was ignored (each service was really reached)
         run: |

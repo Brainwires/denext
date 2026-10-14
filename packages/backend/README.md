@@ -1,9 +1,11 @@
 # @denext/backend
 
 **Backend services inside your [denext](https://denext.dev) app**, as one opt-in plugin: no hosted
-service, nothing to run beside it. It ships **storage** — buckets with per-bucket rules, signed
-upload and download URLs, multipart uploads, image transforms on download and access checks tied to
-the request's session — on S3 (AWS, Cloudflare R2, MinIO) or the local filesystem, with zero npm;
+service, nothing to run beside it. It ships **storage** — buckets declared in config or created at
+runtime, per-bucket rules in TypeScript or SQL row-level security, signed upload and download URLs,
+multipart and TUS resumable uploads, image transforms, and Supabase's Storage API at
+`/storage/v1` (so `supabase.storage` from `@supabase/supabase-js` works unchanged) — on S3 (AWS,
+Cloudflare R2, MinIO) or the local filesystem, with zero npm;
 and **Postgres** — one client for your server code (`db()`) and for denext auth
 (`backendAuthAdapter()`).
 
@@ -39,7 +41,7 @@ export default {
 denext plugin add @denext/backend
 ```
 
-Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.3.0"` to `deno.json`'s `imports` and
+Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.4.0"` to `deno.json`'s `imports` and
 the plugin to `denext.config.ts` as above. Set `DENEXT_STORAGE_SECRET` (at least 32 characters):
 it signs the plugin's URLs and upload tokens.
 
@@ -97,7 +99,8 @@ The client is `Deno.SQL`, built into denext's Deno runtime. On stock Deno pass y
 transaction that sets the role (`authenticated`, or `anon` when signed out or outside a request)
 and `request.jwt.claims` transaction-locally, so policies written with Supabase's `auth.uid()`,
 `auth.role()`, `auth.email()` and `auth.jwt()` apply unchanged. The roles and functions are created
-by a migration on first use (or by a DBA with `rlsSetupSql(role)` and `rls: { migrate: false }`).
+by a migration on first use (or by a DBA with `rlsSetupSql(role)` and
+`postgres: { rls: { migrate: false } }`).
 `db()` reads the identity at each query, so a module-level client is fine.
 `db({ as: user })` acts for a user outside a request; `db.service()` bypasses RLS entirely — the
 app's own database user, for maintenance code only. Guide:
@@ -107,17 +110,41 @@ app's own database user, for maintenance code only. Guide:
 adds triggers that NOTIFY the changed row's key; `useTableChanges("notes", { initial })` from
 `@denext/backend/client` keeps a row list live, every row re-read as the viewer under their
 row-level security, so a change reaches only the subscribers whose policies return it.
-`onTableChange` and `tableChanges` from `@denext/backend/server` react on the server. Guide:
+`onTableChange` and `tableChanges` from `@denext/backend/server` react on the server. The same
+option serves Supabase Realtime at `/realtime/v1` — `supabase.channel()` with `postgres_changes`,
+broadcast and presence, private channels authorized by `realtime.messages` policies — and
+`source: "logical"` reads changes from logical replication instead of triggers. Guide:
 [Backend › Realtime from the database](https://denext.dev/docs/backend#realtime-from-the-database).
 
 **Auto-REST.** `backend({ postgres: {}, rest: {} })` serves the schema's tables (those the `anon` /
 `authenticated` roles were granted and that enforce row-level security — RLS-enabled tables and
-`security_invoker` views; others only when named in `rest.tables`) PostgREST-style under `/rest/v1/<table>`: `select=`, filters
-(`col=eq.x`, `in.(…)`, `like`, `is`, `not.`), `order=`, `limit` / `offset` / `Range`,
-`Prefer: count=exact`, inserts, and updates and deletes that require a filter — every statement
-run through `db()`, so row-level security applies. `from("notes").select("id,body").eq("id", 1)`
+`security_invoker` views; others only when named in `rest.tables`) in PostgREST 12's wire format
+under `/rest/v1`: embedded resources, `or` / `and` trees, every operator, aliases, casts and JSON
+paths, upserts, `/rpc/<function>`, CSV, counts and PostgREST's OpenAPI document — every statement
+run through `db()`, so row-level security applies, and `supabase.from()` / `rpc()` work
+unchanged. `from("notes").select("id,body").eq("id", 1)`
 from `@denext/backend/client` builds the requests, typed by the generated `.denext/rest.ts`. Guide:
 [Backend › Auto-REST](https://denext.dev/docs/backend#auto-rest).
+
+## Supabase compatibility and the other services
+
+`backend({ supabase: true })` installs Supabase-style API keys (`DENEXT_PUBLISHABLE_KEY`,
+`DENEXT_SECRET_KEY` — the `service_role`, server-side only — and ES256 `DENEXT_JWT_SIGNING_KEYS`;
+`denext backend keys` mints them) and serves GoTrue's `/auth/v1` over the `denextAuth()` users, so
+the stock `@supabase/supabase-js` client works against the app for auth, REST, storage, realtime
+and functions. Each service is its own option:
+
+- **Edge Functions** (`functions: {}`): `functions/<name>.ts` at `/functions/v1/<name>`, each in a
+  Deno Worker of its own, for `supabase.functions.invoke`.
+- **Vault** (`vault: {}`): AES-256-GCM secrets in `vault.secrets` under `DENEXT_VAULT_KEY`.
+- **Queues** (`queues: {}`): pgmq's SQL API without the extension.
+- **Vector search**: `vectorSearchSql()` / `matchDocuments()` over pgvector.
+- **Database webhooks** (`webhooks`): signed, retried deliveries of table changes.
+
+`denext db` (migrations, `diff`, `dump`, `pull`, `lint`, `inspect`, `test`, `types`), `denext
+storage`, `denext functions` and `denext backend keys | token` cover the Supabase CLI's ground.
+Guides: [Backend](https://denext.dev/docs/backend) ·
+[Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
 
 ## What it enforces
 
@@ -133,5 +160,9 @@ from `@denext/backend/client` builds the requests, typed by the generated `.dene
 - **Uploads go through `POST /_denext/storage/sign`**, which refuses cross-site requests that carry
   cookies (denext's `csrf()` rule) and validates its body.
 - Objects served from the app's origin carry `nosniff` and a sandboxing CSP.
+- **The Storage API (`/storage/v1`) and TUS uploads** enforce the same rules: the secret key
+  (`backend({ supabase })`'s) is the only way to the service role; with `storage: { rls: true }` every
+  operation runs as the request's role so the policies on `storage.objects` / `storage.buckets`
+  decide; the size cap, allow-list and sniffing apply to signed and resumable uploads too.
 
 Full guide: [denext.dev/docs/backend](https://denext.dev/docs/backend).

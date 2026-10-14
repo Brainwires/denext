@@ -8,7 +8,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { fromFileUrl, join } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../src/build/esbuild/mod.ts";
 import { filterAdmits, tanstackCodeSplitPlugin } from "../src/build/tanstack-code-split.ts";
 
 const EXAMPLE = fromFileUrl(new URL("../examples/tanstack-router", import.meta.url));

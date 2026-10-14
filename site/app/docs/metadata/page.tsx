@@ -82,9 +82,13 @@ i18n: {
 }`}
       </Code>
       <Callout kind="note">
-        Generated URLs are absolute, so set <code>metadataBase</code>{" "}
-        (or a canonical origin) — required for correct <code>hreflang</code>{" "}
-        in a static export, where there is no request host to derive one from.
+        Generated URLs are absolute, so set <code>metadataBase</code> (or{" "}
+        <code>canonicalOrigin</code>) — they resolve against it, never against the request's{" "}
+        <code>Host</code> in a page that may be cached (ISR,{" "}
+        <code>force-static</code>, a static export): a forged <code>Host</code>{" "}
+        stored in a cached page would reach every later visitor. Without one, such a page keeps{" "}
+        <code>og:image</code> relative and omits <code>hreflang</code>{" "}
+        / canonical; a per-request page uses the request's origin and is sent <code>no-store</code>.
       </Callout>
 
       <h2>File conventions</h2>

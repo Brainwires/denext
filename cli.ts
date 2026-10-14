@@ -16,17 +16,21 @@
 
 import { join, resolve } from "@std/path";
 import {
+  childToolchainMarker,
   entrypointArg,
   isStandaloneBinary,
   maybeReexecPinned as reexecPinned,
   maybeReexecToolchain,
+  mergeRunFlags,
+  pinnedConfigArgs,
   toolchainApplies,
   toolchainConfigArgs,
+  toolchainRuntimeFlags,
 } from "./src/cli/self-exec.ts";
 import { loadDenoToolchainPin, resolveDenoToolchain } from "./src/build/deno-toolchain.ts";
 import { runDenoPassthrough } from "./src/cli/commands/deno-toolchain.ts";
 import { denoPathEnv } from "./src/cli/deno-path.ts";
-import { CONFIG_FILES, resolveProject } from "./src/build/paths.ts";
+import { resolveProject } from "./src/build/paths.ts";
 import {
   buildAppCss,
   injectAppConfigRedirects,
@@ -44,6 +48,7 @@ import {
   writeMergedModuleConfig,
 } from "./src/build/module-config.ts";
 import { loadEnv } from "./src/server/env.ts";
+import { markBuildPhase } from "./src/server/phase.ts";
 import { cliNpmModeArgs } from "./src/build/pnpm-workspace.ts";
 import {
   COMMAND_DISPATCH_BUDGET_MS,
@@ -55,10 +60,17 @@ import type { CommandContext, CommandSpec, ParseOutcome, ProjectVerb } from "./s
 import { type CommandRegistry, GLOBAL_FLAGS, verbIndex } from "./src/cli/command.ts";
 import { buildRegistry } from "./src/cli/register.ts";
 import { envTierFor, projectDir, SHUTDOWN_SIGNALS } from "./src/cli/shared.ts";
-import { firstNotice, readCommandCache } from "./src/cli/command-cache.ts";
+import { firstNotice, hasDenextConfig, readCommandCache } from "./src/cli/command-cache.ts";
 import { acquireProjectLocks } from "./src/build/project-locks.ts";
 import { denoForwardFor, denoVerbArgs, verbatimFrom } from "./src/cli/deno-forward.ts";
-import { DENO_VERBS, forwardedDenoVerbs, isDenoVerb, shadowNotice } from "./src/cli/deno-verbs.ts";
+import {
+  DENO_VERBS,
+  forwardedDenoVerbs,
+  isDenoVerb,
+  shadowNotice,
+  unlistedVerbHint,
+} from "./src/cli/deno-verbs.ts";
+import { routeUnknownVerb, type VerbRoute } from "./src/cli/verb-route.ts";
 
 /**
  * The `--allow-*` flags to give a re-exec child: mirror the parent's coarse
@@ -245,9 +257,20 @@ function maybeReexecPinned(dir: string): Promise<boolean> {
     // In a pnpm workspace the CLI's npm imports stay off the pnpm tree (pnpm-workspace.ts).
     // `denoExecutable()` is denext's Deno toolchain once {@linkcode toolchainGate} chose it.
     spawn: (cli) =>
-      spawnCliChild(denoExecutable(), ["-A", ...cliNpmModeArgs(dir), ...minDepAgeArgs()], cli, {
-        DENEXT_PINNED_ACTIVE: "1",
-      }),
+      spawnCliChild(
+        denoExecutable(),
+        [
+          "-A",
+          ...toolchainRuntimeFlags(
+            childToolchainMarker((n) => Deno.env.get(n), Deno.version.deno),
+          ),
+          ...pinnedConfigArgs(dir),
+          ...cliNpmModeArgs(dir),
+          ...minDepAgeArgs(),
+        ],
+        cli,
+        { DENEXT_PINNED_ACTIVE: "1" },
+      ),
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),
   });
@@ -306,9 +329,17 @@ function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boole
         deno,
         [
           ...await toolchainPermissionFlags(),
-          ...await toolchainConfigArgs(),
-          ...cliNpmModeArgs(gateDir(command, ctx)),
-          ...minDepAgeArgs(),
+          // The config and resolution flags this process resolved with: started on `jsr:` (a
+          // `deno task`), it found the project's deno.json from the working directory, but the
+          // child runs the https URL that resolved to, which discovers no config at all.
+          ...mergeRunFlags(
+            [
+              ...toolchainRuntimeFlags(marker),
+              ...cliNpmModeArgs(gateDir(command, ctx)),
+              ...minDepAgeArgs(),
+            ],
+            await toolchainConfigArgs(entrypointArg(import.meta.url)),
+          ),
         ],
         entrypointArg(import.meta.url),
         { DENEXT_TOOLCHAIN_ACTIVE: marker },
@@ -340,6 +371,7 @@ async function reexecWithConfig(
       // sloppy-imports so the re-exec'd process can load Next.js app route modules
       // that use extensionless imports at runtime (permissive fallback).
       "--unstable-sloppy-imports",
+      ...toolchainRuntimeFlags(childToolchainMarker((n) => Deno.env.get(n), Deno.version.deno)),
       ...await childPermissionFlags(),
       // Deno's minimum-dependency-age policy applies to the child too and the parent can't
       // read the value it was started with: forward `DENEXT_MIN_DEP_AGE` (see minDepAgeArgs),
@@ -418,6 +450,9 @@ async function startServesCss(dir: string): Promise<boolean> {
  */
 async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<boolean> {
   if (!command.loadsModules) return false;
+  // Before anything below imports denext.config.ts (the CSS gate does): building, not serving,
+  // so config helpers don't refuse a runtime secret the build environment doesn't have.
+  if (command.name === "build" || command.name === "export") markBuildPhase();
   const dir = gateDir(command, ctx);
   if (await maybeReexecPinned(dir)) return true;
   await loadEnv({ dir, mode: envTierFor(command) });
@@ -503,20 +538,6 @@ async function projectHelp(dir: string): Promise<ProjectHelp | null> {
     : { verbs, note: PROJECT_LISTED_NOTE };
 }
 
-/**
- * Whether `dir` holds a denext config — a file-existence probe, never an import, so
- * `denext --help` inside a project evaluates none of the project's code.
- */
-async function hasDenextConfig(dir: string): Promise<boolean> {
-  for (const name of CONFIG_FILES) {
-    try {
-      const stat = await Deno.stat(join(dir, name));
-      if (stat.isFile) return true;
-    } catch { /* not this name */ }
-  }
-  return false;
-}
-
 /** Whether a token asks for help (`--help` / `-h`). */
 function isHelpToken(token: string): boolean {
   return token === "--help" || token === "-h";
@@ -553,6 +574,11 @@ function isVersionToken(token: string): boolean {
  * (loaded on the first miss, so a plain project pays nothing), else a Deno verb or a script, which
  * runs on denext's Deno exactly as `denext deno <args…>` would (and never returns).
  *
+ * The project's config is imported only for a name that can be a project verb
+ * (`routeUnknownVerb`): a script never is, a reserved Deno verb (`run`, `x`, `compile`, …) never
+ * is, and any other Deno verb is one only when the project's cached `denext commands` listing
+ * names it — so `denext main.ts` or `denext bench` runs no project code before Deno does.
+ *
  * Discovery here runs under the DISPATCH budget, not the listing one: the verb was asked for by
  * name, so a slow config import on a loaded machine must not make it "unknown". When discovery
  * still falls short, the unknown-command error says why instead of only that it is unknown.
@@ -560,6 +586,8 @@ function isVersionToken(token: string): boolean {
 async function resolveOutcome(registry: CommandRegistry): Promise<ParseOutcome> {
   let outcome = registry.parse(Deno.args, DENO_VERB_NAMES);
   if (outcome.kind !== "error" || !outcome.unknownVerb) return outcome;
+  const route = await routeUnknownVerb(Deno.args, outcome.unknownVerb);
+  if (route.kind === "deno") return await runRouted(route);
   const loaded = await loadPluginCommands(registry, cwdFromArgs(Deno.args), {
     timeoutMs: COMMAND_DISPATCH_BUDGET_MS,
   });
@@ -571,6 +599,18 @@ async function resolveOutcome(registry: CommandRegistry): Promise<ParseOutcome> 
   return shortfall === null
     ? outcome
     : { ...outcome, message: `${outcome.message} (${shortfall})` };
+}
+
+/**
+ * Run a script or Deno verb that `routeUnknownVerb` sent to Deno, after the one-time hint when a
+ * project verb of that name could exist but is not listed yet.
+ */
+async function runRouted(route: Extract<VerbRoute, { kind: "deno" }>): Promise<never> {
+  const { forward } = route;
+  if (route.unlisted && await firstNotice(forward.cwd, `unlisted:${forward.args[0]}`)) {
+    console.error(unlistedVerbHint(forward.args[0]));
+  }
+  return await runDenoPassthrough(forward.args, forward.cwd, true);
 }
 
 /**

@@ -13,6 +13,7 @@ import { applyTableChanges, useTableChanges } from "../packages/backend/client.t
 import type { TableChangesState } from "../packages/backend/client.ts";
 import {
   decodeSubscriptionKey,
+  qualifiedTableName,
   REALTIME_CHANNEL_ID,
 } from "../packages/backend/src/realtime-shared.ts";
 import { fromPostgresJs, type PostgresJsLike } from "../src/server/postgres.ts";
@@ -180,6 +181,61 @@ Deno.test("applyTableChanges: upserts, renames and deletes by the key column", (
   assertEquals(rows.length, 2, "the input is not modified");
 });
 
+Deno.test("applyTableChanges: a truncate empties the rows; later changes apply after it", () => {
+  const out = applyTableChanges([{ id: 1 }, { id: 2 }], [
+    { op: "truncate" },
+    { op: "insert", key: "3", row: { id: 3 } },
+  ]);
+  assertEquals(out, [{ id: 3 }]);
+});
+
+Deno.test("useTableChanges: events keeps only the kinds of change asked for; operator filters key", () => {
+  withFakeSocket(() => {
+    const { doc, container } = makeDom();
+    setDocument(doc as Any);
+    let state!: TableChangesState<Note>;
+    const batches: string[][] = [];
+    const initial = [{ id: 1, body: "one" }];
+    function App() {
+      state = useTableChanges<Note>("notes", {
+        initial,
+        filter: "id=gte.1",
+        events: ["insert", "truncate"],
+        onChange: (changes) => batches.push(changes.map((c) => c.op)),
+      });
+      return h("span", null, state.rows.map((r) => r.body).join(","));
+    }
+    const root = createRoot(container as Any);
+    root.render(h(App, null));
+    flushSync();
+    const ws = FakeWS.instances.at(-1)!;
+    ws.open();
+    const sent = JSON.parse(ws.sent.find((s) => s.includes("channel-subscribe"))!);
+    assertEquals(decodeSubscriptionKey(sent.key)!.filter, { column: "id", op: "gte", value: "1" });
+    ws.deliver({ type: "channel-ready", subId: sent.subId });
+    flushSync();
+    const frame = (seq: number, value: unknown) =>
+      ws.deliver({ type: "channel", subId: sent.subId, seq, value });
+    frame(1, {
+      seq: 1,
+      changes: [
+        { op: "update", key: "1", row: { id: 1, body: "uno" } },
+        { op: "insert", key: "2", row: { id: 2, body: "two" } },
+      ],
+    });
+    flushSync();
+    assertEquals(container.textContent, "one,two", "the update was not asked for");
+    frame(2, { seq: 2, changes: [{ op: "delete", key: "1" }] });
+    flushSync();
+    assertEquals(container.textContent, "one,two");
+    frame(3, { seq: 3, changes: [{ op: "truncate" }] });
+    flushSync();
+    assertEquals(container.textContent, "");
+    assertEquals(batches, [["insert"], ["truncate"]]);
+    root.unmount();
+  });
+});
+
 Deno.test("fromPostgresJs maps listen() (and leaves it out when the driver has none)", async () => {
   const calls: unknown[] = [];
   const pg = Object.assign(() => Promise.resolve([]), {
@@ -242,4 +298,33 @@ Deno.test("fromPostgresJs maps reserve(): queries on the reserved connection, re
     begin: () => Promise.resolve(),
   }) as unknown as PostgresJsLike);
   assertEquals(without.reserve, undefined);
+});
+
+Deno.test("useTableChanges: `schema` subscribes `schema.table`; keys accept it, not deeper", () => {
+  assertEquals(qualifiedTableName("notes"), "notes");
+  assertEquals(qualifiedTableName("notes", "public"), "notes");
+  assertEquals(qualifiedTableName("things", "app"), "app.things");
+  const nonce = "abcdefghijklmnopqrstuv";
+  assertEquals(decodeSubscriptionKey(`app.things|${nonce}`), { table: "app.things", nonce });
+  assertEquals(decodeSubscriptionKey(`a.b.c|${nonce}`), null);
+  assertEquals(decodeSubscriptionKey(`.things|${nonce}`), null);
+  withFakeSocket(() => {
+    const { doc, container } = makeDom();
+    setDocument(doc as Any);
+    function App() {
+      useTableChanges("things", { schema: "app" });
+      useTableChanges("notes", { schema: "public" });
+      return h("span", null, "x");
+    }
+    const root = createRoot(container as Any);
+    root.render(h(App, null));
+    flushSync();
+    const ws = FakeWS.instances.at(-1)!;
+    ws.open();
+    const tables = ws.sent.filter((s) => s.includes("channel-subscribe")).map((s) =>
+      decodeSubscriptionKey(JSON.parse(s).key)!.table
+    );
+    assertEquals(tables.sort(), ["app.things", "notes"]);
+    root.unmount();
+  });
 });

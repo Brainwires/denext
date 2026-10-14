@@ -155,3 +155,44 @@ Deno.test("/_denext/health reports the store kind, so a silent fallback to memor
     setCacheStore(saved);
   }
 });
+
+Deno.test("/_denext/health: a failing readiness check (the backend's database) is a 503 degraded", async () => {
+  // With a wrong database password the probe said `{"status":"ok"}` and compose marked the app
+  // healthy while every backend request failed. A registered check now gates it.
+  const { createProdHandler } = await import("../src/build/prod-server/handler.ts");
+  const { registerHealthCheck } = await import("../src/server/health.ts");
+  const handler = createProdHandler(
+    { config: null } as unknown as Parameters<typeof createProdHandler>[0],
+    "/nonexistent-client-dir",
+    "",
+    false,
+    () => Promise.resolve(new Response("app")),
+  );
+  const saved = getCacheStore();
+  let up = false;
+  const unregister = registerHealthCheck("database", () => {
+    if (!up) throw new Error('password authentication failed for user "denext"');
+    return true;
+  });
+  const slow = registerHealthCheck("slow", () => new Promise(() => {}), { timeoutMs: 20 });
+  try {
+    setCacheStore(inMemoryCacheStore());
+    const down = await handler(new Request("http://localhost/_denext/health"));
+    assertEquals(down.status, 503);
+    const body = await down.json();
+    assertEquals(body, {
+      status: "degraded",
+      cache: "ok",
+      cacheStore: "memory",
+      checks: { database: "down", slow: "down" },
+    });
+    slow();
+    up = true;
+    const ok = await handler(new Request("http://localhost/_denext/health"));
+    assertEquals(ok.status, 200);
+    assertEquals((await ok.json()).checks, { database: "ok" });
+  } finally {
+    unregister();
+    setCacheStore(saved);
+  }
+});

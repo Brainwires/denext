@@ -8,8 +8,8 @@ staggered girders, hop the barrels the ape rolls at you, and rescue the cat at
 the top.
 
 ```sh
-deno task example:game          # build once, serve → http://localhost:3005
-deno task example:game --dev    # rebuild on each request
+denext task example:game          # build once, serve → http://localhost:3005
+denext task example:game --dev    # rebuild on each request
 ```
 
 Controls: **← →** move · **↑ ↓** ladders · **Space** jump (plus on-screen touch

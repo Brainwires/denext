@@ -5,7 +5,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, isAbsolute, join, toFileUrl } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../src/build/esbuild/mod.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";

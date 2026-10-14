@@ -4,10 +4,15 @@
 // project writes, and the re-exec decision itself, driven through its process seams.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join, resolve } from "@std/path";
+import { join } from "@std/path";
 import {
-  configFromCommandLine,
+  configArgsFor,
+  discoveredConfig,
   maybeReexecPinned,
+  mergeRunFlags,
+  nearestConfig,
+  parseRunCommandLine,
+  pinnedConfigArgs,
   pinnedDenextCli,
   pinnedVersion,
   type ReexecPinnedDeps,
@@ -379,32 +384,188 @@ Deno.test("the verbs a binary defers are exactly the module-loading ones", () =>
   }
 });
 
-Deno.test("toolchainConfigArgs: the --config this process was started with, else nothing", async () => {
-  const argv = (a: string[] | null) => () => Promise.resolve(a);
-  assertEquals(
-    configFromCommandLine(["deno", "run", "-A", "--config", "x.json", "cli.ts"]),
-    "x.json",
+Deno.test("parseRunCommandLine: config, --no-config, the script and the resolution flags", () => {
+  const line = (...a: string[]) => parseRunCommandLine(["deno", "run", ...a]);
+  assertEquals(line("-A", "--config", "x.json", "cli.ts").config, "x.json");
+  assertEquals(line("-c", "y.json", "cli.ts").script, "cli.ts");
+  assertEquals(line("--config=z.json", "cli.ts", "dev").config, "z.json");
+  assert(line("-A", "--no-config", "jsr:@denext/denext/cli").noConfig);
+  // After the script, flags belong to the program, not to Deno.
+  const after = line("-A", "cli.ts", "--config", "a.json", "--lock=b");
+  assertEquals([after.config, after.script, after.resolution], [undefined, "cli.ts", []]);
+  assertEquals(parseRunCommandLine(["deno", "eval", "--config", "b.json"]).config, undefined);
+  const flags = line(
+    "-A",
+    "--lock",
+    "my.lock",
+    "--node-modules-dir=none",
+    "--import-map",
+    "im.json",
+    "--min-dep-age=0",
+    "--frozen",
+    "--no-npm",
+    "--location",
+    "https://x.test",
+    "--reload",
+    "jsr:@denext/denext@4.0.0/cli",
+    "build",
   );
-  assertEquals(configFromCommandLine(["deno", "run", "-c", "y.json", "cli.ts"]), "y.json");
-  assertEquals(
-    configFromCommandLine(["deno", "run", "--config=z.json", "cli.ts", "dev"]),
-    "z.json",
-  );
-  // After the script, a --config belongs to the program, not to Deno.
-  assertEquals(
-    configFromCommandLine(["deno", "run", "-A", "cli.ts", "--config", "a.json"]),
-    undefined,
-  );
-  assertEquals(configFromCommandLine(["deno", "eval", "--config", "b.json"]), undefined);
-  assertEquals(
-    await toolchainConfigArgs(argv(["deno", "run", "--config", "/p/deno.json", "c.ts"])),
-    [
+  assertEquals(flags.resolution, [
+    "--lock",
+    "my.lock",
+    "--node-modules-dir=none",
+    "--import-map",
+    "im.json",
+    "--min-dep-age=0",
+    "--frozen",
+    "--no-npm",
+  ]);
+  assertEquals(flags.script, "jsr:@denext/denext@4.0.0/cli", "a separate value is not the script");
+  // A bare `--lock` before another flag takes no value.
+  assertEquals(line("--lock", "-A", "c.ts").resolution, ["--lock"]);
+});
+
+Deno.test("discoveredConfig follows Deno's discovery: script dir, cwd for jsr:/npm:, none remote", async () => {
+  const root = await tree({
+    "app/deno.json": "{}",
+    "app/src/x.ts": "",
+    "tool/deno.jsonc": "{}",
+    "tool/cli.ts": "",
+    "ws/deno.json": '{ "workspace": ["./web"] }',
+    "ws/web/deno.json": "{}",
+    "bare/x.ts": "",
+  });
+  try {
+    const app = join(root, "app");
+    const tool = join(root, "tool");
+    assertEquals(nearestConfig(join(app, "src")), join(app, "deno.json"));
+    assertEquals(nearestConfig(join(root, "bare")), null);
+    assertEquals(nearestConfig(join(root, "ws", "web")), join(root, "ws", "web", "deno.json"));
+    assertEquals(discoveredConfig("jsr:@denext/denext@4.0.0/cli", app), join(app, "deno.json"));
+    assertEquals(discoveredConfig("npm:x", join(app, "src")), join(app, "deno.json"));
+    assertEquals(discoveredConfig("https://jsr.io/@denext/denext/4.0.0/cli.ts", app), null);
+    // A local script: beside the script, wherever the working directory is.
+    assertEquals(discoveredConfig(join(tool, "cli.ts"), app), join(tool, "deno.jsonc"));
+    assertEquals(discoveredConfig("../tool/cli.ts", app), join(tool, "deno.jsonc"));
+    assertEquals(discoveredConfig(`file://${join(tool, "cli.ts")}`, app), join(tool, "deno.jsonc"));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("configArgsFor: nothing when the child finds the same file, else --config / --no-config", async () => {
+  const root = await tree({ "app/deno.json": "{}", "tool/deno.json": "{}", "tool/cli.ts": "" });
+  try {
+    const app = join(root, "app");
+    const cfg = join(app, "deno.json");
+    const url = "https://jsr.io/@denext/denext/4.0.0/cli.ts";
+    assertEquals(configArgsFor(cfg, url, app), ["--config", cfg], "a remote child finds none");
+    assertEquals(configArgsFor(cfg, "jsr:@denext/denext/cli", app), []);
+    assertEquals(configArgsFor(cfg, "jsr:@denext/denext/cli", root), ["--config", cfg]);
+    assertEquals(configArgsFor(null, url, app), []);
+    assertEquals(configArgsFor(null, "jsr:@denext/denext/cli", app), ["--no-config"]);
+    assertEquals(configArgsFor(null, join(root, "tool", "cli.ts"), app), ["--no-config"]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("toolchainConfigArgs: the toolchain child resolves the config its parent resolved", async () => {
+  const root = await tree({
+    "app/deno.json": '{ "imports": { "@denext/backend": "jsr:@denext/backend@^0.1.0" } }',
+    "app/src/x.ts": "",
+    "app/alt.json": "{}",
+    "ws/deno.json": '{ "workspace": ["./web"] }',
+    "ws/web/deno.json": "{}",
+    "repo/deno.json": "{}",
+    "repo/cli.ts": "",
+  });
+  const argv = (...a: string[]) => () => Promise.resolve(["/bin/deno", "run", ...a]);
+  const url = "https://jsr.io/@denext/denext/4.0.0/cli.ts";
+  const jsr = "jsr:@denext/denext@4.0.0/cli";
+  try {
+    const app = join(root, "app");
+    const cfg = join(app, "deno.json");
+    // The reported bug: `deno task build` runs `deno run -A jsr:…/cli build` in the project; the
+    // parent discovers deno.json from the working directory, the https child would find none.
+    assertEquals(await toolchainConfigArgs(url, argv("-A", jsr, "build"), app), ["--config", cfg]);
+    assertEquals(await toolchainConfigArgs(url, argv("-A", jsr), join(app, "src")), [
       "--config",
-      resolve("/p/deno.json"),
-    ],
+      cfg,
+    ]);
+    // An explicit config, relative to the working directory.
+    assertEquals(await toolchainConfigArgs(url, argv("-c", "alt.json", jsr), app), [
+      "--config",
+      join(app, "alt.json"),
+    ]);
+    // --no-config stays none: a remote child discovers nothing anyway, a local one is told.
+    assertEquals(await toolchainConfigArgs(url, argv("--no-config", jsr), app), []);
+    const localCli = join(root, "repo", "cli.ts");
+    assertEquals(await toolchainConfigArgs(localCli, argv("--no-config", localCli), app), [
+      "--no-config",
+    ]);
+    // A local checkout's cli.ts: both processes discover the checkout's own config.
+    assertEquals(await toolchainConfigArgs(localCli, argv("-A", localCli, "build"), app), []);
+    // A workspace member: the member's file (Deno finds the root from it).
+    const web = join(root, "ws", "web");
+    assertEquals(await toolchainConfigArgs(url, argv("-A", jsr), web), [
+      "--config",
+      join(web, "deno.json"),
+    ]);
+    // The resolution flags come along, verbatim.
+    assertEquals(
+      await toolchainConfigArgs(url, argv("--lock=x.lock", "--node-modules-dir=auto", jsr), app),
+      ["--config", cfg, "--lock=x.lock", "--node-modules-dir=auto"],
+    );
+    // An unreadable command line (Windows): a remote CLI is assumed started from jsr: here.
+    const none = () => Promise.resolve(null);
+    assertEquals(await toolchainConfigArgs(url, none, app), ["--config", cfg]);
+    assertEquals(await toolchainConfigArgs(localCli, none, app), []);
+    // The real reader works on this host (or reports nothing).
+    assert(Array.isArray(await toolchainConfigArgs(url)));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("mergeRunFlags: the parent's own resolution flags replace denext's defaults", () => {
+  assertEquals(
+    mergeRunFlags(["--node-modules-dir=none", "--min-dep-age=0"], ["--node-modules-dir=auto"]),
+    ["--min-dep-age=0", "--node-modules-dir=auto"],
   );
-  assertEquals(await toolchainConfigArgs(argv(["deno", "run", "-A", "c.ts"])), []);
-  assertEquals(await toolchainConfigArgs(argv(null)), []);
-  // The real reader works on this host (or reports nothing).
-  assert(Array.isArray(await toolchainConfigArgs()));
+  assertEquals(mergeRunFlags(["--min-dep-age=0"], ["--config", "/p/deno.json"]), [
+    "--min-dep-age=0",
+    "--config",
+    "/p/deno.json",
+  ]);
+});
+
+Deno.test("pinnedConfigArgs hands the pinned child the project's config only from outside it", async () => {
+  // The child is `deno run jsr:@denext/denext@…/cli`, which discovers its config from the working
+  // directory; from outside the project it would run with none, losing the project's
+  // `minimumDependencyAge` exclusion of `jsr:@denext/*` (a fresh release would be refused).
+  const root = await tree({
+    "app/deno.json": '{ "imports": { "denext": "jsr:@denext/denext@^4.0.0" } }',
+    "app/src/x.ts": "",
+    "bare/x.ts": "",
+    "other/deno.json": "{}",
+    "ws/deno.json": '{ "workspace": ["./web"] }',
+    "ws/web/deno.json": "{}",
+  });
+  try {
+    const app = join(root, "app");
+    assertEquals(pinnedConfigArgs(app, root), ["--config", join(app, "deno.json")]);
+    assertEquals(pinnedConfigArgs(app, app), [], "inside the project Deno finds it itself");
+    assertEquals(pinnedConfigArgs(app, join(app, "src")), [], "below the project too");
+    assertEquals(pinnedConfigArgs(join(root, "bare"), root), [], "no config, nothing to pass");
+    // From inside another project the child would find THAT config; it is told the target's.
+    assertEquals(pinnedConfigArgs(app, join(root, "other")), ["--config", join(app, "deno.json")]);
+    assertEquals(pinnedConfigArgs(join(root, "bare"), join(root, "other")), ["--no-config"]);
+    // A workspace member aimed at from the workspace root gets the member's own file.
+    const web = join(root, "ws", "web");
+    assertEquals(pinnedConfigArgs(web, join(root, "ws")), ["--config", join(web, "deno.json")]);
+    assertEquals(pinnedConfigArgs(web, web), []);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
 });

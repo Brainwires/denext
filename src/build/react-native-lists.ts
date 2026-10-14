@@ -6,7 +6,7 @@
 // their components the same way. `reactNative: { lists: "library" }` turns both off.
 
 import { dirname, join } from "@std/path";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import {
   LIST_PACKAGES,
   type ListPackage,

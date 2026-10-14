@@ -12,6 +12,7 @@ import { safeRedirectLocation } from "../config.ts";
 import { originCandidate } from "../origin-check.ts";
 import { currentContext } from "../request-context.ts";
 import { getSession, type SessionOptions } from "../session.ts";
+import { isBannedUser } from "./ban.ts";
 import { cookieSessionOptions, type ResolvedAuthOptions } from "./options.ts";
 import type { AuthConfig, AuthProvider, AuthUser } from "./types.ts";
 
@@ -230,18 +231,21 @@ export function callbackUri(ctx: AuthRouteContext, providerId: string): string {
 }
 
 /**
- * Run the app's signIn callback: `false` denies, an object enriches, else pass through.
+ * Run the app's signIn callback: `false` denies, an object enriches, else pass through. A
+ * banned user is denied before the callback runs.
  *
  * @param config The auth config.
  * @param user The provider-mapped (or credentials-authorized) user.
  * @param providerId Which provider authenticated them.
- * @returns The user to issue a session for, or `null` when the app denied the sign-in.
+ * @returns The user to issue a session for, or `null` when the sign-in is denied (the user is
+ * banned, or the app said no).
  */
 export async function applySignInCallback(
   config: AuthConfig,
   user: AuthUser,
   providerId: string,
 ): Promise<AuthUser | null> {
+  if (user.id && await isBannedUser(config, user.id)) return null;
   if (!config.callbacks?.signIn) return user;
   const result = await config.callbacks.signIn(user, providerId);
   if (result === false) return null;
@@ -261,6 +265,11 @@ export interface Transaction {
   nonce?: string;
   /** The already-coerced same-origin path to return to. */
   returnTo?: string;
+  /**
+   * An `/auth/v1` (GoTrue) flow: where it lands, its PKCE challenge, and the user an identity
+   * is being linked to. The callback hands such a transaction to the `/auth/v1` handler.
+   */
+  gotrue?: { redirectTo: string; challenge?: string; linkUserId?: string };
 }
 
 /**

@@ -82,9 +82,28 @@ Deno.test("global flags are parsed off any command", () => {
 });
 
 Deno.test("-- terminates flag parsing into rest", () => {
-  const out = registry().parse(["dev", "--", "--not-a-flag", "x"]);
+  const out = registry().parse(["dev", "./app", "--", "--not-a-flag", "x"]);
   assert(out.kind === "run");
   assertEquals(out.ctx.rest, ["--not-a-flag", "x"]);
+  assertEquals(out.ctx.positionals, ["./app"]);
+});
+
+Deno.test("a leading -- is ignored by a verb that forwards nothing (deno task start -- --port 4000)", () => {
+  const out = registry().parse(["dev", "--", "--port", "4000", "./app"]);
+  assert(out.kind === "run");
+  assertEquals(out.ctx.flags.port, 4000);
+  assertEquals([out.ctx.positionals, out.ctx.rest], [["./app"], []]);
+  // Only the first: a second `--` still ends the verb's flags.
+  const twice = registry().parse(["dev", "--", "--open", "--", "--port"]);
+  assert(twice.kind === "run");
+  assertEquals([twice.ctx.flags.open, twice.ctx.rest], [true, ["--port"]]);
+  // Its flags are checked as if typed without it.
+  const unknown = registry().parse(["dev", "--", "--prot", "3000"]);
+  assertEquals(unknown.kind, "error");
+  // A passthrough verb keeps the separator, as before.
+  const test = registry().parse(["test", "--", "--seed", "1"]);
+  assert(test.kind === "run");
+  assertEquals(test.ctx.rest, ["--", "--seed", "1"]);
 });
 
 Deno.test("passthrough folds unknown flags AND positionals into rest, in order", () => {

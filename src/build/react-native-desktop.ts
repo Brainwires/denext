@@ -12,7 +12,7 @@
 // out-of-tree platform resolution does for a macOS / Windows build, so the app's unmodified
 // `import { View, Flyout } from "react-native"` gets the desktop View props and additions.
 
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import { resolveInstead } from "./react-native-aliases.ts";
 
 /** A desktop package, or a subpath of one. Group 1 is the flavor, group 2 the subpath. */

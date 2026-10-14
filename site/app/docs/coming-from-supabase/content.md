@@ -1,19 +1,54 @@
 ---
 title: Coming from Supabase
 slug: coming-from-supabase
-lead: A concept map and migration checklist for Supabase developers. With denext and the opt-in @denext/backend plugin your backend lives in your app — auth, Postgres scoped by row-level security, storage, realtime and a PostgREST-style REST API — and you bring the Postgres.
+lead: The stock @supabase/supabase-js client works against a denext app — auth, the database, storage, realtime and Edge Functions — served by your app from a Postgres you bring. A concept map, what is deliberately different, and a migration checklist.
 ---
 
-Supabase is a hosted platform your app talks to over HTTP. denext is the other way round: the
-backend is part of your app. [`denextAuth`](/docs/auth) signs users in, route handlers and
-Server Actions are your functions, and [`@denext/backend`](/docs/backend) adds storage, Postgres
-with Supabase-compatible row-level security, and realtime changes from your tables. You run it
-where you run the app, against a Postgres you provide (any provider, or your own server).
+Supabase is a hosted platform your app talks to over HTTP. With denext and the opt-in
+[`@denext/backend`](/docs/backend) plugin, the same API is served by your app itself, against a
+Postgres you provide (any provider, or your own server): point the client you already have at it.
 
-To be plain about it once: **denext is not a hosted service, and it is not supabase-js
-compatible.** There is no `createClient(url, anonKey)` to point at it and no drop-in for the
-supabase-js API. What carries over unchanged is the database: your tables, your SQL functions
-and your row-level security policies, which use the same roles and the same `auth.*` functions.
+```ts
+import { createClient } from "@supabase/supabase-js";
+
+// Your app's own origin and its publishable key (`denext backend keys` prints a set).
+const supabase = createClient("https://app.example.com", PUBLISHABLE_KEY);
+```
+
+**What works with the stock client**, once the matching option is on:
+
+| supabase-js                                                  | Served at                | Turned on by                                                                            |
+| ------------------------------------------------------------ | ------------------------ | --------------------------------------------------------------------------------------- |
+| API keys and access tokens (`apikey`, `Bearer`)              | every route below        | `backend({ supabase: true })` — or `supabase: { publishableKey, secretKey, … }`         |
+| `supabase.auth.*` (GoTrue)                                   | `/auth/v1`               | `supabase: { auth: { … } }` with `denextAuth()` [→](/docs/auth#supabase-clients-authv1) |
+| `from()`, `rpc()`, `schema()` (PostgREST 12)                 | `/rest/v1`               | `rest: {}` (`rest.schemas` for more than `public`) [→](/docs/backend#auto-rest)         |
+| `supabase.storage` (incl. TUS uploads)                       | `/storage/v1`            | `storage: { … }` (`storage.rls` for SQL policies) [→](/docs/backend#storage)            |
+| `supabase.channel()` (Postgres changes, broadcast, presence) | `/realtime/v1/websocket` | `realtime: realtime({ … })` [→](/docs/backend#realtime-from-the-database)               |
+| `supabase.functions.invoke()`                                | `/functions/v1/<name>`   | `functions: {}` [→](/docs/backend#edge-functions)                                       |
+| `schema("pgmq_public").rpc(…)` (Queues)                      | `/rest/v1/rpc/…`         | `queues: {}` with `rest` [→](/docs/backend#queues)                                      |
+
+The database side carries over as SQL: your tables, functions and row-level security policies
+(the same `anon` / `authenticated` roles and `auth.uid()` / `auth.jwt()`), Supabase's
+`storage.objects` and `realtime.messages` policies, pgmq's queue functions, pgvector's
+`match_documents`, `supabase_functions.http_request` webhook triggers and — with
+`vault: { sql: true }` — `vault.create_secret()` and `vault.decrypted_secrets`.
+
+**What is deliberately different:**
+
+- **Your app is the server.** There is no hosted project, dashboard, logs explorer or usage
+  metering; [`denext ui`](/docs/ui#database) is a local, loopback console. Backups, pooling and
+  upgrades are your Postgres provider's job.
+- **One user store, two ways in.** `/auth/v1` serves the users `denextAuth()` keeps, so a cookie
+  session from denext's own sign-in and a supabase-js token session are the same user; server
+  code reads either with `auth()`. You supply the mailer and SMS sender (`sendVerificationRequest`,
+  `sendSms`).
+- **Least exposure by default.** Auto-REST serves only tables with RLS on (and `security_invoker`
+  views) unless you name others; Edge Functions verify the caller unless `verifyJwt: false`;
+  webhooks reach only targets configured in the app; the vault key never lives in the database
+  (its SQL surface works only inside transactions the app opens).
+- **Server code does not need the client.** Inside the app, `db()` (scoped by the same policies),
+  `storage`, `queue()` and `vault` from `@denext/backend/server` are direct, typed calls — no HTTP
+  round trip.
 
 ```sh
 denext plugin add @denext/backend
@@ -26,43 +61,55 @@ import { backend, backendAuthAdapter, fs, realtime } from "@denext/backend";
 
 export default {
   plugins: [
+    denextAuth({ providers: [github()], adapter: backendAuthAdapter() }),
     backend({
       postgres: {}, // reads DATABASE_URL
+      supabase: { auth: { siteUrl: "https://app.example.com" } }, // keys from the environment
+      rest: {},
       storage: { driver: fs({ dir: ".storage" }), buckets: { avatars: { public: true } } },
       realtime: realtime({ tables: { notes: {} } }),
+      functions: {},
     }),
-    denextAuth({ providers: [github()], adapter: backendAuthAdapter() }),
   ],
 };
 ```
 
 ## Concept map
 
-| Supabase                                            | denext                                                                                                                                                                                                                              |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A hosted project (`https://<ref>.supabase.co`)      | Your app, plus a Postgres you run or rent. Nothing to sign up for.                                                                                                                                                                  |
-| `supabase.from("t").select()` (PostgREST)           | `from("t").select()` from `@denext/backend/client` over `backend({ rest })`'s PostgREST-style routes, run as the request's user; or `db()` in server code. [Auto-REST](/docs/backend#auto-rest), [Postgres](/docs/backend#postgres) |
-| Row-level security, `auth.uid()`, `auth.jwt()`      | The same: `db()` sets `role` and `request.jwt.claims` per query, and Supabase's own `auth.*` functions read them. [Row-level security](/docs/backend#row-level-security)                                                            |
-| `anon` / `authenticated` roles                      | The same names, created by the plugin's first migration. Tables need an explicit `grant`.                                                                                                                                           |
-| `service_role` key                                  | `db.service()` on the server — the app's own database user, no RLS. There is no key to leak: the server is the only client.                                                                                                         |
-| `supabase.rpc("fn", args)`                          | `` db()`select * from fn(${a}, ${b})` `` — your SQL functions, `security definer` included, run as before.                                                                                                                          |
-| Supabase Auth: email + password                     | `credentials()` with an adapter. [Password sign-in](/docs/auth#password-sign-in-without-an-authorize)                                                                                                                               |
-| Supabase Auth: magic link, email OTP                | `magicLink()`, `emailOtp()` — through your own mailer. [Passwordless](/docs/auth#passwordless-magic-links-and-one-time-codes)                                                                                                       |
-| Supabase Auth: OAuth providers                      | `github()`, `google()`, `apple()`, `discord()`, … and generic `oidc()`. [Providers](/docs/auth#providers)                                                                                                                           |
-| Supabase Auth: MFA (TOTP), passkeys                 | TOTP with backup codes, and WebAuthn passkeys. [Two-factor](/docs/auth#two-factor-authentication-totp)                                                                                                                              |
-| `auth.users`, `auth.identities`                     | denext auth's `auth_*` tables on the same database via `backendAuthAdapter()`. [Auth › Postgres](/docs/auth#postgres)                                                                                                               |
-| `supabase.auth.getUser()` on the server             | `await auth()` from `denext/server`.                                                                                                                                                                                                |
-| Storage buckets, signed URLs, image transformations | `backend({ storage })` on S3, R2, MinIO or the filesystem: `public` buckets, signed URLs, `transform`. [Storage](/docs/backend#storage)                                                                                             |
-| Storage policies on `storage.objects`               | A bucket's `authorize({ session, op, key })` function, in TypeScript — not SQL.                                                                                                                                                     |
-| Realtime: Postgres changes                          | `useTableChanges(table)` in the browser, `tableChanges` / `onTableChange` on the server, each change re-read under the viewer's policies. [Realtime](/docs/backend#realtime-from-the-database)                                      |
-| Realtime: broadcast, presence                       | `createChannel` / `useChannel` and `usePresence` from `denext/live`. [Live](/docs/live)                                                                                                                                             |
-| Edge Functions                                      | Route handlers (`app/api/<name>/route.ts`) and validated `defineApi` handlers; Server Actions for form mutations. [Typed API](/docs/typed-api)                                                                                      |
-| `supabase.functions.invoke()`, generated types      | `createApiClient()` / `useApi()`, typed from your route handlers. [Typed API](/docs/typed-api)                                                                                                                                      |
-| Database webhooks                                   | `onTableChange(table, fn)` on the server. [On the server](/docs/backend#on-the-server)                                                                                                                                              |
-| `pg_cron`, scheduled functions                      | `defineJob` in `jobs/` with a cron `schedule`. [Scheduled jobs](/docs/jobs)                                                                                                                                                         |
-| `supabase migration new`, `supabase db push`        | `denext generate migration <name>`, `denext job migrate`. [Postgres migrations](/docs/database#plain-sql-files-on-postgres)                                                                                                         |
-| Studio (table editor, policies, storage, users)     | The Database section of `denext ui`: tables and rows, policies with an "as user" preview, migrations, storage, auth users. Local only. [`denext ui`](/docs/ui#database)                                                             |
-| Vault, project secrets                              | Environment variables (`Deno.env.get`), `.env` in development. [Environment](/docs/environment)                                                                                                                                     |
+| Supabase                                                                   | denext                                                                                                                                                                                                                                                                                                                                                                |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A hosted project (`https://<ref>.supabase.co`)                             | Your app, plus a Postgres you run or rent. Nothing to sign up for.                                                                                                                                                                                                                                                                                                    |
+| `supabase.from("t").select()` (PostgREST)                                  | The same call: `backend({ rest })` serves PostgREST 12's wire format at `/rest/v1`, so supabase-js works unchanged, and so does denext's `from()` from `@denext/backend/client` — embeds, `or`, upserts and all, run as the request's user; or `db()` in server code. [Auto-REST](/docs/backend#auto-rest), [Postgres](/docs/backend#postgres)                        |
+| Row-level security, `auth.uid()`, `auth.jwt()`                             | The same: `db()` sets `role` and `request.jwt.claims` per query, and Supabase's own `auth.*` functions read them. [Row-level security](/docs/backend#row-level-security)                                                                                                                                                                                              |
+| `anon` / `authenticated` roles                                             | The same names, created by the plugin's first migration. Tables need an explicit `grant`.                                                                                                                                                                                                                                                                             |
+| `service_role` key                                                         | `DENEXT_SECRET_KEY` (`sb_secret_…`, with `backend({ supabase })`) — runs as `service_role`, past RLS, as on Supabase; never ship it to a browser. Server code can use `db.service()` instead, with no key at all.                                                                                                                                                     |
+| `supabase.rpc("fn", args)`                                                 | The same call (or `rpc()` from `@denext/backend/client`) against `/rest/v1/rpc/fn`, for the functions `anon` / `authenticated` may EXECUTE; or `` db()`select * from fn(${a}, ${b})` `` on the server. `security definer` runs as before.                                                                                                                             |
+| Supabase Auth: email + password                                            | `credentials()` with an adapter. [Password sign-in](/docs/auth#password-sign-in-without-an-authorize)                                                                                                                                                                                                                                                                 |
+| Supabase Auth: magic link, email OTP                                       | `magicLink()`, `emailOtp()` — through your own mailer. [Passwordless](/docs/auth#passwordless-magic-links-and-one-time-codes)                                                                                                                                                                                                                                         |
+| Supabase Auth: OAuth providers                                             | `github()`, `google()`, `apple()`, `discord()`, … and generic `oidc()`. [Providers](/docs/auth#providers)                                                                                                                                                                                                                                                             |
+| Supabase Auth: MFA (TOTP, phone, WebAuthn), passkeys                       | TOTP, phone and WebAuthn factors with backup codes (recovery codes) in one store both sign-in paths share, and WebAuthn passkeys. [Two-factor](/docs/auth#two-factor-authentication-totp)                                                                                                                                                                             |
+| Supabase Auth: phone OTP                                                   | `phoneOtp()` — through your own `sendSms` (or `hooks.sendSms`). [Phone sign-in](/docs/auth#phone-sign-in)                                                                                                                                                                                                                                                             |
+| Supabase Auth: anonymous sign-in                                           | `anonymous: true` → `POST /auth/anonymous`; an email or phone proof converts the user in place. [Anonymous sign-in](/docs/auth#anonymous-sign-in)                                                                                                                                                                                                                     |
+| Supabase Auth: captcha (hCaptcha, Turnstile)                               | `captcha` on `denextAuth()` — the same check on denext's endpoints and `/auth/v1`. [Captcha](/docs/auth#captcha)                                                                                                                                                                                                                                                      |
+| Supabase Auth hooks (access token, send email / SMS)                       | `hooks.customAccessToken`, `hooks.sendEmail`, `hooks.sendSms` — for cookie sessions and `/auth/v1` alike. [Hooks](/docs/auth#hooks)                                                                                                                                                                                                                                   |
+| Supabase Auth: SAML SSO                                                    | `/auth/v1` with `backend({ supabase: { auth: { saml } } })` — `signInWithSSO`, Single Logout, the `admin/sso/providers` API. denext's own cookie sign-in has no SAML. [SAML](/docs/auth#saml-single-sign-on)                                                                                                                                                          |
+| Supabase Auth: Web3 (Ethereum, Solana)                                     | `/auth/v1` with `supabase: { auth: { web3 } }` — `signInWithWeb3`. [Web3](/docs/auth#web3-sign-in)                                                                                                                                                                                                                                                                    |
+| Supabase Auth: OAuth 2.1 server                                            | `/auth/v1` with `supabase: { auth: { oauthServer } }` — `supabase.auth.oauth.*`, `admin.oauth.*`. [OAuth 2.1 server](/docs/auth#oauth-21-server)                                                                                                                                                                                                                      |
+| `auth.users`, `auth.identities`                                            | denext auth's `auth_*` tables on the same database via `backendAuthAdapter()`. [Auth › Postgres](/docs/auth#postgres)                                                                                                                                                                                                                                                 |
+| `supabase.auth.getUser()` on the server                                    | `await auth()` from `denext/server`.                                                                                                                                                                                                                                                                                                                                  |
+| Storage buckets, signed URLs, image transformations                        | `backend({ storage })` on S3, R2, MinIO or the filesystem, serving Supabase's Storage API at `/storage/v1` (supabase-js unchanged: TUS resumable uploads, `listV2`, object versions and lifecycle rules too). [Storage](/docs/backend#supabase-storage-api)                                                                                                           |
+| Storage policies on `storage.objects`                                      | The same policies, with `storage: { rls: true }` — or a bucket's `authorize({ session, op, key })` in TypeScript. [SQL row-level security](/docs/backend#sql-row-level-security-for-storage)                                                                                                                                                                          |
+| Realtime: Postgres changes                                                 | `supabase.channel().on("postgres_changes", …)` unchanged against the app's `/realtime/v1/websocket`; or `useTableChanges(table)` in the browser, `tableChanges` / `onTableChange` on the server — each change re-read under the viewer's policies. [Realtime](/docs/backend#supabase-realtime-supabasechannel)                                                        |
+| Realtime: broadcast, presence, private channels                            | `supabase.channel()` unchanged — broadcast (`self`, `ack`, REST, `realtime.send()` / `realtime.broadcast_changes()` from SQL), presence across instances, private channels under your `realtime.messages` policies, replay; `broadcast()` from server code, `useBroadcast` / `useRealtimePresence` hooks. [Realtime](/docs/backend#supabase-realtime-supabasechannel) |
+| Edge Functions                                                             | `backend({ functions })`: `functions/<name>/index.ts` served at `/functions/v1/<name>`, each in a worker of its own, `verify_jwt` on by default. Or route handlers. [Edge Functions](/docs/backend#edge-functions)                                                                                                                                                    |
+| `supabase.functions.invoke()`, generated types                             | `functions.invoke` calls `/functions/v1/<name>` as on Supabase; for route handlers, `createApiClient()` / `useApi()`. [Typed API](/docs/typed-api)                                                                                                                                                                                                                    |
+| Database webhooks                                                          | `supabase_functions.http_request` triggers, delivered by the app (signed, retried) to the hooks you configure; or `onTableChange(table, fn)` on the server. [Database webhooks](/docs/backend#database-webhooks)                                                                                                                                                      |
+| `pg_cron`, scheduled functions                                             | `defineJob` in `jobs/` with a cron `schedule`. [Scheduled jobs](/docs/jobs)                                                                                                                                                                                                                                                                                           |
+| Queues (pgmq), `pgmq_public`                                               | The same SQL API without the extension, `queue()` / `queueConsumer()` on the server. [Queues](/docs/backend#queues)                                                                                                                                                                                                                                                   |
+| pgvector, `match_documents`                                                | The same extension and recipe: `denext generate vector-search <table>`, `matchDocuments()`. [Vector search](/docs/backend#vector-search-pgvector)                                                                                                                                                                                                                     |
+| The Supabase CLI (`migration`, `db`, `inspect db`, `test db`, `gen types`) | `denext migration …` and `denext db …`: the same verbs, the same `supabase/migrations/` and the same history table. See [the CLI table](#supabase-cli--denext).                                                                                                                                                                                                       |
+| Studio (table editor, policies, storage, users)                            | The Database section of `denext ui`: tables and rows, policies with an "as user" preview, migrations, storage, auth users. Local only. [`denext ui`](/docs/ui#database)                                                                                                                                                                                               |
+| Vault, project secrets                                                     | `vault` from `@denext/backend/server` (AES-256-GCM under `DENEXT_VAULT_KEY`, same table shape); with `vault: { sql: true }` also `vault.create_secret()` and `vault.decrypted_secrets` in SQL. [Vault](/docs/backend#vault)                                                                                                                                           |
 
 ## Side by side
 
@@ -141,13 +188,22 @@ browser, and `db()` reads it on the server. Providers and the adapter are config
 `denextAuth({ … })`; Supabase sends auth mail for you, denext calls your
 `sendVerificationRequest`. See [Auth](/docs/auth).
 
+Or keep your client code: with `backend({ supabase })` the stock supabase-js `supabase.auth.*`
+calls above work unchanged against `/auth/v1` — password, OTP / magic link, phone, anonymous,
+OAuth with your `denextAuth()` providers or stored `custom:` providers, Web3 (`signInWithWeb3`),
+MFA, SAML SSO (with Single Logout, encrypted assertions and the `admin/sso/providers` API), the
+OAuth 2.1 server (`supabase.auth.oauth.*`, `admin.oauth.*`) and the admin API — over the same
+users the cookie sign-in uses. See [Supabase clients](/docs/auth#supabase-clients-authv1).
+
 ### Storage: upload and signed URLs
 
 ```ts
-// Supabase
+// Supabase — and the same code against denext: the Storage API is served at /storage/v1
 await supabase.storage.from("avatars").upload(`${userId}/avatar.png`, file);
 const { data } = await supabase.storage.from("invoices").createSignedUrl(path, 60);
 ```
+
+Keep it as is, or use denext's own helpers:
 
 ```tsx
 // denext — in the browser (a "use client" component)
@@ -164,10 +220,13 @@ import { storage } from "@denext/backend/server";
 const url = await storage.bucket("invoices").createSignedUrl(path, { expiresIn: 60 });
 ```
 
-A bucket's rules are a function in `denext.config.ts` rather than SQL policies on
-`storage.objects`. Outside a request (a job, a script) there is no session to pass it, so code
-there uses `storage.bucket("invoices", { service: true })` — the counterpart of Supabase's
-service-role key. The Supabase pattern of one folder per user becomes:
+Your policies on `storage.objects` keep working with `storage: { rls: true }`: denext keeps
+Supabase's `storage` schema (`storage.foldername()` included) and runs each operation as the
+request's role. Or write a bucket's rules as a function in `denext.config.ts`. Outside a request
+(a job, a script) there is no session to pass it, so code there uses
+`storage.bucket("invoices", { service: true })` — the counterpart of Supabase's service-role key
+(over HTTP, the secret key from `backend({ supabase })`). The Supabase pattern of one folder per user, in
+TypeScript:
 
 ```ts
 buckets: {
@@ -205,35 +264,44 @@ export function Notes({ initial, listId }: { initial: Note[]; listId: number }) 
 }
 ```
 
-The filter takes Supabase's `column=eq.value` form or `{ list_id: listId }`. The hook keeps the
-row list for you; `onChange` gets each batch if you would rather apply them yourself. Every
-changed row is re-read as the subscriber, under their policies — a subscriber never receives a row
-their `select` policies hide. See
-[Realtime from the database](/docs/backend#realtime-from-the-database).
+The Supabase code above also runs as it is: the app serves Supabase Realtime's protocol at
+`/realtime/v1/websocket`, so `createClient(appUrl, key).channel(…)` gets the same payloads —
+`postgres_changes` with every filter operator (`eq neq lt lte gt gte in`), broadcast, presence and
+private channels authorized by your `realtime.messages` policies, broadcast replay — and tables
+opt in the Supabase way, with `alter publication supabase_realtime add table notes` (or by
+`realtime({ tables })`).
 
-### Edge Functions → route handlers
+The hook is the denext-native way: the filter takes Supabase's `column=op.value` form or
+`{ list_id: listId }` / `{ priority: { gte: 3 } }`, `events` narrows the kinds of change, and it
+keeps the row list for you; `onChange` gets each batch if you would rather apply them yourself.
+Either way every changed row is re-read as the subscriber, under their policies — a subscriber
+never receives a row their `select` policies hide, and a delete reaches only subscribers who could
+see the row. See [Supabase Realtime](/docs/backend#supabase-realtime-supabasechannel).
+
+### Edge Functions
+
+Copy `supabase/functions/` as it is (or leave it there: the plugin reads `supabase/functions/` when
+there is no `functions/`) and turn the functions on:
 
 ```ts
-// Supabase — supabase/functions/hello/index.ts
+// denext.config.ts
+backend({ functions: { functions: { "stripe-webhook": { verifyJwt: false } } } });
+```
+
+```ts
+// supabase/functions/hello/index.ts — unchanged
 Deno.serve(async (req) => {
   const { name } = await req.json();
   return Response.json({ message: `Hello ${name}` });
 });
-// called with: supabase.functions.invoke("hello", { body: { name } })
+// still called with: supabase.functions.invoke("hello", { body: { name } })
 ```
 
-```ts
-// denext — app/api/hello/route.ts
-export async function POST(req: Request): Promise<Response> {
-  const { name } = await req.json();
-  return Response.json({ message: `Hello ${name}` });
-}
-// called with: fetch("/api/hello", { method: "POST", body: … }), or createApiClient()
-```
-
-Both are Deno and web-standard `Request` / `Response`, so most function bodies move as they are.
-A route handler runs in your app's process, with `auth()`, `db()` and `storage` available, and
-`defineApi` adds validated, typed input and errors. See [Typed API](/docs/typed-api).
+Each function runs in a Deno Worker of its own with `Deno.serve`, `EdgeRuntime.waitUntil` and
+`SUPABASE_URL` / `SUPABASE_DB_URL` as on Supabase; `verify_jwt` becomes `verifyJwt` in the config.
+See [Edge Functions](/docs/backend#edge-functions). Code that wants `auth()`, `db()` and `storage`
+directly, or typed input with `defineApi`, fits a route handler (`app/api/hello/route.ts`) better:
+it runs in the app's process. See [Typed API](/docs/typed-api).
 
 ### Your existing policies
 
@@ -271,12 +339,14 @@ claims are set.
    `supabase db dump -f schema.sql` (your schemas, policies included) and
    `supabase db dump --data-only -f data.sql`; or `pg_dump` against the project's connection
    string with `--schema=public --no-owner` (add your other schemas). Leave Supabase's own
-   schemas (`auth`, `storage`, `realtime`, `extensions`, …) out — users and files move separately,
-   below.
+   `auth`, `realtime` and `extensions` schemas out — users move separately, below. Include
+   `--schema=storage` when you will keep Supabase's storage policies (`storage: { rls: true }`):
+   the object and bucket rows and the policies come along, and the files are copied separately
+   ([Moving files](#moving-files)).
 2. **Point `DATABASE_URL` at the new Postgres** and add `backend({ postgres: {} })`. The app's
    database user needs `CREATEROLE` so the first scoped query can create `anon`, `authenticated`
    and the `auth.*` functions; where it may not, have an administrator run `rlsSetupSql("app_user")`
-   (from `@denext/backend`) and set `rls: { migrate: false }`.
+   (from `@denext/backend`) and set `backend({ postgres: { rls: { migrate: false } } })`.
 3. **Create the roles and `auth.*` functions before restoring**, since your policies reference
    them: run the `rlsSetupSql` output with `psql`, or start the app once and make one `db()` query.
    If the dump grants to `service_role` or other Supabase-only roles, either
@@ -287,20 +357,28 @@ claims are set.
    `denext generate migration <name>` + `denext job migrate`.
 5. **Apply denext's own migrations.** They run on first use: auth's `auth_*` tables when
    `backendAuthAdapter()` first runs (recorded in `auth_migrations`), the RLS setup and realtime
-   triggers when the backend first needs them (recorded in `backend_migrations`). Pass
-   `migrate: false` to either and apply them from a deploy step if the app's user should not
-   run DDL.
+   triggers and the `realtime` schema when the backend first needs them (recorded in
+   `backend_migrations`). Pass `migrate: false` to either and apply them from a deploy step if the
+   app's user should not run DDL. Policies you wrote on `realtime.messages` (private channels) are
+   in the `realtime` schema you left out: re-create them once the realtime migration has made the
+   table.
 6. **Move the users** — see [Moving users](#moving-users).
 7. **Copy the storage objects** — see [Moving files](#moving-files).
-8. **Swap the environment.** `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`
-   go away. You set `DATABASE_URL`, the `secret` you pass `denextAuth` (say `AUTH_SECRET`),
+8. **Swap the environment.** Supabase's `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are
+   replaced by the app's own keys: `DENEXT_PUBLISHABLE_KEY` (what a supabase-js client is created
+   with), `DENEXT_SECRET_KEY` (the `service_role`, server-side only) and
+   `DENEXT_JWT_SIGNING_KEYS` — `denext backend keys` prints a fresh set (`--legacy` adds
+   `DENEXT_JWT_SECRET` and the legacy JWT keys). `SUPABASE_URL` becomes the app's own origin. You
+   also set `DATABASE_URL`, the `secret` you pass `denextAuth` (say `AUTH_SECRET`),
    `DENEXT_STORAGE_SECRET` (at least 32 characters), `AWS_ACCESS_KEY_ID` /
    `AWS_SECRET_ACCESS_KEY` for an S3 driver, each OAuth provider's client id and secret, and
    whatever your mailer needs.
 9. **Re-register OAuth redirect URLs** with each provider: the callback is now your app's
    `/auth/callback/<provider>` (under denext auth's `basePath`, default `/auth`), not Supabase's.
-10. **Rewrite the client calls** using the side-by-side snippets above. supabase-js calls in the
-    browser become Server Components, Server Actions, route handlers or `useApi` calls.
+10. **Point the clients at the app.** Keep supabase-js, created with the app's origin and
+    `DENEXT_PUBLISHABLE_KEY` (`createClient(appUrl, publishableKey)`), or move calls to the
+    denext-native APIs in the side-by-side snippets above (Server Components, Server Actions,
+    route handlers, `useApi`) where you prefer.
 
 ### Moving users
 
@@ -309,9 +387,19 @@ What moves:
 - **Users, with their ids.** `createUser` takes an `id`, so each Supabase user keeps their UUID
   and every `owner = auth.uid()` row stays theirs. Copy `email`, `email_confirmed_at` (as epoch
   seconds in `emailVerified`) and the name and avatar from `raw_user_meta_data`.
-- **OAuth links.** Each `auth.identities` row with an OAuth provider becomes `linkAccount({
-  userId, provider, providerAccountId: provider_id })`, so the next GitHub or Google sign-in finds
-  the same user. Use the same provider id denext uses (`github`, `google`, …).
+- **OAuth and Web3 links.** Each `auth.identities` row with an OAuth provider becomes
+  `linkAccount({ userId, provider, providerAccountId: provider_id })`, so the next GitHub or
+  Google sign-in finds the same user. Use the same provider id denext uses (`github`, `google`,
+  …). A `web3` identity carries over the same way (`provider: "web3"`, its
+  `web3:<chain>:<address>` id unchanged), so `signInWithWeb3` finds the same user.
+- **Phone and anonymous users.** Copy `phone` and `phone_confirmed_at` (as epoch seconds in
+  `phoneVerified`) for a phone user, and `is_anonymous` as `isAnonymous: true`: phone sign-in
+  (`phoneOtp()`, or `/auth/v1`'s `signInWithOtp({ phone })`) and an anonymous user's later
+  conversion work as before.
+- **Phone MFA factors.** A verified `phone` row of `auth.mfa_factors` holds only the number, so it
+  can be re-created with `createMfaFactor({ id, userId, type: "phone", status: "verified", phone,
+  … })` in the [one factor store](/docs/auth#one-factor-store-for-both-sign-in-paths) both sign-in
+  paths share.
 - **Passwords — through a hasher that also verifies bcrypt.** Supabase stores bcrypt hashes
   (`$2a$…`) in `encrypted_password`; denext's default hasher is scrypt and does not read them.
   Copy each hash with `setCredential` as it is, and configure a `Hasher` that verifies both:
@@ -343,9 +431,24 @@ hash and writes `await hashPassword(password)` with `setCredential` on success.
 What does not move:
 
 - **Sessions and refresh tokens.** Everyone signs in once more.
-- **TOTP factors and passkeys.** Users enroll again; passkeys are also bound to the site's domain.
-- **Phone / SMS sign-in, anonymous users and SAML SSO** — denext auth has no equivalent (see
-  below); move those users to email or OAuth sign-in first.
+- **TOTP factors.** Supabase documents no supported way to export TOTP secrets, so plan for these users to
+  enroll again (through `/mfa/enroll` or `supabase.auth.mfa.enroll()` — one store, either path). Until they
+  do, they sign in without a second factor, so a policy that requires `aal2` should give them a
+  way to enroll first.
+- **WebAuthn factors and passkeys.** A credential is bound to the relying-party domain it was
+  made for, and Supabase's public keys are not portable to another relying party: users
+  register again.
+- **SAML SSO providers.** Under `backend({ supabase })` `/auth/v1` serves SAML SSO: register each
+  identity provider again with `POST /auth/v1/admin/sso/providers` (`supabase.auth.admin.sso`).
+  As in Supabase, an SSO sign-in never takes over an existing account by email, so carry the SSO
+  identities over: in the import below, write each `sso:<old provider id>` identity as
+  `sso:<new provider id>` and those users sign in to their own accounts.
+- **OAuth 2.1 server clients.** Supabase's OAuth server schema stores a hash of each client secret (`client_secret_hash`), so
+  the secrets cannot be carried over; register the
+  clients again (`supabase.auth.admin.oauth.createClient()`, or `POST
+  /auth/v1/admin/oauth/clients`) and hand them their new credentials; their users approve again.
+- **Denext's own (cookie) sign-in has no SAML.** SAML users sign in through `/auth/v1`
+  (`supabase.auth.signInWithSSO`); the session is the same user `auth()` reads.
 
 A one-off script, run against both databases (`npm:postgres` makes it work on any Deno):
 
@@ -402,32 +505,100 @@ aws s3 sync ./export/avatars s3://my-app/avatars
 ```
 
 On the `fs()` driver a bucket is a directory under `dir`, so `.storage/avatars/<key>`. Object keys
-keep their paths, so the stored keys in your tables stay valid. Then declare each bucket in
-`backend({ storage: { buckets } })` with an `authorize` that matches what its Supabase policies
-allowed, and set the store's CORS rules to allow your origin to `GET` and `PUT` and to expose
-`ETag`.
+keep their paths, so the stored keys in your tables stay valid. Listings, `info()` and the policies
+read the object rows in `storage.objects`: a database restored from a Supabase dump brings
+`storage.buckets` and `storage.objects` (and your policies on them) along, and denext uses those
+tables as they are. Then either keep the policies (`storage: { rls: true }`) or declare each bucket
+in `backend({ storage: { buckets } })` with an `authorize` that matches what they allowed, and set
+the store's CORS rules to allow your origin to `GET` and `PUT` and to expose `ETag`.
+
+## Self-hosting
+
+Supabase self-hosts as a `docker compose` stack; so does a denext app.
+`denext generate docker --stack` reads your config and writes the compose file for what it uses —
+the app, Postgres 17 (or `--pgvector`'s `pgvector/pgvector:pg17`), MinIO with its bucket created
+by a one-shot `mc` service, and a one-shot `denext migration up` (the backend's own roles and
+schemas, then your migrations) before the app starts — with
+health checks and `depends_on` conditions throughout, named volumes, and a `.env.example` listing
+every secret (the role of Supabase's `.env` with its JWT secret and keys).
+
+```sh
+denext generate docker --stack
+cp .env.example .env    # generate each secret as the file says
+docker compose up -d --build
+```
+
+There is no Kong gateway, Studio or analytics container: the app itself serves the APIs, and
+[`denext ui`](/docs/ui#database) is the dashboard, on your machine.
+[Deployment › Self-hosted stack](/docs/deploy#self-hosted-stack-postgres-storage-migrations) has
+the flags and the services.
+
+## Supabase CLI → denext
+
+| Supabase CLI                                               | denext                                                                                                                                                                         |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `supabase migration new <name>`                            | `denext migration new <name>` (`--stdin` takes the SQL from a pipe)                                                                                                            |
+| `supabase migration list`                                  | `denext migration list` / `denext db status` (`--json`)                                                                                                                        |
+| `supabase migration up`                                    | `denext migration up` / `denext db migrate` (`--include-all`, `--to <version>`)                                                                                                |
+| `supabase migration down [--last n]`                       | `denext migration down` / `denext db rollback` (`--steps n` / `--last n`, `--to`). The down scripts run; `--force-reset --yes` resets and re-applies instead, as Supabase does |
+| `supabase migration repair --status applied\|reverted <v>` | `denext migration repair --status applied\|reverted <v…>`                                                                                                                      |
+| `supabase migration squash`                                | `denext migration squash [--version v]` (`--linked` / `--db-url` also rewrite that database's history)                                                                         |
+| `supabase migration fetch`                                 | `denext migration fetch`                                                                                                                                                       |
+| `supabase db push [--include-seed] [--dry-run]`            | `denext db push`                                                                                                                                                               |
+| `supabase db pull`                                         | `denext db pull [name]`                                                                                                                                                        |
+| `supabase db reset`                                        | `denext db reset --yes`                                                                                                                                                        |
+| `supabase db diff`                                         | `denext db diff [--file name]`                                                                                                                                                 |
+| `supabase db dump`                                         | `denext db dump`                                                                                                                                                               |
+| `supabase db lint`                                         | `denext db lint` (plpgsql_check when installed, plus built-in RLS, `search_path` and grant checks)                                                                             |
+| `supabase seed buckets`, `seed.sql`                        | `denext db seed`                                                                                                                                                               |
+| `supabase inspect db <report>`                             | `denext db inspect <report>` (`report` runs them all)                                                                                                                          |
+| `supabase test db`                                         | `denext db test` (pgTAP, `supabase/tests/`)                                                                                                                                    |
+| `supabase gen types typescript`                            | `denext gen types` (= `denext db types`; `--schema`, `--file`)                                                                                                                 |
+| `supabase gen keys` / `gen signing-key`                    | `denext gen keys` (= `denext backend keys`)                                                                                                                                    |
+| `supabase gen bearer-jwt`                                  | `denext gen bearer-jwt` (= `denext backend token --role … --sub …`)                                                                                                            |
+| `supabase functions new` / `list` / `serve` / `delete`     | `denext functions new` / `list` / `serve` / `delete --yes`                                                                                                                     |
+| `supabase functions download` / `deploy`                   | Nothing to do: the functions ship inside the app (`denext build`)                                                                                                              |
+| `supabase storage ls` / `cp` / `mv` / `rm`                 | `denext storage ls` / `cp` / `mv` / `rm` (`ss:///bucket/key` paths, `-r`)                                                                                                      |
+| `supabase link`                                            | `denext db link --url <postgres-url>`, then `--linked` on any verb                                                                                                             |
+| `supabase secrets set / list / unset`                      | `.env` (or your host's environment), or the [vault](/docs/backend#vault)                                                                                                       |
+| `supabase start` / `stop` / `status`                       | `denext stack up` / `down` / `status` (and `logs`) over the stack `denext generate docker` writes                                                                              |
+
+Every database verb works on the project's own database by default. `--db-url <url>` or `--linked`
+points it at another one. A project that keeps its files in `supabase/migrations/` keeps the
+Supabase CLI's history table (`supabase_migrations.schema_migrations`), so you can switch between
+the two CLIs in either direction.
+
+**No denext equivalent:** `login`, `projects`, `orgs`, `branches`, `domains`, `vanity-subdomains`,
+`sso`, `network-bans` / `network-restrictions`, `ssl-enforcement`, `postgres-config`, `backups`,
+`snippets` and `services`. These manage Supabase's hosted platform. denext has none: your Postgres
+provider and your host do that work.
 
 ## What is missing
 
 denext covers the app-backend half of Supabase; some of the platform is not there:
 
-- **Auto-REST is a subset of PostgREST.** `backend({ rest })` serves tables with filters,
-  ordering, paging, inserts, filtered updates and deletes, but no embedded resources (joins), no
-  `or` / `and` groups, no upserts and no `/rpc` route.
-- **No supabase-js drop-in.** Calls have to be rewritten, as above.
+- **Auto-REST defaults differ in three places.** A `PATCH` or `DELETE` needs a filter (as on
+  Supabase, where `safeupdate` refuses one without); `count: "exact"` is for signed-in users unless
+  `rest.exactCount` allows it; and aggregates (`rest.aggregates`) and execution plans
+  (`rest.explain`) are off until you turn them on, as PostgREST ships them.
 - **No hosted dashboard.** `denext ui` runs on your machine, on loopback; there is no shared web
   console, no logs explorer and no usage metrics.
 - **Not hosted at all.** Backups, point-in-time recovery, connection pooling and database upgrades
   are your Postgres provider's job.
-- **Auth gaps.** No phone or SMS sign-in, no anonymous sign-in, no SAML SSO (generic `oidc()`
-  covers OIDC identity providers), and no built-in mailer — you supply `sendVerificationRequest`.
-- **Storage policies are TypeScript, not SQL.** A bucket's `authorize` function replaces policies
-  on `storage.objects`, and there is no `storage` schema to join against. Uploads are presigned
-  (multipart on S3), not TUS resumable uploads.
-- **Realtime is LISTEN/NOTIFY.** `TRUNCATE` sends nothing, and very high write volumes serialize
-  on commit; logical replication is planned.
-- **Types for REST tables only.** `.denext/rest.ts` types the tables auto-REST serves (from the
-  live catalog); there is no generator for the rest of the schema, so for server queries use an ORM
-  such as [Drizzle](/docs/database#orms) or write the row types.
-- **No Vault, no extensions catalogue.** Secrets are environment variables, and the Postgres
-  extensions you have are the ones your provider installs.
+- **No built-in mailer or SMS sender.** `/auth/v1` sends through your `sendVerificationRequest`
+  (or the `sendEmail` hook) and your `sendSms`.
+- **Realtime: a row is re-read per subscriber.** Each change is re-read under the subscriber's
+  policies (never carried past them), so a row inserted and deleted within one 16 ms burst reaches
+  no one, and `new` is the row as it is after the burst. The default notify source serializes
+  committing writers (`source: "logical"` does not, and needs `wal_level = logical`); under it a
+  full old row is carried only when it fits a notification (about 7.5 KB of JSON).
+- **Types for the REST client.** `.denext/rest.ts` is `supabase gen types`-shaped (tables,
+  views, functions, enums and relationships of the exposed schemas) and types `createClient<Database>()`
+  and denext's `from()`; `db()`'s tagged SQL is untyped, so for server queries use an ORM such as
+  [Drizzle](/docs/database#orms) or write the row types.
+- **Vault's SQL needs the app.** `vault.create_secret()` and `vault.decrypted_secrets` work
+  (`vault: { sql: true }`) only inside transactions the app opens with the key — `vault.withKey()`
+  and `denext db push` — because the key is never stored in the database; a `pg_cron` job or a
+  `psql` session cannot read secrets on its own. App-side reads (`vault.get()`) need no SQL mode.
+- **No extensions catalogue.** The Postgres extensions you have (pgvector, say) are the ones your
+  provider installs; queues and webhooks need none.

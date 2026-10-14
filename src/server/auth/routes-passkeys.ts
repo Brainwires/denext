@@ -33,7 +33,8 @@
 
 import { readCappedBody } from "../body.ts";
 import { emitAuthEvent } from "./events.ts";
-import { completeStepUp, recentlyAuthenticated } from "./mfa.ts";
+import { forgetPasskeyFactor } from "./factors.ts";
+import { completeStepUp, pendingSessionLive, recentlyAuthenticated } from "./mfa.ts";
 import { isVerified, toAuthUser } from "./adapter-link.ts";
 import {
   type ChallengeData,
@@ -66,16 +67,20 @@ import {
 import { cookieSessionOptions } from "./options.ts";
 import { getSession, type SessionOptions } from "../session.ts";
 import { readAuthSession } from "./session.ts";
+import { isSsoUser } from "./sso-user.ts";
 import { finishSignIn } from "./sign-in-tail.ts";
 import type { AuthSession, SignInFailedReason } from "./types.ts";
+import { base64UrlField, parseClientData, WebAuthnError } from "./webauthn.ts";
+import { randomToken } from "./oauth.ts";
 import {
-  base64UrlField,
-  parseClientData,
-  verifyAuthentication,
-  verifyRegistration,
-  WebAuthnError,
-} from "./webauthn.ts";
-import { base64UrlDecode, base64UrlEncode, randomToken } from "./oauth.ts";
+  challengeOf,
+  creationOptions,
+  credentialOf,
+  labelOf,
+  requestOptions,
+  verifyNewPasskey,
+  verifyPasskeyAssertion,
+} from "./passkey-ceremony.ts";
 
 /** The most a passkey body may carry (an attestation with a certificate chain fits). */
 const MAX_BODY_BYTES = 64 * 1024;
@@ -155,24 +160,6 @@ async function redeemCeremony(
   return data;
 }
 
-/** The `credential` object of a body, with `id === rawId` and `type: "public-key"`. */
-function credentialOf(body: Record<string, unknown>): {
-  id: string;
-  response: Record<string, unknown>;
-} {
-  const credential = body.credential as Record<string, unknown> | undefined;
-  const response = credential?.response as Record<string, unknown> | undefined;
-  if (
-    !credential || typeof credential !== "object" || credential.type !== "public-key" ||
-    typeof credential.id !== "string" || credential.id !== credential.rawId ||
-    !response || typeof response !== "object"
-  ) {
-    throw new WebAuthnError("malformed", "not a PublicKeyCredential JSON");
-  }
-  base64UrlField(credential.id, "credential.id");
-  return { id: credential.id, response };
-}
-
 // ---- registration -------------------------------------------------------------------
 
 /** The complete, recently signed-in cookie session, or the answer to send. */
@@ -197,6 +184,8 @@ async function registrationSession(pk: PasskeyContext): Promise<AuthSession | Re
   if (session instanceof Response) return session;
   const stored = await pk.adapter.getUser(session.user.id);
   if (!stored) return json({ error: "unauthorized" }, 401);
+  // An SSO user signs in through its identity provider only: no passkey to bypass it with.
+  if (isSsoUser(stored)) return json({ error: "sso_user" }, 403);
   if (stored.email && !isVerified(stored.emailVerified)) {
     return json({ error: "email_unverified" }, 403);
   }
@@ -210,58 +199,16 @@ async function handleRegisterOptions(ctx: AuthRouteContext): Promise<Response | 
   const session = await registrationSession(pk);
   if (session instanceof Response) return session;
   const user = session.user;
-  let handle: string;
   try {
-    handle = userHandleOf(user.id);
+    const existing = await pk.adapter.listPasskeys(user.id);
+    userHandleOf(user.id);
+    const challenge = await beginCeremony(pk, "register", user.id);
+    return json(creationOptions(pk.rp, user, existing, challenge));
   } catch (error) {
     if (!(error instanceof WebAuthnError)) throw error;
     ctx.options.logger.warn("denextAuth: refused a passkey registration", { code: error.code });
     return json({ error: "invalid passkey", code: error.code }, 400);
   }
-  const existing = await pk.adapter.listPasskeys(user.id);
-  const challenge = await beginCeremony(pk, "register", user.id);
-  return json({
-    rp: { id: pk.rp.rpId, name: pk.rp.rpName },
-    user: {
-      id: handle,
-      name: user.email ?? user.id,
-      displayName: user.name ?? user.email ?? user.id,
-    },
-    challenge,
-    pubKeyCredParams: pk.rp.algorithms.map((alg) => ({ type: "public-key", alg })),
-    timeout: pk.rp.timeout * 1000,
-    excludeCredentials: existing.map((p) => ({
-      type: "public-key",
-      id: p.id,
-      ...(p.transports ? { transports: p.transports } : {}),
-    })),
-    authenticatorSelection: {
-      residentKey: "required",
-      requireResidentKey: true,
-      userVerification: pk.rp.requireUserVerification ? "required" : "preferred",
-    },
-    attestation: "none",
-  });
-}
-
-/** The transports a registration reported, kept only when they are short strings. */
-function transportsOf(response: Record<string, unknown>): string[] | undefined {
-  const list = response.transports;
-  if (!Array.isArray(list)) return undefined;
-  const clean = list.filter((t): t is string => typeof t === "string" && /^[a-z-]{1,32}$/.test(t));
-  return clean.length > 0 ? clean.slice(0, 8) : undefined;
-}
-
-/** A user-supplied passkey label, trimmed and capped. */
-function labelOf(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim().slice(0, 64);
-  return trimmed || undefined;
-}
-
-/** Hex of a byte string. */
-function hex(bytes: Uint8Array): string {
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** `POST /passkey/register`. */
@@ -272,37 +219,19 @@ async function handleRegister(ctx: AuthRouteContext): Promise<Response | null> {
   if (session instanceof Response) return session;
   const body = await readBody(ctx);
   try {
-    const { id, response } = credentialOf(body);
-    const clientDataJSON = base64UrlField(response.clientDataJSON, "clientDataJSON");
-    const attestationObject = base64UrlField(response.attestationObject, "attestationObject");
+    const credential = credentialOf(body.credential);
+    const clientDataJSON = base64UrlField(credential.response.clientDataJSON, "clientDataJSON");
     const ceremony = await redeemCeremony(pk, clientDataJSON, ["register"]);
     if (!ceremony || ceremony.userId !== session.user.id) {
       throw new WebAuthnError("challenge", "no registration ceremony for this response");
     }
-    const result = await verifyRegistration(
-      { clientDataJSON, attestationObject },
-      {
-        challenge: parseClientData(clientDataJSON).challenge,
-        origins: pk.rp.origins,
-        rpId: pk.rp.rpId,
-        requireUserVerification: pk.rp.requireUserVerification,
-        algorithms: pk.rp.algorithms,
-      },
+    const record = await verifyNewPasskey(
+      pk.rp,
+      credential,
+      challengeOf(credential),
+      session.user.id,
+      labelOf(body.name),
     );
-    const credentialId = base64UrlEncode(result.credentialId);
-    if (credentialId !== id) throw new WebAuthnError("malformed", "credential.id mismatch");
-    const record = {
-      id: credentialId,
-      userId: session.user.id,
-      publicKey: base64UrlEncode(result.publicKey),
-      alg: result.alg,
-      signCount: result.signCount,
-      backupEligible: result.backupEligible,
-      backedUp: result.backedUp,
-      aaguid: hex(result.aaguid),
-      createdAt: Math.floor(Date.now() / 1000),
-      ...withDefined({ transports: transportsOf(response), name: labelOf(body.name) }),
-    };
     if (!await pk.adapter.createPasskey(record)) {
       return json({ error: "credential already registered" }, 409);
     }
@@ -312,13 +241,6 @@ async function handleRegister(ctx: AuthRouteContext): Promise<Response | null> {
     ctx.options.logger.warn("denextAuth: refused a passkey registration", { code: error.code });
     return json({ error: "invalid passkey", code: error.code }, 400);
   }
-}
-
-/** The entries of `values` that are defined. */
-function withDefined<T extends object>(values: T): Partial<T> {
-  return Object.fromEntries(
-    Object.entries(values).filter(([, v]) => v !== undefined),
-  ) as Partial<T>;
 }
 
 // ---- authentication -----------------------------------------------------------------
@@ -334,7 +256,12 @@ async function authenticationCaller(
   if (!pk) return null;
   if (!isSameOrigin(ctx.request, ctx.config)) return json({ error: "forbidden" }, 403);
   const session = await readAuthSession(ctx.config);
-  return { pk, pending: session?.mfaPending ? session : null };
+  if (!session?.mfaPending) return { pk, pending: null };
+  // A stateless pending cookie outlives a ban or an eviction: refuse it from the stored user.
+  if (!(await pendingSessionLive(ctx.config, session))) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  return { pk, pending: session };
 }
 
 /**
@@ -354,17 +281,7 @@ async function handleAuthenticateOptions(ctx: AuthRouteContext): Promise<Respons
   if (stepUp && passkeyWasFirstFactor(stepUp)) return json({ error: "code_required" }, 403);
   const allow = stepUp ? await pk.adapter.listPasskeys(stepUp.user.id) : [];
   const challenge = await beginCeremony(pk, stepUp ? "mfa" : "signin", stepUp?.user.id);
-  return json({
-    challenge,
-    rpId: pk.rp.rpId,
-    timeout: pk.rp.timeout * 1000,
-    userVerification: pk.rp.requireUserVerification ? "required" : "preferred",
-    allowCredentials: allow.map((p) => ({
-      type: "public-key",
-      id: p.id,
-      ...(p.transports ? { transports: p.transports } : {}),
-    })),
-  });
+  return json(requestOptions(pk.rp, challenge, allow));
 }
 
 /** Report a refused passkey sign-in; the answer is always the same generic `401`. */
@@ -400,45 +317,20 @@ async function verifyAssertion(
   body: Record<string, unknown>,
   pending: AuthSession | null,
 ): Promise<VerifiedAssertion> {
-  const { id, response } = credentialOf(body);
-  const clientDataJSON = base64UrlField(response.clientDataJSON, "clientDataJSON");
-  const authenticatorData = base64UrlField(response.authenticatorData, "authenticatorData");
-  const signature = base64UrlField(response.signature, "signature");
+  const credential = credentialOf(body.credential);
+  const clientDataJSON = base64UrlField(credential.response.clientDataJSON, "clientDataJSON");
   const ceremony = await redeemCeremony(pk, clientDataJSON, pending ? ["mfa"] : ["signin"]);
   if (!ceremony || (pending && ceremony.userId !== pending.user.id)) {
     throw new WebAuthnError("challenge", "no authentication ceremony for this response");
   }
-  const record = await pk.adapter.getPasskey(id);
-  if (!record) throw new WebAuthnError("signature", "unknown credential");
-  if (ceremony.userId !== undefined && record.userId !== ceremony.userId) {
-    throw new WebAuthnError("signature", "the credential belongs to another user");
-  }
-  if (response.userHandle !== undefined && response.userHandle !== null) {
-    if (response.userHandle !== userHandleOf(record.userId)) {
-      throw new WebAuthnError("signature", "the user handle is not the credential's owner");
-    }
-  }
-  const result = await verifyAuthentication(
-    { clientDataJSON, authenticatorData, signature },
-    {
-      publicKey: base64UrlDecode(record.publicKey),
-      signCount: record.signCount,
-      backupEligible: record.backupEligible,
-    },
-    {
-      challenge: parseClientData(clientDataJSON).challenge,
-      origins: pk.rp.origins,
-      rpId: pk.rp.rpId,
-      requireUserVerification: pk.rp.requireUserVerification,
-    },
+  const { record, userVerified } = await verifyPasskeyAssertion(
+    pk.rp,
+    pk.adapter,
+    credential,
+    challengeOf(credential),
+    ceremony.userId,
   );
-  const swapped = await pk.adapter.updatePasskey(record.id, record.signCount, {
-    signCount: result.signCount,
-    backedUp: result.backedUp,
-    lastUsedAt: Math.floor(Date.now() / 1000),
-  });
-  if (!swapped) throw new WebAuthnError("counter", "a concurrent assertion advanced the counter");
-  return { ceremony, userId: record.userId, userVerified: result.userVerified };
+  return { ceremony, userId: record.userId, userVerified };
 }
 
 /** A step-up spends the same per-user budget as a code at `/mfa`: a `429` once it's spent. */
@@ -464,6 +356,8 @@ async function signInOwner(
 ): Promise<Response> {
   const owner = await pk.adapter.getUser(verified.userId);
   if (!owner) return await refuse(ctx, "invalid_passkey", "owner_missing");
+  // A passkey from before the account became an SSO user signs nobody in.
+  if (isSsoUser(owner)) return await refuse(ctx, "invalid_passkey", "sso_user");
   const approved = await applySignInCallback(ctx.config, toAuthUser(owner), PASSKEY_PROVIDER);
   if (!approved) {
     await emitAuthEvent(ctx.options, "signInFailed", {
@@ -529,6 +423,7 @@ async function handleDelete(ctx: AuthRouteContext): Promise<Response | null> {
   const record = await pk.adapter.getPasskey(ctx.params.id);
   if (!record || record.userId !== session.user.id) return json({ error: "not found" }, 404);
   await pk.adapter.deletePasskey(record.id);
+  await forgetPasskeyFactor(ctx.config, record.userId, record.id);
   return json({ ok: true });
 }
 

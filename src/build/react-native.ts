@@ -79,7 +79,7 @@
 // The SPA shell's root style lives with the shell (spa/shared.ts).
 
 import { basename, dirname, join } from "@std/path";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import { type DenextConfig, reactNativeOptions } from "../server/config.ts";
 import { BROWSER_CONDITIONS, resolveInPackageDir, withPackageSideEffects } from "./next-compat.ts";
 import { EXPO_FILTER, EXPO_RN_BRIDGE, expoShimSpecifier } from "./expo-shims.ts";

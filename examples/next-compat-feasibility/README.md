@@ -9,7 +9,7 @@ convert the app.
 > `deno.json` → build → render), recording exactly where drop-in holds. See
 > [The drop-in verifier](#the-drop-in-verifier-convertts--verify-dropinsh)
 > below. Its successor is the **migration-bed nightly**
-> (`tests/migration-bed/`, `deno task test:migration-bed`): SHA-pinned real apps
+> (`tests/migration-bed/`, `denext task test:migration-bed`): SHA-pinned real apps
 > cloned, run through `denext migrate`, built, served and render-asserted on
 > every nightly CI run — the same walk, with the real `migrate` command and a
 > failing test instead of a report table.

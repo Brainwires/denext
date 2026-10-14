@@ -310,6 +310,7 @@ const SERVER_ENV = {
   DENEXT_CANONICAL_ORIGIN: undefined,
   DENEXT_TRUST_PROXY: undefined,
   DENEXT_RATE_LIMIT_HEADER: undefined,
+  DENEXT_RATE_LIMIT_TRUSTED_PROXIES: undefined,
   DENEXT_RATE_LIMIT_LOCAL_ADDRESSES: undefined,
   DENEXT_REQUEST_TIMEOUT_MS: undefined,
   DENEXT_MAX_CONCURRENCY: undefined,
@@ -321,6 +322,7 @@ Deno.test("resolveServerOptions: unset config + unset env leaves every knob unde
       canonicalOrigin: undefined,
       trustForwardedHeaders: undefined,
       rateLimitHeader: undefined,
+      rateLimitTrustedProxies: undefined,
       rateLimitLocalAddresses: undefined,
       requestTimeout: undefined,
       maxConcurrency: undefined,
@@ -392,6 +394,31 @@ Deno.test("resolveServerOptions: rateLimitHeader / rateLimitLocalAddresses — c
   }
   assertEquals(warned.length, 1);
   assert(warned[0].includes("DENEXT_RATE_LIMIT_HEADER"), warned[0]);
+});
+
+Deno.test("resolveServerOptions: rateLimitTrustedProxies — config > env (comma-separated), a bad range warned and dropped", () => {
+  const original = console.warn;
+  const warned: string[] = [];
+  console.warn = (...args: unknown[]) => warned.push(args.map(String).join(" "));
+  try {
+    withEnv({
+      ...SERVER_ENV,
+      DENEXT_RATE_LIMIT_TRUSTED_PROXIES: " 10.0.0.0/8, nope ,2400:cb00::/32",
+    }, () => {
+      assertEquals(resolveServerOptions({}).rateLimitTrustedProxies, [
+        "10.0.0.0/8",
+        "2400:cb00::/32",
+      ]);
+      assertEquals(
+        resolveServerOptions({ rateLimitTrustedProxies: ["192.0.2.1"] }).rateLimitTrustedProxies,
+        ["192.0.2.1"],
+      );
+    });
+  } finally {
+    console.warn = original;
+  }
+  assertEquals(warned.length, 1, warned.join("\n"));
+  assert(warned[0].includes("DENEXT_RATE_LIMIT_TRUSTED_PROXIES") && warned[0].includes("nope"));
 });
 
 Deno.test("resolveServerOptions: the config wins over the env var", () => {

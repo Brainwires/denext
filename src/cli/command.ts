@@ -106,7 +106,9 @@ export interface CommandContext {
   readonly global: GlobalFlags;
   /**
    * Pass-through tokens: everything after a literal `--`, plus (for a
-   * {@linkcode CommandSpec.passthrough} command) any unrecognized flags and the `--` itself.
+   * {@linkcode CommandSpec.passthrough} command) any unrecognized flags and the `--` itself. A
+   * verb that is not passthrough ignores a `--` that comes first (a task runner's), and parses
+   * what follows as its own.
    * Forwarded verbatim to an underlying subprocess by wrapping verbs (`test`, `lint`, …).
    */
   readonly rest: string[];
@@ -521,23 +523,15 @@ interface ParsedArgv {
 /**
  * Parse a command's argv against its flag schema. `--help`/`-h` short-circuits to help;
  * an unknown flag is an error (or forwarded for a passthrough command); `--` forwards
- * everything after it.
+ * everything after it — except a leading `--` on a verb that is not passthrough, which is
+ * skipped.
  */
 function parseCommandArgv(command: CommandSpec, rest: string[]): ParseOutcome {
   const index = indexFlags(command);
   const out: ParsedArgv = { flags: {}, positionals: [], passthrough: [] };
   try {
-    for (let i = 0; i < rest.length; i++) {
-      const tok = rest[i];
-      if (tok === "--") {
-        out.passthrough.push(...afterSeparator(command, rest, i));
-        break;
-      }
-      if (isHelpFlag(tok)) return { kind: "help", command };
-      const consumed = parseToken(command, index, out, rest, i);
-      if (typeof consumed !== "number") return consumed; // an error outcome
-      i += consumed;
-    }
+    const early = walkArgv(command, index, out, rest);
+    if (early) return early;
   } catch (err) {
     return {
       kind: "error",
@@ -560,6 +554,31 @@ function parseCommandArgv(command: CommandSpec, rest: string[]): ParseOutcome {
       rest: out.passthrough,
     },
   };
+}
+
+/** Walk the tokens into `out`; returns an outcome that ends parsing early (help, an error). */
+function walkArgv(
+  command: CommandSpec,
+  index: FlagIndex,
+  out: ParsedArgv,
+  rest: string[],
+): ParseOutcome | undefined {
+  for (let i = 0; i < rest.length; i++) {
+    const tok = rest[i];
+    if (tok === "--") {
+      // A verb that forwards nothing ignores a LEADING `--`: it is the one a task runner adds
+      // (`deno task start -- --port 4000` runs `denext start -- --port 4000`), and what follows
+      // is the verb's own flags.
+      if (i === 0 && !command.passthrough) continue;
+      out.passthrough.push(...afterSeparator(command, rest, i));
+      return undefined;
+    }
+    if (isHelpFlag(tok)) return { kind: "help", command };
+    const consumed = parseToken(command, index, out, rest, i);
+    if (typeof consumed !== "number") return consumed; // an error outcome
+    i += consumed;
+  }
+  return undefined;
 }
 
 /**

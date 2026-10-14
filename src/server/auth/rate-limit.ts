@@ -1,12 +1,12 @@
 /**
  * Brute-force protection for the sign-in endpoints: fixed-window counters in a pluggable
- * {@linkcode RateLimitStore}. Five limiters are built from one `rateLimit` config and
+ * {@linkcode RateLimitStore}. Six limiters are built from one `rateLimit` config and
  * share this module's factory:
  *
  * - the **credentials** limiter counts *failed* `POST {basePath}/callback/:provider`
  *   attempts per client (IP + submitted identifier by default), 5 per 15 minutes;
  * - the **sign-in-start** limiter counts *every* `GET {basePath}/signin/:provider` per
- *   client IP, 20 per 15 minutes, so an unauthenticated visitor can't make the app mint
+ *   client IP, 100 per 15 minutes, so an unauthenticated visitor can't make the app mint
  *   PKCE/state transactions (or probe provider ids) without bound;
  * - the **session-read** limiter counts every `GET {basePath}/session` per client IP,
  *   300 per minute (`rateLimit.session`), so the unauthenticated poll endpoint can't be
@@ -16,7 +16,10 @@
  *   plus an IP-wide bucket at {@linkcode IP_BUCKET_FACTOR}× that — so nobody can turn the
  *   app into a mail cannon aimed at one inbox, or at many;
  * - the **MFA** limiter bounds second-factor attempts per user, 5 per 5 minutes
- *   (`rateLimit.mfa`), plus the same kind of IP-wide bucket.
+ *   (`rateLimit.mfa`), plus the same kind of IP-wide bucket;
+ * - the **captcha** limiter counts every captcha token sent to the provider per client IP,
+ *   30 per minute (`rateLimit.captcha`), spent before the provider is asked — so a stream of
+ *   unauthenticated requests can't drive unlimited calls to the verifier.
  *
  * Past the limit the endpoint answers a generic `429` with `Retry-After` until the window
  * ends; a successful credentials sign-in resets its key. The in-memory default store is
@@ -37,6 +40,7 @@
  */
 
 import { clientAddrOf, ipBucket, limitAddrOf, remoteAddrOf } from "../remote-addr.ts";
+import { backendPostgresClient, backendRateLimitStore } from "./backend-postgres.ts";
 import { currentLimitPolicy, trustsForwardedHeaders } from "../request-context.ts";
 
 /** One key's open failure window. */
@@ -143,6 +147,20 @@ export interface RateLimitOptions {
     /** Window length in ms. Default 5 minutes. */
     windowMs?: number;
   };
+  /**
+   * Tune the **captcha** limiter — the per-IP budget spent on every captcha token denext is
+   * about to send to the provider (denext's own endpoints and `/auth/v1` alike), BEFORE the
+   * provider is called, so no unauthenticated request stream can drive unlimited verifier
+   * calls. A missing or oversized token is refused without spending. `false` turns this one
+   * budget off. Shares `store`; ignores the credentials fields. Skipped, like every per-IP
+   * budget, for a loopback/private peer with no trusted proxy hop.
+   */
+  captcha?: {
+    /** Verifier calls allowed per client IP per window before a `429`. Default 30. */
+    max?: number;
+    /** Window length in ms. Default 1 minute. */
+    windowMs?: number;
+  } | false;
 }
 
 /** A configured limiter (what the credentials route drives). */
@@ -182,6 +200,10 @@ const DEFAULT_VERIFICATION_MAX = 3;
 const DEFAULT_MFA_MAX = 5;
 /** The MFA limiter's window: five minutes. */
 const DEFAULT_MFA_WINDOW_MS = 5 * 60_000;
+/** Captcha verifier calls one client IP may trigger per window before a `429`. */
+const DEFAULT_CAPTCHA_MAX = 30;
+/** The captcha limiter's window: a minute. */
+const DEFAULT_CAPTCHA_WINDOW_MS = 60_000;
 const DEFAULT_MAX_KEYS = 10_000;
 /** Which submitted field names the default key treats as "the account identifier". */
 const IDENTIFIER_FIELDS = ["email", "username", "login", "identifier"];
@@ -403,6 +425,19 @@ export interface RateLimitConfig {
   rateLimit?: RateLimitOptions | false;
   /** Whether a fronting proxy's `x-forwarded-for` may be believed. */
   trustForwardedHeaders?: boolean;
+  /** The auth adapter: its `rateLimits` store is the shared default on the backend's Postgres. */
+  adapter?: { rateLimits?: RateLimitStore };
+}
+
+/**
+ * The store the limiters share when `rateLimit.store` is unset: with `@denext/backend`'s
+ * Postgres set up, the adapter's own Postgres store (same schema) when it keeps one, else one on
+ * the backend's client — never a per-process count behind several replicas. `undefined` (each
+ * limiter's own in-memory store) without it.
+ */
+function defaultSharedStore(config: RateLimitConfig): RateLimitStore | undefined {
+  if (!backendPostgresClient()) return undefined;
+  return config.adapter?.rateLimits ?? backendRateLimitStore();
 }
 
 /**
@@ -430,6 +465,8 @@ interface ConfigLimiters {
   verification: RateLimiter | null;
   /** Second-factor attempts. */
   mfa: RateLimiter | null;
+  /** Captcha verifier calls. */
+  captcha: RateLimiter | null;
 }
 
 // One pair per config object (the plugin hands the same `config` to every request), built
@@ -449,11 +486,11 @@ function budget(
   return createRateLimiter({
     max: tuning?.max ?? max,
     windowMs: tuning?.windowMs ?? windowMs,
-    store: options.store,
+    ...(options.store ? { store: options.store } : {}),
   });
 }
 
-/** Build every limiter for a config — one factory, five budgets, one (optional) shared store. */
+/** Build every limiter for a config — one factory, six budgets, one (optional) shared store. */
 function buildLimiters(config: RateLimitConfig): ConfigLimiters {
   if (config.rateLimit === false) {
     return {
@@ -462,9 +499,12 @@ function buildLimiters(config: RateLimitConfig): ConfigLimiters {
       sessionRead: null,
       verification: null,
       mfa: null,
+      captcha: null,
     };
   }
-  const options = config.rateLimit ?? {};
+  const configured = config.rateLimit ?? {};
+  const shared = configured.store ? undefined : defaultSharedStore(config);
+  const options = shared ? { ...configured, store: shared } : configured;
   return {
     credentials: createRateLimiter(options),
     signinStart: budget(options, options.signin, DEFAULT_SIGNIN_MAX, DEFAULT_WINDOW_MS),
@@ -476,6 +516,9 @@ function buildLimiters(config: RateLimitConfig): ConfigLimiters {
       DEFAULT_WINDOW_MS,
     ),
     mfa: budget(options, options.mfa, DEFAULT_MFA_MAX, DEFAULT_MFA_WINDOW_MS),
+    captcha: options.captcha === false
+      ? null
+      : budget(options, options.captcha, DEFAULT_CAPTCHA_MAX, DEFAULT_CAPTCHA_WINDOW_MS),
   };
 }
 
@@ -542,6 +585,40 @@ export function verificationLimiter(config: RateLimitConfig): RateLimiter | null
  */
 export function mfaLimiter(config: RateLimitConfig): RateLimiter | null {
   return limitersFor(config).mfa;
+}
+
+/**
+ * The captcha limiter for an auth config: 30 verifier calls per client IP per minute by
+ * default, tunable with `rateLimit.captcha`. Drive it with {@linkcode spendCaptchaBudget}.
+ *
+ * @param config The app's auth config.
+ * @returns The limiter, or `null` when `rateLimit: false` or `rateLimit.captcha: false`
+ *   disabled it.
+ */
+function captchaLimiter(config: RateLimitConfig): RateLimiter | null {
+  return limitersFor(config).captcha;
+}
+
+/**
+ * Spend one unit of the per-IP captcha budget for a token about to go to the provider. Like
+ * every per-IP budget it is skipped for a request from an undeclared proxy
+ * ({@linkcode proxiedWithoutTrust}), and it keys on {@linkcode clientIpBucket} (so
+ * `rateLimitHeader` and `trustForwardedHeaders` apply).
+ *
+ * @param request The incoming request.
+ * @param config The app's auth config.
+ * @returns Seconds until the budget refills when refused, else `null` (go ahead).
+ */
+export async function spendCaptchaBudget(
+  request: Request,
+  config: RateLimitConfig,
+): Promise<number | null> {
+  const limiter = captchaLimiter(config);
+  if (!limiter || proxiedWithoutTrust(request, config)) return null;
+  const key = `captcha|${
+    clientIpBucket(request, { trustForwardedHeaders: authTrustsProxy(config) })
+  }`;
+  return await limiter.hit(key);
 }
 
 /** Which per-subject budget a {@linkcode SubjectBucketKeys} pair counts against. */

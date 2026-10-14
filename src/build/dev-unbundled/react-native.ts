@@ -27,7 +27,7 @@
 
 import { basename, dirname, join, resolve, SEPARATOR } from "@std/path";
 import { ensureDir } from "@std/fs";
-import type * as esbuild from "esbuild";
+import type * as esbuild from "../esbuild/mod.ts";
 import { EXPO_RN_BRIDGE } from "../expo-shims.ts";
 import { expoRouterRoot, expoRouterRouteFiles } from "../expo-router.ts";
 import { bundleNextCompatModules } from "../next-compat.ts";

@@ -37,6 +37,7 @@
 // reserved connection, checked once per burst) revalidates; the lock goes with its connection,
 // so when the owner stops or dies the next instance to see a burst takes it over.
 
+import { inRoot } from "./root-context.ts";
 import {
   clientIpForLimits,
   createChannel,
@@ -46,12 +47,13 @@ import {
   type SqlClient,
   type SqlListener,
 } from "@denext/denext/server";
-import type { DbIdentity, RlsScope } from "./rls.ts";
-import { resolveScope, scopedFor } from "./postgres.ts";
+import { type DbIdentity, ensureRlsMigrated, type RlsScope } from "./rls.ts";
+import { resolveScope, rlsReady, scopedFor } from "./postgres.ts";
 import {
   decodeSubscriptionKey,
   type ParsedFilter,
   parseFilter,
+  qualifiedTableName,
   REALTIME_CHANNEL_ID,
   REALTIME_NOTIFY_CHANNEL,
   type TableChange,
@@ -60,28 +62,43 @@ import {
   type TableFilter,
 } from "./realtime-shared.ts";
 import {
+  dropTriggersSql,
+  PUBLICATION_TABLES_SQL,
+  type PublicationRow,
+  publicationTable,
   realtimeMigrations,
   type RealtimeOptions,
   type ResolvedRealtime,
   type ResolvedTable,
   resolveRealtime,
+  tableTrigger,
+  triggerArgs,
 } from "./realtime-sql.ts";
+import { LogicalSource } from "./realtime-logical.ts";
 
 /** A change as the database reported it — keys only, before any re-read. */
 export interface TableChangeEvent {
   /** The table, as configured. */
   table: string;
   /**
-   * `insert`, `update` or `delete`; `resync` when changes may have been missed (the listening
-   * connection was lost and is back, a burst overflowed, a key too long to send).
+   * `insert`, `update`, `delete` or `truncate`; `resync` when changes may have been missed (the
+   * listening connection was lost and is back, a burst overflowed, a key too long to send).
    */
   op: TableEvent | "resync";
-  /** The row's key, as text (absent on `resync`). */
+  /** The row's key, as text (absent on `truncate` and `resync`). */
   key?: string;
   /** The key before an update that changed it. */
   oldKey?: string;
   /** When the trigger ran, in epoch milliseconds (absent on `resync`). */
   ts?: number;
+}
+
+/** A notification as parsed: a {@linkcode TableChangeEvent} plus the old row it may carry. */
+export interface TableNotification extends TableChangeEvent {
+  /** The row before an update or delete (a table configured `old: "full"`). */
+  old?: Record<string, unknown>;
+  /** The old row did not fit the notification. */
+  oldOverflow?: true;
 }
 
 /** Why realtime cannot run: the Postgres client has no `listen`. */
@@ -104,11 +121,24 @@ export class RealtimeUnsupportedError extends Error {
 /** Where an audience's frames go: the Live channel, or a server callback. */
 type Sink = { channel: string } | { fn: (frame: TableChangesFrame) => void };
 
+/**
+ * How an audience's changes are worked out: `view` (`useTableChanges`, `tableChanges`) — `insert`
+ * when a row enters the subscriber's view, `delete` when it leaves it; `raw` (Supabase's
+ * `postgres_changes`) — the operation the database ran, sent only when the subscriber can see
+ * the row (a delete: when they could see it before), filtered by `events`.
+ */
+type AudienceMode = "view" | "raw";
+
 /** One subscription. */
 interface Audience {
   key: string;
   table: ResolvedTable;
   filter?: ParsedFilter;
+  mode: AudienceMode;
+  /** The operations a `raw` audience is sent. */
+  events?: ReadonlySet<TableEvent>;
+  /** A frame's target size for this audience. */
+  frameBytes: number;
   /** `anon`, or `authenticated:<sub>`: the identity the key is bound to. */
   identity: string;
   /**
@@ -130,11 +160,53 @@ interface Audience {
   pumping: boolean;
 }
 
+/** The burst's change to a key after one more notification (`previous`: the burst's so far). */
+function merge(
+  previous: Pending | undefined,
+  op: Pending["op"],
+  event: TableNotification,
+): Pending {
+  const step: Step = { op };
+  if (event.oldKey !== undefined) step.oldKey = event.oldKey;
+  if (event.ts !== undefined) step.ts = event.ts;
+  if (event.old) step.old = event.old;
+  else if (event.oldOverflow) step.oldOverflow = true;
+  const merged: Pending = {
+    op: previous?.op === "insert" && op === "update" ? "insert" : op,
+    steps: [...(previous?.steps ?? []), step].slice(-MAX_STEPS),
+  };
+  const oldKey = previous?.oldKey ?? event.oldKey;
+  if (oldKey !== undefined && op !== "delete") merged.oldKey = oldKey;
+  if (event.ts !== undefined) merged.ts = event.ts;
+  // The image from before the burst: the first change's old row.
+  const first = previous ?? event;
+  if (first.old) merged.old = first.old;
+  else if (first.oldOverflow) merged.oldOverflow = true;
+  return merged;
+}
+
 /** A coalesced change to one key within a burst. */
 interface Pending {
-  op: TableEvent;
+  op: Exclude<TableEvent, "truncate">;
   oldKey?: string;
+  /** When the latest change was written (epoch ms). */
+  ts?: number;
+  /** The row as it was before the burst's first change to it (`old: "full"` tables). */
+  old?: Record<string, unknown>;
+  /** The old row was too large to carry. */
+  oldOverflow?: true;
+  /**
+   * Every change to the key in the burst, in commit order (the last {@linkcode MAX_STEPS}):
+   * a `raw` audience is sent each of them, as Supabase sends each WAL change.
+   */
+  steps: Step[];
 }
+
+/** One change to a key, as a `raw` audience is sent it. */
+type Step = Omit<Pending, "steps">;
+
+/** Changes to one key kept per burst for `raw` audiences. */
+const MAX_STEPS = 64;
 
 /** Counters, for tests and diagnostics. */
 export interface RealtimeStats {
@@ -164,8 +236,14 @@ const MAX_PENDING = 50_000;
 const KEYS_PER_QUERY = 1_000;
 /** A frame's target size; the channel's own cap (16 KiB by default) is the hard limit. */
 const FRAME_BYTES = 12_000;
+/** A `raw` audience's frame size (a server callback: no channel cap); larger rows are truncated. */
+export const RAW_FRAME_BYTES = 1024 * 1024;
 /** How long an audience with no subscriber is kept (a reconnect resumes it). */
 const IDLE_GRACE_MS = 15_000;
+/** How often the publication's tables are read again. */
+const PUBLICATION_POLL_MS = 10_000;
+/** The publication `source: "logical"` keeps the configured tables in. */
+const DENEXT_PUBLICATION = "denext_realtime";
 /** Group re-reads run at once. */
 const REREAD_CONCURRENCY = 4;
 /** Subscribe-time seed queries run at once (more wait their turn). */
@@ -177,10 +255,38 @@ const SEED_PER_SECOND = 8;
 /** How long a just-admitted subscription is safe from eviction before its subscriber arrives. */
 const ADMIT_GRACE_MS = 1_000;
 
-/** The type of each column of a table (`format_type`, no modifier), by `$1::regclass`. */
+/**
+ * The type of each column of a table (`format_type`, no modifier) and its type's name (`udt`:
+ * `int8`, `timestamptz` — what Supabase's `columns` carry), by `$1::regclass`, in column order.
+ */
 export const COLUMN_TYPES_SQL = "select a.attname::text as name, " +
-  "format_type(a.atttypid, null) as type from pg_attribute a " +
-  "where a.attrelid = $1::regclass and a.attnum > 0 and not a.attisdropped";
+  "format_type(a.atttypid, null) as type, t.typname::text as udt, c.relrowsecurity as rls " +
+  "from pg_attribute a join pg_type t on t.oid = a.atttypid join pg_class c on c.oid = a.attrelid " +
+  "where a.attrelid = $1::regclass and a.attnum > 0 and not a.attisdropped order by a.attnum";
+
+/** A table's columns as Supabase's `postgres_changes` payload lists them. */
+export interface ColumnInfo {
+  /** The column. */
+  name: string;
+  /** Its type's name (`int8`, `text`, `uuid`, `timestamptz`, `_int4` …). */
+  type: string;
+}
+
+/** A table's catalog, read once. */
+interface Catalog {
+  types: Map<string, string>;
+  columns: ColumnInfo[];
+  /**
+   * Row-level security is off (the catalog says so): every subscriber may see every row, so an
+   * old row may go to all of them, as Supabase sends it. Unknown counts as on.
+   */
+  open: boolean;
+  /** When it was read (epoch ms): re-read after {@linkcode CATALOG_TTL_MS}. */
+  at: number;
+}
+
+/** How long a table's catalog facts are trusted (a policy switched on is seen within this). */
+const CATALOG_TTL_MS = 10_000;
 
 /** Sets the transaction's `statement_timeout` (`$1`: milliseconds, as text). */
 const STATEMENT_TIMEOUT_SQL = "select set_config('statement_timeout', $1, true)";
@@ -204,14 +310,6 @@ export const REVALIDATE_OWNER_SQL = "select case when exists (select 1 from pg_l
 /** A reserved connection, as `SqlClient.reserve` hands it out. */
 type Reserved = SqlClient & { release(): void | Promise<void> };
 
-type RootBridge = { __denextInRootContext?: <R>(fn: () => R) => R };
-
-/** Run `fn` in the root async context (see src/server/root-context.ts). */
-function inRoot<T>(fn: () => T): T {
-  const run = (globalThis as RootBridge).__denextInRootContext;
-  return run ? run(fn) : fn();
-}
-
 /** The realtime engine of one server instance. */
 export class RealtimeEngine {
   readonly config: ResolvedRealtime;
@@ -229,6 +327,8 @@ export class RealtimeEngine {
   #pending = new Map<string, Map<string, Pending>>();
   #pendingCount = 0;
   #resyncTables = new Set<string>();
+  /** Tables truncated in this burst (delivered before the burst's later changes), with when. */
+  #truncated = new Map<string, number | undefined>();
   #timer: ReturnType<typeof setTimeout> | null = null;
   #listening: Promise<void> | null = null;
   #listener: SqlListener | null = null;
@@ -242,8 +342,14 @@ export class RealtimeEngine {
   /** The flush in progress, and whether another burst arrived while it ran. */
   #flushing: Promise<void> | null = null;
   #flushAgain = false;
-  /** Each table's column types, read once (by table name). */
-  #types = new Map<string, Promise<Map<string, string>>>();
+  /** Each table's catalog, read once (by table name). */
+  #types = new Map<string, Promise<Catalog>>();
+  /** The logical-decoding source, when `source: "logical"`. */
+  #logical: LogicalSource | null = null;
+  /** The publication re-read timer, and the re-read in flight. */
+  #publicationTimer: ReturnType<typeof setInterval> | null = null;
+  #discovering: Promise<void> | null = null;
+  #warnedTables = new Set<string>();
   /** Seed queries running, and those waiting for a turn. */
   #seeding = 0;
   #seedWaiters: Array<() => void> = [];
@@ -272,9 +378,36 @@ export class RealtimeEngine {
     return sql;
   }
 
+  /**
+   * A realtime table by the name it is subscribed under: the configured name, `table` (in
+   * `public`), or `schema.table`.
+   *
+   * @param name The name.
+   * @returns The table, or `undefined`.
+   */
+  lookup(name: string): ResolvedTable | undefined {
+    const direct = this.config.tables.get(name);
+    if (direct) return direct;
+    const dot = name.indexOf(".");
+    const schema = dot < 0 ? "public" : name.slice(0, dot);
+    const table = dot < 0 ? name : name.slice(dot + 1);
+    for (const t of this.config.tables.values()) {
+      if (t.table === table && (t.schema ?? "public") === schema) return t;
+    }
+    return undefined;
+  }
+
+  /** The table, after the publication was read if it is not known yet. */
+  async #resolve(name: string): Promise<ResolvedTable | undefined> {
+    const known = this.lookup(name);
+    if (known || !this.config.publication) return known;
+    await this.start();
+    return this.lookup(name);
+  }
+
   /** The table's resolved options, or a TypeError naming the configured tables. */
   table(name: string): ResolvedTable {
-    const table = this.config.tables.get(name);
+    const table = this.lookup(name);
     if (!table) {
       throw new TypeError(
         `realtime: table ${JSON.stringify(name)} is not in realtime({ tables }) ` +
@@ -287,15 +420,25 @@ export class RealtimeEngine {
   /** Apply the trigger migrations once (a failure is retried on the next call). */
   #migrate(sql: SqlClient): Promise<void> {
     if (!this.config.migrate) return Promise.resolve();
-    const migrations: Migration[] = realtimeMigrations({
+    const configured = [...this.config.tables.values()].filter((t) => !t.fromPublication);
+    const all: Migration[] = realtimeMigrations({
       tables: Object.fromEntries(
-        [...this.config.tables.values()].map((
+        configured.map((
           t,
-        ) => [t.name, { events: t.events, key: t.key, schema: t.schema }]),
+        ) => [t.name, { events: t.events, key: t.key, schema: t.schema, old: t.old }]),
       ),
+      publication: this.config.publication ?? false,
     });
+    // The logical source needs no triggers.
+    const migrations = this.config.source === "logical"
+      ? all.filter((m) => !m.name.startsWith("backend_realtime_t_"))
+      : all;
+    // The `anon` / `authenticated` roles first: the realtime schema grants to them. (An engine
+    // built on its own client, with no `backend({ postgres })` installed, migrates that client.)
     this.#migrated ??= inRoot(() =>
-      migratePostgres(sql, { migrations, table: "backend_migrations" })
+      rlsReady().catch(() => ensureRlsMigrated(sql)).then(() =>
+        migratePostgres(sql, { migrations, table: "backend_migrations" })
+      )
     ).then(() => undefined, (error) => {
       this.#migrated = null;
       throw error;
@@ -320,6 +463,10 @@ export class RealtimeEngine {
     }
     this.#listening = inRoot(async () => {
       await this.#migrate(sql);
+      await this.#discover(sql);
+      await this.#toggleTriggers(sql);
+      this.#armDiscovery();
+      if (this.config.source === "logical") return await this.#startLogical(sql);
       const listener = await sql.listen!(
         REALTIME_NOTIFY_CHANNEL,
         (payload) => inRoot(() => this.receive(payload)),
@@ -334,12 +481,166 @@ export class RealtimeEngine {
     return this.#listening;
   }
 
+  /** Re-read the publication every {@linkcode PUBLICATION_POLL_MS} (once). */
+  #armDiscovery(): void {
+    if (!this.config.publication || this.#publicationTimer !== null || this.#stopped) return;
+    this.#publicationTimer = inRoot(() =>
+      setInterval(() => {
+        this.#discover(this.#client()).catch((error) =>
+          console.error("[@denext/backend] realtime: reading the publication failed", error)
+        );
+      }, PUBLICATION_POLL_MS)
+    );
+    Deno.unrefTimer?.(this.#publicationTimer as unknown as number);
+  }
+
+  /**
+   * Read the publication's tables: new ones join the registry (with their triggers, under the
+   * notify source), dropped ones leave it (and lose their triggers). Single-flight.
+   */
+  #discover(sql: SqlClient): Promise<void> {
+    if (!this.config.publication) return Promise.resolve();
+    this.#discovering ??= this.#discoverOnce(sql).finally(() => {
+      this.#discovering = null;
+    });
+    return this.#discovering;
+  }
+
+  async #discoverOnce(sql: SqlClient): Promise<void> {
+    const rows = await sql.unsafe<PublicationRow>(PUBLICATION_TABLES_SQL, [
+      this.config.publication,
+    ]);
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const table = this.#publicationTableOf(row);
+      if (!table) continue;
+      seen.add(table.name);
+      const known = this.config.tables.get(table.name);
+      if (known && sameTable(known, table)) continue;
+      if (this.config.source === "notify" && !(await this.#ensureTriggers(sql, table))) continue;
+      this.config.tables.set(table.name, table);
+      this.#types.delete(table.name);
+    }
+    for (const [name, table] of this.config.tables) {
+      if (!table.fromPublication || seen.has(name)) continue;
+      this.config.tables.delete(name);
+      if (this.config.source === "notify") await runStatements(sql, dropTriggersSql(table));
+    }
+  }
+
+  /** A publication row as a table — `null` (warned once) when it cannot be one or is configured. */
+  #publicationTableOf(row: PublicationRow): ResolvedTable | null {
+    const table = publicationTable(row);
+    if (typeof table === "string") {
+      this.#warnTable(table);
+      return null;
+    }
+    const configured = this.lookup(table.name);
+    return configured && !configured.fromPublication ? null : table;
+  }
+
+  /**
+   * Create a publication table's triggers unless they are there with the same arguments; `false`
+   * (warned once) when they cannot be (the app's role does not own the table).
+   */
+  async #ensureTriggers(sql: SqlClient, table: ResolvedTable): Promise<boolean> {
+    try {
+      await this.#installTriggers(sql, table);
+      return true;
+    } catch (error) {
+      this.#warnTable(`${table.name}: cannot install its trigger (${(error as Error).message})`);
+      return false;
+    }
+  }
+
+  #warnTable(message: string): void {
+    if (this.#warnedTables.has(message)) return;
+    this.#warnedTables.add(message);
+    console.warn(`[@denext/backend] realtime: skipping publication table ${message}`);
+  }
+
+  async #installTriggers(sql: SqlClient, table: ResolvedTable): Promise<void> {
+    const rows = await sql.unsafe<{ name: string; args: string }>(
+      "select tgname::text as name, encode(tgargs, 'escape') as args from pg_trigger " +
+        "where tgrelid = $1::regclass and tgname in ('denext_realtime', 'denext_realtime_truncate')",
+      [table.qualified],
+    );
+    const expected = triggerArgs(table).map((arg) => `${arg}\\000`).join("");
+    const row = rows.find((r) => r.name === "denext_realtime");
+    if (row?.args === expected && rows.length === 2) return;
+    await runStatements(sql, tableTrigger(table));
+  }
+
+  /**
+   * Turn the triggers of every realtime table on (notify source) or off (logical source: the WAL
+   * carries the changes, and a trigger's NOTIFY would only cost commits).
+   */
+  async #toggleTriggers(sql: SqlClient): Promise<void> {
+    const want = this.config.source === "notify" ? "O" : "D";
+    const rows = await sql.unsafe<{ rel: string; name: string; enabled: string }>(
+      "select tgrelid::regclass::text as rel, tgname::text as name, tgenabled::text as enabled " +
+        "from pg_trigger where tgname in ('denext_realtime', 'denext_realtime_truncate')",
+    );
+    const ours = new Set(
+      [...this.config.tables.values()].map((t) => t.qualified.replaceAll('"', "")),
+    );
+    for (const row of rows) {
+      const rel = String(row.rel).replaceAll('"', "");
+      const mine = ours.has(rel) || ours.has(`public.${rel}`);
+      if (!mine || String(row.enabled) === want) continue;
+      const verb = want === "O" ? "ENABLE" : "DISABLE";
+      try {
+        await sql.unsafe(`ALTER TABLE ${row.rel} ${verb} TRIGGER ${row.name}`);
+      } catch (error) {
+        console.warn(
+          `[@denext/backend] realtime: cannot ${verb.toLowerCase()} the trigger on ${row.rel}: ` +
+            (error as Error).message,
+        );
+      }
+    }
+  }
+
+  /** `source: "logical"`: keep the configured tables in `denext_realtime`, then open the slot. */
+  async #startLogical(sql: SqlClient): Promise<void> {
+    const configured = [...this.config.tables.values()].filter((t) => !t.fromPublication);
+    if (configured.length > 0) {
+      const list = configured.map((t) => t.qualified).join(", ");
+      await sql.unsafe(
+        `DO $do$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_publication WHERE pubname = ` +
+          `'${DENEXT_PUBLICATION}') THEN CREATE PUBLICATION ${DENEXT_PUBLICATION}; END IF; ` +
+          `EXCEPTION WHEN duplicate_object THEN NULL; END $do$`,
+      );
+      await sql.unsafe(`ALTER PUBLICATION ${DENEXT_PUBLICATION} SET TABLE ${list}`);
+    }
+    const publications = [
+      ...(configured.length > 0 ? [DENEXT_PUBLICATION] : []),
+      ...(this.config.publication ? [this.config.publication] : []),
+    ];
+    const source = new LogicalSource({
+      client: this.#client,
+      publications: () => publications,
+      tableOf: (schema, table) => this.lookup(`${schema}.${table}`) ?? null,
+      emit: (event) => this.ingest(event),
+      resync: () => this.#resyncAll(),
+      pollMs: this.config.logical.pollMs,
+      maxChanges: this.config.logical.maxChanges,
+    });
+    await source.start();
+    if (this.#stopped) return void await source.stop();
+    this.#logical = source;
+  }
+
+  /** Every table: changes may have been missed. */
+  #resyncAll(): void {
+    for (const name of this.config.tables.keys()) this.#resyncTables.add(name);
+    this.#schedule();
+  }
+
   /** The listener subscribed — again, after a lost connection: changes may have been missed. */
   #onListen(): void {
     this.stats.listens++;
     if (this.stats.listens === 1) return;
-    for (const name of this.config.tables.keys()) this.#resyncTables.add(name);
-    this.#schedule();
+    this.#resyncAll();
   }
 
   /**
@@ -350,28 +651,39 @@ export class RealtimeEngine {
   receive(payload: string): void {
     this.stats.notifications++;
     const event = parseNotification(payload);
-    if (!event || !this.config.tables.has(event.table)) return;
-    if (event.op === "resync" || this.#pendingCount >= MAX_PENDING) {
+    if (event) this.ingest(event);
+  }
+
+  /**
+   * Take one change (a parsed notification, or one the logical source decoded).
+   *
+   * @param event The change.
+   */
+  ingest(event: TableNotification): void {
+    if (!this.config.tables.has(event.table)) return;
+    if (event.op === "truncate") {
+      // Changes earlier in the burst are moot (the rows are gone); later ones follow it.
+      const dropped = this.#pending.get(event.table)?.size ?? 0;
+      this.#pending.delete(event.table);
+      this.#pendingCount -= dropped;
+      this.#truncated.set(event.table, event.ts);
+    } else if (event.op === "resync" || this.#pendingCount >= MAX_PENDING) {
       this.#resyncTables.add(event.table);
     } else {
-      this.#coalesce(event.table, event.key!, event.op, event.oldKey);
+      this.#coalesce(event.table, event.key!, event);
     }
     this.#schedule();
   }
 
   /** Fold one change into the burst: the latest op per key wins (an insert stays an insert). */
-  #coalesce(table: string, key: string, op: TableEvent, oldKey?: string): void {
+  #coalesce(table: string, key: string, event: TableNotification): void {
+    const op = event.op as Pending["op"];
     let byKey = this.#pending.get(table);
     if (!byKey) this.#pending.set(table, byKey = new Map());
     const previous = byKey.get(key);
     if (previous) byKey.delete(key); // re-inserted below: commit order of the LAST change
     else this.#pendingCount++;
-    const merged: Pending = {
-      op: previous?.op === "insert" && op === "update" ? "insert" : op,
-    };
-    const old = previous?.oldKey ?? oldKey;
-    if (old !== undefined && op !== "delete") merged.oldKey = old;
-    byKey.set(key, merged);
+    byKey.set(key, merge(previous, op, event));
   }
 
   #schedule(): void {
@@ -412,19 +724,22 @@ export class RealtimeEngine {
   async #flushOnce(): Promise<void> {
     const pending = this.#pending;
     const resync = this.#resyncTables;
+    const truncated = this.#truncated;
     this.#pending = new Map();
     this.#resyncTables = new Set();
+    this.#truncated = new Map();
     this.#pendingCount = 0;
-    if (pending.size === 0 && resync.size === 0) return;
+    if (pending.size === 0 && resync.size === 0 && truncated.size === 0) return;
     this.stats.flushes++;
     this.#sweep();
     const work: Array<() => Promise<void>> = [];
+    for (const [name, ts] of truncated) this.#truncateTable(name, ts);
     for (const name of resync) work.push(...this.#resyncTable(name));
     for (const [name, changes] of pending) {
       if (resync.has(name)) continue;
       work.push(...this.#deliverTable(name, changes));
     }
-    this.#revalidate([...new Set([...resync, ...pending.keys()])]);
+    this.#revalidate([...new Set([...resync, ...truncated.keys(), ...pending.keys()])]);
     await runLimited(work, REREAD_CONCURRENCY);
   }
 
@@ -437,6 +752,26 @@ export class RealtimeEngine {
       }
     }
     return [];
+  }
+
+  /**
+   * A truncated table: its hooks, then every subscriber that could see rows of it forgets them
+   * and is told.
+   */
+  #truncateTable(name: string, ts: number | undefined): void {
+    this.#runHooks(
+      ts === undefined ? { table: name, op: "truncate" } : { table: name, op: "truncate", ts },
+    );
+    for (const audience of this.#audiences.values()) {
+      // Only a subscriber who could see rows hears of it: there is nothing to clear otherwise.
+      if (audience.table.name !== name || !audience.active || audience.tracked.size === 0) continue;
+      audience.tracked.clear();
+      if (audience.mode === "raw" && !audience.events?.has("truncate")) continue;
+      const change: TableChange = audience.mode === "raw" && ts !== undefined
+        ? { op: "truncate", ts } as TableChange
+        : { op: "truncate" };
+      this.#enqueue(audience, { changes: [change] });
+    }
   }
 
   /** Hooks, revalidation, then one re-read task per group of the table's active audiences. */
@@ -531,8 +866,10 @@ export class RealtimeEngine {
     const [first] = group;
     const keys = [...changes].filter(([, c]) => c.op !== "delete").map(([key]) => key);
     let rows: Map<string, unknown>;
+    let open = false;
     try {
       rows = await this.#reread(first, keys);
+      open = (await this.#catalog(first.table)).open;
     } catch (error) {
       this.#types.delete(first.table.name); // the table may have changed: read its types again
       console.error(`[@denext/backend] realtime re-read of ${first.table.name} failed`, error);
@@ -540,15 +877,17 @@ export class RealtimeEngine {
       return;
     }
     for (const audience of group) {
-      const out = audienceChanges(audience, changes, rows, this.config.maxTrackedKeys);
-      for (const frame of toFrames(out)) this.#enqueue(audience, frame);
+      const out = audience.mode === "raw"
+        ? rawChanges(audience, changes, rows, this.config.maxTrackedKeys, open)
+        : audienceChanges(audience, changes, rows, this.config.maxTrackedKeys);
+      for (const frame of toFrames(out, audience.frameBytes)) this.#enqueue(audience, frame);
     }
   }
 
   /** The rows among `keys` the audience's scope (and filter) can SELECT, as parsed JSON. */
   async #reread(audience: Audience, keys: string[]): Promise<Map<string, unknown>> {
     const rows = new Map<string, unknown>();
-    const types = await this.#columnTypes(audience.table);
+    const { types } = await this.#catalog(audience.table);
     for (let i = 0; i < keys.length; i += KEYS_PER_QUERY) {
       const chunk = keys.slice(i, i + KEYS_PER_QUERY);
       const { text, params } = rereadQuery(audience.table, audience.filter, chunk, types);
@@ -575,19 +914,33 @@ export class RealtimeEngine {
    * The table's column types (read once, in the root context, as the connecting role: the
    * catalog holds no user data), so keys and filters are compared in the column's own type.
    */
-  #columnTypes(table: ResolvedTable): Promise<Map<string, string>> {
+  async #catalog(table: ResolvedTable): Promise<Catalog> {
     const known = this.#types.get(table.name);
-    if (known) return known;
+    if (known) {
+      const catalog = await known.catch(() => undefined);
+      if (catalog && Date.now() - catalog.at < CATALOG_TTL_MS) return catalog;
+      if (this.#types.get(table.name) === known) this.#types.delete(table.name);
+      const again = this.#types.get(table.name);
+      if (again) return await again;
+    }
     const read = inRoot(() =>
       Promise.resolve().then(() =>
-        this.#client().unsafe<{ name: string; type: string }>(COLUMN_TYPES_SQL, [table.qualified])
+        this.#client().unsafe<{ name: string; type: string; udt?: string; rls?: boolean }>(
+          COLUMN_TYPES_SQL,
+          [table.qualified],
+        )
       )
-    ).then((rows) => new Map(rows.map((row) => [String(row.name), String(row.type)])));
+    ).then((rows) => ({
+      types: new Map(rows.map((row) => [String(row.name), String(row.type)])),
+      columns: rows.map((row) => ({ name: String(row.name), type: String(row.udt ?? row.type) })),
+      open: rows.length > 0 && rows.every((row) => row.rls === false),
+      at: Date.now(),
+    }));
     this.#types.set(table.name, read);
     read.catch(() => {
       if (this.#types.get(table.name) === read) this.#types.delete(table.name);
     });
-    return read;
+    return await read;
   }
 
   /** Queue a frame and make sure the audience's pump runs. */
@@ -729,9 +1082,10 @@ export class RealtimeEngine {
    */
   async authorize(key: string, peer = ""): Promise<boolean> {
     const parts = decodeSubscriptionKey(key);
-    const table = parts && this.config.tables.get(parts.table);
-    if (!parts || !table) return false;
+    if (!parts) return false;
     try {
+      const table = await this.#resolve(parts.table);
+      if (!table) return false;
       const scope = await resolveScope();
       const owner = scope.role === "anon" ? `anon:${peer}` : identityOf(scope);
       const existing = this.#audiences.get(key);
@@ -769,6 +1123,8 @@ export class RealtimeEngine {
     filter?: ParsedFilter;
     scope: RlsScope;
     sink: Sink;
+    mode?: AudienceMode;
+    events?: ReadonlySet<TableEvent>;
   }, owner: string): Promise<boolean> {
     this.#sweep();
     if (!this.#roomFor(owner) || !this.#spend(owner)) return false;
@@ -779,8 +1135,11 @@ export class RealtimeEngine {
     if (raced) return raced.identity === identity; // a concurrent subscribe of the same key
     if (!this.#roomFor(owner)) return false;
     const server = "fn" in init.sink;
+    const mode = init.mode ?? "view";
     this.#audiences.set(init.key, {
       ...init,
+      mode,
+      frameBytes: mode === "raw" ? RAW_FRAME_BYTES : FRAME_BYTES,
       identity,
       owner,
       tracked,
@@ -800,7 +1159,7 @@ export class RealtimeEngine {
     filter: ParsedFilter | undefined,
     scope: RlsScope,
   ): Promise<Set<string>> {
-    const types = await this.#columnTypes(table);
+    const { types } = await this.#catalog(table);
     const { text, params } = seedQuery(table, filter, this.config.maxTrackedKeys, types);
     const rows = await this.#timed<{ k: string }>(scope, text, params);
     return new Set(rows.map((row) => String(row.k)));
@@ -853,7 +1212,8 @@ export class RealtimeEngine {
     table: string,
     options: TableChangesOptions,
   ): Promise<() => void> {
-    const resolved = this.table(table);
+    const name = options.schema ? qualifiedTableName(table, options.schema) : table;
+    const resolved = (await this.#resolve(name)) ?? this.table(name);
     const filter = parseFilter(options.filter);
     const scope = await resolveScope(options.as);
     const key = `server|${crypto.randomUUID()}`;
@@ -868,6 +1228,53 @@ export class RealtimeEngine {
       throw new Error(`tableChanges(${table}): ${this.config.maxSubscribers} subscriptions held`);
     }
     return () => void this.#audiences.delete(key);
+  }
+
+  /**
+   * A Supabase `postgres_changes` binding (the Phoenix socket's): `raw` changes of one table as
+   * `scope`, filtered by `events`, counted against `owner`'s quota.
+   *
+   * @param init The table, filter, scope, events, quota owner and frame callback.
+   * @returns The binding's handle, or `null` when a cap refused it.
+   */
+  async bind(init: {
+    table: ResolvedTable;
+    filter?: ParsedFilter;
+    scope: RlsScope;
+    owner: string;
+    events: ReadonlySet<TableEvent>;
+    onFrame: (frame: TableChangesFrame) => void;
+  }): Promise<RealtimeBinding | null> {
+    const key = `phx|${crypto.randomUUID()}`;
+    const ok = await this.#admit({
+      key,
+      table: init.table,
+      filter: init.filter,
+      scope: init.scope,
+      sink: { fn: init.onFrame },
+      mode: "raw",
+      events: init.events,
+    }, init.owner);
+    if (!ok) return null;
+    return {
+      stop: () => void this.#audiences.delete(key),
+      rescope: (scope: RlsScope) => {
+        const audience = this.#audiences.get(key);
+        if (!audience || identityOf(scope) !== audience.identity) return false;
+        audience.scope = scope;
+        return true;
+      },
+    };
+  }
+
+  /**
+   * A table's columns (name and type name), for Supabase's `columns` payload field.
+   *
+   * @param table The table.
+   * @returns The columns, in order.
+   */
+  async columns(table: ResolvedTable): Promise<ColumnInfo[]> {
+    return (await this.#catalog(table)).columns;
   }
 
   /**
@@ -902,7 +1309,11 @@ export class RealtimeEngine {
     this.#audiences.clear();
     this.#hooks.clear();
     this.#pending.clear();
+    if (this.#publicationTimer !== null) clearInterval(this.#publicationTimer);
+    this.#publicationTimer = null;
     await this.#listening?.catch(() => {});
+    await this.#logical?.stop();
+    this.#logical = null;
     const listener = this.#listener;
     this.#listener = null;
     await listener?.unlisten().catch(() => {});
@@ -910,12 +1321,22 @@ export class RealtimeEngine {
   }
 }
 
+/** A `postgres_changes` binding held by {@linkcode RealtimeEngine.bind}. */
+export interface RealtimeBinding {
+  /** Drop it. */
+  stop(): void;
+  /** Take a refreshed scope of the same identity; `false` (unchanged) for another identity. */
+  rescope(scope: RlsScope): boolean;
+}
+
 /** Options for {@linkcode tableChanges}. */
 export interface TableChangesOptions {
   /** Who to read rows as (default: the current request's user, or anon outside a request). */
   as?: Exclude<DbIdentity, "service">;
-  /** A one-column equality filter: `{ list_id: 42 }` or `"list_id=eq.42"`. */
+  /** A one-column filter: `{ list_id: 42 }`, `{ n: { gte: 3 } }`, `"list_id=eq.42"`. */
   filter?: TableFilter;
+  /** The table's schema (default `public`), for a table outside it. */
+  schema?: string;
   /** Called with each frame: the changes this identity may see, or `resync`. */
   onChange: (frame: TableChangesFrame) => void;
 }
@@ -927,6 +1348,19 @@ function identityOf(scope: RlsScope): string {
   return `authenticated:${String(claims.sub)}`;
 }
 
+/** Whether a re-read of the publication changed nothing about a table. */
+function sameTable(a: ResolvedTable, b: ResolvedTable): boolean {
+  return a.key === b.key && a.old === b.old && a.qualified === b.qualified;
+}
+
+/** Run a script of statements (`;` + newline separated) in one transaction. */
+async function runStatements(sql: SqlClient, script: string): Promise<void> {
+  const statements = script.split(/;\s*\n/).map((s) => s.trim().replace(/;$/, "")).filter(Boolean);
+  await sql.begin(async (tx) => {
+    for (const statement of statements) await tx.unsafe(statement);
+  });
+}
+
 /** Audiences that see exactly the same rows share a re-read. */
 function groupId(audience: Audience): string {
   const f = audience.filter;
@@ -934,38 +1368,72 @@ function groupId(audience: Audience): string {
     audience.scope.role,
     audience.scope.claims,
     f?.column ?? null,
+    f?.op ?? "eq",
     f?.value ?? null,
   ]);
 }
 
 /** A notification payload, validated (malformed → `null`; overflow or no key → `resync`). */
-export function parseNotification(payload: string): TableChangeEvent | null {
+export function parseNotification(payload: string): TableNotification | null {
+  const value = jsonRecord(payload);
+  if (!value || typeof value.table !== "string") return null;
+  const { table, op } = value;
+  if (op === "truncate") {
+    return typeof value.ts === "number" ? { table, op, ts: value.ts } : { table, op };
+  }
+  if (op !== "insert" && op !== "update" && op !== "delete") return null;
+  if (value.overflow === true || typeof value.key !== "string") return { table, op: "resync" };
+  return withOld({
+    table,
+    op,
+    key: value.key,
+    ...(typeof value.old_key === "string" ? { oldKey: value.old_key } : {}),
+    ...(typeof value.ts === "number" ? { ts: value.ts } : {}),
+  }, value);
+}
+
+/** A notification's JSON object (bounded), or `null`. */
+function jsonRecord(payload: string): Record<string, unknown> | null {
   if (typeof payload !== "string" || payload.length > 8_000) return null;
-  let value: Record<string, unknown>;
   try {
-    value = JSON.parse(payload);
+    const value = JSON.parse(payload);
+    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
   } catch {
     return null;
   }
-  if (!value || typeof value !== "object" || typeof value.table !== "string") return null;
-  const op = value.op;
-  if (op !== "insert" && op !== "update" && op !== "delete") return null;
-  if (value.overflow === true || typeof value.key !== "string") {
-    return { table: value.table, op: "resync" };
+}
+
+/** The event with the old row the notification carries (or the note that it did not fit). */
+function withOld(event: TableNotification, value: Record<string, unknown>): TableNotification {
+  const old = value.old;
+  if (old && typeof old === "object" && !Array.isArray(old)) {
+    event.old = old as Record<string, unknown>;
+  } else if (value.old_overflow === true) {
+    event.oldOverflow = true;
   }
-  const event: TableChangeEvent = { table: value.table, op, key: value.key };
-  if (typeof value.old_key === "string") event.oldKey = value.old_key;
-  if (typeof value.ts === "number") event.ts = value.ts;
   return event;
 }
 
+/** The SQL operator of each comparison filter. */
+const OPERATORS = { eq: "=", neq: "<>", lt: "<", lte: "<=", gt: ">", gte: ">=" } as const;
+
 /**
- * `t."column" = $n` in the column's own type (`$n::text::<type>`), so an index on the column
- * serves it; compared as text only when the type is unknown.
+ * `t."column" <op> $n` in the column's own type (`$n::text::<type>`), so an index on the column
+ * serves it; compared as text only when the type is unknown. `in` matches any of a JSON list
+ * (`$n`) cast to the type. The column was validated as an identifier; the value is a parameter.
  */
-function equals(column: string, param: string, types: Map<string, string>): string {
+function filterSql(filter: ParsedFilter, param: string, types: Map<string, string>): string {
+  const { column } = filter;
   const type = types.get(column);
-  return type ? `t."${column}" = ${param}::text::${type}` : `t."${column}"::text = ${param}`;
+  if (filter.op === "in") {
+    return type
+      ? `t."${column}" = any(array(select jsonb_array_elements_text(${param}::jsonb)::${type}))`
+      : `t."${column}"::text in (select jsonb_array_elements_text(${param}::jsonb))`;
+  }
+  const op = OPERATORS[filter.op ?? "eq"];
+  return type
+    ? `t."${column}" ${op} ${param}::text::${type}`
+    : `t."${column}"::text ${op} ${param}`;
 }
 
 /**
@@ -1004,7 +1472,7 @@ export function rereadQuery(
     `from ${table.qualified} t where ${match}`;
   if (filter) {
     params.push(filter.value);
-    text += ` and ${equals(filter.column, "$2", types)}`;
+    text += ` and ${filterSql(filter, "$2", types)}`;
   }
   return { text, params };
 }
@@ -1020,7 +1488,7 @@ export function seedQuery(
   let text = `select ${keyText(table.key, types.get(table.key))} as k from ${table.qualified} t`;
   if (filter) {
     params.push(filter.value);
-    text += ` where ${equals(filter.column, "$2", types)}`;
+    text += ` where ${filterSql(filter, "$2", types)}`;
   }
   return { text: `${text} limit $1`, params };
 }
@@ -1042,19 +1510,125 @@ function audienceChanges(
   maxTracked: number,
 ): TableChange[] {
   const out: TableChange[] = [];
-  const untrack = (key: string | undefined) => {
-    if (key !== undefined && audience.tracked.delete(key)) out.push({ op: "delete", key });
+  const untrack = (key: string | undefined, old?: Record<string, unknown>) => {
+    if (key === undefined || !audience.tracked.delete(key)) return;
+    out.push(old ? { op: "delete", key, old } : { op: "delete", key });
   };
   for (const [key, change] of changes) {
     const row = change.op === "delete" ? undefined : rows.get(key);
     if (row === undefined) {
-      untrack(key);
-      untrack(change.oldKey);
+      untrack(key, change.old);
+      untrack(change.oldKey, change.old);
     } else {
-      out.push(visibleChange(audience.tracked, key, change.oldKey, row, maxTracked));
+      const visible = visibleChange(audience.tracked, key, change.oldKey, row, maxTracked);
+      if (visible.op === "update" && change.old) visible.old = change.old;
+      out.push(visible);
     }
   }
   return out;
+}
+
+/**
+ * One `raw` audience's changes for a burst (Supabase's semantics, under row-level security): an
+ * insert or update is sent with the operation the database ran when the subscriber can see the
+ * row now (and it is tracked); a delete is sent only for a tracked row — one the subscriber could
+ * see. A row that left its view is untracked silently. Only `events` are sent.
+ */
+function rawChanges(
+  audience: { tracked: Set<string>; events?: ReadonlySet<TableEvent> },
+  changes: Map<string, Pending>,
+  rows: Map<string, unknown>,
+  maxTracked: number,
+  open: boolean,
+): TableChange[] {
+  const out: TableChange[] = [];
+  for (const [key, change] of changes) {
+    // The row as it is now (re-read once per burst): every step of the key is judged by it.
+    const row = change.op === "delete" ? undefined : rows.get(key) as Record<string, unknown>;
+    // A table without row-level security: every old row is everyone's (Supabase sends it). Under
+    // row-level security (or not known to be off) the old row is the subscriber's only if they
+    // could see the row before this burst (it was tracked), and only on the burst's first step: a
+    // later step's old row is an intermediate state nobody re-read for them (the row may have
+    // left their view and come back). Everyone else gets the key alone in `old_record`, as
+    // Supabase sends under row-level security.
+    const firstOld = open || sawBefore(audience.tracked, key, change);
+    change.steps.forEach((step, i) => {
+      const sent = rawStep(audience.tracked, key, step, row, maxTracked, i === 0 ? firstOld : open);
+      if (sent && (audience.events?.has(step.op) ?? true)) out.push(sent);
+    });
+  }
+  return out;
+}
+
+/** One step of a key as a raw subscriber is sent it (or nothing), judged by the row as it is now. */
+function rawStep(
+  tracked: Set<string>,
+  key: string,
+  step: Step,
+  row: Record<string, unknown> | undefined,
+  maxTracked: number,
+  withOld: boolean,
+): TableChange | null {
+  return step.op === "delete" || row === undefined
+    ? rawGone(tracked, key, step, withOld)
+    : rawVisible(tracked, key, step, row, maxTracked, withOld);
+}
+
+/**
+ * Whether a subscriber could see a key's row before this burst (it was tracked, under its key or
+ * its old one), with the burst's first step still the first change to it (not cut off by
+ * {@linkcode MAX_STEPS}), so that step's old row is one they saw.
+ */
+function sawBefore(tracked: Set<string>, key: string, change: Pending): boolean {
+  const first = change.steps[0];
+  if (first === undefined || first.old !== change.old) return false;
+  return tracked.has(key) || (first.oldKey !== undefined && tracked.has(first.oldKey));
+}
+
+/** What a raw change carries besides the row: when, and — when `withOld` — the old row. */
+function rawExtra(change: Step, withOld: boolean): Record<string, unknown> {
+  return {
+    ...(change.ts === undefined ? {} : { ts: change.ts }),
+    ...(withOld && change.old ? { old: change.old } : {}),
+    ...(withOld && change.oldOverflow ? { oldOverflow: true } : {}),
+  };
+}
+
+/**
+ * A row the subscriber cannot see now: untracked; a DELETE is sent when they could see it before
+ * (it was tracked), an update out of their view is not.
+ */
+function rawGone(
+  tracked: Set<string>,
+  key: string,
+  change: Step,
+  withOld: boolean,
+): TableChange | null {
+  const known = tracked.delete(key) ||
+    (change.oldKey !== undefined && tracked.delete(change.oldKey));
+  return known && change.op === "delete"
+    ? { op: "delete", key, ...rawExtra(change, withOld) } as TableChange
+    : null;
+}
+
+/**
+ * A row the subscriber can see: tracked, and sent with the operation the database ran — its old
+ * row only when `withOld` (they could see the row before).
+ */
+function rawVisible(
+  tracked: Set<string>,
+  key: string,
+  change: Step,
+  row: Record<string, unknown>,
+  maxTracked: number,
+  withOld: boolean,
+): TableChange {
+  if (change.oldKey !== undefined && change.oldKey !== key) tracked.delete(change.oldKey);
+  if (!tracked.has(key) && tracked.size < maxTracked) tracked.add(key);
+  const extra = rawExtra(change, withOld);
+  if (change.op === "insert") return { op: "insert", key, row, ...extra } as TableChange;
+  const renamed = change.oldKey === undefined ? {} : { oldKey: change.oldKey };
+  return { op: "update", key, ...renamed, row, ...extra } as TableChange;
 }
 
 /**
@@ -1078,18 +1652,24 @@ function visibleChange(
 
 const encoder = new TextEncoder();
 
-/** Split changes into frames of about {@linkcode FRAME_BYTES}; an oversized row is truncated. */
-export function toFrames(changes: TableChange[]): Array<Omit<TableChangesFrame, "seq">> {
+/**
+ * Split changes into frames of about `limit` bytes ({@linkcode FRAME_BYTES} by default); an
+ * oversized row is truncated.
+ */
+export function toFrames(
+  changes: TableChange[],
+  limit = FRAME_BYTES,
+): Array<Omit<TableChangesFrame, "seq">> {
   const frames: Array<Omit<TableChangesFrame, "seq">> = [];
   let current: TableChange[] = [];
   let size = 0;
   for (let change of changes) {
     let bytes = encoder.encode(JSON.stringify(change)).byteLength;
-    if (bytes > FRAME_BYTES) {
+    if (bytes > limit) {
       change = truncate(change);
       bytes = encoder.encode(JSON.stringify(change)).byteLength;
     }
-    if (current.length > 0 && size + bytes > FRAME_BYTES) {
+    if (current.length > 0 && size + bytes > limit) {
       frames.push({ changes: current });
       current = [];
       size = 0;
@@ -1101,10 +1681,15 @@ export function toFrames(changes: TableChange[]): Array<Omit<TableChangesFrame, 
   return frames;
 }
 
-/** A change without its row (too large to send). */
+/** A change without its row and old row (too large to send). */
 function truncate(change: TableChange): TableChange {
-  if (change.op === "delete") return change;
-  const { row: _row, ...rest } = change;
+  if (change.op === "truncate") return change;
+  if (change.op === "delete") {
+    const { old: _old, ...rest } = change;
+    return rest;
+  }
+  const { row: _row, ...rest } = change as TableChange & { row?: unknown; old?: unknown };
+  delete (rest as { old?: unknown }).old;
   return { ...rest, truncated: true } as TableChange;
 }
 
@@ -1112,7 +1697,8 @@ function truncate(change: TableChange): TableChange {
 export function splitFrame(frame: TableChangesFrame): TableChangesFrame[] {
   const changes = frame.changes ?? [];
   if (changes.length <= 1) {
-    return changes.length === 1 && changes[0].op !== "delete" && !("truncated" in changes[0])
+    return changes.length === 1 && changes[0].op !== "delete" && changes[0].op !== "truncate" &&
+        !("truncated" in changes[0])
       ? [{ seq: 0, changes: [truncate(changes[0])] }]
       : [{ seq: 0, resync: true }];
   }

@@ -108,7 +108,7 @@ export default function Mobile() {
         before you add the platforms: the app id becomes the bundle id and the Android package name.
       </p>
       <Code lang="bash">
-        {`deno run -A jsr:@denext/denext/cli create my-app --capacitor
+        {`denext create my-app --capacitor
 cd my-app`}
       </Code>
       <p>
@@ -141,20 +141,25 @@ export default {
         <code>webDir</code> exists when Capacitor copies it, then add each platform once:
       </p>
       <Code lang="bash">
-        {`deno install                # Capacitor's CLI + platforms are npm packages
-deno task export            # out/
-deno run -A --node-modules-dir npm:@capacitor/cli@^8.5.2 add ios       # once
-deno run -A --node-modules-dir npm:@capacitor/cli@^8.5.2 add android   # once`}
+        {`denext install                # Capacitor's CLI + platforms are npm packages
+denext task export            # out/
+denext run -A --node-modules-dir npm:@capacitor/cli@^8.5.2 add ios       # once
+denext run -A --node-modules-dir npm:@capacitor/cli@^8.5.2 add android   # once`}
       </Code>
       <p>
         <strong>4. Run it on a phone.</strong>{" "}
         Sync after every change to the web app, then run from the IDE:
       </p>
       <Code lang="bash">
-        {`deno task mobile:sync       # export, stamp the OTA manifest, copy out/ into ios/ and android/
-deno task mobile:ios        # open in Xcode: pick your team under Signing, choose the phone, Run
-deno task mobile:android    # open in Android Studio`}
+        {`denext task mobile:sync       # export, stamp the OTA manifest, copy out/ into ios/ and android/
+denext task mobile:ios        # open in Xcode: pick your team under Signing, choose the phone, Run
+denext task mobile:android    # open in Android Studio`}
       </Code>
+      <p>
+        <code>denext task</code> runs these on denext&apos;s Deno toolchain; with Deno installed,
+        {" "}
+        <code>deno task mobile:sync</code> and the rest work the same.
+      </p>
       <p>
         <strong>5. Live reload.</strong> Point the installed app at <code>denext dev</code>{" "}
         instead of the bundled export, so every edit reloads on the phone (the phone and the
@@ -227,7 +232,7 @@ denext mobile add haptics share secure-store`}
       </p>
       <Code lang="bash">
         {`denext migrate apps/web --enable-capacitor --app-id com.example.web --platform ios
-cd apps/web && deno task mobile:build:ios --team <TEAM_ID>`}
+cd apps/web && denext task mobile:build:ios --team <TEAM_ID>`}
       </Code>
 
       <h2 id="live-reload-on-a-device">Live reload on a device</h2>
@@ -2656,7 +2661,7 @@ export async function track(order: string) {
         <code>cap add android</code>, run once (it is safe to re-run):
       </p>
       <Code lang="bash">
-        {`deno task mobile:add-ota     # = denext mobile add-ota .`}
+        {`denext task mobile:add-ota     # = denext mobile add-ota .`}
       </Code>
       <p>
         On iOS it writes <code>DenextOtaPlugin.swift</code>, <code>DenextOtaStore.swift</code> and
@@ -3071,9 +3076,10 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         background task) finds an iOS UI data-protected, and a permission or I/O error looks the
         same. That request is refused, or, when it is the stored manifest at launch, that launch
         serves the confirmed or bundled UI (a trial keeps its attempt); nothing is quarantined and
-        the next launch checks again. Shells installed before denext 3.3 (OTA template generation 9)
-        verify only on arrival: re-run <code>denext mobile add-ota</code> and ship a new binary (
-        <code>denext mobile doctor</code> flags them as <code>ota-reverify</code>).
+        the next launch checks again. A shell whose OTA plugin predates re-verification checks a UI
+        only on arrival; <code>denext mobile doctor</code> flags it as <code>ota-reverify</code>
+        {" "}
+        (re-run <code>denext mobile add-ota</code> and ship a new binary).
       </p>
       <Code lang="tsx">
         {`"use client";

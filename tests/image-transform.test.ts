@@ -121,3 +121,60 @@ Deno.test("transformImageBytes: caches by identity, refuses SVG, bombs and garba
   assertEquals([busy.status, busy.headers.get("retry-after")], [503, "1"]);
   await busy.body?.cancel();
 });
+
+Deno.test("transformImageBytes: resize cover (centre crop), contain and fill; origin keeps the format", async () => {
+  const wide = await png(400, 200);
+  const box = { width: 128, height: 128 };
+  assertEquals(await dims(await transformImageBytes(wide, { ...box, resize: "cover" })), {
+    type: "image/webp",
+    width: 128,
+    height: 128,
+  });
+  assertEquals(await dims(await transformImageBytes(wide, { ...box, resize: "contain" })), {
+    type: "image/webp",
+    width: 128,
+    height: 64,
+  });
+  assertEquals(await dims(await transformImageBytes(wide, { ...box, resize: "fill" })), {
+    type: "image/webp",
+    width: 128,
+    height: 128,
+  });
+  // cover never enlarges: a box bigger than the source is cropped to what the source has.
+  assertEquals(
+    await dims(
+      await transformImageBytes(await png(100, 50), { width: 256, height: 96, resize: "cover" }),
+    ),
+    { type: "image/webp", width: 100, height: 50 },
+  );
+  const origin = await transformImageBytes(wide, { width: 128, format: "origin" });
+  assertEquals(origin.headers.get("content-type"), "image/png");
+  const { PhotonImage } = await import("@denext/photon");
+  const source = PhotonImage.new_from_byteslice(wide);
+  const jpeg = source.get_bytes_jpeg(80);
+  source.free();
+  const fromJpeg = await transformImageBytes(jpeg, { width: 128, format: "origin", quality: 50 }, {
+    maxDimension: 2500,
+  });
+  assertEquals((await dims(fromJpeg)).type, "image/jpeg");
+  const bad = await transformImageBytes(wide, { width: 128, resize: "stretch" as "fill" });
+  assertEquals(bad.status, 400);
+});
+
+Deno.test("transformImageBytes: maxDimension takes any size and quality up to the bound", async () => {
+  const wide = await png(400, 200);
+  const odd = await transformImageBytes(wide, { width: 77, height: 33, resize: "fill" }, {
+    maxDimension: 2500,
+  });
+  assertEquals(await dims(odd), { type: "image/webp", width: 77, height: 33 });
+  const notListed = await transformImageBytes(wide, { width: 77 });
+  assertEquals(notListed.status, 400);
+  assertEquals(
+    (await transformImageBytes(wide, { width: 2501 }, { maxDimension: 2500 })).status,
+    400,
+  );
+  assertEquals(
+    (await transformImageBytes(wide, { width: 10, quality: 0 }, { maxDimension: 2500 })).status,
+    400,
+  );
+});

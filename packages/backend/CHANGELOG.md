@@ -1,5 +1,206 @@
 # Changelog
 
+## 0.4.0 - 2026-10-14
+
+### Security
+
+- **Edge Functions' default `SUPABASE_URL`** is now the app's `canonicalOrigin` (plus
+  `basePath`), else the server's own listen address. It was the `Host` of the request that
+  started the worker, which a client chooses, and the worker kept it beside the service key.
+- **storage writes under SQL-RLS land under the caller's role.** Upload, copy, move and
+  TUS writes are judged against the object as it is when they land, with the bytes staged until
+  then. Signed uploads by a policy-checked caller are pinned to the object's version when they
+  were signed. Emptying a bucket deletes only the versions the caller may delete.
+- **a client's direct upload reaches the object only when it completes.** Presigned PUTs and
+  parts (S3) and signed PUTs (fs) go to a staging place; the completion checks the bytes, then
+  writes the row and moves them to the key together. Abandoned uploads are swept.
+- **`denext migration up` / `db push` apply the storage and realtime schemas and the
+  `supabase_realtime` publication** (with the roles first) before the app's migrations, in the
+  tables the server's start records them in (the `denext db` hooks take `migrationSets`).
+- **`denext storage cp -r` refuses to write through a symbolic link inside the destination.**
+- **`denext storage rm -r` on a remote store asks first** (`--yes` answers; no terminal →
+  refused). A storage driver may report its `location` (the s3 driver: its endpoint).
+- **the SQLite metadata store matches `list-v2` prefixes case-sensitively.**
+- **realtime `old: "full"`.** The full old row goes only to subscribers who could see
+  the row before the change, unless the table has row-level security off.
+- **`vault.updateSecret()` with an uppercase id** keeps the secret readable.
+
+### Breaking
+
+- `readRestCatalog(sql, schemas, tables)` takes the list of schemas and returns
+  the whole catalog (`tables`, `foreignKeys`, `functions`, `enums`, …); `generateRestTypes(catalog)`
+  takes the catalog alone; the client's `range()` sends `offset` / `limit` (as supabase-js does)
+  instead of a `Range` header, and `maybeSingle()` checks the row count on the client.
+- **`db()` resolves every request through `resolveIdentity()`**: with `supabase` keys a request
+  carrying the secret key runs as `service_role` (no row-level security), and a refused credential
+  is an `IdentityError` (401).
+- A bucket's `authorize` receives the request's `identity`; anon and signed-in bucket listings
+  changed (below).
+
+### Added
+
+- **`/auth/v1`.** `backend({ supabase: { auth } })` serves the GoTrue-compatible auth API over
+  the `denextAuth()` users (sign-up, password / OTP / magic link / phone / anonymous / OAuth /
+  id_token / PKCE sign-in, user updates, MFA factors, identities, SAML SSO, the admin API), so the
+  stock supabase-js `supabase.auth.*` works unchanged.
+
+- **SAML metadata freshness.** `backend({ supabase: { auth: { saml: { metadataRefresh } } } })`
+  refreshes stored SAML metadata URLs in the background (stopped when the plugin tears down);
+  metadata past its `validUntil` is refused, and an `EncryptedID` NameID is accepted.
+
+- **Storage versioning, `listV2`, signed TUS, streamed forms.** Supabase-style object versioning
+  (noncurrent versions, delete markers, `versionId` reads and deletes, restore by copy, lifecycle
+  policies; migration `backend_storage_0002`), cursor-paged `listV2`, TUS uploads authorized by a
+  signed upload token (`/upload/resumable/sign`), multipart uploads streamed instead of buffered,
+  and the `denext ui` admin hooks.
+- **SAML SSO admin API, Single Logout and encrypted assertions.** `supabase.auth.saml` takes
+  `signingKey` / `signingCertificate` (signed AuthnRequests, Single Logout at
+  `/auth/v1/sso/saml/slo`) and `encryptionKey` / `encryptionCertificate` (`EncryptedAssertion`), and
+  `providers` is optional: identity providers can be stored through
+  `/auth/v1/admin/sso/providers` (`backendAuthAdapter()` keeps them in Postgres).
+- **Realtime: the `supabase_realtime` publication** opts tables in (created if missing; re-read
+  every 10 s, so an `alter publication … add table` while the app runs follows), beside
+  `realtime({ tables })`; `publication: false` turns it off. A publication table needs a one-column
+  primary key; its old row is the whole row with `REPLICA IDENTITY FULL` and no RLS.
+- **Realtime: `source: "logical"`** reads changes from a temporary `pgoutput` slot per instance
+  (`pg_logical_slot_get_binary_changes`, `logical: { pollMs, maxChanges }`) — no triggers (they are
+  disabled), no NOTIFY serialization, real commit timestamps. Needs `wal_level = logical`, a
+  `REPLICATION` role and `reserve()`. `bench/realtime-source.ts` measures both sources.
+- **Broadcast replay and `replication_ready`.** Private-channel broadcasts are stored in
+  `realtime.messages` (3 days) with `meta: { id }`; `config.broadcast.replay: { since, limit }`
+  replays up to 25 with `meta: { replayed: true, id }`. Migration `backend_realtime_0006`.
+- **Every change of a row within a burst** reaches a `postgres_changes` subscriber, in commit
+  order (it was coalesced to the last one).
+- **`useBroadcast` / `useRealtimePresence`** (and `RealtimeClient`) in `@denext/backend/client`:
+  denext's own hooks on the same channels, one same-origin socket per page; a same-origin socket
+  may omit `apikey`.
+- **`useTableChanges` / `tableChanges` `schema` option** (keys may name `schema.table`).
+- **Custom Access Token Hook and anonymous users for denext sessions.** A cookie or native
+  session's claims (what `db()`, auto-REST and storage run with) go through
+  `hooks.customAccessToken` — the `denextAuth()` one, else `supabase.auth.hooks` — with `sub`,
+  `role`, `aud`, `session_id`, `iat`, `exp`, `aal`, `is_anonymous` and `email` restored after
+  it, the result cached per session for 60 seconds, and a throwing or malformed hook failing the
+  request. `is_anonymous` is `true` for an anonymous user's session.
+
+- **`supabase` option and `resolveIdentity()`.** `backend({ supabase: true | { publishableKey,
+  secretKey, jwtSecret, signingKeys } })` installs Supabase-compatible API keys and JWT signing
+  keys, serves the JWKS at `/auth/v1/.well-known/jwks.json`, and adds `denext backend keys`.
+  `resolveIdentity(request?)` (from `@denext/backend/server`) resolves a request to
+  `{ role, claims, userId?, source, session? }` — access token, secret key, denext session, then
+  `anon` — and throws `IdentityError` (401) for a refused credential; `db()` scopes every query
+  with it, the service role running as the connecting role with its claims.
+
+- **Edge Functions.** `backend({ functions: {} })` serves `functions/<name>.ts` /
+  `functions/<name>/index.ts` at `/functions/v1/<name>` (supabase-js `functions.invoke`
+  compatible), each function in a Deno Worker of its own; `Deno.serve(handler)` and
+  default-exported handlers both work. JWT verification is on by default (`verifyJwt: false` per
+  function), CORS preflights reach the function, responses stream, and `denext functions list`
+  lists them.
+- **`@denext/backend`: auto-REST speaks PostgREST 12, so `@supabase/supabase-js` works
+  unchanged.** `createClient(appUrl, key)` then `from()`, `rpc()` and `schema()` reach
+  `backend({ rest })`'s routes, and denext's own client (`from`, `rpc`, `restClient`) now has the
+  same API. New on the routes: embedded resources through the catalog's foreign keys (many-to-one,
+  one-to-many, one-to-one, many-to-many through a junction, `!inner`, `!hint`, spreads, the
+  `count` shorthand, and filters / order / limit / offset / `or` on an embed, plus `rel=is.null`);
+  `or` / `and` trees, nested and negated; every operator (`match`, `imatch`, `isdistinct`, `cs`,
+  `cd`, `ov`, the range operators, `fts` / `plfts` / `phfts` / `wfts` with a configuration,
+  `(any)` / `(all)`); aliases, `::casts` and JSON paths in select, filters and order; upserts
+  (`Prefer: resolution=merge-duplicates|ignore-duplicates`, `on_conflict=`), `columns=` and
+  `missing=default`; `/rpc/<function>` over GET and POST (named arguments and overloads, a single
+  json argument, `params=single-object`, set-returning results filtered, ordered, paged, counted
+  and embedded, scalars, `void`) for the functions `anon` / `authenticated` may EXECUTE;
+  `count=planned|estimated`; CSV in and out; GeoJSON (with PostGIS); `return=headers-only`;
+  `tx=rollback`; `handling=strict` with `max-affected`; `nulls=stripped`; execution plans behind
+  the opt-in `rest.explain`; and several schemas through `rest.schemas` with `Accept-Profile` /
+  `Content-Profile`. Requests resolve through the shared request identity, so supabase-js's
+  `apikey` / `Authorization: Bearer` work (publishable key → `anon`, a user's access token →
+  `authenticated`, the secret key → `service_role`), and a refused one is PostgREST's `401`
+  (`PGRST301`, or `PGRST303` when expired). A GET runs in a READ ONLY transaction. Every name is still looked up in the
+  catalog and every value bound; a request takes at most 64 filters, 256 select items and 8
+  levels of embedding.
+- **`@denext/backend`: the rest of PostgREST in auto-REST.** Views embed through their column
+  lineage (a view inherits its base tables' foreign and unique keys, through views over views);
+  computed fields and computed relationships (a function taking the row; `ROWS 1` is to-one);
+  `order=rel(col)` on a to-one embed; logic trees on embedded columns (`or=(…,rel.col.eq.x)`);
+  `PUT` single-row upserts with PostgREST's checks (`PGRST105`, `PGRST115`); aggregates
+  (`sum` / `avg` / `min` / `max` / `count` with casts, grouped by the other items) behind the
+  opt-in `rest.aggregates`; the OpenAPI (Swagger 2.0) document at `GET /rest/v1`, following
+  privileges; and the secret key (`service_role`) sees every relation and function of the exposed
+  schemas, as in PostgREST. GeoJSON output now runs against PostGIS in CI.
+- **`@denext/backend`: `.denext/rest.ts` is `supabase gen types`-shaped.** `Database` with each
+  exposed schema's `Tables` (with `Relationships`), `Views`, `Functions`, `Enums` and
+  `CompositeTypes`, the `Tables<>` / `TablesInsert<>` / `TablesUpdate<>` / `Enums<>` helpers and
+  `Constants`, so `createClient<Database>()` type-checks; it still registers the default schema
+  for denext's `from()`.
+- **Supabase Realtime.** `backend({ realtime })` serves `/realtime/v1/websocket` (Phoenix channels,
+  serializer `1.0.0` and `2.0.0`, binary broadcast frames) and `POST /realtime/v1/api/broadcast`, so
+  `@supabase/supabase-js`'s `supabase.channel(…)` works against the app: `postgres_changes` (per
+  binding event, schema, table, `eq neq lt lte gt gte in` filters, Supabase's payload, old records,
+  `TRUNCATE`) re-read under each subscriber's row-level security; broadcast (`self`, `ack`, binary,
+  REST, `realtime.send()` and `realtime.broadcast_changes()` from SQL); presence (`track`,
+  `untrack`, `sync` / `join` / `leave`) shared by every instance through Postgres; private channels
+  authorized by `realtime.messages` policies as the joining user. With `backend({ supabase })`
+  keys the socket needs a valid `apikey`, and the channel's `access_token` is verified like a
+  bearer (a user until its `exp` — then the channel closes — the secret key `service_role`, re-verified
+  on every `access_token` push; a refused token refuses the join or closes the channel); without a
+  user token a same-origin socket is its session's user (re-read every minute; a changed session
+  closes the socket). Limits: `realtime({ socket: { maxConnections,
+  maxConnectionsPerAddress, maxChannelsPerConnection, maxEventsPerSecond, maxPayloadBytes } })`;
+  `socket: false` turns the endpoint off.
+- **Realtime tables:** `old: "full"` carries the old row of an update or delete (when it fits a
+  notification), `truncate` is an event (on by default, delivered only to subscribers who could
+  see rows), and new migrations `backend_realtime_0003` to `0005` add the TRUNCATE trigger
+  function, the `realtime` schema (`messages`, `topic()`, `send()`, `broadcast_changes()`) and the
+  presence tables. With `migrate: false`, re-run `realtimeSetupSql()`.
+- **`useTableChanges` / `tableChanges` filters** take every Supabase operator — `{ priority: { gte:
+  3 } }`, `"status=in.(open,blocked)"` — and the hook an `events` list; changes carry `old` (with
+  `old: "full"`) and `{ op: "truncate" }`.
+- **`broadcast(topic, event, payload)`** from `@denext/backend/server` publishes to every
+  `supabase.channel(topic)` subscriber on every instance.
+- **Supabase Storage parity.** `/storage/v1` serves Supabase's Storage API (supabase-js
+  `supabase.storage` unchanged: buckets at runtime, uploads with upsert / cache control / metadata,
+  list, info, exists, move, copy, bulk remove, signed URLs and uploads, public URLs, `render/image`
+  transforms with `resize`), TUS resumable uploads at `/storage/v1/upload/resumable`, object and
+  bucket metadata in Supabase's `storage` schema on Postgres (or `node:sqlite` without it), and
+  `storage: { rls: true }` to authorize with SQL policies on `storage.objects` / `storage.buckets`.
+  The server API gains `info`, `exists`, `copy`, `move`, `listFolder`, `createSignedUrls`,
+  `getPublicUrl` and bucket management; `authorize` receives the request's `identity`.
+- **Vault** (`vault: {}`): AES-256-GCM secrets in `vault.secrets`, key from `DENEXT_VAULT_KEY`,
+  read by server code only (`vault` from `@denext/backend/server`).
+- **Queues** (`queues: {}`): pgmq's SQL API without the extension, Supabase's `pgmq_public`
+  wrappers, and `queue()` / `queues` / `queueConsumer()` on the server.
+- **pgvector**: `vectorSearchSql()` (the `match_documents` recipe), `matchDocuments()`,
+  `toVector()` / `fromVector()`, `requireVector()`.
+- **Database webhooks** (`webhooks`): `supabase_functions.http_request` triggers delivered by the
+  app to configured hooks, signed (Standard Webhooks) and retried; `deliverWebhooks()`,
+  `webhookEvents()`, `verifyWebhook()`.
+- **Vault in SQL** (`vault: { sql: true }`): `vault.create_secret()`, `vault.update_secret()`,
+  `vault.decrypted_secrets`, same format as the app side; keys set per transaction by
+  `vault.withKey()` and `denext db push`.
+- `vectorSearchSql()` now comes from `@denext/denext/server` (re-exported unchanged).
+- **`/auth/v1`: the OAuth 2.1 server, stored providers and Web3.** `supabase: { auth: { oauthServer } }`
+  serves `supabase.auth.oauth.*` and `admin.oauth.*` (clients, consent, authorization codes with
+  PKCE); `custom:` OAuth / OIDC providers can be stored through the admin API; `web3` turns on
+  `signInWithWeb3` (Sign-In with Ethereum and Solana). `backendAuthAdapter()` stores all of them in
+  Postgres.
+- **`s3({ publicEndpoint })`** (or `S3_PUBLIC_ENDPOINT`): URLs handed to a browser — presigned
+  uploads, downloads, multipart parts — are signed for that host, while the server keeps `endpoint`.
+- **CLI verbs.** `denext functions list | new | serve | delete`, `denext storage ls | cp | mv | rm`
+  (`ss:///bucket/key` paths), `denext backend keys` (`--json`, `--legacy`) and `denext backend
+  token` (a signed test access token).
+
+### Changed
+
+- **`denext db` is a core denext verb.** This plugin no longer contributes it; it installs the
+  hooks the core verb uses (its migrations, its service schemas and the Postgres actions `diff`,
+  `dump`, `pull`, `lint`, `inspect`, `test`, `types`).
+- **Bucket listings for anon and signed-in callers** answer as Supabase does without policies:
+  `listBuckets` is an empty list and `getBucket` is `Bucket not found` (they were `403`). The
+  service role, and `storage: { rls: true }` policies, see buckets as before.
+- **`storage.buckets` may be empty** (buckets can be created at runtime); a runtime bucket is
+  authorized by `storage.authorize`. An upload refused for its size says "The object exceeded the
+  maximum allowed size".
+
 ## 0.3.0 - 2026-10-13
 
 Requires `@denext/denext` ^4.0.0-rc.1 (the jobs rename and the rest of denext 4.0's breaking

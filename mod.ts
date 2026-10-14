@@ -482,4 +482,4 @@ export type {
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "4.0.0-rc.2";
+export const VERSION = "4.0.0";

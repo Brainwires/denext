@@ -9,8 +9,10 @@ import {
   GENERATE_KINDS,
   generateArtifact,
   type GenerateKind,
+  type GenerateResult,
   OPTIONAL_NAME_KINDS,
 } from "../../build/generate.ts";
+import { DOCKER_FLAGS, runDocker, usesDockerFlags } from "./generate-docker.ts";
 
 /** Project dir for `generate <kind> <name> [dir]` (positional[2]). */
 function generateDir(ctx: CommandContext): string {
@@ -43,7 +45,7 @@ function generateTarget(
 export const generateCommand: CommandSpec = {
   name: "generate",
   summary:
-    "Scaffold a route, boundary, component, API route, action, middleware, job, test, Docker setup, migration, seed or CI workflow",
+    "Scaffold a route, boundary, component, API route, action, middleware, job, Edge Function, test, Docker setup, migration, vector search, seed or CI workflow",
   aliases: ["g"],
   loadsModules: false, // pure codegen — no user-module load / re-exec needed
   usage: "  denext generate page dashboard/settings\n" +
@@ -56,12 +58,25 @@ export const generateCommand: CommandSpec = {
     "  denext generate action createPost\n" +
     "  denext generate middleware        # middleware.ts (beside app/)\n" +
     "  denext generate job cleanup      # jobs/cleanup.ts (defineJob)\n" +
+    "  denext generate function hello   # functions/hello/index.ts (an Edge Function)\n" +
     "  denext generate test UserCard     # tests/UserCard.test.tsx (denext/testing)\n" +
     "  denext generate docker            # Dockerfile + docker-compose.yml + .dockerignore\n" +
     "  denext generate docker spa        # force the static/SPA image (else auto-detected)\n" +
+    "  denext generate docker --stack    # + Postgres 17, MinIO, migrations, .env.example\n" +
+    "  denext generate docker --postgres --pgvector --no-storage --dev --dry-run\n" +
     "  denext generate migration add_users # migrations/<UTC stamp>_add_users.sql (+ jobs/migrate.ts)\n" +
+    "  denext generate vector-search documents # pgvector table + match_documents (a migration)\n" +
     "  denext generate seed              # jobs/seed.ts (node:sqlite, or Prisma when detected)\n" +
     "  denext generate ci                # .github/workflows/ci.yml (check + build)",
+  flags: [
+    { name: "force", type: "boolean", help: "Overwrite files that already exist" },
+    {
+      name: "dry-run",
+      type: "boolean",
+      help: "Print what would be written (docker: a diff per file) and write nothing",
+    },
+    ...DOCKER_FLAGS,
+  ],
   positionals: [
     { name: "kind", help: GENERATE_KINDS.join(" | "), required: true },
     {
@@ -74,9 +89,20 @@ export const generateCommand: CommandSpec = {
   run: async (ctx) => {
     const { kind, name } = generateTarget(ctx);
     const dir = generateDir(ctx);
-    const { written, skipped } = await generateArtifact(dir, kind, name);
-    for (const p of written) console.log(`   + ${p}`);
-    for (const p of skipped) console.log(`   • exists, skipped: ${p}`);
-    if (written.length === 0 && skipped.length > 0) Deno.exit(1);
+    const force = ctx.flags.force === true;
+    const dryRun = ctx.flags["dry-run"] === true;
+    if (kind === "docker") return await runDocker(ctx, dir, name, { force, dryRun });
+    if (usesDockerFlags(ctx.flags)) {
+      console.error(`denext generate: the --postgres/--stack/… flags only apply to \`docker\`.`);
+      Deno.exit(1);
+    }
+    report(await generateArtifact(dir, kind, name, { force, dryRun }), dryRun);
   },
 };
+
+/** Print a run's written/skipped paths; exit 1 when it wrote nothing because all existed. */
+function report({ written, skipped }: GenerateResult, dryRun: boolean): void {
+  for (const p of written) console.log(`   ${dryRun ? "would write" : "+"} ${p}`);
+  for (const p of skipped) console.log(`   • exists, skipped: ${p}`);
+  if (written.length === 0 && skipped.length > 0) Deno.exit(1);
+}

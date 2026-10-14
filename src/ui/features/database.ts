@@ -476,7 +476,7 @@ async function enableRls(ctx: UiContext): Promise<Response> {
   if (applying(ctx)) {
     for (const file of files) {
       await Deno.mkdir(join(file.path, ".."), { recursive: true });
-      await Deno.writeTextFile(file.path, file.contents, { createNew: true });
+      await Deno.writeTextFile(file.path, file.contents, { createNew: !file.overwrite });
     }
     const written = files.map((f) => relative(ctx.dir, f.path));
     return ctx.json

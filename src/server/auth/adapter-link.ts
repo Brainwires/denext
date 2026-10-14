@@ -8,7 +8,8 @@
  *
  * | Situation | Outcome |
  * | --- | --- |
- * | the `(provider, providerAccountId)` is already linked | that user signs in |
+ * | the `(provider, providerAccountId)` is already linked | that user signs in — unless it is an SSO user (**refused**, `AccountNotLinkedError`) |
+ * | not linked, the local user with that address is an SSO user | **refused** — `AccountNotLinkedError` |
  * | not linked, provider asserts a **verified** email, a local user has that address **verified** | link the account (`linkAccount` event) |
  * | not linked, either side's email is **unverified** | **refused** — `AccountNotLinkedError` |
  * | not linked, no local user with that address (or no address at all) | create the user (`createUser` + `linkAccount` events) |
@@ -28,6 +29,7 @@
 import type { AdapterAccount, AdapterUser, AuthAdapter } from "./adapter.ts";
 import { emitAuthEvent } from "./events.ts";
 import type { ResolvedAuthOptions } from "./options.ts";
+import { isSsoUser } from "./sso-user.ts";
 import type { AuthUser, OAuthProvider } from "./types.ts";
 
 /**
@@ -107,7 +109,8 @@ function assignDefined<T extends object>(target: T, values: Partial<T>): T {
 
 /** Project an adapter record onto the session user, `emailVerified` back to a boolean. */
 /**
- * The session user for a stored adapter user (`emailVerified` becomes a boolean).
+ * The session user for a stored adapter user (`emailVerified` becomes a boolean; an
+ * anonymous user carries `isAnonymous: true`).
  *
  * @param user The adapter's user record.
  * @returns The {@link AuthUser} the session carries.
@@ -115,7 +118,13 @@ function assignDefined<T extends object>(target: T, values: Partial<T>): T {
 export function toAuthUser(user: AdapterUser): AuthUser {
   return assignDefined<AuthUser>(
     { id: user.id, emailVerified: isVerified(user.emailVerified) },
-    { email: user.email, name: user.name, image: user.image, roles: user.roles },
+    {
+      email: user.email,
+      name: user.name,
+      image: user.image,
+      roles: user.roles,
+      isAnonymous: user.isAnonymous === true ? true : undefined,
+    },
   );
 }
 
@@ -140,10 +149,18 @@ function learned(user: AdapterUser, profile: AuthUser, now: number): Partial<Ada
     email: user.email === undefined ? profile.email : undefined,
     name: user.name === undefined ? profile.name : undefined,
     image: user.image === undefined ? profile.image : undefined,
-    emailVerified: !isVerified(user.emailVerified)
+    // The provider vouches only for the address it asserted: a verified profile email marks
+    // the stored one verified only when they are the same address.
+    emailVerified: !isVerified(user.emailVerified) && sameAddress(user.email, profile.email)
       ? verifiedAt(profile.emailVerified, now)
       : undefined,
   });
+}
+
+/** Whether the stored address (if any) is the profile's (case-insensitively). */
+function sameAddress(stored: string | undefined, asserted: string | undefined): boolean {
+  if (asserted === undefined) return false;
+  return stored === undefined || stored.toLowerCase() === asserted.toLowerCase();
 }
 
 /** Persist anything new the provider told us about an existing user. */
@@ -178,6 +195,38 @@ function assertLinkable(
         : "the provider did not assert that the email address is verified") +
       ", so the match proves nothing. Verify the address first, or set " +
       "`allowDangerousEmailAccountLinking: true` on the provider if you accept the risk.",
+  );
+}
+
+/**
+ * Refuse to link a sign-in to an SSO user by its address: its identity provider is its only way
+ * in (GoTrue leaves SSO users out of the accounts a sign-in may link to), and its address is not
+ * free for a new account either. Not even `allowDangerousEmailAccountLinking` links one.
+ *
+ * @throws {AccountNotLinkedError} For an SSO user.
+ */
+function assertNotSso(provider: OAuthProvider, existing: AdapterUser): void {
+  if (!isSsoUser(existing)) return;
+  throw new AccountNotLinkedError(
+    `denextAuth: refusing to link the "${provider.id}" account to the existing user ` +
+      `${JSON.stringify(existing.id)} — it is an SSO user, which signs in through its identity ` +
+      "provider only.",
+  );
+}
+
+/**
+ * Refuse a sign-in to an SSO user through an account linked to it (one linked from a session its
+ * identity provider started, or from before it became an SSO user): denextAuth's sessions never
+ * come from an identity provider, and an SSO user's identity provider is its only way in.
+ *
+ * @throws {AccountNotLinkedError} For an SSO user.
+ */
+function assertNotSsoSignIn(provider: OAuthProvider, linked: AdapterUser): void {
+  if (!isSsoUser(linked)) return;
+  throw new AccountNotLinkedError(
+    `denextAuth: refusing the "${provider.id}" sign-in of the existing user ` +
+      `${JSON.stringify(linked.id)} — it is an SSO user, which signs in through its identity ` +
+      "provider only.",
   );
 }
 
@@ -234,6 +283,10 @@ export interface ResolvedSignIn {
  * @returns The session user plus whether this sign-in CREATED the adapter record — which
  * is what the `signIn` event's documented `isNewUser` reports. Without an adapter nothing
  * is created, so `isNewUser` is `false`.
+ * @param onFirstProof Called before an existing account whose address was never verified is
+ * linked and marked verified on the provider's word (`allowDangerousEmailAccountLinking`):
+ * the route retires everything set up on it without that proof (its password, factors,
+ * passkeys, tokens and sessions) — the pre-account-hijacking defence.
  * @throws {AccountNotLinkedError} When an existing local account matches by email but the
  * match rests on an unverified address and the provider did not opt in.
  */
@@ -242,18 +295,24 @@ export async function resolveSignInUser(
   provider: OAuthProvider,
   profile: AuthUser,
   account: Omit<AdapterAccount, "userId">,
+  onFirstProof?: (user: AdapterUser) => Promise<void>,
 ): Promise<ResolvedSignIn> {
   const adapter = options.adapter;
   if (!adapter) return { user: profile, isNewUser: false };
 
   const linked = await adapter.getUserByAccount(account);
   if (linked) {
+    assertNotSsoSignIn(provider, linked);
     return { user: toAuthUser(await mergeProfile(adapter, linked, profile)), isNewUser: false };
   }
 
   const existing = profile.email ? await adapter.getUserByEmail(profile.email) : undefined;
   if (existing) {
+    assertNotSso(provider, existing);
     assertLinkable(provider, profile, existing);
+    if (!isVerified(existing.emailVerified) && profile.emailVerified === true) {
+      await onFirstProof?.(existing);
+    }
     const user = await mergeProfile(adapter, existing, profile);
     await link(options, adapter, user, account);
     return { user: toAuthUser(user), isNewUser: false };

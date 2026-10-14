@@ -19,8 +19,8 @@ module and **self-hosts it at build time** — no runtime request to Google.
 
 ```sh
 # from this directory
-deno task dev             # http://localhost:3000  (runtime <link> fallback)
-deno task build && deno task start   # fonts self-hosted from /_denext/fonts
+denext task dev             # http://localhost:3000  (runtime <link> fallback)
+denext task build && denext task start   # fonts self-hosted from /_denext/fonts
 ```
 
 To confirm self-hosting, run the production build and check that the page's font

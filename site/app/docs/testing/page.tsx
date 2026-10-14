@@ -252,6 +252,52 @@ try {
         : see <a href="/docs/mobile#testing-mobile-code">Testing mobile code</a>.
       </p>
 
+      <h2 id="vitest">Vitest suites: fake timers and module mocks</h2>
+      <p>
+        <code>denext test</code> runs <code>deno test</code> on{" "}
+        <a href="/docs/toolchain">denext&apos;s Deno toolchain</a>, which has Vitest&apos;s API
+        built in. A test file that imports <code>vitest</code> gets what <code>Deno.test</code>{" "}
+        alone can&apos;t give you: a fake clock and a fake <code>Date</code>{" "}
+        (<code>vi.useFakeTimers()</code>, <code>vi.advanceTimersByTimeAsync()</code>,{" "}
+        <code>vi.setSystemTime()</code>), module mocks (<code>vi.mock()</code>{" "}
+        — replace a module that calls a payment API or shells out), fresh module instances (<code>
+          vi.resetModules()
+        </code>{" "}
+        then <code>await import()</code>) and <code>vi.stubGlobal</code> / <code>vi.stubEnv</code>
+        {" "}
+        with automatic restore. <code>vitest</code>{" "}
+        needs no import-map entry, and an existing Vitest or Jest suite runs as it is.
+      </p>
+      <Code lang="ts">
+        {`// tests/reminder.vitest.ts
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../lib/mailer.ts", () => ({ send: vi.fn(async () => {}) }));
+const { send } = await import("../lib/mailer.ts");
+const { scheduleReminder } = await import("../lib/reminder.ts");
+
+describe("scheduleReminder", () => {
+  afterEach(() => vi.useRealTimers());
+  it("mails once the hour is up", async () => {
+    vi.useFakeTimers();
+    scheduleReminder("ada@example.com", 60 * 60_000);
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(send).toHaveBeenCalledOnce();
+  });
+});`}
+      </Code>
+      <p>
+        Stock Deno cannot resolve <code>vitest</code>. If a plain <code>deno test</code>{" "}
+        also runs in your project, give these files a name its discovery skips, such as{" "}
+        <code>*.vitest.ts</code>, and name them to <code>denext test</code>{" "}
+        (<code>denext test tests/reminder.vitest.ts</code>). The Vitest layer needs no permission of
+        its own, so <code>denext deno test --allow-read …</code>{" "}
+        lists only what the tests use. Coverage: keep a Vitest run&apos;s coverage in a report of
+        its own (<code>denext deno coverage</code>). The Vitest transform changes the code a module
+        emits, and <code>deno coverage</code>{" "}
+        under-reports a module whose plain-run and Vitest-run profiles it merges.
+      </p>
+
       <h2 id="ci">Continuous integration</h2>
       <p>
         Nothing here needs a browser or a service, so CI is <code>deno test</code>. Define one{" "}
@@ -279,13 +325,15 @@ jobs:
           deno-version: v2.x
       - run: deno install          # from deno.lock
       - run: deno task check
-      - run: deno run -A jsr:@denext/denext@^2/cli doctor   # renders every route, exits 1 on a bad document
-      - run: deno run -A jsr:@denext/denext@^2/cli audit --strict`}
+      - run: deno run -A jsr:@denext/denext@^4.0.0/cli doctor   # renders every route, exits 1 on a bad document
+      - run: deno run -A jsr:@denext/denext@^4.0.0/cli audit --strict`}
       </Code>
       <p>
         <code>denext doctor</code>{" "}
         is the conformance gate (every route rendered, a well-formed document asserted) and{" "}
-        <code>denext audit --strict</code> fails the build if runtime source imports npm — see{" "}
+        <code>denext audit --strict</code>{" "}
+        fails the build if runtime source imports npm, and also runs <code>deno audit</code>{" "}
+        over the lockfile (<code>--skip-deno-audit</code> leaves that half out) — see{" "}
         <a href="/docs/doctor-audit">Doctor &amp; audit</a>. Add <code>--coverage</code>{" "}
         to the test step and <code>deno coverage</code> after it for a report. A plain{" "}
         <code>deno task</code> runs the <code>deno test</code>{" "}
@@ -314,7 +362,7 @@ const ORIGIN = \`http://127.0.0.1:\${PORT}\`;
 
 async function startDev(): Promise<() => Promise<void>> {
   const child = new Deno.Command("deno", {
-    args: ["run", "-A", "jsr:@denext/denext@^2/cli", "dev", ".", "--port", String(PORT)],
+    args: ["run", "-A", "jsr:@denext/denext@^4.0.0/cli", "dev", ".", "--port", String(PORT)],
     stdout: "null",
     stderr: "inherit",
   }).spawn();

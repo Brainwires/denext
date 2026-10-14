@@ -10,7 +10,26 @@ export interface TarEntry {
   link?: string;
 }
 
+import { join } from "@std/path";
 import { gzipBytes } from "../src/build/precompress.ts";
+
+/**
+ * Whether this process may create symlinks. Always on POSIX; on Windows only with Developer Mode
+ * or elevation (a standard user gets os error 1314), where extraction must refuse clearly instead.
+ */
+export const canSymlink: boolean = await (async () => {
+  if (Deno.build.os !== "windows") return true;
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(join(dir, "t"), "");
+    await Deno.symlink("t", join(dir, "l"), { type: "file" });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+})();
 
 const enc = new TextEncoder();
 

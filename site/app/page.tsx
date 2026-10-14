@@ -75,7 +75,7 @@ const PILLARS: Pillar[] = [
       {
         title: "The web",
         body:
-          "Server rendering with streaming, a static export for any host or CDN, or a client-only SPA, chosen per app and per route. deno task dev / build / start / export.",
+          "Server rendering with streaming, a static export for any host or CDN, or a client-only SPA, chosen per app and per route. denext task dev / build / start / export.",
       },
       {
         title: "iOS and Android",

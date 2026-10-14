@@ -484,6 +484,31 @@ Deno.test("denoToolchainStatus: each cache state, the opt-outs, and whether this
   }
 });
 
+Deno.test("denoToolchainStatus: a compiled executable names the Deno its commands run on", async () => {
+  const f = await fixture(await zipped());
+  const opts = { pin: f.pin, target: TARGET, os: "linux", cacheRoot: f.root, standalone: true };
+  try {
+    // The executable's embedded Deno (2.9.7 here) runs only the CLI; every child runs the toolchain.
+    const missing = await denoToolchainStatus({ ...opts, env: envOf({}), running: "2.9.7" });
+    assertStringIncludes(missing.detail, "downloaded on the first denext command");
+    assertStringIncludes(missing.detail, "denext runs every command on it");
+    assertStringIncludes(missing.detail, "embeds deno 2.9.7 for itself only");
+    assertFalse(missing.detail.includes("running on deno"), missing.detail);
+    await ensure(f);
+    const cached = await denoToolchainStatus({ ...opts, env: envOf({}), running: "2.9.7" });
+    assertEquals(cached.state, "cached");
+    assertStringIncludes(cached.detail, "denext runs every command on it");
+    const stock = await denoToolchainStatus({
+      ...opts,
+      env: envOf({ DENEXT_DENO: "stock" }),
+      running: "2.9.7",
+    });
+    assertStringIncludes(stock.detail, "commands run on the `deno` on PATH");
+  } finally {
+    await f.close();
+  }
+});
+
 Deno.test("link / unlink touch only what link created", async () => {
   const home = await Deno.makeTempDir();
   const root = join(home, "cache", "denext-deno");

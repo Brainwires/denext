@@ -189,6 +189,24 @@ export function pinnedDenextCli(dir: string): string | null {
   return version === null ? "jsr:@denext/denext/cli" : `jsr:@denext/denext@${version}/cli`;
 }
 
+/**
+ * The config flags the pinned-CLI child needs so it reads the PROJECT's config — what `deno run`
+ * in the project directory would discover ({@linkcode nearestConfig}, a workspace member's own
+ * file included). The child runs `jsr:@denext/denext@…/cli`, which discovers its config from the
+ * working directory, so a verb aimed at a project from outside it (`denext build ./app`) would
+ * start the child with another config or none at all — and without the project's
+ * `minimumDependencyAge` exclusion of `jsr:@denext/*`, Deno's default hold refuses a denext
+ * published in the last two days. From inside the project the child finds the same file itself,
+ * so nothing is added ({@linkcode configArgsFor}).
+ *
+ * @param dir The project directory the verb targets.
+ * @param cwd The child's working directory (production: the process's own).
+ * @returns `["--config", <absolute path>]`, `["--no-config"]`, or `[]`.
+ */
+export function pinnedConfigArgs(dir: string, cwd: string = Deno.cwd()): string[] {
+  return configArgsFor(nearestConfig(dir), "jsr:@denext/denext/cli", cwd);
+}
+
 /** Whether `dir` holds `.git` (a directory, or a worktree's file) — the walk's boundary. */
 function isGitRoot(dir: string): boolean {
   try {
@@ -374,22 +392,163 @@ export function toolchainApplies(
 }
 
 /**
- * The `--config` / `-c` a `deno run` command line gave, read from the runtime flags before the
- * script (`run --config x`, `-c x`, `--config=x`); `undefined` without one.
+ * The resolution flags a child must repeat to resolve modules the way its parent did: the lock
+ * file, the import map, the npm mode, the vendor directory, the dependency-age hold.
+ */
+const RESOLUTION_FLAGS: ReadonlySet<string> = new Set([
+  "--lock",
+  "--no-lock",
+  "--frozen",
+  "--frozen-lockfile",
+  "--import-map",
+  "--node-modules-dir",
+  "--vendor",
+  "--min-dep-age",
+  "--cached-only",
+  "--no-npm",
+  "--no-remote",
+]);
+
+/**
+ * The `deno run` flags that take their value as the NEXT token unless given `--flag=value`, so the
+ * script is not mistaken for one (every permission flag, `--reload`, `--env-file`, … take theirs
+ * after `=` only). `--lock`'s value is optional; like Deno's own parser, it takes the next token
+ * when that is not a flag.
+ */
+const SEPARATE_VALUE_FLAGS: ReadonlySet<string> = new Set([
+  "--config",
+  "-c",
+  "--lock",
+  "--import-map",
+  "--min-dep-age",
+  "--location",
+  "--seed",
+  "--cert",
+  "--ext",
+  "--preload",
+  "--require",
+  "--log-level",
+  "-L",
+  "--conditions",
+]);
+
+/** What a `deno run` command line said about resolution, read up to its script. */
+export interface RunCommandLine {
+  /** The `--config` / `-c` path as written, when one was given. */
+  config?: string;
+  /** Whether it ran with `--no-config`. */
+  noConfig: boolean;
+  /** The main module as written (`jsr:@denext/denext@…/cli`, `cli.ts`, a URL). */
+  script?: string;
+  /** Its {@linkcode RESOLUTION_FLAGS}, verbatim and in order, each with its value. */
+  readonly resolution: string[];
+}
+
+/** The name a `--flag[=value]` token sets (`--lock=x` → `--lock`). */
+function flagName(token: string): string {
+  const eq = token.indexOf("=");
+  return eq === -1 ? token : token.slice(0, eq);
+}
+
+/** The tokens of the runtime flag at `argv[i]`: itself, then its value when that comes next. */
+function runFlagTokens(argv: readonly string[], i: number): string[] {
+  const next = argv[i + 1];
+  const takesNext = SEPARATE_VALUE_FLAGS.has(argv[i]) && next !== undefined &&
+    !next.startsWith("-");
+  return takesNext ? [argv[i], next] : [argv[i]];
+}
+
+/** Record what one runtime flag (its {@linkcode runFlagTokens}) says about resolution. */
+function applyRunFlag(tokens: readonly string[], out: RunCommandLine): void {
+  const name = flagName(tokens[0]);
+  if (name === "--no-config") out.noConfig = true;
+  else if (name === "--config" || name === "-c") {
+    out.config = tokens[1] ?? (tokens[0].slice(name.length + 1) || undefined);
+  } else if (RESOLUTION_FLAGS.has(name)) out.resolution.push(...tokens);
+}
+
+/**
+ * Read a `deno run` command line's runtime flags — the ones before the script; after it, flags
+ * belong to the program.
  *
  * @param argv The process's whole command line (`deno run … <script> …`).
- * @returns The config path as written.
+ * @returns What it said; empty when it is not a `deno run`.
  */
-export function configFromCommandLine(argv: readonly string[]): string | undefined {
+export function parseRunCommandLine(argv: readonly string[]): RunCommandLine {
+  const out: RunCommandLine = { noConfig: false, resolution: [] };
   const run = argv.indexOf("run");
   for (let i = run + 1; run !== -1 && i < argv.length; i++) {
-    const tok = argv[i];
-    if (tok === "--config" || tok === "-c") return argv[i + 1];
-    const eq = /^(?:--config|-c)=(.+)$/.exec(tok);
-    if (eq) return eq[1];
-    if (!tok.startsWith("-")) return undefined; // the script: runtime flags end here
+    if (!argv[i].startsWith("-")) {
+      out.script = argv[i];
+      break;
+    }
+    const tokens = runFlagTokens(argv, i);
+    applyRunFlag(tokens, out);
+    i += tokens.length - 1;
   }
-  return undefined;
+  return out;
+}
+
+/** Whether `path` is a file. */
+function isFile(path: string): boolean {
+  try {
+    return Deno.statSync(path).isFile;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The `deno.json` (else `deno.jsonc`) Deno's discovery finds from `dir`: the nearest one at or
+ * above it. In a workspace that is the member's own file; Deno finds the root from there, which an
+ * explicit `--config <member>` does too.
+ *
+ * @param dir Where the walk starts.
+ * @returns The config's absolute path, or null when there is none up to the filesystem root.
+ */
+export function nearestConfig(dir: string): string | null {
+  for (let at = resolve(dir);; at = dirname(at)) {
+    for (const name of CONFIG_NAMES) {
+      if (isFile(join(at, name))) return join(at, name);
+    }
+    if (dirname(at) === at) return null;
+  }
+}
+
+/**
+ * The config a `deno run <script>` started in `cwd` discovers on its own (Deno 2.9): a local
+ * script's from the script's directory, a `jsr:` / `npm:` one's from the working directory, and a
+ * remote URL's (`https://jsr.io/…/cli.ts`) none at all — which is why a toolchain child started on
+ * the URL a JSR-installed CLI loaded from has to be TOLD the config its parent found.
+ *
+ * @param script The main module as written.
+ * @param cwd The working directory.
+ * @returns The config's absolute path, or null.
+ */
+export function discoveredConfig(script: string, cwd: string): string | null {
+  if (/^(?:jsr|npm):/.test(script)) return nearestConfig(cwd);
+  if (/^[a-z][a-z0-9+.-]+:/i.test(script)) { // a scheme (a drive letter is one character)
+    return script.startsWith("file:") ? nearestConfig(dirname(fromFileUrl(script))) : null;
+  }
+  return nearestConfig(dirname(resolve(cwd, script)));
+}
+
+/**
+ * The flags that make a `deno run <childScript>` in `cwd` resolve exactly `config`: nothing when
+ * its own discovery finds that file already, `--config <path>` when it would find another or none,
+ * and `--no-config` when the parent had none but the child would find one. The one rule behind
+ * every CLI child denext starts — the toolchain re-exec, a binary's pinned-denext re-exec and
+ * `denext ui`'s verb runs.
+ *
+ * @param config The config the parent resolved (absolute), or null for none.
+ * @param childScript The child's main module as it will be written.
+ * @param cwd The child's working directory.
+ * @returns `[]`, `["--config", config]` or `["--no-config"]`.
+ */
+export function configArgsFor(config: string | null, childScript: string, cwd: string): string[] {
+  const own = discoveredConfig(childScript, cwd);
+  if (config === null) return own === null ? [] : ["--no-config"];
+  return own === config ? [] : ["--config", config];
 }
 
 /** This process's command line (Linux `/proc`, macOS `ps`); `null` where it can't be read. */
@@ -411,20 +570,84 @@ async function ownCommandLine(): Promise<string[] | null> {
 }
 
 /**
- * The `--config` the toolchain child needs to read the config this process was started with: Deno
- * offers no API for it, and a child whose entrypoint is a local file would otherwise discover the
- * config beside that file. Read from this process's command line where the OS exposes it; `[]`
- * when it gave none (the child then discovers the same config this process did).
+ * The resolution flags the toolchain child needs to resolve exactly what this process resolved —
+ * Deno offers no API for either. The config: an explicit `--config` (absolute), none after
+ * `--no-config`, else the file this process's own discovery found ({@linkcode discoveredConfig}
+ * of the script it was started on), passed only when the child's discovery would differ
+ * ({@linkcode configArgsFor}). Then the lock / import-map / npm-mode / vendor / dependency-age
+ * flags it was started with, verbatim (the child's working directory is the same). Read from this
+ * process's command line where the OS exposes it; where it can't be read, a local CLI is assumed
+ * started on its own file and a remote one from `jsr:` in this working directory.
  *
+ * @param childScript The child's main module (`entrypointArg(import.meta.url)` of `cli.ts`).
  * @param readArgv Reads the command line (tests pass a fake).
- * @returns `["--config", <absolute path>]`, or `[]`.
+ * @param cwd The working directory, shared by both processes.
+ * @returns The flags, to go before the child's script.
  */
 export async function toolchainConfigArgs(
+  childScript: string,
   readArgv: () => Promise<string[] | null> = ownCommandLine,
+  cwd: string = Deno.cwd(),
 ): Promise<string[]> {
   const argv = await readArgv();
-  const config = argv ? configFromCommandLine(argv) : undefined;
-  return config ? ["--config", resolve(config)] : [];
+  const line = argv ? parseRunCommandLine(argv) : undefined;
+  const assumed = /^[a-z][a-z0-9+.-]+:\/\//i.test(childScript) ? "jsr:" : childScript;
+  const config = line?.noConfig
+    ? null
+    : line?.config !== undefined
+    ? resolve(cwd, line.config)
+    : discoveredConfig(line?.script ?? assumed, cwd);
+  return [...configArgsFor(config, childScript, cwd), ...line?.resolution ?? []];
+}
+
+/**
+ * The runtime flags a denext CLI child on the pinned toolchain gets (the toolchain re-exec, and a
+ * compiled binary's pinned-denext child once it handed the toolchain down).
+ *
+ * `--unstable-no-legacy-abort`: Deno.serve's `request.signal` aborts only when a response is NOT
+ * delivered (the client went away), not after every delivered one. The server loop reads it on
+ * each request to cancel work when the client disconnects, and under the legacy behavior Deno
+ * prints a warning on the first such request. The request context's own signal
+ * (`requestSignal()`) still aborts once a response is delivered, from `info.completed`.
+ *
+ * @param marker The toolchain the child runs (`DENEXT_TOOLCHAIN_ACTIVE`): a version, or `path`
+ *   for a `DENEXT_DENO=<path>` binary of unknown version (which gets none: it may predate them).
+ * @returns The flags.
+ */
+export function toolchainRuntimeFlags(marker: string | undefined): string[] {
+  return marker && marker !== "path" ? ["--unstable-no-legacy-abort"] : [];
+}
+
+/**
+ * The toolchain a CLI child spawned with `denoExecutable()` runs, for
+ * {@linkcode toolchainRuntimeFlags}: the `DENEXT_TOOLCHAIN_ACTIVE` marker, else this process's own
+ * Deno when it is a toolchain build (`2.9.7-denext.N`) and no `DENO_BIN` points elsewhere.
+ *
+ * @param env Reads an environment variable.
+ * @param denoVersion This process's `Deno.version.deno`.
+ * @returns The marker, or `undefined` (not the toolchain, or not known to be).
+ */
+export function childToolchainMarker(
+  env: (name: string) => string | undefined,
+  denoVersion: string,
+): string | undefined {
+  const marker = env(TOOLCHAIN_ACTIVE_ENV);
+  if (marker) return marker;
+  return !env("DENO_BIN") && /-denext\.\d+$/.test(denoVersion) ? denoVersion : undefined;
+}
+
+/**
+ * `base` (denext's own child flags) followed by `inherited` (the parent's), with every `base`
+ * flag the parent set itself dropped — Deno takes the last of a repeated flag, but the parent's
+ * own choice should not depend on that.
+ *
+ * @param base Flags denext adds (`--node-modules-dir=none`, `--min-dep-age=…`).
+ * @param inherited Flags from {@linkcode toolchainConfigArgs}.
+ * @returns The merged flags.
+ */
+export function mergeRunFlags(base: readonly string[], inherited: readonly string[]): string[] {
+  const set = new Set(inherited.filter((t) => t.startsWith("-")).map(flagName));
+  return [...base.filter((t) => !set.has(flagName(t))), ...inherited];
 }
 
 /** What {@linkcode maybeReexecToolchain} touches in the process (injectable for tests). */

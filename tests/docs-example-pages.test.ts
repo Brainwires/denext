@@ -121,6 +121,6 @@ Deno.test("examples lib: the sidebar opens only the current example's category",
 Deno.test("examples lib: the run block changes into the directory the commands are for", () => {
   const byName = new Map(EXAMPLES.map((e) => [e.name, e]));
   assertStringIncludes(runBlock(byName.get("hello")!), "\ncd denext/examples/hello\n");
-  // `deno task example:animation` is a repo-root task.
-  assertStringIncludes(runBlock(byName.get("animation")!), "\ncd denext\ndeno task example:");
+  // `denext task example:animation` is a repo-root task.
+  assertStringIncludes(runBlock(byName.get("animation")!), "\ncd denext\ndenext task example:");
 });

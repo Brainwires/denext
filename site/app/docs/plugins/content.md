@@ -301,6 +301,13 @@ A built-in verb always wins a name collision, in both directions: you can't shad
 `denext build`, and a future denext release that adds a verb can't be broken by a project
 that already used the name — the project's verb simply stops being reachable.
 
+Deno's verbs are next. A verb named `run`, `x`, `eval`, `serve`, `compile`, `install`,
+`uninstall`, `upgrade` or `task` is refused where it is defined (a config error for
+`commands:`, a throw from `addCommand`): those names always mean Deno's. A verb named after
+another Deno verb (`bench`, `doc`, …) is allowed, but `denext bench` runs it instead of Deno's
+only after `denext commands` has listed it — the CLI decides from that cached listing, without
+importing your config, so `denext main.ts` and Deno's verbs never run project code first.
+
 ## Rendering
 
 A plugin renders with denext's **public** exports — there is no private render API to

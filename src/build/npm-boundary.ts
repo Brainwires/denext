@@ -28,7 +28,7 @@
  * @module
  */
 
-import * as esbuild from "esbuild";
+import * as esbuild from "./esbuild/mod.ts";
 import { dirname, resolve } from "@std/path";
 import { readDirective } from "./directives.ts";
 import { resolveNodeFrom, SSR_CONDITIONS } from "./next-compat.ts";

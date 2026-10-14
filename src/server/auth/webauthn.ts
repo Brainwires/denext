@@ -712,8 +712,13 @@ const OID_BASIC_CONSTRAINTS = "551d13";
 /** `id-fido-gen-ce-aaguid`, 1.3.6.1.4.1.45724.1.1.4 (§8.2.1). */
 const OID_FIDO_AAGUID = "2b0601040182e51c010104";
 
-/** Hex of a byte string. */
-function hex(bytes: Uint8Array): string {
+/**
+ * Hex of a byte string.
+ *
+ * @param bytes The bytes.
+ * @returns Lowercase hex.
+ */
+export function hex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 

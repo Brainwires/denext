@@ -36,7 +36,10 @@
  */
 
 import { hmacSign, hmacVerify } from "../session.ts";
+import { bearerTokenOf } from "./bearer-header.ts";
 import type { AuthAdapter, NativeSessionRecord } from "./adapter.ts";
+import { isBanned } from "./ban.ts";
+import { ssoSessionAllowed } from "./sso-user.ts";
 import { emitAuthEvent } from "./events.ts";
 import { constantTimeEqualHex, sha256Hex } from "./hash.ts";
 import { base64UrlDecode, base64UrlEncode, randomToken } from "./oauth.ts";
@@ -535,7 +538,10 @@ function parseRefresh(token: string): RefreshParts | null {
 /** Why a refresh was refused (for the event log; the caller always sees `invalid_grant`). */
 export type RefreshOutcome =
   | { ok: true; tokens: NativeTokens }
-  | { ok: false; reason: "invalid" | "reuse" | "revoked" | "expired" | "user_gone" };
+  | {
+    ok: false;
+    reason: "invalid" | "reuse" | "revoked" | "expired" | "user_gone" | "banned" | "sso_user";
+  };
 
 /** A refusal, as {@link RefreshOutcome} carries it. */
 type RefreshRefusal = Extract<RefreshOutcome, { ok: false }>;
@@ -556,7 +562,9 @@ function pastMaxAge(native: ResolvedNative, family: NativeSessionRecord, at: num
 /**
  * The checks every successful refresh shares, on a genuine, unrevoked family: unexpired, within
  * its absolute lifetime (past it the family is revoked, and the refusal reads as an expiry),
- * and its user still exists (else it is revoked). Answers the snapshot to mint for.
+ * and its user still exists (else it is revoked), is not banned (refused while the ban lasts)
+ * and is not an SSO user (revoked: its identity provider is its only way in). Answers the
+ * snapshot to mint for.
  */
 async function liveSnapshot(
   config: AuthConfig,
@@ -576,6 +584,12 @@ async function liveSnapshot(
   if (!snapshot || !user) {
     await native.adapter.revokeNativeSession(family.id);
     return { ok: false, reason: "user_gone" };
+  }
+  if (isBanned(user, at)) return { ok: false, reason: "banned" };
+  // denextAuth's own sign-ins never come from an identity provider: an SSO user's family ends.
+  if (!ssoSessionAllowed(user, snapshot.amr ?? [])) {
+    await native.adapter.revokeNativeSession(family.id);
+    return { ok: false, reason: "sso_user" };
   }
   return snapshot;
 }
@@ -724,6 +738,22 @@ export async function familyOfRefreshToken(
 }
 
 /**
+ * Whether the family's user may use its session now: a ban refuses the token at every use while
+ * it lasts, not only through the revocation, and an SSO user's session (never its identity
+ * provider's) is refused the same way.
+ */
+async function userMayUse(
+  config: AuthConfig,
+  userId: string,
+  snapshot: NativeSnapshot,
+  at: number,
+): Promise<boolean> {
+  const user = await resolveAuthOptions(config).adapter?.getUser(userId);
+  if (isBanned(user, at)) return false;
+  return !user || ssoSessionAllowed(user, snapshot.amr ?? []);
+}
+
+/**
  * Verify a native access token and return the session it acts as: the MAC must verify (any
  * configured secret), the token must be unexpired, and its family must still be live — not
  * revoked, not past its expiry, and owned by the same user.
@@ -759,6 +789,7 @@ export async function verifyNativeAccessToken(
   if (family.userId !== payload.u) return null;
   const snapshot = parseSnapshot(family.session);
   if (!snapshot) return null;
+  if (!(await userMayUse(config, family.userId, snapshot, at))) return null;
   return {
     user: snapshot.user,
     provider: snapshot.provider,
@@ -797,11 +828,8 @@ export function nativeBearerToken(request: Request | undefined): string | undefi
  * @returns The `nat_…` token, or `undefined`.
  */
 export function nativeBearerOf(header: string | null | undefined): string | undefined {
-  if (!header) return undefined;
-  const space = header.indexOf(" ");
-  if (space < 0 || header.slice(0, space).toLowerCase() !== "bearer") return undefined;
-  const token = header.slice(space + 1).trim();
-  return token.startsWith(ACCESS_PREFIX) ? token : undefined;
+  const token = bearerTokenOf(header);
+  return token?.startsWith(ACCESS_PREFIX) ? token : undefined;
 }
 
 /**

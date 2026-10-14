@@ -33,9 +33,9 @@ in-memory fallback. Override it with `setCacheStore(...)`:
 
 ```sh
 # from this directory
-deno task dev             # http://localhost:3000  (dev always renders fresh)
-deno task build && deno task start   # ISR + data cache active
+denext task dev             # http://localhost:3000  (dev always renders fresh)
+denext task build && denext task start   # ISR + data cache active
 ```
 
-Note: ISR (`/isr`) only caches in **production** (`deno task start`). In dev,
+Note: ISR (`/isr`) only caches in **production** (`denext task start`). In dev,
 pages always render fresh so you see your edits immediately.

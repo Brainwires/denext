@@ -210,7 +210,10 @@ optimization; OG images. → [Databases](https://denext.dev/docs/database) ·
 S3, R2, MinIO or the filesystem (buckets with per-bucket rules, signed URLs, image transforms),
 Postgres scoped by Supabase-compatible row-level security (`db()` runs each query as the request's
 user), realtime changes from your tables (`useTableChanges`), and a PostgREST-style REST API with a
-typed `from()` client. Postgres itself is first-party in core: a client on `Deno.SQL`, Postgres
+typed `from()` client. It also serves Supabase's APIs (`/auth/v1`, `/rest/v1`, `/storage/v1`,
+realtime, `/functions/v1`), each behind its own option, so the stock `@supabase/supabase-js`
+client works unchanged against the app; plus Vault, pgmq queues, pgvector search, database
+webhooks and `denext db` (migrations, diff, dump, lint, types). Postgres itself is first-party in core: a client on `Deno.SQL`, Postgres
 stores for auth, sessions, rate limits, the cache and job history, and SQL migrations; `denext ui`
 browses the database. → [Backend](https://denext.dev/docs/backend) ·
 [Coming from Supabase](https://denext.dev/docs/coming-from-supabase)
@@ -221,8 +224,10 @@ run history. → [Jobs](https://denext.dev/docs/jobs)
 
 **Production.** Graceful drain, per-request timeouts, concurrency ceilings, body caps, gzip and
 brotli, CORS, a security-header set, SSRF-safe fetch and image optimization, CSRF-defended
-actions, request ids, instrumentation, a Dockerfile generator and recipes for Docker, Deno Deploy
-and self-hosting. → [Deployment](https://denext.dev/docs/deploy) ·
+actions, request ids, per-address rate limits that key on the client address your proxy sends
+(`rateLimitHeader`), instrumentation, a Docker generator (the image, plus a compose stack with
+Postgres, an S3 store and a migrations step detected from your config) and recipes for Docker,
+Deno Deploy and self-hosting. → [Deployment](https://denext.dev/docs/deploy) ·
 [Security](https://denext.dev/docs/security) ·
 [Production checklist](https://denext.dev/docs/production-checklist)
 
@@ -236,7 +241,10 @@ content collections, the backend and an Effect bridge. A project adds its own CL
 One CLI covers the lifecycle: `dev` with per-module HMR and Fast Refresh, `build`, `export`,
 `start`, `generate` (routes, components, actions, jobs, tests, Docker), `test`, `lint`, `fmt`,
 `check`, `add`, `plugin`, `patch` (patch-package for npm dependencies and for denext itself),
-`desktop`, `mobile`, `ota` and `completions`. A dev-time overlay reports server errors and type
+`desktop`, `mobile`, `ota`, `job` and `completions`. Every other Deno verb works through it too
+(`denext compile`, `denext run`, `denext x`, …), and `denext task` runs a `deno.json` task, all on
+denext's own Deno build (`Deno.SQL`, Vitest/Jest compatibility in `deno test`), downloaded and
+SHA-256-verified on first need. → [Toolchain](https://denext.dev/docs/toolchain) A dev-time overlay reports server errors and type
 errors; the DevTools panel shows the live component tree and why a component re-rendered.
 → [CLI reference](https://denext.dev/docs/cli) · [DevTools](https://denext.dev/docs/devtools)
 
@@ -246,12 +254,12 @@ errors; the DevTools panel shows the live component tree and why a component re-
 self-time and heap growth for a route in headless Chromium, with a budget gate for CI.
 `denext/testing` drives the whole app the way a JavaScript-disabled browser would (cookie jar, form
 submit), renders components with real hooks and events, and probes every route for a well-formed
-document. → [Testing](https://denext.dev/docs/testing) · [Profiling](https://denext.dev/docs/profile)
+document; a test file that imports `vitest` gets fake timers and `vi.mock` under `denext test`. → [Testing](https://denext.dev/docs/testing) · [Profiling](https://denext.dev/docs/profile)
 · [Doctor & audit](https://denext.dev/docs/doctor-audit)
 
 **A GUI over the project.** `denext ui` serves a loopback project dashboard: a schema-driven,
 comment-preserving `denext.config.ts` editor, a Cron page, plugin option forms and JSR search, every
-`generate` kind, Docker and `docker-compose.yml` editing, a Desktop panel that sets up code signing
+`generate` kind, Docker (the self-hosted stack's toggles) and `docker-compose.yml` editing, a Desktop panel that sets up code signing
 from the identities in your keychain, and a Setup page for a fresh clone. Project code never runs
 in the UI's process. → [Project UI](https://denext.dev/docs/ui)
 
@@ -334,7 +342,7 @@ downloaded and SHA-256-verified on first need. Four ways to get it:
 2. `deno install -A -g -n denext jsr:@denext/denext/cli` — a launcher through your Deno.
 3. `deno task compile` from a checkout.
 4. Nothing at all: `deno run -A jsr:@denext/denext/cli <verb>` does the same thing, and the
-   scaffolded `deno task dev` / `build` / `start` already use it.
+   scaffolded `dev` / `build` / `start` tasks run that CLI pinned to the project's version.
 
 A project is a `deno.json` with the JSX settings, the import map and the lint plugin — no
 `node_modules`, no lockfile churn:
@@ -347,12 +355,12 @@ A project is a `deno.json` with the JSX settings, the import map and the lint pl
     "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
   },
   "imports": {
-    "denext": "jsr:@denext/denext@^3",
-    "denext/jsx-runtime": "jsr:@denext/denext@^3/jsx-runtime",
-    "denext/server": "jsr:@denext/denext@^3/server",
-    "denext/client": "jsr:@denext/denext@^3/client"
+    "denext": "jsr:@denext/denext@^4.0.0",
+    "denext/jsx-runtime": "jsr:@denext/denext@^4.0.0/jsx-runtime",
+    "denext/server": "jsr:@denext/denext@^4.0.0/server",
+    "denext/client": "jsr:@denext/denext@^4.0.0/client"
   },
-  "lint": { "plugins": ["jsr:@denext/denext/lint-plugin"] }
+  "lint": { "plugins": ["jsr:@denext/denext@^4.0.0/lint-plugin"] }
 }
 ```
 

@@ -12,7 +12,7 @@
 
 import { assert } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "../../src/build/esbuild/mod.ts";
 import { launchManagedBrowser } from "../../src/profile/browser.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));

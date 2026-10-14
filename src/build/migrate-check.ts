@@ -195,7 +195,8 @@ function transformFindings(r: MigrateResult): MigrateFinding[] {
   if (r.prisma) {
     out.push({
       item: "prisma",
-      reason: `run \`deno task ${r.prisma.setupTask}\` once before \`deno task dev\` / \`build\``,
+      reason:
+        `run \`denext task ${r.prisma.setupTask}\` once before \`denext task dev\` / \`build\``,
     });
     for (const w of r.prisma.warnings) out.push({ item: "prisma", reason: w });
   }

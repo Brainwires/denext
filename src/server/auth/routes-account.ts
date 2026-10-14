@@ -7,7 +7,8 @@
  *   `POST {basePath}/verify` takes the same two fields from a form or JSON body.
  * - `POST {basePath}/reset` — `{ email }`: request a reset link. The answer is the same
  *   for every address (a generic `200`, or a `303` to the "check your email" page) — only
- *   a spent send budget changes it, to a `429` that is equally blind to existence.
+ *   a spent send budget changes it, to a `429` that is equally blind to existence. With
+ *   `captcha` configured it first needs a solved captcha token (`captchaRefusal`).
  * - `POST {basePath}/reset/confirm` — `{ email, token, password }`: set the new password
  *   (every server-side session of the user is revoked), then `200` / `303` to the sign-in
  *   page with `?reset=1`.
@@ -22,7 +23,8 @@
  */
 
 import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "../body.ts";
-import { emailFlowAdapter, resetPassword, startEmailFlow, verifyEmail } from "./email.ts";
+import { captchaRefusal } from "./captcha.ts";
+import { emailFlowAdapter, mailerOf, resetPassword, startEmailFlow, verifyEmail } from "./email.ts";
 import {
   type AuthRoute,
   type AuthRouteContext,
@@ -142,11 +144,15 @@ async function handleResetRequest(ctx: AuthRouteContext): Promise<Response | nul
   const adapter = emailFlowAdapter(ctx.config, "reset");
   if (!adapter) return null;
   if (!isSameOrigin(ctx.request, ctx.config)) return forbidden();
-  const identifier = normalizeEmailIdentifier((await readFields(ctx)).email);
-  const send = ctx.config.sendVerificationRequest;
+  const fields = await readFields(ctx);
+  const refused = await captchaRefusal(ctx, fields);
+  if (refused) return refused;
+  const identifier = normalizeEmailIdentifier(fields.email);
+  const send = mailerOf(ctx.config);
   if (!send) {
     ctx.options.logger.error(
-      "denextAuth: POST /reset needs `sendVerificationRequest` — no reset email was sent.",
+      "denextAuth: POST /reset needs `sendVerificationRequest` (or `hooks.sendEmail`) — no " +
+        "reset email was sent.",
     );
   } else if (identifier) {
     const result = await startEmailFlow(ctx.config, {

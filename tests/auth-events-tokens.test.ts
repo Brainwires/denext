@@ -184,6 +184,8 @@ function describe(reason: SignInFailedReason): string {
       return "bad secret";
     case "rate_limited":
       return "throttled";
+    case "captcha_failed":
+      return "bot check";
     case "access_denied":
     case "account_not_linked":
       return "policy";

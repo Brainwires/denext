@@ -31,8 +31,8 @@ also the **bundle-size baseline** for `bench/` (the "first load" number in
 
 ```sh
 # from this directory
-deno task dev             # http://localhost:3000
-deno task build && deno task start
+denext task dev             # http://localhost:3000
+denext task build && denext task start
 ```
 
 Or from the repo root: `deno run -A cli.ts dev examples/hello`.

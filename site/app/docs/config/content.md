@@ -193,6 +193,9 @@ itself (it reads neither the config keys nor the env vars for them).
   headers. A bare origin (`"https://example.com"` — scheme + host, no path);
   anything else fails validation at boot. The fix for a proxy that rewrites
   `Host` (every Server Action answers `403` otherwise).
+  Without it (or a page's `metadataBase`), a cacheable page (ISR, `force-static`)
+  keeps `og:image` relative and gets no automatic hreflang / canonical: an origin
+  taken from a request header is never written into a cached page.
 - **`trustForwardedHeaders`** — `boolean` (env `DENEXT_TRUST_PROXY=1`; default
   `false`). Trust `X-Forwarded-Proto` / `X-Forwarded-Host` from a reverse proxy
   when deriving the origin, and `X-Forwarded-For` / an inbound `X-Request-Id`
@@ -206,9 +209,20 @@ itself (it reads neither the config keys nor the env vars for them).
   `@denext/backend` realtime's signed-out quota and `clientIpForLimits()`; not
   `clientIp()`. The model is Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`. A
   request whose header holds no IP address falls back to the rule without it
-  (one warning) rather than going unlimited. Only when clients **cannot** reach
-  denext except through that proxy, and it overwrites the header. Not an HTTP
-  header name → fails validation at boot.
+  (one warning) rather than going unlimited. Believed only from a trusted proxy:
+  a socket peer in `rateLimitTrustedProxies`, or, with none listed, a
+  loopback/private peer while `trustForwardedHeaders` is on. From any other peer
+  it is ignored (one warning) and the limit keys on that peer, so a client that
+  reaches the origin directly can't choose its own bucket. With neither trust
+  rule set it is never believed (a warning at boot). Not an HTTP header name →
+  fails validation at boot.
+- **`rateLimitTrustedProxies`** — `string[]` (env
+  `DENEXT_RATE_LIMIT_TRUSTED_PROXIES`, comma-separated; default none). CIDR
+  ranges or single addresses of the proxies whose `rateLimitHeader` is believed
+  (`["173.245.48.0/20", "2400:cb00::/32", …]` for Cloudflare's published
+  ranges, `["10.0.0.0/8"]` for a proxy on a private network). A request whose
+  socket peer is outside every range keys its limits on that peer. Not a CIDR
+  range → fails validation at boot (a bad env entry is warned and dropped).
 - **`rateLimitLocalAddresses`** — `boolean` (env
   `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`; default `false`). Apply those
   per-address limits to a loopback, private, link-local or unique-local socket

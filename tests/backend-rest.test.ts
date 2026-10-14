@@ -25,9 +25,10 @@ import { issueAuthSession } from "../src/server/auth/session.ts";
 import type { AuthConfig } from "../src/server/auth/types.ts";
 import { backend, type RestOptions } from "../packages/backend/mod.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
-import { readRestCatalog } from "../packages/backend/src/rest-catalog.ts";
+import { readRestCatalog, type RestCatalog } from "../packages/backend/src/rest-catalog.ts";
 import {
   concurrencyOf,
+  isSchemaReload,
   resolveRest,
   RestCatalogCache,
   skippedWarning,
@@ -37,6 +38,12 @@ import { RestError } from "../packages/backend/src/rest-query.ts";
 import { writeRestTypes } from "../packages/backend/src/rest-codegen.ts";
 import { restClient, RestClientError, type Selected } from "../packages/backend/client.ts";
 import { type FakeSqlClient, fakeSqlClient } from "./helpers/fake-sql-client.ts";
+import {
+  generateSupabaseKeys,
+  installSupabaseKeys,
+  resolveSupabaseKeys,
+  signSupabaseJwt,
+} from "../src/server/auth/gotrue/keys.ts";
 
 const ORIGIN = "https://app.test";
 /** An empty app for every test (removed when the module unloads). */
@@ -57,8 +64,11 @@ const COLUMN_ROWS: SqlRow[] = [
   ["body", "text", "text", "S", "true", "false", "false"],
   ["size", "integer", "int4", "N", "true", "false", "true"],
 ].map(([name, cast, type, category, nullable, hasDefault, readOnly]) => ({
+  schema: "public",
   table: "notes",
   kind: "r",
+  oid: "1001",
+  reachable: "true",
   rls: "true",
   name,
   cast_type: cast,
@@ -71,7 +81,29 @@ const COLUMN_ROWS: SqlRow[] = [
   has_default: hasDefault,
   read_only: readOnly,
 }));
-const KEY_ROWS: SqlRow[] = [{ table: "notes", name: "id" }];
+const KEY_ROWS: SqlRow[] = [
+  { schema: "public", table: "notes", oid: "1001", primary: "true", columns: '["id"]' },
+];
+
+/** The functions the fake's catalog lists (none unless a test sets them). */
+let FUNCTION_ROWS: SqlRow[] = [];
+/** The types the fake's catalog lists. */
+let TYPE_ROWS: SqlRow[] = [];
+/** The row-type attributes the fake's catalog lists. */
+let ATTRIBUTE_ROWS: SqlRow[] = [];
+
+/** The fake's answer to one of the catalog's queries, or `undefined` for anything else. */
+function catalogAnswer(text: string, columns: () => SqlRow[]): SqlRow[] | undefined {
+  if (text.includes("JOIN pg_attribute a ON a.attrelid = c.oid")) return columns();
+  if (text.includes("FROM pg_index")) return KEY_ROWS;
+  if (text.includes("FROM pg_constraint")) return [];
+  if (text.includes("FROM pg_type t")) return TYPE_ROWS;
+  if (text.includes("FROM pg_attribute a")) return ATTRIBUTE_ROWS;
+  if (text.includes("FROM pg_proc")) return FUNCTION_ROWS;
+  if (text.includes("pg_extension")) return [{ postgis: "false" }];
+  if (text.includes("JOIN pg_rewrite")) return [];
+  return undefined;
+}
 
 /** One REST statement as it reached the database. */
 interface Seen {
@@ -107,10 +139,8 @@ async function restApp(
   const seen: Seen[] = [];
   const unsafe = sql.unsafe.bind(sql);
   const answer = (text: string, params: unknown[] = []): SqlRow[] => {
-    if (text.includes("FROM pg_attribute") || text.includes("JOIN pg_attribute a ON a.attrelid")) {
-      return catalog();
-    }
-    if (text.includes("i.indisprimary")) return KEY_ROWS;
+    const rows = catalogAnswer(text, catalog);
+    if (rows) return rows;
     const entry: Seen = {
       text,
       params,
@@ -122,7 +152,7 @@ async function restApp(
     return respond(entry);
   };
   sql.unsafe = (<T>(text: string, params?: unknown[]): SqlQuery<T> => {
-    if (!/pg_attribute|indisprimary|^SELECT coalesce|^WITH _m|^INSERT|^UPDATE|^DELETE/.test(text)) {
+    if (!/pg_[a-z]+|^SELECT|^WITH|^INSERT|^UPDATE|^DELETE|^EXPLAIN/.test(text)) {
       return unsafe<T>(text, params);
     }
     return {
@@ -169,6 +199,9 @@ async function restApp(
 function tearDown(): void {
   resetPlugins();
   installPostgres(undefined);
+  FUNCTION_ROWS = [];
+  TYPE_ROWS = [];
+  ATTRIBUTE_ROWS = [];
 }
 
 /** A signed-in user's session cookie. */
@@ -205,14 +238,16 @@ Deno.test("GET reads as anon under a statement timeout, answering Postgres's JSO
     assertEquals([run.role, run.claims.role, run.timeout], ["anon", "anon", "5000"]);
     assertStringIncludes(
       run.text,
-      `SELECT "id", "body" FROM "public"."notes" WHERE "id" > $1::integer`,
+      `SELECT t0."id" AS "id", t0."body" AS "body" FROM "public"."notes" AS t0 WHERE ` +
+        `t0."id" > $1::integer`,
     );
-    assertStringIncludes(run.text, `ORDER BY "id" DESC LIMIT 5`);
+    assertStringIncludes(run.text, `ORDER BY t0."id" DESC LIMIT 5`);
     assertEquals(run.params, ["0"]);
     // BEGIN, the RLS setup, the timeout and the query, then COMMIT: one transaction.
     const tail = app.sql.statements.slice(-4);
     assertEquals(tail[0], "BEGIN");
     assertStringIncludes(tail[2], "statement_timeout");
+    assertStringIncludes(tail[2], "transaction_read_only", "a read is READ ONLY");
     assertEquals(tail[3], "COMMIT");
   } finally {
     tearDown();
@@ -291,8 +326,11 @@ Deno.test("errors use the PostgREST envelope; unknown tables 404, other paths pa
     const other = await app.call("/rest/v2/notes");
     assertEquals(other.status, 404);
     assert(!(await other.text()).includes("PGRST"));
-    const put = await app.call("/rest/v1/notes", { method: "PUT" });
-    assertEquals([put.status, put.headers.get("allow")], [405, "GET, HEAD, POST, PATCH, DELETE"]);
+    const options = await app.call("/rest/v1/notes", { method: "OPTIONS" });
+    assertEquals([options.status, options.headers.get("allow")], [
+      405,
+      "GET, HEAD, POST, PUT, PATCH, DELETE",
+    ]);
     assertEquals(app.seen.length, 0, "nothing reached the database");
   } finally {
     tearDown();
@@ -311,9 +349,9 @@ Deno.test("POST inserts: minimal is 201 with no body, representation returns the
     assertEquals([minimal.status, await minimal.text()], [201, ""]);
     assertStringIncludes(
       app.seen[0].text,
-      `json_populate_record(NULL::"public"."notes", $1::json)`,
+      `json_populate_recordset(NULL::"public"."notes", $1::json)`,
     );
-    assertEquals(app.seen[0].params, ['{"body":"hi"}']);
+    assertEquals(app.seen[0].params, ['[{"body":"hi"}]']);
     const full = await app.call("/rest/v1/notes?select=id,body", {
       method: "POST",
       headers: { ...json, prefer: "return=representation, count=exact" },
@@ -323,7 +361,7 @@ Deno.test("POST inserts: minimal is 201 with no body, representation returns the
     assertEquals(await full.json(), [{ id: 7, body: "hi" }]);
     assertEquals(full.headers.get("content-range"), "*/1");
     assertEquals(full.headers.get("preference-applied"), "return=representation, count=exact");
-    assertStringIncludes(app.seen[1].text, `RETURNING "id", "body"`);
+    assertStringIncludes(app.seen[1].text, `RETURNING t0."id", t0."body"`);
   } finally {
     tearDown();
   }
@@ -345,7 +383,7 @@ Deno.test("PATCH and DELETE need a filter; with one they answer 204 or the rows"
       body: JSON.stringify({ body: "x" }),
     });
     assertEquals(patched.status, 204);
-    assertStringIncludes(app.seen[0].text, `UPDATE "public"."notes" SET ("body")`);
+    assertStringIncludes(app.seen[0].text, `UPDATE "public"."notes" AS t0 SET ("body")`);
     const deleted = await app.call("/rest/v1/notes?id=eq.1", {
       method: "DELETE",
       headers: { prefer: "return=representation" },
@@ -406,13 +444,13 @@ Deno.test("bodies: too large, not JSON, wrong type", async () => {
     const broken = await app.call("/rest/v1/notes", { method: "POST", body: "{" });
     assertEquals(broken.status, 400);
     await broken.body?.cancel();
-    const form = await app.call("/rest/v1/notes", {
+    const xml = await app.call("/rest/v1/notes", {
       method: "POST",
-      headers: { "content-type": "text/csv" },
-      body: "a,b",
+      headers: { "content-type": "application/xml" },
+      body: "<a/>",
     });
-    assertEquals(form.status, 415);
-    await form.body?.cancel();
+    assertEquals(xml.status, 415);
+    await xml.body?.cancel();
   } finally {
     tearDown();
   }
@@ -487,7 +525,7 @@ Deno.test("tables: a list limits the routes; schema and basePath are configurabl
     const res = await app.call("/api/db/notes");
     assertEquals([res.status, (await res.json()).message], [
       404,
-      "Could not find the table 'app.notes'",
+      "Could not find the table 'app.notes' in the schema cache",
     ]);
   } finally {
     tearDown();
@@ -496,7 +534,7 @@ Deno.test("tables: a list limits the routes; schema and basePath are configurabl
 
 Deno.test("resolveRest validates options; rest needs postgres", () => {
   assertEquals(resolveRest({}), {
-    schema: "public",
+    schemas: ["public"],
     tables: "*",
     basePath: "/rest/v1",
     maxRows: 1000,
@@ -504,9 +542,14 @@ Deno.test("resolveRest validates options; rest needs postgres", () => {
     statementTimeout: 5000,
     maxConcurrent: undefined,
     exactCount: "authenticated",
+    explain: false,
+    aggregates: false,
   });
+  assertEquals(resolveRest({ schemas: ["a", "b", "a"], schema: "c" }).schemas, ["a", "b"]);
   const bad: RestOptions[] = [
     { schema: 'x"; drop' },
+    { schemas: [] },
+    { schemas: ["ok", "no-pe"] },
     { tables: [1 as unknown as string] },
     { tables: "all" as unknown as "*" },
     { basePath: "rest" },
@@ -536,37 +579,41 @@ Deno.test("resolveRest validates options; rest needs postgres", () => {
 });
 
 Deno.test("readRestCatalog groups columns and keys, and honours a table list", async () => {
-  const rows = [...COLUMN_ROWS, { ...COLUMN_ROWS[0], table: "views_only", kind: "v" }];
+  const rows = [...COLUMN_ROWS, { ...COLUMN_ROWS[0], table: "views_only", kind: "v", oid: "1002" }];
   const sql = {
     unsafe: (text: string, params: unknown[]) => {
-      assertEquals(params, ["public"]);
-      return Promise.resolve(text.includes("indisprimary") ? KEY_ROWS : rows);
+      if (params.length) assertEquals(params, ['["public"]']);
+      return Promise.resolve(catalogAnswer(text, () => rows) ?? []);
     },
   } as never;
-  const all = await readRestCatalog(sql, "public", "*");
-  assertEquals([...all.keys()], ["notes", "views_only"]);
-  const notes = all.get("notes")!;
+  const all = await readRestCatalog(sql, ["public"], "*");
+  const tables = all.tables.get("public")!;
+  assertEquals([...tables.keys()], ["notes", "views_only"]);
+  const notes = tables.get("notes")!;
   assertEquals(notes.primaryKey, ["id"]);
   assertEquals(notes.columns.map((c) => c.name), ["id", "owner", "body", "size"]);
   assertEquals(notes.columns[3].readOnly, true);
-  assertEquals(all.get("views_only")!.kind, "view");
-  assertEquals(all.get("views_only")!.primaryKey, []);
-  assertEquals([...(await readRestCatalog(sql, "public", ["views_only"])).keys()], ["views_only"]);
+  assertEquals(tables.get("views_only")!.kind, "view");
+  assertEquals(tables.get("views_only")!.primaryKey, []);
+  const listed = await readRestCatalog(sql, ["public"], ["public.views_only"]);
+  assertEquals([...listed.tables.get("public")!.keys()], ["views_only"]);
 });
 
 Deno.test("the catalog cache: read once, retried after a failure, re-read on a dev miss", async () => {
   let reads = 0;
   let fail = true;
-  let tables = new Map<string, never>();
+  const catalogOf = (tables: Map<string, unknown>) =>
+    ({ tables: new Map([["public", tables]]) }) as unknown as RestCatalog;
+  let tables = new Map<string, unknown>();
   const cache = new RestCatalogCache(() => {
     reads++;
-    return fail ? Promise.reject(new Error("down")) : Promise.resolve(tables);
+    return fail ? Promise.reject(new Error("down")) : Promise.resolve(catalogOf(tables));
   }, true);
   let error: unknown;
   await cache.get().catch((e) => (error = e));
   assertEquals((error as Error).message, "down");
   fail = false;
-  assertEquals(await cache.table("notes"), undefined);
+  assertEquals(await cache.table("public", "notes"), undefined);
   assertEquals(
     reads,
     2,
@@ -576,15 +623,42 @@ Deno.test("the catalog cache: read once, retried after a failure, re-read on a d
   const now = Date.now;
   Date.now = () => now() + 5000;
   try {
-    assertEquals(await cache.table("notes"), "N" as never);
+    assertEquals(await cache.table("public", "notes"), "N" as never);
     assertEquals(reads, 3);
   } finally {
     Date.now = now;
   }
-  const prod = new RestCatalogCache(() => (reads++, Promise.resolve(new Map())), false);
-  await prod.table("x");
-  await prod.table("x");
-  assertEquals(reads, 4, "outside dev a miss never re-reads");
+  // Outside dev a miss re-reads too, at most every 10 s: a table a migration created after
+  // boot (a rolling deploy, `migration up` against a live app) gets its route without a restart.
+  let prodTables = new Map<string, unknown>();
+  const prod = new RestCatalogCache(
+    () => (reads++, Promise.resolve(catalogOf(prodTables))),
+    false,
+  );
+  await prod.table("public", "x");
+  await prod.table("public", "x");
+  assertEquals(reads, 4, "a miss right after a read is not re-read");
+  prodTables = new Map([["x", "X" as never]]);
+  Date.now = () => now() + 5000;
+  try {
+    assertEquals(await prod.table("public", "x"), undefined, "not before 10 s");
+    Date.now = () => now() + 11_000;
+    assertEquals(await prod.table("public", "x"), "X" as never);
+    assertEquals(reads, 5);
+  } finally {
+    Date.now = now;
+  }
+  // NOTIFY pgrst, 'reload schema' invalidates: the next request re-reads (a changed table).
+  prodTables = new Map([["x", "X2" as never]]);
+  assertEquals(await prod.table("public", "x"), "X" as never, "cached");
+  prod.invalidate();
+  assertEquals(await prod.table("public", "x"), "X2" as never);
+  assertEquals(reads, 6);
+});
+
+Deno.test("schema reload: PostgREST's `pgrst` payloads", () => {
+  for (const payload of ["", "reload schema", " Reload Schema "]) assert(isSchemaReload(payload));
+  for (const payload of ["reload config", "other"]) assert(!isSchemaReload(payload));
 });
 
 Deno.test(".denext/rest.ts: generated by the prepare step; a stub, or the previous file, without a database", async () => {
@@ -602,19 +676,17 @@ Deno.test(".denext/rest.ts: generated by the prepare step; a stub, or the previo
       tearDown();
     }
     const generated = await Deno.readTextFile(`${outDir}/rest.ts`);
-    assertStringIncludes(generated, `"notes": {`);
-    assertStringIncludes(generated, `"size": number | null;`);
+    assertStringIncludes(generated, `notes: {`);
+    assertStringIncludes(generated, `size: number | null;`);
     // A failed read keeps the generated file.
     const { logged } = await quiet(() =>
-      writeRestTypes(outDir, { schema: "public" }, () => Promise.reject(new Error("no db")))
+      writeRestTypes(outDir, {}, () => Promise.reject(new Error("no db")))
     );
     assertEquals(await Deno.readTextFile(`${outDir}/rest.ts`), generated);
     assertStringIncludes(String(logged[0][0]), "keeping the previous one");
     // With no earlier file, a stub that types rows as Record<string, unknown>.
     await Deno.remove(`${outDir}/rest.ts`);
-    await quiet(() =>
-      writeRestTypes(outDir, { schema: "public" }, () => Promise.reject(new Error("no db")))
-    );
+    await quiet(() => writeRestTypes(outDir, {}, () => Promise.reject(new Error("no db"))));
     const stub = await Deno.readTextFile(`${outDir}/rest.ts`);
     assertStringIncludes(stub, "Record<string, unknown>");
     assertStringIncludes(stub, "no db");
@@ -662,6 +734,7 @@ Deno.test("restClient drives the handler: filters, order, paging, count, single,
       error: null,
       count: 9,
       status: 206,
+      statusText: "",
     });
     const url = new URL(sent[0].url);
     assertEquals(url.pathname, "/rest/v1/notes");
@@ -675,10 +748,9 @@ Deno.test("restClient drives the handler: filters, order, paging, count, single,
       ["body", "ilike.%y%"],
       ["order", "id.desc,body.asc.nullsfirst"],
       ["limit", "2"],
-      ["offset", "4"],
+      ["offset", "0"],
     ]);
     assertEquals(sent[0].headers.get("prefer"), "count=exact");
-    assertEquals(sent[0].headers.get("range"), "0-1");
     assertEquals(sent[0].headers.get("x-app"), "1");
 
     const one = await notes.select().eq("id", 1).single();
@@ -740,39 +812,51 @@ Deno.test('tables: "*" serves only RLS tables and security_invoker views; the re
   let sent = "";
   const sql = {
     unsafe: (text: string) => {
-      if (!text.includes("indisprimary")) sent = text;
-      return Promise.resolve(text.includes("indisprimary") ? KEY_ROWS : rows);
+      if (text.includes("JOIN pg_attribute a ON a.attrelid = c.oid")) sent = text;
+      return Promise.resolve(catalogAnswer(text, () => rows) ?? []);
     },
   } as never;
   // The catalog query reads RLS and security_invoker from pg_class.
   const skipped: unknown[] = [];
-  const all = await readRestCatalog(sql, "public", "*", (s) => skipped.push(...s));
+  const all = await readRestCatalog(sql, ["public"], "*", (s) => skipped.push(...s));
   assertStringIncludes(sent, "c.relrowsecurity");
   assertStringIncludes(sent, "security_invoker=");
-  assertEquals([...all.keys()], ["notes", "parts", "invoker_view"]);
+  assertEquals([...all.tables.get("public")!.keys()], ["notes", "parts", "invoker_view"]);
   assertEquals(skipped, [
-    { name: "open_table", kind: "table", reason: "row-level security is not enabled" },
     {
+      schema: "public",
+      name: "open_table",
+      kind: "table",
+      reason: "row-level security is not enabled",
+    },
+    {
+      schema: "public",
       name: "definer_view",
       kind: "view",
       reason: "a view without security_invoker runs with its owner's rights",
     },
     {
+      schema: "public",
       name: "matview",
       kind: "materialized view",
       reason: "a materialized view has no row-level security",
     },
-    { name: "remote", kind: "foreign table", reason: "a foreign table has no row-level security" },
+    {
+      schema: "public",
+      name: "remote",
+      kind: "foreign table",
+      reason: "a foreign table has no row-level security",
+    },
   ]);
   // Naming them is the operator's choice: a list exposes them as named.
-  const named = await readRestCatalog(sql, "public", ["open_table", "definer_view"], (s) => {
+  const named = await readRestCatalog(sql, ["public"], ["open_table", "definer_view"], (s) => {
     assertEquals(s, []);
   });
-  assertEquals([...named.keys()], ["open_table", "definer_view"]);
-  const warning = skippedWarning(resolveRest({}), skipped as never)!;
+  assertEquals([...named.tables.get("public")!.keys()], ["open_table", "definer_view"]);
+  const warning = skippedWarning(skipped as never)!;
   assertStringIncludes(warning, "public.open_table (table): row-level security is not enabled");
   assertStringIncludes(warning, "public.remote (foreign table)");
-  assertEquals(skippedWarning(resolveRest({}), []), null);
+  assertEquals(skippedWarning([]), null);
 });
 
 Deno.test("a table without RLS gets no route under the default, and one warning says why", async () => {
@@ -901,6 +985,671 @@ Deno.test("the CSRF exemption is auth()'s own bearer parser: a cookie-authentica
     });
     assertEquals([lookAlike.status, (await lookAlike.json()).code], [403, "csrf_failed"]);
     assertEquals(app.seen.length, 0);
+  } finally {
+    tearDown();
+  }
+});
+
+// ── PostgREST parity: functions, profiles, preferences, media types ─────────
+
+/** One `TYPES_SQL` row. */
+function typeRow(
+  oid: string,
+  name: string,
+  category: string,
+  extra: Partial<Record<string, string>> = {},
+): SqlRow {
+  return {
+    oid,
+    schema: "pg_catalog",
+    name,
+    cast_type: name,
+    typtype: "b",
+    type_name: name,
+    category,
+    element_name: null,
+    element_category: null,
+    enum_labels: null,
+    relid: "0",
+    relkind: "",
+    rel_schema: "",
+    rel_name: "",
+    ...extra,
+  };
+}
+
+/** One `FUNCTIONS_SQL` row. */
+function functionRow(
+  name: string,
+  returnOid: string,
+  args: Array<[string, string, string?]>,
+  extra: Partial<Record<string, string | number>> = {},
+): SqlRow {
+  return {
+    schema: "public",
+    name,
+    executable: "true",
+    volatility: "s",
+    set_of: "false",
+    return_oid: returnOid,
+    ndefaults: 0,
+    args: JSON.stringify(args.map(([n, oid, mode]) => ({ name: n, oid, mode: mode ?? "i" }))),
+    ...extra,
+  };
+}
+
+/** A catalog with functions of every result kind. */
+function withFunctions(): void {
+  TYPE_ROWS = [
+    typeRow("23", "int4", "N", { cast_type: "integer" }),
+    typeRow("25", "text", "S"),
+    typeRow("114", "json", "U"),
+    typeRow("2278", "void", "P"),
+    typeRow("2249", "record", "P"),
+    typeRow("9000", "notes", "C", {
+      schema: "public",
+      typtype: "c",
+      relid: "9001",
+      relkind: "r",
+      rel_schema: "public",
+      rel_name: "notes",
+    }),
+    typeRow("9100", "pair", "C", { schema: "public", typtype: "c", relid: "9101", relkind: "c" }),
+    typeRow("9200", "mood", "E", {
+      schema: "public",
+      typtype: "e",
+      enum_labels: '["ok","sad"]',
+    }),
+  ];
+  ATTRIBUTE_ROWS = [
+    { relid: "9001", name: "id", type_oid: "23", nullable: "false" },
+    { relid: "9001", name: "body", type_oid: "25", nullable: "true" },
+    { relid: "9101", name: "a", type_oid: "23", nullable: "true" },
+  ];
+  FUNCTION_ROWS = [
+    functionRow("add", "23", [["a", "23"], ["b", "23"]], { volatility: "i", ndefaults: 1 }),
+    functionRow("touch", "2278", [], { volatility: "v" }),
+    functionRow("notes_of", "9000", [["n", "23"]], { set_of: "true" }),
+    functionRow("one_note", "9000", []),
+    functionRow("echo", "114", [["", "114"]]),
+    functionRow("pairf", "9100", []),
+    functionRow("nums", "23", [], { set_of: "true" }),
+    functionRow("stats", "2249", [["k", "25", "t"], ["v", "23", "t"]], { set_of: "true" }),
+    functionRow("untyped", "2249", []),
+  ];
+}
+
+/** Answers RPC statements by shape. */
+function rpcResponder(seen: Seen): SqlRow[] {
+  if (seen.text.startsWith("EXPLAIN")) return [{ "QUERY PLAN": [{ Plan: { "Plan Rows": 40 } }] }];
+  if (seen.text.startsWith("SELECT count(*)::text AS n FROM (SELECT")) return [{ n: "1" }];
+  if (seen.text.startsWith("SELECT to_json")) return [{ body: "3", n: "1" }];
+  if (seen.text.includes(`"public"."nums"`)) return [{ body: "[1,2]", n: "2", total: "2" }];
+  if (seen.text.includes(`"public"."one_note"`)) return [{ body: '[{"id":1}]', n: "1" }];
+  if (seen.text.includes(`"public"."pairf"`)) return [{ body: "[]", n: "0" }];
+  return [{ body: '[{"id":1},{"id":2}]', n: "2", total: "2" }];
+}
+
+Deno.test("rpc: scalars, void, sets, composites, single json argument, GET and HEAD", async () => {
+  withFunctions();
+  const app = await restApp(rpcResponder, { exactCount: "all" });
+  try {
+    const sum = await app.call("/rest/v1/rpc/add", {
+      method: "POST",
+      body: JSON.stringify({ a: 1, b: 2 }),
+    });
+    assertEquals([sum.status, await sum.text()], [200, "3"]);
+    assertStringIncludes(app.seen[0].text, `"public"."add"("a" => (SELECT _a."a"`);
+    assertEquals(app.seen[0].timeout, "5000");
+    const get = await app.call("/rest/v1/rpc/add?a=1");
+    assertEquals(get.status, 200);
+    await get.body?.cancel();
+    assertStringIncludes(app.seen[1].text, `"a" => $1::integer`);
+    const tail = app.sql.statements.slice(-4);
+    assertStringIncludes(tail[2], "transaction_read_only", "a GET call is READ ONLY");
+    const voided = await app.call("/rest/v1/rpc/touch", { method: "POST" });
+    assertEquals([voided.status, await voided.text()], [204, ""]);
+    const set = await app.call("/rest/v1/rpc/notes_of?n=1&select=id&id=gt.0", {
+      headers: { prefer: "count=exact" },
+    });
+    assertEquals([set.status, set.headers.get("content-range")], [200, "0-1/2"]);
+    assertEquals(await set.json(), [{ id: 1 }, { id: 2 }]);
+    assertStringIncludes(app.seen.at(-1)!.text, `t0."id" > $2::integer`);
+    const one = await app.call("/rest/v1/rpc/one_note", { method: "POST", body: "{}" });
+    assertEquals(await one.json(), { id: 1 });
+    const none = await app.call("/rest/v1/rpc/pairf", { method: "POST", body: "{}" });
+    assertEquals(await none.text(), "null");
+    const nums = await app.call("/rest/v1/rpc/nums", { method: "HEAD" });
+    assertEquals([nums.status, await nums.text()], [200, ""]);
+    const echo = await app.call("/rest/v1/rpc/echo", { method: "POST", body: "[1,2]" });
+    assertEquals(echo.status, 200);
+    await echo.body?.cancel();
+    assertStringIncludes(app.seen.at(-1)!.text, `"public"."echo"($1::json)`);
+    const stats = await app.call("/rest/v1/rpc/stats?select=k");
+    assertEquals(stats.status, 200);
+    await stats.body?.cancel();
+    const csv = await app.call("/rest/v1/rpc/one_note", {
+      method: "POST",
+      body: "{}",
+      headers: { accept: "text/csv" },
+    });
+    assertEquals(await csv.text(), "id\n1\n");
+    const objectScalar = await app.call("/rest/v1/rpc/add?a=1", {
+      headers: { accept: "application/vnd.pgrst.object+json" },
+    });
+    assertEquals(objectScalar.status, 200);
+    await objectScalar.body?.cancel();
+    const planned = await app.call("/rest/v1/rpc/notes_of?n=1", {
+      headers: { prefer: "count=planned" },
+    });
+    assertEquals(planned.headers.get("content-range"), "0-1/40");
+    await planned.body?.cancel();
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("rpc refusals: unknown functions and arguments, select on a scalar, verbs", async () => {
+  withFunctions();
+  const app = await restApp(rpcResponder);
+  try {
+    const missing = await app.call("/rest/v1/rpc/nope", { method: "POST", body: "{}" });
+    assertEquals([missing.status, (await missing.json()).code], [404, "PGRST202"]);
+    const untyped = await app.call("/rest/v1/rpc/untyped", { method: "POST", body: "{}" });
+    assertEquals(untyped.status, 404, "RETURNS record without OUT columns is not callable");
+    await untyped.body?.cancel();
+    const badArg = await app.call("/rest/v1/rpc/add", { method: "POST", body: '{"z":1}' });
+    assertEquals([badArg.status, (await badArg.json()).code], [404, "PGRST202"]);
+    const selectScalar = await app.call("/rest/v1/rpc/add?a=1&select=x");
+    assertEquals([selectScalar.status, (await selectScalar.json()).code], [400, "PGRST100"]);
+    const patch = await app.call("/rest/v1/rpc/add", { method: "PATCH", body: "{}" });
+    assertEquals([patch.status, (await patch.json()).code], [405, "PGRST101"]);
+    const forged = await app.call("/rest/v1/rpc/touch", {
+      method: "POST",
+      cookie: await cookieFor("user-a"),
+      crossSite: true,
+    });
+    assertEquals(forged.status, 403, "a cookie-carrying cross-site call is a write");
+    await forged.body?.cancel();
+    const single = await app.call("/rest/v1/rpc/echo", {
+      method: "POST",
+      body: '{"x":1}',
+      headers: { prefer: "params=single-object" },
+    });
+    assertEquals(single.headers.get("preference-applied"), "params=single-object");
+    await single.body?.cancel();
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("profiles: Accept-Profile / Content-Profile pick an exposed schema", async () => {
+  const app = await restApp(undefined, { schemas: ["public", "api"] });
+  try {
+    const read = await app.call("/rest/v1/notes", { headers: { "accept-profile": "public" } });
+    assertEquals([read.status, read.headers.get("content-profile")], [200, "public"]);
+    await read.body?.cancel();
+    const other = await app.call("/rest/v1/notes", { headers: { "accept-profile": "api" } });
+    assertEquals([other.status, (await other.json()).message], [
+      404,
+      "Could not find the table 'api.notes' in the schema cache",
+    ]);
+    const unknown = await app.call("/rest/v1/notes", {
+      method: "POST",
+      headers: { "content-profile": "secret" },
+      body: "{}",
+    });
+    assertEquals([unknown.status, (await unknown.json()).code], [406, "PGRST106"]);
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("Prefer: strict handling, headers-only, tx=rollback, max-affected, planned counts", async () => {
+  let n = "1";
+  const app = await restApp((seen) =>
+    seen.text.startsWith("EXPLAIN")
+      ? [{ "QUERY PLAN": JSON.stringify([{ Plan: { "Plan Rows": 5000 } }]) }]
+      : [{ body: '[{"id":7}]', n, total: "1" }]
+  );
+  try {
+    const strict = await app.call("/rest/v1/notes", {
+      headers: { prefer: "handling=strict, return=what" },
+    });
+    assertEquals([strict.status, (await strict.json()).code], [400, "PGRST122"]);
+    const lenient = await app.call("/rest/v1/notes", {
+      headers: { prefer: "return=what, timezone=UTC" },
+    });
+    assertEquals(lenient.status, 200);
+    await lenient.body?.cancel();
+    const location = await app.call("/rest/v1/notes", {
+      method: "POST",
+      headers: { prefer: "return=headers-only" },
+      body: JSON.stringify({ body: "x" }),
+    });
+    assertEquals([location.status, location.headers.get("location")], [201, "/notes?id=eq.7"]);
+    assertStringIncludes(app.seen.at(-1)!.text, `RETURNING t0."id"`);
+    const rolled = await app.call("/rest/v1/notes?id=eq.1", {
+      method: "PATCH",
+      headers: { prefer: "tx=rollback, return=representation" },
+      body: JSON.stringify({ body: "x" }),
+    });
+    assertEquals([rolled.status, rolled.headers.get("preference-applied")], [
+      200,
+      "tx=rollback, return=representation",
+    ]);
+    await rolled.body?.cancel();
+    assertEquals(app.sql.statements.at(-1), "ROLLBACK");
+    n = "3";
+    const affected = await app.call("/rest/v1/notes?id=gt.0", {
+      method: "DELETE",
+      headers: { prefer: "handling=strict, max-affected=2" },
+    });
+    assertEquals([affected.status, (await affected.json()).code], [400, "PGRST124"]);
+    assertStringIncludes(app.seen.at(-1)!.text, "RETURNING 1) SELECT count(*)");
+    const counted = await app.call("/rest/v1/notes?id=gt.0", {
+      method: "DELETE",
+      headers: { prefer: "count=exact" },
+    });
+    assertEquals([counted.status, counted.headers.get("content-range")], [204, "*/3"]);
+    n = "1";
+    const planned = await app.call("/rest/v1/notes", { headers: { prefer: "count=planned" } });
+    assertEquals(planned.headers.get("content-range"), "0-0/5000");
+    await planned.body?.cancel();
+    const estimated = await app.call("/rest/v1/notes", { headers: { prefer: "count=estimated" } });
+    assertEquals(estimated.headers.get("content-range"), "0-0/5000", "over maxRows: the plan");
+    await estimated.body?.cancel();
+    const limited = await app.call("/rest/v1/notes?id=eq.1&limit=1", { method: "DELETE" });
+    assertEquals([limited.status, (await limited.json()).code], [400, "PGRST100"]);
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("media: CSV, stripped nulls, GeoJSON without PostGIS, plans off and on", async () => {
+  const app = await restApp((seen) =>
+    seen.text.startsWith("EXPLAIN")
+      ? [{ "QUERY PLAN": "Seq Scan on notes" }, { "QUERY PLAN": "  Filter: x" }]
+      : [{ body: '[{"id":1,"body":"a, b"}]', n: "1" }]
+  );
+  try {
+    const csv = await app.call("/rest/v1/notes", { headers: { accept: "text/csv" } });
+    assertEquals([csv.headers.get("content-type"), await csv.text()], [
+      "text/csv; charset=utf-8",
+      'id,body\n1,"a, b"\n',
+    ]);
+    const stripped = await app.call("/rest/v1/notes", {
+      headers: { accept: "application/vnd.pgrst.array+json;nulls=stripped" },
+    });
+    await stripped.body?.cancel();
+    assertStringIncludes(app.seen.at(-1)!.text, "json_strip_nulls");
+    const any = await app.call("/rest/v1/notes", { headers: { accept: "text/html, */*;q=0.1" } });
+    assertEquals(any.status, 200);
+    await any.body?.cancel();
+    const html = await app.call("/rest/v1/notes", { headers: { accept: "text/html" } });
+    assertEquals([html.status, (await html.json()).code], [406, "PGRST107"]);
+    const geo = await app.call("/rest/v1/notes", { headers: { accept: "application/geo+json" } });
+    assertEquals([geo.status, (await geo.json()).code], [406, "PGRST107"]);
+    const plan = await app.call("/rest/v1/notes", {
+      headers: { accept: 'application/vnd.pgrst.plan+text; for="application/json"' },
+    });
+    assertEquals([plan.status, (await plan.json()).code], [406, "PGRST107"]);
+    const csvIn = await app.call("/rest/v1/notes", {
+      method: "POST",
+      headers: { "content-type": "text/csv" },
+      body: "body\nx\ny\n",
+    });
+    assertEquals(csvIn.status, 201);
+    assertEquals(JSON.parse(app.seen.at(-1)!.params[0] as string), [{ body: "x" }, { body: "y" }]);
+    const form = await app.call("/rest/v1/notes", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "body=z",
+    });
+    assertEquals(form.status, 201);
+    assertEquals(JSON.parse(app.seen.at(-1)!.params[0] as string), [{ body: "z" }]);
+  } finally {
+    tearDown();
+  }
+  const explaining = await restApp(
+    (seen) =>
+      seen.text.startsWith("EXPLAIN")
+        ? [{ "QUERY PLAN": "Seq Scan on notes" }, { "QUERY PLAN": "  Filter: x" }]
+        : [{ body: "[]", n: "0" }],
+    { explain: true },
+  );
+  try {
+    const text = await explaining.call("/rest/v1/notes?id=eq.1", {
+      headers: {
+        accept: 'application/vnd.pgrst.plan+text; for="application/json"; options=analyze|verbose',
+      },
+    });
+    assertEquals(await text.text(), "Seq Scan on notes\n  Filter: x");
+    assertStringIncludes(
+      explaining.seen.at(-1)!.text,
+      "EXPLAIN (FORMAT TEXT, ANALYZE, VERBOSE) SELECT",
+    );
+    assertEquals(explaining.sql.statements.at(-1), "ROLLBACK", "an analyzed plan never commits");
+    const json = await explaining.call("/rest/v1/notes?id=eq.1", {
+      method: "DELETE",
+      headers: { accept: "application/vnd.pgrst.plan+json" },
+    });
+    assertEquals(
+      json.headers.get("content-type"),
+      `application/vnd.pgrst.plan+json; for="application/json"; charset=utf-8`,
+    );
+    assertEquals(await json.text(), "Seq Scan on notes");
+    const badOption = await explaining.call("/rest/v1/notes", {
+      headers: { accept: "application/vnd.pgrst.plan; options=drop" },
+    });
+    assertEquals(badOption.status, 406);
+    await badOption.body?.cancel();
+    const rpcPlan = await explaining.call("/rest/v1/notes", {
+      headers: { accept: "application/vnd.pgrst.plan" },
+    });
+    assertEquals(rpcPlan.status, 200);
+    await rpcPlan.body?.cancel();
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("writes: upserts, columns=, missing=default reach the statement", async () => {
+  const app = await restApp(() => [{ body: "[]", n: "0" }]);
+  try {
+    const upsert = await app.call("/rest/v1/notes?on_conflict=id&columns=id,body", {
+      method: "POST",
+      headers: { prefer: "resolution=merge-duplicates, missing=default, count=exact" },
+      body: JSON.stringify([{ id: 1 }, { id: 2, body: "b" }]),
+    });
+    assertEquals(upsert.status, 201);
+    assertEquals(
+      upsert.headers.get("preference-applied"),
+      "resolution=merge-duplicates, missing=default, count=exact",
+    );
+    const text = app.seen.at(-1)!.text;
+    assertStringIncludes(text, `ON CONFLICT ("id") DO UPDATE SET "body" = EXCLUDED."body"`);
+    assertStringIncludes(text, "DEFAULT)");
+    const ignore = await app.call("/rest/v1/notes", {
+      method: "POST",
+      headers: { prefer: "resolution=ignore-duplicates" },
+      body: JSON.stringify({ id: 1 }),
+    });
+    assertEquals(ignore.status, 201);
+    assertStringIncludes(app.seen.at(-1)!.text, `ON CONFLICT ("id") DO NOTHING`);
+    const patchColumns = await app.call("/rest/v1/notes?id=eq.1&columns=body", {
+      method: "PATCH",
+      headers: { prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify({ body: "x", owner: "y" }),
+    });
+    assertEquals([patchColumns.status, patchColumns.headers.get("preference-applied")], [
+      204,
+      null,
+    ]);
+    assertStringIncludes(app.seen.at(-1)!.text, `SET ("body")`);
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("restClient speaks supabase-js's wire format: every filter, transform and write", async () => {
+  const sent: Request[] = [];
+  let reply = () => new Response("[]", { status: 200 });
+  const fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    sent.push(new Request(String(input), init));
+    return Promise.resolve(reply());
+  }) as typeof globalThis.fetch;
+  const rest = restClient({ url: "https://x.test/rest/v1", fetch });
+  const last = () => sent.at(-1)!;
+  const params = () => [...new URL(last().url).searchParams];
+  await rest.from("t").select("a, b:c ,  d(e)").contains("tags", ["a", "b c"])
+    .contains("meta", { k: 1 }).contains("r", "[1,2)").containedBy("tags", ["x"])
+    .overlaps("tags", ["y"]).overlaps("r", "[1,3)").rangeGt("r", "[1,2)").rangeGte("r", "[1,2)")
+    .rangeLt("r", "[1,2)").rangeLte("r", "[1,2)").rangeAdjacent("r", "[1,2)")
+    .textSearch("s", "cat & dog").textSearch("s", "cat", { type: "plain", config: "english" })
+    .textSearch("s", "a b", { type: "phrase" }).textSearch("s", "x", { type: "websearch" })
+    .likeAllOf("n", ["a*", "*b"]).likeAnyOf("n", ["c"]).ilikeAllOf("n", ["d"])
+    .ilikeAnyOf("n", ["e"]).regexMatch("n", "^a").regexIMatch("n", "^b")
+    .isDistinct("n", "z").notIn("id", [1, 2]).match({ x: 1, y: "two" })
+    .filter("n", "eq", "f").or("a.eq.1,b.eq.2").or("c.eq.3", { referencedTable: "d" })
+    .order("e", { referencedTable: "d", ascending: false }).limit(5, { foreignTable: "d" })
+    .range(10, 19, { referencedTable: "d" });
+  assertEquals(params(), [
+    ["select", "a,b:c,d(e)"],
+    ["tags", 'cs.{a,"b c"}'],
+    ["meta", 'cs.{"k":1}'],
+    ["r", "cs.[1,2)"],
+    ["tags", "cd.{x}"],
+    ["tags", "ov.{y}"],
+    ["r", "ov.[1,3)"],
+    ["r", "sr.[1,2)"],
+    ["r", "nxl.[1,2)"],
+    ["r", "sl.[1,2)"],
+    ["r", "nxr.[1,2)"],
+    ["r", "adj.[1,2)"],
+    ["s", "fts.cat & dog"],
+    ["s", "plfts(english).cat"],
+    ["s", "phfts.a b"],
+    ["s", "wfts.x"],
+    ["n", "like(all).{a*,*b}"],
+    ["n", "like(any).{c}"],
+    ["n", "ilike(all).{d}"],
+    ["n", "ilike(any).{e}"],
+    ["n", "match.^a"],
+    ["n", "imatch.^b"],
+    ["n", "isdistinct.z"],
+    ["id", "not.in.(1,2)"],
+    ["x", "eq.1"],
+    ["y", "eq.two"],
+    ["n", "eq.f"],
+    ["or", "(a.eq.1,b.eq.2)"],
+    ["d.or", "(c.eq.3)"],
+    ["d.order", "e.desc"],
+    ["d.limit", "10"],
+    ["d.offset", "10"],
+  ]);
+  await rest.from("t").select().csv();
+  assertEquals(last().headers.get("accept"), "text/csv");
+  await rest.from("t").select().geojson();
+  assertEquals(last().headers.get("accept"), "application/geo+json");
+  reply = () => new Response("Seq Scan", { status: 200 });
+  const plan = await rest.from("t").select().explain({ analyze: true, verbose: true });
+  assertEquals(plan.data, "Seq Scan");
+  assertEquals(
+    last().headers.get("accept"),
+    'application/vnd.pgrst.plan+text; for="application/json"; options=analyze|verbose;',
+  );
+  reply = () => new Response("[]", { status: 200 });
+  await rest.from("t").update({ a: 1 }).eq("id", 1).rollback().maxAffected(3)
+    .setHeader("x-trace", "1").returns<unknown>();
+  assertEquals(last().headers.get("prefer"), "tx=rollback,handling=strict,max-affected=3");
+  assertEquals(last().headers.get("x-trace"), "1");
+  await rest.from("t").insert([{ a: 1 }, { b: 2 }], { count: "exact", defaultToNull: false });
+  assertEquals(params(), [["columns", '"a","b"']]);
+  assertEquals(last().headers.get("prefer"), "count=exact,missing=default");
+  await rest.from("t").upsert({ a: 1 }, { onConflict: "a", ignoreDuplicates: true }).select("a");
+  assertEquals(params(), [["on_conflict", "a"], ["select", "a"]]);
+  assertEquals(
+    last().headers.get("prefer"),
+    "resolution=ignore-duplicates,return=representation",
+  );
+  await rest.from("t").upsert([{ a: 1 }]);
+  assertEquals(last().headers.get("prefer"), "resolution=merge-duplicates");
+  await rest.from("t").delete({ count: "planned" }).eq("id", 1);
+  assertEquals([last().method, last().headers.get("prefer")], ["DELETE", "count=planned"]);
+  await rest.rpc("fn", { a: 1, list: [1, 2], skip: undefined }, { get: true, count: "exact" });
+  assertEquals([last().method, params()], ["GET", [["a", "1"], ["list", "{1,2}"]]]);
+  await rest.rpc("fn", {}, { head: true });
+  assertEquals(last().method, "HEAD");
+  await rest.rpc("fn", { a: 1 });
+  assertEquals([last().method, await last().json()], ["POST", { a: 1 }]);
+  await rest.schema("api").from("t").select();
+  assertEquals(last().headers.get("accept-profile"), "api");
+  await rest.schema("api").rpc("fn");
+  assertEquals(last().headers.get("content-profile"), "api");
+  reply = () => new Response('[{"a":1},{"a":2}]', { status: 200 });
+  const many = await rest.from("t").select().maybeSingle();
+  assertEquals([many.status, many.error?.code], [406, "PGRST116"]);
+  reply = () => new Response('[{"a":1}]', { status: 200 });
+  assertEquals((await rest.from("t").select().maybeSingle()).data, { a: 1 });
+  reply = () => new Response("[]", { status: 200 });
+  assertEquals((await rest.from("t").select().maybeSingle()).data, null);
+  reply = () =>
+    new Response('{"code":"PGRST201","message":"m","details":[{"a":1}],"hint":"h"}', {
+      status: 300,
+    });
+  const ambiguous = await rest.from("t").select("a(b)");
+  assertEquals([ambiguous.error?.code, ambiguous.error?.details], ["PGRST201", '[{"a":1}]']);
+  let thrown: unknown;
+  try {
+    await rest.from("t").select().throwOnError();
+  } catch (error) {
+    thrown = error;
+  }
+  assert(thrown instanceof RestClientError);
+  const offline = restClient({
+    url: "https://x.test",
+    fetch: () => Promise.reject(new Error("x")),
+  });
+  let offlineThrown: unknown;
+  try {
+    await offline.from("t").select().throwOnError();
+  } catch (error) {
+    offlineThrown = error;
+  }
+  assertEquals((offlineThrown as RestClientError).code, "network_error");
+  const controller = new AbortController();
+  reply = () => new Response(null, { status: 204 });
+  const aborted = await rest.from("t").delete().eq("id", 1).abortSignal(controller.signal);
+  assertEquals([aborted.status, aborted.statusText, aborted.data], [204, "No Content", null]);
+  assertEquals(last().signal.aborted, false);
+});
+
+Deno.test("Supabase keys and access tokens: the shared identity, 401s, CSRF, exact counts", async () => {
+  const g = await generateSupabaseKeys();
+  const keys = await resolveSupabaseKeys({
+    publishableKey: g.publishableKey,
+    secretKey: g.secretKey,
+    signingKeys: g.signingKey,
+  });
+  const now = () => Math.floor(Date.now() / 1000);
+  const token = (exp: number) =>
+    signSupabaseJwt(keys, { sub: "user-j", role: "authenticated", aud: "authenticated", exp });
+  installSupabaseKeys(keys);
+  const app = await restApp(() => [{ body: '[{"id":1}]', n: "1", total: "1" }]);
+  try {
+    const anon = await app.call("/rest/v1/notes", { headers: { apikey: g.publishableKey } });
+    assertEquals(anon.status, 200);
+    await anon.body?.cancel();
+    assertEquals(app.seen.at(-1)!.role, "anon");
+    const user = await app.call("/rest/v1/notes", {
+      headers: {
+        apikey: g.publishableKey,
+        authorization: `Bearer ${await token(now() + 600)}`,
+        prefer: "count=exact",
+      },
+    });
+    assertEquals(user.status, 200, "a signed-in token may count exactly");
+    await user.body?.cancel();
+    assertEquals([app.seen.at(-1)!.role, app.seen.at(-1)!.claims.sub], ["authenticated", "user-j"]);
+    const expired = await app.call("/rest/v1/notes", {
+      headers: { authorization: `Bearer ${await token(now() - 600)}` },
+    });
+    assertEquals([expired.status, (await expired.json()).code], [401, "PGRST303"]);
+    const bad = await app.call("/rest/v1/notes", { headers: { apikey: "sb_publishable_nope" } });
+    assertEquals([bad.status, (await bad.json()).code], [401, "PGRST301"]);
+    assertEquals(bad.headers.get("www-authenticate"), 'Bearer error="invalid_token"');
+    const seen = app.seen.length;
+    const service = await app.call("/rest/v1/notes?id=eq.1", {
+      method: "DELETE",
+      cookie: await cookieFor("user-a"),
+      crossSite: true,
+      headers: { apikey: g.secretKey, authorization: `Bearer ${g.secretKey}` },
+    });
+    assertEquals(service.status, 204, "the secret key decides: no cookie, no CSRF check");
+    assertEquals(app.seen.length, seen + 1);
+    assertEquals(app.seen.at(-1)!.claims.role, "service_role");
+    const jwtWrite = await app.call("/rest/v1/notes", {
+      method: "POST",
+      body: "{}",
+      cookie: await cookieFor("user-a"),
+      crossSite: true,
+      headers: { authorization: `Bearer ${await token(now() + 600)}` },
+    });
+    assertEquals(jwtWrite.status, 201);
+    const cookieWrite = await app.call("/rest/v1/notes", {
+      method: "POST",
+      body: "{}",
+      cookie: await cookieFor("user-a"),
+      crossSite: true,
+      headers: { apikey: g.publishableKey },
+    });
+    assertEquals(cookieWrite.status, 403, "the publishable key does not lift the cookie rule");
+    await cookieWrite.body?.cancel();
+  } finally {
+    installSupabaseKeys(undefined);
+    tearDown();
+  }
+});
+
+Deno.test("aggregates are off by default; PUT; the OpenAPI root; the secret key's catalog", async () => {
+  const g = await generateSupabaseKeys();
+  const keys = await resolveSupabaseKeys({
+    publishableKey: g.publishableKey,
+    secretKey: g.secretKey,
+    signingKeys: g.signingKey,
+  });
+  installSupabaseKeys(keys);
+  const hidden = relation("hidden", "r", false).map((row) => ({
+    ...row,
+    oid: "1003",
+    reachable: "false",
+  }));
+  let app = await restApp(
+    () => [{ body: '[{"id":1}]', n: "1" }],
+    {},
+    () => [...COLUMN_ROWS, ...hidden],
+  );
+  try {
+    const refused = await app.call("/rest/v1/notes?select=id.sum()");
+    assertEquals([refused.status, (await refused.json()).code], [400, "PGRST123"]);
+    const put = await app.call("/rest/v1/notes?id=eq.1", {
+      method: "PUT",
+      headers: { prefer: "return=representation" },
+      body: JSON.stringify({ id: 1, owner: "o", body: "b" }),
+    });
+    assertEquals([put.status, await put.text()], [200, '[{"id":1}]']);
+    assertStringIncludes(app.seen.at(-1)!.text, `ON CONFLICT ("id") DO UPDATE SET`);
+    const minimal = await app.call("/rest/v1/notes?id=eq.1", {
+      method: "PUT",
+      body: JSON.stringify({ id: 1, owner: "o", body: "b" }),
+    });
+    assertEquals(minimal.status, 204);
+    const root = await app.call("/rest/v1", { headers: { accept: "application/openapi+json" } });
+    const doc = await root.json();
+    assertEquals([root.status, doc.swagger, Object.keys(doc.paths)], [200, "2.0", ["/", "/notes"]]);
+    const head = await app.call("/rest/v1", { method: "HEAD" });
+    assertEquals([head.status, await head.text()], [200, ""]);
+    const post = await app.call("/rest/v1", { method: "POST", body: "{}" });
+    assertEquals([post.status, post.headers.get("allow")], [405, "GET, HEAD"]);
+    await post.body?.cancel();
+    const anonHidden = await app.call("/rest/v1/hidden", { headers: { apikey: g.publishableKey } });
+    assertEquals(anonHidden.status, 404);
+    await anonHidden.body?.cancel();
+    const service = await app.call("/rest/v1/hidden", { headers: { apikey: g.secretKey } });
+    assertEquals(service.status, 200, "the secret key sees every relation of the schema");
+    await service.body?.cancel();
+    const serviceDoc = await app.call("/rest/v1", { headers: { apikey: g.secretKey } });
+    assertEquals(Object.keys((await serviceDoc.json()).paths), ["/", "/hidden", "/notes"]);
+  } finally {
+    installSupabaseKeys(undefined);
+    tearDown();
+  }
+  app = await restApp(() => [{ body: '[{"sum":3}]', n: "1" }], { aggregates: true });
+  try {
+    const allowed = await app.call("/rest/v1/notes?select=id.sum()");
+    assertEquals([allowed.status, await allowed.json()], [200, [{ sum: 3 }]]);
+    assertStringIncludes(app.seen.at(-1)!.text, `sum(t0."id") AS "sum"`);
   } finally {
     tearDown();
   }

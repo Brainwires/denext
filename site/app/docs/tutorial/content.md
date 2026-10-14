@@ -383,8 +383,8 @@ export const config = {
 The public feed is the same for everyone, so it does not need to re-query on every
 request. One segment export opts the route into incremental static regeneration: the
 page is served from a cached shell and regenerated at most once every 10 seconds,
-stale-while-revalidate. It applies to the production server (`deno task start`) —
-`deno task dev` always re-renders. [Rendering](/docs/rendering) explains the other
+stale-while-revalidate. It applies to the production server (`denext task start`) —
+`denext task dev` always re-renders. [Rendering](/docs/rendering) explains the other
 segment options, and [Data fetching](/docs/data) explains invalidating a cache on
 demand.
 
@@ -392,7 +392,7 @@ demand.
 // examples/notes/app/page.tsx
 // Public home feed. `export const revalidate` opts this route into ISR: it renders
 // to a cached shell that is regenerated at most once every 10s (stale-while-
-// revalidate), so the feed is cheap under load. Active in `deno task start` (prod).
+// revalidate), so the feed is cheap under load. Active in `denext task start` (prod).
 
 import { listPublicNotes } from "../lib/db.ts";
 
@@ -604,7 +604,7 @@ export default async function MyNotes() {
 }
 ```
 
-Run `deno task dev`, open `/notes`, and the route now ships one small bundle — the two
+Run `denext task dev`, open `/notes`, and the route now ships one small bundle — the two
 islands and the runtime — while the page, the session and SQLite stay on the server.
 The step-7 test still passes unchanged: with JavaScript off the same forms post to the
 same endpoints. Two things to keep in mind as you add islands of your own:
@@ -612,7 +612,7 @@ same endpoints. Two things to keep in mind as you add islands of your own:
 - **Do not put the hooks in `page.tsx`.** A page or layout that calls a hook itself, with
   no `"use client"` boundary, makes denext bundle and hydrate the _whole route_ — page,
   layouts and everything they import. That is a compatibility path for apps written that
-  way; here it would try to ship `lib/db.ts`, and the build (and `deno task dev`) refuse
+  way; here it would try to ship `lib/db.ts`, and the build (and `denext task dev`) refuse
   it, naming the module and the route. The fix is always this chapter's shape.
 - **Mark server-only modules.** `lib/db.ts` is server-only by nature (`node:sqlite`,
   `Deno.env`); call `serverOnly()` from `denext` at its top (or `import "server-only"` in a
@@ -620,18 +620,21 @@ same endpoints. Two things to keep in mind as you add islands of your own:
 
 ## 9. Build and run
 
-`deno task dev` serves the app with hot reloading at `http://localhost:3000`;
-`deno task build` emits the production output and `deno task start` serves it, with
+`denext task dev` serves the app with hot reloading at `http://localhost:3000`;
+`denext task build` emits the production output and `denext task start` serves it, with
 ISR and error redaction active. The demo accounts are seeded on first run —
 `demo@denext.dev` and `alice@denext.dev`, password `password` — and in production you
 set `SESSION_SECRET` to a strong secret and `NOTES_DB` to the database path.
 
 ```sh
 # examples/notes/README.md
-deno task dev      # http://localhost:3000
+denext task dev      # http://localhost:3000
 # or, production:
-deno task build && deno task start
+denext task build && denext task start
 ```
+
+`denext task` runs the `deno.json` task on [denext's Deno toolchain](/docs/toolchain); with Deno
+installed, `deno task dev` runs the same task.
 
 From there it is a Deno process behind whatever you already run: Deno Deploy, a
 container, systemd, or a single `deno serve`. [Deploying](/docs/deploy) has the

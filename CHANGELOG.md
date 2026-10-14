@@ -8,58 +8,430 @@ and this project adheres to
 
 ## [Unreleased]
 
-## [4.0.0-rc.2] - 2026-10-13
-
-### Changed
-
-- **denext's Deno toolchain and Deno Desktop runtime are 2.9.7-denext.16** (both pins from the same
-  release, hashes and attestations verified). The Vitest/Jest layer in `deno test` needs no
-  permission of its own (its config, `__mocks__` and automock reads take no `--allow-read` inside
-  the project, and it needs no `--allow-env`), `vi.mock` works under a path with `~` or a space,
-  and `deno coverage` maps the modules the layer transformed. Upstream Deno picks: `deno compile`
-  checks read permission for a dynamic import, Node-API fixes, coverage runs skip V8's code cache,
-  the `fetch` connection pool, `rand` 0.9.3. The minimum desktop runtime stays 2.9.7-denext.14.
-
-## [4.0.0-rc.1] - 2026-10-13
-
-### Breaking (4.0)
-
-- **`denext task` is Deno's `deno task`.** `denext task <name> [args…]` runs a `deno.json` /
-  `package.json` task on denext's Deno toolchain, every argument verbatim. Inside it every `deno`
-  is the toolchain: Deno's task shell runs its own executable for a `deno …` step, and a script or
-  tool the task starts finds that binary as `deno` on `PATH` — through the toolchain's own cache
-  directory, or a directory holding only a `deno` link to it — with every other `PATH` lookup
-  (node, npm, python) unchanged, and no change at all when `PATH` already finds it. A leading global
-  flag goes after the subcommand (`denext --config deno.json task p` → `deno task --config
-  deno.json p`; `denext -A main.ts` → `deno run -A main.ts`); `--verbose` is denext's alone.
-  `denext ui`'s Tasks page runs a task the same way.
-- **Background and scheduled tasks are now jobs**, end to end, with no aliases: `denext job <name>
-  | --list | --history | --clear-history`; the `tasks/` directory is `jobs/`; `defineTask` →
-  `defineJob`, `runTask` → `runJob`, `registerTask` / `getTask` / `isTask` / `taskNames` →
-  `registerJob` / `getJob` / `isJob` / `jobNames`; the types `Task`, `TaskContext`,
-  `TaskDefinition`, `TaskRetry`, `TaskBackoff`, `TaskRunRecord`, `TasksConfig`,
-  `TaskHistoryConfig` and `TaskHistory*` → `Job…`; `sqliteTaskHistoryStore` /
-  `postgresTaskHistoryStore` → `sqliteJobHistoryStore` / `postgresJobHistoryStore`; config
-  `scheduledTasks` → `scheduledJobs` and `tasks: { history, historyMaxRuns }` → `jobs: { … }`;
-  the history file `.denext/tasks.db` → `.denext/jobs.db` (and the Postgres store's `task_runs`
-  table → `job_runs`, a run's `task` field → `job`, and `denext job --list --json`'s `tasks` → `jobs`); `denext generate task` → `denext generate
-  job`, and `generate migration` / `generate seed` write `jobs/migrate.ts` / `jobs/seed.ts`. A
-  config that still sets `tasks` or `scheduledTasks` fails to load, naming the new key. The docs
-  page moved to [/docs/jobs](https://denext.dev/docs/jobs).
-- **`denext info <module>`** is Deno's `deno info` (its flags pass through); `denext info [dir]`
-  keeps printing denext's environment and project facts. Deno's cache info: `denext deno info`.
-- **`denext audit` also runs `deno audit`** (Deno's audit flags — `--level`, `--ignore`,
-  `--ignore-unfixable`, `--socket`, `--fix`, `--lock`, … — forwarded) and exits non-zero when
-  either half fails. Deno's half needs the network (the advisory services) and reads the
-  lockfile, so an offline CI step or a project without `deno.lock` that ran `denext audit` before
-  now fails or changes its result: pass `--skip-deno-audit` for denext's checks only.
-- A forwarding verb (`test`, `lint`, `fmt`, `check`, `add`, `remove`, `update`) keeps a literal
-  `--` in what it hands Deno, so `denext test a.test.ts -- --seed 1` gives the script its own
-  arguments, and hands back `--quiet` (and `--json` to `lint`), which denext parses as global
-  flags.
+## [4.0.0] - 2026-10-14
 
 ### Added
 
+- **`setRequestTimeout(ms)` (`denext/server`).** Replaces the app's `requestTimeout` for the
+  current request — longer, shorter, or `0` for none — counted from the request's start. For a
+  surface with a time budget of its own (a plugin's long-running endpoint, a large transfer).
+- **`localServerOrigin()` (`denext/server`).** It returns the origin on which this machine
+  reaches the server that received the current request: the address it listens on, with a
+  wildcard bind as loopback (`http://127.0.0.1:3000`). The value never comes from the request's
+  headers, so server code can give it to something that outlives the request. Outside denext's
+  own server loop it is `undefined`.
+- **Readiness checks in `/_denext/health`, and `denext doctor` for `@denext/backend`.**
+  `registerHealthCheck(name, check)` from `denext/server` adds a check the probe runs; while one
+  fails (or takes over 2 s) the probe answers `503` with `"status": "degraded"` and
+  `checks: { name: "down" }`. `@denext/backend` registers `database`, so an app whose database
+  is unreachable (a wrong password, a stopped server) is no longer reported healthy by the probe
+  or the generated compose healthcheck. `denext doctor` gains backend checks: the plugin's setup
+  accepts the configuration (keys, storage secret), the database answers, no backend or app
+  migration is pending, and the storage driver answers.
+- **A captcha budget in front of the verifier (`rateLimit.captcha`).** Every captcha token
+  denext is about to send to hCaptcha / Turnstile — on denext's own endpoints and `/auth/v1` —
+  first spends a per-client-IP budget, 30 per minute by default (`{ max, windowMs }`, or `false`
+  to turn it off; `rateLimit: false` turns it off with the rest). Past it the request is a `429`
+  with no provider call: `{ error: "too many attempts" }` with `Retry-After` on denext's
+  endpoints, GoTrue's `over_request_rate_limit` on `/auth/v1`. A missing or oversized token is
+  refused without spending. With the send budgets, no unauthenticated request stream can drive
+  unlimited calls to a captcha verifier, mailer or SMS gateway.
+- **`denext migration` and the Supabase CLI's `db` verbs, on SQLite or Postgres.**
+  `denext migration new | list | up | down | repair | squash | fetch` and `denext db migrate`
+  (= `migration up`) / `rollback` (= `migration down`) / `status` / `push` / `reset` / `seed` /
+  `link` are now core verbs. They need no plugin and work on `node:sqlite` as well as Postgres.
+  A migration's down script is a `-- migrate:down` section or a `<name>.down.sql` file, and
+  `generate migration` writes both sections. `down` refuses a migration with no down script
+  before it runs anything; `--force-reset --yes` resets the database and re-applies up to the
+  target instead, as `supabase migration down` does. `up` takes `--to <version>`, and refuses
+  out-of-order files without `--include-all`. A project with `supabase/migrations/` keeps the
+  Supabase CLI's `supabase_migrations.schema_migrations` history, so you can switch between the
+  two CLIs in either direction. `--db-url <url | sqlite:path>` or `--linked` (after
+  `denext db link --url`, which stores the URL in `.env` and never prints it) targets another
+  database. `migrateSqlite` / `sqliteMigrationStatus` from `denext/server` are the SQLite twins of
+  `migratePostgres`, and the generated `jobs/migrate.ts` uses them.
+- **`@denext/backend`: the Postgres tooling of `denext db`.** `db pull [name]` writes what the
+  database has as a new migration and records it as applied. `db lint` runs plpgsql_check when it
+  is installed, plus built-in checks: RLS off on a table the API roles reach, policies with RLS
+  off, RLS without a policy, a mutable `search_path`, views without `security_invoker`, tables
+  with no grants. `db inspect <report>` runs the `supabase inspect db` reports (`report` runs them
+  all). `db test` runs pgTAP files from `supabase/tests/` in rolled-back transactions. `db types`
+  prints the whole-schema `Database` type in `supabase gen types` shape. `db seed` also creates
+  the config's buckets and uploads `supabase/buckets/<bucket>/**`.
+- **The rest of the Supabase CLI.** `denext stack up | down | status | logs` runs the Docker stack
+  `denext generate docker` writes, the way `supabase start` does. `up` writes the stack when it is
+  missing, fills a missing `.env` with generated secrets and a fresh key set, then runs
+  `docker compose up --wait`. `status` prints the API, REST, database and S3 URLs and the
+  publishable key; the secret key and the passwords appear only with `--show-secrets`.
+  `@denext/backend` adds `denext storage ls | cp | mv | rm` (`ss:///bucket/key` paths, `-r`,
+  local ↔ bucket and bucket ↔ bucket), `denext functions new | serve | delete` (`serve` runs only
+  the functions host, on port 54321) next to `list`, and `denext backend token` (a signed access
+  token for a role and user, like `supabase gen bearer-jwt`; it prints only the token).
+  `denext gen types | keys | signing-key | bearer-jwt` maps the Supabase CLI's `gen` group onto
+  them. Shell completions now complete each verb's actions (`denext db <TAB>`). `denext mcp` adds
+  `denext_migrations` (list, up, down) and `denext_gen_types`.
+  `edgeFunctionSource` is exported from `denext/plugin-kit` for a plugin's own scaffolding verbs.
+- **`denextAuth({ sendSms, captcha, hooks, anonymous })`.** SMS delivery, captcha (hCaptcha /
+  Turnstile), Supabase's auth hooks (`customAccessToken`, `sendEmail`, `sendSms`) and anonymous
+  sign-in are now configured once on `denextAuth()`; `/auth/v1` uses them unless
+  `backend({ supabase: { auth } })` sets its own.
+- **`/auth/v1`: the stock supabase-js `supabase.auth.*` against denext auth.** With
+  `backend({ supabase })` the users `denextAuth()` keeps are also served by a GoTrue-compatible
+  API: `signup` (email or phone with a password, or anonymous), `token`
+  (`password`, `refresh_token`, `pkce`, `id_token`), `otp` / `magiclink`, `verify` (the code, the
+  link hash, and the GET an emailed link opens — implicit fragment or PKCE `?code=`), `resend`,
+  `recover`, `user` (GET / PUT: metadata, password, email and phone changes; an anonymous user
+  becomes permanent by confirming one), `reauthenticate`, `logout` (`local` / `others` /
+  `global`), `authorize` and `user/identities/authorize` (OAuth through the configured providers,
+  whose callback stays `{basePath}/callback/:provider`), identity unlinking, `factors` (TOTP and
+  SMS: enroll, challenge, verify to `aal2`, unenroll), `settings`, SAML 2.0 `sso` (SP-initiated,
+  metadata and ACS, on the new SAML primitives), and the admin API (`admin/users` with
+  pagination, create / read / update incl. `ban_duration` / delete, `invite`,
+  `admin/generate_link`, factor removal). Sessions are rotating refresh-token families with
+  GoTrue's reuse detection; access tokens carry Supabase's claims and re-check their session on
+  every request. Options under `backend({ supabase: { auth } })`: `siteUrl`, `redirectUrls`,
+  `jwtExpiry`, `refreshTokenReuseInterval`, `disableSignup`, `autoconfirm`, `phoneAutoconfirm`,
+  `anonymousUsers`, `minPasswordLength`, `otpLength`, `otpExpiry`, `sendSms`, `captcha`
+  (hCaptcha / Turnstile), `hooks` (`customAccessToken`, `sendEmail`, `sendSms`),
+  `requireReauthentication`, `manualLinking`, `mfa`, `saml`, `idTokenProviders`, `oauthServer`
+  and `web3` (below). Errors are
+  GoTrue's `{ code, error_code, msg }`. Tested with `@supabase/supabase-js` on the in-memory
+  adapter and on Postgres.
+- **SAML metadata validity, background refresh and `EncryptedID`.** IdP metadata's `validUntil`
+  and `cacheDuration` are parsed strictly (the earliest / shortest over the EntityDescriptor and
+  an enclosing EntitiesDescriptor; garbage is `bad_metadata`) and returned by `parseIdpMetadata`
+  (`ParsedIdpMetadata`). A `/auth/v1` provider — stored or config-declared — whose metadata is past
+  its `validUntil` fails closed: sign-in and IdP-initiated Single Logout answer 400
+  `saml_metadata_expired`, the ACS and an SP-initiated logout land with that `error_code`, and the
+  logger warns once per provider; the admin API refuses already-expired metadata. A stored
+  `metadata_url` is fetched again at the earliest of a day after the last fetch, its
+  `cacheDuration` and its `validUntil` (stored as `metadataValidUntil` / `metadataRefreshAfter`;
+  Postgres migration `0006_auth_sso_metadata_validity`, SQLite columns added in place); a failed
+  refresh keeps the stored copy only while it is valid. Metadata fetches are single-flight per
+  provider, at most one per five minutes, and back off after a failure (five minutes doubling to
+  an hour). `saml.metadataRefresh: { intervalSeconds }` refreshes due providers in the background
+  (unref'd, stopped at teardown), and `refreshSsoMetadata(config?, { force, jitterMs })` from
+  `denext/server` does it from a scheduled job and returns a summary. `saml:EncryptedID` is
+  accepted in an Assertion's Subject and in a LogoutRequest under the `EncryptedAssertion` rules
+  (algorithm allow-list, one EncryptedKey, strict content model, decrypted only after the covering
+  signature verified, exactly one `saml:NameID` inside, parsed strictly in the EncryptedID's
+  namespace context); without an SP decryption key it stays `encrypted_assertion_unsupported`.
+- **SAML SSO: stored providers, Single Logout and encrypted assertions for `/auth/v1`.** The SSO
+  admin API (`GET/POST /auth/v1/admin/sso/providers`, `GET/PUT/DELETE …/:id`, service role only,
+  GoTrue's `SSOProvider` shape and error codes) stores identity providers next to the
+  config-declared `saml.providers` — by `metadata_xml` or an HTTPS `metadata_url` (fetched with
+  `safeFetch` pinned to its host, refreshed when a day old), with GoTrue's `attribute_mapping` and
+  `name_id_format`; entity ids and domains are unique across all providers. `saml.signingKey` +
+  `signingCertificate` (PKCS #8 PEM or RSA JWK, RSA-SHA256) sign AuthnRequests and turn on Single
+  Logout: `POST /logout` for a SAML session answers `200 { url }` with a signed LogoutRequest for
+  the IdP, and `/auth/v1/sso/saml/slo` verifies the IdP's LogoutResponse, or an IdP-initiated
+  LogoutRequest (HTTP-Redirect query signature or HTTP-POST XML signature; Destination, Issuer,
+  freshness, InResponseTo, replay) that ends the sessions its NameID / SessionIndex name and is
+  answered with a signed LogoutResponse. `saml.encryptionKey` + `encryptionCertificate` accept
+  `EncryptedAssertion`s (RSA-OAEP with SHA-1 / SHA-256; AES-128/256-GCM or -CBC): a Response
+  signature is verified before decrypting, the decrypted Assertion is held to every plaintext rule,
+  and without a signature over the cipher text every refusal is the one `decryption_failed` (no
+  padding or format oracle). The SP metadata publishes both certificates and the SLO endpoint.
+  Assertion and logout message IDs are now remembered in the adapter, shared by every replica. New
+  adapter group `createSsoProvider` / `updateSsoProvider` / `getSsoProvider` /
+  `getSsoProviderByEntityId` / `getSsoProviderByDomain` / `listSsoProviders` /
+  `deleteSsoProvider` / `createSsoSession` / `listSsoSessions` / `claimSamlMessageId`, in the
+  in-memory, SQLite and Postgres adapters (Postgres migration `0004_auth_sso_providers`). The
+  primitives gain `buildLogoutRequest`, `buildLogoutResponse`, `peekLogoutMessage`,
+  `verifyLogoutRequest`, `verifyLogoutResponse`, `SamlSpConfig.signingKey` / `encryptionKey` and
+  the codes `decryption_failed`, `bad_key` and `bad_binding`. Golden encrypted, signed and logout
+  fixtures come from xmlsec1 and `openssl`.
+- **Phone sign-in, anonymous sign-in, captcha and Supabase's auth hooks on denext's own auth
+  endpoints.** One `denextAuth()` config now drives both paths:
+  - `phoneOtp()` (from `denext/server`): `POST {basePath}/callback/phone` with `{ phone }` texts a
+    one-time code through `sendSms` / `hooks.sendSms`, and `{ phone, code }` signs in
+    (`amr: ["sms"]`). Sends are enumeration-safe (one answer for known, unknown and invalid
+    numbers; the per-number + per-IP send budget spent before the lookup), redeems are single-use
+    under the failure budget, a new number signs up phone-verified unless `allowSignUp: false`,
+    and a first proof into an account whose number was never verified retires its password,
+    second factors, passkeys, bearer tokens and sessions first (new `phoneVerified` event). No GET:
+    a code never rides a URL. Codes live in a new `"sms"` verification-token space.
+  - `anonymous: true` adds `POST {basePath}/anonymous`, which creates and signs in a user with no
+    identifier (`isAnonymous: true` on the session user and `is_anonymous: true` in the claims
+    `@denext/backend` runs a cookie session's queries with). Redeeming an email link / code or a
+    phone code for an identifier no account has, from a complete anonymous session, converts that
+    user in place — same id, `isAnonymous` cleared, new `userConverted` event — even under
+    `allowSignUp: false`; an identifier that already has an account signs into it instead.
+  - `captcha` (hCaptcha / Turnstile) now also guards the credentials sign-in, the email and phone
+    sends, `/anonymous` and `POST /reset`: the token comes from `captchaToken`, `captcha_token`,
+    `cf-turnstile-response`, `h-captcha-response` or the `x-captcha-token` header and is checked
+    before any adapter work or rate-limit spend; a refusal is `400 { error: "captcha_failed" }`
+    (a form: `?error=CaptchaFailed`), and `signInFailed` gains the `"captcha_failed"` reason.
+  - `hooks.sendEmail` delivers every native auth email (verification, reset, magic link, email
+    code) with Supabase's Send Email Hook payload instead of `sendVerificationRequest`;
+    `hooks.sendSms` every native SMS; and `hooks.customAccessToken` shapes the claims a cookie or
+    native session's `@denext/backend` queries run with (fixed claims restored, cached per session
+    for 60 seconds, a throwing hook fails the request).
+- **One MFA factor store for `denextAuth()` and `/auth/v1`.** A user may hold several second
+  factors — TOTP authenticators, phones that receive SMS codes, and WebAuthn authenticators — in
+  the adapter's factor group, and both sign-in paths read the same factors and enforce them the
+  same way: any verified factor makes a cookie sign-in pending and an `/auth/v1` session `aal1`
+  (which `auth()` reads as signed out until the step-up, like a pending cookie). The cookie
+  step-up takes a code from any TOTP factor, or an SMS code after the new
+  `POST {basePath}/mfa/challenge` (`{ factorId }`) texted it; `verifySecondFactor` takes
+  `challengeId` / `factorId` and answers the `factorId` and the `"sms"` method. `/auth/v1` adds
+  WebAuthn factors (`factorType: "webauthn"`, backed by the passkey store — deleting the passkey
+  deletes the factor), recovery codes (`/factors/recovery-codes*`, denext's backup codes, listed
+  as a `recovery_code` factor), and passkeys (`/passkeys/registration/*`,
+  `/passkeys/authentication/*`, `GET /passkeys`, `PATCH|DELETE /passkeys/:id`,
+  `admin/users/:id/passkeys`), over the store `{basePath}/passkey*` uses. A TOTP secret a
+  pre-4.0 denext kept in the user's MFA record moves into a factor, as stored, the first time
+  the user's factors are read (no key needed, so an unopenable one keeps the user enrolled); it
+  is re-sealed for the factor after the first code it accepts. Once a factor is verified, adding
+  another — enrolling, first verifying, registering a passkey through `/auth/v1` — needs `aal2`
+  (`403 insufficient_aal`), and a pending cookie session can't enroll or confirm one, so a first
+  factor alone never adds a factor of its own. A repeated `/auth/v1` sign-up for an unconfirmed
+  address keeps the account's password only when it is the same one; a different one clears it
+  for good (the newest confirmation goes to the owner, who sets a password after confirming). A
+  sign-up for an unconfirmed account that has no password yet (created by a one-time code or an
+  invite) sets its password like a new sign-up, and an account with a verified phone keeps its
+  password whatever an email sign-up sends.
+- **`/auth/v1`: the OAuth 2.1 server, stored providers and Web3 sign-in.** `oauthServer: {}` makes
+  the app an authorization server: `supabase.auth.admin.oauth.*` registers clients (secrets shown
+  once, stored hashed), `/oauth/authorize` sends the user to your consent page, which answers with
+  `supabase.auth.oauth.getAuthorizationDetails` / `approveAuthorization` / `denyAuthorization`,
+  and `/oauth/token` issues access tokens carrying `client_id` and `scope`, rotating refresh
+  tokens and (with `openid`) an id_token — exact redirect matching, PKCE S256 required,
+  single-use hashed codes whose replay revokes their tokens, consent recorded per user and client,
+  `listGrants` / `revokeGrant` (revoking ends the client's tokens), userinfo and
+  `.well-known/oauth-authorization-server`. `supabase.auth.admin.customProviders.*` stores OAuth
+  2.0 / OIDC providers (secret sealed at rest, OIDC discovery checked when saved) that
+  `signInWithOAuth({ provider: "custom:<name>" })` signs in through, via `/auth/v1/callback`.
+  `web3: { ethereum?, solana? }` turns on `signInWithWeb3`: Sign-In with Ethereum (secp256k1
+  recovery and Keccak-256 in denext's own TypeScript; low-s, EIP-55) and Sign-In with Solana
+  (Ed25519), with the message's domain, URI, chain id and time window checked and its nonce
+  claimed once; identities are GoTrue's (provider `web3`, `sub` `web3:<chain>:<address>`,
+  `custom_claims`, `amr` method `web3`) and so are its refusals (`validation_failed`, and
+  `400 { error: "invalid_grant", error_description }` for a message that doesn't sign in here). OAuth-server sessions carry GoTrue's
+  `oauth_provider/authorization_code` `amr` method. New optional adapter groups (OAuth clients / authorizations / consents, stored
+  providers, Web3 nonces) on the in-memory, SQLite and Postgres adapters (Postgres migration
+  `0005_auth_oauth_server`). Tested with `@supabase/supabase-js` on the in-memory adapter and on
+  Postgres.
+- **Auth adapters keep Supabase's user fields.** `AdapterUser` gains `phone`, `phoneVerified`,
+  `userMetadata`, `appMetadata`, `isAnonymous`, `createdAt`, `updatedAt`, `lastSignInAt` and
+  `bannedUntil`; `AdapterAccount` gains `identityId`, `identityData`, `email` and timestamps; new
+  optional methods `getUserByPhone`, `listUsers` and an MFA-factor group (`createMfaFactor`,
+  `listMfaFactors`, `updateMfaFactor`, `claimMfaFactorStep`, `deleteMfaFactor`);
+  `revokeNativeSessionsByUser(userId, exceptId?)`. The in-memory, SQLite and Postgres adapters
+  implement all of it (Postgres migration `0002_auth_user_profile`; SQLite adds the columns on
+  open).
+- **Storage: object versioning, as Supabase Storage has it.** A bucket's `versioning_status`
+  (`DISABLED`, `ENABLED`, `SUSPENDED`; `createBucket` / `updateBucket`, or `versioned` on a
+  declared bucket): overwriting keeps the old object as a noncurrent version, deleting leaves a
+  delete marker. Versions are read, signed, listed (`noncurrentVersions`, `deleteMarkers`,
+  `exactMatch`), restored (`copy` with `sourceVersionId`) and deleted for good
+  (`remove([{ path, versionId }])`, which brings the newest noncurrent version back when it deletes
+  the current one); a bucket lifecycle policy (`getBucketLifecycle`, `updateBucketLifecycle`,
+  `deleteBucketLifecycle`) expires noncurrent versions. Migration `backend_storage_0002` adds the
+  columns (`storage.objects.archived_at`, `is_delete_marker`, `is_versioned`;
+  `storage.buckets.versioning_status`, `lifecycle`); a sqlite metadata file is upgraded in place.
+- **Storage `listV2`**: cursor pages, flat or with `with_delimiter` (folders apart), for
+  supabase-js's `listV2` and `listFilesV2` from `@denext/backend/client`.
+- **Signed TUS uploads**: `/storage/v1/upload/resumable/sign` with `x-signature` (a
+  `createSignedUploadUrl` token), as on Supabase; `uploadResumable(…, { signature })`.
+- **`denext ui` storage** lists buckets created at runtime too, and deletes through the plugin's
+  storage operations (so the object's metadata row goes with its bytes).
+- **Supabase-compatible keys and request identity (`backend({ supabase })`).** `@denext/backend`
+  takes a `supabase` option (`true`, or the keys) that installs Supabase's API keys — a
+  publishable key (`sb_publishable_…`, the `anon` role), a secret key (`sb_secret_…`, the
+  `service_role`) and the legacy HS256 `anon` / `service_role` JWTs — and an ES256 signing key whose
+  public half is served at `/auth/v1/.well-known/jwks.json`. Every field defaults to an environment
+  variable (`DENEXT_PUBLISHABLE_KEY`, `DENEXT_SECRET_KEY`, `DENEXT_JWT_SECRET`,
+  `DENEXT_JWT_SIGNING_KEYS`); `denext backend keys [--legacy]` mints a set, and `denext dev` with
+  none configured generates one into `.denext/backend-keys.json`. `resolveIdentity(request?)` from
+  `@denext/backend/server` is the one function that decides who a request is — a user's access
+  token (`Authorization: Bearer <jwt>`), then the secret key, then the denext session (cookie or
+  native token), then `anon` — and returns `{ role: "anon" | "authenticated" | "service_role",
+  claims, userId?, source, session? }`; a presented credential that is invalid or expired throws
+  `IdentityError` (401) instead of falling back to `anon`. `db()` now resolves each request
+  through it, so `request.jwt.claims` carries an access token's claims as they are, and the
+  service role runs as the connecting role (no row-level security) with `auth.role()` reading
+  `service_role`; `identityScope(identity)` and `db({ as: identity })` take a resolved identity.
+  `auth()` reads such an access token as a session, and re-checks its `session_id` against the
+  adapter's session families, so a revoked session's tokens stop at once. Core exports the key
+  primitives (`resolveSupabaseKeys`, `signSupabaseJwt`, `verifySupabaseJwt`, `apiKeyRole`,
+  `generateSupabaseKeys`, `supabaseJwks`, `verifyAccessToken`) from `denext/server`.
+- **Edge Functions in `@denext/backend`.** `backend({ functions: {} })` serves
+  `functions/<name>.ts` (or `functions/<name>/index.ts`; `supabase/functions/` when only that
+  exists) at `/functions/v1/<name>`, the path supabase-js's `functions.invoke` calls. A module that
+  calls `Deno.serve(handler)` or default-exports a handler runs unchanged, each in a Deno Worker of
+  its own (started on first use, replaced after a crash, restarted on an edit under `denext dev`;
+  optional per-function `permissions` with Deno's worker options). A caller needs a valid identity
+  unless `verifyJwt: false`; a CORS preflight passes through to the function; a cookie-carrying
+  cross-site write is refused. Responses stream; `timeoutMs` and `maxBodyBytes` bound a request.
+  `denext generate function <name>` scaffolds one, and `denext functions list` lists them.
+- **`@denext/backend` storage speaks Supabase's Storage API.** `backend({ storage })` serves
+  `/storage/v1`, so `supabase.storage` from `@supabase/supabase-js` v2 works unchanged: bucket
+  CRUD at runtime (`createBucket`, `getBucket`, `listBuckets` with search, sort and paging,
+  `updateBucket`, `emptyBucket`, `deleteBucket`), `upload` / `update` (raw bodies and forms,
+  `x-upsert`, `cache-control`, `metadata`), `download`, `info`, `exists`, `list` (folders first,
+  `search`, `sortBy`, `limit`, `offset`), bulk `remove`, `move` and `copy` (also across buckets),
+  `createSignedUrl(s)`, `createSignedUploadUrl` + `uploadToSignedUrl`, `getPublicUrl`, and
+  `render/image` transforms with `resize: cover | contain | fill`, any size up to
+  `maxTransformDimension` (2500), `quality` and `format: "origin"`. Errors are Storage's
+  `{ statusCode, error, message }`. Who a request is comes from the backend's shared identity
+  (`backend({ supabase })`): an access token is that user, the secret key the service role, a
+  denext session its user, anything else `anon`; a refused token is `400 InvalidJWT`. `storage.api: false` turns it off.
+- **TUS resumable uploads** at `/storage/v1/upload/resumable` (TUS 1.0.0: creation,
+  creation-with-upload, `PATCH`, `HEAD`, termination, expiration), for `tus-js-client` and Uppy:
+  S3 multipart underneath on the `s3()` driver, chunk objects on `fs()`; the size cap, allow-list
+  and content sniffing are checked at creation and again on the assembled object.
+- **Bucket and object metadata.** Every write keeps a row per object (size, type,
+  `Cache-Control`, ETag, owner, free-form `metadata`) and per bucket: Supabase's own
+  `storage.objects` / `storage.buckets` tables (with `storage.foldername()`, `filename()`,
+  `extension()`) on Postgres, created by the `backend_storage_0001` migration
+  (`storageMigrations()`), or a `node:sqlite` file (`storage.metadataPath`) without Postgres.
+  Declared buckets are written into the table at startup.
+- **SQL row-level security for storage.** `storage: { rls: true }` (with `postgres`) runs each
+  storage operation's statement on `storage.objects` / `storage.buckets` as the request's role
+  with its claims, so policies written for Supabase apply unchanged; a bucket's `authorize`, when
+  set, must allow it too. `storage.authorize` is the rule for runtime buckets and declared ones
+  without their own; `authorize` now also receives the request's `identity`.
+- **The storage server API grows to match:** `upload(key, body, { upsert, cacheControl,
+  metadata })`, `info`, `exists`, `copy`, `move`, `listFolder`, `createSignedUrls`,
+  `getPublicUrl`, and `storage.createBucket` / `getBucket` / `listBuckets` / `updateBucket` /
+  `deleteBucket` / `emptyBucket`. The `s3()` driver copies inside the store (`CopyObject`).
+- **`s3({ publicEndpoint })`** (or `S3_PUBLIC_ENDPOINT`): the host every URL handed to a browser
+  is signed for — presigned uploads, downloads, multipart parts — when it differs from the
+  `endpoint` the server calls (the Docker stack's `http://minio:9000`). `denext generate docker`
+  writes `S3_PUBLIC_ENDPOINT` into `.env.example` and the app's environment.
+- **`transformImageBytes` takes `resize`** (`cover` crops to the box, `contain` fits inside it,
+  `fill` stretches to it), `format: "origin"` (keep the source's PNG, JPEG or WebP) and a
+  `maxDimension` option that accepts any width, height and quality up to a bound instead of the
+  `images` allowlists.
+- **`denext generate docker` writes a self-hosted stack.** It reads the project and adds the
+  services it needs to the compose file: Postgres 17 (for `@denext/backend` or a Postgres
+  `DATABASE_URL`; `pgvector/pgvector:pg17` when a migration creates the `vector` extension), MinIO
+  with a one-shot `mc` bucket bootstrap (for an `s3()` storage driver), and a one-shot
+  `denext job migrate` service (for `migrations/` with `jobs/migrate.ts`). Every long-running
+  service has a health check and a restart policy, the app waits on `service_healthy` /
+  `service_completed_successfully`, data lives in named volumes, and the database publishes no
+  host port. A new `.env.example` lists every secret the stack reads (`POSTGRES_PASSWORD`,
+  `AUTH_SECRET`, `DENEXT_JWT_SECRET`, `DENEXT_VAULT_KEY`, `DENEXT_STORAGE_SECRET`,
+  `MINIO_ROOT_PASSWORD`, …) with how to generate each; the required ones are empty and the compose
+  file refuses to start until `.env` sets them. Flags override the detection: `--postgres` /
+  `--no-postgres`, `--pgvector`, `--storage`, `--migrate` (each with a `--no-` form), `--stack`
+  (`--all`), `--expose-db`, `--dev` (a `compose.dev.yml` overlay running `denext dev` on a bind
+  mount), `--port`, `--deno-tag`; the command reports what it detected and why. With Postgres or
+  `@denext/backend` the image runs on denext's Deno toolchain (`Deno.SQL`). The `denext ui` Docker
+  page has the same switches, checked as detected, and the MCP `denext_generate` tool takes them
+  as `postgres`, `pgvector`, `storage`, `migrate` (`false` for a `--no-` form), `stack`,
+  `exposeDb`, `dev`, `port` and `denoTag`.
+- **`denext generate --dry-run` and `--force`** for every kind. An existing file is still never
+  overwritten without `--force`; for `docker` the command prints the diff of each file it skipped.
+- **SAML 2.0 Service Provider primitives in `denext/server`.** `parseIdpMetadata`,
+  `spMetadataXml`, `buildAuthnRequest` (HTTP-Redirect binding) and `verifySamlResponse`
+  (HTTP-POST binding), with `inMemorySamlReplayCache` and a `SamlError` carrying stable `code`s.
+  Verification runs on denext's own strict XML parser (any DOCTYPE or entity declaration is
+  refused; size and depth are capped) and Exclusive XML Canonicalization with
+  `InclusiveNamespaces`, accepts only RSA-SHA256/512 and ECDSA-SHA256 signatures over
+  SHA-256/512 digests with the enveloped-signature + exc-c14n transforms, trusts only the
+  configured IdP certificates (never a KeyInfo), and reads claims only from the element whose
+  signature verified: duplicate IDs, a second Assertion anywhere in the document, a Reference
+  that does not name the signature's parent, comments or markup inside NameID / Issuer /
+  Audience / attribute values, encrypted assertions, replays and every Destination, Recipient,
+  Audience, Issuer, InResponseTo and validity-window mismatch are refused. Zero npm; WebCrypto
+  only. The primitives mount no routes.
+- **`@denext/backend`: auto-REST speaks PostgREST 12, so `@supabase/supabase-js` works
+  unchanged.** `createClient(appUrl, key)` then `from()`, `rpc()` and `schema()` reach
+  `backend({ rest })`'s routes, and denext's own client (`from`, `rpc`, `restClient`) now has the
+  same API. New on the routes: embedded resources through the catalog's foreign keys (many-to-one,
+  one-to-many, one-to-one, many-to-many through a junction, `!inner`, `!hint`, spreads, the
+  `count` shorthand, and filters / order / limit / offset / `or` on an embed, plus `rel=is.null`);
+  `or` / `and` trees, nested and negated; every operator (`match`, `imatch`, `isdistinct`, `cs`,
+  `cd`, `ov`, the range operators, `fts` / `plfts` / `phfts` / `wfts` with a configuration,
+  `(any)` / `(all)`); aliases, `::casts` and JSON paths in select, filters and order; upserts
+  (`Prefer: resolution=merge-duplicates|ignore-duplicates`, `on_conflict=`), `columns=` and
+  `missing=default`; `/rpc/<function>` over GET and POST (named arguments and overloads, a single
+  json argument, `params=single-object`, set-returning results filtered, ordered, paged, counted
+  and embedded, scalars, `void`) for the functions `anon` / `authenticated` may EXECUTE;
+  `count=planned|estimated`; CSV in and out; GeoJSON (with PostGIS); `return=headers-only`;
+  `tx=rollback`; `handling=strict` with `max-affected`; `nulls=stripped`; execution plans behind
+  the opt-in `rest.explain`; and several schemas through `rest.schemas` with `Accept-Profile` /
+  `Content-Profile`. Requests resolve through the shared request identity, so supabase-js's
+  `apikey` / `Authorization: Bearer` work (publishable key → `anon`, a user's access token →
+  `authenticated`, the secret key → `service_role`), and a refused one is PostgREST's `401`
+  (`PGRST301`, or `PGRST303` when expired). A GET runs in a READ ONLY transaction. Every name is still looked up in the
+  catalog and every value bound; a request takes at most 64 filters, 256 select items and 8
+  levels of embedding.
+- **`@denext/backend`: the rest of PostgREST in auto-REST.** Views embed through their column
+  lineage (a view inherits its base tables' foreign and unique keys, through views over views);
+  computed fields and computed relationships (a function taking the row; `ROWS 1` is to-one);
+  `order=rel(col)` on a to-one embed; logic trees on embedded columns (`or=(…,rel.col.eq.x)`);
+  `PUT` single-row upserts with PostgREST's checks (`PGRST105`, `PGRST115`); aggregates
+  (`sum` / `avg` / `min` / `max` / `count` with casts, grouped by the other items) behind the
+  opt-in `rest.aggregates`; the OpenAPI (Swagger 2.0) document at `GET /rest/v1`, following
+  privileges; and the secret key (`service_role`) sees every relation and function of the exposed
+  schemas, as in PostgREST. GeoJSON output now runs against PostGIS in CI.
+- **`@denext/backend`: `.denext/rest.ts` is `supabase gen types`-shaped.** `Database` with each
+  exposed schema's `Tables` (with `Relationships`), `Views`, `Functions`, `Enums` and
+  `CompositeTypes`, the `Tables<>` / `TablesInsert<>` / `TablesUpdate<>` / `Enums<>` helpers and
+  `Constants`, so `createClient<Database>()` type-checks; it still registers the default schema
+  for denext's `from()`.
+- **`@denext/backend`: Supabase Realtime, served by the app.** With `backend({ realtime })` the app
+  serves `/realtime/v1/websocket` — the Phoenix channels protocol (serializer `1.0.0` and `2.0.0`,
+  binary broadcast frames included) — and the REST broadcast `/realtime/v1/api/broadcast`, so the
+  stock `@supabase/supabase-js` `supabase.channel(…)` works unchanged: `postgres_changes` (event,
+  schema, table and the `eq neq lt lte gt gte in` filters; Supabase's payload shape; old records
+  as the key, or the whole row with `old: "full"`; `TRUNCATE`), every row re-read as the
+  subscriber under row-level security and a delete sent only to subscribers who could see the
+  row; broadcast (`self`, `ack`, REST, and `realtime.send()` / `realtime.broadcast_changes()` from
+  SQL) and presence across every instance sharing the database; private channels authorized by
+  the `realtime.messages` policies, evaluated as the joining user. The socket's `apikey` and every
+  `access_token` are verified with the `backend({ supabase })` keys; a token's expiry closes its
+  channels. `useTableChanges` gains
+  operator filters and an `events` option; `broadcast()` publishes from server code. See
+  [Supabase Realtime](https://denext.dev/docs/backend#supabase-realtime-supabasechannel).
+- **`@denext/backend` realtime: the publication, replay, native hooks, and a logical source.**
+  Tables opt in the Supabase way too — `alter publication supabase_realtime add table …` (the
+  publication is created if missing and re-read every 10 seconds) — beside `realtime({ tables })`.
+  Private channels replay stored broadcasts (`config.broadcast.replay: { since, limit }`, with
+  `meta: { replayed, id }`), `replication_ready` gets its `system` message, and every change to a
+  row within a burst is sent, in order. `useBroadcast` and `useRealtimePresence` in
+  `@denext/backend/client` reach the same channels without supabase-js, on every instance.
+  `realtime({ source: "logical" })` reads changes from a temporary `pgoutput` slot per instance
+  instead of triggers and NOTIFY, so committing writers no longer serialize on the notification
+  queue (measured: 100 % of the no-realtime commit rate at 32 writers, against 18 % for NOTIFY).
+  `useTableChanges` / `tableChanges` take a `schema`.
+- **`captureRequestContext()` in `denext/plugin-kit`.** A plugin holding a long-lived connection
+  (a WebSocket it upgraded) captures the request before upgrading and later re-enters a copy of it,
+  so `auth()`, `cookies()` and `clientIpForLimits()` answer as they did for the original — how it
+  re-checks who is on the other end.
+- **Vault, queues, vector search and database webhooks in `@denext/backend`.**
+  `backend({ postgres: {}, vault: {} })` stores secrets in `vault.secrets` (Supabase Vault's
+  table shape), encrypted with AES-256-GCM in the app under `DENEXT_VAULT_KEY` (the row id is
+  authenticated with the ciphertext; keys rotate with `key: [new, old]` and `vault.rotate()`); the
+  plaintext is read only by server code (`vault.get`, `vault.decryptedSecrets`). `queues: {}`
+  installs pgmq's SQL API as plain tables and functions (no extension; `send`, `send_batch`,
+  `read` with a visibility timeout, `read_with_poll`, `pop`, `archive`, `delete`, `set_vt`,
+  `metrics`, `purge_queue`, …) plus Supabase's `pgmq_public` wrappers, all security invoker, so
+  grants and row-level security on each queue table decide who can use it; `queue()`, `queues`
+  and the `queueConsumer()` job drive them from the server. `vectorSearchSql()` writes Supabase's
+  pgvector `match_documents` recipe and `matchDocuments()` / `toVector()` call it (a missing
+  `vector` extension is a clear error). `webhooks` gives `supabase_functions.http_request`
+  triggers without `pg_net`: the change is recorded with Supabase's payload and the app delivers
+  it to a configured hook (or an `allowUrls` prefix, nothing else), signed with Standard Webhooks
+  headers (`verifyWebhook()` checks them) and retried with backoff.
+- **Vault in SQL** (`backend({ vault: { sql: true } })`): Supabase's `vault.create_secret()`,
+  `vault.update_secret()` and `vault.decrypted_secrets` over the same rows and the same AES-256-GCM
+  format as the app-side vault (GCM built in PL/pgSQL over pgcrypto's AES block, so each side
+  reads what the other wrote). The key never lives in the database: the app sets it
+  transaction-locally, as a bound parameter, only in transactions it opens — `vault.withKey(fn)`
+  and the migrations `denext db push` applies — and elsewhere the SQL refuses with "no key in this
+  transaction". Only the app's own database user can call it.
+- **`denext generate vector-search [table]`** writes a migration with Supabase's pgvector recipe
+  (the extension, the table with an HNSW index and row-level security, `match_<table>()`);
+  `vectorSearchSql()` is now also exported from `denext/server`.
+- **`denext db push | status | reset | diff | dump`** (from `@denext/backend`): apply the plugin's
+  and the project's migrations (`migrations/` or `supabase/migrations/`), reset a development
+  database and run its seed file, print (or write as a migration) the DDL for what the live
+  database has that the migrations do not, by comparing it with a throwaway shadow database, and
+  run `pg_dump`.
 - **Every Deno verb through `denext`.** A verb denext doesn't define runs on denext's Deno
   toolchain exactly like `denext deno <verb>` — `denext compile …`, `denext run …`, `denext x …`,
   `denext bench …` — arguments verbatim, exit code and signals passed through, stock Deno when no
@@ -114,7 +486,6 @@ and this project adheres to
 - `deno task desktop:pin-runtime <tag>` also writes `src/build/deno-toolchain-pin.json` from the
   release's `cli` section (every CLI archive cross-checked against `SHA256SUMS`, hashed and
   `gh attestation verify`'d like the runtime archives), so one command pins both.
-
 - **React Native mode: `TextInput` takes the props react-native-web drops.** `autoComplete`'s
   React Native values (`"password-new"`, `"sms-otp"`, `"name-given"`, …) and iOS's
   `textContentType` (`"oneTimeCode"`, `"emailAddress"`, `"newPassword"`, …) become the HTML
@@ -137,6 +508,96 @@ and this project adheres to
 
 ### Changed
 
+- **The generated Docker stack no longer runs the app as the Postgres superuser, keeps per-IP
+  limits on, and serves working presigned URLs.** A one-shot `db-init` service (as the
+  superuser) creates the app's own role, `POSTGRES_APP_USER` (`denext_app`): the database's owner
+  with `CREATEROLE`, never a superuser, its password `POSTGRES_APP_PASSWORD` set on every `up`.
+  The app and `migrate` connect as it. A stack created before keeps superuser-owned tables:
+  start over with `denext stack down --volumes`, or `ALTER TABLE … OWNER TO denext_app`. The app
+  gets `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1`, so sign-in and sign-up budgets apply to clients
+  arriving from the Docker bridge. MinIO is published on `127.0.0.1:${MINIO_PORT:-9000}` by the
+  production file (the dev overlay no longer adds it), so the default
+  `S3_PUBLIC_ENDPOINT=http://localhost:9000` reaches it; `.env.example`'s `S3_BUCKET` now
+  matches the bucket the config names.
+- **`denext <script>` and Deno's verbs no longer import the project's config first.** A name no
+  built-in claims used to send the CLI into `denext.config.ts` (and every plugin `setup()`), with
+  the CLI's own permissions, to look for a project verb before handing `denext main.ts` or
+  `denext compile …` to Deno, so a cloned project's config ran before Deno's permission prompts
+  could apply. Now a script or URL goes straight to `deno run`. A project verb may no longer be
+  named `run`, `x`, `eval`, `serve`, `compile`, `install`, `uninstall`, `upgrade` or `task`: a
+  `commands:` entry with one of these names is a config error, and `addCommand` throws. A project
+  verb named after another Deno verb (`bench`, `doc`, …) runs in place of Deno's only once
+  `denext commands` has listed it (`.denext/commands.json`, which must match the current config,
+  `deno.json` and `deno.lock`). Until then Deno's verb runs, and a denext project prints one hint
+  to run `denext commands`.
+- **`rateLimitHeader` is believed only from a trusted proxy.** Before, any client that could
+  reach the server directly could send its own `cf-connecting-ip` (or whichever header was
+  named) on every request and get a fresh limit bucket each time. That defeated `denextAuth`'s
+  per-IP and IP-wide budgets, `rateLimit()` and the Live per-address cap. The header now counts
+  only when the socket peer is in the new **`rateLimitTrustedProxies`** (CIDR ranges or addresses;
+  env `DENEXT_RATE_LIMIT_TRUSTED_PROXIES`, comma-separated) or, with none listed, is a
+  loopback/private address while `trustForwardedHeaders` is on. From any other peer the header is
+  ignored and the limit keys on that peer, with one warning. A `rateLimitHeader` with neither rule
+  set is never believed, and the server warns at boot. Typed-API batch items and server-side
+  self-calls inherit the parent's peer, so they reach the same verdict. Supabase Auth trusts
+  `GOTRUE_RATE_LIMIT_HEADER` from anyone; denext deliberately does not. To upgrade, behind
+  Cloudflare list its published ranges; behind nginx or `cloudflared` on the same host or network,
+  set `trustForwardedHeaders: true`.
+- **denext pins Deno toolchain and Deno Desktop runtime 2.9.7-denext.17** (both pins from the same
+  release, hashes and attestations verified). Each toolchain download now carries esbuild 0.25.5
+  beside `deno` (its version and SHA-256 pinned per platform), so builds on the toolchain use it
+  instead of fetching the npm esbuild. The toolchain keeps its own type-check, code and analysis
+  caches in `DENO_DIR` (suffixed `_denext`), so alternating it with stock Deno no longer throws
+  either one's caches away. `vitest`, `vite-plus/test` and `@jest/globals` are typed when the
+  package isn't installed (no more `any` mocks; `deno check` and the editor resolve them too), and
+  the test files of a Vitest / Jest config project are type-checked. `deno bundle` uses the
+  shipped esbuild. `deno coverage` merges a module's profiles from a plain run and a
+  Vitest run (each reported through its own source map, then combined line for line), and
+  `--coverage-raw-data-only` runs keep accumulating in one directory. The minimum desktop runtime
+  stays 2.9.7-denext.14.
+- **`denext db` is a core verb.** `@denext/backend` no longer contributes it; it installs hooks
+  the core verb uses: its own migrations, its service schemas, and the Postgres actions
+  (`diff`, `dump`, `pull`, `lint`, `inspect`, `test`, `types`). `db status` prints
+  `migration list`'s table. A migration file's `-- migrate:down` section is never run by
+  `migratePostgres` or the generated runner. A `jobs/migrate.ts` generated by an older denext
+  applied SQLite files whole, so it would run a migration's down section right after its up
+  section. `denext generate migration` (and `denext migration new`) now replace that runner, and
+  until it is replaced the job loader refuses to run it while any migration has a down script.
+  The error names the files and the fix.
+- **`denext db seed` tracks seed files by hash**, in `supabase_migrations.seed_files` like the
+  Supabase CLI (`_seed_files` in a project with a `_migrations` history). It skips a file it has
+  already run unchanged; an edited file runs again, and so does every file with `--force`.
+- **Storage form uploads are streamed**: the file part of a multipart upload flows through the
+  size cap and sniffing to the store instead of being read into memory first.
+- **Storage bucket listings for anon and signed-in users** answer as Supabase does without
+  policies: `listBuckets` is an empty list and `getBucket` is `Bucket not found` (they were `403`);
+  the service role, and `storage: { rls: true }` policies, see buckets as before.
+- **`@denext/backend`: `storage.buckets` may be empty** (buckets can be created at runtime), and an
+  upload refused for its size now says "The object exceeded the maximum allowed size".
+- **The generated Postgres service is Postgres 17 and publishes no port by default.** The
+  commented example in a plain `docker-compose.yml` is `postgres:17-alpine`; a switched-on one
+  (the UI's Postgres box, now `--postgres`) is the stack's service: credentials from `.env`, a
+  `pg_isready` health check, a `db-data` volume, and `127.0.0.1:5432` only with `--expose-db`.
+- **esbuild 0.25.5, and no `npm:esbuild`.** denext vendors esbuild's JavaScript API
+  (`src/build/esbuild/`, MIT, from esbuild 0.25.5) and spawns an esbuild binary itself:
+  `ESBUILD_BINARY_PATH` when set (checked to be 0.25.5), else the `esbuild` denext's Deno toolchain
+  ships beside its `deno` (from 2.9.7-denext.17: extracted from the verified toolchain zip, checked
+  against the pinned SHA-256 and recorded in the toolchain stamp), else — `DENEXT_DENO=stock`,
+  stock Deno, or an older toolchain — the official `@esbuild/<platform>` 0.25.5 binary, taken from
+  Deno's npm cache or downloaded, with the tarball checked against its pinned npm integrity and the
+  binary against its pinned SHA-256 before it runs. A toolchain esbuild that fails verification is
+  never installed; builds use the npm one with a single warning. The `esbuild` entry is gone from
+  `deno.json` (and from the framework deps a local-path migration copies). `denext toolchain
+  status` shows which esbuild builds run. Moving from 0.24 to 0.25 changes nothing denext relies
+  on; a regular-expression plugin `filter` now honours its flags (`/…/i`), as esbuild 0.25.2 made
+  it.
+- **denext's Deno toolchain and Deno Desktop runtime are 2.9.7-denext.16** (both pins from the same
+  release, hashes and attestations verified). The Vitest/Jest layer in `deno test` needs no
+  permission of its own (its config, `__mocks__` and automock reads take no `--allow-read` inside
+  the project, and it needs no `--allow-env`), `vi.mock` works under a path with `~` or a space,
+  and `deno coverage` maps the modules the layer transformed. Upstream Deno picks: `deno compile`
+  checks read permission for a dynamic import, Node-API fixes, coverage runs skip V8's code cache,
+  the `fetch` connection pool, `rand` 0.9.3. The minimum desktop runtime stays 2.9.7-denext.14.
 - **`rateLimit()` follows the app's `trustForwardedHeaders`.** Without its own
   `trustForwardedHeaders`, the API middleware now keys on the last `x-forwarded-for` hop whenever
   the app trusts its proxy (`trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1`, read per request),
@@ -165,6 +626,158 @@ and this project adheres to
 
 ### Fixed
 
+- **`@denext/backend`'s surfaces are no longer cut at the app's 30 s `requestTimeout`.** An Edge
+  Function invoked for 35 s answered `503` at 30 s (its own 150 s `timeoutMs` was unreachable),
+  and a slow or large storage upload or download failed at 30 s. The backend now gives each
+  surface its own deadline: functions their `timeoutMs` plus 10 s, storage (`/storage/v1`,
+  `/_denext/storage`, TUS) an hour, auto-REST `rest.statementTimeout` plus 6 s when longer than
+  the app's. With `requestTimeout: 0` none gets one.
+- **`@denext/backend` auto-REST picks up schema changes in production.** The catalog was read
+  once at startup outside `denext dev`, so a table created by a later migration (a rolling deploy,
+  `denext migration up` against a live app) answered `PGRST205` until a restart. A request for an
+  unknown table or function now re-reads it (at most every 10 s), and the plugin listens for
+  PostgREST's `NOTIFY pgrst, 'reload schema'` on every replica; `denext migration up` and
+  `migratePostgres` send it after applying a migration.
+- **`denext stack up` no longer regenerates the database password over existing data.** With
+  `.env` deleted after a first run, `stack up` wrote a fresh `.env` whose new `POSTGRES_PASSWORD`
+  the existing `db-data` volume did not accept, and the app failed every query. It now refuses,
+  naming the volume, and points at restoring the old `.env` or `denext stack down --volumes`.
+- **`@denext/backend` no longer sends database connection errors to clients.** With a wrong
+  database password, `GET /rest/v1/<table>` answered an anonymous client with
+  `password authentication failed for user "…"`. Connection-class SQLSTATEs (08, 28, 53, 57P,
+  3D000) are now a generic `503` `PGRST000` "the database is unavailable" with `Retry-After`, the
+  detail logged server-side; a realtime join that fails on a database error says only
+  "database error".
+- **A storage bucket's `authorize({ session })` sees supabase-js users.** A request carrying a
+  Supabase access token reached `authorize` with no `session`, so the documented
+  `authorize: ({ session }) => !!session` refused every supabase-js upload. The session is now
+  the one `auth()` reads from the bearer (`null` for a revoked token or a pending second factor),
+  or the token's verified claims when `denextAuth()` is not configured.
+- **Auth budgets and the SAML replay cache hold across replicas on `@denext/backend`'s Postgres.**
+  With `backend({ postgres })` and no `rateLimit.store`, the `denextAuth()` and `/auth/v1` limiters
+  (sign-in, session reads, email / SMS sends, second factors, captcha) counted per process, so N
+  replicas allowed N times every budget. They now count in `auth_rate_limits` on that database:
+  the adapter's own table with `backendAuthAdapter()` (the new optional `AuthAdapter.rateLimits`,
+  which `postgresAuthAdapter` provides), else one on the backend's client. The SAML message-id
+  replay cache uses the adapter's `claimSamlMessageId` whenever the adapter has it, and with the
+  backend's Postgres never falls back to a per-process cache. Without the backend nothing changes.
+- **The generated Docker image shuts down gracefully.** Its `CMD` was `deno task start`, and
+  `deno task` does not forward `SIGTERM` to the server it starts: `docker stop` waited out the
+  grace period and SIGKILLed the app (exit 137) — in-flight requests cut, no plugin teardowns.
+  `denext generate docker` now writes the `start` task's own `deno run …` line as an exec-form
+  `CMD` (when the task needs no shell), runs it under `tini -g` (the whole process group gets the
+  signal, which also covers a `deno task start` fallback), and the stack's `web` service sets
+  `stop_grace_period: 30s`. An idle container now stops in well under a second, with exit code 0.
+- **`denext build` no longer needs runtime secrets.** A Docker `RUN deno task build` layer has no
+  `.env`, so an app with the documented `denextAuth({ secret: Deno.env.get("AUTH_SECRET")! })`
+  failed the image build with "`secret` is required". `denext build` / `denext export` now set
+  `DENEXT_PHASE=build` before the config is imported; while it is set, `denextAuth()` uses a
+  random secret for the run when none is configured and leaves the OAuth client credentials, the
+  short-secret refusal and the production `canonicalOrigin` check to `denext start` /
+  `denext dev`, which check everything as before.
+- **Destructive database verbs ask before they change a remote database.** `denext db push` and
+  `denext migration squash` against `--linked`, or a `--db-url` Postgres URL that is not on this
+  machine, now ask for confirmation at the terminal (as the Supabase CLI does), and refuse with no
+  terminal unless `--yes` is passed. `db reset` and `migration down --force-reset` accept a "yes"
+  at the terminal as well as `--yes`, and name the remote database in the question. A local
+  database (loopback host, Unix socket, SQLite) is unchanged.
+- **The stack's migrations service applies `@denext/backend`'s own migrations first.** It ran
+  `denext job migrate`, which knows only `migrations/`, and the backend's migrations (the `anon` /
+  `authenticated` roles, the `auth` functions, the storage and realtime schemas) ran only when the
+  app started. So on a fresh database an app migration that grants to `anon`, writes a policy on
+  `storage.objects` or adds a table to `supabase_realtime` failed, and the app never started. With
+  `@denext/backend` in the config the service now runs `denext migration up`. That verb (and `db
+  push` / `db migrate`) now also applies the storage schema, the realtime schema and the
+  `supabase_realtime` publication, one migration at a time in order (the roles first). They go in
+  the tracking tables and under the advisory locks the server's start uses, so neither applies
+  one twice. The per-table realtime triggers still come at the start, after the app's tables exist.
+- **`realtime({ source: "logical" })` works in the generated stack.** `denext generate docker`
+  runs Postgres with `wal_level=logical` and `db-init` gives the app's role `REPLICATION` when the
+  config uses the logical source.
+- **No more "request.signal aborts on successful responses (legacy behavior)" warning on
+  `denext start` / `dev`.** The server loop reads each request's signal to cancel work when the
+  client goes away, which made Deno print that warning on the first response. A CLI child on
+  denext's toolchain now runs with `--unstable-no-legacy-abort`, so the request's signal fires
+  only when a response is not delivered. `requestSignal()` still aborts once a response is
+  delivered (from `Deno.serve`'s `info.completed`), as before.
+- **A leading `--` no longer swallows a verb's flags.** `deno task start -- --port 4000` runs
+  `denext start -- --port 4000`, and the `--` made `--port 4000` pass-through tokens that `start`
+  ignored. A verb that forwards nothing (`start`, `dev`, `build`, `routes`, …) now skips a `--`
+  that comes first and parses the rest as its own flags. Forwarding verbs (`test`, `task`, `fmt`,
+  `lint`, …) and a `--` later in the line keep their meaning.
+- **`denext storage cp -r` never writes through a symbolic link inside the destination.** A
+  download into a folder that held a link (to a directory or a file elsewhere) wrote through it.
+  Each path component under the destination is now checked first, and the copy is refused.
+- **`denext migration up` / `down` / `repair`, `db migrate` / `rollback` and `denext storage rm
+  -r` confirm against a remote target.** With `--linked` or a `--db-url` off this machine (the
+  migration verbs), or an S3 store off this machine (`storage rm -r`), they now ask at the
+  terminal, and refuse without one unless `--yes`, as `db push` and `migration squash` already
+  did. A dry run, and loopback, Unix-socket, SQLite and fs targets, are not asked about.
+- **A stack `.env` can no longer turn a placeholder into the service-role key.**
+  `denext generate docker --stack` wrote the four optional Supabase key lines of `.env.example`
+  as the literal `undefined`, so `denext stack up` crash-looped, and a hand-filled `.env` that
+  left the secret-key line alone made `apikey: undefined` authenticate as `service_role`
+  (row-level security bypassed). The lines are now written empty, and `resolveSupabaseKeys` —
+  so `backend({ supabase })` at startup — refuses a placeholder key (`undefined`, `null`, …), a
+  secret key under 32 characters or too predictable to be a secret, and a key configured as both
+  publishable and secret, with an error naming the variable (never the value). An empty
+  `DENEXT_JWT_SECRET` counts as unset.
+- **The installers can install a release from before 4.0 again.** `install.sh` / `install.ps1`
+  ran `denext toolchain install` after every install, but the `toolchain` verb arrived in 4.0, so
+  installing the latest stable 3.x release (or `DENEXT_VERSION=v3.x`) printed `unknown command
+  "toolchain"` and a warning, and `install.ps1 -Uninstall` ended with a failing exit code. The
+  installers now read the binary's `--version` and skip the toolchain step (and the uninstall's
+  `toolchain unlink`) for a release that predates it, with a one-line note.
+- **The pinned Deno Desktop runtime verifies on Windows when its archive holds a nested symlink.**
+  Windows stores a symlink's target with backslashes, so a link such as a macOS framework's
+  `Chromium Embedded Framework` → `Versions/A/…` never matched the `/`-separated target recorded at
+  install, and the install failed with "did not verify after install". The check now compares the
+  targets in the recorded form.
+- **`@denext/backend`: an Edge Function stuck in synchronous code no longer takes the function
+  down.** A timeout (or a client going away) only asked the worker to abort the request, so a
+  function busy in a loop such as `while (true) {}` kept its worker at 100 % CPU and every later
+  call to it timed out. The worker now acknowledges an abort; one that does not within a second
+  is terminated and replaced, the requests it was still serving fail with `504 WORKER_TIMEOUT`,
+  and the next call starts on a fresh worker.
+- **`denext storage cp -r` keeps every download inside the destination folder.** An object key
+  written by other tooling (`a/../../x`, an absolute path, a drive letter, a backslash) could
+  place a file outside the folder being copied into. Such a key now refuses the whole copy before
+  anything is written.
+- **A generated Dockerfile on a non-default port now listens on it.** The image's `CMD` was
+  `deno task start -- --port N`; `deno task` forwards the literal `--`, so `denext start` took
+  `--port` as passthrough and stayed on 3000. The Dockerfile now sets `ENV PORT=N` (which
+  `start` reads) and keeps the bare `CMD ["deno", "task", "start"]`.
+- **`denext generate docker`: the MinIO bucket bootstrap no longer fails on first start.** The
+  image restarts its server once after its first boot, after the health check has already passed,
+  so `minio-init` could find nothing listening ("connection refused"). The bootstrap now retries.
+- **The SAML metadata background refresh no longer starts during a build.** The timer
+  (`saml.metadataRefresh`) now starts only when serving (`dev` / `start`), not in `denext build`
+  or export.
+- **`/auth/v1` phone-factor challenges spend the user's SMS budget, not the factor's**:
+  unenrolling and re-enrolling a phone factor no longer starts a fresh send budget.
+- **`/auth/v1` `/resend` for an SMS confirmation answers `over_sms_send_rate_limit`** past its
+  budget (it answered `over_email_send_rate_limit`).
+- **`inMemoryAuthAdapter()` keeps one live verification token per address and purpose**, as the
+  SQL adapters do: issuing a new one retires the older, and a token is consumed only when its
+  hash matches (compared in constant time).
+- **The toolchain re-exec reads the project's `deno.json`.** A project task that runs the CLI from
+  JSR (`deno run -A jsr:@denext/denext@<v>/cli build`) found the project's config from the working
+  directory, but the copy it re-ran on denext's Deno toolchain started from the module's https URL,
+  which discovers no config, so a `denext.config.ts` import that only the import map names failed
+  with `Import "…" not a dependency`. The child now resolves the config its parent resolved: an
+  explicit `--config`, none after `--no-config`, else the file the parent's own discovery found (a
+  workspace member's included), together with the parent's `--lock`, `--import-map`,
+  `--node-modules-dir`, `--vendor`, `--frozen` and `--min-dep-age` flags. A compiled
+  executable's pinned-denext child and `denext ui`'s verb runs follow the same rule.
+- **A fresh `denext create` project is `deno fmt`- and `deno lint`-clean.** Every template and
+  feature (`--template minimal`, `--tailwind`, `--src-dir`, `--desktop`, `--capacitor`, `--fallow`,
+  `--mcp`, …) writes its README, pages, stylesheet, `AGENTS.md` and packaging / coverage scripts
+  the way `deno fmt`'s defaults lay them out, so `deno fmt --check` changes nothing. A test
+  scaffolds each combination and runs both.
+- **`denext toolchain status` under the compiled executable** no longer says it is "running on
+  deno 2.9.7" (the Deno embedded in the executable, which runs only the CLI itself): it says
+  denext runs every command on the toolchain, or on the `deno` on `PATH` with
+  `DENEXT_DENO=stock`, and that a missing toolchain downloads on the first denext command.
 - **Running a project verb no longer reports it as an unknown command on a loaded machine.**
   `denext <verb>` discovered the project's `commands:` / plugin verbs under the 1.5 s budget meant
   for listings, so a config import slowed by a cold cache or a busy CPU dropped the verb silently
@@ -189,6 +802,148 @@ and this project adheres to
 
 ### Security
 
+- **A forged `Host` can no longer reach a cached page's metadata URLs (web cache poisoning).**
+  Without `canonicalOrigin`, the `og:image` an `opengraph-image` file adds and the automatic
+  hreflang / canonical links took their origin from the request's `Host` (or a trusted
+  `X-Forwarded-Host`). Absolute metadata URLs now resolve against `canonicalOrigin` (or
+  `DENEXT_CANONICAL_ORIGIN`), else the page's `metadataBase`, as in Next.js. Without either,
+  a page the ISR cache may store (`revalidate`, `force-static`) keeps `og:image` relative and
+  omits hreflang / canonical, where before the page was turned dynamic. A per-request page
+  still uses the request's origin and is sent `no-store`. A `generateSitemaps` sitemap index
+  built on a `Host`-derived origin is now sent `private, no-store` too. Production logs one
+  warning when no stable origin is configured.
+  Hardening of the new `/auth/v1` API (unreleased) and the user store it shares with `denextAuth()`:
+- **No password set before an address was proven survives its first proof.** A magic link, an
+  email or SMS one-time code, a recovery link or an invite that first confirms an account's
+  address now retires everything set up on it before: the password, second factors, passkeys,
+  bearer API tokens and every session (token and cookie). Only the account's own sign-up
+  confirmation, bound to the password that sign-up chose, keeps it. Previously a magic link into
+  an account someone else had registered with the address kept that person's password. An
+  anonymous user's address change keeps only the password it held when the change was requested,
+  and an anonymous user can't set a password without an email or phone (GoTrue's rule). An OAuth
+  provider's verified email marks the stored address verified only when it is the same address,
+  and an `allowDangerousEmailAccountLinking` link onto an unconfirmed account clears that account
+  first.
+- **Account changes need `aal2` once a user has a verified factor.** `PUT /user` refuses a
+  password, email or phone change from a session below `aal2` (`401 insufficient_aal`, as GoTrue
+  does), and linking or unlinking an identity needs `aal2` too. A session that still owes its
+  second factor is refused by the account endpoints (`403 insufficient_aal`); it can still read
+  the user, finish MFA and sign out.
+- **Bans and password changes reach denextAuth.** A banned user can't sign in through denextAuth's
+  own routes, and a ban ends every session, cookie sessions in the `sessionStore` included. A
+  password change through `PUT /user` ends the user's other sessions of both kinds; an admin
+  password change or user deletion ends all of them.
+- **`session.user.emailVerified` of an `/auth/v1` access token comes from the stored user.** It was
+  read from `user_metadata`, which the user can write; the token's `user_metadata.email_verified`
+  / `phone_verified` now always carry the stored flags.
+- **SAML SSO trust model.** An IdP speaks only for its provider's email domains: an address
+  outside them is never bound to an account (refused, `email_address_not_authorized`, for a
+  provider stored through the admin API). A first SSO sign-in no longer takes over an existing
+  account with the same email (`email_exists`, as in GoTrue) unless a config-declared provider
+  sets the new `linkExistingAccounts`. SSO sign-up honours `disableSignup` and the new per-provider
+  `allowSignUp`, and SSO users get no `email` identity.
+- **A ban refuses every token while it lasts.** A banned user's bearer API tokens, native access
+  and refresh tokens and `/auth/v1` access tokens are refused at each use (`requireBearer`,
+  `verifyApiToken`, `auth()`, `resolveIdentity()`, `GET /user`), not only through the revocation
+  a ban performs, so a token that revocation missed is dead too; the ban's end restores them.
+- **A stateless pending-MFA cookie can't finish the step-up after a ban or an eviction.** Without
+  a `sessionStore` a pending cookie can't be revoked, so `/mfa`, `/mfa/enroll`, `/mfa/confirm`,
+  `/mfa/challenge`, the passkey step-up and `pendingMfaSession()` refuse it when its user is
+  banned or deleted, or when the account's address was first proven after it signed in.
+- **SSO users' credentials belong to the IdP.** `PUT /user` refuses an SSO user's password, email
+  or phone change, or a reauthentication nonce (`422 user_sso_managed`, as in GoTrue), and an SSO
+  user's identities are its SSO identities only (no synthesized `email` identity), so its last
+  one can't be unlinked.
+- **SSO users sign in through their identity provider only.** A magic link, an email or SMS
+  one-time code, a password, a recovery link or a resend for an SSO user's email or phone — on
+  `/auth/v1` and through `magicLink()`, `emailOtp()`, `phoneOtp()`, `credentials()` and
+  `{basePath}/reset` alike — now answers exactly as for an unknown address and sends nothing (as
+  GoTrue's lookups exclude SSO users); before, any of them signed an SSO user in without the
+  IdP, past its MFA, policies and deprovisioning. A sign-up for its address is answered as for a
+  registered one and creates no second account. A code or reset link issued before an account
+  became an SSO user signs nobody in. An OAuth, native or `id_token` sign-in never links onto an
+  SSO user by email (`account_not_linked` / `email_exists`), even with
+  `allowDangerousEmailAccountLinking`. An SSO user can't register a passkey (`422
+  validation_failed` on `/auth/v1`, `403 sso_user` on `{basePath}/passkey/register*`), a passkey
+  from before signs it in nowhere, and linking an identity to it needs a session its IdP started
+  (`422 user_sso_managed`). The admin API's `generate_link` answers `user_not_found` for
+  `recovery` and the email-change links and `email_exists` for `magiclink`, `signup` and
+  `invite` (GoTrue would create a second account there), and `POST /invite` is `email_exists`.
+  Being an SSO user now follows the stored `app_metadata.provider` alone (`sso:<id>`, set by its
+  first SAML sign-in), so linking or unlinking another identity no longer changes it; an existing
+  account an IdP was linked to (`linkExistingAccounts`) is not an SSO user and keeps its other
+  sign-in methods.
+- **An SSO user's sessions are the ones its identity provider started.** A session of an SSO user
+  that no SAML sign-in started — one from a password, code, link, passkey or OAuth sign-in made
+  before the account became an SSO user, or before such sign-ins were refused — is now refused at
+  use (`403 session_not_found`) and at refresh (`refresh_token_not_found`, its session revoked) on
+  `/auth/v1`; a session that stepped up with MFA after a SAML sign-in keeps working, and a token
+  issued to an OAuth client is unaffected. No such session is started any more either: a sign-in
+  through an identity linked to an SSO user answers `422 user_sso_managed` on `/auth/v1`, and
+  denextAuth refuses it (`AccountNotLinkedError`). denextAuth's native sessions of an SSO user are
+  refused at use and revoked at refresh, and its cookie sessions end when they are next due to
+  slide (`session.updateAge`). The admin API no longer changes whether a user is an SSO user:
+  `app_metadata.provider` is kept as stored when an update would make a user an SSO user, stop one
+  being one or move it to another provider, and `POST /admin/users` never creates one (GoTrue's
+  `is_sso_user` is not admin-writable). `GET /reauthenticate` for an SSO user answers
+  `422 user_sso_managed` and sends nothing (`PUT /user` refuses its nonce anyway). A SAML provider
+  with `linkExistingAccounts` never links onto an SSO user another provider signed up
+  (`email_exists`).
+- **An admin-generated sign-up link keeps the admin's password.** `generate_link` with
+  `type: "signup"` and a `password` binds the code to that password, so confirming it no longer
+  retires the password as a foreign one (GoTrue's behaviour).
+- **SAML metadata endpoints must be `https:`.** A SingleSignOnService / SingleLogoutService URL
+  with another scheme (`javascript:`, `data:`) refuses the metadata, and `/auth/v1` refuses a
+  plaintext one (loopback `http:` only under `dangerouslyAllowInsecureProviders`) at registration,
+  at a refresh and at use, so the URL handed to the browser is always an HTTPS page.
+- **`@denext/backend` Edge Functions: `SUPABASE_URL` never comes from a request's `Host`.** With
+  neither `functions.url` nor a `SUPABASE_URL` env var, a function's worker took `SUPABASE_URL`
+  from the first request that started it and kept it for its whole life, beside
+  `SUPABASE_SERVICE_ROLE_KEY`. One request with a forged `Host` after a start, restart or edit
+  pointed every later `createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)` at another host,
+  sending it the service key. The default is now the app's `canonicalOrigin` (or
+  `DENEXT_CANONICAL_ORIGIN`) plus its `basePath`, else the address the server listens on as this
+  machine reaches it (`http://127.0.0.1:<port>`); with none of them known, functions get no
+  `SUPABASE_URL` and a warning says so.
+- **`@denext/backend` storage under SQL-RLS: a write is judged against the object as it is when
+  it lands.** An upload, copy, move or TUS upload by a request's user was checked by a rolled-back
+  dry run and then written as the service role once its bytes were in. So an upsert that passed
+  while the path was free could replace an object someone else created there in the meantime,
+  even though their `update` policy would refuse it. A slow body kept that window open; a TUS
+  upload kept it open for up to a day. The row is now written under the caller's role, in one
+  transaction with the current row locked, and the bytes wait in a staging area until that write
+  is allowed. A move takes the destination's name before it copies any bytes. A signed upload
+  token minted by a policy-checked caller (`/object/upload/sign`, signed TUS,
+  `createSignedUploadUrl`) is pinned to the object's version when it was signed: if the object
+  has changed since, the upload is a `409`.
+- **`@denext/backend` storage: a client's direct upload reaches the object only when it
+  completes.** The URLs `createSignedUploadUrl` and the sign route's `upload` op hand out (an S3
+  presigned PUT, presigned multipart parts, or the fs driver's signed PUT) wrote the client's
+  bytes straight to the object's key. The size, type and pin checks ran later, at completion. So
+  bytes the completion would refuse, or an upload never completed, replaced what was stored
+  there. The URLs now point at a staging place (`.denext-staging/<bucket>/<version>`). The
+  completion checks the staged bytes, then writes the row and moves the bytes to the key together
+  (`409` when a pinned object has changed since signing). An abandoned upload's staged bytes, or
+  its incomplete multipart upload, are swept once its completion window closes.
+- **`@denext/backend` storage: emptying a bucket under SQL-RLS deletes only what the caller may
+  delete.** `POST /bucket/<id>/empty` purged every noncurrent version and delete marker as the
+  service role. Now each one is deleted under the caller's policies, as live objects already were.
+- **`@denext/backend` storage: the SQLite metadata store matches a `list-v2` prefix
+  case-sensitively.** SQLite's `LIKE` ignores ASCII case, so a listing scoped to `alice/` also
+  returned `ALICE/…` and `Alice/…`. Postgres was not affected.
+- **`@denext/backend` realtime: an update's full old row reaches only subscribers who could see
+  the row.** With `old: "full"`, a raw `postgres_changes` subscriber received `old_record` in full
+  even when the row only just entered their view (a row handed to them), which exposed its
+  previous contents. On a table with row-level security on, or not known to be off, the old row now
+  goes only to a subscriber who could see the row before the change, and only with the first
+  change of a burst. Everyone else gets the key alone, which is what Supabase sends under
+  row-level security. Tables with row-level security off still send it to every subscriber.
+- **`@denext/backend` vault: `updateSecret()` with an uppercase id no longer destroys the
+  secret.** The id matched the row (`::uuid` ignores case), but the new ciphertext was bound to
+  the caller's spelling while every reader binds Postgres's lowercase `id::text`, so the secret
+  could never be read again. Secrets are now sealed under the id the database returns, the
+  additional data uses the canonical form of a UUID, and the write is checked to land on that
+  row.
 - **A typed-API batch item and a server-side typed-API self-call keep the client's
   `rateLimitHeader` address.** The sub-request copied only an allowlist of the parent's headers,
   so with `rateLimitHeader` set behind a loopback proxy each item had no address to limit on and
@@ -200,6 +955,83 @@ and this project adheres to
   one that sends `x-forwarded-for`. Where those peers are the real clients, set
   `rateLimitLocalAddresses: true` to budget each by its own address. The credentials limiter's
   per-identifier key applies either way.
+
+### Breaking (4.0)
+
+These are what moving a 3.x app to 4.0 involves. This section is the record.
+
+- **Project verbs run on denext's Deno toolchain.** `dev`, `build`, `export`, `start`, `test`,
+  `check`, `job`, `doctor` and the other verbs that run project code re-run themselves on the
+  pinned `2.9.7-denext.N` Deno, downloaded and SHA-256-verified into `<DENO_DIR>/denext-deno/` on
+  first need, so the Deno your code runs on is no longer the one that started the CLI. A launcher
+  that denies `--allow-run`, or a sandbox without network on first use, stays on stock Deno (one
+  warning); `DENEXT_DENO=stock` opts out.
+- **First-party plugins need their 4.0 releases.** Each plugin's 4.0-compatible release requires
+  denext 4.0, and the releases built for 3.x don't work with it: `@denext/backend` 0.4,
+  `@denext/content-collections` 0.5, `@denext/effect` 0.2, `@denext/graphql` 0.3, `@denext/htmx`
+  2.1, `@denext/openapi` 0.4, `@denext/pages-router` 0.12, `@denext/react-router` 0.3.
+  `denext upgrade` moves the denext pin, the CLI tasks and these plugins together.
+- **No `npm:esbuild`.** denext runs the esbuild 0.25.5 binary its toolchain ships (or the
+  verified `@esbuild/<platform>` one), and the framework deps a local-path migration copies no
+  longer include `esbuild`: an app that imports esbuild itself adds its own `deno.json` entry.
+- **`@denext/backend`: `db()` scopes every query with the request's identity**
+  (`resolveIdentity()`): with `backend({ supabase })` keys, the secret key runs as `service_role`
+  with no row-level security, and a refused credential is an `IdentityError` (401).
+- **`@denext/backend` storage:** `listBuckets` for anon and signed-in callers is an empty list
+  and `getBucket` is `Bucket not found` (they were `403`); a bucket's `authorize` receives the
+  request's `identity`, and a bucket created at runtime (or declared without `authorize`) is
+  decided by `storage.authorize`, else open only to the service role; the size refusal reads "The
+  object exceeded the maximum allowed size".
+- **`@denext/backend` auto-REST:** `readRestCatalog(sql, schemas, tables)` takes a list of
+  schemas and returns the whole catalog, `generateRestTypes(catalog)` takes the catalog alone,
+  and the client's `range()` sends `offset` / `limit` instead of a `Range` header.
+- **`denext generate docker`'s Postgres publishes no host port** unless `--expose-db`
+  (`127.0.0.1:5432`).
+- **`denext db` is a core verb**, no longer contributed by `@denext/backend`.
+- **A TOTP secret kept in a pre-4.0 user's MFA record moves into the factor store** the first time
+  the user's factors are read (no key needed). Keep a database backup from before the upgrade if
+  you may need to roll back to 3.x.
+
+- **`denext task` is Deno's `deno task`.** `denext task <name> [args…]` runs a `deno.json` /
+  `package.json` task on denext's Deno toolchain, every argument verbatim. Inside it every `deno`
+  is the toolchain: Deno's task shell runs its own executable for a `deno …` step, and a script or
+  tool the task starts finds that binary as `deno` on `PATH` — through the toolchain's own cache
+  directory, or a directory holding only a `deno` link to it — with every other `PATH` lookup
+  (node, npm, python) unchanged, and no change at all when `PATH` already finds it. A leading global
+  flag goes after the subcommand (`denext --config deno.json task p` → `deno task --config
+  deno.json p`; `denext -A main.ts` → `deno run -A main.ts`); `--verbose` is denext's alone.
+  `denext ui`'s Tasks page runs a task the same way.
+- **Background and scheduled tasks are now jobs**, end to end, with no aliases: `denext job <name>
+  | --list | --history | --clear-history`; the `tasks/` directory is `jobs/`; `defineTask` →
+  `defineJob`, `runTask` → `runJob`, `registerTask` / `getTask` / `isTask` / `taskNames` →
+  `registerJob` / `getJob` / `isJob` / `jobNames`; the types `Task`, `TaskContext`,
+  `TaskDefinition`, `TaskRetry`, `TaskBackoff`, `TaskRunRecord`, `TasksConfig`,
+  `TaskHistoryConfig` and `TaskHistory*` → `Job…`; `sqliteTaskHistoryStore` /
+  `postgresTaskHistoryStore` → `sqliteJobHistoryStore` / `postgresJobHistoryStore`; config
+  `scheduledTasks` → `scheduledJobs` and `tasks: { history, historyMaxRuns }` → `jobs: { … }`;
+  the history file `.denext/tasks.db` → `.denext/jobs.db` (and the Postgres store's `task_runs`
+  table → `job_runs`, a run's `task` field → `job`, and `denext job --list --json`'s `tasks` → `jobs`); `denext generate task` → `denext generate
+  job`, and `generate migration` / `generate seed` write `jobs/migrate.ts` / `jobs/seed.ts`. A
+  config that still sets `tasks` or `scheduledTasks` fails to load, naming the new key. The docs
+  page moved to [/docs/jobs](https://denext.dev/docs/jobs).
+- **`denext info <module>`** is Deno's `deno info` (its flags pass through); `denext info [dir]`
+  keeps printing denext's environment and project facts. Deno's cache info: `denext deno info`.
+- **`denext audit` also runs `deno audit`** (Deno's audit flags — `--level`, `--ignore`,
+  `--ignore-unfixable`, `--socket`, `--fix`, `--lock`, … — forwarded) and exits non-zero when
+  either half fails. Deno's half needs the network (the advisory services) and reads the
+  lockfile, so an offline CI step or a project without `deno.lock` that ran `denext audit` before
+  now fails or changes its result: pass `--skip-deno-audit` for denext's checks only.
+- A forwarding verb (`test`, `lint`, `fmt`, `check`, `add`, `remove`, `update`) keeps a literal
+  `--` in what it hands Deno, so `denext test a.test.ts -- --seed 1` gives the script its own
+  arguments, and hands back `--quiet` (and `--json` to `lint`), which denext parses as global
+  flags.
+
+### Notes
+
+- **How denext's Deno build is kept current**: how the `2.9.7-denext.N` toolchain tracks Deno
+  releases and takes fixes between them, how each denext release pins and verifies one build, and
+  how the first command bootstraps it. See
+  [denext's Deno toolchain › Notes](https://denext.dev/docs/toolchain#notes-how-denexts-deno-build-is-kept-current).
 
 ## [3.4.16] - 2026-10-12
 
@@ -13664,7 +14496,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.0.0-rc.2...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.0.0...development
+[4.0.0]: https://jsr.io/@denext/denext@4.0.0
 [4.0.0-rc.2]: https://jsr.io/@denext/denext@4.0.0-rc.2
 [4.0.0-rc.1]: https://jsr.io/@denext/denext@4.0.0-rc.1
 [3.4.16]: https://jsr.io/@denext/denext@3.4.16

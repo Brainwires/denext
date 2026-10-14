@@ -37,25 +37,43 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { SqliteDb, SqlValue } from "../sqlite-cache.ts";
-import type { AdapterUser, AuthAdapter, MfaRecord } from "./adapter.ts";
+import type {
+  AdapterUser,
+  AuthAdapter,
+  MfaRecord,
+  SsoProviderRecord,
+  SsoProviderWrite,
+} from "./adapter.ts";
+import type { SsoMethods } from "./memory-sso.ts";
 import { emailKey } from "./email-key.ts";
+import {
+  OAUTH_SERVER_SQLITE_TABLES,
+  OAUTH_SERVER_USER_TABLES,
+  sqlOAuthServerGroups,
+} from "./sql-adapter-oauth-server.ts";
 import { sqliteSessionStore } from "./sqlite-session-store.ts";
 import {
   ACCOUNT_MAP,
   API_TOKEN_MAP,
+  factorPatchColumns,
   type FieldMap,
   fromRow,
+  MFA_FACTOR_MAP,
   MFA_MAP,
   NATIVE_GRANT_MAP,
   NATIVE_SESSION_MAP,
   NATIVE_SESSION_RETENTION,
+  pageWindow,
   PASSKEY_CHALLENGE_MAP,
   PASSKEY_MAP,
   patchUser,
   spendBackupCode,
+  SSO_PROVIDER_MAP,
+  SSO_SESSION_MAP,
   toRow as sharedToRow,
   USER_MAP,
   VERIFICATION_MAP,
+  withDomains,
   withUserId,
 } from "./adapter-rows.ts";
 
@@ -121,6 +139,14 @@ const SCHEMA: TableSpec[] = [
       ["image", "TEXT"],
       ["roles", "TEXT"],
       ["created_at", "INTEGER"],
+      ["phone", "TEXT"],
+      ["phone_verified", "INTEGER"],
+      ["user_metadata", "TEXT"],
+      ["app_metadata", "TEXT"],
+      ["is_anonymous", "INTEGER"],
+      ["updated_at", "INTEGER"],
+      ["last_sign_in_at", "INTEGER"],
+      ["banned_until", "INTEGER"],
     ],
     // Unique WHERE NOT NULL: one account per address, any number of address-less users.
     indexes: [{
@@ -128,6 +154,11 @@ const SCHEMA: TableSpec[] = [
         "WHERE email_lc IS NOT NULL",
       duplicates: "SELECT email_lc, count(*) FROM auth_users WHERE email_lc IS NOT NULL " +
         "GROUP BY email_lc HAVING count(*) > 1",
+    }, {
+      sql: "CREATE UNIQUE INDEX IF NOT EXISTS auth_users_phone ON auth_users (phone) " +
+        "WHERE phone IS NOT NULL",
+      duplicates: "SELECT phone, count(*) FROM auth_users WHERE phone IS NOT NULL " +
+        "GROUP BY phone HAVING count(*) > 1",
     }],
     backfill: "UPDATE auth_users SET email_lc = lower(trim(email)) " +
       "WHERE email_lc IS NULL AND email IS NOT NULL",
@@ -145,6 +176,12 @@ const SCHEMA: TableSpec[] = [
       ["token_type", "TEXT"],
       ["scope", "TEXT"],
       ["id_token", "TEXT"],
+      ["identity_id", "TEXT"],
+      ["identity_data", "TEXT"],
+      ["email", "TEXT"],
+      ["created_at", "INTEGER"],
+      ["updated_at", "INTEGER"],
+      ["last_sign_in_at", "INTEGER"],
     ],
     constraints: "PRIMARY KEY (provider, provider_account_id)",
     indexes: [{
@@ -204,6 +241,25 @@ const SCHEMA: TableSpec[] = [
       ["backup_code_hashes", "TEXT"],
       ["last_step", "INTEGER"],
     ],
+  },
+  {
+    name: "auth_mfa_factors",
+    columns: [
+      ["id", "TEXT PRIMARY KEY"],
+      ["user_id", "TEXT NOT NULL"],
+      ["factor_type", "TEXT NOT NULL"],
+      ["status", "TEXT NOT NULL"],
+      ["friendly_name", "TEXT"],
+      ["secret", "TEXT"],
+      ["phone", "TEXT"],
+      ["created_at", "INTEGER"],
+      ["updated_at", "INTEGER"],
+      ["last_step", "INTEGER"],
+      ["last_challenged_at", "INTEGER"],
+    ],
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_mfa_factors_user ON auth_mfa_factors (user_id)",
+    }],
   },
   {
     name: "auth_native_grants",
@@ -275,6 +331,68 @@ const SCHEMA: TableSpec[] = [
     indexes: [{
       sql: "CREATE INDEX IF NOT EXISTS auth_passkey_challenges_expiry " +
         "ON auth_passkey_challenges (expires_at)",
+    }],
+  },
+  // The /auth/v1 OAuth server, stored providers and Web3 nonces.
+  ...OAUTH_SERVER_SQLITE_TABLES,
+];
+
+/** The SAML SSO tables of `/auth/v1`: providers, their domains, session origins, message ids. */
+const SSO_SCHEMA: TableSpec[] = [
+  {
+    name: "auth_sso_providers",
+    columns: [
+      ["id", "TEXT PRIMARY KEY"],
+      ["entity_id", "TEXT NOT NULL"],
+      ["metadata_xml", "TEXT NOT NULL"],
+      ["metadata_url", "TEXT"],
+      ["attribute_mapping", "TEXT"],
+      ["name_id_format", "TEXT"],
+      ["created_at", "INTEGER"],
+      ["updated_at", "INTEGER"],
+      ["metadata_valid_until", "INTEGER"],
+      ["metadata_refresh_after", "INTEGER"],
+    ],
+    indexes: [{
+      sql: "CREATE UNIQUE INDEX IF NOT EXISTS auth_sso_providers_entity " +
+        "ON auth_sso_providers (entity_id)",
+    }],
+  },
+  {
+    name: "auth_sso_domains",
+    columns: [["domain", "TEXT PRIMARY KEY"], ["provider_id", "TEXT NOT NULL"]],
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_sso_domains_provider ON auth_sso_domains (provider_id)",
+    }],
+  },
+  {
+    name: "auth_sso_sessions",
+    columns: [
+      ["session_id", "TEXT PRIMARY KEY"],
+      ["provider_id", "TEXT NOT NULL"],
+      ["name_id", "TEXT NOT NULL"],
+      ["session_index", "TEXT"],
+      ["user_id", "TEXT NOT NULL"],
+      ["expires_at", "INTEGER NOT NULL"],
+    ],
+    indexes: [
+      {
+        sql: "CREATE INDEX IF NOT EXISTS auth_sso_sessions_name " +
+          "ON auth_sso_sessions (provider_id, name_id)",
+      },
+      { sql: "CREATE INDEX IF NOT EXISTS auth_sso_sessions_user ON auth_sso_sessions (user_id)" },
+      {
+        sql:
+          "CREATE INDEX IF NOT EXISTS auth_sso_sessions_expiry ON auth_sso_sessions (expires_at)",
+      },
+    ],
+  },
+  {
+    name: "auth_saml_message_ids",
+    columns: [["id", "TEXT PRIMARY KEY"], ["expires_at", "INTEGER NOT NULL"]],
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_saml_message_ids_expiry " +
+        "ON auth_saml_message_ids (expires_at)",
     }],
   },
 ];
@@ -351,7 +469,7 @@ function initSchema(db: SqliteDb): void {
     // failing at once with "database is locked", even when WAL is refused.
     db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL");
   } catch { /* a handle that refuses pragmas keeps its defaults */ }
-  for (const spec of SCHEMA) reconcileTable(db, spec);
+  for (const spec of [...SCHEMA, ...SSO_SCHEMA]) reconcileTable(db, spec);
   rekeyInternationalisedEmails(db);
 }
 
@@ -484,7 +602,7 @@ function saveUser(state: SqliteState, user: AdapterUser, createdAt: number): Ada
     email_lc: user.email ? emailKey(user.email) : null,
     created_at: createdAt,
   }, "id");
-  return { ...user };
+  return { ...user, createdAt };
 }
 
 /** The five required user methods. */
@@ -492,7 +610,13 @@ function userMethods(
   state: SqliteState,
 ): Pick<
   AuthAdapter,
-  "createUser" | "getUser" | "getUserByEmail" | "getUserByAccount" | "updateUser"
+  | "createUser"
+  | "getUser"
+  | "getUserByEmail"
+  | "getUserByAccount"
+  | "updateUser"
+  | "getUserByPhone"
+  | "listUsers"
 > {
   const read = (sql: string, params: SqlValue[]): AdapterUser | undefined => {
     const row = one(state.db(), sql, params);
@@ -501,6 +625,18 @@ function userMethods(
   return {
     createUser: (user) => saveUser(state, withUserId(user), state.now()),
     getUser: (id) => read("SELECT * FROM auth_users WHERE id = ?", [id]),
+    getUserByPhone: (phone) => read("SELECT * FROM auth_users WHERE phone = ?", [phone]),
+    listUsers({ page, perPage }) {
+      const { size, offset } = pageWindow(page, perPage);
+      const users = state.db()
+        .query<Record<string, SqlValue>>(
+          "SELECT * FROM auth_users ORDER BY created_at, id LIMIT ? OFFSET ?",
+          [size, offset],
+        )
+        .map((row) => fromRow(USER_MAP, row));
+      const [{ n }] = state.db().query<{ n: number }>("SELECT count(*) AS n FROM auth_users");
+      return { users, total: Number(n) };
+    },
     getUserByEmail: (email) =>
       read("SELECT * FROM auth_users WHERE email_lc = ?", [emailKey(email)]),
     getUserByAccount: (ref) =>
@@ -527,7 +663,10 @@ function accountMethods(
 ): Pick<AuthAdapter, "linkAccount" | "unlinkAccount" | "listAccounts"> {
   return {
     linkAccount(account) {
-      put(state.db(), "auth_accounts", toRow(ACCOUNT_MAP, account));
+      put(state.db(), "auth_accounts", {
+        ...toRow(ACCOUNT_MAP, account),
+        created_at: account.createdAt ?? state.now(),
+      });
     },
     unlinkAccount(ref) {
       state.db().exec(
@@ -755,11 +894,56 @@ function nativeMethods(
         [state.now(), id],
       );
     },
-    revokeNativeSessionsByUser(userId) {
+    revokeNativeSessionsByUser(userId, exceptId) {
       state.db().exec(
-        "UPDATE auth_native_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
-        [state.now(), userId],
+        "UPDATE auth_native_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL" +
+          " AND id IS NOT ?",
+        [state.now(), userId, exceptId ?? null],
       );
+    },
+  };
+}
+
+/** The `/auth/v1` MFA factors. */
+function factorMethods(
+  state: SqliteState,
+): Pick<
+  AuthAdapter,
+  | "createMfaFactor"
+  | "listMfaFactors"
+  | "updateMfaFactor"
+  | "claimMfaFactorStep"
+  | "deleteMfaFactor"
+> {
+  return {
+    createMfaFactor(record) {
+      put(state.db(), "auth_mfa_factors", toRow(MFA_FACTOR_MAP, record));
+    },
+    listMfaFactors: (userId) =>
+      state.db()
+        .query<Record<string, SqlValue>>(
+          "SELECT * FROM auth_mfa_factors WHERE user_id = ? ORDER BY created_at, id",
+          [userId],
+        )
+        .map((row) => fromRow(MFA_FACTOR_MAP, row)),
+    updateMfaFactor(id, patch) {
+      const sets = factorPatchColumns(patch);
+      if (!sets.length) return;
+      state.db().exec(
+        `UPDATE auth_mfa_factors SET ${sets.map(([c]) => `${c} = ?`).join(", ")} WHERE id = ?`,
+        [...sets.map(([, v]) => v as SqlValue), id],
+      );
+    },
+    claimMfaFactorStep(id, step) {
+      const rows = state.db().query<{ id: string }>(
+        "UPDATE auth_mfa_factors SET last_step = ? WHERE id = ? " +
+          "AND (last_step IS NULL OR last_step < ?) RETURNING id",
+        [step, id, step],
+      );
+      return rows.length === 1;
+    },
+    deleteMfaFactor(id) {
+      state.db().exec("DELETE FROM auth_mfa_factors WHERE id = ?", [id]);
     },
   };
 }
@@ -832,6 +1016,122 @@ function passkeyMethods(
   };
 }
 
+/** Run `fn` in one IMMEDIATE transaction (rolled back when it throws). */
+function transaction<T>(db: SqliteDb, fn: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const out = fn();
+    db.exec("COMMIT");
+    return out;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch { /* the failed statement may already have ended the transaction */ }
+    throw error;
+  }
+}
+
+/** Providers by a WHERE clause, with their domains. */
+function ssoProviders(db: SqliteDb, where: string, params: SqlValue[]): SsoProviderRecord[] {
+  const rows = db.query<Record<string, SqlValue>>(
+    `SELECT * FROM auth_sso_providers ${where} ORDER BY created_at, id`,
+    params,
+  ).map((row) => fromRow(SSO_PROVIDER_MAP, row));
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.id);
+  const domains = db.query<Record<string, SqlValue>>(
+    `SELECT domain, provider_id FROM auth_sso_domains WHERE provider_id IN (${
+      ids.map(() => "?").join(", ")
+    })`,
+    ids,
+  );
+  return withDomains(rows, domains);
+}
+
+/** Why `record` cannot be written over the rows of other providers, or `ok`. */
+function ssoConflict(db: SqliteDb, record: SsoProviderRecord): SsoProviderWrite {
+  if (
+    one(db, "SELECT id FROM auth_sso_providers WHERE entity_id = ? AND id <> ?", [
+      record.entityId,
+      record.id,
+    ])
+  ) return "entity_id_exists";
+  for (const domain of record.domains) {
+    if (
+      one(db, "SELECT domain FROM auth_sso_domains WHERE domain = ? AND provider_id <> ?", [
+        domain,
+        record.id,
+      ])
+    ) return "domain_exists";
+  }
+  return "ok";
+}
+
+/** Write a provider row and replace its domains (inside a transaction). */
+function writeSsoProvider(db: SqliteDb, record: SsoProviderRecord): void {
+  put(db, "auth_sso_providers", toRow(SSO_PROVIDER_MAP, record));
+  db.exec("DELETE FROM auth_sso_domains WHERE provider_id = ?", [record.id]);
+  for (const domain of record.domains) {
+    db.exec("INSERT INTO auth_sso_domains (domain, provider_id) VALUES (?, ?)", [
+      domain,
+      record.id,
+    ]);
+  }
+}
+
+/** The `/auth/v1` SAML SSO group. */
+function ssoMethods(state: SqliteState): SsoMethods {
+  const save = (record: SsoProviderRecord, mustExist: boolean): SsoProviderWrite =>
+    transaction(state.db(), () => {
+      const db = state.db();
+      const exists = !!one(db, "SELECT id FROM auth_sso_providers WHERE id = ?", [record.id]);
+      if (exists !== mustExist) return mustExist ? "not_found" : "entity_id_exists";
+      const verdict = ssoConflict(db, record);
+      if (verdict === "ok") writeSsoProvider(db, record);
+      return verdict;
+    });
+  return {
+    createSsoProvider: (record) => save(record, false),
+    updateSsoProvider: (record) => save(record, true),
+    getSsoProvider: (id) => ssoProviders(state.db(), "WHERE id = ?", [id])[0],
+    getSsoProviderByEntityId: (entityId) =>
+      ssoProviders(state.db(), "WHERE entity_id = ?", [entityId])[0],
+    getSsoProviderByDomain: (domain) =>
+      ssoProviders(
+        state.db(),
+        "WHERE id = (SELECT provider_id FROM auth_sso_domains WHERE domain = ?)",
+        [domain],
+      )[0],
+    listSsoProviders: () => ssoProviders(state.db(), "", []),
+    deleteSsoProvider: (id) =>
+      transaction(state.db(), () => {
+        const db = state.db();
+        db.exec("DELETE FROM auth_sso_domains WHERE provider_id = ?", [id]);
+        db.exec("DELETE FROM auth_sso_sessions WHERE provider_id = ?", [id]);
+        return db.query("DELETE FROM auth_sso_providers WHERE id = ? RETURNING id", [id])
+          .length === 1;
+      }),
+    createSsoSession(record) {
+      state.db().exec("DELETE FROM auth_sso_sessions WHERE expires_at <= ?", [state.now()]);
+      put(state.db(), "auth_sso_sessions", toRow(SSO_SESSION_MAP, record));
+    },
+    listSsoSessions: (providerId, nameId) =>
+      state.db().query<Record<string, SqlValue>>(
+        "SELECT * FROM auth_sso_sessions WHERE provider_id = ? AND name_id = ? AND expires_at > ?",
+        [providerId, nameId, state.now()],
+      ).map((row) => fromRow(SSO_SESSION_MAP, row)),
+    claimSamlMessageId(id, expiresAt) {
+      const db = state.db();
+      db.exec("DELETE FROM auth_saml_message_ids WHERE expires_at <= ?", [state.now()]);
+      return db.query(
+        "INSERT INTO auth_saml_message_ids (id, expires_at) VALUES (?, ?) " +
+          "ON CONFLICT(id) DO NOTHING RETURNING id",
+        [id, expiresAt],
+      ).length === 1;
+    },
+  };
+}
+
 export { NATIVE_SESSION_RETENTION };
 
 /** The tables keyed by `user_id` that a user's deletion clears. */
@@ -840,8 +1140,11 @@ const USER_TABLES = [
   "auth_credentials",
   "auth_api_tokens",
   "auth_mfa",
+  "auth_mfa_factors",
   "auth_native_sessions",
   "auth_passkeys",
+  "auth_sso_sessions",
+  ...OAUTH_SERVER_USER_TABLES,
 ];
 
 /**
@@ -951,8 +1254,15 @@ export function sqliteAuthAdapter(options: SqliteAuthAdapterOptions = {}): AuthA
     ...credentialMethods(state),
     ...apiTokenMethods(state),
     ...mfaMethods(state),
+    ...factorMethods(state),
     ...nativeMethods(state),
     ...passkeyMethods(state),
+    ...ssoMethods(state),
+    ...sqlOAuthServerGroups({
+      rows: (sql, params) => Promise.resolve(state.db().query(sql, params as SqlValue[])),
+      table: (name) => name,
+      now: state.now,
+    }),
     async deleteUser(id) {
       deleteUserRows(state, id);
       await sessions.deleteByUser(id);

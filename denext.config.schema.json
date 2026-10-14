@@ -1067,6 +1067,13 @@
       "description": "A request header the fronting proxy sets to the client address — `\"cf-connecting-ip\"` (Cloudflare), `\"fly-client-ip\"` (Fly.io), `\"x-real-ip\"` (nginx) — that every **per-address limit** keys on: `rateLimit()`, `denextAuth`'s per-IP budgets, `live.limits.maxConnectionsPerIp`, `@denext/backend` realtime's signed-out quota and `clientIpForLimits()`. Supabase Auth's `GOTRUE_RATE_LIMIT_HEADER`, for denext. When a request carries an IP address in it (its last comma-separated value), that address is the limit key, IPv6 bucketed by /64 and an IPv4-mapped address as its IPv4 — a loopback/private one too.",
       "type": "string"
     },
+    "rateLimitTrustedProxies": {
+      "description": "The proxies whose DenextConfig.rateLimitHeader is believed: CIDR ranges or single addresses (`[\"173.245.48.0/20\", \"2400:cb00::/32\"]` for Cloudflare's published ranges, `[\"10.0.0.0/8\"]` for an nginx or Fly proxy on a private network). A request whose socket peer is outside every range keys its per-address limits on that peer instead. Unset (or empty): a loopback/private peer when `trustForwardedHeaders` is on, else none. Unset, the `DENEXT_RATE_LIMIT_TRUSTED_PROXIES` env var (comma-separated) is read at boot (config > env > none).",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "rateLimitLocalAddresses": {
       "description": "Apply per-address limits (`rateLimit()`, `denextAuth`'s per-IP budgets, `live.limits.maxConnectionsPerIp`, `@denext/backend` realtime's signed-out quota, `clientIpForLimits()`) to a loopback, private, link-local or unique-local socket peer too, counted by its own address. Default `false`: such a peer is usually a reverse proxy every visitor shares, so its limit would be site-wide, and the limits are skipped for it with a warning. Turn it on where those peers are real clients — a LAN or VPN deployment, a container network with no proxy in front. A trusted forwarded hop or a DenextConfig.rateLimitHeader address still takes precedence. Unset, `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES=1` turns it on (config > env > `false`).",
       "type": "boolean"

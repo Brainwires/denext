@@ -8,6 +8,7 @@
 // Real Postgres semantics (concurrency across connections, types) are covered by the
 // integration tests in tests/postgres-integration.test.ts against a real server.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { DatabaseSync } from "node:sqlite";
 import type { SqlClient, SqlQuery, SqlRow } from "../../src/server/postgres.ts";
 
@@ -93,13 +94,22 @@ export function fakeSqlClient(): FakeSqlClient {
   // fails (25P02) until the transaction (or a savepoint) is rolled back.
   let inTransaction = false;
   let aborted = false;
+  // The fake is one SQLite connection, but a real server gives each transaction a connection of
+  // its own: a statement issued outside `begin` (a status read, another runner's first look)
+  // runs on another connection, so it neither sees a transaction's abort state nor poisons it
+  // by failing. Only statements made inside a `begin` callback (`scoped`) do.
+  const inBegin = new AsyncLocalStorage<boolean>();
+  const transactionAborted = () => aborted && inBegin.getStore() === true;
+  const abortTransaction = () => {
+    if (inTransaction && inBegin.getStore() === true) aborted = true;
+  };
   const run = (text: string, params: unknown[] = [], simple = false): SqlRow[] => {
     const sql = text.replace(/\$(\d+)/g, "?$1");
     statements.push(sql);
     if (sql === "BEGIN") inTransaction = true;
     if (/^(COMMIT|ROLLBACK)$/.test(sql)) inTransaction = aborted = false;
     if (sql.startsWith("ROLLBACK TO SAVEPOINT")) aborted = false;
-    if (aborted) {
+    if (transactionAborted()) {
       throw Object.assign(
         new Error("current transaction is aborted, commands ignored until end of block"),
         { code: "25P02" },
@@ -115,7 +125,7 @@ export function fakeSqlClient(): FakeSqlClient {
       }
       return raw.prepare(sql).all(...params.map(bindable)) as SqlRow[];
     } catch (error) {
-      if (inTransaction) aborted = true;
+      abortTransaction();
       throw translate(error);
     }
   };
@@ -145,22 +155,24 @@ export function fakeSqlClient(): FakeSqlClient {
     settings,
     begin<T>(fn: (tx: SqlClient) => T | Promise<T>): Promise<T> {
       // One connection: transactions take turns, as they would each hold a pooled one.
-      const next = queue.then(async () => {
-        run("BEGIN");
-        try {
-          // An array of queries is awaited as a whole, as Deno.SQL and postgres.js do.
-          const returned = fn(client);
-          const result =
-            (Array.isArray(returned) ? await Promise.all(returned) : await returned) as T;
-          run("COMMIT");
-          return result;
-        } catch (error) {
-          run("ROLLBACK");
-          throw error;
-        } finally {
-          endTransaction();
-        }
-      });
+      const next = queue.then(() =>
+        inBegin.run(true, async () => {
+          run("BEGIN");
+          try {
+            // An array of queries is awaited as a whole, as Deno.SQL and postgres.js do.
+            const returned = fn(client);
+            const result =
+              (Array.isArray(returned) ? await Promise.all(returned) : await returned) as T;
+            run("COMMIT");
+            return result;
+          } catch (error) {
+            run("ROLLBACK");
+            throw error;
+          } finally {
+            endTransaction();
+          }
+        })
+      );
       queue = next.catch(() => {});
       return next;
     },

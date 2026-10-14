@@ -28,10 +28,13 @@
 import type { DenextPlugin } from "../../plugin/mod.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { isProductionEnv, isWeakSecret } from "../session.ts";
+import { isBuildPhase } from "../phase.ts";
 import { emitAuthEvent } from "./events.ts";
-import { hasMfaAdapter } from "./mfa.ts";
+import { hasMfaAdapter, pendingSessionLive } from "./mfa.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { assertEmailProviderConfig } from "./providers-email.ts";
+import { assertPhoneProviderConfig } from "./providers-phone.ts";
+import { assertAnonymousConfig } from "./routes-anonymous.ts";
 import { resolvePasskeys } from "./passkeys.ts";
 import { authTrustsProxy } from "./rate-limit.ts";
 import { handleAuthRequest } from "./routes.ts";
@@ -42,8 +45,9 @@ import {
   verifyNativeAccessToken,
 } from "./native.ts";
 import { currentContext, headers } from "../request-context.ts";
+import { jwtBearerOf, sessionFromJwtBearer } from "./gotrue/access.ts";
 import type { SessionStore } from "./session-store.ts";
-import { readAuthSession, refreshIfStale } from "./session.ts";
+import { readAuthSession, refreshLiveSession } from "./session.ts";
 import { isOAuthProvider } from "./types.ts";
 import type { AuthConfig, AuthSession, OAuthProvider } from "./types.ts";
 
@@ -81,20 +85,42 @@ export function peekActiveAuthConfig(): AuthConfig | null {
 
 let warnedNoOrigin = false;
 
+/** Whether `secret` holds no usable value (unset, empty, or a list of only unset entries). */
+function missingSecret(secret: AuthConfig["secret"]): boolean {
+  return Array.isArray(secret) ? !secret.some((s) => typeof s === "string" && s !== "") : !secret;
+}
+
+/**
+ * Under `denext build` / `denext export` the runtime secrets are usually absent (a Docker build
+ * layer has no `.env`), and nothing is signed: a missing `secret` becomes a random one for the
+ * run, so `denextAuth({ secret: Deno.env.get("AUTH_SECRET")! })` builds. Serving checks in full.
+ */
+function forBuildPhase(config: AuthConfig): AuthConfig {
+  if (!isBuildPhase() || !missingSecret(config.secret)) return config;
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return { ...config, secret: btoa(String.fromCharCode(...bytes)) };
+}
+
+/** A brute-forceable secret is refused in production (checked when serving, not building). */
+function assertStrongSecretInProd(secret: AuthConfig["secret"]): void {
+  if (!isWeakSecret(secret) || !isProductionEnv() || isBuildPhase()) return;
+  throw new Error(
+    "denextAuth: `secret` is shorter than 32 chars — refusing to boot in production with " +
+      "a brute-forceable session secret. Set a long, random secret (e.g. `openssl rand " +
+      "-base64 32`).",
+  );
+}
+
 function validateConfig(config: AuthConfig): void {
   if (!config.secret || (Array.isArray(config.secret) && config.secret.length === 0)) {
     throw new Error("denextAuth: `secret` is required");
   }
-  if (isWeakSecret(config.secret) && isProductionEnv()) {
-    throw new Error(
-      "denextAuth: `secret` is shorter than 32 chars — refusing to boot in production with " +
-        "a brute-forceable session secret. Set a long, random secret (e.g. `openssl rand " +
-        "-base64 32`).",
-    );
-  }
+  assertStrongSecretInProd(config.secret);
   validateProviders(config.providers);
   assertCredentialsVerifiable(config);
   assertEmailProviderConfig(config);
+  assertPhoneProviderConfig(config);
+  assertAnonymousConfig(config);
   // Resolving validates the 2.5 surface too: an unusable `basePath`, an invalid cookie
   // name, or `session.strategy: "database"` with nowhere to store sessions all throw here
   // — at config time, not on the first login.
@@ -107,8 +133,9 @@ function validateConfig(config: AuthConfig): void {
     // Every sign-in would come back pending with no way to enroll or verify a factor:
     // nobody could ever finish signing in.
     throw new Error(
-      'denextAuth: `mfa.required: "always"` needs an adapter with the MFA group (getMfa, ' +
-        "setMfa, consumeBackupCode, claimTotpStep).",
+      'denextAuth: `mfa.required: "always"` needs an adapter with the MFA factor store ' +
+        "(createMfaFactor, listMfaFactors, updateMfaFactor, claimMfaFactorStep, deleteMfaFactor) " +
+        "and backup codes (getMfa, setMfa, consumeBackupCode).",
     );
   }
   if (!config.canonicalOrigin) requireCanonicalOriginInProd();
@@ -122,6 +149,7 @@ function validateConfig(config: AuthConfig): void {
 
 /** At least one provider, unique ids, and non-empty OAuth credentials. */
 function validateProviders(providers: AuthConfig["providers"]): void {
+  const building = isBuildPhase();
   if (!providers || providers.length === 0) {
     throw new Error("denextAuth: at least one provider is required");
   }
@@ -130,7 +158,8 @@ function validateProviders(providers: AuthConfig["providers"]): void {
     if (seen.has(p.id)) throw new Error(`denextAuth: duplicate provider id "${p.id}"`);
     seen.add(p.id);
     if (isOAuthProvider(p)) {
-      assertOAuthCredentials(p);
+      // Client credentials come from the runtime environment: checked when serving.
+      if (!building) assertOAuthCredentials(p);
       assertResponseMode(p);
     }
   }
@@ -235,6 +264,8 @@ function warnOnUndeclaredProxy(config: AuthConfig): void {
  * standard NODE_ENV/DENEXT_ENV=production signal a deploy sets; elsewhere warn once.
  */
 function requireCanonicalOriginInProd(): void {
+  // Building, not serving: the origin usually comes from the runtime environment.
+  if (isBuildPhase()) return;
   if (isProductionEnv()) {
     throw new Error(
       "denextAuth: `canonicalOrigin` is required in production — without it the OAuth " +
@@ -258,6 +289,7 @@ function requireCanonicalOriginInProd(): void {
  * @returns A {@link DenextPlugin}.
  */
 export function denextAuth(config: AuthConfig): DenextPlugin {
+  config = forBuildPhase(config);
   validateConfig(config);
   activeConfig = config;
   return {
@@ -343,8 +375,18 @@ function currentSession(): Promise<AuthSession | null> {
   // `cookies()` is: it marks the render dynamic (a bearer page is never stored by ISR and
   // answers `private, no-store`), postpones under PPR, throws inside `"use cache"` and reads
   // empty under `force-static` — a user's page can't be cached and served to the next visitor.
-  const bearer = currentContext() ? nativeBearerOf(headers().get("authorization")) : undefined;
+  const header = currentContext() ? headers().get("authorization") : null;
+  const bearer = nativeBearerOf(header);
   if (bearer !== undefined) return verifyNativeAccessToken(activeConfig, bearer);
+  // A Supabase access token (`backend({ supabase })`) is a session the same way; an `anon` /
+  // `service_role` key in the header is not a user, and leaves the cookie to decide.
+  const jwt = jwtBearerOf(header);
+  if (jwt !== undefined) {
+    const config = activeConfig;
+    return sessionFromJwtBearer(config, jwt).then((session) =>
+      session === undefined ? readAuthSession(config) : session
+    );
+  }
   return readAuthSession(activeConfig);
 }
 
@@ -373,13 +415,15 @@ export async function auth(): Promise<AuthSession | null> {
  *
  * A pending session grants nothing: {@link auth} and every guard still read it as signed
  * out, and it is never slid forward. It is short-lived, and the step-up replaces it with
- * a fresh session rather than upgrading it.
+ * a fresh session rather than upgrading it. One whose user has since been banned or deleted,
+ * or whose address was first proven after it signed in, reads as `null` too.
  *
  * @returns The pending {@link AuthSession}, or `null`.
  */
 export async function pendingMfaSession(): Promise<AuthSession | null> {
   const session = await currentSession();
-  return session?.mfaPending ? session : null;
+  if (!session?.mfaPending || !activeConfig) return null;
+  return await pendingSessionLive(activeConfig, session) ? session : null;
 }
 
 /**
@@ -387,10 +431,10 @@ export async function pendingMfaSession(): Promise<AuthSession | null> {
  * and {@link updateAuthSession}; the refreshed cookie rides the request's outgoing
  * headers, so only call it where the response has not been sent yet.
  */
-function refreshActiveSession(session: AuthSession): Promise<AuthSession> {
+function refreshActiveSession(session: AuthSession): Promise<AuthSession | null> {
   // A native (bearer) session has no cookie to slide; its app refreshes its own token.
   if (session.nativeSessionId) return Promise.resolve(session);
-  return activeConfig ? refreshIfStale(activeConfig, session) : Promise.resolve(session);
+  return activeConfig ? refreshLiveSession(activeConfig, session) : Promise.resolve(session);
 }
 
 /**
@@ -399,7 +443,8 @@ function refreshActiveSession(session: AuthSession): Promise<AuthSession> {
  * `requireSession()` do for you. Call it from a Server Action or a `route.ts` handler
  * (anywhere the response has not been sent yet); the refreshed cookie rides that
  * response. In a streamed Server Component use {@link auth} instead — a `Set-Cookie`
- * written after the headers flush is dropped silently.
+ * written after the headers flush is dropped silently. A session due to slide whose user is
+ * an SSO user is ended instead (its identity provider is that user's only way in).
  *
  * @returns The (possibly refreshed) {@link AuthSession}, or `null` when signed out.
  */
@@ -487,7 +532,8 @@ export async function requireAuth(
   // re-issued cookie is queued on the outgoing headers and the pipeline attaches it to
   // whatever response the request ends up producing — the "continue" case needs no
   // Response of its own.
-  await refreshActiveSession(session);
+  // A session ended instead (an SSO user's, never its identity provider's) is signed out.
+  if (!(await refreshActiveSession(session))) return refuse(request, options.signInPath);
   return null;
 }
 

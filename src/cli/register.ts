@@ -27,6 +27,10 @@ import { patchCommand } from "./commands/patch.ts";
 import { mcpCommand } from "./commands/mcp.ts";
 import { uiCommand } from "./commands/ui.ts";
 import { dbAdminCommand } from "./commands/db-admin.ts";
+import { dbCommand } from "./commands/db.ts";
+import { migrationCommand } from "./commands/migration.ts";
+import { stackCommand } from "./commands/stack.ts";
+import { genCommand } from "./commands/gen.ts";
 import { makeCompletionsCommand } from "./commands/completions.ts";
 import { makeCommandsCommand } from "./commands/commands.ts";
 
@@ -67,6 +71,12 @@ export function buildRegistry(): CommandRegistry {
   reg.register(initCommand);
   reg.register(generateCommand);
   reg.register(fallowCommand);
+  // The database: migrations (Postgres or SQLite) and the Supabase CLI's `db` verbs.
+  reg.register(migrationCommand);
+  reg.register(dbCommand);
+  reg.register(genCommand);
+  // The local Docker stack (`supabase start` / `stop` / `status`).
+  reg.register(stackCommand);
   // Desktop packaging.
   reg.register(desktopCommand);
   // Capacitor mobile: over-the-air UI manifest + native plugin install.

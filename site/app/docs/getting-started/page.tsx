@@ -70,7 +70,7 @@ deno install -A -g -n denext jsr:@denext/denext/cli`}
         <em>latest stable</em>{" "}
         release: release candidates are GitHub prereleases and are never "latest", so pick one with
         {" "}
-        <code>DENEXT_VERSION=v{RELEASE}-rc.1</code>{" "}
+        <code>DENEXT_VERSION=v&lt;version&gt;-rc.N</code>{" "}
         if you want it. The latest-version lookup uses GitHub's API, which allows 60 anonymous
         requests an hour per IP: with <code>GITHUB_TOKEN</code> (or{" "}
         <code>GH_TOKEN</code>) set, both installers send it on that one <code>api.github.com</code>
@@ -292,10 +292,10 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();`}
         at a pinned version, so nothing is installed globally:
       </p>
       <Code lang="sh">
-        {`deno task fallow:audit      # the changed-code gate: exit 1 on a "fail" verdict
-deno task hooks:install     # git runs that gate before every commit (git config core.hooksPath)
-deno task fallow            # dead code + duplication + health over the whole project
-deno task coverage:fallow   # deno test --coverage → coverage/coverage-final.json (measured CRAP)`}
+        {`denext task fallow:audit      # the changed-code gate: exit 1 on a "fail" verdict
+denext task hooks:install     # git runs that gate before every commit (git config core.hooksPath)
+denext task fallow            # dead code + duplication + health over the whole project
+denext task coverage:fallow   # deno test --coverage → coverage/coverage-final.json (measured CRAP)`}
       </Code>
       <p>
         The hook is installed only when you run <code>hooks:install</code>{" "}

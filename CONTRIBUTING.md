@@ -67,15 +67,13 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
   in `tests/serial-tests.ts` (its pass is separate from the stock ones), and `vitest` needs no
   import-map entry. The pass runs with `--allow-read --allow-write` only (what the Vitest files
   use; from `2.9.7-denext.16` the Vitest layer's own reads need no grant): a new file that needs
-  more adds it to `VITEST_GRANTS` in `scripts/test-run.ts`. **Coverage:** the Vitest files stay out of `test:coverage` / `coverage:fallow` (stock
-  Deno), and `scripts/test-run.ts` strips `--coverage` from their pass. The Vitest transform
-  changes the code a module emits; the pinned toolchain (`2.9.7-denext.16`) maps a Vitest run's
-  profile on its own, but `deno coverage` under-reports a module whose plain-run and Vitest-run
-  profiles it merges (`src/server/auth/rate-limit.ts`: 91.9% and 30.8% of lines alone, 38.9%
-  merged; `src/mobile/picked-web.ts`: 96.4% from the Vitest file alone, 10.7% merged), and a
-  stock run's profile of a module the toolchain has since run reads as "Missing transpiled
-  source". Merge them once the fork's `deno coverage` combines profiles of one module emitted two
-  ways.
+  more adds it to `VITEST_GRANTS` in `scripts/test-run.ts`. **Coverage:** `test:coverage` and
+  `coverage:fallow` include the Vitest files. With `--coverage=<dir>`, `scripts/test-run.ts` runs
+  every pass on the toolchain with `--coverage-raw-data-only` (the stock files in one pass without
+  `--parallel`, the serial ones included, then the Vitest files), and the report comes from the
+  toolchain's `deno coverage <dir>` (`scripts/toolchain-deno.ts`). From `2.9.7-denext.17` it
+  merges a module's plain-run and Vitest-run profiles per emitted form, so a line either pass ran
+  counts as covered; stock Deno's `deno coverage` would under-report such a module.
   **`deno task test:stress`** finds these: it runs the timer-heavy unit tests (client runtime,
   mobile, desktop, React Native, Expo, VirtualList, navigation; serial and child-process files
   left out, see `scripts/test-stress.ts`) with the `tests/stress/timer-jitter.ts` preload, which
@@ -279,14 +277,21 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
 1. **Start from a clean, pushed `development`** (`git status` clean; all work
    lands on `development` — never branch off it).
 2. **Run the heavy CI jobs on that commit.** A push to `development` runs only
-   ci.yml's fast jobs; `integration`, `next-compat` and `coverage` run on pull
-   requests, `main` and a manual dispatch. Dispatch it and wait:
+   ci.yml's fast jobs; `integration`, `next-compat`, `coverage` and
+   `backend-integration` (the `@denext/backend` suites against a real Postgres and MinIO,
+   as service containers) run on pull requests, `main` and a manual dispatch. Dispatch it
+   and wait:
    `gh workflow run ci.yml --ref development`, then
    `gh run watch "$(gh run list --workflow=ci.yml --event=workflow_dispatch --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status`.
    The release script checks this itself (`scripts/release-ci.ts`): it refuses
    to start unless the newest ci.yml run on HEAD that ran those jobs has
-   `check`, `integration`, `next-compat`, `coverage`, `ios-export-router` and
-   `windows-resolve` green (it needs `gh`, logged in).
+   `check`, `integration`, `next-compat`, `coverage`, `backend-integration`,
+   `ios-export-router` and `windows-resolve` green (it needs `gh`, logged in).
+   It also needs the newest desktop-ci.yml run on HEAD green in every job (the
+   desktop suites on all three OSes, the installers, install.ps1 / install.sh;
+   `DESKTOP_CI_JOBS` lists the ones that must exist). A push runs desktop-ci only
+   when its `paths` filter matches, so dispatch it as well:
+   `gh workflow run desktop-ci.yml --ref development`, and wait for it.
 3. **Cut:** `deno task release X.Y.Z` (add `--confirm` to skip the prompt,
    `--dry` to preview). The script: bumps every version spot (`deno task bump`
    — root `deno.json` + `mod.ts`, `ROADMAP.md`'s status line, every
@@ -298,11 +303,16 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    the release gate, `deno task doc-lint` and `deno publish --dry-run`, shows
    the diff, then commits, tags `vX.Y.Z` and pushes — the tag triggers the
    publish. The gate does not re-run the whole suite: CI's `check` job already
-   passed it on HEAD (step 2), and the publish workflow runs it again on the
-   tagged commit, so it checks only the release's own changes (`deno fmt
-   --check`, `deno lint` and `RELEASE_DELTA_TESTS` in `scripts/release.ts`).
-   `--full-gate` runs `deno task check` instead. Don't run the suite yourself
-   before cutting; the release covers it.
+   passed it on HEAD (step 2), so it checks only the release's own changes
+   (`deno fmt --check`, `deno lint` and `RELEASE_DELTA_TESTS` in
+   `scripts/release.ts`). `--full-gate` runs `deno task check` instead. Don't
+   run the suite yourself before cutting; the release covers it. The publish
+   workflow decides the same way (`scripts/publish-verify.ts`): the release
+   commit on a CI-checked parent gets the delta gate, a tagged commit CI
+   checked itself gets fmt + lint, and anything else (a plugin tag on an
+   unchecked commit) gets the whole suite. Every binary, the Mac ones
+   included, is built on Linux; a `macos-check` job runs the released Mac
+   binaries afterwards, off the release's critical path.
 4. **Before running it for a stable major/minor**, hand-edit the prose the bump
    does not: `ROADMAP.md`'s status paragraph, any `README.md` stage language, and
    any stage language on the docs-site pages (`site/app/docs/*/content.md`).
@@ -377,9 +387,10 @@ only that package, on its own tag:
   tree; CI does not use `--allow-dirty`.
 - **Versions are immutable.** A published version can't be replaced — a mistake
   means bumping to the next patch.
-- **Minimum-dependency-age.** For roughly the first 24 hours, importing the new
-  version needs `--min-dep-age=0`; a `denext build` of a freshly scaffolded app
-  hits the same policy inside `deno bundle` — `DENEXT_MIN_DEP_AGE=0` forwards it.
+- **Minimum-dependency-age.** For the first two days (Deno 2.9's default), importing the new
+  version outside a project needs `--min-dep-age=0`. Projects from `denext create` /
+  `denext migrate` exempt `jsr:@denext/*` in their `deno.json`; elsewhere
+  `DENEXT_MIN_DEP_AGE=0` forwards the override to denext's `deno bundle` children.
   A supply-chain delay, not an error.
 - **Provenance requires the tag path.** Publishing manually from a laptop skips
   provenance — always release via the tag push so CI does it.

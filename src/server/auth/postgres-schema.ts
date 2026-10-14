@@ -14,6 +14,7 @@ import {
 } from "../postgres.ts";
 import { migratePostgres, type Migration } from "../postgres-migrate.ts";
 import { inRootContext } from "../root-context.ts";
+import { oauthServerPostgresSql } from "./sql-adapter-oauth-server.ts";
 
 /** The tracking table of the auth migrations. */
 const AUTH_MIGRATIONS_TABLE = "auth_migrations";
@@ -81,6 +82,68 @@ CREATE INDEX IF NOT EXISTS auth_sessions_expiry ON ${p}auth_sessions (expires_at
 CREATE TABLE IF NOT EXISTS ${p}auth_rate_limits (
   key TEXT PRIMARY KEY, hits BIGINT NOT NULL, reset_at DOUBLE PRECISION NOT NULL);
 CREATE INDEX IF NOT EXISTS auth_rate_limits_reset ON ${p}auth_rate_limits (reset_at);
+`,
+  }, {
+    // Supabase-shaped users and identities: phone, metadata, anonymous users, timestamps.
+    name: "0002_auth_user_profile",
+    sql: `
+ALTER TABLE ${p}auth_users ADD COLUMN phone TEXT;
+ALTER TABLE ${p}auth_users ADD COLUMN phone_verified BIGINT;
+ALTER TABLE ${p}auth_users ADD COLUMN user_metadata TEXT;
+ALTER TABLE ${p}auth_users ADD COLUMN app_metadata TEXT;
+ALTER TABLE ${p}auth_users ADD COLUMN is_anonymous BOOLEAN;
+ALTER TABLE ${p}auth_users ADD COLUMN updated_at BIGINT;
+ALTER TABLE ${p}auth_users ADD COLUMN last_sign_in_at BIGINT;
+ALTER TABLE ${p}auth_users ADD COLUMN banned_until BIGINT;
+CREATE UNIQUE INDEX IF NOT EXISTS auth_users_phone ON ${p}auth_users (phone)
+  WHERE phone IS NOT NULL;
+CREATE INDEX IF NOT EXISTS auth_users_created ON ${p}auth_users (created_at, id);
+ALTER TABLE ${p}auth_accounts ADD COLUMN identity_id TEXT;
+ALTER TABLE ${p}auth_accounts ADD COLUMN identity_data TEXT;
+ALTER TABLE ${p}auth_accounts ADD COLUMN email TEXT;
+ALTER TABLE ${p}auth_accounts ADD COLUMN created_at BIGINT;
+ALTER TABLE ${p}auth_accounts ADD COLUMN updated_at BIGINT;
+ALTER TABLE ${p}auth_accounts ADD COLUMN last_sign_in_at BIGINT;
+CREATE TABLE IF NOT EXISTS ${p}auth_mfa_factors (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, factor_type TEXT NOT NULL, status TEXT NOT NULL,
+  friendly_name TEXT, secret TEXT, phone TEXT, created_at BIGINT, updated_at BIGINT,
+  last_step BIGINT, last_challenged_at BIGINT);
+CREATE INDEX IF NOT EXISTS auth_mfa_factors_user ON ${p}auth_mfa_factors (user_id);
+`,
+  }, {
+    // SAML SSO of /auth/v1: stored providers, their domains, the SSO origin of sessions (for
+    // IdP-initiated Single Logout) and the SAML message ids every replica's replay check shares.
+    name: "0004_auth_sso_providers",
+    sql: `
+CREATE TABLE IF NOT EXISTS ${p}auth_sso_providers (
+  id TEXT PRIMARY KEY, entity_id TEXT NOT NULL, metadata_xml TEXT NOT NULL, metadata_url TEXT,
+  attribute_mapping TEXT, name_id_format TEXT, created_at BIGINT, updated_at BIGINT);
+CREATE UNIQUE INDEX IF NOT EXISTS auth_sso_providers_entity ON ${p}auth_sso_providers (entity_id);
+CREATE TABLE IF NOT EXISTS ${p}auth_sso_domains (
+  domain TEXT PRIMARY KEY, provider_id TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS auth_sso_domains_provider ON ${p}auth_sso_domains (provider_id);
+CREATE TABLE IF NOT EXISTS ${p}auth_sso_sessions (
+  session_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, name_id TEXT NOT NULL,
+  session_index TEXT, user_id TEXT NOT NULL, expires_at BIGINT NOT NULL);
+CREATE INDEX IF NOT EXISTS auth_sso_sessions_name ON ${p}auth_sso_sessions (provider_id, name_id);
+CREATE INDEX IF NOT EXISTS auth_sso_sessions_user ON ${p}auth_sso_sessions (user_id);
+CREATE INDEX IF NOT EXISTS auth_sso_sessions_expiry ON ${p}auth_sso_sessions (expires_at);
+CREATE TABLE IF NOT EXISTS ${p}auth_saml_message_ids (
+  id TEXT PRIMARY KEY, expires_at BIGINT NOT NULL);
+CREATE INDEX IF NOT EXISTS auth_saml_message_ids_expiry ON ${p}auth_saml_message_ids (expires_at);
+`,
+  }, {
+    // The /auth/v1 OAuth 2.1 server (clients, authorizations, consents, the session families a
+    // client holds), stored OAuth / OIDC providers and Web3 sign-in nonces.
+    name: "0005_auth_oauth_server",
+    sql: oauthServerPostgresSql(p),
+  }, {
+    // The metadata validity of stored SAML providers: its validUntil and when a metadata URL
+    // is next fetched (validUntil, cacheDuration).
+    name: "0006_auth_sso_metadata_validity",
+    sql: `
+ALTER TABLE ${p}auth_sso_providers ADD COLUMN metadata_valid_until BIGINT;
+ALTER TABLE ${p}auth_sso_providers ADD COLUMN metadata_refresh_after BIGINT;
 `,
   }];
 }

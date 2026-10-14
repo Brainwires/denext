@@ -38,7 +38,7 @@
 // top-level side effect in one of those siblings (a polyfill, a registry `register()` call) no
 // longer runs. A barrel that runs code of its OWN is still detected and left alone.
 
-import type * as esbuild from "esbuild";
+import type * as esbuild from "./esbuild/mod.ts";
 import { dirname, extname, resolve } from "@std/path";
 import type { DenextConfig } from "../server/config.ts";
 import { applyEdits, type Edit, endOf, type Node, parseModule, startOf } from "./swc-ast.ts";
