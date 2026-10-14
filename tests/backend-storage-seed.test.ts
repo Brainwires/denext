@@ -318,3 +318,68 @@ Deno.test("denext storage rm -r on a remote store needs --yes or a yes at the te
     }
   }
 });
+
+Deno.test({
+  name: "denext storage cp -r: a symbolic link inside the destination is never written through",
+  ignore: Deno.build.os === "windows", // creating a symlink needs a privilege there
+}, async () => {
+  const { createStorageCommand } = await import("../packages/backend/src/storage-command.ts");
+  const { storage: store } = await import("../packages/backend/src/storage.ts");
+  const root = await Deno.makeTempDir({ prefix: "dnx-storage-symlink-" });
+  const original = store.bucket;
+  const keys = ["a.txt", "sub/b.txt", "c.txt"];
+  store.bucket = (() => ({
+    list: (prefix: string) =>
+      Promise.resolve({
+        objects: keys.filter((k) => k.startsWith(prefix)).map((key) => ({ key })),
+      }),
+    download: () => Promise.resolve({ body: new TextEncoder().encode("from the bucket") }),
+  })) as unknown as typeof store.bucket;
+  try {
+    await Deno.mkdir(`${root}/work/out`, { recursive: true });
+    await Deno.mkdir(`${root}/elsewhere`);
+    await Deno.writeTextFile(`${root}/elsewhere/c.txt`, "precious");
+    const errors: string[] = [];
+    let code = 0;
+    const command = createStorageCommand({
+      log: () => {},
+      error: (l) => errors.push(l),
+      exit: (c) => (code = c),
+    });
+    const cp = async () => {
+      code = 0;
+      await command.run(
+        {
+          positionals: ["cp", "ss:///b", "out"],
+          flags: { recursive: true },
+          global: { cwd: `${root}/work` },
+          rest: [],
+        } as never,
+      );
+    };
+    const outside = () => [...Deno.readDirSync(`${root}/elsewhere`)].map((e) => e.name).sort();
+    // A directory link inside the destination.
+    await Deno.symlink(`${root}/elsewhere`, `${root}/work/out/sub`);
+    await cp();
+    assertEquals(code, 1);
+    assertStringIncludes(errors.at(-1)!, "is a symbolic link");
+    assertEquals(outside(), ["c.txt"], "nothing written through the link");
+    assertEquals([...Deno.readDirSync(`${root}/work/out`)].map((e) => e.name), ["sub"]);
+    // A file link inside the destination.
+    await Deno.remove(`${root}/work/out/sub`);
+    await Deno.symlink(`${root}/elsewhere/c.txt`, `${root}/work/out/c.txt`);
+    await cp();
+    assertEquals(code, 1);
+    assertStringIncludes(errors.at(-1)!, "is a symbolic link");
+    assertEquals(await Deno.readTextFile(`${root}/elsewhere/c.txt`), "precious");
+    // Without the links, the tree is written.
+    await Deno.remove(`${root}/work/out/c.txt`);
+    await cp();
+    assertEquals(code, 0);
+    assertEquals(await Deno.readTextFile(`${root}/work/out/sub/b.txt`), "from the bucket");
+    assertEquals(await Deno.readTextFile(`${root}/elsewhere/c.txt`), "precious");
+  } finally {
+    store.bucket = original;
+    await Deno.remove(root, { recursive: true });
+  }
+});

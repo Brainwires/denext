@@ -9,7 +9,7 @@
 //   rm <ss:///…>… [-r] [--yes]       delete objects (-r: everything under a prefix; on a remote
 //                                    store, confirmed at the terminal or with --yes)
 
-import { dirname, relative, resolve, SEPARATOR } from "@std/path";
+import { dirname, join, relative, resolve, SEPARATOR } from "@std/path";
 import type { CommandContext, CommandSpec } from "@denext/denext/cli/command";
 import { type CommandIo, consoleIo } from "./command-io.ts";
 import { filesUnder } from "./files.ts";
@@ -161,13 +161,43 @@ function confinedPath(dst: string, rel: string): string {
   return file;
 }
 
+/**
+ * Refuse to write `file` through a symbolic link below `dst`: each path component under the
+ * destination folder that exists (the file included) is `lstat`ed, so a link planted inside the
+ * folder can't send a download somewhere else. (`dst` itself is the caller's choice.)
+ *
+ * @param dst The destination folder.
+ * @param file The file about to be written (inside `dst`).
+ * @throws {Error} When a component is a symbolic link.
+ */
+async function refuseSymlinks(dst: string, file: string): Promise<void> {
+  const root = resolve(dst);
+  const rel = relative(root, file);
+  let at = root;
+  for (const part of rel ? rel.split(SEPARATOR) : []) {
+    at = join(at, part);
+    let info: Deno.FileInfo;
+    try {
+      info = await Deno.lstat(at);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) return; // nothing below it exists yet
+      throw error;
+    }
+    if (info.isSymlink) {
+      throw new Error(`refusing to download to ${file}: ${at} is a symbolic link`);
+    }
+  }
+}
+
 async function copyDown(from: Remote, dst: string, ctx: CommandContext, io: CommandIo) {
   if (recursive(ctx)) {
     const keys = await keysUnder(from);
     // Every key is checked before anything is written.
     const files = keys.map((key) => confinedPath(dst, relativeKey(from, key)));
+    for (const file of files) await refuseSymlinks(dst, file);
     for (const [i, key] of keys.entries()) {
       const file = files[i];
+      await refuseSymlinks(dst, file); // again: an earlier write may have made a directory
       await download({ bucket: from.bucket, key }, file);
       io.log(`downloaded ss:///${from.bucket}/${key} → ${file}`);
     }

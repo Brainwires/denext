@@ -14,6 +14,7 @@
 - **a client's direct upload reaches the object only when it completes.** Presigned PUTs and
   parts (S3) and signed PUTs (fs) go to a staging place; the completion checks the bytes, then
   writes the row and moves them to the key together. Abandoned uploads are swept.
+- **`denext storage cp -r` refuses to write through a symbolic link inside the destination.**
 - **`denext storage rm -r` on a remote store asks first** (`--yes` answers; no terminal →
   refused). A storage driver may report its `location` (the s3 driver: its endpoint).
 - **the SQLite metadata store matches `list-v2` prefixes case-sensitively.**

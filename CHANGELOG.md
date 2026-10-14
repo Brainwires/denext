@@ -616,6 +616,9 @@ a 3.x app to 4.0 involves. This section is the record.
   terminal unless `--yes` is passed. `db reset` and `migration down --force-reset` accept a "yes"
   at the terminal as well as `--yes`, and name the remote database in the question. A local
   database (loopback host, Unix socket, SQLite) is unchanged.
+- **`denext storage cp -r` never writes through a symbolic link inside the destination.** A
+  download into a folder that held a link (to a directory or a file elsewhere) wrote through it.
+  Each path component under the destination is now checked first, and the copy is refused.
 - **`denext migration up` / `down` / `repair`, `db migrate` / `rollback` and `denext storage rm
   -r` confirm against a remote target.** With `--linked` or a `--db-url` off this machine (the
   migration verbs), or an S3 store off this machine (`storage rm -r`), they now ask at the
