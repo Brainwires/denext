@@ -107,6 +107,44 @@ and this project adheres to
   reference), inline and reference images (`![alt](src "title")`; the alt and title are
   attribute-escaped and `src` is refused exactly as a link target is), indented code blocks and
   code spans of any backtick-run length (``a ` b``). Raw HTML is still escaped.
+- **`denext auth reseal`: TOTP factors leave a retired `secret` without waiting for a code.**
+  The `denextAuth()` plugin contributes the verb: it opens every TOTP factor (`/auth/v1`'s
+  included) with the configured secrets and re-seals each one a retired secret, a pre-sealing
+  plaintext row or a pre-4.0 record still holds under the current one, through
+  `updateMfaFactor`. It is idempotent and resumable, ends with a read-only verification pass, and
+  reports counts only (`--dry-run`, `--json`); a run that leaves any behind exits 1. Remove the
+  retired secret once it reports zero remaining. The same job is `resealTotpFactors(config)` from
+  `denext/server`, for a `jobs/` module.
+- **`microsoftEntra({ tenant: "common" | "organizations" | "consumers" })`.** A multi-tenant
+  `id_token`'s issuer is checked against its own `tid` claim
+  (`https://login.microsoftonline.com/{tid}/v2.0`, the template issuer Microsoft's discovery
+  document declares), with the signature checked against the common key set; a token whose `iss`
+  and `tid` disagree, or whose `tid` is missing or not a GUID, is refused. `organizations` refuses
+  personal accounts, and `consumers` takes the personal-account tenant's fixed issuer.
+  `allowedTenants` limits which tenants may sign in — recommended, since `common` and
+  `organizations` admit any tenant. Generic providers can use the same check through
+  `OAuthProvider.tenantIssuer`.
+- **A native `id_token` sign-in finishes a second factor instead of answering
+  `403 mfa_required`.** For a user with a verified factor, `POST {basePath}/native/apple` |
+  `/native/google` answers `{ mfa_required: true, mfa_token, expires_in, factors }` — no tokens,
+  no `signIn` event — and `POST {basePath}/native/mfa` (`{ mfa_token, code }`: a TOTP, backup or,
+  after `POST {basePath}/native/mfa-challenge`, SMS code) answers the native tokens. The
+  `mfa_token` is single-use (a wrong code answers a fresh one, one attempt fewer, at most five),
+  lives five minutes from the sign-in, is not a bearer or refresh token, and is refused once its
+  user is banned or deleted. `nativeSession()` throws it as `NativeSessionError` `mfa_required`
+  with `error.mfa`, finished by `completeMfa(mfa, code)` (and `sendMfaSms`). Native grants gain
+  the `"mfa"` kind. Under `mfa.required: "always"`, a user with no factor yet still gets
+  `403 mfa_required` and enrolls through the browser flow.
+- **`saml()`: SAML 2.0 identity providers on denextAuth's own endpoints.** `GET
+  {basePath}/signin/:id` sends an AuthnRequest (signed with `sp.signingKey`), the IdP posts its
+  Response to `POST {basePath}/callback/:id`, and `GET {basePath}/saml/:id/metadata` publishes
+  this service provider. It reuses `/auth/v1`'s SAML implementation — the same verifier
+  (signature wrapping, comment injection, audience, recipient, destination, `InResponseTo`,
+  validity, the shared replay cache, encrypted assertions) and the same SSO account rules (email
+  bound only on the provider's `domains`, no takeover of an existing account unless
+  `linkExistingAccounts`, an SSO user of another IdP never linked). Its users are SSO users, and
+  its sessions are SSO sign-ins (`amr` `sso/saml`), the only kind an SSO user's session may be.
+  Only SP-initiated logins are accepted; Single Logout stays `/auth/v1`'s.
 
 ### Changed
 

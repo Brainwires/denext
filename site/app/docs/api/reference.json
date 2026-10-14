@@ -1754,6 +1754,18 @@
           "denextOnly": true
         },
         {
+          "name": "NativeMfaChallenge",
+          "slug": "NativeMfaChallenge",
+          "kind": "interface",
+          "signature": "interface NativeMfaChallenge",
+          "doc": "A native sign-in that still owes a second factor: finish it with NativeSession.completeMfa. Single-use — every call answers a fresh one on the error it throws — and short-lived (five minutes from the id_token sign-in).",
+          "docFull": "A native sign-in that still owes a second factor: finish it with\n{@link NativeSession.completeMfa}. Single-use — every call answers a fresh one on the error it\nthrows — and short-lived (five minutes from the id_token sign-in).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "nativeSession",
           "slug": "nativeSession-fn",
           "kind": "function",
@@ -5206,7 +5218,7 @@
           "kind": "function",
           "signature": "auth(): Promise<AuthSession | null>",
           "doc": "Read the current request's auth session, or null when signed out. Call from a Server Component, a route.ts handler, or middleware.ts — anywhere inside the request context.",
-          "docFull": "Read the current request's auth session, or `null` when signed out. Call from a\nServer Component, a `route.ts` handler, or `middleware.ts` — anywhere inside the\nrequest context.\n\nA session that has passed the first factor but not the second\n({@link AuthSession.mfaPending}) reads as `null` here — it **fails closed**, so every\nguard built on `auth()` (requireAuth, requireSession, Live `authorize`, Server\nActions) refuses it without having to know MFA exists.",
+          "docFull": "Read the current request's auth session, or `null` when signed out. Call from a\nServer Component, a `route.ts` handler, or `middleware.ts` — anywhere inside the\nrequest context.\n\nA session that has passed the first factor but not the second\n({@link AuthSession.mfaPending}) reads as `null` here — it **fails closed**, so every\nguard built on `auth()` (requireAuth, requireSession, Live `authorize`, Server\nActions) refuses it without having to know MFA exists.\n\nWith an adapter, a cookie session's user is re-read on every request (once per request,\nhowever many times `auth()` is called): a deleted or banned user, and an SSO user (whose\nidentity provider never starts a denextAuth session), read as `null` from their very next\nrequest. A bearer session's user is re-read the same way by its own verification.",
           "params": [],
           "returns": "The AuthSession, or null.",
           "examples": [],
@@ -5374,6 +5386,18 @@
           "denextOnly": true
         },
         {
+          "name": "AuthorizedTapOptions",
+          "slug": "AuthorizedTapOptions",
+          "kind": "interface",
+          "signature": "interface AuthorizedTapOptions<T>",
+          "doc": "Options for tapChannelAuthorized.",
+          "docFull": "Options for {@linkcode tapChannelAuthorized}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "AuthPasskeyConfig",
           "slug": "AuthPasskeyConfig",
           "kind": "interface",
@@ -5389,7 +5413,7 @@
           "name": "AuthProvider",
           "slug": "AuthProvider",
           "kind": "typeAlias",
-          "signature": "type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider | PhoneProvider",
+          "signature": "type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider | PhoneProvider | SamlProvider",
           "doc": "Any configured provider.",
           "docFull": "Any configured provider.",
           "params": [],
@@ -5848,6 +5872,18 @@
           "signature": "interface Channel<T>",
           "doc": "A channel on the server.",
           "docFull": "A channel on the server.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelAccessError",
+          "slug": "ChannelAccessError",
+          "kind": "class",
+          "signature": "class ChannelAccessError",
+          "doc": "Why tapChannelAuthorized refused a subscriber.",
+          "docFull": "Why {@linkcode tapChannelAuthorized} refused a subscriber.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -9321,12 +9357,12 @@
           "slug": "microsoftEntra",
           "kind": "function",
           "signature": "microsoftEntra(options: MicrosoftEntraOptions): OAuthProvider",
-          "doc": "Microsoft Entra ID (formerly Azure AD) — OIDC v2.0 endpoints, id_token verified against the tenant's JWKS. Single-tenant only (see MicrosoftEntraOptions.tenant); claims come from the verified id_token, so no Microsoft Graph call is made.",
-          "docFull": "Microsoft Entra ID (formerly Azure AD) — OIDC v2.0 endpoints, `id_token` verified\nagainst the tenant's JWKS. Single-tenant only (see {@link MicrosoftEntraOptions.tenant});\nclaims come from the verified `id_token`, so no Microsoft Graph call is made.",
+          "doc": "Microsoft Entra ID (formerly Azure AD) — OIDC v2.0 endpoints, id_token verified against the tenant's JWKS. A single tenant, or the multi-tenant aliases (common, organizations, consumers; see MicrosoftEntraOptions.tenant). Claims come from the verified id_token, so no Microsoft Graph call is made.",
+          "docFull": "Microsoft Entra ID (formerly Azure AD) — OIDC v2.0 endpoints, `id_token` verified\nagainst the tenant's JWKS. A single tenant, or the multi-tenant aliases (`common`,\n`organizations`, `consumers`; see {@link MicrosoftEntraOptions.tenant}). Claims come from\nthe verified `id_token`, so no Microsoft Graph call is made.",
           "params": [
             {
               "name": "options",
-              "doc": "Tenant plus the app's client credentials."
+              "doc": "Tenant (plus allowedTenants for a multi-tenant alias) and the app's client credentials."
             }
           ],
           "returns": "The configured Entra provider (id: \"microsoft-entra\").",
@@ -9625,8 +9661,8 @@
           "slug": "NativeGrantRecord",
           "kind": "interface",
           "signature": "interface NativeGrantRecord",
-          "doc": "A single-use native grant: an authorization **code** (handed to the app's redirect URI) or a sign-in **nonce** (for a native id_token sign-in). Only the SHA-256 of the value is stored.",
-          "docFull": "A single-use native grant: an authorization **code** (handed to the app's redirect URI) or\na sign-in **nonce** (for a native id_token sign-in). Only the SHA-256 of the value is stored.",
+          "doc": "A single-use native grant: an authorization **code** (handed to the app's redirect URI), a sign-in **nonce** (for a native id_token sign-in), or an **mfa** token (a native id_token sign-in that still owes its second factor). Only the SHA-256 of the value is stored.",
+          "docFull": "A single-use native grant: an authorization **code** (handed to the app's redirect URI), a\nsign-in **nonce** (for a native id_token sign-in), or an **mfa** token (a native id_token\nsign-in that still owes its second factor). Only the SHA-256 of the value is stored.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -9732,7 +9768,7 @@
           "name": "OAuthAuthorizationPatch",
           "slug": "OAuthAuthorizationPatch",
           "kind": "typeAlias",
-          "signature": "type OAuthAuthorizationPatch = Partial<Pick<OAuthAuthorizationRecord, userId | status | codeHash | sessionId | expiresAt>>",
+          "signature": "type OAuthAuthorizationPatch = Partial<Pick<OAuthAuthorizationRecord, userId | status | codeHash | sessionId | expiresAt | ssoConsent>>",
           "doc": "The fields OAuthServerAdapter.updateOAuthAuthorization may change.",
           "docFull": "The fields {@linkcode OAuthServerAdapter.updateOAuthAuthorization} may change.",
           "params": [],
@@ -11589,6 +11625,51 @@
           "denextOnly": true
         },
         {
+          "name": "ResealOptions",
+          "slug": "ResealOptions",
+          "kind": "interface",
+          "signature": "interface ResealOptions",
+          "doc": "Options for resealTotpFactors.",
+          "docFull": "Options for {@linkcode resealTotpFactors}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ResealReport",
+          "slug": "ResealReport",
+          "kind": "interface",
+          "signature": "interface ResealReport",
+          "doc": "What resealTotpFactors found and did — counts only, never a secret.",
+          "docFull": "What {@linkcode resealTotpFactors} found and did — counts only, never a secret.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "resealTotpFactors",
+          "slug": "resealTotpFactors",
+          "kind": "function",
+          "signature": "resealTotpFactors(config: AuthConfig, options?: ResealOptions): Promise<ResealReport>",
+          "doc": "Re-seal every TOTP factor that a retired secret (or a pre-sealing plaintext row) still holds under the current secret — the job behind denext auth reseal, also callable from a jobs/ module. Idempotent and resumable: run it again after an interruption. A real run ends with a read-only verification pass, whose count is the report's remaining; drop the retired secret once it is 0.",
+          "docFull": "Re-seal every TOTP factor that a retired `secret` (or a pre-sealing plaintext row) still\nholds under the current `secret` — the job behind `denext auth reseal`, also callable from a\n`jobs/` module. Idempotent and resumable: run it again after an interruption. A real run ends\nwith a read-only verification pass, whose count is the report's `remaining`; drop the retired\nsecret once it is `0`.\n\n```ts\n// jobs/reseal.ts\nimport { activeAuthConfig, defineJob, resealTotpFactors } from \"denext/server\";\nexport default defineJob({\n  description: \"re-seal TOTP factors under the current auth secret\",\n  handler: async () => console.log(await resealTotpFactors(activeAuthConfig())),\n});\n```",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The auth config — the one denextAuth() was built with (activeAuthConfig())."
+            },
+            {
+              "name": "options",
+              "doc": "dryRun to count only; pageSize for the user walk."
+            }
+          ],
+          "returns": "Counts only — never a secret.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "resetCacheStats",
           "slug": "resetCacheStats",
           "kind": "function",
@@ -12144,6 +12225,23 @@
           "denextOnly": true
         },
         {
+          "name": "saml",
+          "slug": "saml",
+          "kind": "function",
+          "signature": "saml(options: SamlProviderOptions): SamlProvider",
+          "doc": "A SAML 2.0 identity provider (Okta, Entra ID, Google Workspace, ADFS, Keycloak, …) on {basePath}/signin/:id. Sign-ins are SSO sign-ins: the account is the IdP's (an SSO user), its email is bound only on the provider's domains, and an existing account is never taken over unless linkExistingAccounts is set.",
+          "docFull": "A SAML 2.0 identity provider (Okta, Entra ID, Google Workspace, ADFS, Keycloak, …) on\n`{basePath}/signin/:id`. Sign-ins are SSO sign-ins: the account is the IdP's (an SSO user),\nits email is bound only on the provider's `domains`, and an existing account is never taken\nover unless `linkExistingAccounts` is set.\n\n```ts\nsaml({\n  id: \"acme\",\n  metadataXml: await Deno.readTextFile(\"./acme-idp-metadata.xml\"),\n  domains: [\"acme.com\"],\n});\n```",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The IdP's metadata, its domains and the account rules."
+            }
+          ],
+          "returns": "The provider to list in AuthConfig.providers.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "SamlBindingInput",
           "slug": "SamlBindingInput",
           "kind": "typeAlias",
@@ -12198,6 +12296,42 @@
           "signature": "type SamlPrivateKey = string | JsonWebKey",
           "doc": "An SP private key: a PKCS #8 PEM (-----BEGIN PRIVATE KEY-----) or an RSA private JWK. Only RSA keys are supported (RSA-SHA256 signatures, RSA-OAEP key transport).",
           "docFull": "An SP private key: a PKCS #8 PEM (`-----BEGIN PRIVATE KEY-----`) or an RSA private JWK.\nOnly RSA keys are supported (RSA-SHA256 signatures, RSA-OAEP key transport).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SamlProvider",
+          "slug": "SamlProvider",
+          "kind": "interface",
+          "signature": "interface SamlProvider",
+          "doc": "A SAML 2.0 identity provider on denextAuth's own endpoints (saml({ … })): GET {basePath}/signin/:id sends the browser to the IdP with a signed-when-configured AuthnRequest, the IdP posts its Response back to POST {basePath}/callback/:id, and GET {basePath}/saml/:id/metadata publishes this service provider's metadata. The Response is verified by the same SAML implementation /auth/v1 uses, and the user is resolved by the same SSO rules: the account is an SSO user, signed in through this IdP only.",
+          "docFull": "A SAML 2.0 identity provider on denextAuth's own endpoints (`saml({ … })`): `GET\n{basePath}/signin/:id` sends the browser to the IdP with a signed-when-configured\nAuthnRequest, the IdP posts its Response back to `POST {basePath}/callback/:id`, and\n`GET {basePath}/saml/:id/metadata` publishes this service provider's metadata. The Response is\nverified by the same SAML implementation `/auth/v1` uses, and the user is resolved by the same\nSSO rules: the account is an SSO user, signed in through this IdP only.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SamlProviderOptions",
+          "slug": "SamlProviderOptions",
+          "kind": "typeAlias",
+          "signature": "type SamlProviderOptions = Omit<SamlProvider, type>",
+          "doc": "Options for saml: everything on a SamlProvider but its type.",
+          "docFull": "Options for {@link saml}: everything on a {@link SamlProvider} but its `type`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SamlProviderSp",
+          "slug": "SamlProviderSp",
+          "kind": "interface",
+          "signature": "interface SamlProviderSp",
+          "doc": "This service provider, as one SamlProvider presents itself to its IdP.",
+          "docFull": "This service provider, as one {@link SamlProvider} presents itself to its IdP.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -13487,7 +13621,7 @@
           "kind": "function",
           "signature": "tapChannel<T>(channel: Channel<T> | string, key: string, handlers: ChannelTapHandlers<T>): () => void",
           "doc": "Observe a channel's publishes on the SERVER: every payload published to key on any instance — through the installed transport, decoded, in seq order per instance — until the returned disposer runs. The seam a plugin uses to bridge channel pushes into another protocol (a GraphQL subscription in @denext/graphql, an SSE stream, a queue) without a second event bus. Survives setChannelTransport (re-binds to the new transport).",
-          "docFull": "Observe a channel's publishes on the SERVER: every payload published to `key` on any\ninstance — through the installed transport, decoded, in `seq` order per instance — until\nthe returned disposer runs. The seam a plugin uses to bridge channel pushes into another\nprotocol (a GraphQL subscription in `@denext/graphql`, an SSE stream, a queue) without a\nsecond event bus. Survives `setChannelTransport` (re-binds to the new transport).\n\nNot authorization: `authorize` gates socket SUBSCRIBERS; a server-side tap sees every\npublish to the key, so the consumer gates its own audience.",
+          "docFull": "Observe a channel's publishes on the SERVER: every payload published to `key` on any\ninstance — through the installed transport, decoded, in `seq` order per instance — until\nthe returned disposer runs. The seam a plugin uses to bridge channel pushes into another\nprotocol (a GraphQL subscription in `@denext/graphql`, an SSE stream, a queue) without a\nsecond event bus. Survives `setChannelTransport` (re-binds to the new transport).\n\nNot authorization: `authorize` gates socket SUBSCRIBERS; a server-side tap sees every\npublish to the key. A tap that serves a viewer goes through `tapChannelAuthorized` (from\n`denext/server`), which runs the channel's `authorize` for that viewer first.",
           "params": [
             {
               "name": "channel",
@@ -13503,6 +13637,43 @@
             }
           ],
           "returns": "A disposer that stops the tap.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "tapChannelAuthorized",
+          "slug": "tapChannelAuthorized",
+          "kind": "function",
+          "signature": "tapChannelAuthorized<T>(channel: Channel<T> | string, key: string, options: AuthorizedTapOptions<T>): Promise<() => void>",
+          "doc": "Subscribe a viewer to one key of a channel on the server, behind the channel's authorize — the same gate, context and key the Live socket applies to a useChannel subscriber. Call it inside the viewer's request (a resolver, a route handler): authorize(ctx, key) runs there with ctx = { origin, url, cookie, peerId } from that request, and again, lazily, on the first payload after the channel's re-authorization TTL, in a copy of that request's context.",
+          "docFull": "Subscribe a viewer to one key of a channel on the server, behind the channel's `authorize` —\nthe same gate, context and key the Live socket applies to a `useChannel` subscriber. Call it\ninside the viewer's request (a resolver, a route handler): `authorize(ctx, key)` runs there\nwith `ctx` = `{ origin, url, cookie, peerId }` from that request, and again, lazily, on the\nfirst payload after the channel's re-authorization TTL, in a copy of that request's context.",
+          "params": [
+            {
+              "name": "channel",
+              "doc": "The channel (or its id)."
+            },
+            {
+              "name": "key",
+              "doc": "The key to follow."
+            },
+            {
+              "name": "options",
+              "doc": "Payload / end callbacks and the peer id."
+            }
+          ],
+          "returns": "A disposer that stops the subscription.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TenantIssuer",
+          "slug": "TenantIssuer",
+          "kind": "interface",
+          "signature": "interface TenantIssuer",
+          "doc": "How a multi-tenant provider's id_token issuer is checked (see OAuthProvider.tenantIssuer).",
+          "docFull": "How a multi-tenant provider's `id_token` issuer is checked (see {@link OAuthProvider.tenantIssuer}).",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -14003,7 +14174,7 @@
           "kind": "function",
           "signature": "verifyApiToken(config: AuthConfig, presented: string): Promise<ApiTokenRecord | null>",
           "doc": "Verify a presented bearer token: hash it, look the hash up (an indexed exact match — no secret is ever compared in-process), and check it is still live.",
-          "docFull": "Verify a presented bearer token: hash it, look the hash up (an indexed exact match — no\nsecret is ever compared in-process), and check it is still live.\n\nEvery failure mode returns the same `null`: an unknown token, a revoked one, an expired\none, a malformed one, one whose owner is banned, and \"bearer tokens aren't configured at all\". Callers must keep\nthat uniformity in their answer — see `requireBearer`.",
+          "docFull": "Verify a presented bearer token: hash it, look the hash up (an indexed exact match — no\nsecret is ever compared in-process), and check it is still live.\n\nEvery failure mode returns the same `null`: an unknown token, a revoked one, an expired\none, a malformed one, one whose owner is banned or no longer exists, an SSO user's token\nnot minted from a session its identity provider started, and \"bearer tokens aren't\nconfigured at all\". Callers must keep that uniformity in their answer — see `requireBearer`.",
           "params": [
             {
               "name": "config",
@@ -15265,6 +15436,18 @@
           "signature": "interface NativeIdTokenSignIn",
           "doc": "What a native id_token sign-in sends.",
           "docFull": "What a native id_token sign-in sends.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "NativeMfaChallenge",
+          "slug": "NativeMfaChallenge",
+          "kind": "interface",
+          "signature": "interface NativeMfaChallenge",
+          "doc": "A native sign-in that still owes a second factor: finish it with NativeSession.completeMfa. Single-use — every call answers a fresh one on the error it throws — and short-lived (five minutes from the id_token sign-in).",
+          "docFull": "A native sign-in that still owes a second factor: finish it with\n{@link NativeSession.completeMfa}. Single-use — every call answers a fresh one on the error it\nthrows — and short-lived (five minutes from the id_token sign-in).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -29472,6 +29655,18 @@
           "denextOnly": true
         },
         {
+          "name": "AuthorizedTapOptions",
+          "slug": "AuthorizedTapOptions",
+          "kind": "interface",
+          "signature": "interface AuthorizedTapOptions<T>",
+          "doc": "Options for tapChannelAuthorized.",
+          "docFull": "Options for {@linkcode tapChannelAuthorized}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "bufferedRequest",
           "slug": "bufferedRequest",
           "kind": "function",
@@ -29566,10 +29761,15 @@
           "name": "captureRequestContext",
           "slug": "captureRequestContext",
           "kind": "function",
-          "signature": "captureRequestContext(): (fn: () => T) => T",
+          "signature": "captureRequestContext(init?: object): (fn: () => T) => T",
           "doc": "Capture the current request so its session can be read again later, outside it — what a plugin holding a long-lived connection (a WebSocket it upgraded) uses to re-check who is on the other end: the returned function runs fn in a fresh request context for a copy of this request (its URL, its headers — cookies included — and its client address, with the app's proxy trust and limit policy), so auth(), cookies() and clientIpForLimits() answer as they did for the original. Capture BEFORE Deno.upgradeWebSocket, which consumes the request. Outside a request the function runs fn as it is.",
           "docFull": "Capture the current request so its session can be read again later, outside it — what a\nplugin holding a long-lived connection (a WebSocket it upgraded) uses to re-check who is on\nthe other end: the returned function runs `fn` in a fresh request context for a copy of this\nrequest (its URL, its headers — cookies included — and its client address, with the app's\nproxy trust and limit policy), so `auth()`, `cookies()` and `clientIpForLimits()` answer as\nthey did for the original. Capture BEFORE `Deno.upgradeWebSocket`, which consumes the request.\nOutside a request the function runs `fn` as it is.",
-          "params": [],
+          "params": [
+            {
+              "name": "init.headers",
+              "doc": "Headers set on the copy (replacing the captured ones of the same name) — a credential the client sent after the upgrade (a GraphQL over WebSocket connection_init token as authorization), so the session is read as if the request had carried it."
+            }
+          ],
           "returns": "A runner: (fn) => fn() in a context equivalent to the captured request's.",
           "examples": [],
           "denextOnly": true
@@ -29581,6 +29781,30 @@
           "signature": "interface Channel<T>",
           "doc": "A channel on the server.",
           "docFull": "A channel on the server.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelAccessError",
+          "slug": "ChannelAccessError",
+          "kind": "class",
+          "signature": "class ChannelAccessError",
+          "doc": "Why tapChannelAuthorized refused a subscriber.",
+          "docFull": "Why {@linkcode tapChannelAuthorized} refused a subscriber.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelContext",
+          "slug": "ChannelContext",
+          "kind": "interface",
+          "signature": "interface ChannelContext",
+          "doc": "The subscriber's identity handed to authorize (the Live connection context).",
+          "docFull": "The subscriber's identity handed to `authorize` (the Live connection context).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -30221,7 +30445,7 @@
           "kind": "function",
           "signature": "tapChannel<T>(channel: Channel<T> | string, key: string, handlers: ChannelTapHandlers<T>): () => void",
           "doc": "Observe a channel's publishes on the SERVER: every payload published to key on any instance — through the installed transport, decoded, in seq order per instance — until the returned disposer runs. The seam a plugin uses to bridge channel pushes into another protocol (a GraphQL subscription in @denext/graphql, an SSE stream, a queue) without a second event bus. Survives setChannelTransport (re-binds to the new transport).",
-          "docFull": "Observe a channel's publishes on the SERVER: every payload published to `key` on any\ninstance — through the installed transport, decoded, in `seq` order per instance — until\nthe returned disposer runs. The seam a plugin uses to bridge channel pushes into another\nprotocol (a GraphQL subscription in `@denext/graphql`, an SSE stream, a queue) without a\nsecond event bus. Survives `setChannelTransport` (re-binds to the new transport).\n\nNot authorization: `authorize` gates socket SUBSCRIBERS; a server-side tap sees every\npublish to the key, so the consumer gates its own audience.",
+          "docFull": "Observe a channel's publishes on the SERVER: every payload published to `key` on any\ninstance — through the installed transport, decoded, in `seq` order per instance — until\nthe returned disposer runs. The seam a plugin uses to bridge channel pushes into another\nprotocol (a GraphQL subscription in `@denext/graphql`, an SSE stream, a queue) without a\nsecond event bus. Survives `setChannelTransport` (re-binds to the new transport).\n\nNot authorization: `authorize` gates socket SUBSCRIBERS; a server-side tap sees every\npublish to the key. A tap that serves a viewer goes through `tapChannelAuthorized` (from\n`denext/server`), which runs the channel's `authorize` for that viewer first.",
           "params": [
             {
               "name": "channel",
@@ -30237,6 +30461,31 @@
             }
           ],
           "returns": "A disposer that stops the tap.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "tapChannelAuthorized",
+          "slug": "tapChannelAuthorized",
+          "kind": "function",
+          "signature": "tapChannelAuthorized<T>(channel: Channel<T> | string, key: string, options: AuthorizedTapOptions<T>): Promise<() => void>",
+          "doc": "Subscribe a viewer to one key of a channel on the server, behind the channel's authorize — the same gate, context and key the Live socket applies to a useChannel subscriber. Call it inside the viewer's request (a resolver, a route handler): authorize(ctx, key) runs there with ctx = { origin, url, cookie, peerId } from that request, and again, lazily, on the first payload after the channel's re-authorization TTL, in a copy of that request's context.",
+          "docFull": "Subscribe a viewer to one key of a channel on the server, behind the channel's `authorize` —\nthe same gate, context and key the Live socket applies to a `useChannel` subscriber. Call it\ninside the viewer's request (a resolver, a route handler): `authorize(ctx, key)` runs there\nwith `ctx` = `{ origin, url, cookie, peerId }` from that request, and again, lazily, on the\nfirst payload after the channel's re-authorization TTL, in a copy of that request's context.",
+          "params": [
+            {
+              "name": "channel",
+              "doc": "The channel (or its id)."
+            },
+            {
+              "name": "key",
+              "doc": "The key to follow."
+            },
+            {
+              "name": "options",
+              "doc": "Payload / end callbacks and the peer id."
+            }
+          ],
+          "returns": "A disposer that stops the subscription.",
           "examples": [],
           "denextOnly": true
         },

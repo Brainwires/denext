@@ -276,8 +276,48 @@ it raw or as its SHA-256 hex, so a captured `id_token` can't be replayed. Set
 The account is then created or linked by the usual [linking rules](/docs/auth#account-linking-rules):
 an existing local account with the same address links only when both sides are verified. The
 email comes from the verified token only; the client's first-login payload contributes a
-display name at most. A user with a second factor gets `403 { "error": "mfa_required" }` —
-send them through the browser flow, which runs the step-up.
+display name at most.
+
+A user with a verified second factor is not signed in by the `id_token` alone. The sign-in
+answers a pending result instead of tokens — `{ "mfa_required": true, "mfa_token": "nmf_…",
+"expires_in": 300, "factors": [{ "id", "type": "totp" | "phone" }] }` — and `nativeSession()`
+throws it as a `NativeSessionError` with `code: "mfa_required"` and the pending sign-in on
+`error.mfa`. Finish it with a code:
+
+```ts
+try {
+  await session.signInWithIdToken("apple", input);
+} catch (error) {
+  if (!(error instanceof NativeSessionError) || error.code !== "mfa_required" || !error.mfa) {
+    throw error;
+  }
+  // An SMS factor texts a code first: `await session.sendMfaSms(error.mfa, factorId)` answers
+  // `{ challengeId, mfa }`, then `completeMfa(mfa, code, { factorId, challengeId })`.
+  try {
+    await session.completeMfa(error.mfa, await askForCode()); // a TOTP or backup code
+  } catch (wrong) {
+    // `invalid_code` carries a fresh `wrong.mfa` (one attempt fewer) to retry with.
+  }
+}
+```
+
+On the wire that is `POST /auth/native/mfa` `{ mfa_token, code[, factor_id, challenge_id] }` and
+`POST /auth/native/mfa-challenge` `{ mfa_token, factor_id }`. The `mfa_token` is the pending
+state, and nothing else:
+
+- **Single-use.** Every presentation spends it. A wrong code answers
+  `401 { error: "invalid_code", mfa_token, attempts_left }` with a fresh token (same expiry);
+  after five wrong codes the sign-in is over (`400 invalid_grant`). Code checks draw on the same
+  `rateLimit.mfa` budget as the web step-up.
+- **Short-lived.** Five minutes from the `id_token` sign-in, never extended.
+- **Grants nothing.** It is not an access or refresh token, and no session, tokens or `signIn`
+  event exist until the second factor passes. A user banned or deleted in between, or whose
+  address was first proven after the sign-in, never finishes it.
+
+This mirrors `/auth/v1`, where GoTrue's `grant_type=id_token` issues an `aal1` session that the
+MFA verify calls raise; a native session has no lesser level, so the pending state is a token
+that is not a session at all. Under `mfa.required: "always"`, a user with no factor yet still
+gets `403 { "error": "mfa_required" }`: enrollment runs in the browser flow (`signIn`).
 
 With Apple, pass the `authorizationCode` too. When `clientSecret` is configured (or an
 `apple()` web provider has one), the server exchanges the code at Apple's token endpoint and

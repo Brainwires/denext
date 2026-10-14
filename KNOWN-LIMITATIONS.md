@@ -89,10 +89,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `requireSession()`; a streamed component's headers have flushed). A store without `update`
   never slides.
 - **`mfa.required: "always"` is trust-on-first-use;** rotating `secret` invalidates in-flight
-  one-time codes, and a retired `secret` must stay in the list until the TOTP factors sealed
-  under it are re-sealed — which happens (through `updateMfaFactor`) only after a TOTP code from
-  that factor passes, so never for a user who steps up only with a backup code, a phone code or a
-  passkey with user verification; rate limiters count per node without a shared
+  one-time codes, and a retired `secret` can be removed only after `denext auth reseal` reports
+  zero remaining; rate limiters count per node without a shared
   `rateLimit.store`, and every per-IP budget (the captcha budget included) is skipped for a
   loopback/private peer with no trusted proxy hop unless `rateLimitLocalAddresses` is set.
 - **One passkey ceremony per browser at a time** (the ceremony cookie is per browser), and the
@@ -101,14 +99,14 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **Passkeys verify `none` and `packed` attestation only, without a trust chain** (no FIDO
   Metadata Service), and ES256 / RS256 / Ed25519 keys only.
 - **Fixed profiles:** TOTP is SHA-1 / 6 digits / 30 s (what every authenticator supports); an
-  email local part must be ASCII; `microsoftEntra` needs a specific tenant (`common` can't verify).
-- **Native sessions:** a user with a second factor can't use a native `id_token` sign-in
-  (`403 mfa_required`); concurrent refreshes with one token revoke the family unless
+  email local part must be ASCII.
+- **Native sessions:** under `mfa.required: "always"` a user with no factor yet can't enroll from
+  a native `id_token` sign-in (`403 mfa_required`; the browser flow enrolls); concurrent refreshes with one token revoke the family unless
   `native.refreshReuseInterval` is set; Apple token revocation needs `native.apple.clientSecret`.
 - **`cors` covers route handlers and the native auth endpoints only**, not pages, Server Actions,
   the batch endpoint or Live; middleware must let `OPTIONS` under `/auth` through.
-- **No SAML SSO on denext's own sign-in endpoints** (generic `oidc()` covers OIDC identity
-  providers; `/auth/v1` serves SAML with `backend({ supabase })`).
+- **SAML Single Logout is `/auth/v1`'s only:** a `saml()` provider on denext's own endpoints
+  signs in, and its session ends with `signOut()`, not with an IdP's LogoutRequest.
 
 ### Backend (`@denext/backend`)
 

@@ -63,8 +63,8 @@ export default {
 `secret` must be at least 32 characters (shorter warns in development and **throws in
 production**) and accepts an array to rotate — every secret verifies, the first one
 signs. The same list seals TOTP secrets at rest ([Secrets at rest](#secrets-at-rest)), so
-keep a retired secret in it until the factors sealed under it have been re-sealed — list
-the new secret first, never replace the old one (see [Secrets at rest](#secrets-at-rest)). `canonicalOrigin` warns in development and throws in production: without it the
+list the new secret first, never replace the old one, and remove the old one once
+`denext auth reseal` reports zero remaining (see [Secrets at rest](#secrets-at-rest)). `canonicalOrigin` warns in development and throws in production: without it the
 OAuth `redirect_uri` and the same-origin checks derive from the attacker-controllable
 `Host` header. An OAuth provider whose `clientId` / `clientSecret` is empty — or the
 literal string `"undefined"`, which a missing `Deno.env.get("…")!` produces — is refused
@@ -173,7 +173,7 @@ production, where that mailer refuses to send). See
 
 ## Providers
 
-Sixteen presets ship in `denext/server`. Every OAuth preset takes
+Seventeen presets ship in `denext/server`. Every OAuth preset takes
 `{ clientId, clientSecret, scopes? }`; `scopes` replaces the defaults rather than adding
 to them.
 
@@ -181,7 +181,7 @@ to them.
 | --------------- | ------------------ | -------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | Google          | `google()`         | —                                      | OIDC. Endpoints pinned (they live on a sibling host), so no discovery.                                     |
 | GitHub          | `github()`         | —                                      | OAuth. Reads `/user` + `/user/emails`; only a _verified_ address reaches the session.                      |
-| Microsoft Entra | `microsoftEntra()` | `tenant` (required)                    | OIDC v2.0. Single-tenant only — see the note below.                                                        |
+| Microsoft Entra | `microsoftEntra()` | `tenant` (required), `allowedTenants`  | OIDC v2.0. A tenant, or `common` / `organizations` / `consumers` — see the note below.                     |
 | Apple           | `apple()`          | —                                      | OIDC over `response_mode=form_post`, with name and email — see the section below.                          |
 | Discord         | `discord()`        | —                                      | OAuth. An unverified address is dropped like `email_verified: false`.                                      |
 | GitLab          | `gitlab()`         | `baseUrl` (default `gitlab.com`)       | OIDC. Self-managed must be `https:` at the host root.                                                      |
@@ -195,6 +195,7 @@ to them.
 | Magic link      | `magicLink()`      | `id`, `name`, `allowSignUp`            | Passwordless: mails a single-use sign-in link — see [below](#passwordless-magic-links-and-one-time-codes). |
 | Email code      | `emailOtp()`       | `id`, `name`, `allowSignUp`            | Passwordless: mails a one-time numeric code.                                                               |
 | Phone code      | `phoneOtp()`       | `id`, `name`, `allowSignUp`            | Passwordless: texts a one-time code through `sendSms` — see [Phone sign-in](#phone-sign-in).               |
+| SAML 2.0        | `saml()`           | `id`, `metadataXml`, `domains`         | An enterprise IdP's SSO — see [SAML providers](#saml-providers).                                           |
 
 A `domain` / `baseUrl` is validated before it is interpolated: `https:` only, host only,
 no credentials, path, query or fragment. A `tenant` / `realm` /
@@ -257,12 +258,99 @@ A session cookie set with `SameSite=Strict` is not sent on the redirect that fol
 cross-site POST, so the user lands signed out until the next navigation; keep the session
 cookie at its default `Lax`.
 
-> [!NOTE]
-> **Microsoft Entra** requires a
-> specific `tenant` (a GUID or a verified domain): the multi-tenant aliases `common`,
-> `organizations` and `consumers` are refused, because their discovery document declares
-> the template issuer `https://login.microsoftonline.com/{tenantid}/v2.0` while the
-> `id_token` carries the tenant-specific one, and denext compares `iss` by exact match.
+### Microsoft Entra: one tenant or many
+
+`tenant` is a single directory (a GUID or a verified domain) or one of Microsoft's multi-tenant
+aliases:
+
+| `tenant`        | Who signs in                                     | How the `id_token`'s issuer is checked                                        |
+| --------------- | ------------------------------------------------ | ----------------------------------------------------------------------------- |
+| a tenant        | that directory's users                           | exactly `https://login.microsoftonline.com/<tenant>/v2.0` (discovery on)      |
+| `organizations` | any work or school tenant; personal accounts no  | against the token's own `tid`: `https://login.microsoftonline.com/{tid}/v2.0` |
+| `common`        | any work or school tenant, and personal accounts | against the token's own `tid`, as above                                       |
+| `consumers`     | personal Microsoft accounts only                 | exactly the personal-account tenant's issuer (`9188040d-…`)                   |
+
+For `common` and `organizations` the discovery document declares a template issuer
+(`https://login.microsoftonline.com/{tenantid}/v2.0`), so denext fills it from the token's own
+`tid` claim — which must be a GUID — and compares `iss` to the result exactly, after checking the
+signature against the common key set. A token can only claim the issuer of the tenant it says it
+is from, and a token whose `iss` names one tenant and whose `tid` names another is refused.
+
+> [!WARNING]
+> `common` and `organizations` admit a user of **any** Entra tenant, including one an attacker
+> creates for the purpose (and Entra's `email` claim is whatever that tenant's admin set). List
+> the tenants you serve:
+>
+> ```ts
+> microsoftEntra({
+>   clientId,
+>   clientSecret,
+>   tenant: "organizations",
+>   allowedTenants: ["72f988bf-86f1-41af-91ab-2d7cd011db47"], // tenant ids (GUIDs)
+> });
+> ```
+>
+> A token from a tenant outside the list is refused before anything else. Without the list,
+> treat the account as "someone with a Microsoft account": Entra sends no `email_verified`, so
+> its address never links to an existing account (see
+> [Account linking rules](#account-linking-rules)).
+
+### SAML providers
+
+`saml()` signs users in through an enterprise identity provider (Okta, Entra ID, Google
+Workspace, ADFS, Keycloak, …) on denextAuth's own endpoints — no `/auth/v1` needed:
+
+```ts
+import { denextAuth, saml, sqliteAuthAdapter } from "denext/server";
+
+denextAuth({
+  secret: Deno.env.get("AUTH_SECRET")!,
+  canonicalOrigin: "https://example.com",
+  adapter: sqliteAuthAdapter({ path: "auth.db" }), // required: the account is stored
+  providers: [
+    saml({
+      id: "acme",
+      name: "Acme SSO",
+      metadataXml: await Deno.readTextFile("./acme-idp-metadata.xml"),
+      domains: ["acme.com"], // the addresses this IdP speaks for
+      attributeMapping: { name: "displayName" },
+      // sp: { signingKey, signingCertificate, encryptionKey, encryptionCertificate, entityId },
+    }),
+  ],
+});
+```
+
+| Endpoint                            | What it does                                                                     |
+| ----------------------------------- | -------------------------------------------------------------------------------- |
+| `GET {basePath}/signin/acme`        | Sends the browser to the IdP with an AuthnRequest (signed with `sp.signingKey`). |
+| `POST {basePath}/callback/acme`     | The Assertion Consumer Service: the IdP posts its Response here.                 |
+| `GET {basePath}/saml/acme/metadata` | This SP's metadata (also the default entity id) — give it to the IdP.            |
+
+`signIn("acme")` from `denext/client` starts it like any provider. Only SP-initiated logins are
+accepted: the AuthnRequest's ID and a fresh RelayState ride the signed, single-use transaction
+cookie (`SameSite=None`, since the IdP's POST is cross-site), and the Response must answer that
+request exactly.
+
+**The same SAML code as `/auth/v1`.** The Response is verified by the implementation behind
+[SAML single sign-on](#saml-single-sign-on) — a strict XML parser, XML-DSig over exclusive c14n
+against the metadata's certificates only, signature-wrapping and comment-injection defenses, the
+audience (this SP's entity id), the recipient and destination (this ACS), the validity window,
+`InResponseTo`, the shared assertion replay cache, and encrypted assertions — and the user by
+its SSO rules:
+
+- An address is bound to the account (as verified) only on one of the provider's `domains`; any
+  other address is never bound. Without `domains`, no email is bound.
+- The provider's NameID signs in the same user every time. A first sign-in never takes over an
+  existing account with the same address (`?error=account_not_linked`) unless
+  `linkExistingAccounts: true` and the address is on the provider's domains; an SSO user of
+  another identity provider is never linked.
+- A new user is created unless `allowSignUp: false`, as an **SSO user** (`sso:acme`): its
+  identity provider is its only way in. Password, code, link, passkey and OAuth sign-ins never
+  find it, and only a session its IdP started (`amr` includes `sso/saml`) lives — see the SAML
+  trust model under [Threat notes](#threat-notes).
+- A user with a second factor gets the pending step-up, like any other sign-in.
+
+Single Logout is `/auth/v1`'s only; a `saml()` sign-in ends with `signOut()` like any session.
 
 ## OIDC discovery and key caching
 
@@ -401,8 +489,8 @@ fire the `sessionRevoked` event.
 A user who can no longer sign in needs no revocation to be signed out: with an `adapter`, every
 read of a cookie session — `auth()`, `requireAuth()`, `requireSession()`, the `/auth/*` endpoints —
 re-reads its user through the adapter (once per request, however many times `auth()` is called),
-and a deleted or banned user, or an SSO user (whose identity provider never starts a denextAuth
-session), reads as signed out from their very next request, stateless cookies included. Anything holding a resource is released on server drain
+and a deleted or banned user, or an SSO user whose session its identity provider did not start
+(a [`saml()`](#saml-providers) sign-in is the one that does), reads as signed out from their very next request, stateless cookies included. Anything holding a resource is released on server drain
 through the plugin teardown seam — a closable session store **and** a closable `adapter`,
 so a `sqliteAuthAdapter` no longer keeps its file handle for the life of the process.
 
@@ -1187,11 +1275,10 @@ opens it only to check a code:
 - The stored value carries its version, nonce and ciphertext together:
   `totp.v1.<nonce>.<ciphertext>`. Store it as an opaque string.
 - **Rotation.** With `secret: [current, previous]`, a factor sealed under `previous` still
-  opens, and is re-sealed under `current` **only when a TOTP code from that factor passes** —
-  through the adapter's `updateMfaFactor`. Keep a retired secret in the list
-  until every factor sealed under it has been re-sealed that way: a user who only ever signs in
-  with a passkey under user verification (or a backup code) is never checked, so never
-  re-sealed. **Replacing** the secret instead of listing both bricks every factor
+  opens, and is re-sealed under `current` when a TOTP code from that factor passes — through
+  the adapter's `updateMfaFactor`. `denext auth reseal` re-seals the rest without waiting for a
+  code (see [Re-sealing after a rotation](#re-sealing-after-a-rotation)); remove `previous` once
+  it reports zero remaining. **Replacing** the secret instead of listing both bricks every factor
   sealed under the old one: it **fails closed** — no TOTP code verifies, the user still owes a
   second factor, a backup code still works, and the logger warns with the user id (never the
   secret).
@@ -1213,6 +1300,51 @@ opens it only to check a code:
   (no per-row marker says it was ever sealed), so whoever can write the MFA table can swap a
   sealed secret for a plaintext one they know. That access could equally rewrite a password
   hash or delete the factor; sealing protects a copied database, not a writable one.
+
+### Re-sealing after a rotation
+
+`denext auth reseal` (contributed by the `denextAuth()` plugin, so it runs against your config's
+adapter and `secret`) opens every TOTP factor with the configured secrets and re-seals each one
+that a retired secret — or a pre-sealing plaintext row, or a pre-4.0 record — still holds under
+the current one, writing it back through `updateMfaFactor`:
+
+```sh
+denext auth reseal --dry-run   # counts only, writes nothing
+denext auth reseal             # re-seal, then verify
+denext auth reseal --json      # the report as JSON (for a script or a scheduler)
+```
+
+```
+auth reseal:
+  users scanned:      1204
+  TOTP factors:       311
+  already current:    250
+  re-sealed:          61
+  remaining:          0
+No factor needs a retired secret: secrets after the first can be removed.
+```
+
+- **Idempotent and resumable.** Each factor is written on its own; a factor already sealed under
+  the current secret is left alone, so an interrupted run is finished by running it again.
+- **Verified.** A real run ends with a read-only pass over every user, and that pass's count is
+  `remaining`: when it is `0`, no factor needs a retired secret any more. A run that leaves any
+  behind exits `1`.
+- **Both sign-in paths.** `/auth/v1`'s TOTP factors (`supabase.auth.mfa.enroll`) live in the
+  same store, sealed the same way, so they are covered too.
+- **Counts only.** Nothing prints, logs or returns a secret. A factor no configured secret opens
+  is reported as `unopenable` and never written — removing a retired secret can't change it, and
+  `disableTotp(authConfig, userId)` is its user's recovery.
+- **As a job.** The same function is `resealTotpFactors(config, { dryRun? })` from
+  `denext/server`; it needs an adapter with `listUsers` (every first-party adapter has it):
+
+```ts
+// jobs/reseal.ts — `denext job reseal`
+import { activeAuthConfig, defineJob, resealTotpFactors } from "denext/server";
+export default defineJob({
+  description: "re-seal TOTP factors under the current auth secret",
+  handler: async () => console.log(await resealTotpFactors(activeAuthConfig())),
+});
+```
 
 ### One factor store for both sign-in paths
 
@@ -1731,8 +1863,14 @@ user held, whether or not the adapter's `deleteUser` removed it: each verificati
 user, so a deleted user's cookie session, native access token, bearer API token and `/auth/v1`
 access token (one with no `session_id` included) authenticate nothing from the next request.
 
+A user with a second factor who signs in with a native `id_token` gets a pending sign-in, not
+tokens: `{ mfa_required: true, mfa_token, expires_in, factors }`, finished at
+`POST {basePath}/native/mfa` with a TOTP, backup or SMS code (`nativeSession()`'s
+`completeMfa`). The `mfa_token` is single-use, lives five minutes, and is not a credential for
+anything else.
+
 The whole flow — CORS for the app's origin, the client helper `nativeSession()`,
-`createApiClient({ base, auth })`, the id_token checks and deletion — is on
+`createApiClient({ base, auth })`, the id_token checks, the second factor and deletion — is on
 [App backend](/docs/app-backend).
 
 ## Client
@@ -2499,9 +2637,8 @@ What the first-party auth layer still does not do — the full ledger is
 - **By default a GET spends a magic link**, so a mail gateway that pre-fetches links can burn
   one — use `magicLink({ confirm: true })`, or `emailOtp()`.
 - **Rotating `secret` invalidates the one-time codes in flight**: they are keyed under the
-  current (first) secret, and live for minutes. A retired secret must stay in the list until
-  the TOTP factors sealed under it are re-sealed, which happens only when a TOTP code from that
-  factor passes (never for a user who steps up only with a passkey or a backup code).
+  current (first) secret, and live for minutes. A retired secret can be removed once
+  `denext auth reseal` reports zero remaining.
 - **One passkey ceremony per browser at a time**: the ceremony cookie is per browser, so a
   second ceremony supersedes the first.
 - **Stateless cookie sessions survive a password reset** — and a pre-account-hijacking

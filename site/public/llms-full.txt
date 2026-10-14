@@ -1141,6 +1141,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface MouseEvent<T, E>` — A mouse event.
 - `interface MutableRefObject<T>` — A mutable ref cell.
 - `interface NativeIdTokenSignIn` — What a native id_token sign-in sends.
+- `interface NativeMfaChallenge` — A native sign-in that still owes a second factor: finish it with NativeSession.completeMfa. Single-use — every call answers a fresh one on the error it throws — and short-lived (five minutes from the id_token sign-in).
 - `nativeSession(options: NativeSessionOptions): NativeSession` — A native session against a remote denext server (denextAuth({ native })). Pass it as createApiClient({ base, auth: session }).
 - `interface NativeSession` — A native session: an auth provider for createApiClient, plus sign-in and sign-out.
 - `class NativeSessionError` — A failed native-session call.
@@ -1413,8 +1414,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface AuthNativeConfig` — **Native session mode** — sessions for an app whose WebView can't use the __Host- SameSite cookie (a Capacitor shell at capacitor://localhost). The app opens {basePath}/native/authorize in a system browser sheet (openAuthSession), signs in there with any provider, and receives a one-time code at its redirect URI; it exchanges the code plus its PKCE verifier at POST {basePath}/native/token for a short-lived bearer access token and a rotating refresh token. auth(), requireAuth() and requireSession() accept the access token. Needs an adapter with the native session group.
 - `interface Author` — A named author (<meta name="author">, optional <link rel="author">).
 - `interface AuthorizedCallbackInput` — What AuthCallbacks.authorized is asked about.
+- `interface AuthorizedTapOptions<T>` — Options for tapChannelAuthorized.
 - `interface AuthPasskeyConfig` — Passkeys (WebAuthn) — sign-in with a platform or roaming authenticator, as a first factor or as the second. Every field is optional; the relying party defaults to canonicalOrigin.
-- `type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider | PhoneProvider` — Any configured provider.
+- `type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider | PhoneProvider | SamlProvider` — Any configured provider.
 - `interface AuthSession` — The signed (readable, tamper-evident) session payload. Never stores tokens/secrets.
 - `interface AuthSessionConfig` — Session lifetime + storage strategy.
 - `interface AuthUser` — A normalized user profile — the non-sensitive identity denext stores in the session.
@@ -1449,6 +1451,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `cappedBody(request: Request, maxBytes: number): Request` — request with its body wrapped so that reading past maxBytes errors the stream (the consumer — formData(), json(), a multipart parser — then throws). For streaming consumers that cannot use readCappedBody; a declared content-length over the cap is refused up front.
 - `interface CdnCacheHeadersConfig` — Shared-cache headers on ISR pages with options (DenextConfig.cdnCacheHeaders as an object: the headers on, with these settings).
 - `interface Channel<T>` — A channel on the server.
+- `class ChannelAccessError` — Why tapChannelAuthorized refused a subscriber.
 - `interface ChannelConfig<T>` — The definition passed to createChannel.
 - `interface ChannelContext` — The subscriber's identity handed to authorize (the Live connection context).
 - `interface ChannelEvent` — One transport event: a channel publish/revoke, or a cross-instance cache-tag invalidate.
@@ -1708,7 +1711,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface MfaRecord` — A user's TOTP factor plus their single-use backup codes.
 - `mfaStatus(config: AuthConfig, userId: string): Promise<MfaStatus>` — A user's second-factor state — for an account-settings page.
 - `interface MfaStatus` — A user's second-factor state, as mfaStatus reports it.
-- `microsoftEntra(options: MicrosoftEntraOptions): OAuthProvider` — Microsoft Entra ID (formerly Azure AD) — OIDC v2.0 endpoints, id_token verified against the tenant's JWKS. Single-tenant only (see MicrosoftEntraOptions.tenant); claims come from the verified id_token, so no Microsoft Graph call is made.
+- `microsoftEntra(options: MicrosoftEntraOptions): OAuthProvider` — Microsoft Entra ID (formerly Azure AD) — OIDC v2.0 endpoints, id_token verified against the tenant's JWKS. A single tenant, or the multi-tenant aliases (common, organizations, consumers; see MicrosoftEntraOptions.tenant). Claims come from the verified id_token, so no Microsoft Graph call is made.
 - `interface MicrosoftEntraOptions` — Options for microsoftEntra.
 - `type Middleware = (request: Request, context: MiddlewareContext) => MiddlewareResult | Promise<MiddlewareResult>` — A root middleware handler run before routing.
 - `interface MiddlewareConfig` — Optional configuration exported by a middleware module.
@@ -1731,7 +1734,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ModuleLoader = (filePath: string) => Promise<unknown>` — How the server loads a module given its file path (injectable for tests).
 - `interface NativeAppleConfig` — Sign in with Apple for a native app: NativeIdTokenProviderConfig plus the secret.
 - `nativeBearerToken(request: Request | undefined): string | undefined` — The native access token an Authorization header carries: the token for a Bearer nat_… header, undefined when the header is absent or carries something else (an API token, Basic auth) — so cookie sessions keep working beside bearer API tokens.
-- `interface NativeGrantRecord` — A single-use native grant: an authorization **code** (handed to the app's redirect URI) or a sign-in **nonce** (for a native id_token sign-in). Only the SHA-256 of the value is stored.
+- `interface NativeGrantRecord` — A single-use native grant: an authorization **code** (handed to the app's redirect URI), a sign-in **nonce** (for a native id_token sign-in), or an **mfa** token (a native id_token sign-in that still owes its second factor). Only the SHA-256 of the value is stored.
 - `interface NativeIdTokenProviderConfig` — A provider whose id_tokens a native app may exchange at POST {basePath}/native/<id>.
 - `interface NativeSessionRecord` — One native-app session: a refresh-token rotation chain (a "family"). The refresh token the app holds names this record and its NativeSessionRecord.generation; each refresh advances the generation, so presenting an older one is a replay and revokes the family.
 - `next(init?: object): NextCommand` — Continue to routing; optionally attach headers to the eventual response.
@@ -1740,7 +1743,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `noStore(): void` — Opt the current render out of the page cache (Next's unstable_noStore() / connection() intent): a route with export const revalidate = N that calls this is rendered per request instead of being stored and served to other visitors.
 - `notFound(): never` — Throw to render the nearest not-found UI with a 404 status.
 - `interface OAuthAuthorizationExpect` — What OAuthServerAdapter.updateOAuthAuthorization requires of the stored row.
-- `type OAuthAuthorizationPatch = Partial<Pick<OAuthAuthorizationRecord, userId | status | codeHash | sessionId | expiresAt>>` — The fields OAuthServerAdapter.updateOAuthAuthorization may change.
+- `type OAuthAuthorizationPatch = Partial<Pick<OAuthAuthorizationRecord, userId | status | codeHash | sessionId | expiresAt | ssoConsent>>` — The fields OAuthServerAdapter.updateOAuthAuthorization may change.
 - `interface OAuthAuthorizationRecord` — A pending (then settled) authorization request — /oauth/authorize creates one.
 - `interface OAuthClientOptions` — The client credentials every OAuth preset needs.
 - `interface OAuthClientRecord` — One registered OAuth client (Supabase's OAuthClient, secret hashed).
@@ -1873,6 +1876,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RequireBearerOptions` — Options for requireBearer.
 - `requireSession(options?: RequireSessionOptions): ApiMiddleware<object, object>` — Require a signed-in viewer (denext auth): extends the context with { session }, or fails with a 401 unauthorized envelope before any schema runs. With role, a signed-in caller who holds none of the listed roles fails with a 403 forbidden envelope instead.
 - `interface RequireSessionOptions` — Options for requireSession.
+- `interface ResealOptions` — Options for resealTotpFactors.
+- `interface ResealReport` — What resealTotpFactors found and did — counts only, never a secret.
+- `resealTotpFactors(config: AuthConfig, options?: ResealOptions): Promise<ResealReport>` — Re-seal every TOTP factor that a retired secret (or a pre-sealing plaintext row) still holds under the current secret — the job behind denext auth reseal, also callable from a jobs/ module. Idempotent and resumable: run it again after an interruption. A real run ends with a read-only verification pass, whose count is the report's remaining; drop the retired secret once it is 0.
 - `resetCacheStats(): void` — Reset the cache-activity counters (tests / a fresh monitoring window).
 - `resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult>` — Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, every passkey of the user is removed, and every server-side session and bearer API token is revoked — a reset is how an owner takes an account back, so nothing a thief set up with a stolen session (a passkey registered from it included) survives it. Fires passwordReset (after sessionRevoked).
 - `type ResetPasswordResult = object | object` — What resetPassword reports.
@@ -1912,11 +1918,15 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type SafeFetchErrorCode = unsupported-protocol | host-not-allowed | blocked-address | dns | network | bad-response | too-many-redirects` — Error codes surfaced by safeFetch.
 - `interface SafeFetchOptions` — Options for safeFetch.
 - `safeRedirectLocation(location: string): string` — Make a redirect Location safe against open redirects. An explicit http(s):// absolute URL is preserved (a deliberately-configured external redirect); anything else is forced to a single-slash, same-origin path so a protocol-relative (//host) or backslash (/\host) prefix — which browsers resolve cross-origin — cannot escape the current origin.
+- `saml(options: SamlProviderOptions): SamlProvider` — A SAML 2.0 identity provider (Okta, Entra ID, Google Workspace, ADFS, Keycloak, …) on {basePath}/signin/:id. Sign-ins are SSO sign-ins: the account is the IdP's (an SSO user), its email is bound only on the provider's domains, and an existing account is never taken over unless linkExistingAccounts is set.
 - `type SamlBindingInput = object | object` — How a logout message arrived: the raw query (HTTP-Redirect) or the posted form.
 - `class SamlError` — A refused SAML message or bad SAML configuration. code is a stable machine code (see SamlErrorCode); the message is human-readable detail for logs. Never echo the message to an end user — report a generic sign-in failure.
 - `type SamlErrorCode = malformed_xml | doctype_forbidden | malformed_response | unexpected_markup | unsigned | bad_signature | signature_wrapping | multiple_assertions | encrypted_assertion_unsupported | decryption_failed | status_not_success | bad_destination | bad_recipient | bad_subject_confirmation | bad_audience | bad_issuer | expired | not_yet_valid | in_response_to_mismatch | idp_initiated_disallowed | replay | unsupported_algorithm | bad_certificate | bad_metadata | bad_key | bad_binding` — The stable machine codes a SamlError carries. Switch on code, never on the message (which is for logs and may change between versions).
 - `interface SamlIdpConfig` — A trusted SAML 2.0 Identity Provider.
 - `type SamlPrivateKey = string | JsonWebKey` — An SP private key: a PKCS #8 PEM (-----BEGIN PRIVATE KEY-----) or an RSA private JWK. Only RSA keys are supported (RSA-SHA256 signatures, RSA-OAEP key transport).
+- `interface SamlProvider` — A SAML 2.0 identity provider on denextAuth's own endpoints (saml({ … })): GET {basePath}/signin/:id sends the browser to the IdP with a signed-when-configured AuthnRequest, the IdP posts its Response back to POST {basePath}/callback/:id, and GET {basePath}/saml/:id/metadata publishes this service provider's metadata. The Response is verified by the same SAML implementation /auth/v1 uses, and the user is resolved by the same SSO rules: the account is an SSO user, signed in through this IdP only.
+- `type SamlProviderOptions = Omit<SamlProvider, type>` — Options for saml: everything on a SamlProvider but its type.
+- `interface SamlProviderSp` — This service provider, as one SamlProvider presents itself to its IdP.
 - `interface SamlReplayCache` — Where assertion IDs are remembered so each is accepted once. Back it with something every replica shares (a database table, a KV store) when the SP runs on more than one process.
 - `interface SamlSpConfig` — This SAML 2.0 Service Provider.
 - `scanRoutes(appDir: string): Promise<RouteManifest>` — Scan appDir recursively and produce a sorted route manifest.
@@ -2013,6 +2023,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SupabaseSigningKey` — One ES256 key: its id, the private key (signing) and the public JWK (JWKS + verifying).
 - `interface TailwindConfig` — Tailwind CSS integration. When set, denext compiles input (which contains the raw @import "tailwindcss"; directives) into output using the Tailwind v4 standalone binary — which denext downloads and manages itself — before its own CSS pipeline runs. The output file is what your layout imports.
 - `tapChannel<T>(channel: Channel<T> | string, key: string, handlers: ChannelTapHandlers<T>): () => void` — Observe a channel's publishes on the SERVER: every payload published to key on any instance — through the installed transport, decoded, in seq order per instance — until the returned disposer runs. The seam a plugin uses to bridge channel pushes into another protocol (a GraphQL subscription in @denext/graphql, an SSE stream, a queue) without a second event bus. Survives setChannelTransport (re-binds to the new transport).
+- `tapChannelAuthorized<T>(channel: Channel<T> | string, key: string, options: AuthorizedTapOptions<T>): Promise<() => void>` — Subscribe a viewer to one key of a channel on the server, behind the channel's authorize — the same gate, context and key the Live socket applies to a useChannel subscriber. Call it inside the viewer's request (a resolver, a route handler): authorize(ctx, key) runs there with ctx = { origin, url, cookie, peerId } from that request, and again, lazily, on the first payload after the channel's re-authorization TTL, in a copy of that request's context.
+- `interface TenantIssuer` — How a multi-tenant provider's id_token issuer is checked (see OAuthProvider.tenantIssuer).
 - `interface ThemeColorDescriptor` — <meta name="theme-color"> with an optional media query.
 - `TOO_LARGE: Symbol` — Sentinel returned by readCappedBody when the body exceeds the cap.
 - `totpAuthUri(options: TotpAuthUriOptions): string` — Build the otpauth://totp/… provisioning URI (Google Authenticator key-URI format) to render as a QR code or a link. The label is Issuer:account with each part percent-encoded (so a : inside either part can't forge the separator), and every query value is percent-encoded too (a space is %20, never +).
@@ -2142,6 +2154,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type Messages = Record<string, string>` — A flat message catalog for one locale: message key → template string.
 - `type ModuleEndpoints<M, P> = mapped` — Every exported HTTP-method handler of a route module, as { GET: InferEndpoint; … }. P is the pattern-derived params record (never for a static route).
 - `interface NativeIdTokenSignIn` — What a native id_token sign-in sends.
+- `interface NativeMfaChallenge` — A native sign-in that still owes a second factor: finish it with NativeSession.completeMfa. Single-use — every call answers a fresh one on the error it throws — and short-lived (five minutes from the id_token sign-in).
 - `nativeSession(options: NativeSessionOptions): NativeSession` — A native session against a remote denext server (denextAuth({ native })). Pass it as createApiClient({ base, auth: session }).
 - `interface NativeSession` — A native session: an auth provider for createApiClient, plus sign-in and sign-out.
 - `class NativeSessionError` — A failed native-session call.
@@ -3188,14 +3201,17 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `apiDefinitionOf(handler: unknown): ApiRouteMeta | undefined` — The definition + middleware attached to a defineApi handler, or undefined for a plain function. The seam handleApi reads (body cap, error redaction) and the accessor an OpenAPI/docs plugin uses to describe an app's endpoints.
 - `interface ApiRouteMeta` — The metadata attached to a defineApi handler (what handleApi and plugins read).
 - `interface AppCss` — Result of buildAppCss: everything needed by server + client + docs.
+- `interface AuthorizedTapOptions<T>` — Options for tapChannelAuthorized.
 - `bufferedRequest(request: Request, body: Uint8Array): Request` — Rebuild a request from already-buffered body bytes (headers/method preserved).
 - `buildAppCss(opts: object): Promise<AppCss | null>` — Build the whole project's CSS assets: scan for .css files, transform each, write a JS shim per file, and emit a merged deno config (framework + project imports normalized to absolute, plus the CSS redirects) so the module loader — and deno bundle (via CssAssets.importMap) — can resolve every .css import.
 - `buildNextCompatModules(options: BuildNextCompatModulesOptions): Promise<Map<string, string>>` — Build react→denext-rewritten SSR bundles for a set of route source modules, each RE-EXPORTING the source module's shape (default + named exports: metadata/generateMetadata/segment-config/…) rather than wrapping it in a render(). The main SSR loader (createNextCompatServerLoader) returns these instead of the raw source, so the whole route subtree — including npm React libraries imported inside it — runs on denext's single React.
 - `interface BuildNextCompatModulesOptions` — Options for buildNextCompatModules.
 - `bundleRoutes(routeEntries: Array<object>, opts: BundleOptions): Promise<MultiBundleOutput>` — Bundle several browser entries in a **single** code-split pass, so any module imported by more than one entry — chiefly the denext client runtime, which every route entry imports — is hoisted into one shared chunk they all reference (downloaded once, cached across client navigations) instead of being inlined into each entry. Contrast bundleRoute, which bundles one route in isolation and therefore cannot share a chunk with its siblings.
 - `cappedBody(request: Request, maxBytes: number): Request` — request with its body wrapped so that reading past maxBytes errors the stream (the consumer — formData(), json(), a multipart parser — then throws). For streaming consumers that cannot use readCappedBody; a declared content-length over the cap is refused up front.
-- `captureRequestContext(): (fn: () => T) => T` — Capture the current request so its session can be read again later, outside it — what a plugin holding a long-lived connection (a WebSocket it upgraded) uses to re-check who is on the other end: the returned function runs fn in a fresh request context for a copy of this request (its URL, its headers — cookies included — and its client address, with the app's proxy trust and limit policy), so auth(), cookies() and clientIpForLimits() answer as they did for the original. Capture BEFORE Deno.upgradeWebSocket, which consumes the request. Outside a request the function runs fn as it is.
+- `captureRequestContext(init?: object): (fn: () => T) => T` — Capture the current request so its session can be read again later, outside it — what a plugin holding a long-lived connection (a WebSocket it upgraded) uses to re-check who is on the other end: the returned function runs fn in a fresh request context for a copy of this request (its URL, its headers — cookies included — and its client address, with the app's proxy trust and limit policy), so auth(), cookies() and clientIpForLimits() answer as they did for the original. Capture BEFORE Deno.upgradeWebSocket, which consumes the request. Outside a request the function runs fn as it is.
 - `interface Channel<T>` — A channel on the server.
+- `class ChannelAccessError` — Why tapChannelAuthorized refused a subscriber.
+- `interface ChannelContext` — The subscriber's identity handed to authorize (the Live connection context).
 - `interface ChannelTapHandlers<T>` — What tapChannel reports.
 - `interface CommandContext` — The parsed invocation handed to a command's CommandSpec.run.
 - `interface CommandSpec` — A first-class denext CLI verb.
@@ -3244,6 +3260,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `STALLED: Symbol` — Sentinel returned by readCappedBody when the body stalls (idle).
 - `interface TailwindConfig` — Tailwind CSS integration. When set, denext compiles input (which contains the raw @import "tailwindcss"; directives) into output using the Tailwind v4 standalone binary — which denext downloads and manages itself — before its own CSS pipeline runs. The output file is what your layout imports.
 - `tapChannel<T>(channel: Channel<T> | string, key: string, handlers: ChannelTapHandlers<T>): () => void` — Observe a channel's publishes on the SERVER: every payload published to key on any instance — through the installed transport, decoded, in seq order per instance — until the returned disposer runs. The seam a plugin uses to bridge channel pushes into another protocol (a GraphQL subscription in @denext/graphql, an SSE stream, a queue) without a second event bus. Survives setChannelTransport (re-binds to the new transport).
+- `tapChannelAuthorized<T>(channel: Channel<T> | string, key: string, options: AuthorizedTapOptions<T>): Promise<() => void>` — Subscribe a viewer to one key of a channel on the server, behind the channel's authorize — the same gate, context and key the Live socket applies to a useChannel subscriber. Call it inside the viewer's request (a resolver, a route handler): authorize(ctx, key) runs there with ctx = { origin, url, cookie, peerId } from that request, and again, lazily, on the first payload after the channel's re-authorization TTL, in a copy of that request's context.
 - `toBase64Url(bytes: Uint8Array): string` — Encode bytes as URL-safe base64 (no padding). Shared with the Remix session compat.
 - `TOO_LARGE: Symbol` — Sentinel returned by readCappedBody when the body exceeds the cap.
 - `verifyOrigin(request: Request, options: OriginCheckOptions): boolean` — Is this request from the app's own origin (or an explicitly allowed one)?

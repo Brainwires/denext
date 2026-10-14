@@ -27,11 +27,7 @@ or an upstream. Each one's limitation entry is deleted when it ships.
   early (a ban, a password reset or a deletion); magic links default to `confirm: true`; a
   default `native.refreshReuseInterval` (GoTrue uses 10 s); one passkey ceremony per tab, not per
   browser.
-- **Auth, providers and factors:** a `denext auth reseal` job that moves TOTP factors off a
-  retired `secret` without waiting for a code; `microsoftEntra` with `common` / `organizations`
-  (validate the issuer against the token's `tid`); a native `id_token` sign-in that returns a
-  pending second factor instead of `403 mfa_required`; SAML for `denextAuth`'s own endpoints,
-  reusing `/auth/v1`'s implementation; optional FIDO Metadata Service attestation checks.
+- **Auth, providers and factors:** optional FIDO Metadata Service attestation checks.
 - **Backend:** realtime tells subscribers to re-read on `TRUNCATE`; rate limits for the auto-REST
   routes; AVIF image-transform sources (`@denext/avif`).
 - **Deno Desktop (runtime work):** CEF on macOS keeps cookies under a real Keychain key in a
