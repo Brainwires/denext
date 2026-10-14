@@ -16,8 +16,8 @@
 // The refresh token lives in `storage` (the Keychain / Keystore through `secureStore`); the
 // access token only in memory. Refreshes are single-flight, so a burst of 401s rotates the
 // refresh token once — a second rotation with the same token would read as a replay and sign
-// the user out on the server (unless the server sets `native.refreshReuseInterval`, which
-// answers a racing second process within that window with the same pair instead).
+// the user out on the server outside `native.refreshReuseInterval` (10 s by default), within
+// which a racing second process is answered with the same pair instead.
 
 /** Where the refresh token is kept — `secureStore` from `denext/mobile` fits as is. */
 export interface NativeSessionStorage {

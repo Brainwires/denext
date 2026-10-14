@@ -3,7 +3,8 @@
 // revoked) and
 // `native.refreshReuseInterval` (the grace window in which the IMMEDIATELY previous refresh
 // token gets the pair its rotation issued, byte for byte, instead of revoking the family).
-// Defaults leave both off — the strict behaviour tests/auth-native.test.ts pins.
+// The cap is off by default; the reuse interval defaults to 10 s (GoTrue's
+// GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL), and `0` is the strict mode.
 
 import { assert, assertEquals, assertNotEquals } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
@@ -92,18 +93,48 @@ async function revoked(h: Harness, token: string): Promise<boolean> {
 
 // ---- defaults + config ---------------------------------------------------------------------
 
-Deno.test("defaults: no absolute cap and no reuse interval; values are clamped", async () => {
+Deno.test("defaults: no absolute cap and a 10 s reuse interval; values are clamped", async () => {
   const plain = await setup();
-  assertEquals([plain.native.refreshMaxAge, plain.native.reuseInterval], [null, 0]);
+  assertEquals([plain.native.refreshMaxAge, plain.native.reuseInterval], [null, 10]);
+  assertEquals((await setup({ refreshReuseInterval: 0 })).native.reuseInterval, 0);
   const clamped = await setup({ refreshTokenMaxAge: 10, refreshReuseInterval: 999 });
   assertEquals([clamped.native.refreshMaxAge, clamped.native.reuseInterval], [3600, 60]);
   const negative = await setup({ refreshReuseInterval: -5 });
   assertEquals(negative.native.reuseInterval, 0);
 });
 
-Deno.test("default strict mode: an immediate re-presentation of the previous token revokes", async () => {
-  await withClock(async () => {
+Deno.test("default reuse interval: a re-presentation inside 10 s gets the same pair, one branch", async () => {
+  await withClock(async (clock) => {
     const h = await setup();
+    const first = await start(h);
+    const second = await rotate(h, first.refresh_token);
+    clock.ms = T0 + 9_000;
+    assertEquals(await rotate(h, first.refresh_token), second, "byte-identical pair");
+    const family = await h.adapter.getNativeSession!(familyOf(first.refresh_token));
+    assertEquals(family?.generation, 1, "no second rotation: the family has one branch");
+    assert(!(await revoked(h, first.refresh_token)));
+    // The pair both callers hold keeps rotating; the spent first token is a replay past 10 s.
+    const third = await rotate(h, second.refresh_token);
+    assert(await verifyNativeAccessToken(h.config, third.access_token));
+    clock.ms = T0 + 25_000;
+    assertEquals(await refusal(h, first.refresh_token), "reuse");
+  });
+});
+
+Deno.test("default reuse interval: past 10 s the previous token is a replay and revokes", async () => {
+  await withClock(async (clock) => {
+    const h = await setup();
+    const first = await start(h);
+    await rotate(h, first.refresh_token);
+    clock.ms = T0 + 11_000;
+    assertEquals(await refusal(h, first.refresh_token), "reuse");
+    assert(await revoked(h, first.refresh_token));
+  });
+});
+
+Deno.test("strict mode (refreshReuseInterval: 0): an immediate re-presentation revokes", async () => {
+  await withClock(async () => {
+    const h = await setup({ refreshReuseInterval: 0 });
     const first = await start(h);
     await rotate(h, first.refresh_token);
     assertEquals(await refusal(h, first.refresh_token), "reuse");

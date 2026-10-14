@@ -440,8 +440,8 @@ attack surface, so each ships with its own invariant:
   and redirect-URI bound, single-try and 60 seconds long by default, and minted only for a
   sign-in made after the flow began; access tokens are re-checked against their session family
   on every request; a replayed refresh token revokes its family while a forged one (bad MAC)
-  touches nothing. The opt-in `refreshTokenMaxAge` / `refreshReuseInterval` policies are
-  pinned too. `tests/auth-native.test.ts`, `tests/auth-native-idtoken.test.ts`,
+  touches nothing. The opt-in `refreshTokenMaxAge` policy and the `refreshReuseInterval`
+  grace window (10 s by default) are pinned too. `tests/auth-native.test.ts`, `tests/auth-native-idtoken.test.ts`,
   `tests/auth-native-refresh-policy.test.ts`, `tests/auth-account-delete.test.ts`. See
   [App backend](/docs/app-backend#security).
 - **Account linking refuses unverified matches.** An OAuth account only links to

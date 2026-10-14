@@ -82,7 +82,8 @@ async function setup(
     sessionStore: inMemorySessionStore(),
     pages: { signIn: "/login" },
     rateLimit: false,
-    native: { redirectUris: [REDIRECT, "http://127.0.0.1/cb"] },
+    // Strict reuse detection (the 10 s default grace is pinned in auth-native-refresh-policy).
+    native: { redirectUris: [REDIRECT, "http://127.0.0.1/cb"], refreshReuseInterval: 0 },
     events: {
       sessionRevoked: (p) => void events.push(`revoked:${p.sessionId ?? p.userId}`),
       signOut: () => void events.push("signOut"),

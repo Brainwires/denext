@@ -18,6 +18,11 @@ and this project adheres to
   subscription is re-checked lazily after `authTtlSeconds` and ends when the check fails or on
   `channel.revoke(key)` (or a revoke naming its peer). `fromChannel` now returns a promise; a
   `subscribe` resolver returns it as is.
+- **`magicLink()` opens a confirmation page by default (`confirm: true`).** The link's GET renders
+  a page naming the account whose button POSTs the token, so a mail gateway that pre-fetches
+  links can't spend one and a link someone else requested signs nobody in without a click. A
+  provider built by hand without `confirm` gets the page too. `magicLink({ confirm: false })`
+  signs in on the GET as before. `/auth/v1/verify` keeps Supabase's GET behaviour.
 
 ### Added
 
@@ -189,7 +194,11 @@ and this project adheres to
   whatever waited for it (`minio-init`, the app, `docker compose up --wait`) could hit the restart
   gap with `connection refused`. The check now also requires that PID 1 is no longer the image's
   `entrypoint.sh`.
-
+- **`native.refreshReuseInterval` defaults to 10 seconds**, as GoTrue's
+  `GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL` does. Two refreshes racing with one native refresh
+  token (a background task and the app) both get the same new pair and the family advances once,
+  instead of the loser revoking the family and signing the user out. `refreshReuseInterval: 0`
+  keeps the strict behaviour.
 - **`.env.example` points at `denext stack passwd --postgres`** for changing `POSTGRES_PASSWORD`
   on an existing volume. Before, it said that changing the password locked the stack out.
 - **`Image`'s `fadeDuration` follows React Native:** the Android shell fades by 300 ms when it is

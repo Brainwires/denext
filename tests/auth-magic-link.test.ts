@@ -209,7 +209,9 @@ Deno.test("magicLink / emailOtp: defaults and overrides; GET /providers echoes {
     type: "email",
     mode: "magic",
     allowSignUp: true,
+    confirm: true,
   });
+  assertEquals(magicLink({ confirm: false }).confirm, false);
   const overrides: EmailProviderOptions = { id: "code", name: "Code", allowSignUp: false };
   assertEquals(emailOtp(overrides), {
     id: "code",
@@ -338,7 +340,7 @@ Deno.test("the send budget: the 4th send for one address is the same 429 whether
 // ---- magic links -----------------------------------------------------------
 
 Deno.test("magic link: the emailed link signs in once and lands on callbackUrl; a replay is ?error=Verification", async () => {
-  const h = setup(magicLink());
+  const h = setup(magicLink({ confirm: false }));
   const user = await h.adapter.createUser({ email: "ada@x.test", emailVerified: 1 });
   await send(h, "Ada@X.test", { callbackUrl: "/dash" });
   assertEquals(h.sent.length, 1);
@@ -365,7 +367,7 @@ Deno.test("magic link: the emailed link signs in once and lands on callbackUrl; 
 
 Deno.test("magic link: dead after email.magicMaxAge (10 minutes)", async () => {
   let clock = Math.floor(Date.now() / 1000);
-  const h = setup(magicLink(), {}, inMemoryAuthAdapter({ now: () => clock }));
+  const h = setup(magicLink({ confirm: false }), {}, inMemoryAuthAdapter({ now: () => clock }));
   await send(h, "late@x.test");
   const life = h.stored[0].expires - Math.floor(Date.now() / 1000);
   assert(life >= 599 && life <= 600, `lives 10 minutes (got ${life}s)`);
@@ -476,7 +478,7 @@ Deno.test("one-time code: dead after email.otpMaxAge (5 minutes)", async () => {
 // ---- who signs in ----------------------------------------------------------
 
 Deno.test("an unknown address signs up on redeem: a verified user, createUser, isNewUser", async () => {
-  const h = setup(magicLink());
+  const h = setup(magicLink({ confirm: false }));
   await send(h, "new@x.test");
   assertEquals(await h.adapter.getUserByEmail("new@x.test"), undefined, "a send creates nothing");
   const { res, ctx } = await click(h);
@@ -521,7 +523,7 @@ Deno.test("an MFA-enrolled user: a pending session, mfa required (JSON) / pages.
   assertEquals((await sessionOf(otp, coded.ctx))?.mfaPending, true);
   assertEquals(otp.events, []);
 
-  const magic = await enrolled(magicLink());
+  const magic = await enrolled(magicLink({ confirm: false }));
   const clicked = await click(magic);
   const step = location(clicked.res);
   assertEquals([step.pathname, step.searchParams.get("callbackUrl")], ["/mfa", "/home"]);
@@ -531,7 +533,7 @@ Deno.test("an MFA-enrolled user: a pending session, mfa required (JSON) / pages.
 
 Deno.test("callbacks.signIn returning false refuses the sign-in: no session", async () => {
   const deny = { callbacks: { signIn: () => false } };
-  const h = setup(magicLink(), deny);
+  const h = setup(magicLink({ confirm: false }), deny);
   await send(h, "deny@x.test");
   const { res, ctx } = await click(h);
   const to = location(res);
@@ -572,7 +574,7 @@ async function withPassword(
 }
 
 Deno.test("pre-account hijacking: a first email sign-in retires the unverified account's password, tokens and sessions", async () => {
-  const h = setup(magicLink(), { session: { strategy: "database" } });
+  const h = setup(magicLink({ confirm: false }), { session: { strategy: "database" } });
   const id = await withPassword(h, "victim@x.test", ATTACKER_PASSWORD);
   const attacker = await passwordSignIn(h, "victim@x.test", ATTACKER_PASSWORD);
   assertEquals(attacker.res.status, 200, "the password works while the address is unproven");
@@ -630,7 +632,7 @@ Deno.test("an adapter that can read a password but neither replace nor delete it
 });
 
 Deno.test("pre-account hijacking: a TOTP factor enrolled on the unverified account is dropped â€” the victim signs in with no MFA step", async () => {
-  const h = setup(magicLink());
+  const h = setup(magicLink({ confirm: false }));
   const id = await withPassword(h, "victim@x.test", ATTACKER_PASSWORD);
   // The attacker enrols a factor, then confirms it (written directly: no TOTP clock here).
   const now = Math.floor(Date.now() / 1000);
@@ -708,7 +710,7 @@ Deno.test("one-time code: a concurrent burst can't overrun the 5-guess budget â€
 Deno.test("an adapter that stores null for an unverified address still gets the pre-account-hijacking defence", async () => {
   const base = inMemoryAuthAdapter();
   // An Auth.js-style adapter: an unverified address reads back as `null`, not `undefined`.
-  const h = setup(magicLink(), {}, {
+  const h = setup(magicLink({ confirm: false }), {}, {
     ...base,
     getUserByEmail: async (email: string) => {
       const user = await base.getUserByEmail(email);

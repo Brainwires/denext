@@ -881,17 +881,17 @@ denextAuth({
 types. Both are `type: "email"` providers on `{basePath}/callback/:provider` — ids
 `"email"` and `"email-otp"` by default, with a display `name` (`"Email"`, `"Email code"`)
 that `GET {basePath}/providers` echoes — and both take `{ id?, name?, allowSignUp? }`
-(`magicLink` also `confirm`, below).
+(`magicLink` also `confirm`, on by default — below).
 Configuring one without `sendVerificationRequest`, or with an adapter missing
 `createVerificationToken`, `useVerificationToken`, `getUserByEmail`, `createUser` or
 `updateUser`, makes `denextAuth()` throw.
 
-| Request                                        | What it does                                                                                                    |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `POST /callback/email` — `{ email }`           | Mails a link to `/callback/email?token=…&email=…` (10 minutes by default)                                       |
-| `GET /callback/email?token=…&email=…`          | The click: consumes the token, signs the user in, redirects — or, with `confirm`, renders the confirmation page |
-| `POST /callback/email-otp` — `{ email }`       | Mails a code (6 digits, 5 minutes by default) as `token`; `url` never carries it                                |
-| `POST /callback/email-otp` — `{ email, code }` | Redeems the code (spaces and hyphens ignored) and signs the user in                                             |
+| Request                                        | What it does                                                                                                   |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `POST /callback/email` — `{ email }`           | Mails a link to `/callback/email?token=…&email=…` (10 minutes by default)                                      |
+| `GET /callback/email?token=…&email=…`          | The click: renders the confirmation page — or, with `confirm: false`, consumes the token and signs the user in |
+| `POST /callback/email-otp` — `{ email }`       | Mails a code (6 digits, 5 minutes by default) as `token`; `url` never carries it                               |
+| `POST /callback/email-otp` — `{ email, code }` | Redeems the code (spaces and hyphens ignored) and signs the user in                                            |
 
 A body carrying a `token` (a magic-link provider — how a JS client redeems) or a `code` (an
 email-code provider) redeems; anything else sends. A `callbackUrl` sent along rides in the
@@ -948,16 +948,17 @@ address stays unverified and the redeem gets the generic failure. An account tha
 already verified keeps all of it. A stateless cookie session can't be revoked and lives
 until it expires — another reason to run a `sessionStore` in production.
 
-**The confirmation page.** By default opening a magic link spends it (Auth.js does the same),
-so a mail gateway that pre-fetches links to scan them can burn one before the user clicks,
-and a link someone else requested signs the clicker straight into that account.
-`magicLink({ confirm: true })` closes both: the link's GET renders a small page — "Continue as
-**ada@example.com**?" — whose button POSTs the token back to the same URL, and only that POST
-spends it. A scanner's GET (any number of them) changes nothing, and nobody is signed in
-without pressing a button that names the account.
+**The confirmation page.** Opening a magic link does not spend it: the link's GET renders a
+small page — "Continue as **ada@example.com**?" — whose button POSTs the token back to the
+same URL, and only that POST spends it. A mail gateway that pre-fetches links to scan them
+(any number of times) changes nothing, and a link someone else requested signs nobody in
+without a press of a button that names the account. `confirm: false` restores Auth.js's
+behaviour, where the GET spends the link and signs in; a scanner can then burn it first, and
+an attacker's link signs the clicker into the attacker's account.
 
 ```ts
-providers: [magicLink({ confirm: true })],
+providers: [magicLink()], // confirm: true is the default
+providers: [magicLink({ confirm: false })], // the GET signs in
 ```
 
 The page is denext's own: no script, `default-src 'none'` with its one style allowed by hash,
@@ -2676,11 +2677,11 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   under their own MAC domain and re-checked against their session family on every request,
   so a revoked family stops at once. A replayed refresh token (an older generation with a
   valid MAC) revokes its whole family; a forged one (bad MAC) is refused without touching
-  it. Two opt-ins adjust this: `native.refreshTokenMaxAge` caps a family absolutely from its
-  sign-in (default none), and `native.refreshReuseInterval` (default `0`, at most 60 seconds)
-  lets the immediately previous refresh token re-fetch the same pair shortly after its
-  rotation, for apps whose refreshes can race — at the cost of missing a replay inside that
-  window. The native POSTs take no ambient credential, so a request with no `Origin` (a native
+  it. Two settings adjust this: `native.refreshTokenMaxAge` caps a family absolutely from its
+  sign-in (default none), and `native.refreshReuseInterval` (default 10 seconds, as GoTrue's,
+  at most 60; `0` is strict) lets the immediately previous refresh token re-fetch the same
+  pair shortly after its rotation, so refreshes that race don't sign the user out — at the
+  cost of missing a replay inside that window. The native POSTs take no ambient credential, so a request with no `Origin` (a native
   HTTP client) passes, while a present `Origin` must be this app or one the `cors` config
   allows, and `"null"` never is. See [App backend](/docs/app-backend#security).
 
@@ -2720,8 +2721,8 @@ What the first-party auth layer still does not do — the full ledger is
   only; without an adapter to store it, later sessions carry no name.
 - **Deleting an account can't end stateless cookie sessions on other devices** — they
   reference a user that no longer exists until they expire. Run a `sessionStore`.
-- **By default a GET spends a magic link**, so a mail gateway that pre-fetches links can burn
-  one — use `magicLink({ confirm: true })`, or `emailOtp()`.
+- **`magicLink({ confirm: false })` spends a link on its GET**, so a mail gateway that
+  pre-fetches links can burn one; the default confirmation page (or `emailOtp()`) avoids it.
 - **Rotating `secret` invalidates the one-time codes in flight**: they are keyed under the
   current (first) secret, and live for minutes. A retired secret can be removed once
   `denext auth reseal` reports zero remaining.

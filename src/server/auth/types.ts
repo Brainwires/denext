@@ -249,7 +249,10 @@ export interface EmailProvider {
   name: string;
   /** Discriminant marking this as an email provider. */
   type: "email";
-  /** `"magic"` mails a link (redeemed by its GET); `"otp"` mails a code (redeemed by a POST). */
+  /**
+   * `"magic"` mails a link (opened on a confirmation page whose button redeems it, unless
+   * `confirm: false`); `"otp"` mails a code (redeemed by a POST).
+   */
   mode: "magic" | "otp";
   /**
    * Whether an address with no account may sign up by proving its mailbox. With `false`
@@ -257,9 +260,10 @@ export interface EmailProvider {
    */
   allowSignUp: boolean;
   /**
-   * `magicLink({ confirm: true })`: the link's GET renders a confirmation page whose form POSTs
-   * the token, instead of spending it — so a mail gateway that pre-fetches links can't burn
-   * one, and nobody is signed in without pressing the button. Absent for `emailOtp()`.
+   * `magicLink()` (unless `confirm: false`): the link's GET renders a confirmation page whose
+   * form POSTs the token, instead of spending it — so a mail gateway that pre-fetches links
+   * can't burn one, and nobody is signed in without pressing the button. Absent for
+   * `emailOtp()`; only an explicit `false` (`magicLink({ confirm: false })`) redeems on the GET.
    */
   confirm?: boolean;
 }
@@ -906,9 +910,10 @@ export interface AuthNativeConfig {
    * task and the foreground app, two processes). Within this long after a rotation, presenting
    * the IMMEDIATELY previous refresh token answers the same token pair that rotation issued,
    * instead of treating it as a replay and revoking the family. An older generation, or the
-   * previous one after the window, is still a replay. Default `0` (strict: any reuse revokes);
-   * clamped to 0..60. It weakens replay detection for a token replayed within the window of
-   * its legitimate use — see the docs before enabling it.
+   * previous one after the window, is still a replay. Default `10`, as GoTrue's
+   * `GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL`; `0` is strict (any reuse revokes); clamped
+   * to 0..60. Inside the window a replayed previous token gets the pair its legitimate use
+   * got — set `0` where that matters more than a refresh race.
    */
   refreshReuseInterval?: number;
   /** One-time code lifetime in seconds (default 60; clamped to 10..600). */

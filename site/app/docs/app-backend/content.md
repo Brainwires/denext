@@ -104,7 +104,7 @@ export default {
         // accessTokenTtl: 900,          seconds (60..3600)
         // refreshTokenTtl: 2_592_000,   seconds, slides on each refresh (1 hour..1 year)
         // refreshTokenMaxAge: 7_776_000, absolute cap from sign-in (default: none)
-        // refreshReuseInterval: 0,      concurrent-refresh grace, seconds (0..60)
+        // refreshReuseInterval: 10,     concurrent-refresh grace, seconds (0..60; 0 = strict)
         // codeTtl: 60,                  seconds (10..600)
       },
     }),
@@ -112,12 +112,12 @@ export default {
 };
 ```
 
-Two refresh policies are off by default and worth deciding on:
+Two refresh policies are worth deciding on:
 
 | Option                 | Default | What it does                                                                                                                                                                                                                                                                       |
 | ---------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `refreshTokenMaxAge`   | none    | An absolute lifetime, in seconds from the original sign-in (1 hour..10 years). Each refresh still slides the expiry by `refreshTokenTtl`, but never past this cap; past it the refresh is `invalid_grant` like an expired one, the family is revoked, and the user signs in again. |
-| `refreshReuseInterval` | `0`     | A grace window, in seconds (0..60), for two refreshes racing with one refresh token. Within it, the immediately previous refresh token answers the same pair its rotation issued instead of revoking the family. See [Security](#security) for the tradeoff.                       |
+| `refreshReuseInterval` | `10`    | A grace window, in seconds (0..60), for two refreshes racing with one refresh token (GoTrue's default). Within it, the immediately previous refresh token answers the same pair its rotation issued instead of revoking the family; `0` is strict. See [Security](#security).      |
 
 Without `refreshTokenMaxAge`, an app opened at least once every `refreshTokenTtl` stays
 signed in indefinitely. Set it when a session should end on a schedule however active it is
@@ -125,7 +125,7 @@ signed in indefinitely. Set it when a session should end on a schedule however a
 
 `refreshReuseInterval` is for an app with more than one refresher: a background task or a
 second process holding the same stored refresh token. `nativeSession()` is single-flight
-within one JavaScript context, so a single-process app doesn't need it.
+within one JavaScript context, so a single-process app can set it to `0` (strict).
 
 The flow, in the order it happens:
 
@@ -367,7 +367,8 @@ The checks, in one place:
   whole family is revoked, which signs out the thief and the app alike. A token whose MAC
   doesn't verify is refused without touching the family, so knowing a family id is not
   enough to sign someone out. Two concurrent refreshes with one token produce exactly one
-  new pair (the loser is treated as a replay) — the client is single-flight for that reason.
+  new pair: inside the reuse interval the loser gets that same pair, outside it (or with
+  `refreshReuseInterval: 0`) it is treated as a replay — the client is single-flight anyway.
 - **The reuse interval weakens replay detection, slightly.** With `refreshReuseInterval: N`,
   the immediately previous refresh token is accepted for `N` seconds after its rotation and
   answers the same pair that rotation issued (byte-identical; the family advances once).
@@ -377,7 +378,7 @@ The checks, in one place:
   next rotation, because whichever party then presents a spent token outside the window
   revokes the family. An older generation is a replay even inside the window, and the window
   never revives a revoked, expired or capped family or a deleted user. Keep it as short as
-  your race needs (a few seconds), or leave it at `0`.
+  your race needs (the default is 10 seconds, GoTrue's), or set `0` for strict detection.
 - **Nothing is stored to answer the reuse interval.** The pair is re-derived, not kept: the
   refresh token is an HMAC of the family, the generation and a server-only salt, and the
   access token's issue time is the stored rotation time and its id an HMAC of the same

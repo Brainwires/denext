@@ -76,10 +76,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **No mailer:** emailed tokens go through your `sendVerificationRequest`, handed over after the
   response, so delivery is best-effort where the platform freezes the isolate.
 - **`sqliteAuthAdapter` is single-node and additive-only** (no renames or drops).
-- **Magic links redeem on GET by default**, so a link-scanning mail gateway can spend one, and a
-  link the attacker requested can sign a victim into the attacker's account (as in Auth.js).
-  `magicLink({ confirm: true })` puts a confirmation page (naming the account) in front of the
-  redeem; `emailOtp()` avoids links altogether.
 - **Stateless cookie sessions can't be ended early** by a password reset, a pre-account-hijacking
   eviction, a ban, an `/auth/v1` password change or account deletion; run a `sessionStore` (or
   `session.strategy: "database"`). A stateless session that still owes its second factor can't
@@ -102,8 +98,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **Fixed profiles:** TOTP is SHA-1 / 6 digits / 30 s (what every authenticator supports); an
   email local part must be ASCII.
 - **Native sessions:** under `mfa.required: "always"` a user with no factor yet can't enroll from
-  a native `id_token` sign-in (`403 mfa_required`; the browser flow enrolls); concurrent refreshes with one token revoke the family unless
-  `native.refreshReuseInterval` is set; Apple token revocation needs `native.apple.clientSecret`.
+  a native `id_token` sign-in (`403 mfa_required`; the browser flow enrolls); Apple token
+  revocation needs `native.apple.clientSecret`.
 - **`cors` covers route handlers and the native auth endpoints only**, not pages, Server Actions,
   the batch endpoint or Live; middleware must let `OPTIONS` under `/auth` through.
 - **SAML Single Logout is `/auth/v1`'s only:** a `saml()` provider on denext's own endpoints

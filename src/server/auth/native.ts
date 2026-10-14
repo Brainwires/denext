@@ -19,12 +19,13 @@
  *   that doesn't verify is a forgery, refused without touching the family — so knowing a
  *   family id is not enough to sign someone out.
  *
- * Two opt-in refresh policies:
- * - **`refreshTokenMaxAge`** caps a family absolutely, from its original sign-in
+ * Two refresh policies:
+ * - **`refreshTokenMaxAge`** (opt-in) caps a family absolutely, from its original sign-in
  *   (`createdAt`): past it a refresh is refused like an expired family's, and the family is
  *   revoked. Its expiry never slides past the cap, so access tokens stop with it too.
- * - **`refreshReuseInterval`** answers the loser of a refresh race: within that many seconds of
- *   a rotation, the IMMEDIATELY previous generation gets the pair that rotation issued, again.
+ * - **`refreshReuseInterval`** (default 10 s, as GoTrue's
+ *   `GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL`; `0` is strict) answers the loser of a
+ *   refresh race: within that many seconds of a rotation, the IMMEDIATELY previous generation gets the pair that rotation issued, again.
  *   Nothing token-shaped is stored for this. Every part of a pair is a pure function of server
  *   secrets and stored family state — the refresh MAC covers `(family, generation, salt)`, and
  *   the access token's issue time is the stored `rotatedAt` and its id an HMAC of the same
@@ -53,6 +54,12 @@ const ACCESS_DOMAIN = "denext.native.access.v1";
 const REFRESH_DOMAIN = "denext.native.refresh.v1";
 /** The MAC domain of an access token's id (derived, so a pair can be re-derived exactly). */
 const ACCESS_ID_DOMAIN = "denext.native.access-id.v1";
+/**
+ * The default `native.refreshReuseInterval`, in seconds: GoTrue's
+ * `GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL` default, so two app processes refreshing with one
+ * token at once don't sign the user out.
+ */
+const DEFAULT_REUSE_INTERVAL = 10;
 /** Access-token prefix — recognizable in logs and secret scanners. */
 const ACCESS_PREFIX = "nat_";
 /** Refresh-token prefix. */
@@ -212,7 +219,7 @@ export function resolveNative(config: AuthConfig): ResolvedNative | null {
     refreshMaxAge: native.refreshTokenMaxAge === undefined
       ? null
       : lifetime(native.refreshTokenMaxAge, 3600, 3600, 10 * 365 * 86_400),
-    reuseInterval: lifetime(native.refreshReuseInterval, 0, 0, 60),
+    reuseInterval: lifetime(native.refreshReuseInterval, DEFAULT_REUSE_INTERVAL, 0, 60),
     codeTtl: lifetime(native.codeTtl, 60, 10, 600),
     requireNonce: native.requireNonce !== false,
     config: native,

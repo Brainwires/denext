@@ -1,8 +1,8 @@
-// `magicLink({ confirm: true })`: the link's GET renders a confirmation page and spends nothing
+// `magicLink()` (`confirm: true` by default): the link's GET renders a confirmation page and spends nothing
 // (a link scanner's pre-fetch is harmless, however often it runs), the page's form POSTs the
 // token back to the same URL, which signs in — and the refusals: a cross-origin POST, a page
 // asked for without a token, attacker-controlled query values (escaped), framing (refused by
-// header), and the default (no `confirm`) still signing in on the GET.
+// header). `confirm` is on by default; `confirm: false` signs in on the GET.
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import {
@@ -185,9 +185,27 @@ Deno.test("confirm: attacker-chosen query values are escaped, and a bad email or
   assertEquals((await run(h.config, new Request(list))).res.status, 303, "one address only");
 });
 
-Deno.test("confirm: off by default — the GET still signs in, and the OTP provider has no page", async () => {
+Deno.test("confirm: on by default — the default GET renders the page and spends nothing", async () => {
   const h = setup({});
-  assertEquals(h.config.providers[0].type === "email" && h.config.providers[0].confirm, undefined);
+  assertEquals(h.config.providers[0].type === "email" && h.config.providers[0].confirm, true);
+  const link = await mailLink(h);
+  const page = await run(h.config, new Request(link));
+  assertEquals(page.res.status, 200);
+  assertEquals(sessionCookie(page.ctx), undefined, "the GET signs nobody in");
+  assertStringIncludes(await page.res.text(), "ada@example.com");
+  // A hand-built magic provider without `confirm` gets the page too.
+  const { confirm: _confirm, ...bare } = magicLink();
+  const handBuilt = setup({});
+  handBuilt.config.providers = [bare, emailOtp()];
+  assertEquals(
+    (await run(handBuilt.config, new Request(await mailLink(handBuilt)))).res.status,
+    200,
+  );
+});
+
+Deno.test("confirm: false — the GET signs in, and the OTP provider has no page", async () => {
+  const h = setup({ confirm: false });
+  assertEquals(h.config.providers[0].type === "email" && h.config.providers[0].confirm, false);
   const { res, ctx } = await run(h.config, new Request(await mailLink(h)));
   assertEquals(res.status, 303);
   assert(sessionCookie(ctx));

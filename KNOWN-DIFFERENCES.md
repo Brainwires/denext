@@ -295,6 +295,11 @@ Where `@denext/backend` deliberately departs from Supabase. See
   and a personal OAuth login linked to it would outlive that. Okta, WorkOS, Clerk and Auth0
   Organizations enforce the same rule. Linking still works from an SSO session, so the user keeps
   the provider's tokens for API access; the linked identity only can't sign in.
+- **`/auth/v1/verify` still redeems on GET.** denext's own `magicLink()` opens a confirmation
+  page by default, but the GoTrue-compatible `GET /auth/v1/verify` link keeps Supabase's
+  behaviour (the link verifies and redirects), because that is the supabase-js contract: a mail
+  scanner that pre-fetches it can spend it, as on Supabase. Use `verifyOtp({ token_hash })` from
+  a page of your own to put a click in front of it.
 - **A magic link, one-time code or recovery link that first confirms an account retires its
   password.** Supabase keeps a password set by an earlier unconfirmed sign-up; denext keeps only
   the one the account's own sign-up confirmation proves.
@@ -347,7 +352,9 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
   writes no account row — the address on the user record is the identity — but a first
   email sign-in into an account whose address was never verified first retires the
   password, TOTP factor, bearer tokens and server-side sessions set up without that proof
-  (pre-account hijacking), which Auth.js does not do.
+  (pre-account hijacking), which Auth.js does not do. A magic link opens a confirmation page
+  whose button spends it, where Auth.js signs in on the GET (`magicLink({ confirm: false })`
+  restores that).
 - **`id_token` audience validation is strict by default** (`strictAudience`): OIDC Core
   §3.1.3.7 steps 3–5 — a single `aud` must _be_ this client, a multi-valued `aud` needs an
   `azp` naming this client, and a foreign `azp` is refused. Auth.js accepts plain `aud`

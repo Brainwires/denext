@@ -374,16 +374,27 @@ async function requestMagicLink(client: TestClient, email: string): Promise<Mail
   return await mailTo(email, "magic", since);
 }
 
+/** Open a mailed magic link: its confirmation page (which spends nothing), then its button. */
+async function openMagicLink(client: ReturnType<typeof createTestClient>, path: string) {
+  const page = await client.get(path);
+  assertEquals(page.status, 200, "the link opens the confirmation page");
+  return await client.submit(client.form(page.text), {});
+}
+
 async function magicLinkSignsIn({ handler }: Ctx) {
   const client = createTestClient(handler);
   const mail = await requestMagicLink(client, "ada@denext.dev");
   assertMatch(pathOf(mail), /^\/auth\/callback\/email\?token=.+&callbackUrl=%2Fdashboard$/);
-  const opened = await client.get(pathOf(mail));
+  const opened = await openMagicLink(client, pathOf(mail));
   assertEquals([opened.status, opened.location], [303, "/dashboard"]);
   const dash = await client.get("/dashboard");
   assertEquals(dash.status, 200);
   assertStringIncludes(dash.text, "ada@denext.dev");
-  assertEquals((await client.get(pathOf(mail))).location, "/login?error=Verification");
+  const replay = await client.get(pathOf(mail));
+  assertEquals(
+    (await client.submit(client.form(replay.text), {})).location,
+    "/login?error=Verification",
+  );
   // Ada's address was verified, so the link retired nothing: the password still works.
   assertEquals((await postCredentials(client, "ada@denext.dev", RESET_PASSWORD)).status, 200);
 }
@@ -405,7 +416,10 @@ async function magicLinkRetiresUnverifiedAccess({ handler }: Ctx) {
 
   // …then the real owner signs in with a link from that mailbox.
   const owner = createTestClient(handler);
-  const opened = await owner.get(pathOf(await requestMagicLink(owner, "grace@denext.dev")));
+  const opened = await openMagicLink(
+    owner,
+    pathOf(await requestMagicLink(owner, "grace@denext.dev")),
+  );
   assertEquals([opened.status, opened.location], [303, "/dashboard"]);
   assertStringIncludes((await owner.get("/dashboard")).text, "grace@denext.dev");
 
