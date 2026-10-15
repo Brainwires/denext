@@ -171,6 +171,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     reactNative: "union", // `boolean | ReactNativeConfig`: a toggle branch + an options group
     mobile: "group",
     desktop: "group",
+    compile: "group", // `denext build --compile`: embedded paths + extra baked permissions
     experimental: "group",
     classComponents: "toggle",
     compatibilityMode: "segmented",
@@ -305,6 +306,9 @@ Deno.test("arrays split by what their items are", () => {
   assertEquals(kindAt("publicEnv"), "chips");
   assertEquals(kindAt("i18n", "locales"), "chips");
   assertEquals(kindAt("mdx", "remarkPlugins"), "code");
+  // `compile`: the embedded paths are chips; `permissions` is `"all" | CompilePermissions`.
+  assertEquals(kindAt("compile", "include"), "chips");
+  assertEquals(kindAt("compile", "permissions"), "union");
 });
 
 Deno.test("numbers carry the bounds the schema declares", () => {
