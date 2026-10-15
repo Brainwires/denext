@@ -133,6 +133,16 @@ Deno.test("the checked-in pin: a schema-1 table whose entries carry url + sha256
   }
 });
 
+Deno.test("ci.yml's backend-integration toolchain matches the checked-in linux-x86_64 pin", async () => {
+  const ci = await Deno.readTextFile(new URL("../.github/workflows/ci.yml", import.meta.url));
+  const env = (name: string) => ci.match(new RegExp(`^\\s+${name}:\\s*(\\S+)\\s*$`, "m"))?.[1];
+  const pin = DENO_TOOLCHAIN.targets["linux-x86_64"];
+  if (DENO_TOOLCHAIN.version === null || !pin) return;
+  assertEquals(env("DENEXT_DENO_RELEASE"), `denext-runtime-v${DENO_TOOLCHAIN.version}`);
+  assertEquals(env("DENEXT_DENO_ZIP"), pin.file);
+  assertEquals(env("DENEXT_DENO_SHA256"), pin.sha256, "re-pin ci.yml's hash with the toolchain");
+});
+
 Deno.test("pin selection: no pin yet, an unpinned host — each a clear unavailable error", async () => {
   const placeholder: DenoToolchainPin = { schema: 1, version: null, targets: {} };
   const err = await assertRejects(
