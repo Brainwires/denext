@@ -134,6 +134,8 @@ function commitPlacement(handle: RootHandle, wipRoot: Fiber): void {
   walkFlagged(wipRoot, Placement | ChildDeletion | ChildrenChanged, (f) => {
     if (f.tag === "host" && f.alternate !== null && needsSync(f)) {
       syncChildren(f.stateNode as Element, childrenDom(f));
+    } else if (f.tag === "singleton" && needsSync(f)) {
+      getSingletonSupport()!.place(f); // an adopted <head>'s children go into the page's head
     } else if (f.tag === "portal" && needsSync(f)) {
       // A portal target (e.g. document.body) is shared with foreign nodes (#root, the
       // entry script, other portals), so place only this portal's own nodes — never

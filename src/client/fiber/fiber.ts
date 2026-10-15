@@ -252,10 +252,15 @@ export const HiddenBit = 512;
 /** Set by commitDeletion once this fiber is unmounted, so a late async callback (a settling
  * Suspense promise) can bail instead of acting on a dead fiber. */
 export const UnmountedBit = 1024;
+/**
+ * A `<title>` / `<meta>` / `<link>` of a client root layout's `<head>`: its element lives in the
+ * page's head, where the server hoisted it, not in the page container (singleton-runtime.ts).
+ */
+export const HoistedBit = 2048;
 
 /** The bits `createWorkInProgress` carries from the current fiber onto its twin. */
 const CARRIED_BITS = StrictBit | UnderProfilerBit | ProfilerMountedBit | ShowingFallbackBit |
-  OffscreenBit | HiddenBit;
+  OffscreenBit | HiddenBit | HoistedBit;
 /** The bits a work-in-progress fiber keeps from its own previous life (never carried). */
 const OWN_BITS = ForceRenderBit | StateUpdateBit | UnmountedBit;
 
@@ -588,8 +593,9 @@ export function bubbleFlags(completed: Fiber): void {
 
 /** Collect the ordered top-level DOM nodes produced by a fiber's subtree. */
 export function collectDom(fiber: Fiber, out: (Element | Text)[]): void {
-  // A portal's DOM lives in its target, not in the in-place parent — skip it.
-  if (fiber.tag === "portal") return;
+  // A portal's DOM lives in its target, not in the in-place parent — skip it, and a hoisted
+  // head tag's, which lives in the page's head.
+  if (fiber.tag === "portal" || (fiber.bits & HoistedBit) !== 0) return;
   if (fiber.stateNode !== null && (fiber.tag === "host" || fiber.tag === "text")) {
     out.push(fiber.stateNode);
     return;

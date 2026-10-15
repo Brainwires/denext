@@ -108,6 +108,13 @@ and this project adheres to
 
 ### Fixed
 
+- **A root layout rendered by client code keeps its `<title>` / `<meta>` / `<link>` in the
+  head.** The server hoists them into the document's head, as React 19 does; hydration now adopts
+  them there (matched by tag and identifying attributes, among the document's own tags) instead
+  of creating them again in the page container with a dev mismatch warning, a fresh render adds
+  them to the head, and unmounting the layout takes them out. The rest of its `<head>` content
+  (a `<style>`, a `<script>`) stays where the parser left it.
+
 - **A hidden `<Activity>` holds class lifecycles and refs, as React does.** A class component
   that mounts inside a hidden one no longer runs `componentDidMount` (nor `componentDidUpdate`
   while it stays hidden); hiding a shown one runs its `componentWillUnmount`, and revealing runs

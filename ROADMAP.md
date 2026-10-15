@@ -82,10 +82,6 @@ or an upstream. Each one's limitation entry is deleted when it ships.
   no fiber of its own to attach a ref to; the callbacks already receive the instance.
 - **A soft navigation streams `defer()` data per boundary,** as a document load does; today a
   client navigation's Flight payload waits for every deferred value.
-- **A root layout rendered by client code hoists its `<head>` tags:** its
-  `<title>` / `<meta>` / `<link>` are created again in the page container on hydration (the
-  server hoisted them into the document head, and dev warns of the mismatch). Until then, put
-  them in `metadata` or a Server Component layout.
 
 ## Server, ops and API surface
 

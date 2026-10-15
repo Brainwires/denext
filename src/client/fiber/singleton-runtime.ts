@@ -19,7 +19,7 @@ import { onErrorFor } from "./boundaries.ts";
 import { completeHostUpdate } from "./complete-work.ts";
 import { isHydrating } from "./hydration.ts";
 import { documentForFiber, fiberToRoot } from "./state.ts";
-import { type Fiber, Update } from "./fiber.ts";
+import { type Fiber, HoistedBit, Update } from "./fiber.ts";
 import { setSingletonSupport } from "./singleton-support.ts";
 
 type Props = Record<string, unknown>;
@@ -50,6 +50,90 @@ function adopt(wip: Fiber): boolean {
   wip.tag = "singleton";
   wip.stateNode = el;
   return true;
+}
+
+// ---- The head's hoisted tags -----------------------------------------------------------------
+//
+// The server hoists every `<title>` / `<meta>` / `<link>` into the document's head (React 19's
+// document metadata), and the parser keeps the rest of the layout's `<head>` content (a
+// `<style>`, a `<script>`) where it was, in the page container. So, as React hoists them, those
+// three tags of an adopted `<head>` live in the page's head: hydration adopts the server's by
+// match (they sit among the document's own tags, in no set order), a fresh one is added there,
+// and an unmount takes it out. The rest of the head's content keeps flowing into the container.
+
+const HOISTED = /^(title|meta|link)$/;
+
+/** The adopted `<head>` a host fiber is a direct (host-level) child of, else null. */
+function headOf(f: Fiber): Fiber | null {
+  for (let p = f.return; p !== null; p = p.return) {
+    if (p.tag === "singleton") return p.vnode.type === "head" ? p : null;
+    if (p.tag === "host" || p.tag === "root" || p.tag === "portal") return null;
+  }
+  return null;
+}
+
+/** Whether `f` is a head tag the page's head holds: hoisted, and not microdata (React's rule). */
+function hoists(f: Fiber): boolean {
+  return f.tag === "host" && HOISTED.test(f.vnode.type as string) &&
+    f.vnode.props?.itemProp == null && headOf(f) !== null;
+}
+
+/** The hoisted head tags of an adopted `<head>` (host-level descendants), in order. */
+function hoistedOf(f: Fiber | null, out: Fiber[]): Fiber[] {
+  for (; f !== null; f = f.sibling) {
+    if (f.tag === "host") {
+      if (hoists(f)) out.push(f);
+    } else if (f.tag !== "portal") hoistedOf(f.child, out);
+  }
+  return out;
+}
+
+/** The attributes that identify a head tag (React's hoistable keys), compared when claiming. */
+const HEAD_KEYS = [
+  "name",
+  "property",
+  "httpEquiv",
+  "charSet",
+  "rel",
+  "href",
+  "media",
+  "hrefLang",
+  "id",
+];
+
+/** Elements of the page's head already claimed by this hydration. */
+const claimed = new WeakSet<Element>();
+
+function claimHoisted(wip: Fiber): Element | null | undefined {
+  if (!hoists(wip)) return undefined;
+  const head = documentForFiber(wip).head;
+  const nodes = Array.from(head?.childNodes ?? []) as Element[];
+  const el = nodes.find((n) => !claimed.has(n) && sameHeadTag(n, wip)) ?? null;
+  if (el) claimed.add(el);
+  return el;
+}
+
+/** Whether the page's `el` is the head tag `f` renders: its tag and identifying attributes. */
+function sameHeadTag(el: Element, f: Fiber): boolean {
+  const props: Props = f.vnode.props ?? {};
+  return el.nodeType === 1 && el.tagName.toLowerCase() === f.vnode.type &&
+    HEAD_KEYS.every((k) => props[k] == null || reflects(el, k, props[k]));
+}
+
+/**
+ * Place an adopted `<head>`'s hoisted tags in the page's head: one not there yet goes before the
+ * next of them that is (or at the end); one already there — a hydrated tag among the document's
+ * own — is never moved.
+ */
+function place(f: Fiber): void {
+  if (f.vnode.type !== "head") return;
+  const head = f.stateNode as Element;
+  const nodes = hoistedOf(f.child, []).map((h) => h.stateNode as Element);
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    if (nodes[i].parentNode === head) continue;
+    const next = nodes[i + 1];
+    head.insertBefore(nodes[i], next?.parentNode === head ? next : null);
+  }
 }
 
 const isClass = (k: string) => k === "className" || k === "class";
@@ -109,6 +193,8 @@ function scanHydration(el: Element, props: Props): { base: Props; skip: Set<stri
 }
 
 function complete(wip: Fiber): void {
+  // Mark the head's hoisted tags, so the container's placement leaves them to `place`.
+  if (wip.vnode.type === "head") { for (const f of hoistedOf(wip.child, [])) f.bits |= HoistedBit; }
   if (completeHostUpdate(wip)) return;
   wip.flags |= Update; // a mount writes its props in the commit, after a released layout's
   if (isHydrating) {
@@ -150,5 +236,5 @@ function release(f: Fiber): void {
 
 /** Wire host-singleton adoption into the reconciler (the generated entry calls this). */
 export function installSingletonSupport(): void {
-  setSingletonSupport({ adopt, complete, commit, release });
+  setSingletonSupport({ adopt, complete, commit, release, place, claimHoisted });
 }
