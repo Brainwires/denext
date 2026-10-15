@@ -26,6 +26,13 @@ and this project adheres to
 
 ### Added
 
+- **`@denext/backend` 0.5.0: webhook events are deleted after a retention.** Delivered events are
+  kept 7 days and failed ones 30 (`webhooks.retention: { deliveredMs, failedMs }`, counted from the
+  change; `false` keeps them all). Before, every event stayed in
+  `supabase_functions.webhook_events` for good. The background deliverer deletes the expired
+  ones once an hour, in batches, through a new index (`backend_webhooks_0002`). Under
+  `delivery: "manual"`, schedule `webhookCleanupJob()`. `purgeWebhookEvents()` runs the cleanup
+  on demand.
 - **`DENEXT_BOOT_DDL=off`: no schema changes at startup, and a server that won't start without
   its schema.** For deployments that apply migrations out of band, no denext feature creates a
   table, role, function, trigger or publication: the Postgres auth adapter, the session,

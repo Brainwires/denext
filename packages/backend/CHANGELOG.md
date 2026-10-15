@@ -13,6 +13,10 @@
   realtime (its triggers and publications too), vault, queues and webhooks create nothing, and the
   server's start checks that their migrations are recorded. `denext db push` applies realtime's
   per-table triggers after the app's migrations.
+- **Webhook events are deleted after a retention:** delivered ones after 7 days, failed ones
+  after 30 (`webhooks.retention`, or `false`). The background deliverer cleans up hourly;
+  `webhookCleanupJob()` and `purgeWebhookEvents()` (`@denext/backend/server`) for
+  `delivery: "manual"`. New migration `backend_webhooks_0002` (an index).
 - **Image transforms take AVIF sources** (`render/image`, signed transform URLs), decoded by
   `@denext/avif` once the declared size passed the decompression-bomb checks (needs denext with
   AVIF decoding in `transformImageBytes`; an older one answers `400`).

@@ -1642,6 +1642,18 @@ create trigger order_created after insert on orders for each row
   instances share the work without sending one event twice at once; delivery is at least once,
   so receivers dedupe on `webhook-id`. `delivery: "manual"` leaves it to `deliverWebhooks()` (from
   a job), and `webhookEvents({ status })` lists recent events.
+- **Retention.** Settled events are deleted once they are old enough, counted from the change:
+  delivered ones after 7 days, failed ones after 30 (`retention: { deliveredMs, failedMs }`, or
+  `false` to keep every event). Pending ones are never deleted. The background deliverer cleans
+  up once an hour. Under `delivery: "manual"`, schedule the cleanup job:
+
+  ```ts
+  // jobs/webhook-cleanup.ts
+  import { webhookCleanupJob } from "@denext/backend/server";
+  export default webhookCleanupJob({ schedule: "17 * * * *" });
+  ```
+
+  `purgeWebhookEvents()` runs it once and returns `{ deleted }`.
 - **Signing** follows [Standard Webhooks](https://www.standardwebhooks.com): `webhook-id`,
   `webhook-timestamp` and `webhook-signature: v1,<base64 HMAC-SHA256>`, with the hook's `secret`
   or `webhooks.secret` (`DENEXT_WEBHOOK_SECRET`). A receiver checks it with

@@ -12,8 +12,18 @@
 // Delivery is at least once: an event is leased (its next attempt pushed out) when a deliverer
 // takes it, so several app instances share the work without sending one event twice at once,
 // and a crash mid-delivery is retried after the lease. Receivers dedupe on `webhook-id`.
+//
+// Settled events are kept for `retention` (delivered: 7 days, failed: 30, from when the change
+// happened), then deleted by the background deliverer (once an hour) or `purgeWebhookEvents()`
+// (`webhookCleanupJob()` under `delivery: "manual"`), in batches.
 
-import { bootMigrate, type Migration, type SqlClient } from "@denext/denext/server";
+import {
+  bootMigrate,
+  defineJob,
+  type Job,
+  type Migration,
+  type SqlClient,
+} from "@denext/denext/server";
 import { db } from "./postgres.ts";
 import { positiveOption } from "./options.ts";
 
@@ -53,7 +63,14 @@ export interface WebhooksOptions {
    * `deliverWebhooks()` does (from a job, say).
    */
   delivery?: "auto" | "manual";
-  /** Apply the `backend_webhooks_0001` migration on first use (default `true`). */
+  /**
+   * How long settled events are kept, in milliseconds from when the change happened: `delivered`
+   * ones (default 7 days) and `failed` ones — given up on after `maxAttempts`, or never allowed
+   * to go anywhere — (default 30 days). Older ones are deleted by the background deliverer (once
+   * an hour) and by `purgeWebhookEvents()` / `webhookCleanupJob()`. `false` keeps every event.
+   */
+  retention?: false | { deliveredMs?: number; failedMs?: number };
+  /** Apply the `backend_webhooks_*` migrations on first use (default `true`). */
   migrate?: boolean;
   /** The `fetch` deliveries use (tests). */
   fetch?: typeof fetch;
@@ -69,8 +86,29 @@ export interface ResolvedWebhooks {
   maxBackoffMs: number;
   pollIntervalMs: number;
   delivery: "auto" | "manual";
+  retention: { deliveredMs: number; failedMs: number } | null;
   migrate: boolean;
   fetch: typeof fetch;
+}
+
+/** The default retention of a delivered event (7 days) and of a failed one (30 days). */
+const DELIVERED_MS = 7 * 86_400_000;
+const FAILED_MS = 30 * 86_400_000;
+
+/** `retention`, validated. */
+function resolveRetention(o: WebhooksOptions["retention"]): ResolvedWebhooks["retention"] {
+  if (o === false) return null;
+  if (o !== undefined && (typeof o !== "object" || o === null)) {
+    throw new TypeError("backend(): webhooks.retention must be false or { deliveredMs, failedMs }");
+  }
+  return {
+    deliveredMs: positiveOption(
+      o?.deliveredMs,
+      DELIVERED_MS,
+      "backend(): webhooks.retention.deliveredMs",
+    ),
+    failedMs: positiveOption(o?.failedMs, FAILED_MS, "backend(): webhooks.retention.failedMs"),
+  };
 }
 
 /** The environment variable the default secret is read from. */
@@ -124,6 +162,7 @@ export function resolveWebhooks(
     maxBackoffMs: positiveOption(o.maxBackoffMs, 3_600_000, "backend(): webhooks.maxBackoffMs"),
     pollIntervalMs: positiveOption(o.pollIntervalMs, 5000, "backend(): webhooks.pollIntervalMs"),
     delivery,
+    retention: resolveRetention(o.retention),
     migrate: o.migrate !== false,
     fetch: o.fetch ?? ((input, init) => fetch(input, init)),
   };
@@ -194,6 +233,11 @@ BEGIN
   RETURN NULL;
 END $fn$;
 REVOKE ALL ON FUNCTION supabase_functions.http_request() FROM PUBLIC;`,
+  }, {
+    // The retention cleanup's scan: settled events by age.
+    name: "backend_webhooks_0002",
+    sql: `CREATE INDEX IF NOT EXISTS webhook_events_settled_idx
+  ON supabase_functions.webhook_events (created_at) WHERE status <> 'pending';`,
   }];
 }
 
@@ -547,6 +591,80 @@ export async function deliverWebhooks(limit = 50): Promise<DeliveryResult> {
   return result;
 }
 
+/** Events one cleanup statement deletes at most. */
+const PURGE_BATCH = 1000;
+
+/** How often the background deliverer runs the retention cleanup. */
+const CLEANUP_EVERY_MS = 3_600_000;
+
+/**
+ * Delete the settled events older than `retention` on `sql`, in batches; the number deleted.
+ *
+ * @param sql The client.
+ * @param retention The resolved retention.
+ * @returns How many events were deleted.
+ */
+async function purge(
+  sql: SqlClient,
+  retention: NonNullable<ResolvedWebhooks["retention"]>,
+): Promise<number> {
+  let deleted = 0;
+  for (let batch = 0; batch < 100; batch++) {
+    const rows = await sql.unsafe(
+      `WITH doomed AS (
+         SELECT id FROM supabase_functions.webhook_events
+         WHERE (status = 'delivered' AND created_at < now() - make_interval(secs => $1))
+            OR (status = 'failed' AND created_at < now() - make_interval(secs => $2))
+         ORDER BY created_at LIMIT $3
+       )
+       DELETE FROM supabase_functions.webhook_events e USING doomed WHERE e.id = doomed.id
+       RETURNING e.id`,
+      [retention.deliveredMs / 1000, retention.failedMs / 1000, PURGE_BATCH],
+    );
+    deleted += rows.length;
+    if (rows.length < PURGE_BATCH) break;
+  }
+  return deleted;
+}
+
+/**
+ * Delete the settled webhook events older than `webhooks.retention` (delivered: 7 days, failed:
+ * 30 by default) now. The background deliverer already does once an hour; under
+ * `delivery: "manual"` schedule {@linkcode webhookCleanupJob} instead.
+ *
+ * @returns How many events were deleted (none with `retention: false`).
+ */
+export async function purgeWebhookEvents(): Promise<{ deleted: number }> {
+  const config = installed();
+  if (!config.retention) return { deleted: 0 };
+  const sql = db.service();
+  if (config.migrate) await ensureWebhooksMigrated(sql);
+  return { deleted: await purge(sql, config.retention) };
+}
+
+/**
+ * A job that runs {@linkcode purgeWebhookEvents}: put it in `jobs/<name>.ts` with a `schedule`
+ * when deliveries are `"manual"` (the background deliverer cleans up on its own otherwise).
+ *
+ * ```ts
+ * // jobs/webhook-cleanup.ts
+ * import { webhookCleanupJob } from "@denext/backend/server";
+ * export default webhookCleanupJob({ schedule: "17 * * * *" });
+ * ```
+ *
+ * @param o A cron `schedule` and a `description`.
+ * @returns The job.
+ */
+export function webhookCleanupJob(
+  o: { schedule?: string | string[]; description?: string } = {},
+): Job<{ deleted: number }> {
+  return defineJob({
+    description: o.description ?? "delete settled webhook events past their retention",
+    schedule: o.schedule,
+    handler: () => purgeWebhookEvents(),
+  });
+}
+
 /** One event, as {@linkcode webhookEvents} lists it. */
 export interface WebhookEvent {
   /** The event's id (`webhook-id` is `evt_<id>`). */
@@ -611,13 +729,28 @@ export function startWebhookDelivery(config: ResolvedWebhooks): () => Promise<vo
   let running: Promise<unknown> | undefined;
   let again = false;
   let stopped = false;
+  let cleanedAt = -Infinity;
+  /** The retention cleanup, at most once an hour, after a pass (a failure is retried next pass). */
+  const cleanup = async () => {
+    if (!config.retention || Date.now() - cleanedAt < CLEANUP_EVERY_MS) return;
+    try {
+      await purge(db.service(), config.retention);
+      cleanedAt = Date.now();
+    } catch (error) {
+      console.warn(
+        `[@denext/backend] webhooks: retention cleanup failed: ${
+          (error as Error)?.message ?? error
+        }`,
+      );
+    }
+  };
   const pass = () => {
     if (stopped) return;
     if (running) {
       again = true;
       return;
     }
-    running = deliverWebhooks().catch((error) => {
+    running = deliverWebhooks().then(cleanup).catch((error) => {
       console.warn(
         `[@denext/backend] webhooks: delivery pass failed: ${(error as Error)?.message ?? error}`,
       );
