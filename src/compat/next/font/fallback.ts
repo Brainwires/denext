@@ -10,6 +10,7 @@
  * @module
  */
 
+import type { FontFileMetrics } from "./font-file.ts";
 import { FONT_METRICS } from "./font-metrics.ts";
 
 /** A local system face a fallback can be built on (Next's two choices). */
@@ -105,12 +106,51 @@ export interface FallbackFontFace {
  */
 export function fallbackFontFace(family: string, face?: FallbackFace): FallbackFontFace | null {
   const o = fallbackOverrides(family, face);
-  if (!o) return null;
+  return o ? fallbackFace(family, o) : null;
+}
+
+/** The `"<family> Fallback"` `@font-face` carrying a set of overrides. */
+export function fallbackFace(family: string, o: FallbackOverrides): FallbackFontFace {
   const name = `${family} Fallback`;
   return {
     family: name,
     css: `@font-face{font-family:'${name}';src:local("${o.fallbackFont}");` +
       `ascent-override:${o.ascentOverride};descent-override:${o.descentOverride};` +
       `line-gap-override:${o.lineGapOverride};size-adjust:${o.sizeAdjust};}`,
+  };
+}
+
+/**
+ * The fallback faces' average widths as `next/font/local` measures them (fontkit over the
+ * system files, Next's `DEFAULT_SANS_SERIF_FONT` / `DEFAULT_SERIF_FONT`) — not Capsize's
+ * `xWidthAvg`, which the Google path uses.
+ */
+const LOCAL_FALLBACK_WIDTHS: Record<FallbackFace, { azAvgWidth: number; unitsPerEm: number }> = {
+  "Arial": { azAvgWidth: 934.5116279069767, unitsPerEm: 2048 },
+  "Times New Roman": { azAvgWidth: 854.3953488372093, unitsPerEm: 2048 },
+};
+
+/**
+ * The overrides for a local font file (Next's `getFallbackMetricsFromFontFile`): the same
+ * math as {@link fallbackOverrides}, against the fallback widths `next/font/local` uses.
+ *
+ * @param font The parsed font file's metrics.
+ * @param face The local face to adjust (`Arial` unless `Times New Roman` was asked for).
+ */
+export function localFallbackOverrides(
+  font: FontFileMetrics,
+  face: FallbackFace,
+): FallbackOverrides {
+  const fb = LOCAL_FALLBACK_WIDTHS[face];
+  const sizeAdjust = font.azAvgWidth
+    ? font.azAvgWidth / font.unitsPerEm / (fb.azAvgWidth / fb.unitsPerEm)
+    : 1;
+  const scale = font.unitsPerEm * sizeAdjust;
+  return {
+    fallbackFont: face,
+    sizeAdjust: pct(sizeAdjust),
+    ascentOverride: pct(font.ascent / scale),
+    descentOverride: pct(font.descent / scale),
+    lineGapOverride: pct(font.lineGap / scale),
   };
 }

@@ -114,8 +114,6 @@ Each is documented as a manual recipe today (the
 - **Shipped shared stores:** first-party Redis and Deno KV `CacheStore`, `SessionStore` and
   `RateLimitStore`, plus an exported adapter contract suite (`cacheStoreContract` from
   `denext/testing`) so a community adapter can prove itself.
-- **`next/font/local` metric-matched fallback faces:** parse the local font's metrics (today
-  `adjustFontFallback` on a local font emits no fallback face).
 - **Node-stream `Writable` backpressure** for `renderToPipeableStream` /
   `renderToStaticNodeStream` (they buffer): make the core renderer pull-gated and resolve the
   `await allReady`-then-read deadlock the eager drain avoids. SSR-hot-path risk for a narrow

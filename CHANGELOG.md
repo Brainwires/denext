@@ -18,6 +18,18 @@ and this project adheres to
   `x-forwarded-for` hop). A rate-limited route's `signInFailed` keeps the limiter's bucket (an
   IPv6 client's /64) as before; an event raised outside a request (a job) has none.
 
+- **`next/font/local` emits Next's metric-matched fallback face.** `localFont({ src })` now
+  reads the font file's own metrics (`head`, `hhea`, and the `cmap` + `hmtx` width of Next's
+  sample text) from a `.ttf`, `.otf`, `.woff` or `.woff2` — parsed in-house, no npm; WOFF and
+  WOFF2 decompress through `node:zlib` — and declares a `"<family> Fallback"` face on a local
+  Arial (or Times New Roman with `adjustFontFallback: "Times New Roman"`) with the
+  `size-adjust` / `ascent-override` / `descent-override` / `line-gap-override` Next computes for
+  the same file, placed right after the font in the stack. With several `src` files the one
+  Next picks (closest to weight 400, normal style) is measured. `adjustFontFallback: false`
+  still emits none, and a file that can't be found or parsed emits none. The file is looked up
+  under `public/` for a `/…` path, else under the project root, `public/`, `app/`, `src/app/`
+  and `src/`.
+
 ### Fixed
 
 - **`global-error.tsx` hydrates on the next-compat build and in a static export.** Both paths

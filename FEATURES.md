@@ -748,8 +748,8 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - Codecs as first-party zero-npm JSR packages: **`@denext/photon`**
   (resize/WebP), **`@denext/avif`** (AVIF).
 - **`next/font`** (local + Google; Google self-hosted at build, with Next's metric-matched
-  fallback face — `adjustFontFallback` — from a bundled real-metrics table; a local font gets
-  no fallback face yet).
+  fallback face — `adjustFontFallback` — from a bundled real-metrics table; a local font's
+  fallback face is measured from the font file itself).
 - **`next/og`** dynamic OG images via **`@denext/og`** (satori + resvg + yoga) —
   inline `style` + Tailwind (`tw`), **async components**, and an `offline: true`
   switch that renders with zero network egress (errors instead of fetching a
@@ -1725,8 +1725,13 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   generated table of real metrics (Capsize's set, the one Next ships; regenerate with
   `deno task gen:font-metrics`), using Next's own math — so text laid out before the
   web font arrives takes the same space (no font-swap CLS) and a migrated app gets
-  identical overrides. — `src/compat/next/font/fallback.ts`,
-  `src/compat/next/font/font-metrics.ts`, `scripts/gen-font-metrics.ts`.
+  identical overrides. `next/font/local` gets the same face (default `Arial`, or
+  `adjustFontFallback: "Times New Roman"`), measured from the font file itself — `.ttf` /
+  `.otf` / `.woff` / `.woff2`, parsed with no npm (`head`, `hhea`, `cmap` + `hmtx` for the
+  sample-text width), the file picked by Next's weight-400/normal rule — with Next's
+  `getFallbackMetricsFromFontFile` math. — `src/compat/next/font/fallback.ts`,
+  `src/compat/next/font/font-file.ts`, `src/compat/next/font/font-metrics.ts`,
+  `scripts/gen-font-metrics.ts`.
 
 ### 3.9 SEO — automatic where Next is manual **[default]**
 

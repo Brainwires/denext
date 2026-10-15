@@ -71,26 +71,33 @@ const inter = Inter({ subsets: ["latin"] });
 
 Regenerate the metrics table with `deno task gen:font-metrics`.
 
-## `next/font/local` and its one gap
+## `next/font/local`
 
 `denext/next/font/local`'s default export takes `src` (a path, one source, or
-several), `weight`, `style`, `display`, `variable`, `fallback` and `preload`,
-and returns the same `{ className, style, variable }` handle. It is fully
-synchronous — no network, no npm — because the font files are served statically
-by your app.
+several), `weight`, `style`, `display`, `variable`, `fallback`, `preload` and
+`adjustFontFallback`, and returns the same `{ className, style, variable }`
+handle. It is fully synchronous — no network, no npm — because the font files
+are served statically by your app.
 
 ```ts
 import localFont from "denext/next/font/local";
 
 const brand = localFont({ src: "/fonts/brand.woff2", variable: "--font-brand" });
+// font-family: 'dnx-local-…', 'dnx-local-… Fallback'
 ```
 
-> **`next/font/local`: no metric-matched fallback face.** A local font's metrics
-> live in its file, which denext does not parse, so
-> `localFont({ adjustFontFallback: "Arial" })` type-checks and keeps a stable
-> class name but emits no fallback face — the stack falls straight through to
-> your `fallback` list. Parsing the file's metrics is on the
-> [roadmap](https://github.com/Brainwires/denext/blob/main/ROADMAP.md).
+A local font gets the same metric-matched fallback face, measured from the font
+file itself, as Next measures it: `head`, `hhea` and the `cmap` + `hmtx` width of
+Next's sample text, read from a `.ttf`, `.otf`, `.woff` or `.woff2` with no npm,
+and run through Next's `getFallbackMetricsFromFontFile`. The face is
+`local("Arial")` unless you pass `adjustFontFallback: "Times New Roman"`;
+`false` emits none. With several `src` files, the one closest to weight 400
+(normal style on a tie, then the thinner) is measured, as in Next.
+
+The file is read when the font registers, from disk: a `src` starting with `/`
+is looked up under `public/` and then as a file path; a relative one under the
+project root, `public/`, `app/`, `src/app/` and `src/`. A file denext can't find
+or parse (a WOFF2 collection, say) emits no fallback face.
 
 ## Fonts in a migrated app
 
