@@ -371,6 +371,18 @@ and this project adheres to
   the server only, with a timeout and a size cap — or supplied offline with `blob`. Registration
   options ask for `"direct"` attestation while it is on.
 
+- **A regression suite for the Next.js advisories published 2026-08-31 – 2026-10-15.**
+  `tests/security-nextjs-advisories.test.ts` replays each advisory's attack against denext, one
+  test per advisory named by its GHSA / CVE id: the image optimizer SSRF (GHSA-cjq9-62q9-8jv4)
+  and SVG decoder RCE (GHSA-2464-fhr4-w9xw), the ISR cache poisoning via encoded and `/index`
+  paths (GHSA-mcj8-r9mp-w47p) and in the Pages Router (GHSA-4jqv-mc3x-m676), the metadata image
+  `dynamicParams` bypass (GHSA-f87g-xv8r-7p7x), the `use cache` root-param, Draft Mode and
+  typed-array advisories (GHSA-h694-7cp9-m8p3, GHSA-3w37-wq28-93x7, GHSA-673q-mjm6-r5xr), the dev
+  server MCP endpoint (GHSA-39w2-rjm5-chcv), the Server Actions DoS (GHSA-p3m5-59mp-jv5r with
+  React's GHSA-h3gv-c5rc-p453), React's Server Components RCE (GHSA-xqc2-xf4c-x3h3) and
+  `next/og` (GHSA-vcvr-r3jv-pc5j). `security/nextjs-advisories.json` catalogs each advisory with
+  denext's status and its test, and a test fails when an entry has no matching test.
+
 ### Changed
 
 - **The build's server copies are relocatable.** Each copy imports the modules it reaches by a
@@ -535,6 +547,25 @@ and this project adheres to
     now, at the root and in `src/`. Two such files (`middleware.ts` beside `proxy.tsx`, or
     `middleware.ts` beside `middleware.js`) fail at startup naming both, as Next does, instead
     of one being picked.
+- **A nested metadata image honours `dynamicParams = false` (GHSA-f87g-xv8r-7p7x /
+  CVE-2026-94485).** `app/blog/[slug]/opengraph-image.tsx` (or `twitter-image`) rendered for any
+  param, so a request for `/blog/<excluded>/opengraph-image` produced the image for a param that
+  `generateStaticParams()` deliberately left out and that the page itself 404s. The image now
+  reads the segment config of the layouts above it, the page beside it and its own module, and
+  answers 404 for a param set they do not enumerate.
+- **The wire codec no longer decodes an `N` tag to a prototype or a constructor
+  (GHSA-xqc2-xf4c-x3h3 class).** The non-finite-number tag was looked up with `v in {…}`, which
+  also answers for inherited names, so `{ "$": "N", "v": "__proto__" }` in a Server Action's
+  arguments, a typed API body or a Live frame decoded to `Object.prototype` (and `"constructor"`
+  to the `Object` function), handing a handler a prototype-pollution and gadget primitive. Only
+  `NaN`, `Infinity`, `-Infinity` and `-0` decode now; any other name is a malformed payload
+  (400).
+- **`@denext/og` 0.1.2 escapes inline SVG (GHSA-vcvr-r3jv-pc5j / CVE-2026-94545).** The vendored
+  satori serializer joined an inline `<svg>`'s text, attribute values and styles into the SVG it
+  rasterizes without escaping them, so a request value placed in an SVG `<title>`, attribute or
+  style could inject arbitrary SVG into an `ImageResponse` / `opengraph-image`. Element and
+  attribute names are now checked against XML's `Name` rule and every value and text node is
+  escaped; `scripts/og-harden-svg.ts` applies this to the bundle after each regeneration.
 - **A desktop window stays on the app's origin** (Deno Desktop runtime 2.9.7-denext.18). A
   top-level navigation to any other origin (a link, `location = …`, a form, a server redirect,
   `window.open()`, `target="_blank"`) no longer loads in the window, on every backend (WKWebView,

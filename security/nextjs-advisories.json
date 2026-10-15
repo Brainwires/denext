@@ -1,0 +1,228 @@
+{
+  "$comment": "Next.js (and upstream React / sharp) security advisories mapped onto denext. Each entry names the regression test that replays the attack; tests/security-nextjs-advisories.test.ts fails when an entry has no matching test. status: \"not-affected\" or \"fixed in <commit>\".",
+  "advisories": [
+    {
+      "id": "GHSA-vcvr-r3jv-pc5j",
+      "aliases": [
+        "CVE-2026-94545"
+      ],
+      "package": "next (next/og)",
+      "published": "2026-09-22",
+      "severity": "critical",
+      "class": "SVG markup injection into the og renderer (RCE upstream)",
+      "status": "fixed in a4a8ece1",
+      "test": "GHSA-vcvr-r3jv-pc5j / CVE-2026-94545: request values in an og <svg> cannot inject markup",
+      "file": "tests/security-nextjs-advisories.test.ts",
+      "url": "https://github.com/vercel/next.js/security/advisories/GHSA-vcvr-r3jv-pc5j"
+    },
+    {
+      "id": "GHSA-2464-fhr4-w9xw",
+      "aliases": [
+        "CVE-2026-96889"
+      ],
+      "package": "next (image optimizer, sharp/librsvg)",
+      "published": "2026-10-14",
+      "severity": "critical",
+      "class": "native SVG decoder memory corruption",
+      "status": "not-affected",
+      "test": "GHSA-2464-fhr4-w9xw / CVE-2026-96889 / GHSA-wq5f-xc86-pv6w: an SVG source never reaches an image decoder",
+      "file": "tests/security-nextjs-advisories.test.ts",
+      "url": "https://github.com/vercel/next.js/security/advisories/GHSA-2464-fhr4-w9xw"
+    },
+    {
+      "id": "GHSA-wq5f-xc86-pv6w",
+      "aliases": [
+        "CVE-2026-96889"
+      ],
+      "package": "sharp (librsvg)",
+      "published": "2026-10-06",
+      "severity": "high",
+      "class": "native SVG decoder memory corruption",
+      "status": "not-affected",
+      "test": "GHSA-2464-fhr4-w9xw / CVE-2026-96889 / GHSA-wq5f-xc86-pv6w: an SVG source never reaches an image decoder",
+      "file": "tests/security-nextjs-advisories.test.ts",
+      "url": "https://github.com/advisories/GHSA-wq5f-xc86-pv6w"
+    },
+    {
+      "id": "GHSA-cjq9-62q9-8jv4",
+      "aliases": [
+        "CVE-2026-94483"
+      ],
+      "package": "next (image optimizer)",
+      "published": "2026-09-30",
+      "severity": "high",
+      "class": "SSRF via DNS answer of an allow-listed host",
+      "status": "not-affected",
+      "test": "GHSA-cjq9-62q9-8jv4 / CVE-2026-94483: an allow-listed host cannot steer the image fetch to a private IP",
+      "file": "tests/security-nextjs-advisories.test.ts",
+      "url": "https://github.com/vercel/next.js/security/advisories/GHSA-cjq9-62q9-8jv4"
+    },
+    {
+      "id": "GHSA-mcj8-r9mp-w47p",
+      "aliases": [
+        "CVE-2026-94484"
+      ],
+      "package": "next (ISR response cache)",
+      "published": "2026-09-30",
+      "severity": "moderate",
+      "class": "cache-key confusion / poisoning via encoded and /index paths",
+      "status": "not-affected",
+      "test": "GHSA-mcj8-r9mp-w47p / CVE-2026-94484: encoded and /index paths cannot poison another route's ISR entry",
+      "file": "tests/security-nextjs-advisories.test.ts",
+      "url": "https://github.com/vercel/next.js/security/advisories/GHSA-mcj8-r9mp-w47p"
+    },
+    {
+      "id": "GHSA-4jqv-mc3x-m676",
+      "aliases": [
+        "CVE-2026-94543"
+      ],
+      "package": "next (Pages Router SSG/ISR)",
+      "published": "2026-09-30",
+      "severity": "moderate",
+      "class": "cross-route cache poisoning",
+      "status": "not-affected",
+      "test": "GHSA-4jqv-mc3x-m676 / CVE-2026-94543: a crafted path never rewrites another Pages Router ISR entry",
+      "file": "tests/security-nextjs-advisories.test.ts",
+      "url": "https://github.com/vercel/next.js/security/advisories/GHSA-4jqv-mc3x-m676"
+    },
+    {
+      "id": "GHSA-f87g-xv8r-7p7x",
+      "aliases": [
+        "CVE-2026-94485"
+      ],
+      "package": "next (metadata image routes)",
+      "published": "2026-09-30",
+      "severity": "moderate",
+      "class": "dynamicParams bypass (information disclosure)",
+      "status": "fixed in a4a8ece1",
+      "test": "GHSA-f87g-xv8r-7p7x / CVE-2026-94485: a metadata image honours dynamicParams = false",
+      "file": "tests/security-nextjs-advisories.test.ts",
+      "url": "https://github.com/vercel/next.js/security/advisories/GHSA-f87g-xv8r-7p7x"
+    },
+    {
+      "id": "GHSA-h694-7cp9-m8p3",
+      "aliases": [
+        "CVE-2026-103004"
+      ],
+      "package": "next (use cache)",
+      "published": "2026-09-30",
+      "severity": "moderate",
+      "class": "cache-key omission across root params",
+      "status": "not-affected",
+      "test": "GHSA-h694-7cp9-m8p3 / CVE-2026-103004: nested use cache keys every input, root params included",
+      "file": "tests/security-nextjs-advisories.test.ts",
+      "url": "https://github.com/vercel/next.js/security/advisories/GHSA-h694-7cp9-m8p3"
+    },
+    {
+      "id": "GHSA-3w37-wq28-93x7",
+      "aliases": [
+        "CVE-2026-94544"
+      ],
+      "package": "next (use cache, Draft Mode)",
+      "published": "2026-09-30",
+      "severity": "moderate",
+      "class": "draft content leaked through a shared pending fill",
+      "status": "not-affected",
+      "test": "GHSA-3w37-wq28-93x7 / CVE-2026-94544: overlapping draft and regular requests never share draft content",
+      "file": "tests/security-nextjs-advisories.test.ts",
+      "url": "https://github.com/vercel/next.js/security/advisories/GHSA-3w37-wq28-93x7"
+    },
+    {
+      "id": "GHSA-39w2-rjm5-chcv",
+      "aliases": [
+        "CVE-2026-94486"
+      ],
+      "package": "next (dev server MCP endpoint)",
+      "published": "2026-09-30",
+      "severity": "low",
+      "class": "missing origin check on a dev endpoint",
+      "status": "not-affected",
+      "test": "GHSA-39w2-rjm5-chcv / CVE-2026-94486: the dev endpoints the MCP tools read refuse other sites",
+      "file": "tests/security-nextjs-advisories.test.ts",
+      "url": "https://github.com/vercel/next.js/security/advisories/GHSA-39w2-rjm5-chcv"
+    },
+    {
+      "id": "GHSA-xqc2-xf4c-x3h3",
+      "package": "react-server-dom-* (Flight)",
+      "published": "2026-10-14",
+      "severity": "critical",
+      "class": "deserialization gadget (RCE)",
+      "status": "fixed in a4a8ece1",
+      "test": "GHSA-xqc2-xf4c-x3h3: a crafted wire payload never decodes to a prototype or constructor",
+      "file": "tests/security-nextjs-advisories.test.ts",
+      "url": "https://github.com/react/react/security/advisories/GHSA-xqc2-xf4c-x3h3",
+      "note": "denext has no react-server-dom; the same gadget class was reachable through its wire codec's N tag."
+    },
+    {
+      "id": "GHSA-673q-mjm6-r5xr",
+      "package": "next (use cache)",
+      "published": "2026-10-14",
+      "severity": "critical",
+      "class": "typed-array Flight deserialization (RCE)",
+      "status": "not-affected",
+      "test": "GHSA-673q-mjm6-r5xr: a use cache result with typed arrays never crosses a deserializer",
+      "file": "tests/security-nextjs-advisories.test.ts",
+      "url": "https://github.com/vercel/next.js/security/advisories/GHSA-673q-mjm6-r5xr"
+    },
+    {
+      "id": "GHSA-p3m5-59mp-jv5r",
+      "package": "next (Server Actions)",
+      "published": "2026-10-14",
+      "severity": "high",
+      "class": "CPU denial of service in reply decoding",
+      "status": "not-affected",
+      "test": "GHSA-p3m5-59mp-jv5r / GHSA-h3gv-c5rc-p453: hostile Server Action bodies are answered in bounded time",
+      "file": "tests/security-nextjs-advisories.test.ts",
+      "url": "https://github.com/vercel/next.js/security/advisories/GHSA-p3m5-59mp-jv5r"
+    },
+    {
+      "id": "GHSA-h3gv-c5rc-p453",
+      "package": "react-server-dom-* (Server Functions)",
+      "published": "2026-10-14",
+      "severity": "high",
+      "class": "CPU / memory denial of service",
+      "status": "not-affected",
+      "test": "GHSA-p3m5-59mp-jv5r / GHSA-h3gv-c5rc-p453: hostile Server Action bodies are answered in bounded time",
+      "file": "tests/security-nextjs-advisories.test.ts",
+      "url": "https://github.com/react/react/security/advisories/GHSA-h3gv-c5rc-p453"
+    },
+    {
+      "id": "GHSA-2xp9-vwfh-vxw4",
+      "package": "next (image optimizer, sharp/libheif)",
+      "published": "2026-08-25",
+      "severity": "critical",
+      "class": "native AVIF decoder (RCE)",
+      "status": "not-affected",
+      "test": "GHSA-2xp9-vwfh-vxw4 / GHSA-rgj7-g3m4-5g8c: AVIF is opt-in output only, never a native decode path",
+      "file": "tests/nextjs-cve-parity.test.ts",
+      "url": "https://github.com/vercel/next.js/security/advisories/GHSA-2xp9-vwfh-vxw4",
+      "note": "Published 2026-08-25 by Vercel, reviewed into the GitHub Advisory Database 2026-09-08."
+    },
+    {
+      "id": "GHSA-rgj7-g3m4-5g8c",
+      "package": "sharp (libheif)",
+      "published": "2026-09-08",
+      "severity": "high",
+      "class": "native AVIF/HEIF decoder",
+      "status": "not-affected",
+      "test": "GHSA-2xp9-vwfh-vxw4 / GHSA-rgj7-g3m4-5g8c: AVIF is opt-in output only, never a native decode path",
+      "file": "tests/nextjs-cve-parity.test.ts",
+      "url": "https://github.com/advisories/GHSA-rgj7-g3m4-5g8c"
+    },
+    {
+      "id": "CVE-2026-75604",
+      "aliases": [
+        "GHSA-p293-qw3h-jr36"
+      ],
+      "package": "next (Windows hosts)",
+      "published": "2026-08-25",
+      "severity": "critical",
+      "class": "path traversal on Windows filesystems (RCE)",
+      "status": "not-affected",
+      "test": "CVE-2026-75604: serveStatic refuses Windows-style traversal (backslash/UNC/drive)",
+      "file": "tests/nextjs-cve-parity.test.ts",
+      "url": "https://github.com/vercel/next.js/security/advisories/GHSA-p293-qw3h-jr36",
+      "note": "Published 2026-08-25 by Vercel, reviewed into the GitHub Advisory Database 2026-09-08."
+    }
+  ]
+}

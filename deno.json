@@ -378,7 +378,8 @@
       "scripts/",
       "coverage/",
       ".fallow/",
-      "catalog/"
+      "catalog/",
+      "security/"
     ]
   }
 }
