@@ -328,6 +328,11 @@ Deno.test("db <postgres action>: needs @denext/backend, then runs its hook", asy
     global[hooksSlot] = {
       migrations: () => [{ name: "backend_0001", sql: "create schema svc" }],
       table: "backend_migrations",
+      // What needs the app's tables (realtime's per-table triggers): after the app's migrations.
+      afterMigrationSets: () => [{
+        table: "backend_migrations",
+        migrations: [{ name: "backend_realtime_t_notes", sql: "select 1" }],
+      }],
       serviceSchemas: ["svc"],
       actions: {
         lint: async (
@@ -341,9 +346,14 @@ Deno.test("db <postgres action>: needs @denext/backend, then runs its hook", asy
     };
     assertEquals(await act(DB_ACTIONS, root, ["lint"]), ["applied backend_0001"]);
     assertEquals(seen, ["lint"]);
-    // Push applies the backend's migrations first; seed seeds the buckets; reset drops its schemas.
+    // Push applies the backend's migrations first and its after-sets last; seed seeds the
+    // buckets; reset drops its schemas.
     const pushed = await act(DB_ACTIONS, root, ["push"], { "include-seed": true });
-    assertEquals(pushed, ["  applied backend_0001  (@denext/backend)", "  bucket avatars"]);
+    assertEquals(pushed, [
+      "  applied backend_0001  (@denext/backend)",
+      "  applied backend_realtime_t_notes  (@denext/backend)",
+      "  bucket avatars",
+    ]);
     await act(DB_ACTIONS, root, ["reset"], { yes: true });
     const drops = sql.calls.filter((c) => c.text.startsWith("DROP SCHEMA")).map((c) => c.text);
     assertEquals(drops, [

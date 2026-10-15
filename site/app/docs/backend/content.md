@@ -673,6 +673,10 @@ and set `backend({ postgres: { rls: { migrate: false } } })`. Without the grant,
 `… may not grant itself the role anon` and a hint naming the `GRANT`. A superuser connection works
 too, but connect as an ordinary role in production: a superuser could switch to any role.
 
+With [`DENEXT_BOOT_DDL=off`](/docs/database#schema-at-startup) the backend
+creates none of its schemas: `denext db push` applies them out of band, and `denext start` refuses
+to start until every migration the enabled services need is recorded.
+
 ### Coming from Supabase: your policies work as-is
 
 - `auth.uid()`, `auth.role()`, `auth.email()` and `auth.jwt()` are Supabase's functions, reading the

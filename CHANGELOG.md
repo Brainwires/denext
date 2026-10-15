@@ -26,6 +26,18 @@ and this project adheres to
 
 ### Added
 
+- **`DENEXT_BOOT_DDL=off`: no schema changes at startup, and a server that won't start without
+  its schema.** For deployments that apply migrations out of band, no denext feature creates a
+  table, role, function, trigger or publication: the Postgres auth adapter, the session,
+  rate-limit, cache and job-history stores, and `@denext/backend`'s RLS roles, storage, realtime,
+  vault, queues and webhooks schemas. `denext dev` / `denext start` instead check that every
+  migration those features would apply is recorded, and fail with a `BootSchemaError`
+  (`code: "boot_schema_missing"`) naming each missing migration and its tracking table; a store
+  built later checks on first use. `denext migration up` / `db push` now also apply
+  `@denext/backend` realtime's per-table triggers, after the app's migrations, so the backend's
+  whole schema can be applied out of band. New in `denext/server`: `bootMigrate`,
+  `bootDdlEnabled`, `registerBootCheck`, `BootSchemaError`, and `withMigrationLock` (run DDL that
+  is not a recorded migration under a runner's advisory lock).
 - **`smtpMailer({ host, port, secure, user, pass, from })` (`denext/server`): an SMTP client with
   no npm dependency, usable as `sendVerificationRequest`.** It runs on `Deno.connect` /
   `Deno.connectTls` / `Deno.startTls`. TLS is required: port 465 (or `secure`) is implicit TLS,
@@ -203,6 +215,15 @@ and this project adheres to
 
 - **denext pins Deno toolchain and Deno Desktop runtime 2.9.7-denext.19** (both pins from the same
   release): denext.18 plus the fix below; the navigation guard below arrived in denext.18.
+- **denext pins Deno toolchain and Deno Desktop runtime 2.9.7-denext.18** (both pins from the same
+  release): the navigation guard below; the toolchain is otherwise unchanged from denext.17.
+- **A first run on Postgres prints one line per store instead of the server's notices.** The
+  migrations denext's stores and `@denext/backend` apply for themselves raise
+  `client_min_messages` inside their transactions, so `relation … already exists, skipping` and
+  `… does not exist, skipping` stay on the server (postgres.js printed each as a multi-line
+  object). A run that applies migrations prints one line, such as `[denext] postgresAuthAdapter:
+  applied 8 migrations to auth_migrations (0001_auth_tables … 0008_auth_sessions_valid_after)`.
+  `migratePostgres` takes `quiet: true` for the same.
 - **`@denext/backend` 0.5.0: realtime from the logical source honours a table's `events`.** A
   change of a kind the table leaves out (a `TRUNCATE`, say) is dropped, as the notify source's
   triggers never fire for it; before, the WAL source delivered every kind.
@@ -243,6 +264,12 @@ and this project adheres to
 - **`/auth/v1` `GET /admin/users` with empty paging values returns the default page.**
   supabase-js's `auth.admin.listUsers()` with no options sends `?page=&per_page=`, which was
   read as one user per page; an empty value now means GoTrue's defaults (page 1, 50 per page).
+- **`@denext/backend` 0.5.0: realtime's startup DDL runs under the migration lock.** The
+  triggers of a publication's tables, the trigger switch between the notify and logical sources,
+  and the `denext_realtime` publication were created outside the advisory lock every other boot
+  migration takes. Replicas starting together could race each other and a migration run on the
+  same tables. They now run in a transaction holding the lock of `backend_migrations`, and a
+  table's triggers are checked again once the lock is held, so they are created once.
 - **`@denext/backend` 0.5.0: realtime returns its reserved connections clean.** A failed
   `revalidate: { owner: "one" }` check (a statement timeout or a cancel, with the session still
   alive) sent the connection back to the pool still holding the owner's advisory lock, so no

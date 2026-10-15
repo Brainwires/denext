@@ -13,7 +13,7 @@
 // takes it, so several app instances share the work without sending one event twice at once,
 // and a crash mid-delivery is retried after the lease. Receivers dedupe on `webhook-id`.
 
-import { migratePostgres, type Migration, type SqlClient } from "@denext/denext/server";
+import { bootMigrate, type Migration, type SqlClient } from "@denext/denext/server";
 import { db } from "./postgres.ts";
 import { positiveOption } from "./options.ts";
 
@@ -510,11 +510,11 @@ const migrated = new WeakMap<SqlClient, Promise<void>>();
 export function ensureWebhooksMigrated(sql: SqlClient): Promise<void> {
   let pending = migrated.get(sql);
   if (!pending) {
-    pending = migratePostgres(sql, {
+    pending = bootMigrate(sql, {
       migrations: webhooksMigrations(),
       table: "backend_migrations",
-    })
-      .then(() => undefined);
+      feature: "backend({ webhooks })",
+    });
     pending.catch(() => migrated.delete(sql));
     migrated.set(sql, pending);
   }

@@ -13,7 +13,7 @@
 // (postgres.js runs the same shape).
 
 import type { AuthSession, SqlClient, SqlQuery } from "@denext/denext/server";
-import { migratePostgres, type Migration } from "@denext/denext/server";
+import { bootMigrate, type Migration } from "@denext/denext/server";
 import type { RequestIdentity } from "./identity.ts";
 
 /**
@@ -546,7 +546,11 @@ export function ensureRlsMigrated(sql: SqlClient): Promise<void> {
   let pending = migrated.get(sql);
   if (!pending) {
     const run = () =>
-      migratePostgres(sql, { migrations: rlsMigrations(), table: BACKEND_MIGRATIONS_TABLE });
+      bootMigrate(sql, {
+        migrations: rlsMigrations(),
+        table: BACKEND_MIGRATIONS_TABLE,
+        feature: "backend({ postgres }) row-level security",
+      });
     const inRoot = (globalThis as RootBridge).__denextInRootContext;
     pending = (inRoot ? inRoot(run) : run()).then(() => undefined, (error) => {
       migrated.delete(sql);

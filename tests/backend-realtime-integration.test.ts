@@ -831,3 +831,62 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name: `realtime on a real Postgres: trigger DDL waits for the backend's migration lock${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    let hub: Harness | undefined;
+    let release = () => {};
+    let held: Promise<unknown> = Promise.resolve();
+    try {
+      hub = await install(env.app, {}, `${NOTES}\ncreate publication dnx_lock_pub;`, {
+        publication: "dnx_lock_pub",
+      });
+      // Start (the realtime migrations apply), keeping the publication's re-read to call by hand.
+      const real = globalThis.setInterval;
+      let tick: (() => void) | undefined;
+      globalThis.setInterval = ((handler: () => void, ms?: number) => {
+        if (ms === 10_000) tick = handler;
+        return real(handler, ms);
+      }) as typeof setInterval;
+      try {
+        await realtimeEngine().start();
+      } finally {
+        globalThis.setInterval = real;
+      }
+      // Another instance is mid-migration: it holds the lock every boot migration takes.
+      let locked = () => {};
+      const isLocked = new Promise<void>((resolve) => locked = resolve);
+      held = env.app.begin(async (tx) => {
+        await tx.unsafe("select pg_advisory_xact_lock(hashtext($1))", [
+          'denext:migrate:"backend_migrations"',
+        ]);
+        locked();
+        await new Promise<void>((resolve) => release = resolve);
+      });
+      await isLocked;
+      await db.service()`alter publication dnx_lock_pub add table notes`;
+      tick!();
+      const triggers = () =>
+        env.app.unsafe("select 1 from pg_trigger where tgname = 'denext_realtime'");
+      await settle(400);
+      assertEquals((await triggers()).length, 0, "the trigger waits for the lock");
+      release();
+      await held;
+      const deadline = Date.now() + 10_000;
+      while ((await triggers()).length === 0) {
+        assert(Date.now() < deadline, "the trigger is created once the lock is free");
+        await settle(20);
+      }
+    } finally {
+      release();
+      await held.catch(() => {});
+      await uninstall(hub);
+      await env.drop();
+    }
+  },
+});

@@ -9,6 +9,10 @@
   (`clientIpForLimits()`), the secret key never. A request with a refused credential counts
   against its address. Past it: `429` `over_request_rate_limit` (PostgREST's error shape) with
   `Retry-After`, before any statement. `{ max, windowMs, store }`, or `false` to turn it off.
+- **`DENEXT_BOOT_DDL=off` (denext's) is honoured by every service:** the RLS roles, storage,
+  realtime (its triggers and publications too), vault, queues and webhooks create nothing, and the
+  server's start checks that their migrations are recorded. `denext db push` applies realtime's
+  per-table triggers after the app's migrations.
 - **Image transforms take AVIF sources** (`render/image`, signed transform URLs), decoded by
   `@denext/avif` once the declared size passed the decompression-bomb checks (needs denext with
   AVIF decoding in `transformImageBytes`; an older one answers `400`).
@@ -25,6 +29,11 @@
   lock is released first), and a stopped engine reserves no new one. A failed logical-slot read
   drops the temporary slot and resets `TimeZone` before the connection goes back, so the slot
   pins no WAL and the source can reopen.
+
+- **Realtime's startup DDL runs under the migration lock** of `backend_migrations` (publication
+  triggers, the trigger switch, the `denext_realtime` publication), re-checked once the lock is
+  held, so replicas starting together don't race. Its migrations print one line, with the
+  server's notices silenced.
 
 ## 0.4.0 - 2026-10-14
 

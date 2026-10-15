@@ -4,10 +4,10 @@
 // its timeout lapses and is retried, until `maxAttempts` sends it to the archive as dead.
 
 import {
+  bootMigrate,
   defineJob,
   type Job,
   type JobContext,
-  migratePostgres,
   type SqlClient,
 } from "@denext/denext/server";
 import { db } from "./postgres.ts";
@@ -127,8 +127,11 @@ const migrated = new WeakMap<SqlClient, Promise<void>>();
 export function ensureQueuesMigrated(sql: SqlClient): Promise<void> {
   let pending = migrated.get(sql);
   if (!pending) {
-    pending = migratePostgres(sql, { migrations: queuesMigrations(), table: "backend_migrations" })
-      .then(() => undefined);
+    pending = bootMigrate(sql, {
+      migrations: queuesMigrations(),
+      table: "backend_migrations",
+      feature: "backend({ queues })",
+    });
     pending.catch(() => migrated.delete(sql));
     migrated.set(sql, pending);
   }

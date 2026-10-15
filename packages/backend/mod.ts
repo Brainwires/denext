@@ -56,7 +56,15 @@
  */
 
 import type { DenextPlugin, PluginContext } from "@denext/denext/server";
-import { handleGoTrueRequest, installGoTrue, registerHealthCheck } from "@denext/denext/server";
+import {
+  bootMigrate,
+  handleGoTrueRequest,
+  installGoTrue,
+  type Migration,
+  registerBootCheck,
+  registerHealthCheck,
+} from "@denext/denext/server";
+import { rlsMigrations } from "./src/rls.ts";
 import { installSupabaseAuthHooks } from "./src/identity.ts";
 import { checkBucketName } from "./src/keys.ts";
 import { handleStorageRequest } from "./src/handler.ts";
@@ -87,6 +95,7 @@ import { createHub, handleRealtimeRequest, installRealtimeHub } from "./src/real
 import { postgresBus } from "./src/realtime-bus.ts";
 import { channelPermissions } from "./src/realtime-authz.ts";
 import {
+  realtimeMigrations,
   type RealtimeOptions,
   realtimeSchemaMigrations,
   resolveRealtime,
@@ -318,7 +327,7 @@ function setupRealtime(
   ctx: PluginContext,
   options: RealtimeOptions,
   slot: ReturnType<typeof openPostgres>["slot"],
-): void {
+): RealtimeEngine {
   const channel = createRealtimeChannel();
   const engine = new RealtimeEngine(
     options,
@@ -349,13 +358,14 @@ function setupRealtime(
       installRealtimeHub(undefined);
     });
   }
-  if (ctx.mode !== "dev") return;
+  if (ctx.mode !== "dev") return engine;
   const missing = "error" in slot
     ? slot.error.message
     : typeof slot.sql.listen !== "function"
     ? "this Postgres client has no listen() (LISTEN/NOTIFY)"
     : undefined;
   if (missing) console.warn(`[@denext/backend] realtime is unsupported here: ${missing}`);
+  return engine;
 }
 
 /** Install the Supabase keys, `/auth/v1` (with the JWKS) and `denext backend keys`. */
@@ -386,15 +396,64 @@ function setupPostgres(
   const { slot, owned } = openPostgres(options.postgres!, env);
   installPostgres(slot);
   if (owned && "sql" in slot) ctx.addTeardown(() => slot.sql.close());
-  if (options.realtime) setupRealtime(ctx, options.realtime, slot);
+  const engine = options.realtime ? setupRealtime(ctx, options.realtime, slot) : undefined;
   if (rest) setupRest(ctx, rest, "sql" in slot ? slot.sql : undefined);
   installVault(options.vault);
   installQueues(options.queues);
   installWebhooks(webhooks);
   if (ctx.mode === "dev" || ctx.mode === "prod") {
+    registerBackendBootCheck(options, webhooks, engine);
     startServices(ctx, options, webhooks);
     ctx.addTeardown(registerHealthCheck("database", () => databaseReachable(slot)));
   }
+}
+
+/** Whether a service is on and applies its own migrations (no `migrate: false`). */
+function migrates(service: { migrate?: boolean } | undefined): boolean {
+  return !!service && service.migrate !== false;
+}
+
+/** The vault's migrations (its SQL functions' too, with `vault.sql`). */
+function vaultBootMigrations(vault: VaultOptions): Migration[] {
+  return [...vaultMigrations(), ...(vault.sql ? vaultSqlMigrations() : [])];
+}
+
+/** What the enabled services apply to `backend_migrations` on their own (each unless `migrate: false`). */
+function bootMigrationsOf(
+  options: BackendOptions,
+  webhooks: ReturnType<typeof resolveWebhooks> | undefined,
+  engine: RealtimeEngine | undefined,
+): Migration[] {
+  const parts: Array<[boolean, () => Migration[]]> = [
+    [options.postgres?.rls?.migrate !== false, rlsMigrations],
+    [engine?.config.migrate === true, () => engine!.migrations()],
+    [migrates(options.vault), () => vaultBootMigrations(options.vault!)],
+    [migrates(options.queues), queuesMigrations],
+    [webhooks?.migrate === true, webhooksMigrations],
+  ];
+  return parts.flatMap(([on, migrations]) => on ? migrations() : []);
+}
+
+/**
+ * `DENEXT_BOOT_DDL=off`: before the server serves, check that every migration the enabled
+ * services would apply on their own is recorded (a no-op with boot DDL on).
+ */
+function registerBackendBootCheck(
+  options: BackendOptions,
+  webhooks: ReturnType<typeof resolveWebhooks> | undefined,
+  engine: RealtimeEngine | undefined,
+): void {
+  const migrations = bootMigrationsOf(options, webhooks, engine);
+  registerBootCheck(async () => {
+    const sql = db.service();
+    await bootMigrate(sql, { migrations, table: "backend_migrations", feature: "@denext/backend" });
+    if (!options.storage) return;
+    await bootMigrate(sql, {
+      migrations: storageMigrations(),
+      table: STORAGE_MIGRATIONS_TABLE,
+      feature: "backend({ storage })",
+    });
+  });
 }
 
 /**
@@ -432,6 +491,16 @@ function installDbHooksFor(
             on.queues ? queuesMigrations : () => [],
             on.webhooks ? webhooksMigrations : () => [],
           ])
+          : [],
+      // Realtime's per-table triggers need the app's tables: after its migrations.
+      afterMigrationSets: () =>
+        postgres && realtimeOptions && !isLogical(realtimeOptions)
+          ? [{
+            table: "backend_migrations",
+            migrations: realtimeMigrations(realtimeOptions).filter((m) =>
+              m.name.startsWith("backend_realtime_t_")
+            ),
+          }]
           : [],
       // Storage's metadata lives on the backend's Postgres: its schema, in its own table.
       migrationSets: () =>
@@ -473,6 +542,11 @@ function startServices(
     Promise.resolve().then(() => ensureWebhooksMigrated(db.service())).catch(warn("webhooks"));
   }
   if (webhooks.delivery === "auto") ctx.addTeardown(startWebhookDelivery(webhooks));
+}
+
+/** Whether realtime reads the WAL (no per-table triggers). */
+function isLogical(options: RealtimeOptions): boolean {
+  return resolveRealtime(options).source === "logical";
 }
 
 /** The services that run on Postgres refuse a config without it. */

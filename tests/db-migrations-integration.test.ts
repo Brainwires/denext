@@ -523,8 +523,12 @@ alter publication supabase_realtime add table notes;
       assert(out.indexOf("backend_storage_0001") < out.indexOf("20260101000000_init.sql"), out);
       // The roles first: the realtime and storage schemas grant to them.
       assert(out.indexOf("backend_rls_0001") < out.indexOf("backend_realtime_0001"), out);
-      // The server's start then finds them applied (same names, same tracking tables): only the
-      // per-table realtime trigger, which needs the app's table, is left for it.
+      // The per-table realtime trigger needs the app's table: it comes after the app's migration.
+      assert(
+        out.indexOf("20260101000000_init.sql") < out.indexOf("backend_realtime_t_notes_"),
+        out,
+      );
+      // The server's start then finds everything applied (same names, same tracking tables).
       const storage = await migratePostgres(env.app, {
         migrations: storageMigrations(),
         table: STORAGE_MIGRATIONS_TABLE,
@@ -534,11 +538,7 @@ alter publication supabase_realtime add table notes;
         migrations: realtimeMigrations(realtimeOptions),
         table: "backend_migrations",
       });
-      assert(live.applied.length > 0, "the per-table trigger is the start's");
-      assert(
-        live.applied.every((name) => name.startsWith("backend_realtime_t_")),
-        live.applied.join(", "),
-      );
+      assertEquals(live.applied, [], "up applied the per-table trigger too");
       // Run again: nothing to do.
       assertStringIncludes(await run(MIGRATION_ACTIONS, ["up"]), "The database is up to date.");
     } finally {

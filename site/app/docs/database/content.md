@@ -115,6 +115,39 @@ with a more privileged role), and takes `schema` to keep them out of `public`. W
 [`@denext/backend`](/docs/backend#postgres), `backend({ postgres })` opens one client for the
 whole app and `backendAuthAdapter()` puts auth on it.
 
+### Schema at startup
+
+A store applies its migrations on first use (and `@denext/backend` its own at the server's start),
+each under the same transaction-scoped advisory lock as its runner, so replicas starting together
+take turns and the one that waited skips what the other applied. `@denext/backend`'s realtime
+creates its triggers and publication under the lock of `backend_migrations` too. A run that applies
+something prints one line for it:
+
+```text
+[denext] postgresAuthAdapter: applied 8 migrations to auth_migrations (0001_auth_tables … 0008_auth_sessions_valid_after)
+```
+
+The server's `NOTICE`s (`relation … already exists, skipping`) are silenced inside those
+transactions; postgres.js would otherwise print each one.
+
+Where migrations are applied out of band (a release step with a privileged role, a DBA), set
+**`DENEXT_BOOT_DDL=off`** (`0`, `false` and `no` work too). No denext feature then creates a
+table, role, function, trigger or publication: the auth adapter and the session, rate-limit,
+cache and job-history stores, and `@denext/backend`'s RLS roles, storage, realtime, vault,
+queues and webhooks schemas. `denext dev` and `denext start` instead check that every migration
+those features would apply is recorded, and refuse to start with a `BootSchemaError`
+(`code: "boot_schema_missing"`) that names each missing one and its tracking table. A store built
+later checks on first use. To apply them out of band:
+
+- `@denext/backend`: `denext db push` (or `denext migration up`) applies its migrations, then the
+  app's, then realtime's per-table triggers, which need the app's tables.
+- denext's own stores (`auth_migrations`, `cache_migrations`, `job_history_migrations`): run the
+  app once with `DENEXT_BOOT_DDL` unset as a role that may create them, as a release step.
+- `realtime({ source: "logical" })`: create the `denext_realtime` publication for the configured
+  tables (`CREATE PUBLICATION denext_realtime FOR TABLE …`).
+
+A store's own `migrate: false` still skips both its migrations and the check.
+
 Other drivers work as they always have — `jsr:@db/postgres`, `npm:mysql2` and the rest are
 standard Deno code. Keep the pool a module singleton.
 [`examples/postgres-load`](https://github.com/Brainwires/denext/tree/main/examples/postgres-load)

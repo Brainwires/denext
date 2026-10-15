@@ -27,7 +27,8 @@ import {
   type SqlRow,
   toNumber,
 } from "./postgres.ts";
-import { migratePostgres, type Migration } from "./postgres-migrate.ts";
+import type { Migration } from "./postgres-migrate.ts";
+import { bootMigrate, registerBootCheck } from "./postgres-boot.ts";
 import { inRootContext } from "./root-context.ts";
 
 /** Options for {@linkcode postgresCacheStore}. */
@@ -93,6 +94,8 @@ class PostgresCache implements CacheStore {
     this.#sql = sql;
     this.#owned = owned;
     this.#options = options;
+    // DENEXT_BOOT_DDL=off: the server checks the tables before it serves.
+    if (options.migrate !== false) registerBootCheck(async () => void await this.#db());
     this.#max = {
       data: options.maxDataEntries ?? DEFAULT_MAX,
       page: options.maxPageEntries ?? DEFAULT_MAX,
@@ -110,10 +113,11 @@ class PostgresCache implements CacheStore {
     if (this.#options.migrate !== false) {
       // Shared by every request, so started in the root context (see root-context.ts).
       this.#migrated ??= inRootContext(() =>
-        migratePostgres(this.#sql, {
+        bootMigrate(this.#sql, {
           migrations: cacheMigrations(this.#p),
           table: "cache_migrations",
           schema: this.#options.schema,
+          feature: "postgresCacheStore",
         })
       ).catch((error) => {
         this.#migrated = undefined; // retry on the next access, never disable the cache

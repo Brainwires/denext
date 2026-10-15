@@ -71,6 +71,11 @@ export interface BackendDbHooks {
   table: string;
   /** Further sets of the backend's migrations, each in its own table (applied after those). */
   migrationSets?(): BackendMigrationSet[];
+  /**
+   * Sets that need the app's tables (realtime's per-table triggers), applied after the app's
+   * own migrations — what the server's start would otherwise create.
+   */
+  afterMigrationSets?(): BackendMigrationSet[];
   /** The schemas the backend's services own (dropped by `db reset`). */
   serviceSchemas: string[];
   /** Wraps the client migrations run on (the SQL vault sets its keys per transaction). */

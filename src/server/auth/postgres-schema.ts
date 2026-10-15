@@ -12,7 +12,8 @@ import {
   schemaPrefix,
   type SqlClient,
 } from "../postgres.ts";
-import { migratePostgres, type Migration } from "../postgres-migrate.ts";
+import type { Migration } from "../postgres-migrate.ts";
+import { bootMigrate, registerBootCheck } from "../postgres-boot.ts";
 import { inRootContext } from "../root-context.ts";
 import { oauthServerPostgresSql } from "./sql-adapter-oauth-server.ts";
 
@@ -197,13 +198,14 @@ export function authDb(options: PostgresAuthStoreOptions, feature: string): Auth
   let closed = false;
   const migrate = (): Promise<void> => {
     if (options.migrate === false) return Promise.resolve();
-    return migratePostgres(sql, {
+    return bootMigrate(sql, {
       migrations: authMigrations(prefix),
       table: AUTH_MIGRATIONS_TABLE,
       schema: options.schema,
-    }).then(() => undefined);
+      feature,
+    });
   };
-  return {
+  const handle: AuthDb = {
     async ready() {
       // A closed store must not reach the database again: the server is draining.
       if (closed) {
@@ -230,4 +232,7 @@ export function authDb(options: PostgresAuthStoreOptions, feature: string): Auth
       if (owned) await sql.close();
     },
   };
+  // DENEXT_BOOT_DDL=off: the server checks the tables before it serves.
+  if (options.migrate !== false) registerBootCheck(async () => void await handle.ready());
+  return handle;
 }

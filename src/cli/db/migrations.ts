@@ -26,7 +26,12 @@ import { checksum, migratePostgres, notifySchemaReload } from "../../server/post
 import { isPostgresUrl, runScript, type SqlClient } from "../../server/postgres.ts";
 import { displayTarget } from "../db-admin/connection.ts";
 import type { CommandContext } from "../command.ts";
-import { type BackendDbHooks, backendHooks, type DbIo } from "./project.ts";
+import {
+  type BackendDbHooks,
+  backendHooks,
+  type BackendMigrationSet,
+  type DbIo,
+} from "./project.ts";
 import { type SeedFiles, seedFilesFor, seedHash } from "./seed-files.ts";
 import {
   type DbTarget,
@@ -152,12 +157,35 @@ async function applyBackend(
   hooks: BackendDbHooks | undefined,
   dryRun: boolean,
 ): Promise<string[]> {
-  if (!hooks || target.dialect !== "postgres") return [];
-  const sql = await keyed(target.sql!);
-  const sets = [
+  if (!hooks) return [];
+  return await applySets(target, [
     { table: hooks.table || BACKEND_TABLE, migrations: hooks.migrations() },
     ...hooks.migrationSets?.() ?? [],
-  ];
+  ], dryRun);
+}
+
+/**
+ * Apply `@denext/backend`'s migrations that need the app's tables (realtime's per-table
+ * triggers), after the app's own — what the server's start would otherwise create.
+ */
+async function applyBackendAfterApp(
+  target: DbTarget,
+  hooks: BackendDbHooks | undefined,
+  dryRun: boolean,
+): Promise<string[]> {
+  return hooks?.afterMigrationSets
+    ? await applySets(target, hooks.afterMigrationSets(), dryRun)
+    : [];
+}
+
+/** Apply sets of the backend's migrations, one migration at a time, in order (Postgres only). */
+async function applySets(
+  target: DbTarget,
+  sets: BackendMigrationSet[],
+  dryRun: boolean,
+): Promise<string[]> {
+  if (target.dialect !== "postgres" || sets.length === 0) return [];
+  const sql = await keyed(target.sql!);
   const names: string[] = [];
   // One at a time, in the hooks' order (the roles before the schemas that grant to them):
   // `migratePostgres` orders a list by name, and `backend_realtime_*` sorts before `backend_rls_*`.
@@ -258,10 +286,7 @@ export async function upAction(
     const own = await applyBackend(target, backendHooks(), dryRun);
     const verb = dryRun ? "would apply" : "applied";
     const json: { applied: string[]; dryRun: boolean; seeded?: string[] } = { applied: [], dryRun };
-    for (const name of own) {
-      json.applied.push(name);
-      if (!run.ctx.global.json) run.io.log(`  ${verb} ${name}  (@denext/backend)`);
-    }
+    reportBackend(run, verb, own, json.applied);
     const names = await migrateUp(history, local.files, {
       to: stringFlag(run.ctx, "to") ?? stringFlag(run.ctx, "version"),
       includeAll: run.ctx.flags["include-all"] === true,
@@ -273,10 +298,23 @@ export async function upAction(
       for (const name of names) run.io.log(`  ${verb} ${name}`);
     }
     json.applied.push(...names);
+    // What needs the app's tables (realtime's per-table triggers), once they exist.
+    const late = await applyBackendAfterApp(target, backendHooks(), dryRun);
+    reportBackend(run, verb, late, json.applied);
     if (options.seed && !dryRun) json.seeded = await seedTarget(run, target, history);
     if (run.ctx.global.json) run.io.log(JSON.stringify(json, null, 2));
-    else if (!own.length && !names.length) run.io.log("The database is up to date.");
+    else if (!own.length && !names.length && !late.length) {
+      run.io.log("The database is up to date.");
+    }
   });
+}
+
+/** Record (and, without `--json`, print) the backend migrations `up` applied. */
+function reportBackend(run: MigrationRun, verb: string, names: string[], applied: string[]): void {
+  for (const name of names) {
+    applied.push(name);
+    if (!run.ctx.global.json) run.io.log(`  ${verb} ${name}  (@denext/backend)`);
+  }
 }
 
 /** `--steps` / `--last` as a number. */

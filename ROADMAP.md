@@ -21,6 +21,9 @@
 Entries in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) that aren't forced by an OS, a browser
 or an upstream. Each one's limitation entry is deleted when it ships.
 
+- **Postgres schema out of band:** `denext db push` applies denext's own stores' migrations (auth,
+  cache, job history) and the logical realtime source's publication, so `DENEXT_BOOT_DDL=off`
+  needs no release run with boot DDL on.
 - **Deno Desktop (runtime work):** CEF on macOS keeps cookies under a real Keychain key in a
   signed app, not Chromium's mock keychain; a share sheet (macOS `NSSharingServicePicker`,
   Windows `DataTransferManager`); Spotlight indexing and Handoff on macOS; icons and the

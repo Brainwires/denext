@@ -49,6 +49,11 @@ export interface PostgresMigrateOptions {
   schema?: string;
   /** List what would run, and run nothing. */
   dryRun?: boolean;
+  /**
+   * Silence the server's `NOTICE`s (`relation … already exists, skipping`) inside the runner's
+   * transactions; a driver may print each one (postgres.js does by default). Default `false`.
+   */
+  quiet?: boolean;
 }
 
 /** One migration's state, as {@linkcode postgresMigrationStatus} reports it. */
@@ -212,6 +217,51 @@ async function guardSetup(work: () => Promise<unknown>): Promise<void> {
   }
 }
 
+/** Raise the transaction's `client_min_messages` past `NOTICE` (it ends with the transaction). */
+export const QUIET_SQL = "SELECT set_config('client_min_messages', 'warning', true)";
+
+/**
+ * Take the runner's transaction-scoped advisory lock for `lock` (released when `tx` ends),
+ * after silencing the transaction's notices when `quiet`.
+ */
+async function takeMigrationLock(tx: SqlClient, lock: string, quiet = false): Promise<void> {
+  if (quiet) await tx.unsafe(QUIET_SQL);
+  await tx.unsafe("SELECT pg_advisory_xact_lock(hashtext($1))", [`denext:migrate:${lock}`]);
+}
+
+/** Options for {@linkcode withMigrationLock}: which runner's lock to take. */
+export interface MigrationLockOptions {
+  /** The tracking table whose runner's lock is taken (default `_migrations`). */
+  table?: string;
+  /** The tracking table's schema; default: the search path. */
+  schema?: string;
+  /** Silence the server's `NOTICE`s inside the transaction. Default `false`. */
+  quiet?: boolean;
+}
+
+/**
+ * Run `fn` in a transaction holding the same advisory lock {@linkcode migratePostgres} takes
+ * for the tracking table `options` names, so DDL that is not a recorded migration (a trigger
+ * created at startup, say) never races a migration run, or another instance doing the same.
+ * The lock is held until the transaction ends.
+ *
+ * @param sql The client.
+ * @param options The tracking table (and its schema) whose runner's lock to take.
+ * @param fn The work, on the transaction's client.
+ * @returns What `fn` returned.
+ */
+export async function withMigrationLock<T>(
+  sql: SqlClient,
+  options: MigrationLockOptions,
+  fn: (tx: SqlClient) => Promise<T>,
+): Promise<T> {
+  const lock = trackingTable(options);
+  return await sql.begin(async (tx) => {
+    await takeMigrationLock(tx, lock, options.quiet);
+    return await fn(tx);
+  });
+}
+
 /**
  * Run `fn` in a transaction that first takes the runner's advisory lock for `lock` (held until
  * the transaction ends, so a second runner waits, then sees the first one's work) and runs
@@ -221,6 +271,7 @@ async function guardSetup(work: () => Promise<unknown>): Promise<void> {
  * @param lock The lock's name (one per tracking table).
  * @param setup Create the history's schema and table (idempotent DDL).
  * @param fn The work.
+ * @param quiet Silence the server's `NOTICE`s inside the transaction.
  * @returns What `fn` returned.
  */
 export async function lockedMigrationTx<T>(
@@ -228,10 +279,11 @@ export async function lockedMigrationTx<T>(
   lock: string,
   setup: (tx: SqlClient) => Promise<unknown>,
   fn: (tx: SqlClient) => Promise<T>,
+  quiet = false,
 ): Promise<T> {
   const attempt = () =>
     sql.begin(async (tx) => {
-      await tx.unsafe("SELECT pg_advisory_xact_lock(hashtext($1))", [`denext:migrate:${lock}`]);
+      await takeMigrationLock(tx, lock, quiet);
       await guardSetup(() => setup(tx));
       return await fn(tx);
     });
@@ -297,6 +349,7 @@ export async function runMigrationScript(
  * @param migration The migration.
  * @param table The qualified tracking table.
  * @param schema The tracking table's schema, if any.
+ * @param quiet Silence the server's `NOTICE`s while it runs.
  * @returns Whether this call applied it.
  */
 export async function applyPostgresMigration(
@@ -304,6 +357,7 @@ export async function applyPostgresMigration(
   migration: Migration,
   table: string,
   schema: string | undefined,
+  quiet = false,
 ): Promise<boolean> {
   const sum = await checksum(migration.sql);
   return await lockedMigrationTx(
@@ -323,6 +377,7 @@ export async function applyPostgresMigration(
       ]);
       return true;
     },
+    quiet,
   );
 }
 
@@ -370,7 +425,7 @@ export async function migratePostgres(
   };
   if (result.dryRun) return result;
   for (const migration of pending) {
-    if (await applyPostgresMigration(sql, migration, table, options.schema)) {
+    if (await applyPostgresMigration(sql, migration, table, options.schema, options.quiet)) {
       result.applied.push(migration.name);
     }
   }

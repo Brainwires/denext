@@ -477,7 +477,16 @@ export type {
   SqlQuery,
   SqlRow,
 } from "./postgres.ts";
-export { migratePostgres, postgresMigrationStatus } from "./postgres-migrate.ts";
+export { migratePostgres, postgresMigrationStatus, withMigrationLock } from "./postgres-migrate.ts";
+export {
+  BOOT_DDL_ENV,
+  BOOT_SCHEMA_MISSING,
+  bootDdlEnabled,
+  bootMigrate,
+  BootSchemaError,
+  registerBootCheck,
+} from "./postgres-boot.ts";
+export type { BootMigrateOptions } from "./postgres-boot.ts";
 export { migrateSqlite, sqliteMigrationStatus } from "./sqlite-migrate.ts";
 export type { SqliteMigrateOptions, SqliteMigrationDb } from "./sqlite-migrate.ts";
 export { vectorSearchSql } from "./vector-sql.ts";
@@ -485,6 +494,7 @@ export type { VectorSearchSqlOptions } from "./vector-sql.ts";
 export type {
   MigrateResult,
   Migration,
+  MigrationLockOptions,
   MigrationState,
   MigrationStatus,
   PostgresMigrateOptions,

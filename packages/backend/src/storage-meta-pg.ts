@@ -9,7 +9,7 @@
 // carries no RETURNING (an INSERT policy alone allows an upload, as on Supabase); the row is read
 // back as the service.
 
-import { migratePostgres, type Migration, type SqlClient } from "@denext/denext/server";
+import { bootMigrate, type Migration, type SqlClient } from "@denext/denext/server";
 import { StorageError } from "./errors.ts";
 import { db, rlsReady, scopedFor } from "./postgres.ts";
 import { pgRole, RLS_SETUP } from "./rls.ts";
@@ -232,7 +232,11 @@ export function postgresMetaStore(): MetaStore {
   let migrated: Promise<void> | undefined;
   const ready = (): Promise<void> => {
     migrated ??= rlsReady().then(() =>
-      migratePostgres(db.service(), { migrations: storageMigrations(), table: MIGRATIONS_TABLE })
+      bootMigrate(db.service(), {
+        migrations: storageMigrations(),
+        table: MIGRATIONS_TABLE,
+        feature: "backend({ storage })",
+      })
     ).then(() => undefined, (err) => {
       migrated = undefined;
       throw err;

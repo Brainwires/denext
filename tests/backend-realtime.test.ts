@@ -1599,6 +1599,61 @@ Deno.test({
   },
 });
 
+/** The advisory lock every boot migration of the backend takes (`backend_migrations`'). */
+const MIGRATION_LOCK = 'denext:migrate:"backend_migrations"';
+
+/** Assert the first statement `match` finds ran in a transaction holding the migration lock. */
+function assertUnderMigrationLock(sql: FakeRealtimeClient, match: RegExp): void {
+  const at = sql.statements.findIndex((s) => match.test(s));
+  assert(at >= 0, `${match} was sent`);
+  for (let i = at - 1; i >= 0; i--) {
+    const s = sql.statements[i];
+    if (s === "BEGIN" || s === "COMMIT") break;
+    if (/pg_advisory_xact_lock/.test(s) && sql.parameters[i][0] === MIGRATION_LOCK) return;
+  }
+  throw new Error(`${match} ran outside the backend's migration lock`);
+}
+
+Deno.test({
+  name: "realtime DDL at startup runs under the backend's migration lock",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
+    sql.catalog.publication.push({
+      schema: "app",
+      table: "things",
+      pk: "id",
+      ident: "d",
+      rls: false,
+    });
+    // A realtime trigger left disabled (by a logical-source run): the notify source enables it.
+    sql.catalog.triggers.set(
+      "notes",
+      new Map([["denext_realtime", { args: "notes\\000id\\000", enabled: "D" }]]),
+    );
+    const env = await setUp({}, sql);
+    try {
+      const engine = realtimeEngine();
+      const tick = await captureTick(() => engine.start());
+      assertUnderMigrationLock(sql, /^DROP TRIGGER IF EXISTS denext_realtime ON "app"."things"/);
+      assertUnderMigrationLock(sql, /^CREATE TRIGGER denext_realtime AFTER .* ON "app"."things"/s);
+      assertUnderMigrationLock(sql, /^ALTER TABLE notes ENABLE TRIGGER denext_realtime$/);
+      // Leaving the publication drops its triggers, under the lock too.
+      sql.catalog.publication.length = 0;
+      const before = sql.statements.length;
+      tick();
+      await until(() => !engine.config.tables.has("app.things"));
+      await settle(20);
+      const after = { ...sql, statements: sql.statements.slice(before) } as FakeRealtimeClient;
+      Object.assign(after, { parameters: sql.parameters.slice(before) });
+      assertUnderMigrationLock(after, /^DROP TRIGGER IF EXISTS denext_realtime ON "app"."things"/);
+    } finally {
+      await env.done();
+    }
+  },
+});
+
 /** A reserved connection answering the slot statements, fed from `batches`. */
 function fakeSlot(sql: FakeRealtimeClient, batches: Uint8Array[][]) {
   const statements: string[] = [];
@@ -1643,6 +1698,8 @@ Deno.test({
         "the logical source installs no row triggers",
       );
       assert(sql.statements.some((s) => s.includes("CREATE PUBLICATION denext_realtime")));
+      assertUnderMigrationLock(sql, /CREATE PUBLICATION denext_realtime/);
+      assertUnderMigrationLock(sql, /^ALTER PUBLICATION denext_realtime SET TABLE/);
       assert(
         sql.statements.includes('ALTER PUBLICATION denext_realtime SET TABLE "notes", "items"'),
       );

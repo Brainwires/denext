@@ -129,6 +129,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   that tracked the key — at most `maxTrackedKeys` (default 10 000) per subscription. Subscriptions
   are capped per identity and per instance; behind a reverse proxy without
   `trustForwardedHeaders`, signed-out visitors are counted per Live connection, not per address.
+- **`DENEXT_BOOT_DDL=off` has no out-of-band command for denext's own stores.** `denext db push`
+  applies `@denext/backend`'s migrations, but the auth, cache and job-history stores'
+  (`auth_migrations`, `cache_migrations`, `job_history_migrations`) are applied by running the app
+  once with boot DDL on, and the logical realtime source's `denext_realtime` publication is
+  created by hand.
 - **Storage's SQL policies need `storage: { rls: true }`** (otherwise a bucket's `authorize` in
   TypeScript decides, with no `storage` schema to join against). An S3 upload
   whose client skips the completion call was checked by nobody: record the keys completion
