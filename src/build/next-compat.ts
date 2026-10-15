@@ -877,6 +877,8 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/build/next-mdx",
   "denext/desktop",
   "denext/desktop/updater",
+  // `denext build --compile`'s entry: the compiled binary's server, jobs and migrations.
+  "denext/standalone",
   // The shims' compatibility manifest: metadata for tooling (`denext migrate`, the docs).
   "denext/expo/manifest",
 ]);
