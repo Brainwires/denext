@@ -860,6 +860,7 @@ function prefixedAliases(aliases: Readonly<Record<string, string>>): Record<stri
  */
 export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/server",
+  "denext/auth",
   "denext/server-only",
   "denext/remix/server",
   "denext/next-intl/server",

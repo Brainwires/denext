@@ -31,6 +31,7 @@
     "denext": "jsr:@denext/denext@^4.1.0",
     "denext/jsx-runtime": "jsr:@denext/denext@^4.1.0/jsx-runtime",
     "denext/server": "jsr:@denext/denext@^4.1.0/server",
+    "denext/auth": "jsr:@denext/denext@^4.1.0/auth",
     "denext/client": "jsr:@denext/denext@^4.1.0/client",
     "react": "jsr:@denext/denext@^4.1.0/react",
     "react-dom": "jsr:@denext/denext@^4.1.0/react-dom",

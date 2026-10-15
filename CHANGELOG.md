@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Added
 
+- **`denext/auth`: the auth surface as its own entry point.** `import { auth, denextAuth, github }
+  from "denext/auth"` — `denextAuth()`, `auth()` and the guards (`requireAuth`, `requireSession`),
+  the provider presets, the adapters and stores, bearer tokens, email verification and password
+  reset, MFA, passkeys and SAML. `denext/server` still re-exports every name. `denext create` and
+  `denext migrate` map it in the import map they write.
 - **`ip` on every auth event.** Each `denextAuth` event payload (`signIn`, `signOut`,
   `sessionRevoked`, `createUser`, `linkAccount`, `verificationRequested`, `emailVerified`,
   `phoneVerified`, `userConverted`, `passwordReset`, `apiTokenIssued`, `apiTokenRevoked`, and

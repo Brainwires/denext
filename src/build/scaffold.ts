@@ -247,6 +247,7 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
     "denext/jsx-runtime": `${dep}/jsx-runtime`,
     "denext/jsx-dev-runtime": `${dep}/jsx-dev-runtime`,
     "denext/server": `${dep}/server`,
+    "denext/auth": `${dep}/auth`,
     "denext/client": `${dep}/client`,
     "denext/testing": `${dep}/testing`,
     // `denext generate test` writes tests against @std/assert.

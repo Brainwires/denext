@@ -23,8 +23,9 @@ Three facts shape everything below:
   accounts, credentials, API tokens and MFA factors live. Passing one never by itself
   makes sessions stateful — those are two different decisions.
 
-Everything comes from `denext/server` (the client half from `denext` or
-`denext/client`). There is no `denext/auth` subpath.
+The server half is the `denext/auth` entry point (`import { auth, denextAuth, github } from
+"denext/auth"`); `denext/server` re-exports every one of those names, so either import works.
+The client half comes from `denext` or `denext/client`.
 
 On top of sign-in, the plugin runs the account flows an app would otherwise hand-roll:
 [password sign-in with no `authorize`](#password-sign-in-without-an-authorize),

@@ -255,6 +255,7 @@ async function buildAppRouterImports(
     "denext": R.base,
     "denext/jsx-runtime": jsr("jsx-runtime"),
     "denext/server": jsr("server"),
+    "denext/auth": jsr("auth"),
     "denext/client": jsr("client"),
   };
   if (opts.remix) {

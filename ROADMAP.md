@@ -85,7 +85,6 @@ or an upstream. Each one's limitation entry is deleted when it ships.
 ## Auth
 
 - **A `next-auth` compat shim,** so a drop-in Next app that imports `next-auth` runs.
-- **A standalone `denext/auth` subpath** (the surface lives in `denext/server` today).
 
 ## React, Remix and SPA surface
 
