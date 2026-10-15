@@ -148,6 +148,53 @@ later checks on first use. To apply them out of band:
 
 A store's own `migrate: false` still skips both its migrations and the check.
 
+### Pool sizing, timeouts and PgBouncer
+
+`postgresClient(url)` and `backend({ postgres: { url } })` open `Deno.SQL` with its defaults. To
+tune the pool, build the client yourself and pass it as `sql` (the backend never closes a client
+it was handed):
+
+```ts
+// Deno.SQL (denext's toolchain): times are in seconds
+const sql = new Deno.SQL(Deno.env.get("DATABASE_URL"), {
+  max: 10, // pooled connections (default 10)
+  idleTimeout: 60, // close a connection idle this long (default 0: never)
+  maxLifetime: 1800, // replace a connection this old (default 0: never)
+  connectionTimeout: 10, // to connect, and to wait for a free connection (default 30)
+});
+// postgres.js on stock Deno: fromPostgresJs(postgres(url, { max, idle_timeout, max_lifetime, connect_timeout }))
+```
+
+**Sizing.** Each instance holds at most `max` pooled connections, plus one more for `LISTEN`
+when something listens: `@denext/backend` realtime's notify source and webhook delivery's wake-up
+share it. These come out of the pool while they run: a transaction, every `db()` query (one
+transaction each), and the reserved connections. `realtime.revalidate.owner: "one"` reserves one
+for the life of the instance, and so does the logical source. Keep `instances × (max + 1)` under
+the server's `max_connections` minus what its administration needs. A request past `max` waits
+for a free connection, up to `connectionTimeout`, and then fails. It doesn't open another one.
+
+**Timeouts.** Bound a statement on the server, not in the pool: `statement_timeout` as a
+connection parameter (`?options=-c%20statement_timeout%3D5000` in the URL, milliseconds) or per
+role (`ALTER ROLE app SET statement_timeout = '5s'`). Auto-REST and realtime's re-reads already
+set a transaction-local one. `idle_in_transaction_session_timeout` ends a transaction a crashed
+caller left open.
+
+**PgBouncer in transaction mode.** `db()` is safe behind it: the role and claims are set
+transaction-locally, and nothing denext sends sets a session parameter that outlives its own
+reservation. A few things need a connection that is kept for the whole session, and they don't
+work through a transaction-mode pooler:
+
+- `LISTEN` (realtime's notify source, webhook delivery's wake-up, a schema reload notice), and
+  session-level advisory locks (`realtime.revalidate.owner: "one"`).
+- The logical source's temporary replication slot (and PgBouncer doesn't pass replication through
+  anyway).
+- Prepared statements: PgBouncer before 1.21 (or with `max_prepared_statements = 0`) refuses
+  them. Set `prepare: false` (`Deno.SQL` and postgres.js both take it).
+
+`backend({ postgres })` has one client for all of its services, so an app that uses those features
+connects directly or through a session-mode pool. The migration lock (transaction-scoped) and the
+stores' single statements work in either mode.
+
 Other drivers work as they always have — `jsr:@db/postgres`, `npm:mysql2` and the rest are
 standard Deno code. Keep the pool a module singleton.
 [`examples/postgres-load`](https://github.com/Brainwires/denext/tree/main/examples/postgres-load)

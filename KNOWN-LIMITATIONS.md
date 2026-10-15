@@ -129,6 +129,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   that tracked the key — at most `maxTrackedKeys` (default 10 000) per subscription. Subscriptions
   are capped per identity and per instance; behind a reverse proxy without
   `trustForwardedHeaders`, signed-out visitors are counted per Live connection, not per address.
+- **One Postgres client for every service:** behind PgBouncer in transaction mode, realtime's
+  notify source, `revalidate.owner: "one"` and the logical source don't work (they need a
+  session; webhooks then deliver on the poll interval only), and `backend({ postgres })` takes no second, direct
+  connection for them. Connect directly or through a session-mode pool.
 - **`DENEXT_BOOT_DDL=off` has no out-of-band command for denext's own stores.** `denext db push`
   applies `@denext/backend`'s migrations, but the auth, cache and job-history stores'
   (`auth_migrations`, `cache_migrations`, `job_history_migrations`) are applied by running the app

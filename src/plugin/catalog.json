@@ -685,8 +685,29 @@
                   "manual"
                 ]
               },
+              "retention": {
+                "description": "How long settled events are kept, in milliseconds from when the change happened: `delivered` ones (default 7 days) and `failed` ones — given up on after `maxAttempts`, or never allowed to go anywhere — (default 30 days). Older ones are deleted by the background deliverer (once an hour) and by `purgeWebhookEvents()` / `webhookCleanupJob()`. `false` keeps every event.",
+                "anyOf": [
+                  {
+                    "enum": [
+                      false
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "deliveredMs": {
+                        "type": "number"
+                      },
+                      "failedMs": {
+                        "type": "number"
+                      }
+                    }
+                  }
+                ]
+              },
               "migrate": {
-                "description": "Apply the `backend_webhooks_0001` migration on first use (default `true`).",
+                "description": "Apply the `backend_webhooks_*` migrations on first use (default `true`).",
                 "type": "boolean"
               },
               "fetch": {
