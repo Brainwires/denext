@@ -1590,6 +1590,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopWindowConfig` — The initial window (DesktopConfig.window), applied when the runtime adopts it.
 - `detectLocale(request: Request, i18n: I18nConfig): string` — Pick the best supported locale for a request from the NEXT_LOCALE cookie (highest priority) then the Accept-Language header, falling back to the default locale. Matches on both exact tags and the primary subtag (fr-CA matches a supported fr).
 - `type Directive = client | server | null` — Which boundary a module declares, or null when it declares none.
+- `type DirectPairedClient = SqlClient & object` — A client paired with a direct connection by withDirectConnection.
 - `disableTotp(config: AuthConfig, userId: string): Promise<void>` — Remove a user's TOTP factors — and their backup codes when no other verified factor remains. A no-op for a user without one. Callers must have proved a fresh factor first — see the /mfa/disable endpoint.
 - `discord(options: OAuthClientOptions): OAuthProvider` — Discord (OAuth 2.0). Reads the profile from /users/@me; only an address Discord reports as verified reaches the session.
 - `interface DocumentOptions` — Inputs to renderDocument for assembling the full HTML page.
@@ -1630,6 +1631,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `forbidden(): never` — Throw to render the nearest forbidden.tsx UI with a 403 status.
 - `interface FormatDetectionMetadata` — format-detection (telephone=no etc.).
 - `type FormFields = Record<string, FormDataEntryValue>` — The form fields of a submission as a plain object (the default input shape).
+- `interface FrameworkMigrationSet` — A set of migrations a denext feature applies for itself at startup — what denext db push / denext migration up apply out of band (with DENEXT_BOOT_DDL=off).
+- `frameworkMigrationSets(): FrameworkMigrationSet[]` — Every declared set, resolved, one per tracking table and schema, in declaration order.
 - `fromPostgresJs(pg: PostgresJsLike): SqlClient` — Adapt an npm postgres (postgres.js) client to a SqlClient — the stock-Deno path for every denext Postgres feature. denext does not depend on the package: import it in your app (npm:postgres) and pass the wrapped client as sql.
 - `generateBackupCodes(hasher: Hasher, count?: number): Promise<BackupCodes>` — Generate a set of unique backup codes and hash each through hasher. The hash covers the normalised form (no hyphen, lowercase), so a user may type a code with or without the hyphen, in any case.
 - `interface GeneratedSupabaseKeys` — A freshly generated key set, as generateSupabaseKeys returns it.
@@ -1921,6 +1924,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `registerBootCheck(check: () => Promise<void>): void` — With boot-time DDL off, register a feature's schema check for the server's startup (verifyBootSchemas); a no-op with it on. Each check runs once.
 - `registerCacheLifeProfiles(profiles: Record<string, CacheLifeProfile>): void` — Register named cacheLife profiles (typically from denext.config). A custom profile whose name collides with a built-in overrides it. Idempotent-ish: a later call with the same name wins.
 - `type RegisterFn = () => void | Promise<void>` — The register export: run once at server startup.
+- `registerFrameworkMigrations(key: string, set: SetSource): void` — Declare the migrations a feature applies for itself, so denext db push / migration up apply them out of band. Every Postgres store of denext declares its set when it is built (one per tracking table and schema); a function is resolved when the CLI reads the sets.
 - `registerHealthCheck(name: string, check: HealthCheck, options?: HealthCheckOptions): () => void` — Register a readiness check /_denext/health runs on every probe. While it fails the probe answers 503 with "status": "degraded" and checks: { [name]: "down" } (never the error itself — the probe is public). Registering a name again replaces the check.
 - `registerJob(name: string, job: Job): void` — Register (or replace) a job by name — used by the jobs/ loader and by app code.
 - `interface RemotePattern` — An allowed remote image source for the optimizer (Next.js-style). A source URL matches when its protocol equals protocol (if given), its host matches hostname (a literal, or a leading-*. wildcard suffix), and its path starts with pathname (if given).
@@ -2037,6 +2041,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ServiceDefinition` — A service definition passed to defineService.
 - `interface ServiceErrorContext` — Where a supervision failure happened (OnServiceError).
 - `interface Session<T>` — A request's session. data is the verified payload (or null when absent/invalid).
+- `sessionClient(sql: SqlClient): SqlClient` — The client session-level work runs on: the direct connection withDirectConnection paired with sql, else sql itself.
 - `sessionFromClaims(claims: SupabaseJwtClaims): AuthSession` — The denext session an authenticated access token stands for. user.emailVerified is left unset: the token's user_metadata is user-writable, so it is no evidence — read the stored user for it (auth() does).
 - `interface SessionOptions` — Options for getSession.
 - `interface SessionStore` — Where store-backed sessions live. Every method may be sync or async; get must return only an **unexpired** session (treat expiresAt in the past as a miss).
@@ -2180,6 +2185,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type VNodeType = string | Component<any> | FRAGMENT` — The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker.
 - `interface VProps` — Props passed to a virtual node. children is normalized separately.
 - `interface Web3NonceAdapter` — The Web3 sign-in group.
+- `withDirectConnection(pooled: SqlClient, direct: SqlClient, owns?: object): DirectPairedClient` — Pair a pooled client (a PgBouncer in transaction mode, say) with a direct connection to the same database — Prisma's directUrl. Queries and transactions go to pooled; what needs a session of its own goes to direct: listen() (LISTEN / NOTIFY), reserve() (a session-level advisory lock, a temporary replication slot), and denext's migrations and their locks (sessionClient). close() closes the ones owns names.
 - `withHeaders(response: Response, extra?: Headers): Response` — Merge extra headers into a response (returning a new Response if needed).
 - `withMigrationLock<T>(sql: SqlClient, options: MigrationLockOptions, fn: (tx: SqlClient) => Promise<T>): Promise<T>` — Run fn in a transaction holding the same advisory lock migratePostgres takes for the tracking table options names, so DDL that is not a recorded migration (a trigger created at startup, say) never races a migration run, or another instance doing the same. The lock is held until the transaction ends.
 

@@ -199,7 +199,7 @@
                 ]
               },
               "metadataPath": {
-                "description": "Where the bucket and object metadata lives without Postgres: a `node:sqlite` file (default `.denext-storage.db` in the project root). With `postgres`, it is the `storage` schema.",
+                "description": "Where the bucket and object metadata lives without Postgres: a `node:sqlite` file (default `.denext-storage.db` in the project root; in a `denext build --compile` binary, `storage.db` in its state directory, and a relative path resolves against its working directory). With `postgres`, it is the `storage` schema.",
                 "type": "string"
               },
               "maxTransformDimension": {
@@ -222,6 +222,10 @@
               },
               "sql": {
                 "description": "A client to use instead of `url`: any `SqlClient` (on stock Deno, `fromPostgresJs(postgres(url))` with the npm `postgres` package). It is never closed by the plugin."
+              },
+              "directUrl": {
+                "description": "A direct `postgres://` URL to the same database (default: `DATABASE_DIRECT_URL`), for when `url` / `sql` is a pooler in transaction mode (PgBouncer, Supavisor). What needs a session of its own runs on it: realtime's LISTEN, its reserved connections (`revalidate.owner: \"one\"`, the logical source), webhook delivery's wake-up, the REST schema-reload listener, and every migration and its lock. Queries, `db()` included, keep using the pooled one.",
+                "type": "string"
               },
               "rls": {
                 "description": "Row-level security: `db()` runs every query as `anon` or `authenticated` with the request's claims, so Supabase-style policies apply. The roles and `auth.*` functions are created by a migration on first use unless `migrate: false`.",

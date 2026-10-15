@@ -7163,6 +7163,18 @@
           "denextOnly": true
         },
         {
+          "name": "DirectPairedClient",
+          "slug": "DirectPairedClient",
+          "kind": "typeAlias",
+          "signature": "type DirectPairedClient = SqlClient & object",
+          "doc": "A client paired with a direct connection by withDirectConnection.",
+          "docFull": "A client paired with a direct connection by {@linkcode withDirectConnection}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "disableTotp",
           "slug": "disableTotp",
           "kind": "function",
@@ -7681,6 +7693,30 @@
           "docFull": "The form fields of a submission as a plain object (the default `input` shape).",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FrameworkMigrationSet",
+          "slug": "FrameworkMigrationSet",
+          "kind": "interface",
+          "signature": "interface FrameworkMigrationSet",
+          "doc": "A set of migrations a denext feature applies for itself at startup — what denext db push / denext migration up apply out of band (with DENEXT_BOOT_DDL=off).",
+          "docFull": "A set of migrations a denext feature applies for itself at startup — what `denext db push` /\n`denext migration up` apply out of band (with `DENEXT_BOOT_DDL=off`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "frameworkMigrationSets",
+          "slug": "frameworkMigrationSets",
+          "kind": "function",
+          "signature": "frameworkMigrationSets(): FrameworkMigrationSet[]",
+          "doc": "Every declared set, resolved, one per tracking table and schema, in declaration order.",
+          "docFull": "Every declared set, resolved, one per tracking table and schema, in declaration order.",
+          "params": [],
+          "returns": "The sets.",
           "examples": [],
           "denextOnly": true
         },
@@ -11608,6 +11644,27 @@
           "denextOnly": true
         },
         {
+          "name": "registerFrameworkMigrations",
+          "slug": "registerFrameworkMigrations",
+          "kind": "function",
+          "signature": "registerFrameworkMigrations(key: string, set: SetSource): void",
+          "doc": "Declare the migrations a feature applies for itself, so denext db push / migration up apply them out of band. Every Postgres store of denext declares its set when it is built (one per tracking table and schema); a function is resolved when the CLI reads the sets.",
+          "docFull": "Declare the migrations a feature applies for itself, so `denext db push` / `migration up`\napply them out of band. Every Postgres store of denext declares its set when it is built (one\nper tracking table and schema); a function is resolved when the CLI reads the sets.",
+          "params": [
+            {
+              "name": "key",
+              "doc": "Identifies the set (a later declaration with the same key replaces it)."
+            },
+            {
+              "name": "set",
+              "doc": "The set, or a function returning it (or nothing) when the CLI reads them."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "registerHealthCheck",
           "slug": "registerHealthCheck",
           "kind": "function",
@@ -13235,6 +13292,23 @@
           "docFull": "A request's session. `data` is the verified payload (or `null` when absent/invalid).",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "sessionClient",
+          "slug": "sessionClient",
+          "kind": "function",
+          "signature": "sessionClient(sql: SqlClient): SqlClient",
+          "doc": "The client session-level work runs on: the direct connection withDirectConnection paired with sql, else sql itself.",
+          "docFull": "The client session-level work runs on: the direct connection {@linkcode withDirectConnection}\npaired with `sql`, else `sql` itself.",
+          "params": [
+            {
+              "name": "sql",
+              "doc": "The client."
+            }
+          ],
+          "returns": "The client for LISTEN, reserved connections and migrations.",
           "examples": [],
           "denextOnly": true
         },
@@ -15249,6 +15323,31 @@
           "docFull": "The Web3 sign-in group.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "withDirectConnection",
+          "slug": "withDirectConnection",
+          "kind": "function",
+          "signature": "withDirectConnection(pooled: SqlClient, direct: SqlClient, owns?: object): DirectPairedClient",
+          "doc": "Pair a pooled client (a PgBouncer in transaction mode, say) with a direct connection to the same database — Prisma's directUrl. Queries and transactions go to pooled; what needs a session of its own goes to direct: listen() (LISTEN / NOTIFY), reserve() (a session-level advisory lock, a temporary replication slot), and denext's migrations and their locks (sessionClient). close() closes the ones owns names.",
+          "docFull": "Pair a pooled client (a PgBouncer in transaction mode, say) with a direct connection to the\nsame database — Prisma's `directUrl`. Queries and transactions go to `pooled`; what needs a\nsession of its own goes to `direct`: `listen()` (LISTEN / NOTIFY), `reserve()` (a session-level\nadvisory lock, a temporary replication slot), and denext's migrations and their locks\n({@linkcode sessionClient}). `close()` closes the ones `owns` names.\n\n```ts\nconst sql = withDirectConnection(\n  postgresClient(Deno.env.get(\"DATABASE_URL\")), // the pooler\n  postgresClient(Deno.env.get(\"DATABASE_DIRECT_URL\")), // the server itself\n);\n```",
+          "params": [
+            {
+              "name": "pooled",
+              "doc": "The client queries go to."
+            },
+            {
+              "name": "direct",
+              "doc": "The client for session-level work."
+            },
+            {
+              "name": "owns",
+              "doc": "Which of the two close() closes (default both)."
+            }
+          ],
+          "returns": "The paired client.",
           "examples": [],
           "denextOnly": true
         },
