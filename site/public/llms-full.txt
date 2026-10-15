@@ -1382,7 +1382,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 4.0.0` — The denext framework version.
+- `VERSION: 4.1.0` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -1562,7 +1562,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `createApp(config: AppConfig): RequestHandler` — Build the core request handler from an AppConfig: routing, SSR/streaming, API routes, the image endpoint, static files, caching, and the optional request-logging/timeout wrappers. Most apps use serve instead; use createApp directly to embed denext in a custom server.
 - `createAppLinksHandler(config: AppLinksConfig | undefined): (request: Request) => Response | null` — A request handler for the two association files: GET/HEAD of a configured path answers 200 application/json (short public caching); anything else resolves null. denext start and denext dev run it first, before redirects, trailingSlash and middleware, since iOS and Android refuse a redirected or non-200 answer. Use it in a custom server too.
 - `createChannel<T>(config: ChannelConfig<T>): Channel<T>` — Create a channel. Export it from a "use server" module (or give it an id).
-- `createMiddlewareRunner(mod: MiddlewareModule): MiddlewareRunner` — Build a runner from a loaded middleware module. The module may export a single handler or an ordered array of handlers/entries (composed into one chain). Returns null if the module exports no handler.
+- `createMiddlewareRunner(mod: MiddlewareModule, file?: string): MiddlewareRunner` — Build a runner from a loaded middleware module. The module may export a single handler or an ordered array of handlers/entries (composed into one chain), named proxy (Next.js 16's proxy.ts), middleware, or as the default export.
 - `createOtaHandler(options: OtaHandlerOptions): (request: Request) => Promise<Response | null>` — Build a handler that serves an OTA UI export to checkForUiUpdate / the native DenextOta plugin, following the serving rules every OTA server must keep:
 - `createPushSender(config: PushSenderConfig): PushSender` — Create a push sender for your APNs and/or FCM credentials. Keep one per process: it caches the APNs provider JWT for 50 minutes (Apple refuses one older than an hour, and throttles refreshing it more often than every 20 minutes) and the FCM access token until a minute before it expires. A refused provider token (ExpiredProviderToken / InvalidProviderToken, FCM 401) is re-signed and the send retried once.
 - `credentials(options?: CredentialsOptions): CredentialsProvider` — An email/password (or any custom) credentials provider.

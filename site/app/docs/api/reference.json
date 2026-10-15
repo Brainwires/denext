@@ -4188,7 +4188,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 4.0.0",
+          "signature": "VERSION: 4.1.0",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -6511,11 +6511,20 @@
           "name": "createMiddlewareRunner",
           "slug": "createMiddlewareRunner",
           "kind": "function",
-          "signature": "createMiddlewareRunner(mod: MiddlewareModule): MiddlewareRunner",
-          "doc": "Build a runner from a loaded middleware module. The module may export a single handler or an ordered array of handlers/entries (composed into one chain). Returns null if the module exports no handler.",
-          "docFull": "Build a runner from a loaded middleware module. The module may export a single\nhandler or an ordered array of handlers/entries (composed into one chain).\nReturns null if the module exports no handler.",
-          "params": [],
-          "returns": "",
+          "signature": "createMiddlewareRunner(mod: MiddlewareModule, file?: string): MiddlewareRunner",
+          "doc": "Build a runner from a loaded middleware module. The module may export a single handler or an ordered array of handlers/entries (composed into one chain), named proxy (Next.js 16's proxy.ts), middleware, or as the default export.",
+          "docFull": "Build a runner from a loaded middleware module. The module may export a single\nhandler or an ordered array of handlers/entries (composed into one chain), named `proxy`\n(Next.js 16's `proxy.ts`), `middleware`, or as the default export.",
+          "params": [
+            {
+              "name": "mod",
+              "doc": "The loaded middleware.* / proxy.* module."
+            },
+            {
+              "name": "file",
+              "doc": "The module's name for the error message (default \"the middleware file\")."
+            }
+          ],
+          "returns": "The runner.",
           "examples": [],
           "denextOnly": true
         },

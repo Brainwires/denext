@@ -21,7 +21,7 @@
         "./client",
         "./server"
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "backend",
       "configKeys": [
@@ -733,7 +733,7 @@
         "./markdown",
         "./runtime"
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "contentCollections",
       "verb": "content",
@@ -765,7 +765,7 @@
       "exports": [
         "."
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "effect",
       "configKeys": [
@@ -794,7 +794,7 @@
         "./command",
         "./subscriptions"
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "graphql",
       "verb": "graphql",
@@ -974,7 +974,7 @@
         "./command",
         "./types"
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "htmx",
       "verb": "htmx",
@@ -1028,7 +1028,7 @@
         "./spec",
         "./types"
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "openapi",
       "verb": "openapi",
@@ -1188,7 +1188,7 @@
         "./link",
         "./router"
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "pagesRouter",
       "configKeys": [
@@ -1229,7 +1229,7 @@
         "./dom",
         "./routes"
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "reactRouter",
       "configKeys": [

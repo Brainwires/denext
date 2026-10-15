@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-10-15
+
 ### Breaking
 
 - **`@denext/graphql` 0.4.0: `fromChannel(channel, key)` runs the channel's `authorize`.** It
@@ -370,7 +372,6 @@ and this project adheres to
   it is kept until its `nextUpdate`, a rollback to an older BLOB is refused, and it is fetched on
   the server only, with a timeout and a size cap — or supplied offline with `blob`. Registration
   options ask for `"direct"` attestation while it is on.
-
 - **A regression suite for the Next.js advisories published 2026-08-31 – 2026-10-15.**
   `tests/security-nextjs-advisories.test.ts` replays each advisory's attack against denext, one
   test per advisory named by its GHSA / CVE id: the image optimizer SSRF (GHSA-cjq9-62q9-8jv4)
@@ -15119,7 +15120,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.0.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.1.0...development
+[4.1.0]: https://jsr.io/@denext/denext@4.1.0
 [4.0.0]: https://jsr.io/@denext/denext@4.0.0
 [4.0.0-rc.2]: https://jsr.io/@denext/denext@4.0.0-rc.2
 [4.0.0-rc.1]: https://jsr.io/@denext/denext@4.0.0-rc.1
