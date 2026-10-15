@@ -620,8 +620,9 @@ Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <d
 drive it; `createOtaHandler` from `denext/server` serves the export. A downloaded UI is
 re-verified at every launch and on each file's first serve: one changed on the device is refused
 (the bundled UI is served, `onOtaRejected` fires, `otaStatus().tampered` names it), and
-`denext mobile doctor --release` flags a plugin from before re-verification. An unsigned manifest over
-plain `http` is refused beyond loopback. Whether a change can ship over the air:
+`denext mobile doctor --release` flags a plugin from before re-verification. Without an embedded public key,
+an unsigned UI is accepted only from an origin pinned with `add-ota --ota-origin` (https) or a
+loopback host; an unpinned `https` server is refused too (`insecure`). Whether a change can ship over the air:
 `denext mobile fingerprint [--diff old.json] [--write]` hashes the native layer, and
 `denext ota manifest --native-fingerprint auto` makes a binary with another fingerprint refuse
 the UI (`native_mismatch`). A Deno Desktop app gets the same signed updates from
