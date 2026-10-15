@@ -74,7 +74,7 @@ import {
   tableTrigger,
   triggerArgs,
 } from "./realtime-sql.ts";
-import { LogicalSource } from "./realtime-logical.ts";
+import { LogicalSource, releaseReserved, type Reserved } from "./realtime-logical.ts";
 
 /** A change as the database reported it — keys only, before any re-read. */
 export interface TableChangeEvent {
@@ -307,8 +307,12 @@ export const REVALIDATE_OWNER_SQL = "select case when exists (select 1 from pg_l
   `objid = ${OWNER_LOCK[1]} and objsubid = 2 and granted) then true else ` +
   `pg_try_advisory_lock(${OWNER_LOCK[0]}, ${OWNER_LOCK[1]}) end as owner`;
 
-/** A reserved connection, as `SqlClient.reserve` hands it out. */
-type Reserved = SqlClient & { release(): void | Promise<void> };
+/**
+ * Gives up every session-level advisory lock the connection holds. A failed owner check can't
+ * tell whether the lock was taken before the failure, so it releases them all — the reserved
+ * connection is this engine's alone — before the connection goes back to the pool.
+ */
+const UNLOCK_ALL_SQL = "select pg_advisory_unlock_all()";
 
 /** The realtime engine of one server instance. */
 export class RealtimeEngine {
@@ -830,6 +834,9 @@ export class RealtimeEngine {
    * cannot hold the lock: every instance revalidates (warned once), never none.
    */
   async #ownsRevalidation(): Promise<boolean> {
+    // Stopped: the lock connection was (or is being) given back; reserving another would leave
+    // it out of the pool with nobody to return it.
+    if (this.#stopped) return false;
     const sql = this.#client();
     if (typeof sql.reserve !== "function") {
       if (!this.#warnedReserve) {
@@ -846,8 +853,10 @@ export class RealtimeEngine {
       const [row] = await (await pending).unsafe<{ owner: boolean }>(REVALIDATE_OWNER_SQL);
       return row?.owner === true;
     } catch {
+      // The connection may be dead (its lock went with it) or alive with the lock held (a
+      // statement timeout, a cancel): release every advisory lock before it returns to the pool.
       if (this.#lockConn === pending) this.#lockConn = null;
-      void pending.then((conn) => conn.release()).catch(() => {});
+      void pending.then((conn) => releaseReserved(conn, [[UNLOCK_ALL_SQL]])).catch(() => {});
       return false;
     }
   }
@@ -858,11 +867,10 @@ export class RealtimeEngine {
     this.#lockConn = null;
     if (!pending) return;
     try {
-      const conn = await pending;
-      await conn.unsafe(`select pg_advisory_unlock(${OWNER_LOCK[0]}, ${OWNER_LOCK[1]})`)
-        .then(() => {}, () => {});
-      await conn.release();
-    } catch { /* never reserved, or already gone: nothing is held */ }
+      await releaseReserved(await pending, [
+        [`select pg_advisory_unlock(${OWNER_LOCK[0]}, ${OWNER_LOCK[1]})`],
+      ]);
+    } catch { /* never reserved: nothing is held */ }
   }
 
   /** Re-read the burst's rows once for the group, then work out each audience's changes. */

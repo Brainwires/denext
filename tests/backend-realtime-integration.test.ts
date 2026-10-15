@@ -38,6 +38,7 @@ import {
   seedQuery,
 } from "../packages/backend/src/realtime.ts";
 import { type RealtimeOptions, resolveRealtime } from "../packages/backend/src/realtime-sql.ts";
+import { LogicalSource } from "../packages/backend/src/realtime-logical.ts";
 import { postgresEnvironment } from "./helpers/postgres-env.ts";
 import {
   authConfig,
@@ -759,6 +760,73 @@ Deno.test({
       assertEquals(triggers.length, 0, "no trigger on the write path");
     } finally {
       await uninstall(hub);
+      await env.drop();
+    }
+  },
+});
+
+Deno.test({
+  name: `realtime on a real Postgres: a failed logical read drops its slot and the source reopens${
+    logicalReason ? ` (skipped: ${logicalReason})` : ""
+  }`,
+  ignore: logicalReason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    const error = console.error;
+    console.error = () => {};
+    let source: LogicalSource | undefined;
+    const held: Array<{ release(): void | Promise<void> }> = [];
+    try {
+      await env.admin.unsafe(`alter role ${new URL(env.url).username} replication`);
+      await env.app.unsafe("create table notes (id bigserial primary key, body text not null)");
+      await env.app.unsafe("create publication dnx_pub for table notes");
+      const table = resolveRealtime({ tables: { notes: {} } }).tables.get("notes")!;
+      const keys: string[] = [];
+      let resyncs = 0;
+      let throwOnce = true;
+      // The reopen must land on another pooled connection (as it can on a busy pool): the
+      // second reservation first takes the connection just returned and holds it.
+      let reserves = 0;
+      const sql = {
+        reserve: async () => {
+          if (++reserves === 2) held.push(await env.app.reserve!());
+          return await env.app.reserve!();
+        },
+      } as unknown as SqlClient;
+      source = new LogicalSource({
+        client: () => sql,
+        publications: () => ["dnx_pub"],
+        tableOf: (_schema, name) => name === "notes" ? table : null,
+        emit: (event) => {
+          // A read that fails with its session alive (here: a throw while decoding it).
+          if (throwOnce) {
+            throwOnce = false;
+            throw new Error("decode failed");
+          }
+          if (event.key) keys.push(event.key);
+        },
+        resync: () => void resyncs++,
+        pollMs: 20,
+        maxChanges: 100,
+      });
+      await source.start();
+      await env.app`insert into notes (body) values ('lost to the failed read')`;
+      // Before the fix the old slot stayed on the pooled connection, pinning WAL: re-creating
+      // it elsewhere failed ("already exists") on every retry, and no change was read again.
+      await until(() => resyncs === 1, 10_000, "the source reopened");
+      await env.app`insert into notes (body) values ('after the reopen')`;
+      await until(() => keys.length === 1, 10_000, "a change read on the new slot");
+      const slots = await env.admin.unsafe<{ n: number }>(
+        "select count(*)::int as n from pg_replication_slots where database = $1",
+        [env.database],
+      );
+      assertEquals(slots[0].n, 1, "only the live slot is left");
+    } finally {
+      await source?.stop();
+      for (const conn of held) await conn.release();
+      console.error = error;
       await env.drop();
     }
   },

@@ -18,6 +18,14 @@
 - **The logical realtime source honours a table's `events`:** a change of a kind the table leaves
   out (a `TRUNCATE`, say) is dropped, as the triggers of the notify source never fire for it.
 
+### Fixed
+
+- **Realtime returns its reserved connections clean.** A failed `revalidate.owner: "one"` check
+  no longer returns its connection to the pool with the owner's advisory lock held (every advisory
+  lock is released first), and a stopped engine reserves no new one. A failed logical-slot read
+  drops the temporary slot and resets `TimeZone` before the connection goes back, so the slot
+  pins no WAL and the source can reopen.
+
 ## 0.4.0 - 2026-10-14
 
 ### Security

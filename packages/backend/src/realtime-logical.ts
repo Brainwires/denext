@@ -287,7 +287,26 @@ export function byteaOf(value: unknown): Uint8Array {
 }
 
 /** A reserved connection. */
-type Reserved = SqlClient & { release(): void | Promise<void> };
+export type Reserved = SqlClient & { release(): void | Promise<void> };
+
+/** A statement {@linkcode releaseReserved} runs first: its text, and its parameters. */
+export type Cleanup = readonly [text: string, params?: unknown[]];
+
+/**
+ * Give a reserved connection back to the pool with nothing of ours left on it. Each `cleanup`
+ * statement runs first, best effort: a session-level lock, a temporary replication slot or a
+ * session setting would otherwise ride the pooled connection to its next borrower. On a dead
+ * connection they fail, and the server already dropped what the session held. Never throws.
+ *
+ * @param conn The reserved connection.
+ * @param cleanup The statements that undo what this caller left on the session.
+ */
+export async function releaseReserved(conn: Reserved, cleanup: readonly Cleanup[]): Promise<void> {
+  for (const [text, params] of cleanup) {
+    await Promise.resolve(conn.unsafe(text, params)).then(() => {}, () => {});
+  }
+  await Promise.resolve().then(() => conn.release()).catch(() => {});
+}
 
 /** Options for {@linkcode LogicalSource}. */
 export interface LogicalSourceOptions {
@@ -360,7 +379,7 @@ export class LogicalSource {
         [this.#slot],
       );
     } catch (error) {
-      await Promise.resolve(conn.release()).catch(() => {});
+      await this.#retire(conn);
       if (error instanceof LogicalUnsupportedError) throw error;
       throw new LogicalUnsupportedError((error as Error).message);
     }
@@ -384,10 +403,23 @@ export class LogicalSource {
     }
   }
 
+  /**
+   * Return a slot connection: its temporary slot dropped and its TimeZone reset first. A read can
+   * fail with the session alive (a statement timeout, a decode error): released as it was, the
+   * pooled connection would keep the slot — pinning WAL for as long as it lives, and refusing the
+   * next slot of the same name, so the source could never reopen — and the session setting.
+   */
+  #retire(conn: Reserved): Promise<void> {
+    return releaseReserved(conn, [
+      ["select pg_drop_replication_slot($1)", [this.#slot]],
+      ["reset TimeZone"],
+    ]);
+  }
+
   async #reopen(): Promise<void> {
     const old = this.#conn;
     this.#conn = null;
-    await Promise.resolve(old?.release()).catch(() => {});
+    if (old) await this.#retire(old);
     while (!this.#stopped) {
       try {
         await this.#open();
@@ -439,8 +471,6 @@ export class LogicalSource {
     await this.#loop?.catch(() => {});
     const conn = this.#conn;
     this.#conn = null;
-    if (!conn) return;
-    await conn.unsafe("select pg_drop_replication_slot($1)", [this.#slot]).then(() => {}, () => {});
-    await Promise.resolve(conn.release()).catch(() => {});
+    if (conn) await this.#retire(conn);
   }
 }

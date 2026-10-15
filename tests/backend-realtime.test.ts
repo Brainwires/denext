@@ -65,6 +65,7 @@ import {
 } from "../packages/backend/src/realtime-shared.ts";
 import { type FakeRealtimeClient, fakeRealtimeClient } from "./helpers/fake-realtime-client.ts";
 import { begin, insert, relation } from "./helpers/pgoutput.ts";
+import { LogicalSource } from "../packages/backend/src/realtime-logical.ts";
 import { parseCidr } from "../src/server/remote-addr.ts";
 import {
   authConfig,
@@ -472,6 +473,89 @@ Deno.test("realtime: revalidate { owner: 'one' } revalidates only while this ins
   } finally {
     await env.done();
   }
+});
+
+Deno.test("realtime: a failed owner check gives the lock up before its connection goes back to the pool", async () => {
+  const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
+  const log: string[] = [];
+  let owner: boolean | Error = true;
+  sql.reserve = lockConnection(log, () => owner);
+  const env = await setUp({ revalidate: { owner: "one" } }, sql);
+  try {
+    const engine = realtimeEngine();
+    await engine.start();
+    env.sql.insert("notes", { id: 1, owner: A, body: "x" });
+    await until(() => engine.stats.revalidations === 1, 2_000, "the owner's revalidation");
+    // The check fails while the session lives (a statement timeout, a cancel): the session may
+    // still hold the lock, and a pooled connection must never carry it to its next borrower.
+    owner = new Error("canceling statement due to statement timeout");
+    env.sql.insert("notes", { id: 2, owner: A, body: "y" });
+    await until(() => log.includes("release"), 2_000, "the connection returned");
+    assertEquals(log.slice(-2), ["select pg_advisory_unlock_all()", "release"]);
+    // Once stopped, a late burst reserves nothing (no connection left out of the pool).
+    await engine.stop();
+    const reserves = log.filter((l) => l === "reserve").length;
+    env.sql.insert("notes", { id: 3, owner: A, body: "z" });
+    await settle(60);
+    assertEquals(log.filter((l) => l === "reserve").length, reserves);
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime source logical: a failed read drops its slot and resets the session before the connection goes back", async () => {
+  const conns: string[][] = [];
+  let failNext = true;
+  const answer = (rows: unknown[]) => {
+    const p = Promise.resolve(rows);
+    return { then: p.then.bind(p), simple: () => p };
+  };
+  const client = {
+    reserve: () => {
+      const log: string[] = [];
+      conns.push(log);
+      return Promise.resolve({
+        unsafe: (text: string) => {
+          log.push(text);
+          if (text === "show wal_level") return answer([{ wal_level: "logical" }]);
+          if (text.includes("pg_logical_slot_get_binary_changes") && failNext) {
+            failNext = false;
+            // The session is alive: the error is the statement's (a decode, a timeout).
+            return Promise.reject(new Error("canceling statement due to statement timeout"));
+          }
+          return answer([]);
+        },
+        release: () => void log.push("release"),
+      });
+    },
+  } as unknown as SqlClient;
+  const error = console.error;
+  console.error = () => {};
+  const source = new LogicalSource({
+    client: () => client,
+    publications: () => ["p"],
+    tableOf: () => null,
+    emit: () => {},
+    resync: () => {},
+    pollMs: 5,
+    maxChanges: 10,
+  });
+  try {
+    await source.start();
+    await until(() => conns.length === 2 && conns[1].some((s) => s.includes("get_binary")));
+    const first = conns[0];
+    const released = first.indexOf("release");
+    assert(released > 0, "the first connection was returned");
+    const drop = first.findIndex((s) => s.includes("pg_drop_replication_slot"));
+    const reset = first.indexOf("reset TimeZone");
+    assert(drop >= 0 && drop < released, "its temporary slot dropped before it went back");
+    assert(reset >= 0 && reset < released, "its session TimeZone reset before it went back");
+  } finally {
+    await source.stop();
+    console.error = error;
+  }
+  const second = conns[1];
+  assert(second.indexOf("reset TimeZone") < second.indexOf("release"), "stop() resets it too");
 });
 
 Deno.test("realtime: revalidate { owner: 'one' } without reserve() warns and revalidates everywhere", async () => {

@@ -236,6 +236,15 @@ and this project adheres to
 - **`/auth/v1` `GET /admin/users` with empty paging values returns the default page.**
   supabase-js's `auth.admin.listUsers()` with no options sends `?page=&per_page=`, which was
   read as one user per page; an empty value now means GoTrue's defaults (page 1, 50 per page).
+- **`@denext/backend` 0.5.0: realtime returns its reserved connections clean.** A failed
+  `revalidate: { owner: "one" }` check (a statement timeout or a cancel, with the session still
+  alive) sent the connection back to the pool still holding the owner's advisory lock, so no
+  instance could take it until that pooled connection closed and nothing revalidated. The engine
+  now releases every advisory lock it holds first, and reserves nothing once stopped. A failed
+  read of the logical source's slot returned its connection with the temporary slot and the
+  session's `TimeZone` still set. The slot pinned WAL for as long as the connection lived, and the
+  source could not reopen because a slot of that name already existed. The slot is dropped and
+  the setting reset before the connection goes back.
 - **`@denext/content-collections` Markdown: `_x_` / `*x*` in a link destination** (inline or
   reference, e.g. `[x](https://a.test/_x_/y)`) is no longer turned into `<em>`, which corrupted
   the `href`. The destination is held out before emphasis runs; the link text still takes it.
