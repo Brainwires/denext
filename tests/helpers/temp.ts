@@ -43,3 +43,28 @@ export async function removeTempDir(dir: string, attempts = 20): Promise<void> {
     }
   }
 }
+
+const untilExit = new Set<string>();
+
+/**
+ * Make a temp directory that is removed when the test process exits (the `unload` event, which
+ * fires even after a failed assertion). For helpers that hand a path to many tests, where no
+ * single test owns the lifetime. Removal tolerates a still-open handle on Windows.
+ *
+ * @param prefix The directory-name prefix.
+ * @returns The new directory's path.
+ */
+export function makeTempDirUntilExit(prefix: string): string {
+  if (untilExit.size === 0) {
+    globalThis.addEventListener("unload", () => {
+      for (const dir of untilExit) {
+        try {
+          removeTempDirSync(dir);
+        } catch { /* best effort at exit */ }
+      }
+    });
+  }
+  const dir = Deno.makeTempDirSync({ prefix });
+  untilExit.add(dir);
+  return dir;
+}

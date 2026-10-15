@@ -16,6 +16,7 @@
 
 import type { DenextConfig } from "../server/config.ts";
 import type { ModuleLoader } from "../server/types.ts";
+import { verifyBootSchemas } from "../server/postgres-boot.ts";
 import type { RouteSynthesizer } from "../router/manifest.ts";
 import { registerRouteSynthesizer } from "../router/manifest.ts";
 import { OTA_MANIFEST_PATH, OTA_PLATFORM_PATH } from "../mobile/ota-manifest.ts";
@@ -258,6 +259,9 @@ export async function applyPlugins(base: ApplyPluginsBase): Promise<void> {
     };
     await plugin.setup(context);
   }
+  // DENEXT_BOOT_DDL=off: a server checks that every Postgres feature the config built (and each
+  // plugin set up) finds its schema, and refuses to start without it.
+  if (base.mode === "dev" || base.mode === "prod") await verifyBootSchemas();
 }
 
 /**

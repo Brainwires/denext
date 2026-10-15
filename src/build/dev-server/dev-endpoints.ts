@@ -7,7 +7,7 @@ import { browserLogEvent, type DevEventKind } from "../dev-events.ts";
 import { denoExecutable } from "../bundle.ts";
 import { isCompat } from "./compat.ts";
 import { customSchemeOrigin } from "../../server/origin-check.ts";
-import { enrichFrame, pushError } from "./reload.ts";
+import { enrichFrame, explainForOverlay, explainForTerminal, pushError } from "./reload.ts";
 import type { DevState } from "./state.ts";
 
 /**
@@ -215,11 +215,13 @@ export function typeCheck(st: DevState, changedPaths: string[]): void {
     const text = await runTypeCheck(st, files);
     if (token !== st.typeCheckToken) return; // superseded by a newer edit
     if (text === null) return; // clean — this edit's refresh/reload already cleared any overlay
+    console.error(explainForTerminal(st, text));
     pushError(st, {
       title: "Type error",
       message: text.split("\n").slice(0, 24).join("\n"),
       stack: "",
       ...enrichFrame(st, text),
+      ...explainForOverlay(st, text),
     });
   })();
 }

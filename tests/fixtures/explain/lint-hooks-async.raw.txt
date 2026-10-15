@@ -1,0 +1,14 @@
+error[denext/no-hooks-in-async]: `useState` is used in async component `Page`. Async components render only on the server and never hydrate, so the hook has no client effect. [denext/no-hooks-in-async]
+ --> /app/lint-hooks-async.tsx:5:27
+  | 
+5 |   const [open, setOpen] = useState(false);
+  |                           ^^^^^^^^^^^^^^^
+
+error[denext/no-handlers-in-async]: `onClick` receives a function in async component `Page`. An async component is a Server Component: its functions never reach the browser, so the handler is dropped and the element does nothing. Pass a Server Action ("use server") or move the handler into a "use client" component. [denext/no-handlers-in-async]
+ --> /app/lint-hooks-async.tsx:7:32
+  | 
+7 |   return <button type="button" onClick={() => setOpen(!open)}>{data}</button>;
+  |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Found 2 problems
+Checked 1 file

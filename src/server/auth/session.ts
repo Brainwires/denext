@@ -31,6 +31,9 @@
  */
 
 import { getSession } from "../session.ts";
+import { currentContext } from "../request-context.ts";
+import type { AdapterUser, AuthAdapter } from "./adapter.ts";
+import { banVerdict, type CredentialVerdict, isBanned } from "./ban.ts";
 import { randomToken } from "./oauth.ts";
 import { cookieSessionOptions, resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { sessionExpired, type SessionStore } from "./session-store.ts";
@@ -102,8 +105,123 @@ async function resolveSession(
   return stored ? { ...stored, sessionId: sid } : null;
 }
 
+/** The request memo slot of {@linkcode storedUser}: user id → the adapter and its read. */
+const STORED_USERS = Symbol("denext.auth.storedUsers");
+
+/** One memoized user read: the adapter it went to, and its result. */
+interface StoredUserRead {
+  adapter: object;
+  read: Promise<AdapterUser | null>;
+}
+
 /**
- * Read the current auth session, or `null` when absent/expired/invalid/revoked.
+ * The stored user `id`, read through `options.adapter` at most once per request (the request
+ * context's memo; a call outside a request reads every time). Several `auth()` calls in one
+ * request, and the slide `requireAuth()` does after its own read, cost one lookup.
+ *
+ * @param options The resolved auth options (an adapter is required).
+ * @param id The user id.
+ * @returns The stored user, or `null` when there is none.
+ */
+function storedUser(options: ResolvedAuthOptions, id: string): Promise<AdapterUser | null> {
+  const adapter = options.adapter!;
+  const memo = currentContext()?.memo;
+  let reads = memo?.get(STORED_USERS);
+  if (memo && !reads) memo.set(STORED_USERS, reads = new Map());
+  const hit = reads?.get(id) as StoredUserRead | undefined;
+  if (hit && hit.adapter === adapter) return hit.read;
+  const read = Promise.resolve(adapter.getUser(id)).then((user) => user ?? null);
+  reads?.set(id, { adapter, read } satisfies StoredUserRead);
+  return read;
+}
+
+/**
+ * Drop `userId`'s memoized read from this request, so a later read in the same request sees a
+ * write made since (a session-ending stamp).
+ */
+function forgetStoredUser(userId: string): void {
+  (currentContext()?.memo.get(STORED_USERS) as Map<string, StoredUserRead> | undefined)
+    ?.delete(userId);
+}
+
+/**
+ * Whether the user ended this session: it signed in (`authTime`, else its issue time) before
+ * the user's `sessionsValidAfter`, to the second.
+ *
+ * @param user The stored user.
+ * @param session The session.
+ * @returns `true` when the session was ended.
+ */
+export function endedByUser(user: AdapterUser, session: AuthSession): boolean {
+  const validAfter = user.sessionsValidAfter;
+  if (typeof validAfter !== "number") return false;
+  const signedIn = session.authTime ?? session.issuedAt;
+  return typeof signedIn !== "number" || signedIn < validAfter;
+}
+
+/**
+ * End every cookie session of `userId` signed in before now — stateless ones included — by
+ * stamping the stored user's `sessionsValidAfter` (never moved back). A user that no longer
+ * exists is left alone.
+ *
+ * @param adapter The adapter (its `getUser` / `updateUser`).
+ * @param userId The user.
+ * @param nowSeconds The clock, epoch seconds.
+ */
+export async function endUserSessions(
+  adapter: Pick<AuthAdapter, "getUser" | "updateUser">,
+  userId: string,
+  nowSeconds: number = Math.floor(Date.now() / 1000),
+): Promise<void> {
+  const user = await adapter.getUser(userId);
+  if (!user) return;
+  const at = Math.max(nowSeconds, user.sessionsValidAfter ?? 0);
+  if (at !== user.sessionsValidAfter) {
+    await adapter.updateUser({ id: userId, sessionsValidAfter: at });
+  }
+  forgetStoredUser(userId);
+}
+
+/**
+ * Whether a cookie session's user, read fresh, may still use it: the user exists, is not
+ * banned, has not ended the session (`sessionsValidAfter`), and — for an SSO user — its
+ * identity provider started the session (denextAuth's own sign-ins never come from one, so no
+ * cookie session of an SSO user lives). Without an adapter there is no user to read, and the
+ * session stands as signed. A refusal no later read could lift (a deleted user, an ended or SSO
+ * session, a ban that outlasts it) is `"dead"`; a ban that ends first only `"refused"`.
+ */
+async function userVerdict(
+  options: ResolvedAuthOptions,
+  session: AuthSession,
+): Promise<CredentialVerdict> {
+  if (!options.adapter) return "ok";
+  const user = await storedUser(options, session.user.id);
+  if (!user || endedByUser(user, session) || !ssoSessionAllowed(user, session.amr ?? [])) {
+    return "dead";
+  }
+  return isBanned(user) ? banVerdict(user, session.expiresAt) : "ok";
+}
+
+/**
+ * Delete a dead session's server-side record, so the store doesn't keep what every read refuses.
+ * Best effort: a failure is logged, and the read's answer is the same.
+ */
+async function deleteDeadSession(options: ResolvedAuthOptions, session: AuthSession) {
+  if (!session.sessionId || !options.sessionStore) return;
+  try {
+    await options.sessionStore.delete(session.sessionId);
+  } catch (error) {
+    options.logger.error("denextAuth: deleting a refused session record failed", error);
+  }
+}
+
+/**
+ * Read the current auth session, or `null` when absent/expired/invalid/revoked — or when its
+ * user, read fresh through the adapter (once per request), was deleted or banned, ended the
+ * session (it signed in before the user's `sessionsValidAfter`), or is an SSO user (whose
+ * identity provider never starts a cookie session). The check runs on every read, so a ban, a
+ * deletion, a password reset or an SSO conversion takes effect on the user's very next request,
+ * not when the session next slides or expires — a stateless cookie session included.
  *
  * @param config The app's auth config.
  * @returns The session, normalised to the current payload shape, or `null`.
@@ -111,7 +229,11 @@ async function resolveSession(
 export async function readAuthSession(config: AuthConfig): Promise<AuthSession | null> {
   const options = resolveAuthOptions(config);
   const session = await getSession<CookieData>(sessionOptions(config));
-  return await resolveSession(session.data, options);
+  const resolved = await resolveSession(session.data, options);
+  if (!resolved) return null;
+  const verdict = await userVerdict(options, resolved);
+  if (verdict === "dead") await deleteDeadSession(options, resolved);
+  return verdict === "ok" ? resolved : null;
 }
 
 /** How {@link issueAuthSession} marks the session it mints. */
@@ -378,7 +500,7 @@ export async function refreshLiveSession(
 ): Promise<AuthSession | null> {
   const options = resolveAuthOptions(config);
   if (shouldRefresh(options, session, nowMs) && options.adapter) {
-    const user = await options.adapter.getUser(session.user.id);
+    const user = await storedUser(options, session.user.id);
     if (user && !ssoSessionAllowed(user, session.amr ?? [])) {
       if (session.sessionId && options.sessionStore) {
         await options.sessionStore.delete(session.sessionId);

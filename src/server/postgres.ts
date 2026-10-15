@@ -255,12 +255,77 @@ export function toNumber(value: unknown): number | undefined {
   return undefined;
 }
 
+/** A client paired with a direct connection by {@linkcode withDirectConnection}. */
+export type DirectPairedClient = SqlClient & {
+  /** The direct (session) client: LISTEN, reserved connections, migrations and their locks. */
+  readonly direct: SqlClient;
+};
+
+/**
+ * Pair a pooled client (a PgBouncer in transaction mode, say) with a direct connection to the
+ * same database — Prisma's `directUrl`. Queries and transactions go to `pooled`; what needs a
+ * session of its own goes to `direct`: `listen()` (LISTEN / NOTIFY), `reserve()` (a session-level
+ * advisory lock, a temporary replication slot), and denext's migrations and their locks
+ * ({@linkcode sessionClient}). `close()` closes the ones `owns` names.
+ *
+ * ```ts
+ * const sql = withDirectConnection(
+ *   postgresClient(Deno.env.get("DATABASE_URL")), // the pooler
+ *   postgresClient(Deno.env.get("DATABASE_DIRECT_URL")), // the server itself
+ * );
+ * ```
+ *
+ * @param pooled The client queries go to.
+ * @param direct The client for session-level work.
+ * @param owns Which of the two `close()` closes (default both).
+ * @returns The paired client.
+ */
+export function withDirectConnection(
+  pooled: SqlClient,
+  direct: SqlClient,
+  owns: { pooled?: boolean; direct?: boolean } = {},
+): DirectPairedClient {
+  const client =
+    ((strings: TemplateStringsArray, ...values: unknown[]) =>
+      pooled(strings, ...values)) as SqlClient;
+  client.unsafe = <T>(text: string, params?: unknown[]) => pooled.unsafe<T>(text, params);
+  client.begin = <T>(fn: (tx: SqlClient) => T | Promise<T>) => pooled.begin(fn);
+  if (direct.listen) {
+    client.listen = (channel, fn, onlisten) => direct.listen!(channel, fn, onlisten);
+  }
+  if (direct.reserve) client.reserve = () => direct.reserve!();
+  client.close = async (options) => {
+    await Promise.all([
+      owns.pooled === false ? undefined : pooled.close(options),
+      owns.direct === false ? undefined : direct.close(options),
+    ]);
+  };
+  return Object.assign(client, { direct });
+}
+
+/**
+ * The client session-level work runs on: the direct connection {@linkcode withDirectConnection}
+ * paired with `sql`, else `sql` itself.
+ *
+ * @param sql The client.
+ * @returns The client for LISTEN, reserved connections and migrations.
+ */
+export function sessionClient(sql: SqlClient): SqlClient {
+  return (sql as Partial<DirectPairedClient>).direct ?? sql;
+}
+
 /** Options shared by every denext Postgres store: a client, or a URL to open one. */
 export interface PostgresConnectionOptions {
   /** A client to use (yours stays open: denext never closes a client it was handed). */
   sql?: SqlClient;
   /** A `postgres://` URL, opened with `Deno.SQL` (denext's runtime) and closed on `close()`. */
   url?: string;
+  /**
+   * A direct `postgres://` URL to the same database, for when `url` / `sql` is a pooler in
+   * transaction mode (PgBouncer, Supavisor): the store's migrations and their locks run on it
+   * (opened with `Deno.SQL`, closed on `close()`).
+   */
+  directUrl?: string;
   /** A schema to keep the tables in (created when missing); default: the search path. */
   schema?: string;
 }
@@ -289,9 +354,15 @@ export function resolveConnection(
   if (options.sql && options.url) {
     throw new TypeError(`${feature}: pass either \`sql\` or \`url\`, not both`);
   }
-  if (options.sql) return { sql: options.sql, owned: false };
-  if (!options.url) {
+  if (!options.sql && !options.url) {
     throw new TypeError(`${feature}: pass \`sql\` (a client) or \`url\` (a postgres:// URL)`);
   }
-  return { sql: postgresClient(options.url, feature), owned: true };
+  const pooled = options.sql ?? postgresClient(options.url, feature);
+  if (!options.directUrl) return { sql: pooled, owned: !options.sql };
+  // A client handed in stays the caller's: closing the store closes only what it opened.
+  const direct = postgresClient(options.directUrl, feature);
+  return {
+    sql: withDirectConnection(pooled, direct, { pooled: !options.sql }),
+    owned: true,
+  };
 }

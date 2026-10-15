@@ -60,6 +60,7 @@ export const CONFIG_KEYS = [
   "platformExtensions",
   "mobile",
   "desktop",
+  "compile",
   "reactNative",
   "experimental",
   "classComponents",

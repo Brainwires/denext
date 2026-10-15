@@ -1,0 +1,6 @@
+TS18048 [ERROR]: 'user' is possibly 'undefined'.
+  return user.name;
+         ~~~~
+    at file:///app/possibly-undefined.ts:9:10
+
+error: Type checking failed.

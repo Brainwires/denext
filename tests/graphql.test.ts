@@ -55,8 +55,8 @@ const schema = createSchema<{ viewer?: string }>({
     },
     Subscription: {
       messages: {
-        subscribe: (_r, { room }: { room: string }) => {
-          const it = fromChannel(events, room);
+        subscribe: async (_r, { room }: { room: string }) => {
+          const it = await fromChannel(events, room);
           attached.resolve();
           return it;
         },
@@ -453,7 +453,7 @@ Deno.test("graphql plugin: a subscription rides a denext channel (publish → SS
 Deno.test("fromChannel: buffers while the consumer is slow (oldest dropped past the cap), ends on revoke, abort and return", async () => {
   setChannelTransport(inMemoryChannelTransport());
   const ch = createChannel<number>({ id: "gql:nums", authorize: () => true });
-  const it = fromChannel(ch, "k", { buffer: 2 });
+  const it = await fromChannel(ch, "k", { buffer: 2 });
   for (const n of [1, 2, 3]) await ch.publish("k", n);
   assertEquals(await it.next(), { value: 2, done: false }, "1 was dropped (cap 2)");
   assertEquals(await it.next(), { value: 3, done: false });
@@ -462,12 +462,12 @@ Deno.test("fromChannel: buffers while the consumer is slow (oldest dropped past 
   assertEquals(await pending, { value: undefined, done: true });
 
   const ac = new AbortController();
-  const aborted = fromChannel(ch, "k", { signal: ac.signal });
+  const aborted = await fromChannel(ch, "k", { signal: ac.signal });
   const waiting = aborted.next();
   ac.abort();
   assertEquals(await waiting, { value: undefined, done: true });
 
-  const returned = fromChannel(ch, "k");
+  const returned = await fromChannel(ch, "k");
   assertEquals(await returned.return!(), { value: undefined, done: true });
   await ch.publish("k", 9);
   assertEquals(await returned.next(), { value: undefined, done: true }, "nothing after return()");

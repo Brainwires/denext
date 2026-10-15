@@ -162,7 +162,12 @@ export async function PUT(
 For object storage, hand the same stream to the SDK — `@aws-sdk/lib-storage`'s
 `Upload` takes a `ReadableStream` body — or, better for a browser client, sign a
 pre-signed URL in a route handler and let the browser `PUT` to S3 directly so
-the bytes never pass through denext.
+the bytes never pass through denext. The opt-in
+[`@denext/backend`](/docs/backend#storage) plugin packages that flow: buckets
+with an `authorize` rule, `createSignedUploadUrl` on the server, and
+`uploadFile(bucket, file, { onProgress })` in the browser, which uploads
+straight to S3 / R2 / MinIO (or a local directory) with progress — see
+[Upload from the browser](/docs/backend#upload-from-the-browser).
 
 Two operational notes for big uploads: `requestTimeout` (default 30 s) bounds
 the **whole** request, so raise it (or set `0`) for a route that expects long

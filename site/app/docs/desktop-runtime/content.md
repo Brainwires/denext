@@ -100,6 +100,7 @@ ours is open yet.
 | Change                                                                                       | Layer                | Upstream                                                                     |
 | -------------------------------------------------------------------------------------------- | -------------------- | ---------------------------------------------------------------------------- |
 | [A stable app origin](#a-stable-app-origin)                                                  | Deno runtime, denext | builds on deno#35675; ours planned                                           |
+| [The navigation guard](#the-navigation-guard)                                                | laufey, Deno, denext | planned                                                                      |
 | [Custom schemes as secure origins](#custom-schemes-as-secure-origins)                        | laufey               | [laufey#84](https://github.com/littledivy/laufey/pull/84)                    |
 | [Request and response bodies on Linux](#request-and-response-bodies-on-linux)                | laufey               | [laufey#86](https://github.com/littledivy/laufey/pull/86); rest planned      |
 | [Per-app persistent storage](#per-app-persistent-storage)                                    | laufey, Deno runtime | [laufey#88](https://github.com/littledivy/laufey/pull/88); Deno side planned |
@@ -158,6 +159,26 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 - **Upstream:** the memory transport is ported from
   [denoland/deno#35675](https://github.com/denoland/deno/pull/35675); the configured origin is
   planned.
+
+### The navigation guard
+
+- **What:** a top-level navigation in an app window to an origin other than the app's (a link,
+  `location = …`, a form, a server redirect, `window.open()`, `target="_blank"`) never loads in the
+  window (from runtime 2.9.7-denext.18, laufey API 48). An `http(s)` destination opens in the system
+  browser through laufey's checked open-external path; anything else (`file:`, a custom scheme,
+  `data:`) is dropped. The window may load the origin the runtime navigated it to, the app origin, a
+  development run's dev server and `desktop.app.allowedNavigationOrigins` (exact origins, carried in
+  `.deno-desktop/app.json`). Subframes are left to the page's CSP.
+- **Why:** the page-side interceptor caught only user-initiated link clicks, so a script
+  navigation, a redirect or a form could replace the app's page with a remote one in a window that
+  holds the app's capabilities and storage.
+- **Layer:** laufey decides natively on every backend: CEF `OnBeforeBrowse` (main frame),
+  WKWebView `decidePolicyForNavigationAction` (main frame), WebView2 `NavigationStarting` (main
+  frame only), each asked again per redirect. WebKitGTK's navigation policy names no frame, so its
+  backend refuses the main frame's response instead (after any redirect): the request has been
+  sent, but nothing from the response is shown or run. The Deno runtime passes the allowed origins
+  at startup; denext writes `allowedNavigationOrigins` into `app.json`.
+- **Upstream:** planned.
 
 ### Custom schemes as secure origins
 
@@ -375,10 +396,10 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 - **Why:** stock Deno Desktop had only `alert` / `confirm` / `prompt`. Without the runtime, denext
   falls back to shelling out to osascript (macOS) or PowerShell (Windows); on Linux the dialogs are
   only the runtime's.
-- **Linux:** the desktop's own dialog through xdg-desktop-portal's
-  FileChooser, called directly (not only inside Flatpak / Snap), wherever the portal offers one; GTK's
-  chooser where it doesn't (a wlroots desktop with only `xdg-desktop-portal-wlr`).
-  `platformFeatures().fileChooser` says which, `fileChooserReason` why GTK's.
+- **Linux:** the desktop's own dialog through xdg-desktop-portal's FileChooser, called directly (not
+  only inside Flatpak / Snap), wherever the portal offers one; GTK's chooser where it doesn't (a
+  wlroots desktop with only `xdg-desktop-portal-wlr`). `platformFeatures().fileChooser` says which,
+  `fileChooserReason` why GTK's.
 - **Layer:** laufey, Deno runtime, denext.
 - **Upstream:** planned.
 
@@ -420,11 +441,11 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   without asking (an ad-hoc CEF bundle isn't always the item's owner) empties the item instead,
   which then reads as not there.
 - **Why:** denext's `secure-store` wrote macOS items with `/usr/bin/security`, which the item then
-  trusts, so any program of the same user could read them back with `security
-  find-generic-password -w`, without a prompt. Now another program gets macOS's prompt, never the
-  secret, and a signed app never reads a value another program put there. denext moves the items it wrote that way on their first read (read with `security`,
-  stored in the runtime's store, then deleted), so a signed-in user stays signed in; a runtime
-  without the store keeps the `security` path.
+  trusts, so any program of the same user could read them back with `security find-generic-password
+  -w`, without a prompt. Now another program gets macOS's prompt, never the secret, and a signed app
+  never reads a value another program put there. denext moves the items it wrote that way on their
+  first read (read with `security`, stored in the runtime's store, then deleted), so a signed-in
+  user stays signed in; a runtime without the store keeps the `security` path.
 - **Layer:** laufey, Deno runtime, denext.
 - **Upstream:** planned.
 
@@ -554,24 +575,24 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 
 ### Clean exits and the Linux session
 
-- **What:** `Deno.exit()` ends the app through the backend (laufey's `exit_app`) on every OS, so
-  the web engine flushes its storage (a `localStorage` write just before the exit is kept) and the
-  process ends with the code given. On Linux both backends quit cleanly on `SIGTERM`, `SIGINT`
-  and `SIGHUP` (through the app's own quit, as a window close does; the WebView backend since
+- **What:** `Deno.exit()` ends the app through the backend (laufey's `exit_app`) on every OS, so the
+  web engine flushes its storage (a `localStorage` write just before the exit is kept) and the
+  process ends with the code given. On Linux both backends quit cleanly on `SIGTERM`, `SIGINT` and
+  `SIGHUP` (through the app's own quit, as a window close does; the WebView backend since
   `2.9.7-denext.13`). A quit cancels any GTK dialog that is open (the runtime's alert, confirm or
-  prompt, a page's script dialog), so the quit ends instead of waiting for someone to dismiss it;
-  a signal whose quit the UI thread doesn't take within 10 seconds (it is stuck in a call that
-  never returns to its loop) ends the process by the signal's default action, and a second signal
-  does so at once. Every `exit()` in the process parks the UI thread before any exit handler runs,
-  so a handler that tears a library down can't pull it out from under a frame being painted. `platformFeatures().sessionType`
-  follows the display that is there: a declared `wayland` with only `$DISPLAY` (GDM's autologin
-  into Xorg XFCE or i3) is `x11`, and CEF's Ozone platform follows it too, so it opens its window.
-  An X11 window manager's XEmbed system tray counts as a tray host. WebKitGTK renders with
-  shared-memory frames on X11 (`WEBKIT_DMABUF_RENDERER_FORCE_SHM`, unless the app sets one of
-  WebKit's renderer variables itself), and CEF's cookie store uses the KWallet daemon Chromium's own rule picks
-  (`kwalletd6` / `kwalletd5` / `kwalletd`, from `KDE_SESSION_VERSION`), the one the probe asks, so
-  an app started without the session's environment no longer reports `"os"` while Chromium
-  falls back to a fixed key.
+  prompt, a page's script dialog), so the quit ends instead of waiting for someone to dismiss it; a
+  signal whose quit the UI thread doesn't take within 10 seconds (it is stuck in a call that never
+  returns to its loop) ends the process by the signal's default action, and a second signal does so
+  at once. Every `exit()` in the process parks the UI thread before any exit handler runs, so a
+  handler that tears a library down can't pull it out from under a frame being painted.
+  `platformFeatures().sessionType` follows the display that is there: a declared `wayland` with only
+  `$DISPLAY` (GDM's autologin into Xorg XFCE or i3) is `x11`, and CEF's Ozone platform follows it
+  too, so it opens its window. An X11 window manager's XEmbed system tray counts as a tray host.
+  WebKitGTK renders with shared-memory frames on X11 (`WEBKIT_DMABUF_RENDERER_FORCE_SHM`, unless the
+  app sets one of WebKit's renderer variables itself), and CEF's cookie store uses the KWallet
+  daemon Chromium's own rule picks (`kwalletd6` / `kwalletd5` / `kwalletd`, from
+  `KDE_SESSION_VERSION`), the one the probe asks, so an app started without the session's
+  environment no longer reports `"os"` while Chromium falls back to a fixed key.
 - **Why:** an app that ended through `Deno.exit()` or a signal could lose its last writes, a
   service manager's `SIGTERM` left a CEF app's profile mid-write (and a WebView app's storage
   unflushed), a `SIGTERM` while the uncaught-error dialog was open took about 80 seconds, one sent
@@ -736,7 +757,8 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 
 ## Runtime releases
 
-Each release is a tag on the Deno fork; denext pins one (`src/build/desktop-runtime-pin.json`).
+Each release is a tag on the Deno fork; denext pins one (`src/build/desktop-runtime-pin.json`;
+currently `2.9.7-denext.19`).
 
 | Release           | What it adds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -757,6 +779,8 @@ Each release is a tag on the Deno fork; denext pins one (`src/build/desktop-runt
 | `2.9.7-denext.15` | The fork's own `deno` CLI ships with the release (`deno-cli-*`, one zip per platform: the binary [denext's Deno toolchain](/docs/toolchain) pins), with Vitest / Jest compatibility in `deno test` and `Deno.SQL` / `Deno.sql` (a built-in Postgres and SQLite client, in the runtime too). `deno --version` and `Deno.version.deno` name the release (`2.9.7-denext.15`). laufey `09ad1b6` (API 47).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `2.9.7-denext.16` | Vitest compatibility needs no permission of its own: the layer's own reads (its config, `__mocks__`, automock) need no `--allow-read` inside the project, and it needs no `--allow-env`. `deno coverage` maps a module the Vitest transform changed. `vi.mock` works under a path with `~` or a space. Upstream Deno picks: `deno compile` checks read permission for a dynamic import, Node-API fixes, coverage runs skip V8's code cache, the `fetch` connection pool, `rand` 0.9.3. laufey `09ad1b6` (API 47).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `2.9.7-denext.17` | CLI only: each `deno-cli-*` zip carries esbuild 0.25.5 beside `deno` (its version and SHA-256 in the manifest), which `deno bundle` and denext's builds use instead of downloading one. The CLI keeps its own type-check, code and analysis caches in `DENO_DIR` (a `_denext` suffix), so alternating it with stock Deno keeps both sets warm. `vitest`, `vite-plus/test` and `@jest/globals` are typed when the package isn't installed (`deno check` and the editor too), and a Vitest / Jest config project's test files are type-checked. `deno coverage` merges a module's profiles from a plain run and a Vitest run, line for line. laufey `09ad1b6` (API 47).                                                                                                                                                                                                                                                                                                                                                                                              |
+| `2.9.7-denext.18` | The navigation guard: a top-level navigation in an app window to another origin never loads in the window; an `http(s)` destination opens in the system browser, on every backend. `desktop.app.allowedNavigationOrigins` (in `app.json`) lists exact origins the window may load. laufey `63c05e2` (API 48).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `2.9.7-denext.19` | Fixes an intermittent crash (SIGSEGV) at exit, seen in `deno lint` with a lint plugin: op contexts are kept alive until the isolate is disposed (a cherry-pick of the still-open upstream PR denoland/deno#37026). No API change.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 denext needs `2.9.7-denext.14`. Under an older runtime a child the app starts from its own
 executable (a sidecar's `spawnSelf`) begins its stdout with the runtime loader's launch messages
@@ -931,8 +955,10 @@ authorship, ahead of a release that includes it: Deno
 [#35662](https://github.com/denoland/deno/pull/35662),
 [#35675](https://github.com/denoland/deno/pull/35675),
 [#36421](https://github.com/denoland/deno/pull/36421),
-[#36761](https://github.com/denoland/deno/pull/36761) and
-[#36789](https://github.com/denoland/deno/pull/36789), and laufey
+[#36761](https://github.com/denoland/deno/pull/36761),
+[#36789](https://github.com/denoland/deno/pull/36789) and
+[#37026](https://github.com/denoland/deno/pull/37026) (the exit-crash fix in `2.9.7-denext.19`), and
+laufey
 [#77](https://github.com/littledivy/laufey/pull/77),
 [#79](https://github.com/littledivy/laufey/pull/79),
 [#80](https://github.com/littledivy/laufey/pull/80) and

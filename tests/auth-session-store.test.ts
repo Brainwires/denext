@@ -16,6 +16,7 @@ import { sqliteSessionStore } from "../src/server/auth/sqlite-session-store.ts";
 import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
 import type { PluginContext } from "../src/plugin/mod.ts";
 import type { SqliteDb } from "../src/server/sqlite-cache.ts";
+import { makeTempDirUntilExit } from "./helpers/temp.ts";
 
 const ORIGIN = "https://app.test";
 const inAnHour = () => Math.floor(Date.now() / 1000) + 3600;
@@ -81,7 +82,7 @@ Deno.test("inMemorySessionStore: LRU cap (expired first) + sweep of expired sess
 });
 
 function tempSqlitePath(): string {
-  return `${Deno.makeTempDirSync({ prefix: "denext-auth-sessions-" })}/sessions.db`;
+  return `${makeTempDirUntilExit("denext-auth-sessions-")}/sessions.db`;
 }
 
 Deno.test("sqliteSessionStore (real node:sqlite) meets the store contract", async (t) => {
@@ -265,10 +266,10 @@ Deno.test("default (no sessionStore): the stateless payload cookie is unchanged"
   assertEquals(((await sessionUser(config, cookie)) as { id: string }).id, "alice");
 });
 
-Deno.test("revokeSession / revokeAllSessions throw without a sessionStore (stateless can't revoke)", async () => {
+Deno.test("revokeSession needs a sessionStore; revokeAllSessions an adapter or a store", async () => {
   denextAuth(storeConfig());
   await assertRejects(() => revokeSession("x"), Error, "no `sessionStore`");
-  await assertRejects(() => revokeAllSessions("alice"), Error, "no `sessionStore`");
+  await assertRejects(() => revokeAllSessions("alice"), Error, "no `adapter` or `sessionStore`");
 });
 
 Deno.test("denextAuth registers a teardown that closes a closable sessionStore", async () => {

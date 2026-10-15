@@ -171,7 +171,8 @@ Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or T
 described in full; others are `{}` + a lint warning.
 Need GraphQL? `@denext/graphql` mounts GraphQL Yoga at `/graphql` (any `GraphQLSchema`;
 Pothos recommended, no decorators) and `fromChannel(channel, key)` turns a `createChannel`
-into a subscription source — the same push the Live socket delivers.
+into a subscription source behind the channel's `authorize` — the same push the Live socket
+delivers, over SSE or WebSocket (`graphql-ws`); `schema: "./app/graphql/schema.ts"` reloads in dev.
 
 A plain handler still works and is still typed: return `TypedResponse<T>` / take a
 `TypedRequest<B>` from `denext/server`. A plain `route.ts` body is capped at 1 MiB
@@ -244,6 +245,15 @@ export function NewPost() {
 }
 ```
 
+**Errors as values (opt-in):** `denext/result` has `Result` / `ok` / `err` / `tryAsync` and an
+exhaustive `match(x).with(pattern, fn)….exhaustive()` (a missing case is a compile error;
+`assertNever(x)` does the same in a `switch` `default`). A `defineApi` handler may
+`return err("code", init?)` instead of `fail()` (the code must be declared in `errors`), and a
+`defineAction` handler `return err("message", { fieldErrors })`. React's throws stay: Suspense,
+`notFound()` / `redirect()` and error boundaries (`tryAsync` re-throws them). Opt-in lint rules
+`denext/exhaustive-switch` and `denext/no-throw` come from `denextLintPlugin(options)`. Docs:
+https://denext.dev/docs/errors-as-values
+
 **Reading cookies / a session (auth):**
 
 ```ts
@@ -281,9 +291,9 @@ pass `authConfig` first to be explicit) — it self-documents as `bearerAuth`
 for `@denext/openapi` (declare the matching `securitySchemes: { bearerAuth: … }` once in the
 `openapi()` options). `credentials()` with no `authorize` verifies against the adapter
 (`getUserByEmail` + `getCredential` + the hasher). Passwordless: `providers: [magicLink(),
-emailOtp()]` plus `sendVerificationRequest` (denext ships no mailer);
-`magicLink({ confirm: true })` puts a click-to-confirm page in front of the redeem, so a mail
-scanner's pre-fetch can't spend the link. Passkeys: `passkeys: true` (or `{ rpId, rpName, userVerification }`) mounts
+emailOtp()]` plus `sendVerificationRequest` (`smtpMailer({ host, user, pass, from })` from
+`denext/server`, TLS required, or your own); a magic link opens a click-to-confirm page by
+default, so a mail scanner's pre-fetch can't spend it (`magicLink({ confirm: false })` opts out). Passkeys: `passkeys: true` (or `{ rpId, rpName, userVerification }`) mounts
 `/auth/passkey/*`, and `registerPasskey()` / `signInWithPasskey()` from `denext/client` (check
 `passkeysSupported()`) sign in usernameless or complete a pending second factor. An OAuth / OIDC
 provider takes `responseMode: "form_post"` (the callback is then a POST). Second factor: an
@@ -292,8 +302,12 @@ enrolled user's sign-in comes back pending; your `pages.mfa` page renders when
 `/auth/mfa/enroll` → `/auth/mfa/confirm` (from a complete session it needs a recent sign-in,
 `session.authTime`); `totpQrSvg(uri)` renders the enrollment QR code as SVG. TOTP secrets are
 sealed at rest under `secret`; with `secret: [current, previous]` a factor sealed under the
-retired one opens and is re-sealed on its next passing check, so keep a retired secret listed until
-then. A session ends `session.maxLifetime` after its sign-in (default 30 days) however often it
+retired one opens and is re-sealed on its next passing check, or at once with `denext auth reseal`
+(`resealTotpFactors(config)` in a job); remove the retired secret once it reports zero remaining.
+SSO: `saml()` signs in through a SAML 2.0 identity provider on `/auth/*`, and
+`microsoftEntra({ tenant: "common" | "organizations" | "consumers", allowedTenants })` takes a
+multi-tenant app (keyed on `tid` + `oid`). `passkeys: { attestation: { mds: {} } }` checks new
+passkeys against the FIDO Metadata Service. A session ends `session.maxLifetime` after its sign-in (default 30 days) however often it
 slides. `events.apiTokenIssued` / `apiTokenRevoked` report every bearer token minted or retired
 (id and owner, never the token). Full guide: https://denext.dev/docs/auth
 
@@ -325,6 +339,16 @@ export default {
 // config; before the first run, or once one of those files changes, it points at `denext commands`.
 ```
 
+**One executable for the server:** `denext build --compile [--target <triple>] [--output <path>]`
+builds, then `deno compile`s the app (server modules, `.denext/`, `public/`, `jobs/`, `services/`, migrations,
+`compile.include`) into `dist/<name>`. `./app` serves like `denext start` (`--port` / `$PORT`), and
+`./app job <name>` and `./app db migrate` run jobs and migrations. Stylesheet imports work with no
+import map. No `.env` file is embedded: the environment, `.env` files and relative data paths are
+read from the working directory, and state goes to `./.denext`. It bakes Docker's least-privilege
+`--allow-*` plus `compile.permissions: { write, run, ffi, sys }` (`"all"` opts in to
+`--allow-all`). The runtime is stock `denort`, so it has no `Deno.SQL`: use
+`fromPostgresJs(postgres(url))`. Docs: https://denext.dev/docs/deployment-targets
+
 **Code health and concurrency:** `denext create --fallow` (or `denext fallow init` in an existing
 app) adds the fallow gate denext itself uses — `fallow.toml` with the path-loaded files as entry
 points, `deno task fallow:audit` / `coverage:fallow` / `hooks:install` (a pinned `npm:fallow`
@@ -342,7 +366,9 @@ Docker files (with the self-hosted stack's toggles) plus in-place `docker-compos
 editing, a Desktop panel that composes the
 signing setup from the identities the keychain holds, a Setup page that readies a fresh
 clone, a Dev page that starts and stops the dev server, a Tasks page for the scripts
-`deno.json` declares, and the project's own verbs. It works with JavaScript disabled, and
+`deno.json` declares, a Services page (the `services/` tree), a Database section (tables, a SQL
+editor, RLS, migrations, storage, users, logs, realtime, Edge Functions, health) and the project's
+own verbs. It works with JavaScript disabled, and
 **project code never runs in the UI's process** — every project-touching operation,
 including verb discovery (`denext commands --json`), is a `deno` subprocess.
 `--read-only` prevents writes by the UI, not execution of your config inside that
@@ -527,8 +553,11 @@ the bundle.
 A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it requires
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
 packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS bridge to the app
-origin; `desktop.app.bridgeOrigins` adds others). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.17 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
+origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origin: a top-level
+navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
+the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
+(exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.19 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -591,8 +620,9 @@ Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <d
 drive it; `createOtaHandler` from `denext/server` serves the export. A downloaded UI is
 re-verified at every launch and on each file's first serve: one changed on the device is refused
 (the bundled UI is served, `onOtaRejected` fires, `otaStatus().tampered` names it), and
-`denext mobile doctor --release` flags a plugin from before re-verification. An unsigned manifest over
-plain `http` is refused beyond loopback. Whether a change can ship over the air:
+`denext mobile doctor --release` flags a plugin from before re-verification. Without an embedded public key,
+an unsigned UI is accepted only from an origin pinned with `add-ota --ota-origin` (https) or a
+loopback host; an unpinned `https` server is refused too (`insecure`). Whether a change can ship over the air:
 `denext mobile fingerprint [--diff old.json] [--write]` hashes the native layer, and
 `denext ota manifest --native-fingerprint auto` makes a binary with another fingerprint refuse
 the UI (`native_mismatch`). A Deno Desktop app gets the same signed updates from
@@ -676,7 +706,16 @@ delivered signed + retried) from `@denext/backend/server`; the plugin adds the P
 also `denext storage ls | cp | mv | rm` (`ss:///bucket/key`), `denext functions new | list | serve |
 delete`, `denext backend token --sub <id>` (a test bearer JWT) and `denext gen types | keys |
 bearer-jwt`. `denext stack up | down | status | logs` runs the `generate docker` stack like
-`supabase start` (writes it and a generated `.env` when missing; `status --show-secrets`).
+`supabase start` (writes it and a generated `.env` when missing; `status --show-secrets`), and
+operates it: `health [--json] [--watch]`, `logs --level/--since/--until/--grep`, `passwd
+--postgres|--dashboard [--generate]` (ALTER ROLE first; a password only from stdin), `roll
+[--include-secret] [--keep-old | --drop-old]` (`--keep-old` keeps the previous keys valid until
+`--drop-old`), `backup [--full]` / `restore <file> [--yes]` (`--restart` / `--no-restart`
+after a `.env` change). Its `dashboard` service is `denext dashboard`: `denext ui`'s Database
+section (tables and rows, a SQL editor, RLS policies, storage, auth users, realtime, Edge
+Functions, logs, health) on
+`127.0.0.1:3100` behind `DASHBOARD_PASSWORD` (rate-limited sign-in, a `__Host-`/`Secure` session cookie over https,
+CSRF on every change); `--dashboard-logs` adds the relay its Logs page reads the stack through.
 
 **A database (zero-npm, server-only module):**
 
@@ -693,7 +732,12 @@ Postgres (every replica sharing one database): `postgresClient(url)` from `denex
 tagged-template client on `Deno.SQL`, built into denext's managed Deno toolchain (on stock Deno:
 `fromPostgresJs(postgres(url))` with `npm:postgres`); `postgresAuthAdapter`, `postgresSessionStore`,
 `postgresRateLimitStore` and `postgresCacheStore` take `{ sql | url, schema? }` and create their
-tables by migration on first use. With `@denext/backend`, `backend({ postgres: {} })` (reads
+tables by migration on first use (under the migration lock). Behind PgBouncer in transaction mode,
+pass `directUrl` too (`backend({ postgres })` reads `DATABASE_DIRECT_URL`): LISTEN, reserved
+connections and migrations take the direct connection (`withDirectConnection(pooled, direct)`).
+`DENEXT_BOOT_DDL=off` makes startup change no schema and fail with `BootSchemaError` while a
+migration is missing; `denext db push` / `migration up` then apply denext's own schemas with the
+app's. With `@denext/backend`, `backend({ postgres: {} })` (reads
 `DATABASE_URL`) + `db()` from `@denext/backend/server` + `denextAuth({ adapter: backendAuthAdapter() })`.
 `db()` is scoped by Supabase-compatible row-level security: each query runs as `authenticated`
 (the request's user in `request.jwt.claims`, so policies use `auth.uid()` / `auth.jwt()`) or `anon`
@@ -718,7 +762,9 @@ authenticated may EXECUTE, with PostgREST 12's wire format at `/rest/v1/<table>`
 `/rest/v1/rpc/<fn>` — embeds through foreign keys (`select=*,author:users(name),tags!inner(*)`),
 `or` / `and` trees, every operator, aliases, casts, JSON paths, upserts, `PUT`, counts, CSV,
 views, computed fields / relationships, aggregates (opt-in `rest.aggregates`), OpenAPI at `GET /rest/v1`,
-`Accept-Profile` across `rest.schemas` — each statement through `db()` under RLS. The stock
+`Accept-Profile` across `rest.schemas` — each statement through `db()` under RLS, behind a
+per-client budget (`rest.rateLimit`, default 1200/min per user or address, never the secret key;
+`429 over_request_rate_limit` + `Retry-After`; `false` turns it off). The stock
 `@supabase/supabase-js` `from()` / `rpc()` / `schema()` work against it unchanged, and so does
 `from("notes").select("id,body").eq("id", 1)` / `rpc()` from `@denext/backend/client`; the
 generated `.denext/rest.ts` is `supabase gen types`-shaped (`createClient<Database>()`).
@@ -762,6 +808,25 @@ export default defineJob({
 // denext.config.ts → scheduledJobs: { "0 0 * * 1": ["digest", "warm-cache"] }
 // anywhere on the server: import { runJob } from "denext/server"; await runJob("cleanup");
 ```
+
+**Shutdown:** on SIGTERM, `denext start` drains in-flight requests, stops `services/`, runs the
+plugin teardowns, then `instrumentation.ts`'s `onShutdown()`. Close app-owned resources there,
+for example `export async function onShutdown() { await sql.end(); }`. The process exits by
+`DENEXT_SHUTDOWN_DRAIN_MS` even if a pool, timer or socket stays open.
+
+**Long-lived server work (supervised services):** `services/<name>.ts` default-exports
+`defineService({ start(ctx) })` from `denext/server` — `start`'s promise is the service's life (a
+throw is a crash; hold a resource with `await ctx.stopped`; `ctx.signal` aborts on stop). The
+server runs them under a root supervisor that restarts a crash with exponential backoff + jitter,
+gives up past `intensity` restarts within `period` (ms) — failing to its parent, or at the top to
+`instrumentation.ts`'s `onServiceError` and the `/_denext/health` `services` check — and stops them
+in reverse order after the drain. `supervise({ children, strategy: "one_for_one" | "one_for_all" |
+"rest_for_one", intensity, period, backoff })` nests trees; `jobService(name)` /
+`sidecarService(handle)` adapt a job loop or a Deno Desktop sidecar; `supervisionStatus()` and
+`denext ui`'s Services page show state, restart counts and the last error. Opt-in restarts for
+Live: `defineSubscription({ restart: true })` and `createChannel({ publisher })`. Restart
+semantics, NOT process isolation: no preemption, a shared heap, and a blocking loop still blocks
+everything. Docs: https://denext.dev/docs/services
 
 **A content collection (typed MD/MDX/YAML/JSON — the `@denext/content-collections` plugin):** add
 `plugins: [contentCollections()]` to `denext.config.ts`, declare collections in `content.config.ts`
@@ -940,7 +1005,7 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `deno task
   check:fix` auto-fixes formatting + fixable lint, then reports the
   rest. The `denext/*` lint rules (rules-of-hooks, hooks-in-component,
-  no-hooks-in-async, directive-placement) are **correctness** rules with **no
+  no-hooks-in-async, no-handlers-in-async, directive-placement) are **correctness** rules with **no
   auto-fix** — resolve them by hand;
   [the contributing guide](https://denext.dev/docs/contributing) says how.
 
@@ -955,6 +1020,9 @@ denext ships tooling so agents get it right the first time:
   `deno run -A jsr:@denext/denext/cli mcp`). It speaks
   MCP over stdio; configure it as an MCP server in your client. Tools:
   `denext_check_snippet` (lint a code string for Next-isms before you write it),
+  `denext_explain_error` (a `deno check` / `deno lint` / build diagnostic explained in plain
+  language with a fix — the same explanation `denext check` and the dev overlay print; `--raw`
+  or `DENEXT_RAW_DIAGNOSTICS=1` gives Deno's original),
   `denext_import_map` (map a Next/React import to denext), `denext_generate` (scaffold —
   takes `force` and `dryRun`),
   `denext_doctor`, `denext_codemod`, `denext_list_routes` (an app's pages + API routes),

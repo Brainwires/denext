@@ -214,7 +214,8 @@ export async function handleCreateToken(ctx: AuthRouteContext): Promise<Response
     if (live.length >= MAX_ACTIVE_TOKENS) {
       return json({ error: "too many tokens", max: MAX_ACTIVE_TOKENS }, 409);
     }
-    const issued = await issueApiToken(ctx.config, { userId, ...options });
+    // The minting session is recorded (an SSO user's token needs its identity provider's).
+    const issued = await issueApiToken(ctx.config, { userId, ...options, session });
     // The one and only time the plaintext is disclosed.
     return json({ token: issued.token, ...publicToken(issued.record) }, 201);
   });

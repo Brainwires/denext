@@ -1,7 +1,7 @@
 /**
  * **Email verification** and **password reset** — the two flows built on
  * {@link ./verification.ts | verification tokens} and the app's `sendVerificationRequest`
- * (denext ships no mailer).
+ * (`smtpMailer()`, or the app's own).
  *
  * The properties both flows keep:
  * - **No existence oracle.** Asking for a reset link for an unknown address resolves
@@ -31,6 +31,7 @@
 import { requestOrigin } from "../absolute-url.ts";
 import { after, currentContext } from "../request-context.ts";
 import { isProductionEnv } from "../session.ts";
+import { endUserSessions } from "./session.ts";
 import type { AdapterUser, AuthAdapter, MaybePromise, VerificationPurpose } from "./adapter.ts";
 import { isVerified } from "./adapter-link.ts";
 import { emitAuthEvent } from "./events.ts";
@@ -128,8 +129,6 @@ const MIN_PASSWORD_LENGTH = 8;
 const MAX_PASSWORD_LENGTH = 1024;
 /** Returned whenever a request went through (sent, or deliberately not). */
 const ACCEPTED: EmailRequestResult = { ok: true };
-/** Configs already warned that a revocation could not reach their stateless sessions. */
-const warnedStateless = new WeakSet<AuthConfig>();
 
 /** The current time in epoch seconds. */
 function nowSeconds(): number {
@@ -212,9 +211,9 @@ function requireMailer(config: AuthConfig, fn: string): SendVerificationRequest 
   const mailer = mailerOf(config);
   if (mailer) return mailer;
   throw new Error(
-    `${fn}: denext ships no mailer — pass \`sendVerificationRequest\` (or \`hooks.sendEmail\`) ` +
-      "to denextAuth (it receives { identifier, url, token, purpose, expiresAt } for every " +
-      "outbound token).",
+    `${fn}: no mailer — pass \`sendVerificationRequest\` (\`smtpMailer({ host, user, pass, ` +
+      "from })`, or a function receiving { identifier, url, token, purpose, expiresAt } for " +
+      "every outbound token) or `hooks.sendEmail` to denextAuth.",
   );
 }
 
@@ -540,35 +539,20 @@ function acceptablePassword(password: unknown): password is string {
 }
 
 /**
- * End every server-side session of `userId` and fire `sessionRevoked` — after a password
- * reset, and when a first email sign-in retires the access an unverified account had
- * ({@link ./routes-email.ts | routes-email.ts}). Stateless cookie sessions can't be
- * revoked; that is said once per config rather than silently skipped.
+ * End every session of `userId` and fire `sessionRevoked` — after a password reset, and when a
+ * first email sign-in retires the access an unverified account had
+ * ({@link ./routes-email.ts | routes-email.ts}): native app session families, the session
+ * store's records, and — through the user's `sessionsValidAfter` — every cookie session signed
+ * in before now, stateless ones included.
  *
- * @param config The app's auth config (it keys the one-time stateless warning).
- * @param options The resolved options: their store is revoked, their logger warns.
+ * @param options The resolved options: their adapter is stamped, their store revoked.
  * @param userId The user whose sessions end.
  */
-async function revokeUserSessions(
-  config: AuthConfig,
-  options: ResolvedAuthOptions,
-  userId: string,
-): Promise<void> {
+async function revokeUserSessions(options: ResolvedAuthOptions, userId: string): Promise<void> {
   // Native app session families end too (they don't depend on a session store).
   await nativeAdapterOf(options.adapter)?.revokeNativeSessionsByUser(userId);
-  if (!options.sessionStore) {
-    if (!warnedStateless.has(config)) {
-      warnedStateless.add(config);
-      options.logger.warn(
-        "denextAuth: sessions are stateless signed cookies, so a password reset (or a first " +
-          "email sign-in into an unverified account) can't sign out the user's existing " +
-          "sessions — they stay valid until they expire. Configure a `sessionStore` (or " +
-          '`session: { strategy: "database" }`) so either one signs out every device.',
-      );
-    }
-    return;
-  }
-  await options.sessionStore.deleteByUser(userId);
+  if (options.adapter) await endUserSessions(options.adapter, userId);
+  await options.sessionStore?.deleteByUser(userId);
   await emitAuthEvent(options, "sessionRevoked", { userId });
 }
 
@@ -691,10 +675,9 @@ async function deletePasskeys(
  * the account theirs (a first email sign-in, or a password reset) while that password (and
  * any session or bearer token it earned, or TOTP factor or passkey it enrolled) still works.
  * So the first proof of ownership retires everything set up without it: the password, the
- * second factor, every passkey, every bearer API token, and every server-side session
- * (`sessionRevoked`). A
- * stateless cookie session can't be revoked — it lives until it expires, which is warned
- * once. A throw leaves the address unverified: fail closed. `/auth/v1` runs the same eviction
+ * second factor, every passkey, every bearer API token, and every session — server-side
+ * records, native families, and (through the user's `sessionsValidAfter`) stateless cookies
+ * (`sessionRevoked`). A throw leaves the address unverified: fail closed. `/auth/v1` runs the same eviction
  * on the first proof of an address it confirms (`gotrue/accounts.ts`).
  *
  * @param config The app's auth config.
@@ -714,7 +697,7 @@ export async function evictUnprovenAccess(
   await retireSecondFactor(config, adapter, userId);
   await deletePasskeys(config, adapter, userId);
   await revokeApiTokens(options, adapter, userId, reason);
-  await revokeUserSessions(config, options, userId);
+  await revokeUserSessions(options, userId);
 }
 
 /**
@@ -807,7 +790,7 @@ export async function resetPassword(
   if (wasVerified) await deletePasskeys(config, adapter, user.id);
   await adapter.setCredential!(user.id, await options.hasher.hash(input.password));
   if (wasVerified) {
-    await revokeUserSessions(config, options, user.id);
+    await revokeUserSessions(options, user.id);
     await revokeApiTokens(options, adapter, user.id, "password_reset");
   }
   await emitAuthEvent(options, "passwordReset", { user: owner });

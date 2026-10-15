@@ -4,6 +4,12 @@
 
 import { relative } from "@std/path";
 import { codeframe, parseStackFrame } from "../dev-codeframe.ts";
+import {
+  explainDiagnosticsText,
+  explanationsSummary,
+  fsExplainContext,
+  rawDiagnostics,
+} from "../explain/mod.ts";
 import { sseSend, sseStream } from "../sse.ts";
 import type { DevState } from "./state.ts";
 
@@ -16,6 +22,11 @@ export interface ErrorPayload {
   frame?: { file: string; display: string; line: number; column: number };
   /** A source snippet around the frame, with a caret at the error column. */
   codeframe?: string;
+  /**
+   * The diagnostics explained in plain language, each with a fix (`src/build/explain`). The
+   * overlay shows it first and keeps `message`, the original, in a collapsed section.
+   */
+  explained?: string;
 }
 
 /** Send one SSE `data:` frame to every subscriber, dropping closed streams. */
@@ -93,6 +104,7 @@ export function pushError(st: DevState, payload: ErrorPayload): void {
     stack: payload.stack || undefined,
     frame: payload.frame,
     codeframe: payload.codeframe,
+    ...(payload.explained ? { explained: payload.explained } : {}),
   });
   send(st, `error:${JSON.stringify(payload)}`);
 }
@@ -104,7 +116,46 @@ export function pushError(st: DevState, payload: ErrorPayload): void {
 export function broadcastError(st: DevState, title: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
   const stack = err instanceof Error && err.stack ? err.stack : "";
-  pushError(st, { title, message, stack, ...enrichFrame(st, stack) });
+  const explained = explainForOverlay(st, message);
+  pushError(st, { title, message, stack, ...enrichFrame(st, stack), ...explained });
+}
+
+/** Colour for the terminal: stderr is a TTY and `NO_COLOR` is unset. */
+function terminalColor(): boolean {
+  try {
+    return Deno.stderr.isTerminal() && !Deno.noColor;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The terminal's copy of tool output (a failed dev type-check): each recognised diagnostic
+ * explained and followed by its original, or `text` unchanged under `DENEXT_RAW_DIAGNOSTICS`.
+ */
+export function explainForTerminal(st: DevState, text: string): string {
+  if (rawDiagnostics()) return text;
+  try {
+    const ctx = fsExplainContext(st.paths.projectDir);
+    return explainDiagnosticsText(text, ctx, { color: terminalColor() }).text;
+  } catch {
+    return text;
+  }
+}
+
+/**
+ * The plain-language explanation of the diagnostics in `text` (type errors, an unresolved
+ * import, a lint report) for the overlay, or `{}` when none is recognised or
+ * `DENEXT_RAW_DIAGNOSTICS` is set.
+ */
+export function explainForOverlay(st: DevState, text: string): Pick<ErrorPayload, "explained"> {
+  if (rawDiagnostics()) return {};
+  try {
+    const { explanations } = explainDiagnosticsText(text, fsExplainContext(st.paths.projectDir));
+    return explanations.length ? { explained: explanationsSummary(explanations) } : {};
+  } catch {
+    return {}; // never let the explainer stand between a developer and the original error
+  }
 }
 
 /** The SSE response for a new live-reload subscriber. */

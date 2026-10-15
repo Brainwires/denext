@@ -2,25 +2,28 @@
 
 The `@denext/avif` wrapper (`mod.ts`) is Apache-2.0 (see `LICENSE`, which carries the
 `@jsquash/avif` copyright it was forked from). The vendored encoder
-`lib/avif_enc.js` + `lib/avif_enc.wasm` is the **prebuilt single-threaded** encoder from
+`lib/avif_enc.js` + `lib/avif_enc.wasm` and decoder `lib/avif_dec.js` + `lib/avif_dec.wasm`
+are the **prebuilt single-threaded** codecs from
 [`@jsquash/avif@2.1.1`](https://github.com/jamsinclair/jSquash), which builds Google
 [Squoosh](https://github.com/GoogleChromeLabs/squoosh)'s `codecs/avif` with emscripten.
-That build statically links the components below; their licenses and full texts follow.
+Those builds statically link the components below; their licenses and full texts follow.
 
 ## Bundled components
 
-| Component                          | Version                                                         | License                                                   | Source                                        |
-| ---------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------- |
-| `@jsquash/avif` (wrapper, build)   | 2.1.1                                                           | Apache-2.0                                                | https://github.com/jamsinclair/jSquash        |
-| Squoosh `codecs/avif` (C++ glue)   | as vendored by `@jsquash/avif@2.1.1`                            | Apache-2.0                                                | https://github.com/GoogleChromeLabs/squoosh   |
-| libavif                            | 1.0.x line (jSquash 2.x pins ≥ 1.0.1)                           | BSD-2-Clause                                              | https://github.com/AOMediaCodec/libavif       |
-| libaom (AV1 encoder)               | 3.7.0 (`AOMedia Project AV1 Encoder v3.7.0` string in the wasm) | BSD-2-Clause + Alliance for Open Media Patent License 1.0 | https://aomedia.googlesource.com/aom          |
-| emscripten runtime (`avif_enc.js`) | as emitted by the jSquash build                                 | MIT                                                       | https://github.com/emscripten-core/emscripten |
+| Component                        | Version                                                         | License                                                   | Source                                        |
+| -------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------- |
+| `@jsquash/avif` (wrapper, build) | 2.1.1                                                           | Apache-2.0                                                | https://github.com/jamsinclair/jSquash        |
+| Squoosh `codecs/avif` (C++ glue) | as vendored by `@jsquash/avif@2.1.1`                            | Apache-2.0                                                | https://github.com/GoogleChromeLabs/squoosh   |
+| libavif                          | 1.0.x line (jSquash 2.x pins ≥ 1.0.1)                           | BSD-2-Clause                                              | https://github.com/AOMediaCodec/libavif       |
+| libaom (AV1 encoder)             | 3.7.0 (`AOMedia Project AV1 Encoder v3.7.0` string in the wasm) | BSD-2-Clause + Alliance for Open Media Patent License 1.0 | https://aomedia.googlesource.com/aom          |
+| libaom (AV1 decoder)             | 3.7.0 (`AOMedia Project AV1 Decoder v3.7.0` string in the wasm) | BSD-2-Clause + Alliance for Open Media Patent License 1.0 | https://aomedia.googlesource.com/aom          |
+| emscripten runtime (`avif_*.js`) | as emitted by the jSquash build                                 | MIT                                                       | https://github.com/emscripten-core/emscripten |
 
 **Not linked** (so the extra notices in libavif's repository `LICENSE` — dav1d, libyuv,
-libsharpyuv, libwebp — do not apply): the encoder is AOM-only, and `enableSharpYUV` is an
-inert option string, no sharpyuv code is compiled in. The multi-threaded (`_mt`) variant
-and the decoder are not vendored.
+libsharpyuv, libwebp — do not apply): both codecs are AOM-only (the decoder uses libaom's AV1
+decoder, not dav1d, and is built without libyuv), and `enableSharpYUV` is an inert option
+string, no sharpyuv code is compiled in. The multi-threaded (`_mt`) encoder variant is not
+vendored.
 
 ## Redistribution
 

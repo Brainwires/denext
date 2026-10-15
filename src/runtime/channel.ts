@@ -37,6 +37,13 @@ import {
 } from "./define-action.ts";
 import { decodeWire, prepareWire, WIRE_ENC } from "./wire-codec.ts";
 import { CHANNEL_BRAND, setChannelRegistrar } from "./channel-brand.ts";
+import {
+  LIVE_RESTART_DEFAULTS,
+  type ResolvedRestart,
+  resolveRestart,
+  restartLoop,
+  type RestartOptions,
+} from "./restart.ts";
 
 /** The subscriber's identity handed to `authorize` (the Live connection context). */
 export interface ChannelContext {
@@ -77,7 +84,36 @@ export interface ChannelConfig<T> {
    * revoked, or denied on re-authorization).
    */
   onIdle?: (key: string, reason: ChannelIdleReason) => void;
+  /**
+   * A supervised producer for each active key: started when `key` gets its first subscriber on
+   * THIS instance (in the root context), its `signal` aborted when the last one leaves. A throw
+   * restarts it with exponential backoff (see `publisherRestart`); subscribers stay connected
+   * throughout and simply receive nothing until it publishes again. Returning ends it for good
+   * (until the key goes idle and active again).
+   */
+  publisher?: ChannelPublisher<T>;
+  /**
+   * How a throwing `publisher` restarts (default: 5 restarts a minute, 250 ms doubling to 10 s,
+   * 20% jitter). Past `maxRestarts` within `period` it gives up for that key (logged); the
+   * subscribers stay connected, and the key's next activation starts it afresh.
+   */
+  publisherRestart?: RestartOptions;
 }
+
+/** What a {@linkcode ChannelConfig.publisher} receives. */
+export interface ChannelPublisherContext<T> {
+  /** The key it produces for. */
+  readonly key: string;
+  /** Aborted when the key's last local subscriber leaves (or the hub shuts down). */
+  readonly signal: AbortSignal;
+  /** Which run this is: `1` first, `2` after the first restart, … */
+  readonly attempt: number;
+  /** Publish to this key (`channel.publish(key, payload)`). */
+  publish(payload: T): Promise<void>;
+}
+
+/** A supervised per-key producer ({@linkcode ChannelConfig.publisher}). */
+export type ChannelPublisher<T> = (ctx: ChannelPublisherContext<T>) => unknown;
 
 /** Why a channel key lost its last local subscriber (see {@linkcode ChannelConfig.onIdle}). */
 export type ChannelIdleReason = "unsubscribe" | "disconnect";
@@ -180,6 +216,8 @@ function deliverTo(fn: (ev: ChannelEvent) => void, ev: ChannelEvent): void {
   }
 }
 let payloadCap = 16 * 1024;
+/** The default lazy re-authorization TTL (seconds) — the hub applies `live.limits.channelAuthTtlSeconds`. */
+let authTtlSeconds = 300;
 let transport: ChannelTransport = inMemoryChannelTransport();
 
 /**
@@ -210,9 +248,51 @@ export function createChannel<T>(config: ChannelConfig<T>): Channel<T> {
     publish: (key, payload) => publish(internals, config.schema, key, payload),
     revoke: (key, opts) => revoke(internals, key, opts?.peerId),
   };
+  if (config.publisher) superviseKeys(internals, channel, config);
   Object.defineProperty(channel, CHANNEL_BRAND, { value: internals });
   if (config.id) registerChannel(config.id, channel);
   return channel;
+}
+
+/**
+ * Run `config.publisher` for each active key under a restart loop: started on `onActive` (before
+ * the app's own hook, so a throwing hook cannot keep it from starting), stopped on `onIdle`.
+ */
+function superviseKeys<T>(
+  internals: ChannelInternals,
+  channel: Channel<T>,
+  config: ChannelConfig<T>,
+): void {
+  const publisher = config.publisher!;
+  if (typeof publisher !== "function") {
+    throw new TypeError("createChannel: `publisher` must be a function");
+  }
+  const policy: ResolvedRestart = resolveRestart(
+    config.publisherRestart ?? true,
+    LIVE_RESTART_DEFAULTS,
+    "createChannel: publisherRestart",
+  )!;
+  const running = new Map<string, AbortController>();
+  internals.onActive = (key) => {
+    running.get(key)?.abort();
+    const controller = new AbortController();
+    running.set(key, controller);
+    void restartLoop({
+      path: `channel:${internals.id}/${key}`,
+      signal: controller.signal,
+      policy,
+      run: (signal, attempt) =>
+        publisher({ key, signal, attempt, publish: (payload) => channel.publish(key, payload) }),
+    }).finally(() => {
+      if (running.get(key) === controller) running.delete(key);
+    });
+    config.onActive?.(key);
+  };
+  internals.onIdle = (key, reason) => {
+    running.get(key)?.abort();
+    running.delete(key);
+    config.onIdle?.(key, reason);
+  };
 }
 
 function browserStub<T>(id: string): Channel<T> {
@@ -297,6 +377,27 @@ export function setChannelPayloadCap(bytes: number): void {
 }
 
 /**
+ * Set the default lazy re-authorization TTL in seconds (the hub applies
+ * `live.limits.channelAuthTtlSeconds`); a channel's own `authTtlSeconds` overrides it.
+ *
+ * @param seconds The TTL.
+ */
+export function setChannelAuthTtl(seconds: number): void {
+  authTtlSeconds = seconds;
+}
+
+/**
+ * The re-authorization TTL in milliseconds for a channel: its own `authTtlSeconds`, else the
+ * default {@link setChannelAuthTtl} installed.
+ *
+ * @param id The channel id.
+ * @returns The TTL in milliseconds.
+ */
+export function channelAuthTtlMs(id: string): number {
+  return (channels.get(id)?.authTtlSeconds ?? authTtlSeconds) * 1000;
+}
+
+/**
  * Forget every registered channel and sequence counter and restore the default transport and
  * payload cap — for tests, which share one process-wide registry (kept off the public barrels,
  * like `resetPlugins`).
@@ -306,6 +407,7 @@ export function resetChannels(): void {
   seqs.clear();
   warnedUnknown.clear();
   payloadCap = 16 * 1024;
+  authTtlSeconds = 300;
   setChannelTransport(inMemoryChannelTransport());
 }
 
@@ -435,8 +537,13 @@ export function broadcastChannelTransport(name = "denext-channels"): ChannelTran
 export interface ChannelTapHandlers<T> {
   /** A payload published to the key (decoded; `seq` orders publishes from one instance). */
   onPayload: (payload: T, seq: number) => void;
-  /** The key was revoked cluster-wide (a peer-scoped revoke is not reported — the tap is no peer). */
+  /**
+   * The key was revoked cluster-wide — or, when {@linkcode ChannelTapHandlers.peerId} is set, for
+   * that peer. Any other peer-scoped revoke is not reported.
+   */
   onRevoke?: () => void;
+  /** The peer this tap acts for: a `revoke(key, { peerId })` naming it is reported too. */
+  peerId?: string;
 }
 
 /**
@@ -447,7 +554,8 @@ export interface ChannelTapHandlers<T> {
  * second event bus. Survives `setChannelTransport` (re-binds to the new transport).
  *
  * Not authorization: `authorize` gates socket SUBSCRIBERS; a server-side tap sees every
- * publish to the key, so the consumer gates its own audience.
+ * publish to the key. A tap that serves a viewer goes through `tapChannelAuthorized` (from
+ * `denext/server`), which runs the channel's `authorize` for that viewer first.
  *
  * @param channel The channel (or its id).
  * @param key The key to observe (exact match).
@@ -480,7 +588,7 @@ export function tapChannel<T>(
     unsubscribe = t.subscribe((ev) => {
       if (ev.channelId !== id || ev.key !== key) return;
       if (ev.kind === "revoke") {
-        if (!ev.peerId) handlers.onRevoke?.();
+        if (!ev.peerId || ev.peerId === handlers.peerId) handlers.onRevoke?.();
         return;
       }
       if (ev.encoded === undefined) return;

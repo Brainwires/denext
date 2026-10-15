@@ -3,28 +3,34 @@
  * session only (the `Authorization` header is never read), bodies capped at 64 KiB:
  *
  * - `POST /passkey/register/options` — `PublicKeyCredentialCreationOptionsJSON` (WebAuthn L3
- *   §5.4) for the signed-in user: a single-use challenge, the RP, the user handle, ES256 /
- *   RS256 / EdDSA, the user's existing credentials excluded, a discoverable credential
- *   required. Needs a complete session that signed in recently (as `/mfa/enroll` does), so a
- *   stolen session can't plant a passkey of its own — and, for an account with an email
- *   address, a verified one: `403 { error: "email_unverified" }` otherwise (both rows), so whoever
- *   registered someone else's address can't leave a passkey behind for when its owner claims
- *   it. A user id too long for a WebAuthn user handle (64 bytes) is a `400`.
- * - `POST /passkey/register` — `{ credential, name? }`: the `RegistrationResponseJSON`, verified
- *   (§7.1) and stored. `{ ok: true, passkey }`; a credential ID already registered is a `409`.
- * - `POST /passkey/authenticate/options` — `PublicKeyCredentialRequestOptionsJSON`. With a
- *   pending (second-factor-owed) session it is the step-up, offering that user's credentials —
- *   unless that session's first factor was itself a passkey (a sign-in without user
- *   verification, `amr: ["hwk"]`): one key is one factor, so that step-up takes a TOTP or backup
- *   code at `/mfa` only, and this answers `403 { error: "code_required" }`; otherwise a
- *   usernameless sign-in (an empty `allowCredentials`: the authenticator offers its
+ *   §5.4) for the signed-in user, plus the `ceremonyId` the verifying request presents: a
+ *   single-use challenge, the RP, the user handle, ES256 / RS256 / EdDSA, the user's existing
+ *   credentials excluded, a discoverable credential required. Needs a complete session that
+ *   signed in recently (as `/mfa/enroll` does), so a stolen session can't plant a passkey of its
+ *   own — and, for an account with an email address, a verified one:
+ *   `403 { error: "email_unverified" }` otherwise (both rows), so whoever registered someone
+ *   else's address can't leave a passkey behind for when its owner claims it. A user id too
+ *   long for a WebAuthn user handle (64 bytes) is a `400`.
+ * - `POST /passkey/register` — `{ credential, ceremonyId, name? }`: the
+ *   `RegistrationResponseJSON`, verified (§7.1) and stored. `{ ok: true, passkey }`; a
+ *   credential ID already registered is a `409`.
+ * - `POST /passkey/authenticate/options` — `PublicKeyCredentialRequestOptionsJSON` plus a
+ *   `ceremonyId`. With a pending (second-factor-owed) session it is the step-up, offering that
+ *   user's credentials — unless that session's first factor was itself a passkey (a sign-in
+ *   without user verification, `amr: ["hwk"]`): one key is one factor, so that step-up takes a
+ *   TOTP or backup code at `/mfa` only, and this answers `403 { error: "code_required" }`;
+ *   otherwise a usernameless sign-in (an empty `allowCredentials`: the authenticator offers its
  *   discoverable passkeys). Per-IP rate-limited like `/signin/*`.
- * - `POST /passkey/authenticate` — `{ credential, callbackUrl? }`: the assertion, verified
- *   (§7.2): signs the credential's owner in, or completes the pending step-up. Every failure is
- *   the same `401 { error: "invalid passkey" }` (the reason goes to `signInFailed` and the
- *   logger), and a cloned-authenticator counter is refused.
+ * - `POST /passkey/authenticate` — `{ credential, ceremonyId, callbackUrl? }`: the assertion,
+ *   verified (§7.2): signs the credential's owner in, or completes the pending step-up. Every
+ *   failure is the same `401 { error: "invalid passkey" }` (the reason goes to `signInFailed`
+ *   and the logger), and a cloned-authenticator counter is refused.
  * - `GET /passkeys` — the signed-in user's passkeys (no key material).
  * - `DELETE /passkeys/:id` — remove one; needs a recent sign-in.
+ *
+ * Each ceremony is keyed by its own `ceremonyId` (single-use, expiring with its challenge after
+ * `passkeys.timeout`), so ceremonies in several tabs of one browser run side by side; a
+ * missing, replayed or swapped id is refused.
  *
  * Without `denextAuth({ passkeys })` every row answers `null` (a plain 404).
  *
@@ -64,8 +70,7 @@ import {
   isSameOrigin,
   json,
 } from "./routes-shared.ts";
-import { cookieSessionOptions } from "./options.ts";
-import { getSession, type SessionOptions } from "../session.ts";
+import { sha256Hex } from "./hash.ts";
 import { readAuthSession } from "./session.ts";
 import { isSsoUser } from "./sso-user.ts";
 import { finishSignIn } from "./sign-in-tail.ts";
@@ -116,33 +121,39 @@ async function readBody(ctx: AuthRouteContext): Promise<Record<string, unknown>>
   }
 }
 
-// ---- the ceremony cookie -------------------------------------------------------------
+// ---- the ceremony id ------------------------------------------------------------------
 
-/**
- * The signed cookie binding a ceremony to the browser that started it: its random `binding`
- * must match the challenge record's. Same attributes as the OAuth transaction cookie.
- */
-function ceremonyCookie(pk: PasskeyContext): SessionOptions {
-  const tx = pk.ctx.options.cookies.transaction;
-  return cookieSessionOptions(pk.ctx.config, { ...tx, name: `${tx.name}_pk` }, pk.rp.timeout);
+/** The longest ceremony id a request may carry (a minted one is 22 characters). */
+const MAX_CEREMONY_ID = 128;
+
+/** A started ceremony: its challenge, and the id the response hands the tab that asked. */
+interface StartedCeremony {
+  challenge: string;
+  ceremonyId: string;
 }
 
-/** Start a ceremony: a challenge record plus the cookie that binds it here. */
+/**
+ * Start a ceremony: a single-use challenge record (expiring after `passkeys.timeout`) bound to
+ * a fresh random ceremony id. Only the id's SHA-256 is stored; the id itself goes back in the
+ * options response — readable by same-origin script only — and the verifying request must
+ * carry it. So each tab's ceremony is its own: two in parallel in one browser don't collide,
+ * as one cookie per browser did.
+ */
 async function beginCeremony(
   pk: PasskeyContext,
   kind: PasskeyCeremony,
   userId?: string,
-): Promise<string> {
-  const binding = randomToken(16);
+): Promise<StartedCeremony> {
+  const ceremonyId = randomToken(16);
+  const binding = await sha256Hex(ceremonyId);
   const challenge = await issueChallenge(pk.adapter, pk.rp, { kind, userId, binding });
-  const cookie = await getSession<{ binding: string }>(ceremonyCookie(pk));
-  await cookie.set({ binding });
-  return challenge;
+  return { challenge, ceremonyId };
 }
 
 /**
- * Redeem the challenge `clientDataJSON` carries — once — and check it belongs to this browser
- * and to one of `kinds`. The cookie is cleared either way.
+ * Redeem the challenge `clientDataJSON` carries — once, whatever follows — and check it was
+ * issued to `ceremonyId` (the id its options response handed out) and to one of `kinds`. A
+ * missing, replayed or swapped id is refused, and the challenge is spent either way.
  *
  * @returns The ceremony data, or `null`.
  */
@@ -150,14 +161,15 @@ async function redeemCeremony(
   pk: PasskeyContext,
   clientDataJSON: Uint8Array,
   kinds: readonly PasskeyCeremony[],
+  ceremonyId: unknown,
 ): Promise<ChallengeData | null> {
-  const cookie = await getSession<{ binding: string }>(ceremonyCookie(pk));
-  const binding = cookie.data?.binding;
-  cookie.clear();
   const challenge = parseClientData(clientDataJSON).challenge;
   const data = await redeemChallenge(pk.adapter, challenge);
-  if (!data || !binding || data.binding !== binding || !kinds.includes(data.kind)) return null;
-  return data;
+  if (!data || !kinds.includes(data.kind)) return null;
+  if (typeof ceremonyId !== "string" || !ceremonyId || ceremonyId.length > MAX_CEREMONY_ID) {
+    return null;
+  }
+  return data.binding === await sha256Hex(ceremonyId) ? data : null;
 }
 
 // ---- registration -------------------------------------------------------------------
@@ -202,8 +214,8 @@ async function handleRegisterOptions(ctx: AuthRouteContext): Promise<Response | 
   try {
     const existing = await pk.adapter.listPasskeys(user.id);
     userHandleOf(user.id);
-    const challenge = await beginCeremony(pk, "register", user.id);
-    return json(creationOptions(pk.rp, user, existing, challenge));
+    const { challenge, ceremonyId } = await beginCeremony(pk, "register", user.id);
+    return json({ ...creationOptions(pk.rp, user, existing, challenge), ceremonyId });
   } catch (error) {
     if (!(error instanceof WebAuthnError)) throw error;
     ctx.options.logger.warn("denextAuth: refused a passkey registration", { code: error.code });
@@ -221,7 +233,7 @@ async function handleRegister(ctx: AuthRouteContext): Promise<Response | null> {
   try {
     const credential = credentialOf(body.credential);
     const clientDataJSON = base64UrlField(credential.response.clientDataJSON, "clientDataJSON");
-    const ceremony = await redeemCeremony(pk, clientDataJSON, ["register"]);
+    const ceremony = await redeemCeremony(pk, clientDataJSON, ["register"], body.ceremonyId);
     if (!ceremony || ceremony.userId !== session.user.id) {
       throw new WebAuthnError("challenge", "no registration ceremony for this response");
     }
@@ -280,8 +292,12 @@ async function handleAuthenticateOptions(ctx: AuthRouteContext): Promise<Respons
   const { pk, pending: stepUp } = caller;
   if (stepUp && passkeyWasFirstFactor(stepUp)) return json({ error: "code_required" }, 403);
   const allow = stepUp ? await pk.adapter.listPasskeys(stepUp.user.id) : [];
-  const challenge = await beginCeremony(pk, stepUp ? "mfa" : "signin", stepUp?.user.id);
-  return json(requestOptions(pk.rp, challenge, allow));
+  const { challenge, ceremonyId } = await beginCeremony(
+    pk,
+    stepUp ? "mfa" : "signin",
+    stepUp?.user.id,
+  );
+  return json({ ...requestOptions(pk.rp, challenge, allow), ceremonyId });
 }
 
 /** Report a refused passkey sign-in; the answer is always the same generic `401`. */
@@ -319,7 +335,12 @@ async function verifyAssertion(
 ): Promise<VerifiedAssertion> {
   const credential = credentialOf(body.credential);
   const clientDataJSON = base64UrlField(credential.response.clientDataJSON, "clientDataJSON");
-  const ceremony = await redeemCeremony(pk, clientDataJSON, pending ? ["mfa"] : ["signin"]);
+  const ceremony = await redeemCeremony(
+    pk,
+    clientDataJSON,
+    pending ? ["mfa"] : ["signin"],
+    body.ceremonyId,
+  );
   if (!ceremony || (pending && ceremony.userId !== pending.user.id)) {
     throw new WebAuthnError("challenge", "no authentication ceremony for this response");
   }

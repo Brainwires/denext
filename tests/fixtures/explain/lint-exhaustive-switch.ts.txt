@@ -1,0 +1,12 @@
+// lint (opt-in exhaustive-switch): a switch over a local literal union misses a member.
+type Status = "idle" | "loading" | "done";
+
+export function label(status: Status): string {
+  switch (status) {
+    case "idle":
+      return "Waiting";
+    case "loading":
+      return "Loading…";
+  }
+  return "";
+}

@@ -163,7 +163,7 @@ Deno.test("resolveReactFamilyFile: an unmapped subpath fails safe to the base ru
   const r1 = resolveReactFamilyFile("react/experimental");
   assertEquals(r1.file, "react.js");
   assert(r1.warning?.includes("unmapped") && r1.warning.includes("never real React"));
-  const r2 = resolveReactFamilyFile("react-dom/static");
+  const r2 = resolveReactFamilyFile("react-dom/unknown");
   assertEquals(r2.file, "react-dom.js"); // never resolves to the real react-dom
   assert(r2.warning);
 });
@@ -510,4 +510,13 @@ Deno.test("css-url: isTailwindInput recognizes v3 directives and the v4 import",
   assert(isTailwindInput("@tailwind base;\n@tailwind utilities;"));
   assert(isTailwindInput(`@import "tailwindcss";`));
   assert(!isTailwindInput("body { color: red }"));
+});
+
+Deno.test("react-dom/static and next/head are aliased; next/head is library-only", async () => {
+  const { REACT_ALIASES, NEXT_ALIASES, resolveReactFamilyFile } = await import(
+    "../src/build/next-compat.ts"
+  );
+  assertEquals(REACT_ALIASES["react-dom/static"], "react-dom-server.js");
+  assertEquals(resolveReactFamilyFile("react-dom/static"), { file: "react-dom-server.js" });
+  assertEquals(NEXT_ALIASES["next/head"], "next-head.js");
 });

@@ -1,0 +1,26 @@
+TS18048: `user` may be `undefined`
+  at possibly-undefined.ts:9:10
+
+     8 |   const user = users.find((u) => u.id === id);
+  >  9 |   return user.name;
+                  ^^^^
+    10 | }
+
+  `user` can be `undefined` here — `Array.find` returns `undefined` when no element matches. TypeScript won't let you read from it until the code rules that out.
+
+  Fix: Narrow it first:
+    if (user === undefined) {
+      throw new Error("user is missing"); // or return a fallback
+    }
+    return user.name;
+  Or, when a missing value may flow on as `undefined`:
+  return user?.name;
+
+  Original (deno check):
+  │ TS18048 [ERROR]: 'user' is possibly 'undefined'.
+  │   return user.name;
+  │          ~~~~
+  │     at file:///app/possibly-undefined.ts:9:10
+
+error: Type checking failed.
+

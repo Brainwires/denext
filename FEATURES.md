@@ -141,6 +141,8 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   window.
 - Class components (`Component`/`PureComponent`) on every path, through an on-demand
   runtime chunk (Part 2 §3.2).
+- React 19.2's `captureOwnerStack()` (the render-parent chain, in development) and
+  `cacheSignal()` (aborts when the server render ends).
 
 ## Data, caching & ISR
 
@@ -233,11 +235,19 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   signed out everywhere until the second factor, then mints a fresh session;
   **passkeys** (WebAuthn L3 registration + authentication at `/auth/passkey/*`,
   verified with `crypto.subtle` and an in-house CBOR decoder: ES256 / RS256 / Ed25519,
-  `none` / `packed` attestation, counter clone detection, single-use browser-bound
-  challenges) as a first factor or the second. A
+  `none` / `packed` attestation, counter clone detection, single-use challenges keyed
+  by a per-tab ceremony id) as a first factor or the second. A
   first email sign-in into an unverified account retires whatever was set up
-  without proof of the mailbox (pre-account hijacking). denext ships no mailer:
-  every message goes through `sendVerificationRequest`.
+  without proof of the mailbox (pre-account hijacking). Every message goes through
+  `sendVerificationRequest` — `smtpMailer()` (a zero-npm SMTP client, TLS required) or your own.
+  A magic link opens a click-to-confirm page by default, so a mail scanner can't spend it.
+  **SSO and identity**: `saml()` (SAML 2.0 identity providers on `/auth/*`, SP-initiated),
+  multi-tenant Microsoft Entra (`tenant: "common" | "organizations" | "consumers"`, keyed on
+  `tid` + `oid`, `allowedTenants`), optional FIDO Metadata Service checks on new passkeys
+  (`passkeys.attestation.mds`), and a native `id_token` sign-in that finishes a second factor
+  (`/native/mfa`). A per-user `sessionsValidAfter` ends stateless cookie sessions early (a
+  password reset, a ban, "sign out everywhere"), and `denext auth reseal` moves TOTP factors off
+  a retired `secret`.
 - **`cookies()` / `headers()`** with **secure cookie defaults** (httpOnly,
   SameSite=Lax, Secure over HTTPS), plus the per-request facts from anywhere on
   the server: **`clientIp()`** (the trusted proxy's hop or the socket peer),
@@ -261,6 +271,13 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   otherwise. Zero cost when the app defines none. `retry: { attempts, backoff }` retries a
   failed run (fixed or exponential backoff), each attempt recorded in the run history and the
   overlap guard holding while a run retries.
+- **Supervised services** (`services/<name>.ts` → `defineService({ start })`, or any
+  `supervise({ children, strategy, intensity, period })` tree): `one_for_one` / `one_for_all` /
+  `rest_for_one` restarts with exponential backoff + jitter, intensity escalation to the parent or
+  to `onServiceError` + the `services` health check, reverse-order stop after the server drain,
+  `jobService` / `sidecarService` adapters, `supervisionStatus()` and a `denext ui` Services page;
+  opt-in Live restarts (`defineSubscription({ restart })`, `createChannel({ publisher })`).
+  Restart semantics, not isolation (see [the docs](https://denext.dev/docs/services)).
 - **`denext patch`** — patch-package for denext: record an edit to an npm package (or to
   denext's own sources, installed from JSR) as `patches/<name>+<version>.patch` and re-apply
   it at every `dev`/`build`/`start`; a denext patch overrides single framework files through
@@ -352,7 +369,12 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   factors), `postgresSessionStore`, `postgresRateLimitStore`, `postgresCacheStore` and
   `postgresJobHistoryStore` (one job-run history across replicas). `migratePostgres` /
   `postgresMigrationStatus` apply `migrations/*.sql` in order, each in its own transaction under
-  an advisory lock (`denext generate migration <name>` + `denext job migrate`). With the plugin,
+  an advisory lock (`denext generate migration <name>` + `denext job migrate`); `denext db push`
+  / `migration up` also apply every store's and the plugin's own schemas, so
+  `DENEXT_BOOT_DDL=off` (no DDL at startup; a missing migration fails the boot with
+  `BootSchemaError`) can run the whole schema out of band. Behind PgBouncer in transaction mode,
+  `directUrl` (`withDirectConnection(pooled, direct)`) sends LISTEN, reserved connections and
+  migrations to a direct connection. With the plugin,
   `backend({ postgres: {} })` (reads `DATABASE_URL`) opens one client for the app and
   `backendAuthAdapter()` puts auth's tables on it. — `src/server/postgres.ts`,
   `postgres-migrate.ts`, `postgres-cache.ts`, `postgres-job-history.ts`,
@@ -395,7 +417,9 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   cookie-carrying cross-site write is refused (`csrf_failed`). The typed client — `from(table)`
   and `restClient({ url })` from `@denext/backend/client`, a supabase-js-shaped builder that
   resolves to `{ data, error, count, status }` — is typed by `.denext/rest.ts`, generated from
-  the live catalog at `denext dev` and `denext build`. — `packages/backend/src/rest*.ts`.
+  the live catalog at `denext dev` and `denext build`. Each client has a request budget
+  (`rest.rateLimit`, 1200 a minute by default; `429 over_request_rate_limit`). —
+  `packages/backend/src/rest*.ts`.
 - **Supabase's APIs** ⚑ — `backend({ supabase })` installs Supabase-style API keys (publishable =
   `anon`, secret = `service_role`, ES256 access tokens with a JWKS) and resolves every request
   to one identity (`resolveIdentity()`), and serves GoTrue's **`/auth/v1`** over the
@@ -408,17 +432,25 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   `functions/<name>.ts` at `/functions/v1/<name>`, each in its own Deno Worker; `vault: {}`
   keeps AES-256-GCM secrets in `vault.secrets`; `queues: {}` is pgmq's SQL API without the
   extension; `vectorSearchSql()` / `matchDocuments()` over pgvector; `webhooks` delivers signed,
-  retried table-change hooks. — `packages/backend/src/functions.ts`, `vault.ts`, `queues.ts`,
+  retried table-change hooks and deletes delivered / failed events after a retention (7 / 30
+  days). — `packages/backend/src/functions.ts`, `vault.ts`, `queues.ts`,
   `vector.ts`, `webhooks.ts`.
 - **`denext db`** — migrations on SQLite or Postgres (`push`, `status`, `reset`, `seed`, and the
   Supabase CLI's history table), plus `diff`, `dump`, `pull`, `lint`, `inspect`, `test` and
   `types` against Postgres with the plugin. — `src/cli/db/`, `packages/backend/src/db-command.ts`.
 - **The Database section of `denext ui`** — for a project on Postgres: tables with their
   columns, indexes and keys; rows (keyset-paged, editable, each write previewed as its exact SQL
-  first); row-level security policies; migrations (applied, pending, edited since); the storage
-  buckets and their objects; denext auth's users (revoke sessions, delete a user). Each
+  first); a SQL editor (read-only in a `READ ONLY` transaction, or a committing script);
+  row-level security policies; migrations (applied, pending, edited since); the storage
+  buckets and their objects, with uploads; denext auth's users (create, ban, set a password,
+  revoke sessions, delete); logs (redacted, filtered by service, level, time and text);
+  realtime (the publication, live channels and bindings); Edge Functions and their recent
+  invocations; and health (services, `/_denext/health`, the `services/` tree). Each
   operation is a `denext db-admin` child that loads the project, so project code never runs in
-  the UI process; `--read-only` is honoured. — `src/ui/features/database.ts`, `src/ui/database/`.
+  the UI process; `--read-only` is honoured. **`denext dashboard`** serves the same section for
+  the self-hosted stack behind `DASHBOARD_PASSWORD` (a `dashboard` service in
+  `denext generate docker --stack`), and `denext stack health | passwd | roll | backup |
+  restore` operate the stack. — `src/ui/features/database.ts`, `src/ui/database/`.
 
 ## Client runtime
 
@@ -445,7 +477,7 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
 - **`VirtualList`** (`denext`) and **`lists: "denext"`** — the measured
   virtualized list engine behind React Native mode's FlatList / FlashList /
   LegendList; with `lists: "denext"` an npm-React app's (and its packages')
-  `@legendapp/list/react` imports resolve to a LegendList built on it, chat
+  `@legendapp/list/react` imports resolve to a LegendList built on it, bottom-anchored
   behaviour (`initialScrollAtEnd`, `maintainScrollAtEnd`, `alignItemsAtEnd`),
   `getState().listen` and the DOM build's class and attribute props included. See
   [/docs/lists](https://denext.dev/docs/lists).
@@ -604,7 +636,9 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   provenance pinned to the release workflow and tag; `deno task
   desktop:pin-runtime <tag>` writes a new pin; `DENEXT_DESKTOP_RUNTIME=stock`
   opts out. It carries a **stable app origin** (`desktop.app.origin`, so
-  storage and server allow-lists survive relaunch), **deep links and opened
+  storage and server allow-lists survive relaunch) that the window **stays on** (a top-level
+  navigation elsewhere opens in the user's browser unless
+  `desktop.app.allowedNavigationOrigins` lists it), **deep links and opened
   files** (`onDeepLink`, `onOpenFile`, `desktop.app.singleInstance`), a
   **preload** (`desktop.preload`, Electron's preload), WebSockets through the
   runtime's relay (`desktopWebSocketUrl`) and DevTools off when packaged. A
@@ -714,7 +748,8 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - Codecs as first-party zero-npm JSR packages: **`@denext/photon`**
   (resize/WebP), **`@denext/avif`** (AVIF).
 - **`next/font`** (local + Google; Google self-hosted at build, with Next's metric-matched
-  fallback face — `adjustFontFallback` — from a bundled real-metrics table).
+  fallback face — `adjustFontFallback` — from a bundled real-metrics table; a local font gets
+  no fallback face yet).
 - **`next/og`** dynamic OG images via **`@denext/og`** (satori + resvg + yoga) —
   inline `style` + Tailwind (`tw`), **async components**, and an `offline: true`
   switch that renders with zero network egress (errors instead of fetching a
@@ -829,8 +864,11 @@ cache uses Deno's built-in `node:sqlite`.)
 - **`@denext/graphql`** (`packages/graphql`): GraphQL Yoga mounted at `/graphql` through
   the plugin seam (same-origin gate on mutations, CORS off, body cap, introspection and
   GraphiQL dev-only), `fromChannel(channel, key)` turning a `createChannel` key into a
-  subscription source over `tapChannel` (delivered as GraphQL over SSE, across instances
-  via the app's `ChannelTransport`), `schema.graphql` at build, `denext graphql sdl | diff`.
+  subscription source behind the channel's `authorize` (`tapChannelAuthorized`: Live's context,
+  lazy re-check and revoke), delivered as GraphQL over SSE or over WebSocket (`graphql-ws`, a
+  same-origin handshake), capped per address and overall as Live's sockets are, and across
+  instances via the app's `ChannelTransport`; a module-path
+  schema that reloads in `denext dev`; `schema.graphql` at build, `denext graphql sdl | diff`.
 - **`@denext/content-collections`** (`packages/content-collections`): a typed, validated,
   queryable content layer (MD/MDX/YAML/JSON) — Astro Content Layer / Nuxt Content for denext.
   `content.config.ts` declares collections with a Standard Schema + a loader (`glob` for local
@@ -871,6 +909,11 @@ cache uses Deno's built-in `node:sqlite`.)
   no loopback HTTP). `useApi(path, method, opts, { tags?, suspense? })` is the hook
   (`src/client/use-api.ts`; Suspense mode seeds hydration from the SSR value on Flight
   routes; `useApiLive` from `denext/live` refetches on a Live tag invalidation).
+- **Errors as values, opt-in** (`denext/result`): `Result`, `ok` / `err`, `tryAsync` /
+  `trySync`, `map` / `andThen`, and an exhaustive `match(x).with(…).exhaustive()` whose missing
+  case is a compile error; a `defineApi` handler may `return err("code")` (a declared code only)
+  and a `defineAction` handler `return err("message", { fieldErrors })`. The opt-in lint rules
+  `denext/exhaustive-switch` and `denext/no-throw` go with it. — `src/result.ts`.
 - **Typed Server Actions.** `defineAction({ input, handler })` (from
   `denext/server`) validates `FormData` into a typed input — a parser function or
   any Standard Schema (Zod, Valibot, …) — and its output type flows into
@@ -961,11 +1004,11 @@ cache uses Deno's built-in `node:sqlite`.)
   flags `--cwd/--config/--json/--verbose/--quiet`, per-command `--help`, "did
   you mean" suggestions, `denext completions bash|zsh|fish`, and
   plugin-contributed verbs). Verbs: `create`/`init`
-  (`--template default|minimal`), `generate` (sixteen kinds: `page`, `route`,
+  (`--template default|minimal`), `generate` (eighteen kinds: `page`, `route`,
   `layout`, `loading`, `error`, `not-found`, `component`, `api`, `action`,
-  `middleware`, `job`, `test`, `docker`, `migration` (a timestamped SQL file + a
-  `node:sqlite` runner job), `seed`, `ci` (a GitHub Actions workflow); the engine takes
-  `force`/`dryRun`),
+  `middleware`, `job`, `function` (an Edge Function), `test`, `docker`, `migration` (a
+  timestamped SQL file + a runner job), `vector-search`, `seed`, `ci` (a GitHub Actions
+  workflow); the engine takes `force`/`dryRun`),
   `ui` (below), `commands` (list this project's own verbs; `--json`),
   `routes` (the app's pages and API routes with methods, params and files, as a table or
   `--json`; no route module is imported), `upgrade` (denext, its CLI tasks and the
@@ -982,7 +1025,10 @@ cache uses Deno's built-in `node:sqlite`.)
   role, read from `.denext/client` without building — and `--json` emits the same
   data structurally; `info <module>` is Deno's `deno info`), `audit` (dependency inventory +
   zero-npm proof + CycloneDX SBOM, then `deno audit` over the lockfile; `--skip-deno-audit`),
-  `job` (run, list and inspect background jobs), `toolchain`, `desktop run|dev|build|package|add|publish-update`,
+  `job` (run, list and inspect background jobs), `db` / `migration` (migrations and the
+  Supabase CLI's database verbs), `stack up|down|status|logs|health|passwd|roll|backup|restore`
+  (the self-hosted Docker stack), `dashboard` (the stack's password-protected Database UI),
+  `toolchain`, `desktop run|dev|build|package|add|publish-update`,
   `mobile add|add-ota|dev|fingerprint|assets|build|submit|doctor|privacy|inspect`, `ota
   keygen|manifest`, `migrate`, `codemod`, `mcp` / `mcp init` (the agent
   server below), `fallow init`, `version`. **A project can add its own verbs two ways**: a
@@ -1009,8 +1055,9 @@ cache uses Deno's built-in `node:sqlite`.)
   regenerate-with-diff plus an **in-place `docker-compose.yml` editor** (a line
   splice checked by re-parsing, so comments and untouched lines stay byte for
   byte), a nine-step setup wizard for a fresh clone, and a runner for the
-  project's own verbs with a typed input per declared flag, and a Database section for a
-  project on Postgres (tables, rows, policies, migrations, storage, auth users; see
+  project's own verbs with a typed input per declared flag, a Services page for the
+  `services/` tree, and a Database section for a project on Postgres (tables, rows, a SQL
+  editor, policies, migrations, storage, auth users, logs, realtime, Edge Functions, health; see
   [Backend](#backend-opt-in-plugin-denextbackend)). Server-rendered
   components built with `h()` — **zero bundler and full progressive enhancement**
   (every action works with JavaScript off) behind a six-layer local security
@@ -1045,8 +1092,19 @@ cache uses Deno's built-in `node:sqlite`.)
   packages' own `deno.json` +
   README (`deno task gen:plugin-catalog`, drift-tested). `denext migrate` takes
   its plugin pins from it.
+- **Explained diagnostics** — `denext check`, `lint`, `build` and `dev` print each type, lint
+  or build error they recognize as one line naming the problem, a codeframe, why it happens and
+  a fix, with Deno's original under it (a `defineApi` / `useApi` assignability error collapses to
+  the mismatching property path; a non-exhaustive switch lists the missing members; a `react` /
+  `next/*` import points at the denext one; an unknown route or param gets a did-you-mean).
+  The dev overlay shows the same; `--raw` / `DENEXT_RAW_DIAGNOSTICS=1` prints Deno's output
+  unchanged, and the `denext_explain_error` MCP tool explains pasted output.
+- **A fast CLI start** — the entrypoint reads a generated table of the verbs' names and flags
+  and imports a verb's implementation only when it runs (`--version` / `--help` load 85
+  modules, not the ~1,050 every verb needs). — `src/cli/lazy-registry.ts`,
+  `src/cli/command-table.generated.ts`.
 - **Tooling for AI agents** — a first-party **MCP server** (`denext mcp`, stdio
-  JSON-RPC) whose tools lint a snippet for Next-isms, map a Next/React import,
+  JSON-RPC) whose tools lint a snippet for Next-isms, explain a diagnostic, map a Next/React import,
   scaffold, run `doctor`/`codemod`, list an app's routes, read a RUNNING dev
   server's errors/console/HMR events, render a route or component server-side,
   show a path's render tree, read the **live component tree** from a running dev
@@ -1072,6 +1130,15 @@ cache uses Deno's built-in `node:sqlite`.)
 - Production server with **graceful drain**, per-request **timeout**, an
   optional in-process **`maxConcurrency`** ceiling, body/cache/prefetch caps.
 - **Static export** (`denext export`) for fully-static hosting.
+- **One executable for the server** (`denext build --compile [--target <triple>]`): the
+  build, `.denext/`, `public/`, `jobs/`, `services/`, `functions/`, migrations and
+  `compile.include` paths embedded behind `deno compile`, serving like `denext start`
+  (`./app job <name>`, `./app db migrate`), with the Docker image's least-privilege flags baked
+  in; cross-compiles to every `deno compile` target. — `src/build/compile-app.ts`,
+  `src/standalone/`.
+- **Shutdown**: SIGTERM drains in-flight requests, stops `services/`, runs the plugin
+  teardowns and `instrumentation.ts`'s `onShutdown()`, and exits by `DENEXT_SHUTDOWN_DRAIN_MS`
+  even when an app-owned handle (a pool, a timer) stays open.
 - Deploy recipes (Docker / Deno Deploy / self-host) in
   [the deployment guide](https://denext.dev/docs/deploy).
 
@@ -1079,9 +1146,9 @@ cache uses Deno's built-in `node:sqlite`.)
 
 The framework's **runtime carries no npm dependencies** — CI-enforced across
 `src/{jsx,runtime,client,server,compat,plugin}`
-(`tests/no-npm-compat-guard.test.ts`). Build-time tooling — `esbuild` (npm) plus
-the first-party `@denext/swc` + `@denext/lightningcss` wasm — never reaches the
-shipped runtime.
+(`tests/no-npm-compat-guard.test.ts`). Build-time tooling — `esbuild` (its vendored JS API
+over the binary denext's Deno toolchain ships, not an npm import) plus the first-party
+`@denext/swc` + `@denext/lightningcss` wasm — never reaches the shipped runtime.
 
 ---
 
@@ -1113,41 +1180,41 @@ is in [the CVE-defense guide](https://denext.dev/docs/security).
 - **Same-origin verification, deny-by-default.** Every Server Action POST is
   checked against `Origin` (fallback `Referer`); when neither is present the
   request is **rejected**. A state-changing RPC defaults to _deny_. —
-  `src/server/action-handler.ts:126-161` (`verifyOrigin`), called first at
-  `:63`. Class of CVE-2024-34351.
+  `src/server/origin-check.ts:41-57` (`verifyOrigin`), called first at
+  `src/server/action-handler.ts:97`. Class of CVE-2024-34351.
 - **Scheme-aware downgrade rejection.** An `http://host` Origin is refused for a
   known-HTTPS site (via `canonicalOrigin`, trusted `X-Forwarded-Proto`, or
   request URL); a forged `X-Forwarded-Proto` can only _tighten_, never loosen. —
-  `action-handler.ts:156-179`.
+  `src/server/origin-check.ts:179-194` (`isKnownHttps`).
 - **POST-only dispatch.** `isActionRequest` requires `POST`, so no
-  `<img>`/GET-triggered action. — `action-handler.ts:53-55`.
+  `<img>`/GET-triggered action. — `action-handler.ts:87-89`.
 - **Bounded dispatch by registered id.** Action ids resolve through a `Map`;
   unknown ids 404. The id is never a path or eval target. —
-  `action-handler.ts:75-78`, `src/runtime/server-action.ts:26`.
+  `action-handler.ts:109-110, 164-174`, `src/runtime/server-action.ts:221-223`.
 - **No error/stack leakage.** Handler errors are logged server-side, returned
-  generic. — `action-handler.ts:106-108`.
+  generic. — `action-handler.ts:145-147`.
 - **Forced 303 + same-origin back-redirect** for no-JS form posts. —
-  `action-handler.ts:98-104,
-  226-238`.
+  `action-handler.ts:135, 182-208`.
 - **Action `redirect()` returned to the client, never server-fetched** — no SSRF
-  to forge. — `action-handler.ts:101-105`. CVE-2026-64649.
+  to forge. — `action-handler.ts:137, 182-193`. CVE-2026-64649.
 
 ### 1.2 DoS payload bounding (Server Actions) **[default]**
 
 - **Two-stage body cap** — declared `Content-Length` fast-path (413) plus a
   streaming `readCappedBody` that hard-caps even a chunked body with no length.
   Default **1 MiB** (matches Next's `serverActions.bodySizeLimit`). —
-  `action-handler.ts:23, 68-72, 85-86, 189-214`. Class of CVE-2025-55184 /
+  `action-handler.ts:34, 102-106, 116-118`,
+  `src/server/body.ts:24`. Class of CVE-2025-55184 /
   CVE-2025-67779.
 - **Inert JSON decode** — the only decode of client input is `JSON.parse` with
   no reviver; a payload shaped like a `react.server.reference` is inert data,
-  never resolved/invoked. — `server-action.ts:219-242`. CVE-2025-55182 /
+  never resolved/invoked. — `src/runtime/server-action.ts:432-441`. CVE-2025-55182 /
   CVE-2025-66478 (RSC RCE, CVSS 10.0).
 - **Prototype-pollution resistance** — a `__proto__` key does not pollute
   `Object.prototype` (native `JSON.parse` + denext never deep-merges the
-  payload). — verified `tests/nextjs-cve-parity.test.ts:533-540`.
+  payload). — verified `tests/nextjs-cve-parity.test.ts:543-549`.
 - **Deep-nesting DoS bounded** — a ~200k-deep payload throws in `JSON.parse`, is
-  caught, returns fast. — `server-action.ts:222`.
+  caught, returns fast. — `src/runtime/server-action.ts:434-437`.
 
 ### 1.3 SSRF-safe image optimizer & `safeFetch` **[default]**
 
@@ -1155,23 +1222,23 @@ is in [the CVE-defense guide](https://denext.dev/docs/security).
   refuses if _any_ resolved A/AAAA record is internal, then connects to that
   _pinned_ IP with the original Host header + TLS SNI — no second, rebindable
   resolution at connect time. Closes the residual SSRF gap that a hostname
-  allowlist alone leaves open. — `src/server/safe-fetch.ts:308-375`
-  (`makePinnedFetch`, refusal `:331-334`), transport `:85-105`.
+  allowlist alone leaves open. — `src/server/safe-fetch.ts:461-492`
+  (`makePinnedFetch`, refusal `:515-517`), transport `:211-238`.
 - **Comprehensive internal-range guard** — loopback, `0.0.0.0`, RFC1918,
   `169.254/16` (cloud metadata), `100.64/10` CGNAT,
   multicast/reserved/broadcast, IPv6 `::1`/`fc00::/7`/ `fe80::/10`, `::ffff:`
-  IPv4-mapped, `localhost`/`*.localhost`. — `safe-fetch.ts:19-52`.
+  IPv4-mapped, `localhost`/`*.localhost`. — `safe-fetch.ts:19-48, 89-103`.
 - **Per-hop redirect re-validation** — each redirect hop is re-checked for
   scheme, allowlist, and internal-address before connecting. —
-  `safe-fetch.ts:464-499`, `src/server/image-optimizer.ts:126-164`.
+  `safe-fetch.ts:627-692`, `src/server/image-optimizer.ts:374-415`.
 - **`safeFetch` — SSRF-safe fetch for untrusted URLs** (link previews,
   import-by-URL, webhooks): scheme check, host allowlist (`*.domain`,
   subdomain-not-apex), pinned resolution, per-hop-revalidated redirects, byte
   cap (10 MiB), timeout (10s) + caller `AbortSignal`, correct method downgrade.
-  No Next equivalent. — `safe-fetch.ts:434-501`.
+  No Next equivalent. — `safe-fetch.ts:605-672`.
 - **Remote images refused by default** — remote sources require an
   `images.domains` / `remotePatterns` allowlist. —
-  `image-optimizer.ts:75-88, 134`; `src/server/config.ts:85-89`.
+  `image-optimizer.ts:145-148, 411-415`; `src/server/config.ts:130-135`.
 - **Width/quality allowlist bounds the decode surface** — the `/_denext/image`
   endpoint only honors `w`/`q` values drawn from `images.deviceSizes` +
   `images.imageSizes` and `images.qualities`, so an attacker can't drive the
@@ -1185,15 +1252,15 @@ is in [the CVE-defense guide](https://denext.dev/docs/security).
 - **Resource-exhaustion / decompression-bomb bounds** — 25 MiB download cap
   (declared + streamed), 3 redirects, 10s timeout; source pixels (40M) and
   dimensions (12k) checked _before_ the resize. —
-  `image-optimizer.ts:43-52, 166-198, 236-240`.
+  `image-optimizer.ts:68-76, 332-346, 374-409, 432-460, 657-660`.
 - **HTTP response-parser hardening (request-smuggling resistant)** — controlled
   framing headers, `Accept-Encoding: identity`, integer-only `Content-Length`,
   prefers chunked, rejects bare-LF / non-hex / oversized chunk sizes. —
-  `safe-fetch.ts:147-209, 214-253`.
+  `safe-fetch.ts:288-357, 371-411`.
 - **Image endpoint can never emit active SVG / arbitrary download** — every
   source re-decoded and re-encoded to a raster format (`image/webp`, or
   `image/avif` when enabled, negotiated from `Accept`) with no
-  `Content-Disposition`. — `image-optimizer.ts:207-253`. CVE-2025-55173.
+  `Content-Disposition`. — `image-optimizer.ts:502-527, 536-549, 703-740`. CVE-2025-55173.
 
 ### 1.4 SSR / hydration escaping strictness **[default]**
 
@@ -1201,22 +1268,22 @@ is in [the CVE-defense guide](https://denext.dev/docs/security).
   `isValidAttrName` rejects names with whitespace/quotes/`<>/=`/control chars
   **and any `on*` name case-insensitively**, blocking the lowercase-handler XSS
   sink (`<div {...untrusted}>` with `onerror`) at _both_ SSR and
-  client-DOM-mutation sites. — `src/jsx/render-to-string.ts:74-89`, applied
-  `:379, :394`.
+  client-DOM-mutation sites. — `src/jsx/render-to-string.ts:99-110`, applied
+  `:1128, :1159`.
 - **Attribute-value + text escaping** — everything through `escapeHtml`. —
-  `render-to-string.ts:57-69, 242-243, 410`.
+  `render-to-string.ts:76-82, 647-651, 1174-1179`.
 - **`</script>` / JSON-island breakout escaping** — every embedded JSON
   `<script>` island (public-env, hydration data, Flight) replaces every `<` with
   a `<` unicode escape, defeating `</script>` breakout from params/searchParams.
-  — `src/server/document.ts:77,
-  81`,
+  — `src/server/document.ts:105, 191,
+  239`,
   `src/jsx/render-to-html-flight.ts`.
 
 ### 1.5 Origin / scheme / forwarded-header handling **[default]**
 
 - **Forwarded headers untrusted by default** — `X-Forwarded-Proto`/`-Host`
   ignored unless the deployment opts into `trustForwardedHeaders` (or sets
-  `canonicalOrigin`). — `src/server/absolute-url.ts:4-56`.
+  `canonicalOrigin`). — `src/server/absolute-url.ts:4-7, 49-65`.
 - **One rule for per-address limits** — `clientIpForLimits()` is the address a
   quota or connection cap keys on: the socket peer, or the trusted proxy's last
   `x-forwarded-for` hop, and `undefined` when the peer is a loopback, private,
@@ -1250,14 +1317,16 @@ is in [the CVE-defense guide](https://denext.dev/docs/security).
 ### 1.6 Middleware / routing SSRF & bypass defenses **[default]**
 
 - **No `x-middleware-subrequest` escape hatch** — denext runs its middleware
-  unconditionally; no internal header skips it. — `middleware.ts:314-361`.
+  unconditionally; no internal header skips it. — `middleware.ts:580-647`.
   CVE-2025-29927 (auth bypass).
 - **`next()`/`rewrite()` never dereferences a `Location`** — outcomes only
   attach headers; only the client follows a redirect. Intent markers stripped
-  before reaching the client. — `middleware.ts:165-200, 255-299`. CVE-2025-57822
+  before reaching the client. — `middleware.ts:263-297, 513-558`. CVE-2025-57822
   (middleware SSRF).
-- **Rewrites route by pathname against the local manifest — never proxy a
-  host.** — `middleware.ts:350-358`. CVE-2026-64645.
+- **A same-origin rewrite routes by pathname against the local manifest; an external one
+  is proxied only through the SSRF-guarded `safeFetch`** (a private or internal target is a
+  `502`, never a local render; hop-by-hop headers are dropped). — `middleware.ts:620-640`,
+  `src/server/request-pipeline.ts` (`proxyExternalRewrite`). CVE-2026-64645.
 - **Middleware runs on locale-prefixed paths** — a guard gates `/admin` and
   `/fr/admin` alike. — CVE-2026-64642. _Caveat:_ a matcher written `/admin` (not
   `/:locale?/admin`) still lets `/fr/admin` through — an authoring hazard, same
@@ -1268,13 +1337,14 @@ is in [the CVE-defense guide](https://denext.dev/docs/security).
 - **Path-traversal + symlink-escape protection** — decode + reject malformed
   percent-encoding, lexical containment in `publicDir`, _plus_ a `Deno.realPath`
   re-check so a symlink inside `public/` pointing outside is refused. —
-  `src/server/static.ts:14-56`. Class of CVE-2024-51479.
+  `src/server/static.ts:14-52`. Class of CVE-2024-51479.
 
 ### 1.8 Cache-poisoning defenses **[default]**
 
 - **Only status-200, non-dynamic renders are cached** — 404/redirect/empty never
   stored; reading `cookies()`/`headers()` marks the render uncacheable. —
-  `src/server/request-context.ts:26-27, 96-98, 229`. CVE-2025-49826.
+  `src/server/page-cache-flow.ts:162, 365`;
+  `src/server/request-context.ts:957, 1190`. CVE-2025-49826.
 - **Soft-nav data variant partitioned from the HTML cache.** — CVE-2024-46982 /
   CVE-2025-32421.
 - **`cachedFetch` keys on the request body** — two POSTs with different bodies
@@ -1286,7 +1356,7 @@ is in [the CVE-defense guide](https://denext.dev/docs/security).
   `crypto.getRandomValues` token this server issued and tracks in a pluggable
   store; a forged/guessed cookie is not in the store. `httpOnly`,
   `sameSite=Lax`. Stronger than a static/config-derived bypass value. —
-  `request-context.ts:133-223`. _Caveat:_ default store is in-memory per-process
+  `request-context.ts:1063-1180`. _Caveat:_ default store is in-memory per-process
   (inject a shared store for multi-instance); tokens are tracked, not
   cryptographically signed.
 
@@ -1295,7 +1365,7 @@ is in [the CVE-defense guide](https://denext.dev/docs/security).
 - **Single-gate public-prefix filter** — the browser only receives
   `NEXT_PUBLIC_` / `DENEXT_PUBLIC_` vars; `filterPublicEnv` is the _only_
   producer of embedded values, and the client reads only that island. —
-  `src/runtime/public-env.ts:15-70`. _Caveat:_ passing a secret as a prop to a
+  `src/runtime/public-env.ts:16-52`. _Caveat:_ passing a secret as a prop to a
   client component remains the developer's responsibility (same boundary as
   Next).
 
@@ -1303,7 +1373,7 @@ is in [the CVE-defense guide](https://denext.dev/docs/security).
 
 - denext runs on Deno's capability model; a compromised dependency can't read
   arbitrary files or spawn processes the way a Node/Next process can. —
-  `mod.ts:34`. _Honest note:_ denext's own `deno.json` tasks and `compile` use
+  `mod.ts:36-37`. _Honest note:_ denext's own `deno.json` tasks and `compile` use
   `-A` for dev convenience; scoped permissions are a platform capability you
   apply in production, **not** an enforced denext default.
 
@@ -1377,8 +1447,8 @@ default").
   runtime + hydration for App Router pages. Classifier scans the route's whole
   transitive local import graph; any interactivity signal, unreadable module, or
   failed crawl → hydrate (conservative). —
-  `src/build/hydration.ts:25, 60, 79, 87`, wired
-  `src/build/build.ts, 92, 148`.
+  `src/build/hydration.ts:26, 72-107`, wired
+  `src/build/build-pipeline/routes.ts:50`, `src/build/build-pipeline/transforms.ts:78`.
 - **Tiny self-contained React-equivalent** **[default]** — denext's own JSX
   runtime, hooks, context, and reconciler; no npm React. **~20 KB first load**
   vs ~60 KB React+ReactDOM / ~137 KB Next.js 16; **~19 KB** shared runtime
@@ -1388,13 +1458,13 @@ default").
   code-split pass hoists the runtime into a common chunk downloaded once; a
   later navigation transfers only the route delta (**~0.6–0.9 KB**). Route
   entries dropped from ~19 KB to ~1 KB each. —
-  `src/build/bundle.ts:490, 396, 402-410`, `src/build/build.ts`; regression
-  `tests/integration/build-smoke.test.ts:77, 80`.
+  `src/build/bundle.ts:1734-1746` (`bundleRoutes`), `src/build/build.ts`; regression
+  `tests/integration/build-smoke.test.ts:71-90`.
 - **Single-React bundling for npm libraries** **[opt-in — next-compat build]** —
   every react-family import (incl. inside npm packages) rewritten to denext's
   single React, so no duplicate React and no "no dispatcher installed". —
-  `src/build/next-compat.ts:29, 36, 89-104,
-  140`.
+  `src/build/next-compat.ts:96, 108-127,
+  142, 945`.
 
 ### 2.2 Render / re-render cost
 
@@ -1402,23 +1472,23 @@ default").
   props and unchanged visible context is not re-rendered; a clean subtree with
   no work in the render lanes is skipped entirely. Every function component gets
   memo-style bailout, not just `memo()`-wrapped ones. —
-  `src/client/fiber/, 463, 699-705, 810-820`;
-  `src/runtime/memo.ts:24, 50, 72`; `src/client/fiber/fiber.ts:53-57, 85`.
+  `src/client/fiber/begin-work.ts:84-131`;
+  `src/runtime/memo.ts:23, 53, 74`; `src/client/fiber/fiber.ts:202-208, 374`.
 - **Time-sliced, interruptible transitions** **[default for transition APIs]** —
   `useTransition`/`useDeferredValue`/`startTransition` render on a concurrent
   path with a 5 ms frame budget, yield via `MessageChannel`, and are preempted
   by urgent updates (abandon + restart); tree built off-DOM, committed
   atomically. Default sync lane still runs to completion. —
-  `reconciler.ts:865, 903, 973-998, 918-929, 1023, 838, 812`;
-  `src/runtime/hooks.ts:290, 299`. (Canonical description:
+  `src/client/fiber/scheduler.ts:188-191, 212-218, 263-265, 340-355, 397`;
+  `src/client/fiber/work-loop.ts:151-164, 198`; `src/runtime/hooks.ts:380, 393`. (Canonical description:
   [the concurrency model](https://denext.dev/docs/architecture#concurrency-fiber-based-time-sliced-and-interruptible).)
 - **Auto-memo compiler / `useMemoCache`** **[opt-in]** — a
   React-Compiler-style pass lifts JSX elements into `memoValue(...)` for stable
   identity → more bailouts. Client-only and provably SSR-safe (server
   `useMemoCache` returns a fresh sentinel array, so transformed code is
   byte-equivalent server-side). Correctness over coverage: unanalyzable modules
-  emitted unchanged. — `src/build/compiler.ts:1-18, 182, 318`;
-  `src/runtime/compiler-runtime.ts:19, 37, 47`.
+  emitted unchanged. — `src/build/compiler.ts:1-18, 456, 470`;
+  `src/runtime/compiler-runtime.ts:13, 34, 52`.
 
 ### 2.3 Server render / caching
 
@@ -1435,7 +1505,7 @@ default").
   `cache(fn)` de-dupes calls within one request; uncached outside a request. The
   memo table is **bounded** (LRU with a memory budget) so a hot path can't grow
   it without limit. Plus single-flight coalescing for `unstable_cache`
-  cold-cache stampedes. — `src/server/cache.ts:29, 253-256`.
+  cold-cache stampedes. — `src/server/cache.ts:43, 182-230, 737-740`.
 - **Durable `node:sqlite` ISR / data cache** **[default]** — the pluggable
   `CacheStore` defaults to Deno's built-in `node:sqlite` (real SQLite; resolved
   automatically at startup, with an in-memory fallback), so renders/data survive
@@ -1456,8 +1526,8 @@ default").
   tooling is now the first-party `@denext/lightningcss` / `@denext/swc` wasm, not
   npm); the image/og codecs are now first-party JSR packages
   (`@denext/photon`/`@denext/avif`/`@denext/og`), not npm peers, and the cache
-  uses Deno's built-in `node:sqlite`. — `tests/no-npm-compat-guard.test.ts:9`;
-  `src/build/next-compat.ts:17-20`.
+  uses Deno's built-in `node:sqlite`. — `tests/no-npm-compat-guard.test.ts:1-8`;
+  `src/build/next-compat.ts:17-18`.
 
 ## 3. Features / DX
 
@@ -1470,14 +1540,14 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   import-map alias can't reach `import "react"` _inside_ `node_modules`; denext
   rewrites transitively through esbuild and funnels all runtime modules through
   one namespace so denext instantiates exactly once. —
-  `src/build/next-compat.ts:35, 138,
-  28, 90, 159-175`; page pipeline
-  `src/build/next-compat-build.ts:1`.
+  `src/build/next-compat.ts:9-15, 96,
+  108, 945-1015`; page pipeline
+  `src/build/next-compat-build.ts:1-10`.
 - **Curated `node:` built-in stubs for browser bundles** — safe-to-empty
   built-ins (`fs`, `path`, `os`, …) stubbed for the browser target (webpack
   `resolve.fallback` parallel); genuinely polyfillable ones (`buffer`, `crypto`,
   `stream`, …) deliberately _not_ stubbed, so real needs fail loudly. —
-  `next-compat.ts:191, 238, 269`.
+  `next-compat.ts:1011-1017, 1111-1118`.
 
 ### 3.2 On-demand class-component runtime
 
@@ -1503,7 +1573,7 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 - **`useErrorBoundary`** — imperative `captureError`/`reset` on the nearest
   boundary (async errors, timers). React makes you install
   `react-error-boundary`; denext ships it in-core, SSR-inert. —
-  `src/runtime/hooks.ts:411, 359, 382`.
+  `src/runtime/hooks.ts:476, 493, 528`.
 - **`isServer` / `serverOnly` / `clientOnly`** — replaces the `server-only` +
   `client-only` npm packages Next docs tell you to install; first-class in-core
   with a runtime `isServer()`, and `serverOnly()`/`clientOnly()` **throw when
@@ -1517,11 +1587,11 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 - **`publicEnv` / `isPublicEnvKey`** — isomorphic public-env reader with one
   provable leak-gate; accepts both `NEXT_PUBLIC_` (drop-in) and
   `DENEXT_PUBLIC_`. Runtime-enumerable, unlike Next's compile-time string
-  replacement. — `src/runtime/public-env.ts:15, 33, 64`.
+  replacement. — `src/runtime/public-env.ts:16, 34, 103`.
 - **`useMemoCache`** — the React-Compiler cache primitive exposed as a _public_
   hook (React's is an unstable internal), with `compiler-runtime` as a public
-  entrypoint. — `src/runtime/hooks.ts:247, 74`;
-  `src/runtime/compiler-runtime.ts:19, 37`.
+  entrypoint. — `src/runtime/hooks.ts:310, 106`;
+  `src/runtime/compiler-runtime.ts:13, 34`.
 - **`useEffectEvent` shipped stable** — still experimental in React proper. —
   `mod.ts` hook block, `src/runtime/hooks.ts`.
 - **Browser-platform hooks React/Next don't ship** — `useWakeLock` (Screen Wake
@@ -1564,31 +1634,34 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   `@denext/swc` with no transpile hook of its own; feeds the client bundle
   through the existing import-map seam; provably SSR-safe. —
   `src/build/
-  compiler.ts:1-18`; runtime `src/runtime/compiler-runtime.ts:37`.
+  compiler.ts:1-18`; runtime `src/runtime/compiler-runtime.ts:34`.
 
 ### 3.5 Deno-native lint plugin (no ESLint / no npm)
 
-- **`denext` lint plugin — 4 rules under `deno lint`**: `rules-of-hooks`,
+- **`denext` lint plugin — 5 rules under `deno lint`**: `rules-of-hooks`,
   `hooks-in-component`, `no-hooks-in-async` (hooks in async server components
-  that never hydrate), `directive-placement` (a `"use client"`/`"use server"`
-  that isn't the leading statement, or a module declaring both). React's
+  that never hydrate), `no-handlers-in-async` (a function handed to a JSX `on*`
+  prop in an async server component, which never reaches the client),
+  `directive-placement` (a `"use client"`/`"use server"` that isn't the leading
+  statement, or a module declaring both). `denextLintPlugin({ exhaustiveSwitch,
+  noThrow })` adds the opt-in `exhaustive-switch` and `no-throw`. React's
   equivalents need the ESLint + `eslint-plugin-react-hooks` npm toolchain. —
-  `src/lint/denext-plugin.ts:120, 176, 223`.
+  `src/lint/denext-plugin.ts`.
 
 ### 3.6 Scaffolder & CLI ergonomics
 
 - **`denext create` / `init`** — single Deno command with a native in-repo
   multi-select TUI (no `create-next-app`/npx, no `inquirer`); can scaffold
   targets Next's starter can't — native desktop (`deno desktop`), Capacitor
-  iOS/Android, the full React/Next compat alias set. — `cli.ts:223, 240, 250`;
-  `src/build/scaffold.ts:57-69, 86-112`.
+  iOS/Android, the full React/Next compat alias set. — `src/cli/commands/create.ts:32, 91-129, 170`;
+  `src/build/scaffold.ts:28-60, 205-231`.
 - **Auto-CSS re-exec seam** — makes `import "./x.css"` work on a runtime with no
   CSS loader hook by generating a merged config and re-execing `--config`
-  (guarded against infinite re-exec). — `cli.ts:62`.
+  (guarded against infinite re-exec). — `src/cli/run-verb.ts:81-131`.
 - **Port auto-selection** — picks an open port from 3000 when `--port` is
   omitted (5177 for `denext ui`), falling forward through at most ten; an explicit
-  `--port` is required exactly and fails loudly when taken. — `cli.ts:141-142`;
-  `src/server/serve-utils.ts:164`.
+  `--port` is required exactly and fails loudly when taken. — `src/cli/commands/serve.ts:131-136`;
+  `src/server/serve-utils.ts:224-247`.
 - **A project-management GUI in the framework — `denext ui` [opt-in].** Next has
   no first-party equivalent (`next.config.js` is hand-edited, `create-next-app`
   is a one-shot scaffolder). denext serves a loopback GUI from the CLI that edits
@@ -1608,8 +1681,8 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   `addCommand` does the same. Both are listed by `denext commands [--json]` and in
   shell completions, discovered under a wall-clock budget that degrades to an
   honest notice rather than hanging on user code, and in a process that always
-  exits. Next has no CLI-extension seam at all. — `src/server/config.ts:386`;
-  `src/cli/commands/commands.ts`; `src/cli/plugin-commands.ts:19`.
+  exits. Next has no CLI-extension seam at all. — `src/server/config.ts:2118`;
+  `src/cli/commands/commands.ts`; `src/cli/plugin-commands.ts:20, 131`.
 
 ### 3.7 Deno-native platform integrations (no native npm addons)
 
@@ -1621,7 +1694,7 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 - **`better-sqlite3` → `node:sqlite` shim** — drop-in `better-sqlite3` surface
   (enough for Drizzle's driver) with **zero native dependency**, reproducing
   real-lib quirks (`fileMustExist` throwing, correct nested-savepoint rollback).
-  — `src/compat/better-sqlite3.ts:18, 165, 236`.
+  — `src/compat/better-sqlite3.ts:233, 258-266, 347-373`.
 
 ### 3.8 Compat conveniences that are genuinely nicer
 
@@ -1641,11 +1714,11 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   [KNOWN-LIMITATIONS](https://denext.dev/docs/limitations). —
   `src/compat/next-intl/icu.ts:1`,
   `src/compat/next-intl/index.ts:1`, `src/compat/next-intl/navigation.ts`.
-- **Self-hosted Google fonts (build-time, pure core)** — `selfHostGoogleFont`
+- **Self-hosted Google fonts (build-time, pure core)** — `selfHostFonts`
   downloads `@font-face` CSS + woff2 and rewrites `src: url()` to local paths
   (no runtime Google request); the rewrite core is a pure, testable function
-  with content-hashed filenames. — `src/compat/next/font/google.ts:142`,
-  `:~165`, `:91`; `src/runtime/font-google.ts:64`.
+  with content-hashed filenames. — `src/build/self-host-fonts.ts:39`,
+  `src/compat/next/font/google-fetch.ts:74, 87`; `src/runtime/font-google.ts:63`.
 - **Metric-matched fallback face (`adjustFontFallback`, on by default)** — every
   Google font also declares `"<Family> Fallback"`: a local Arial / Times New Roman
   re-proportioned with `size-adjust` + `ascent`/`descent`/`line-gap-override` from a
@@ -1661,14 +1734,14 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   per-locale `hreflang` cluster (+ `x-default`) and a per-locale canonical on
   every page — SSR and static export alike — derived from the locale list, with
   a page's own `alternates.languages` always winning. Next.js leaves this to
-  you. — `src/server/augment-metadata.ts:83-95`, `src/server/i18n.ts:93`
+  you. — `src/server/augment-metadata.ts:132-156`, `src/server/i18n.ts:149`
   (`localeHref`).
 - **Typed, script-safe JSON-LD.** `metadata.jsonLd` (one object or an array,
   accumulating across layout + page) is serialized into
   `<script type="application/ld+json">` with `<`/`>`/`&`/U+2028/U+2029
   neutralized so a payload can't break out of the script. Next has no typed
   field — you inject a raw `<script>` and own the escaping. —
-  `src/server/types.ts:65, 158`; `src/server/document.ts:630, 788`.
+  `src/server/types.ts:118, 312`; `src/server/document.ts:788-806, 1042-1044`.
 - **`client:only` SEO guardrail (dev).** When SEO-relevant content (a heading,
   paragraph, or long text) is passed into a `client:only` island — which renders
   no server HTML — denext warns in dev that crawlers won't see it, pointing at
@@ -1696,7 +1769,7 @@ the reconciler. Both are opt-in and tree-shake out of apps that don't use them.
   `src/server/live.ts`; `<Live>` island `src/runtime/live-boundary.ts`; client
   `src/client/live-client.ts`; protocol/registry `src/runtime/live-protocol.ts`,
   `src/runtime/live-registry.ts`; cache seam `setLiveInvalidateHook` —
-  `src/server/cache.ts:303`; entrypoint `src/live.ts` (the dedicated
+  `src/server/cache.ts:449-470`; entrypoint `src/live.ts` (the dedicated
   `denext/live` subpath, kept off the shared chunk).
 - **Real-time data family on the same socket** — `useLive` (subscribe to a
   server function's result, re-run under the viewer's session on tag
@@ -1732,7 +1805,7 @@ the reconciler. Both are opt-in and tree-shake out of apps that don't use them.
   dynamic import; the code is fetched on first activation, the handler survives
   serialization (a Flight `{$:"e"}` reference), and a delegated listener
   dispatches it **without running its component**. — `src/runtime/qrl.ts`
-  (`DNX_H_ATTR` :29).
+  (`DNX_H_ATTR` :33).
 - **`useSignal` / `useStore` — reactive, serializable state** — `useSignal(0)`
   returns a stable box (`.value` / `.peek()`), `useStore(obj)` a shallow
   reactive object; values are serialized into a `#__denext_state` island keyed

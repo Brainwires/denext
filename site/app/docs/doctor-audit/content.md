@@ -12,7 +12,15 @@ in-process **route conformance** — exiting non-zero when a critical one fails.
 Conformance renders **every route** on the real SSR path, expanding dynamic
 routes through `generateStaticParams`, and asserts a well-formed document:
 `<!DOCTYPE>`, one `<html>`/`<head>`/`<body>`, a non-empty `<title>`, no server
-crash. Each route is classified **static** (0 KB JS) or **interactive**.
+crash, and no error an `error.tsx` boundary caught (the `no-caught-error` check). Each route
+is classified **static** (0 KB JS) or **interactive**.
+
+The other checks run only where they apply: the denext Deno toolchain, css-shim import
+entries a killed build left in `deno.json`, platform-specific files, the iOS privacy manifest
+(with an `ios/` folder), the files derived from `desktop.app.origin` (when it is set), the
+pinned Deno Desktop runtime (with a `desktop.ts` entry), and, for an app on
+`@denext/backend`, its keys, database, migrations and storage driver. An SPA-mode app skips
+the app directory and route conformance.
 `--report` prints a markdown health report — the checks, every route's
 conformance result, and the last build's client bundle by chunk and role, read
 from `.denext/client` without building; `--json` emits the same data
@@ -28,15 +36,23 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext doctor`
 It renders the **JavaScript-disabled** surface, so a pass also proves
 progressive enhancement is intact — see [Testing](/docs/testing).
 
+## Errors an `error.tsx` caught
+
+A server error that a segment `error.tsx` caught renders the boundary's fallback at status
+200, a well-formed page. The probe still fails the route: it hands the app its own
+`onRequestError` hook and records every render error by the path that raised it, so the
+`no-caught-error` check names the error's message and the digest the server logged it under
+(`an error boundary rendered a caught error: "db down" [digest 66355f2c903f1967]`). A catch
+in a Suspense hole that streams after the shell counts too. Nothing about the error is added
+to the response: the probe reads it in process, so production responses are unchanged.
+
 ## What doctor cannot see
 
 > [!WARNING]
-> **`denext doctor` / `probeApp` see a crash only as the framework's bare 500.**
-> The "no-crash-marker" check matches the 500 fallback body (`Internal Server
-> Error` and nothing else) and raw stack frames. A server error that a segment
-> `error.tsx` caught and rendered at status 200 — the redacted message inside the
-> boundary's own markup — is a rendered page to the probe. Assert on such routes
-> yourself (a `contains` on the expected content).
+> **A streamed Suspense hole whose error no boundary inside it catches** keeps showing its
+> fallback in the HTML (the server logs `streamed Suspense boundary failed to resolve`); the
+> probe sees a rendered page. Put an `error.tsx` (or an error boundary) inside the hole, or
+> assert on the route's content yourself.
 
 More of these in [Known limitations](/docs/limitations).
 
@@ -46,13 +62,20 @@ More of these in [Known limitations](/docs/limitations).
 dependency inventory grouped by registry, a proof that the app's own runtime
 source imports no npm package (offenders are listed when it doesn't hold), a note
 about npm entries in the import map that only the build uses, and a suggested
-baseline permission set to start from.
+baseline permission set to start from. It then runs Deno's `deno audit` for known
+vulnerabilities in the lockfile's packages, and exits non-zero when either part fails.
 
-| Flag       | Effect                                                  |
-| ---------- | ------------------------------------------------------- |
-| `--sbom`   | Emit a CycloneDX SBOM (JSON) instead of the report      |
-| `--strict` | Exit non-zero if runtime source imports npm — a CI gate |
-| `--json`   | Same output as `--sbom`                                 |
+| Flag                | Effect                                                  |
+| ------------------- | ------------------------------------------------------- |
+| `--sbom`            | Emit a CycloneDX SBOM (JSON) instead of the report      |
+| `--strict`          | Exit non-zero if runtime source imports npm — a CI gate |
+| `--json`            | Same output as `--sbom`                                 |
+| `--skip-deno-audit` | Run denext's checks only                                |
+
+`deno audit`'s own flags are forwarded to it: `--level <severity>`, `--ignore-unfixable`,
+`--ignore-registry-errors`, `--socket`, `--fix`, `--ignore <cve,…>`, `--lock <file>`,
+`--no-lock` and `--frozen-lockfile`, plus anything after `--`. `denext deno audit` runs
+Deno's audit alone.
 
 ## `denext info`
 
@@ -60,7 +83,9 @@ baseline permission set to start from.
 denext version, the Deno and V8 versions, the platform (`os/arch`), the project
 directory, the resolved config file path (or `— (using defaults)`), the mode
 (`app-router` or `spa`), and the resolved app directory. With `--json` the same
-facts come back as an object — the quickest thing to paste into a bug report.
+facts come back as an object — the quickest thing to paste into a bug report. Given a
+module, file or URL instead of a directory, `denext info <module>` is Deno's `deno info`
+for it (its flags pass through); Deno's cache locations are `denext deno info`.
 
 ## `denext analyze`
 

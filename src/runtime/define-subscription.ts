@@ -38,6 +38,7 @@ import {
   SUBSCRIPTION_DEF,
   type SubscriptionDef,
 } from "./server-action.ts";
+import { LIVE_RESTART_DEFAULTS, resolveRestart, type RestartOptions } from "./restart.ts";
 
 /** What a subscription's `authorize` / `resolve` receive besides the input. */
 export interface SubscriptionContext {
@@ -66,6 +67,15 @@ export interface SubscriptionConfig<In, Out> {
   authorize?: (input: In, ctx: SubscriptionContext) => boolean | Promise<boolean>;
   /** Computes the value pushed to the client. */
   resolve: (input: In, ctx: SubscriptionContext) => Out | Promise<Out>;
+  /**
+   * Restart a Live recompute whose `resolve` threw, with exponential backoff, instead of leaving
+   * the subscription on the `failed` frame until its next invalidation. The socket stays open and
+   * the client sees no `failed` frame while a restart is pending; after `maxRestarts` within
+   * `period` it gives up and the client gets `failed` as before. `true` takes the defaults
+   * (5 restarts a minute, 250 ms doubling to 10 s, 20% jitter). Off by default. A denied,
+   * not-found or redirecting resolver is never restarted.
+   */
+  restart?: boolean | RestartOptions;
 }
 
 /**
@@ -117,6 +127,11 @@ export function defineSubscription<Out, In = void>(
 
 /** Turn the config into the hub-facing definition (parse / authorize / run). */
 function buildDef<In, Out>(config: SubscriptionConfig<In, Out>): SubscriptionDef {
+  const restart = resolveRestart(
+    config.restart,
+    LIVE_RESTART_DEFAULTS,
+    "defineSubscription: restart",
+  );
   const tagsOf = (input: In): string[] =>
     typeof config.tags === "function" ? [...config.tags(input)] : [...(config.tags ?? [])];
   return {
@@ -128,6 +143,7 @@ function buildDef<In, Out>(config: SubscriptionConfig<In, Out>): SubscriptionDef
       ? (parsed, ctx) => Promise.resolve(config.authorize!(parsed as In, ctx))
       : undefined,
     run: (parsed, ctx) => Promise.resolve(config.resolve(parsed as In, ctx)),
+    ...(restart ? { restart } : {}),
   };
 }
 

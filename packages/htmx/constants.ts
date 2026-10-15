@@ -6,8 +6,8 @@
  */
 
 /**
- * The htmx version this package vendors and wraps. `@denext/htmx`'s own version
- * tracks this string, so `@denext/htmx@2.0.10` ships htmx 2.0.10.
+ * The htmx version this package vendors and wraps. `@denext/htmx`'s own version started at
+ * this string and has moved on its own since (`@denext/htmx@2.1.0` ships htmx 2.0.10).
  */
 export const HTMX_VERSION = "2.0.10";
 

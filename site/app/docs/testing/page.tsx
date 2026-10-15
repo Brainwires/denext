@@ -88,6 +88,12 @@ await waitFor(() => assertEquals(screen.getByRole("status").textContent, "1 resu
         <code>clear</code>, <code>keyboard</code>, and <code>selectOptions</code>; call{" "}
         <code>userEvent.setup()</code> for Testing-Library compatibility.
       </p>
+      <p>
+        <code>render</code> does not turn on denext's development mode, so{" "}
+        <code>captureOwnerStack()</code> (from the <code>react</code> alias) returns{" "}
+        <code>null</code>{" "}
+        in a component test, as React's does in production. Don't assert on its text there.
+      </p>
 
       <h2 id="route-handlers">Route handlers and defineApi</h2>
       <p>
@@ -298,6 +304,33 @@ describe("scheduleReminder", () => {
         under-reports a module whose plain-run and Vitest-run profiles it merges.
       </p>
 
+      <h2 id="probing-every-route">Probing every route</h2>
+      <p>
+        <code>probeApp</code>{" "}
+        renders every route on the same in-process handler (dynamic ones through{" "}
+        <code>generateStaticParams</code>) and asserts a well-formed document: a doctype, one{" "}
+        <code>&lt;html&gt;</code> / <code>&lt;head&gt;</code> /{" "}
+        <code>&lt;body&gt;</code>, a non-empty{" "}
+        <code>&lt;title&gt;</code>, no crash. It also fails a route whose server error an{" "}
+        <code>error.tsx</code> boundary caught and rendered at 200 (the <code>no-caught-error</code>
+        {" "}
+        check, with the error's message and digest), a streamed Suspense hole included; it reads the
+        error in process, so nothing is added to the response. <code>denext doctor</code>{" "}
+        runs the same probe.
+      </p>
+      <Code lang="ts">
+        {`import { formatReport, probeApp } from "denext/testing";
+
+Deno.test("every route renders a valid document", async () => {
+  const report = await probeApp("./");
+  if (!report.ok) throw new Error(formatReport(report));
+});`}
+      </Code>
+      <p>
+        See <a href="/docs/doctor-audit">Doctor &amp; audit</a>{" "}
+        for the options and what the probe cannot see.
+      </p>
+
       <h2 id="ci">Continuous integration</h2>
       <p>
         Nothing here needs a browser or a service, so CI is <code>deno test</code>. Define one{" "}
@@ -330,8 +363,9 @@ jobs:
       </Code>
       <p>
         <code>denext doctor</code>{" "}
-        is the conformance gate (every route rendered, a well-formed document asserted) and{" "}
-        <code>denext audit --strict</code>{" "}
+        is the conformance gate (every route rendered, a well-formed document asserted, no error an
+        {" "}
+        <code>error.tsx</code> caught) and <code>denext audit --strict</code>{" "}
         fails the build if runtime source imports npm, and also runs <code>deno audit</code>{" "}
         over the lockfile (<code>--skip-deno-audit</code> leaves that half out) — see{" "}
         <a href="/docs/doctor-audit">Doctor &amp; audit</a>. Add <code>--coverage</code>{" "}

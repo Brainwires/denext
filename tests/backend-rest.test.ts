@@ -19,6 +19,8 @@ import type { SqlQuery, SqlRow } from "../src/server/postgres.ts";
 import { createApp } from "../src/server/app.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import { setRemoteAddr } from "../src/server/remote-addr.ts";
+import { inMemoryRateLimitStore } from "../src/server/auth/rate-limit.ts";
 import { denextAuth } from "../src/server/auth/mod.ts";
 import { credentials } from "../src/server/auth/providers.ts";
 import { issueAuthSession } from "../src/server/auth/session.ts";
@@ -121,7 +123,7 @@ interface RestApp {
   seen: Seen[];
   call(
     path: string,
-    init?: RequestInit & { cookie?: string; crossSite?: boolean },
+    init?: RequestInit & { cookie?: string; crossSite?: boolean; peer?: string },
   ): Promise<Response>;
   fetch: typeof fetch;
 }
@@ -176,7 +178,7 @@ async function restApp(
     matchExternal: getPluginRequestHandler(),
   });
   const call: RestApp["call"] = (path, init = {}) => {
-    const { cookie, crossSite, ...rest } = init;
+    const { cookie, crossSite, peer, ...rest } = init;
     const headers = new Headers(rest.headers);
     headers.set("host", "app.test");
     if (cookie) headers.set("cookie", cookie);
@@ -187,7 +189,9 @@ async function restApp(
     if (method !== "GET" && method !== "HEAD" && !headers.has("origin")) {
       headers.set("origin", crossSite ? "https://evil.test" : ORIGIN);
     }
-    return handler(new Request(new URL(path, ORIGIN), { ...rest, headers }));
+    const request = new Request(new URL(path, ORIGIN), { ...rest, headers });
+    if (peer) setRemoteAddr(request, { transport: "tcp", hostname: peer, port: 40_000 });
+    return handler(request);
   };
   const fetchVia = ((input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
@@ -544,6 +548,7 @@ Deno.test("resolveRest validates options; rest needs postgres", () => {
     exactCount: "authenticated",
     explain: false,
     aggregates: false,
+    rateLimit: { max: 1200, windowMs: 60_000, store: undefined },
   });
   assertEquals(resolveRest({ schemas: ["a", "b", "a"], schema: "c" }).schemas, ["a", "b"]);
   const bad: RestOptions[] = [
@@ -1650,6 +1655,123 @@ Deno.test("aggregates are off by default; PUT; the OpenAPI root; the secret key'
     const allowed = await app.call("/rest/v1/notes?select=id.sum()");
     assertEquals([allowed.status, await allowed.json()], [200, [{ sum: 3 }]]);
     assertStringIncludes(app.seen.at(-1)!.text, `sum(t0."id") AS "sum"`);
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("rate limits: a budget per address signed out, per user signed in; 429 before any statement", async () => {
+  const g = await generateSupabaseKeys();
+  installSupabaseKeys(
+    await resolveSupabaseKeys({
+      publishableKey: g.publishableKey,
+      secretKey: g.secretKey,
+      signingKeys: g.signingKey,
+    }),
+  );
+  const app = await restApp(undefined, { rateLimit: { max: 2, windowMs: 60_000 } });
+  const status = async (res: Response) => {
+    await res.body?.cancel();
+    return res.status;
+  };
+  try {
+    const peer = "203.0.113.7";
+    assertEquals(await status(await app.call("/rest/v1/notes", { peer })), 200);
+    assertEquals(await status(await app.call("/rest/v1/notes", { peer })), 200);
+    const ran = app.seen.length;
+    const limited = await app.call("/rest/v1/notes", { peer });
+    assertEquals(limited.status, 429);
+    const retry = Number(limited.headers.get("retry-after"));
+    assert(retry >= 1 && retry <= 60, `retry-after ${retry}`);
+    assertEquals(limited.headers.get("content-type"), "application/json; charset=utf-8");
+    const body = await limited.json();
+    assertEquals(Object.keys(body).sort(), ["code", "details", "hint", "message"]);
+    assertEquals(body.code, "over_request_rate_limit");
+    assertStringIncludes(body.hint, "Retry-After");
+    assertEquals(app.seen.length, ran, "no statement ran for the refused request");
+    // Writes and rpc share the budget; another address has its own.
+    assertEquals(await status(await app.call("/rest/v1/rpc/f", { peer, method: "POST" })), 429);
+    assertEquals(await status(await app.call("/rest/v1/notes", { peer: "203.0.113.8" })), 200);
+    // An IPv6 client is counted by its /64.
+    assertEquals(await status(await app.call("/rest/v1/notes", { peer: "2001:db8:1:2::1" })), 200);
+    assertEquals(await status(await app.call("/rest/v1/notes", { peer: "2001:db8:1:2::2" })), 200);
+    assertEquals(await status(await app.call("/rest/v1/notes", { peer: "2001:db8:1:2::3" })), 429);
+
+    // A signed-in user behind the spent address has a budget of their own.
+    const cookie = await cookieFor("user-r");
+    assertEquals(await status(await app.call("/rest/v1/notes", { peer, cookie })), 200);
+    assertEquals(
+      await status(await app.call("/rest/v1/notes", { peer: "198.51.100.9", cookie })),
+      200,
+    );
+    assertEquals(
+      await status(await app.call("/rest/v1/notes", { peer: "198.51.100.10", cookie })),
+      429,
+      "the user's budget follows them across addresses",
+    );
+    // The secret key is a trusted server: never limited.
+    for (let i = 0; i < 4; i++) {
+      const res = await app.call("/rest/v1/notes", {
+        peer,
+        headers: { apikey: g.secretKey, authorization: `Bearer ${g.secretKey}` },
+      });
+      assertEquals(await status(res), 200);
+    }
+    // A refused credential is charged to its address: forged keys can't bypass the budget.
+    const forger = "198.51.100.77";
+    const forged = { peer: forger, headers: { apikey: "sb_publishable_nope" } };
+    assertEquals(await status(await app.call("/rest/v1/notes", forged)), 401);
+    assertEquals(await status(await app.call("/rest/v1/notes", forged)), 401);
+    assertEquals(await status(await app.call("/rest/v1/notes", forged)), 429);
+    // An untrusted loopback / private peer (a reverse proxy every visitor shares) and a request
+    // that never came through the server loop have no address to key on: not limited.
+    for (const local of ["127.0.0.1", "10.0.0.4", undefined]) {
+      for (let i = 0; i < 3; i++) {
+        assertEquals(await status(await app.call("/rest/v1/notes", { peer: local })), 200);
+      }
+    }
+  } finally {
+    installSupabaseKeys(undefined);
+    tearDown();
+  }
+});
+
+Deno.test("rate limits: on by default, a shared store, `false` turns them off; options validated", async () => {
+  assertEquals(resolveRest({}).rateLimit, { max: 1200, windowMs: 60_000, store: undefined });
+  assertEquals(resolveRest({ rateLimit: false }).rateLimit, null);
+  for (
+    const bad of [{ max: 0 }, { windowMs: 1.5 }, { store: {} }, "fast", null] as unknown[]
+  ) {
+    let threw = false;
+    try {
+      resolveRest({ rateLimit: bad as never });
+    } catch (error) {
+      threw = error instanceof TypeError && /rest\.rateLimit/.test(error.message);
+    }
+    assert(threw, `rateLimit ${JSON.stringify(bad)} is refused`);
+  }
+  const store = inMemoryRateLimitStore();
+  const keys: string[] = [];
+  const increment = store.increment.bind(store);
+  store.increment = (key, windowMs) => {
+    keys.push(key);
+    return increment(key, windowMs);
+  };
+  const shared = await restApp(undefined, { rateLimit: { max: 1, store } });
+  try {
+    assertEquals((await shared.call("/rest/v1/notes", { peer: "203.0.113.20" })).status, 200);
+    assertEquals((await shared.call("/rest/v1/notes", { peer: "203.0.113.20" })).status, 429);
+    assertEquals(keys, ["rest|ip:203.0.113.20", "rest|ip:203.0.113.20"]);
+  } finally {
+    tearDown();
+  }
+  const off = await restApp(undefined, { rateLimit: false });
+  try {
+    for (let i = 0; i < 5; i++) {
+      const res = await off.call("/rest/v1/notes", { peer: "203.0.113.21" });
+      assertEquals(res.status, 200);
+      await res.body?.cancel();
+    }
   } finally {
     tearDown();
   }

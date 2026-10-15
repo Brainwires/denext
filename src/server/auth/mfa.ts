@@ -399,9 +399,9 @@ export function recentlyAuthenticated(
 }
 
 /**
- * Whether a session that still owes its second factor may go on toward a complete one. A
- * stateless pending cookie can't be revoked, so what would have revoked it is checked here,
- * from the stored user: the user still exists, is not banned, and had its first address proof
+ * Whether a session that still owes its second factor may go on toward a complete one. What
+ * would have revoked a stateless pending cookie is checked here too (besides the
+ * `sessionsValidAfter` every read applies), from the stored user: the user still exists, is not banned, and had its first address proof
  * (which retires every session set up before it) no later than this sign-in.
  *
  * @param config The app's auth config.

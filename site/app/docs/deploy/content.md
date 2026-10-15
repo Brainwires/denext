@@ -163,6 +163,127 @@ In production route a public HTTPS hostname to the `minio` service and set
 images, so the service uses Bitnami's legacy build of the same server, pinned by digest;
 `MINIO_IMAGE` in `.env` swaps in any MinIO-compatible image that has `mc`.
 
+### Operating the stack
+
+`denext stack` runs the stack the way `supabase start` does, and operates it once it is up:
+
+```sh
+denext stack up | down | status        # start (writing the stack and .env when missing), stop, URLs
+denext stack health [--json] [--watch [seconds]]
+denext stack logs [service] [--service s] [--level warn] [--since 30m] [--until t] [--grep text]
+denext stack passwd --postgres [--dashboard] [--generate]
+denext stack roll [--include-secret] [--keep-old | --drop-old]
+denext stack backup [file] [--full]
+denext stack restore <file> [--yes]
+```
+
+**Health.** `health` lists every service with its compose health check (a one-shot such as
+`db-init` or `migrate` counts once it has exited 0), then calls the app's own
+[`/_denext/health`](#13-health--readiness) and lists its readiness checks (`database`, …). It
+exits 1 when anything is unhealthy, so a script or a cron job can act on it. `--json` prints
+`{ ok, checkedAt, services: [{ name, state, health, ok }], app: { url, status, httpStatus,
+checks } }`. `--watch` repeats every 5 seconds, or every N with `--watch N`.
+
+**Logs.** `logs` is `docker compose logs` with filters: `--service` (repeatable, next to the
+positional service), `--since` / `--until` (a timestamp such as `2026-10-14T09:00:00Z`, or a
+relative `30m`, passed to compose), `--level debug | info | warn | error` (that level and above;
+the level is read from a JSON or logfmt `level` field or a level word such as Postgres's `ERROR:`;
+a line naming none counts as `info`) and `--grep` (plain text, case-sensitive, or `/regex/flags`).
+`--follow` works with every filter.
+
+**Passwords.** `passwd --postgres` changes the superuser's password (`POSTGRES_PASSWORD`) and the
+app role's (`POSTGRES_APP_PASSWORD`). It runs `ALTER ROLE` for both inside the running database,
+in one transaction, before it writes `.env`, so the two never disagree; if the database refuses,
+`.env` is left as it was. The superuser's new password comes from stdin (typed twice without echo
+on a terminal, or one line piped in) or `--generate`; the app role always gets a fresh random one,
+since only the app reads it. `passwd --dashboard` sets `DASHBOARD_PASSWORD`. A password is never
+accepted as an argument, where `ps` would show it, and none is printed unless you pass
+`--show-secrets`. A Postgres password may use `A-Z a-z 0-9 . _ ~ -` only (it goes into
+`DATABASE_URL`).
+
+**Keys.** `roll` replaces `DENEXT_PUBLISHABLE_KEY` and `DENEXT_SECRET_KEY` with a new pair (the
+same minting as `denext backend keys`). Clients holding the old keys need the new ones.
+`--include-secret` also replaces `DENEXT_JWT_SIGNING_KEYS`, and `DENEXT_JWT_SECRET` when it is
+set. That ends every access token, refresh session and legacy JWT key already issued, so it warns
+and asks first (`--yes` skips the question; off a terminal, `--yes` is required).
+
+**Rotating without a cut-over.** `roll --keep-old` starts a rotation instead: the new key goes
+first and the one in effect until now stays listed after it (the backend accepts every
+comma-separated publishable or secret key, and every key in `DENEXT_JWT_SIGNING_KEYS`, signing with
+the first), so clients and tokens holding the old keys keep working. With `--include-secret` the
+old signing key stays as a verifier, so no token ends and nothing is asked. The legacy
+`DENEXT_JWT_SECRET` holds one value, so `--keep-old` leaves it as it is (`roll --include-secret`
+without `--keep-old` replaces it, ending the legacy JWTs). Finish the rotation once every client
+has the new keys and, after an `--include-secret` roll, once the access tokens the old key signed
+have expired (an hour by default):
+
+```sh
+denext stack roll --include-secret --keep-old   # new keys first, the previous ones still valid
+# …ship the new publishable key to every client, wait out the old access tokens…
+denext stack roll --drop-old                     # keep only the newest key of each kind
+```
+
+`--drop-old` mints nothing: it keeps the first publishable key, secret key and signing key and
+drops the rest. A second `roll --keep-old` also retires the previous keys, keeping the key that
+was current next to an even newer one.
+
+**After a change.** `passwd` and `roll` edit `.env` in place. Comments, blank lines, order and
+every other variable keep their bytes, and the file is replaced atomically with its mode (0600
+for a new one). Then the containers that read the changed values have to be recreated:
+`--restart` does it at once (`docker compose up -d --wait web`), `--no-restart` leaves them, and
+with neither the command asks on a terminal and prints the restart command anywhere else.
+
+**Backups.** `backup` writes the database as a `pg_dump` custom-format file, by default to
+`.denext/backups/stack-<time>.dump` (which `.dockerignore` keeps out of the image). `--full`
+writes one `.tar.gz` holding the non-superuser roles and their memberships (no passwords),
+the extensions, the dump, the database and role settings, the storage objects (the MinIO bucket,
+or the `fs()` driver's directory: a literal `fs({ dir })` in the config, or `--storage-dir`) and
+a `MANIFEST.txt` that records the restore order. Every Postgres tool runs inside the stack's
+`db` container, so the machine needs no Postgres client. Backups are written 0600 and never
+overwrite an existing file.
+
+**Restore.** `restore <file>` recognizes a dump or a full backup by its first bytes. It refuses
+a database that already has tables unless you pass `--yes` (a stack that ran its migrations
+already has some). It then stops the app, runs `pg_restore --clean --if-exists` in one
+transaction (the full backup's steps in its manifest's order), and starts the app again. A full
+backup is extracted and checked before anything is touched: an entry with an absolute path or
+`..`, a link that leaves the backup, a hard link or a device is refused, and restore runs only
+the steps it knows, from the files the manifest names. The roles' passwords are not in a backup,
+so the restoring stack keeps the ones in its own `.env`.
+
+### The dashboard
+
+With Postgres the stack has a `dashboard` service: [`denext dashboard`](/docs/ui#the-stack-dashboard),
+a Studio-style view of the stack's database. Tables and rows (browse, filter, sort, page, insert,
+edit, delete), a SQL editor, row-level security policies, migrations, storage buckets and objects
+(upload, download, delete), denext auth's users (search, create, ban, set a password, revoke,
+delete), realtime (the publication opt-in, live channels, presence keys, `postgres_changes`
+subscribers), Edge Functions with their recent invocations, the logs, and health. It runs the
+app's own image with the app's environment, so its database and storage are the app's, reads the
+running app at `DASHBOARD_APP_URL` (`http://web:<port>`; the backend's admin endpoint answers it the
+secret key the app's environment already holds), and publishes on this machine's loopback only:
+
+```sh
+denext stack status      # Dashboard URL  http://127.0.0.1:3100
+```
+
+It is behind `DASHBOARD_PASSWORD`, which `denext stack up` generates into a new `.env`
+(`denext stack status --show-secrets` prints it) and `denext stack passwd --dashboard` changes.
+Without one (a stack whose `.env` predates the dashboard) it stays locked and says how to set
+one. `DASHBOARD_PORT` moves the port; `--no-dashboard` on `denext generate docker` (or
+`denext stack up`) leaves it out. To reach it from another machine, put a TLS reverse proxy in
+front and add `"--origin", "https://<its host>"` to its command: over that https origin the session
+cookie is `__Host-` and `Secure` (a plain-http origin off this machine is refused), sign-ins are rate limited, and every change needs a same-origin request and a CSRF token.
+
+**Logs and service health.** The dashboard's container has no Docker, so its Logs page and the
+services on its Health page read through a relay:
+`--dashboard-logs` (opt-in) adds a `dashboard-logs` service, the only one that mounts the Docker
+socket (`DOCKER_SOCKET` in `.env` points it at another, for rootless Docker or Podman). It runs as
+root to read the socket, is on a network of its own with the dashboard (`internal: true`, no
+published port), answers only GETs for this project's own services and their logs behind a bearer
+token derived from `DASHBOARD_PASSWORD`, and never reads another container's settings or runs
+anything. Without it the Logs page says so; `denext stack logs` works either way.
+
 ### Deno Deploy
 
 Push the repo and point the entrypoint at `jsr:@denext/denext@^4.0.0/cli` with args
@@ -194,7 +315,19 @@ WantedBy=multi-user.target
 Run `denext task build` (or `deno task build`) in your deploy step, then
 `systemctl restart my-app`. The least-privilege `start` spawns no child process, so it runs
 on whichever `deno` the unit names; it needs no `--allow-run` and no toolchain download.
+An app whose Postgres client is `Deno.SQL` (`postgresClient()`, `@denext/backend`'s default)
+needs that `deno` to be [denext's toolchain](/docs/toolchain): point `ExecStart` at the path
+`denext toolchain path` prints, or give the app a postgres.js client
+([Databases › Postgres](/docs/database#postgres)).
 Front it with nginx/Caddy for TLS + the concurrency limit (§1).
+
+### Single binary
+
+`denext build --compile` turns the app's server into one executable that does what
+`denext start` does (and runs `job` and `db` too), with the least-privilege flags baked in and
+no `.env` or database embedded. Copy it to the host and run it from the directory that should hold
+its `.env` and `./.denext` state. Targets, permissions and what it embeds:
+[Deployment targets › A single binary](/docs/deployment-targets#a-single-binary-with-denext-build---compile).
 
 ## 1. Put a concurrency ceiling in front of denext (required)
 
@@ -255,6 +388,9 @@ work is cooperative — i.e. it awaits I/O and threads the per-request
 JavaScript is single-threaded, so a synchronous hot loop blocks the event loop
 until it returns. Keep render/handler code free of unbounded synchronous work,
 and rely on the edge concurrency ceiling (§1) to contain the blast radius.
+Under `denext dev`, time the dev server spends building on a request's behalf (route scans,
+boundary crawls, a next-compat build on a target's first request) does not count against the
+deadline; the app's own handler time does. `denext start` never pauses it.
 
 A surface with a time budget of its own replaces the deadline for its requests with
 `setRequestTimeout(ms)` from `denext/server` (from the request's start; `0` removes it; it may
@@ -271,7 +407,10 @@ disconnect) actually reclaim the work. It returns `undefined` outside denext's
 server loop, so a test that calls a handler directly is unaffected, and
 `undefined` inside a `use cache` scope — a cached fill is shared with other
 readers (single-flight followers, background refreshes), so one client's
-disconnect must not abort it. The client
+disconnect must not abort it. React 19.2's `cacheSignal()` (from the `react` alias) is the
+same signal one step later: it also aborts when the render ends (its last streamed byte
+included), so work a `cache()`d function started and the page no longer needs is cancelled; it
+is `null` on the client, outside a request and inside a `use cache` scope. The client
 IP and the correlation id are reachable the same way: `clientIp()` (the trusted
 proxy's last `x-forwarded-for` hop when `trustForwardedHeaders` is set, else the
 socket peer — never read the header yourself) and `requestId()` (the value
@@ -532,10 +671,25 @@ instead of (or alongside) the env var, see the `onRequest` callback in §14.
 ## 10. Graceful shutdown
 
 On `SIGTERM`/`SIGINT` the server stops accepting new connections and drains
-in-flight requests, then runs plugin teardowns. Draining is bounded by a
-deadline (default **10s**): set `DENEXT_SHUTDOWN_DRAIN_MS` to tune it, or `0` to
-drain indefinitely. If the deadline elapses with requests still in flight the
-process force-exits (and plugin teardown is skipped). Size it above your longest
+in-flight requests. Then it stops the
+[`services/` tree](/docs/services#shutdown-and-the-server-drain), runs the plugin
+teardowns, and finally runs `instrumentation.ts`'s `onShutdown()`. Draining is
+bounded by a deadline (default **10s**): set `DENEXT_SHUTDOWN_DRAIN_MS` to tune
+it, or `0` to drain indefinitely. If the deadline elapses with requests still in
+flight, the process force-exits and plugin teardown is skipped. When the
+deadline passes after the drain, the process exits even if a handle nothing
+closed keeps it alive, such as an app-owned database pool, a timer or a socket.
+To exit sooner, close such resources in `onShutdown`:
+
+```ts
+// instrumentation.ts
+import { sql } from "./lib/db.ts"; // e.g. postgres(url)
+export async function onShutdown() {
+  await sql.end({ timeout: 5 });
+}
+```
+
+Size it above your longest
 expected request and below your orchestrator's kill grace (e.g. k8s
 `terminationGracePeriodSeconds`, typically 30s; the generated compose file sets
 `stop_grace_period: 30s`). The signal must reach the server process itself: run

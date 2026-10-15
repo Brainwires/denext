@@ -163,6 +163,8 @@ interface FormValues {
   readonly exposeDb: boolean;
   /** Also write `compose.dev.yml`. */
   readonly dev: boolean;
+  /** The dashboard's log relay (it mounts the Docker socket). */
+  readonly dashboardLogs: boolean;
 }
 
 /** Everything the panel renders from. */
@@ -370,6 +372,7 @@ function seeResult(
   }
   if (values.exposeDb) params.set("expose-db", "on");
   if (values.dev) params.set("dev", "on");
+  if (values.dashboardLogs) params.set("dashboard-logs", "on");
   for (const [key, paths] of [["w", written], ["r", refused]] as const) {
     for (const path of paths) params.append(key, path);
   }
@@ -428,6 +431,7 @@ function formValues(get: (key: string) => string): FormValues {
     features,
     exposeDb: isOn(get("expose-db")),
     dev: isOn(get("dev")),
+    dashboardLogs: isOn(get("dashboard-logs")),
   };
 }
 
@@ -469,6 +473,7 @@ function requestOf(values: FormValues, strict: boolean): DockerRequest {
     denoTag: parseTag(values.tag, strict),
     exposeDb: values.exposeDb,
     dev: values.dev,
+    dashboardLogs: values.dashboardLogs,
   };
 }
 
@@ -478,6 +483,7 @@ function stackJson(options: DockerOptions, detection: StackDetection): Record<st
     ...Object.fromEntries(STACK_FEATURES.map((f) => [f, options[f] === true])),
     exposeDb: options.exposeDb === true,
     dev: options.dev === true,
+    dashboardLogs: options.dashboardLogs === true,
     detected: detection.features,
     reasons: detection.reasons,
   };
@@ -658,6 +664,7 @@ const FEATURE_LABEL: Record<StackFeature, string> = {
   pgvector: "pgvector image (pgvector/pgvector:pg17)",
   storage: "MinIO S3 store + a one-shot bucket bootstrap",
   migrate: "Migrations service (denext job migrate before the app starts)",
+  dashboard: "Database dashboard on 127.0.0.1:3100 (behind DASHBOARD_PASSWORD)",
 };
 
 /** One labelled checkbox, with an optional muted hint after the label. */
@@ -711,6 +718,12 @@ function StackFields({ state }: ViewProps): VNode {
       name: "dev",
       checked: options.dev === true,
       label: "Write compose.dev.yml (denext dev on a bind mount)",
+    }),
+    h(Check, {
+      id: "dk-dashboard-logs",
+      name: "dashboard-logs",
+      checked: options.dashboardLogs === true,
+      label: "The dashboard's Logs page: a relay service that mounts the Docker socket",
     }),
     detection.warnings.map((w) => h(Note, { key: w, tone: "warn" }, w)),
   );

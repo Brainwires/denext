@@ -30,6 +30,7 @@ ignoreDependencies = [
   "tus-js-client", # deno.json: npm:tus-js-client@4.3.1 — test-only: TUS resumable uploads in the storage parity suite
   "playwright-core", # deno.json: npm:playwright-core@1.63.0 — test-only: Chromium + WebKit in tests/e2e/spa-shell.e2e.test.ts
   "@supabase/supabase-js", # deno.json: npm:@supabase/supabase-js@2.117.2 — test-only: the REST and Storage parity suites
+  "graphql-ws", # deno.json: npm:graphql-ws@6.3.0 — test-only: the real client against @denext/graphql's WebSocket transport
   # Workspace packages and examples import the published framework by its JSR name
   # (their own deno.json maps it); there is no package.json for fallow to read.
   "denext",
@@ -114,6 +115,12 @@ entry = [
   "**/app/**/template.tsx",
   "**/app/**/default.tsx",
   "**/app/**/global-error.tsx",
+  # The modules the `denext` entrypoint (cli.ts) loads on demand through `importCliModule`, a
+  # computed `import()` fallow cannot follow (src/cli/lazy-modules.generated.ts lists them all,
+  # for `deno compile --include`; its side-effect imports mark no export used).
+  "src/cli/run-verb.ts",
+  "src/cli/plugin-commands.ts",
+  "src/cli/cli-cache.ts",
   # Build/codegen scripts run via `deno task`, not imported — declare them so they
   # aren't reported as unused files (e.g. scripts/gen-*.ts feed the docs site).
   "scripts/*.ts",
@@ -129,6 +136,8 @@ entry = [
   # content.config.ts (@denext/content-collections plugin): loaded by dynamic import (path-based),
   # not by a static import, like denext.config.ts.
   "**/content.config.ts",
+  # @denext/graphql's module-path `schema` (loaded by path so `denext dev` can reload it).
+  "examples/graphql/app/graphql/schema.ts",
   "**/middleware.ts",
   "**/instrumentation.ts",
   "**/instrumentation-client.ts",

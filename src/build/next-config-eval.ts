@@ -56,6 +56,59 @@ export interface NextConfigEvalOptions {
   readonly timeoutMs?: number;
 }
 
+/** How long past the deadline the reaper waits before it kills the evaluator itself. */
+const REAPER_GRACE_MS = 5_000;
+
+/**
+ * The reaper: a second, idle child that holds the evaluator's pid. A spawned child is NOT
+ * killed when its parent exits, and the deadline is a timer in the PARENT — so a parent that
+ * died mid-evaluation (a killed test run, a crashed `denext migrate`) left a config stuck in
+ * `while (true) {}` spinning for days. The evaluator can't watch for that itself: a config that
+ * never yields holds its only thread. The reaper waits on its stdin, which only this process
+ * holds open: EOF means the parent is gone, and the evaluator is killed. Its own timer (the
+ * deadline plus a grace) kills the evaluator even if no EOF ever comes. On a normal finish the
+ * parent kills the reaper instead.
+ */
+const REAPER = `
+const [pid, ms] = Deno.args.map(Number);
+const reap = () => {
+  try { Deno.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+  Deno.exit(0);
+};
+setTimeout(reap, ms);
+const buf = new Uint8Array(64);
+while ((await Deno.stdin.read(buf).catch(() => null)) !== null) { /* the parent writes nothing */ }
+reap();
+`;
+
+/**
+ * Tie the evaluator `pid` to this process's life: a reaper that kills it when this process
+ * exits (or `ms` from now). Returns the function that dismisses the reaper once the evaluator
+ * has exited normally, or `null` when no reaper could be started (the caller's own deadline
+ * still applies while it lives).
+ */
+function tieToParent(pid: number, ms: number): (() => Promise<void>) | null {
+  try {
+    const reaper = new Deno.Command(denoExecutable(), {
+      args: ["eval", "--no-config", REAPER, String(pid), String(ms)],
+      clearEnv: true,
+      env: evalEnv(),
+      stdin: "piped",
+      stdout: "null",
+      stderr: "null",
+    }).spawn();
+    return async () => {
+      try {
+        reaper.kill("SIGKILL");
+      } catch { /* it already reaped on its own timer */ }
+      await reaper.status.catch(() => {});
+      await reaper.stdin.close().catch(() => {});
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The failure reason when the calling process may not spawn the evaluator (it runs without
  * `--allow-run`). A caller tells it apart from a config that failed to evaluate: the config
@@ -152,7 +205,8 @@ function evalEnv(): Record<string, string> {
  * prompt, no write/run/net, no downloads, and an environment cleared down to Next's own public
  * variables). A side-effectful config — a watcher, a DB connect, an unresolved
  * top-level await — would otherwise hang the caller forever: at the deadline the child is
- * killed and awaited, so it never outlives the call.
+ * killed and awaited, so it never outlives the call. A reaper process ties the child to this
+ * one: if the caller dies mid-evaluation, the child is killed too, never left running.
  *
  * @param options The app dir, config file, program, result marker, and optional deadline.
  * @returns `{ ok: true, value }` with the parsed marker line, or `{ ok: false, reason }` —
@@ -214,10 +268,15 @@ export async function evalNextConfigProgram(
       stderr: "piped",
       signal,
     }).spawn();
-    const writer = child.stdin.getWriter();
-    await writer.write(new TextEncoder().encode(program)).catch(() => {});
-    await writer.close().catch(() => {});
-    output = await child.output();
+    const dismissReaper = tieToParent(child.pid, timeoutMs + REAPER_GRACE_MS);
+    try {
+      const writer = child.stdin.getWriter();
+      await writer.write(new TextEncoder().encode(program)).catch(() => {});
+      await writer.close().catch(() => {});
+      output = await child.output();
+    } finally {
+      await dismissReaper?.();
+    }
   } catch (err) {
     if (signal.aborted) return { ok: false, reason: `timed out after ${timeoutMs} ms` };
     // Spawning `deno` needs run permission; without it the config was never looked at.

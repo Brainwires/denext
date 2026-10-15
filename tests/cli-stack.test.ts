@@ -3,13 +3,8 @@
 // prints — the publishable key always, the secret key and passwords only with --show-secrets.
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
-import {
-  fillEnv,
-  parsePs,
-  runStack,
-  type StackIo,
-  stackStatus,
-} from "../src/cli/commands/stack.ts";
+import { fillEnv, runStack, stackStatus } from "../src/cli/commands/stack.ts";
+import { parsePs, type StackIo } from "../src/cli/commands/stack-io.ts";
 
 const PS = JSON.stringify([
   {
@@ -128,6 +123,17 @@ Deno.test("parsePs / stackStatus: URLs, keys, secrets only when asked", () => {
   assertEquals(shown.databaseUrl, "postgres://app:pw123@localhost:5433/appdb");
   assertEquals(shown.secretKey, "sb_secret_y");
   assertEquals(stackStatus([], {}, true).services, []);
+  // The dashboard: its loopback URL (on 127.0.0.1, where its cookie lives); the password only
+  // with --show-secrets.
+  const dash = [{
+    Service: "dashboard",
+    State: "running",
+    Publishers: [{ URL: "127.0.0.1", TargetPort: 3100, PublishedPort: 3105 }],
+  }];
+  const withPassword = { DASHBOARD_PASSWORD: "dashboard secret 12" };
+  assertEquals(stackStatus(dash, withPassword, false).dashboardUrl, "http://127.0.0.1:3105");
+  assertEquals(stackStatus(dash, withPassword, false).dashboardPassword, undefined);
+  assertEquals(stackStatus(dash, withPassword, true).dashboardPassword, "dashboard secret 12");
 });
 
 Deno.test("stack up: writes the stack and .env when missing, compose up --wait, then status", async () => {

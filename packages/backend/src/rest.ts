@@ -17,7 +17,8 @@
 // once (a request past that waits briefly, then gets a 503 with `Retry-After`), each under a
 // short `statement_timeout`; a read (GET / HEAD) runs in a READ ONLY transaction, as PostgREST's
 // do. `Prefer: count=exact` (a full count) is for signed-in users only unless `exactCount` says
-// otherwise.
+// otherwise. Each client has a request budget (`rateLimit`, `rest-limit.ts`): past it, a 429
+// before any statement.
 
 import {
   csrf,
@@ -75,6 +76,12 @@ import { openApiDocument } from "./rest-openapi.ts";
 import { IDENTIFIER } from "./realtime-shared.ts";
 import { positiveOption } from "./options.ts";
 import { writeRestTypes } from "./rest-codegen.ts";
+import {
+  type ResolvedRestRateLimit,
+  resolveRestRateLimit,
+  RestLimiter,
+  type RestRateLimitOptions,
+} from "./rest-limit.ts";
 
 export { statusForSqlState } from "./rest-http.ts";
 
@@ -132,6 +139,15 @@ export interface RestOptions {
    * bounds the cost.
    */
   aggregates?: boolean;
+  /**
+   * A request budget per client: a signed-in user by their user id, anyone else by their client
+   * address (`clientIpForLimits()`'s rule — skipped for an untrusted loopback/private peer), the
+   * secret key never. Past it a request is answered 429 `over_request_rate_limit` with
+   * `Retry-After`, before any statement runs. Default `{ max: 1200, windowMs: 60_000 }` — 20
+   * requests a second on average, far above what a page of supabase-js calls needs — counted per
+   * process unless `store` is shared; `false` turns it off.
+   */
+  rateLimit?: RestRateLimitOptions | false;
 }
 
 /** Validated auto-REST options. */
@@ -156,6 +172,8 @@ export interface ResolvedRest {
   explain: boolean;
   /** Whether aggregate functions are allowed. */
   aggregates: boolean;
+  /** The request budget per client, or `null` (off). */
+  rateLimit: ResolvedRestRateLimit | null;
 }
 
 /** The schemas from `schema` / `schemas`, validated. */
@@ -208,6 +226,7 @@ export function resolveRest(o: RestOptions): ResolvedRest {
     exactCount,
     explain: o.explain === true,
     aggregates: o.aggregates === true,
+    rateLimit: resolveRestRateLimit(o.rateLimit),
   };
 }
 
@@ -464,12 +483,18 @@ function scopedDb(): SqlClient {
   return db();
 }
 
-/** The request's identity, or PostgREST's 401 for a refused credential. */
-async function identityOf(request: Request): Promise<RequestIdentity> {
+/**
+ * The request's identity, or PostgREST's 401 for a refused credential — after charging the
+ * request to its client's budget (a refused one to its address), so a 429 comes first.
+ */
+async function identityOf(request: Request, limiter: RestLimiter | null): Promise<RequestIdentity> {
   try {
-    return await resolveIdentity(request);
+    const identity = await resolveIdentity(request);
+    await limiter?.charge(identity);
+    return identity;
   } catch (error) {
     if (!isIdentityError(error)) throw error;
+    await limiter?.chargeRefused();
     const expired = error.code === "jwt_expired";
     throw new RestError(
       401,
@@ -1122,6 +1147,7 @@ async function handle(
   rest: ResolvedRest,
   cache: RestCatalogCache,
   gate: () => StatementGate,
+  limiter: RestLimiter | null,
   request: Request,
   path: string,
   query: URLSearchParams,
@@ -1134,7 +1160,7 @@ async function handle(
     });
   }
   const schema = profileOf(request, rest.schemas, !isRead);
-  const identity = await identityOf(request);
+  const identity = await identityOf(request, limiter);
   // The secret key sees every relation and function of the schemas (still only by catalog name).
   const audience = (c: RestCatalog) => identity.role === "service_role" ? c.service ?? c : c;
   if (path === "") return await openApi(rest, cache, request, schema, audience);
@@ -1166,6 +1192,7 @@ function restHandler(
   const prefix = `${rest.basePath}/`;
   let made: StatementGate | undefined;
   const gate = () => made ??= new StatementGate(concurrencyOf(rest));
+  const limiter = rest.rateLimit ? new RestLimiter(rest.rateLimit) : null;
   return async (request) => {
     const url = new URL(request.url);
     const root = url.pathname === rest.basePath;
@@ -1175,6 +1202,7 @@ function restHandler(
         rest,
         cache,
         gate,
+        limiter,
         request,
         root ? "" : url.pathname.slice(prefix.length),
         url.searchParams,

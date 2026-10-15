@@ -34,12 +34,17 @@ import {
 } from "../database/protocol.ts";
 
 /** The section's tabs. */
-const TABS = [
+const DATABASE_TABS = [
   { href: "/database", label: "Tables" },
+  { href: "/database/sql", label: "SQL" },
   { href: "/database/policies", label: "Policies" },
   { href: "/database/migrations", label: "Migrations" },
   { href: "/database/storage", label: "Storage" },
   { href: "/database/users", label: "Users" },
+  { href: "/database/realtime", label: "Realtime" },
+  { href: "/database/functions", label: "Functions" },
+  { href: "/database/logs", label: "Logs" },
+  { href: "/database/health", label: "Health" },
 ];
 
 /** What every view is told about the request. */
@@ -48,20 +53,29 @@ export interface ViewCtx {
   readonly csrf: string;
   /** `--read-only`: every write control is disabled. */
   readonly readOnly: boolean;
+  /**
+   * Served as the stack's dashboard: nothing writes project files (enabling RLS writes a
+   * migration into the project, which a dashboard's container does not own).
+   */
+  readonly dashboard?: boolean;
 }
 
-/** The section's panel: its tabs, a lead, then the view. */
+/**
+ * The section's panel: its tabs, a lead, then the view. The dashboard's sidebar already lists
+ * the same pages, so it shows no tab strip.
+ */
 export function DbPanel(
-  { tab, title, children }: {
+  { tab, title, children, dashboard }: {
     readonly tab: string;
     readonly title?: string;
     readonly children?: VNodeChildren;
+    readonly dashboard?: boolean;
   },
 ): VNode {
   return h(
     Panel,
     { name: "Database", title: title ?? "Database" },
-    h(Tabs, { items: TABS, active: tab, label: "Database views" }),
+    dashboard ? null : h(Tabs, { items: DATABASE_TABS, active: tab, label: "Database views" }),
     children,
   );
 }
@@ -731,7 +745,7 @@ export function PoliciesView(
       h(
         "td",
         null,
-        t.rls ? "" : h(OpForm, {
+        t.rls || ctx.dashboard ? "" : h(OpForm, {
           csrf: ctx.csrf,
           action: "/database/policies",
           label: "Enable RLS…",
@@ -744,13 +758,21 @@ export function PoliciesView(
   return h(
     Fragment,
     null,
-    h(
-      "p",
-      { class: "lead" },
-      "Enabling row-level security writes a migration (",
-      h(Mono, null, "migrations/"),
-      ") — review it, add your policies, and apply it from Migrations. Nothing is altered directly.",
-    ),
+    ctx.dashboard
+      ? h(
+        "p",
+        { class: "lead" },
+        "Each table's row-level security and its policies. Change them with a migration in the project (",
+        h(Mono, null, "migrations/"),
+        "), applied from Migrations.",
+      )
+      : h(
+        "p",
+        { class: "lead" },
+        "Enabling row-level security writes a migration (",
+        h(Mono, null, "migrations/"),
+        ") — review it, add your policies, and apply it from Migrations. Nothing is altered directly.",
+      ),
     h("h2", null, "Tables"),
     h(Scroll, null, h(Table, { head: ["Table", "Row-level security", "Policies", ""], rows })),
     h("h2", null, "Policies"),
@@ -979,6 +1001,14 @@ function UserRow({ ctx, user }: { readonly ctx: ViewCtx; readonly user: DbAuthUs
     ),
     h("td", null, String(user.passkeys)),
     h("td", null, date(user.createdAt)),
+    h(
+      "td",
+      null,
+      typeof user.bannedUntil === "number" && user.bannedUntil > Date.now() / 1000
+        ? h(Badge, { tone: "warn" }, "banned")
+        : null,
+    ),
+    h("td", null, h("a", { href: href("/database/user", { id: user.id }) }, "Manage")),
     h("td", null, action("revoke", "Revoke sessions…")),
     h("td", null, action("delete", "Delete…")),
   );
@@ -1027,7 +1057,19 @@ export function UsersView(
         Scroll,
         null,
         h(Table, {
-          head: ["Id", "Email", "Name", "Sessions", "Second factor", "Passkeys", "Created", "", ""],
+          head: [
+            "Id",
+            "Email",
+            "Name",
+            "Sessions",
+            "Second factor",
+            "Passkeys",
+            "Created",
+            "",
+            "",
+            "",
+            "",
+          ],
           rows: reply.users.map((u) => h(UserRow, { key: u.id, ctx, user: u })),
         }),
       )

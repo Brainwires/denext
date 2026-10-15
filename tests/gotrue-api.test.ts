@@ -233,6 +233,16 @@ Deno.test("the admin gate: only the secret key; the admin user routes' refusals"
     const list = await api(app, "/admin/users", { ...admin, query: { page: "2", per_page: "1" } });
     assertEquals(list.headers.get("x-total-count"), "3");
     assertStringIncludes(list.headers.get("link")!, 'rel="next"');
+    // supabase-js's `listUsers()` with no options sends empty values: GoTrue's defaults apply.
+    const defaults = await api(app, "/admin/users", {
+      ...admin,
+      query: { page: "", per_page: "" },
+    });
+    assertEquals((defaults.json.users as unknown[]).length, 3);
+    assertEquals(
+      defaults.headers.get("link"),
+      '</auth/v1/admin/users?page=1&per_page=50>; rel="last"',
+    );
     assertEquals((await api(app, `/admin/users/${id}/factors`, admin)).json, [] as never);
     assertEquals(
       (await api(app, `/admin/users/${id}/factors/nope`, { ...admin, method: "DELETE" })).json

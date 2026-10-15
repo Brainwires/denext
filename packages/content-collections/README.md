@@ -13,7 +13,7 @@ The store + types regenerate **live in `denext dev`** and at `denext build`.
 import { contentCollections } from "@denext/content-collections";
 
 export default {
-  plugins: [contentCollections()],
+  plugins: [contentCollections()], // { watch: [...] } if your content lives outside content/**
 };
 ```
 
@@ -64,6 +64,7 @@ typed to each collection's schema. Call them from Server Components, route handl
 ## Render
 
 ```tsx
+import { notFound } from "denext";
 import { Content, getEntry } from "@denext/content-collections/runtime";
 
 export default async function Post({ params }: { params: { slug: string } }) {
@@ -95,9 +96,11 @@ document (`{ h1: Heading, Callout }`).
   runtime renders it for you: `await renderContent(entry)` or `<Content entry={entry} />`
   (server-only). A `.md` entry renders through the package's first-party, zero-dependency
   Markdown renderer at request time (`@denext/content-collections/markdown` — headings with ids,
-  lists, fenced code, blockquotes / `> [!NOTE]` callouts, GFM pipe tables, inline and
-  reference-style links, emphasis; raw HTML is escaped, `javascript:`/`data:` links are dropped).
-  A document that needs more (nested lists, footnotes, images, components) is an `.mdx` entry. A `.mdx` entry is compiled **at build** (and at dev
+  nested lists, fenced and indented code, code spans of any backtick-run length, blockquotes /
+  `> [!NOTE]` callouts, GFM pipe tables, inline and reference-style links and images, GFM
+  footnotes (`[^1]`, a numbered section with back-links), emphasis; raw HTML is escaped, and
+  `javascript:`/`data:` link and image targets are dropped). A document that needs components or
+  raw HTML is an `.mdx` entry. A `.mdx` entry is compiled **at build** (and at dev
   startup / on change) into a component module under `.denext/content/<collection>/<id>.js`
   with denext's build-time `@mdx-js/mdx` — nothing MDX-related runs at request time — and
   `renderContent(entry, { components })` passes `components` to the document. `format` on each

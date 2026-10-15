@@ -1996,3 +1996,49 @@ Deno.test("phoenix codec: a client's binary broadcast push round-trips through t
     RangeError,
   );
 });
+
+Deno.test({
+  name: "realtime hub: the admin snapshot — channels, subscribers, bindings; presence keys apart",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const r = rig();
+    try {
+      const a = r.open(userIdentity(A));
+      const b = r.open();
+      await a.join("realtime:db", {
+        postgres_changes: [
+          { event: "INSERT", schema: "public", table: "notes", filter: "id=gte.5" },
+        ],
+      });
+      const jb = await b.join("realtime:lobby", { presence: { key: "visitor-1" } });
+      await r.open().join("realtime:lobby");
+      b.send(jb.joinRef, "t1", "realtime:lobby", "presence", {
+        type: "presence",
+        event: "track",
+        payload: { secret: "do-not-list" },
+      });
+      await until(() => b.socket.replyTo("t1") !== undefined);
+      const state = r.hub.adminState();
+      assertEquals(state.connections, 3);
+      assertEquals(state.channels, [
+        { topic: "db", private: false, subscribers: 1 },
+        { topic: "lobby", private: false, subscribers: 2 },
+      ]);
+      assertEquals(state.bindings, [
+        { topic: "db", tables: ["notes"], filter: "id=gte.5", events: ["insert"] },
+      ]);
+      // Keys only: a tracked payload never travels with them.
+      const keys = await r.hub.presenceKeys("lobby", false);
+      assertEquals(keys, { "visitor-1": 1 });
+      assert(!JSON.stringify(state).includes("do-not-list"));
+      // An operator expanding that one key gets its payload.
+      assertEquals(await r.hub.presenceOf("lobby", false, "visitor-1"), [{
+        secret: "do-not-list",
+      }]);
+      assertEquals(await r.hub.presenceOf("lobby", false, "nobody"), []);
+    } finally {
+      await r.hub.stop();
+    }
+  },
+});

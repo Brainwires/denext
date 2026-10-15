@@ -7,6 +7,7 @@
 import { resolve } from "@std/path";
 import { join } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
+import { runtimeStateDir } from "../../server/standalone.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
 import {
   discoverJobs,
@@ -121,7 +122,7 @@ async function historyAnswer(
   clear: boolean,
   readOnly: boolean,
 ): Promise<Record<string, unknown>> {
-  const resolved = historyStoreFor(paths.config ?? undefined, paths.outDir);
+  const resolved = historyStoreFor(paths.config ?? undefined, runtimeStateDir(paths.outDir));
   if (!resolved) {
     return clear
       ? { enabled: false, cleared: false, reason: "run history is off" }
@@ -182,7 +183,7 @@ function parsePayload(raw: unknown): unknown {
  */
 async function runOne(paths: ProjectPaths, name: string, payload: unknown): Promise<void> {
   console.log(`running job "${name}"…`);
-  const stopRecording = startRunHistory(paths.config ?? undefined, paths.outDir, {
+  const stopRecording = startRunHistory(paths.config ?? undefined, runtimeStateDir(paths.outDir), {
     closeCustom: true,
   });
   const started = performance.now();

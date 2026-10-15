@@ -1,7 +1,7 @@
 // Production server, stage 3: the module loader, middleware, instrumentation, config
 // rules, cache store, the `createApp` handler and the Live hub.
 
-import { join } from "@std/path";
+import { join, relative } from "@std/path";
 import { timed } from "../../runtime/timing.ts";
 import { EMITTED_DIR, getPluginRequestHandler } from "../../plugin/mod.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
@@ -28,8 +28,10 @@ import {
   setNextRuntimeEnv,
 } from "../../server/instrumentation.ts";
 import { bootScheduledJobs } from "../../server/job-loader.ts";
+import { bootServices } from "../../server/service-loader.ts";
 import { installLiveHub } from "../../server/live.ts";
 import { resolveLimitPolicy } from "../../server/remote-addr.ts";
+import { runtimeStateDir } from "../../server/standalone.ts";
 import { sameOriginUpgrade } from "../../server/origin-check.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../../server/middleware.ts";
 import { defaultLoader } from "../../server/mod.ts";
@@ -88,7 +90,7 @@ export async function prodLoader(paths: ProjectPaths, info: BuildInfo): Promise<
 async function loadMiddleware(paths: ProjectPaths, load: ModuleLoader): Promise<MiddlewareRunner> {
   if (!paths.middlewarePath) return null;
   const mod = await load(paths.middlewarePath);
-  return createMiddlewareRunner(mod as never);
+  return createMiddlewareRunner(mod as never, relative(paths.projectDir, paths.middlewarePath));
 }
 
 /**
@@ -144,7 +146,8 @@ function sweepStalePagesAfterStartup(paths: ProjectPaths, info: BuildInfo): void
  * share/poison one cache; fails safe to in-memory) and `createApp`. Live Server
  * Components: the WebSocket hub is mounted only when the app has a Flight route (only
  * Flight routes can carry a `<Live>` boundary); the socket's own cookies still gate
- * every push.
+ * every push. `loaded.instrumentation` receives the loaded instrumentation hooks, whose
+ * `onShutdown` the server runs after its drain.
  */
 export async function createProdApp(
   paths: ProjectPaths,
@@ -153,13 +156,15 @@ export async function createProdApp(
   { flightRoutes, boundary }: FlightBoundary,
   assets: AssetResolvers,
   load: ModuleLoader,
+  loaded: { instrumentation?: Instrumentation } = {},
 ): Promise<(request: Request) => Promise<Response>> {
   await timed("warmRouteModules", () => warmRouteModules(manifest, load));
   const middlewareRunner = await loadMiddleware(paths, load);
   setNextRuntimeEnv();
   const instrumentation = await loadInstrumentation(paths.instrumentationPath);
+  loaded.instrumentation = instrumentation; // the server runs its `onShutdown` after the drain
   await runRegister(instrumentation);
-  const rules = await bootProdServices(paths, info);
+  const rules = await bootProdServices(paths, info, instrumentation);
   const appConfig = prodAppConfig(
     paths,
     manifest,
@@ -177,18 +182,30 @@ export async function createProdApp(
 }
 
 /**
- * The process-lifetime services the server boots with: the scheduled jobs, the durable default
- * cache store and the stale-page sweep. Returns the denext.config redirect/rewrite/header rules.
+ * The process-lifetime services the server boots with: the scheduled jobs, the supervised
+ * `services/` tree, the durable default cache store and the stale-page sweep. Returns the
+ * denext.config redirect/rewrite/header rules.
  */
-async function bootProdServices(paths: ProjectPaths, info: BuildInfo): Promise<ResolvedRules> {
+async function bootProdServices(
+  paths: ProjectPaths,
+  info: BuildInfo,
+  instrumentation: Instrumentation,
+): Promise<ResolvedRules> {
   // Discover jobs/ and register cron schedules (Deno.cron on Deploy, else a userland tick). The
   // scheduler lives for the server process (created once here); the disposer is not retained.
-  await bootScheduledJobs(paths.projectDir, paths.config ?? undefined, paths.outDir);
+  // A compiled app's `.denext` is embedded and read-only: its state goes to the state dir.
+  const stateDir = runtimeStateDir(paths.outDir);
+  await bootScheduledJobs(paths.projectDir, paths.config ?? undefined, stateDir);
+  // Start the supervised services/ tree (a no-op without the directory). The drain stops it.
+  await bootServices(paths.projectDir, {
+    outDir: stateDir,
+    onServiceError: instrumentation.onServiceError,
+  });
   const rules = await resolveConfigRules(paths.config);
   await resolveDefaultCacheStore(
     paths.config?.cache?.path
       ? paths.config.cache
-      : { ...paths.config?.cache, path: join(paths.outDir, "cache.db") },
+      : { ...paths.config?.cache, path: join(stateDir, "cache.db") },
   );
   sweepStalePagesAfterStartup(paths, info);
   return rules;

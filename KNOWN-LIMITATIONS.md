@@ -21,8 +21,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   instruments every client `await`; `yield*` delegation and top-level `await` are not).
 - **`next-intl` formats the common ICU subset.** An unknown number/date skeleton token is
   ignored, and deeply nested `plural`/`select` is depth-capped (an error, not a wrong render).
-- **`captureOwnerStack()` and `cacheSignal()` return `null`** (owner stacks are in denext's
-  DevTools; there is no client cache scope).
+- **`captureOwnerStack()` reports the render-parent chain** (the DevTools panel's), not React's
+  JSX-owner chain: a component passed as `children` through a wrapper is listed under the wrapper.
+  Each frame's location is where the component was declared, and during a server render it
+  returns `null`.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`), Next's `taint` config
   (React's `experimental_taint*` are enforced), and Next canary's navigation-stage APIs
   (`unstable_navigation` / `unstable_prefetch` from `next/cache`; an import fails the build).
@@ -34,6 +36,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **Built for five targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64).
   Elsewhere, and offline on first use, commands run on stock Deno, without `Deno.SQL` or
   Vitest/Jest compatibility in `deno test`.
+- **A CLI installed from JSR caches its verbs after the install, not during it.** `deno install
+  -g jsr:@denext/denext/cli` caches the entrypoint; each verb's modules are cached by the CLI's
+  first online run (in the background) or by `denext toolchain install`. A verb used offline
+  before either has happened fails to load. The compiled binary embeds every verb.
 - **A plain `deno task` runs a task's `deno` steps on the Deno that started it** (stock Deno);
   `denext task` is what puts the toolchain inside a task.
 - **Coverage from a Vitest run doesn't merge with a plain run's.** The Vitest layer changes the
@@ -66,55 +72,51 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   only** (elsewhere it fetches on mount).
 - **`@denext/openapi` describes only what a validator can export** (else `{}` / `unknown`);
   middleware responses appear only as `default`; `scalar` / `swagger` load from a CDN.
-- **`@denext/graphql` subscriptions are GraphQL over SSE**, not WebSocket; `fromChannel` bypasses
-  the channel's `authorize` (gate in the resolver); with Yoga `batching` the cost budget is per
-  operation. A schema edit in `denext dev` needs a restart.
+- **`@denext/graphql`: with Yoga `batching` the cost budget is per operation.** A schema object
+  imported into `denext.config.ts` needs a restart after an edit (a module-path `schema` reloads).
 
 ### First-party auth (`denextAuth`)
 
-- **No mailer:** emailed tokens go through your `sendVerificationRequest`, handed over after the
-  response, so delivery is best-effort where the platform freezes the isolate.
+- **Mail delivery is best-effort:** emailed tokens go to `sendVerificationRequest` (`smtpMailer()`
+  or your own) after the response, so delivery can be cut short where the platform freezes the
+  isolate.
 - **`sqliteAuthAdapter` is single-node and additive-only** (no renames or drops).
-- **Magic links redeem on GET by default**, so a link-scanning mail gateway can spend one, and a
-  link the attacker requested can sign a victim into the attacker's account (as in Auth.js).
-  `magicLink({ confirm: true })` puts a confirmation page (naming the account) in front of the
-  redeem; `emailOtp()` avoids links altogether.
-- **Stateless cookie sessions can't be ended early** by a password reset, a pre-account-hijacking
-  eviction, a ban, an `/auth/v1` password change or account deletion; run a `sessionStore` (or
-  `session.strategy: "database"`). A stateless session that still owes its second factor can't
-  complete it once its user is banned or deleted or the address was first proven after it signed
-  in, but a complete one lives until it expires.
+- **Without an adapter, a stateless cookie session can't be ended early:** the user's
+  `sessionsValidAfter` (set by `revokeAllSessions`, a password reset or change, a ban, a deletion
+  and the pre-account-hijacking eviction) lives on the stored user, so with no adapter there is
+  nothing to read. It is compared to the second: a session signed in during the very second it
+  is set survives it. `revokeSession(id)` (one device) needs a `sessionStore`.
 - **Sliding refresh needs a `Response` being produced** (`/session`, `requireAuth()`,
   `requireSession()`; a streamed component's headers have flushed). A store without `update`
   never slides.
 - **`mfa.required: "always"` is trust-on-first-use;** rotating `secret` invalidates in-flight
-  one-time codes, and a retired `secret` must stay in the list until the TOTP factors sealed
-  under it are re-sealed — which happens (through `updateMfaFactor`) only after a TOTP code from
-  that factor passes, so never for a user who steps up only with a backup code, a phone code or a
-  passkey with user verification; rate limiters count per node without a shared
+  one-time codes, and a retired `secret` can be removed only after `denext auth reseal` reports
+  zero remaining; rate limiters count per node without a shared
   `rateLimit.store`, and every per-IP budget (the captcha budget included) is skipped for a
   loopback/private peer with no trusted proxy hop unless `rateLimitLocalAddresses` is set.
-- **One passkey ceremony per browser at a time** (the ceremony cookie is per browser), and the
-  passkey endpoints are same-origin only: an extra `passkeys.origins` entry (another web origin,
-  an Android `apk-key-hash`) needs that origin to serve the auth routes itself.
-- **Passkeys verify `none` and `packed` attestation only, without a trust chain** (no FIDO
-  Metadata Service), and ES256 / RS256 / Ed25519 keys only.
+- **The passkey endpoints are same-origin only:** an extra `passkeys.origins` entry (another web
+  origin, an Android `apk-key-hash`) needs that origin to serve the auth routes itself.
+- **Passkeys verify `none` and `packed` attestation only** (with `attestation.mds`, another
+  format registers only as unattested), and ES256 / RS256 / Ed25519 keys only. The Metadata
+  Service checks fetch no certificate revocation lists.
 - **Fixed profiles:** TOTP is SHA-1 / 6 digits / 30 s (what every authenticator supports); an
-  email local part must be ASCII; `microsoftEntra` needs a specific tenant (`common` can't verify).
-- **Native sessions:** a user with a second factor can't use a native `id_token` sign-in
-  (`403 mfa_required`); concurrent refreshes with one token revoke the family unless
-  `native.refreshReuseInterval` is set; Apple token revocation needs `native.apple.clientSecret`.
+  email local part must be ASCII.
+- **Native sessions:** under `mfa.required: "always"` a user with no factor yet can't enroll from
+  a native `id_token` sign-in (`403 mfa_required`; the browser flow enrolls); Apple token
+  revocation needs `native.apple.clientSecret`.
 - **`cors` covers route handlers and the native auth endpoints only**, not pages, Server Actions,
   the batch endpoint or Live; middleware must let `OPTIONS` under `/auth` through.
-- **No SAML SSO on denext's own sign-in endpoints** (generic `oidc()` covers OIDC identity
-  providers; `/auth/v1` serves SAML with `backend({ supabase })`).
+- **SAML Single Logout is `/auth/v1`'s only:** a `saml()` provider on denext's own endpoints
+  signs in, and its session ends with `signOut()`, not with an IdP's LogoutRequest.
 
 ### Backend (`@denext/backend`)
 
 - **Not hosted.** The stock supabase-js client works against the app (`/auth/v1`, `/rest/v1`,
   `/storage/v1`, `/realtime/v1`, `/functions/v1`, each once its option is on), but there is no
-  Supabase project behind it: backups, pooling and upgrades are the Postgres provider's job, and
-  `denext ui`'s Database section is a local, loopback tool (no shared console, logs or metrics).
+  Supabase project behind it: pooling and upgrades are the Postgres provider's job (`denext stack
+  backup` / `restore` cover the self-hosted stack), and the Database section of `denext ui` and
+  `denext dashboard` (its password-protected copy for the stack) is a single-project tool with
+  one shared password, not a multi-user console, and keeps no metrics.
   Moving from a Supabase project, TOTP secrets, WebAuthn credentials and OAuth-server client
   secrets don't carry over (users enroll again, clients are re-registered).
 - **The built-in Postgres client is `Deno.SQL`, part of denext's Deno runtime.** On stock Deno pass
@@ -123,11 +125,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **Auto-REST speaks PostgREST 12's wire format but is not PostgREST:** a request takes at most 64
   filters, 256 select items and 8 levels of embedding, and runs under a 5-second
   `statement_timeout`. The routes are not in the `@denext/openapi` document (`GET /rest/v1` serves
-  PostgREST's own Swagger 2.0 one), and the plugin does not rate-limit them (guard them in
-  `middleware.ts`).
+  PostgREST's own Swagger 2.0 one), and their request budget (`rest.rateLimit`) counts per
+  process unless it is given a shared `store`.
 - **Realtime re-reads every change as each subscriber.** With the default LISTEN/NOTIFY source the
-  trigger sends only the key, so every change costs a re-read per identity and filter; `TRUNCATE`
-  sends nothing; many concurrent writers serialize on commit (the logical-replication source
+  trigger sends only the key, so every change costs a re-read per identity and filter; many
+  concurrent writers serialize on commit (the logical-replication source
   avoids that, but needs `wal_level = logical` and a `REPLICATION` role); and a change sent while
   the listener reconnects is lost (every subscriber is told to re-read). A delete, or an update out of view, reaches only a subscription
   that tracked the key — at most `maxTrackedKeys` (default 10 000) per subscription. Subscriptions
@@ -137,7 +139,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   TypeScript decides, with no `storage` schema to join against). An S3 upload
   whose client skips the completion call was checked by nobody: record the keys completion
   returned, and give the bucket lifecycle rules for unrecorded objects and incomplete multipart
-  uploads. Image transforms take PNG, JPEG, GIF and WebP sources up to 25 MiB, at the configured
+  uploads. Image transforms take PNG, JPEG, GIF, WebP and AVIF sources up to 25 MiB (an AVIF
+  only when it declares its size: a still image, not a bare image sequence), at the configured
   `images` sizes and qualities only.
 
 ### Tooling
@@ -146,36 +149,41 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   verb (`dev`, `build`, `export`, `start`, …), on denext's Deno toolchain (downloaded on first
   need; no Deno install required). Offline on first use, with no toolchain cached, it needs a
   `deno` on PATH. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
+- **A `denext build --compile` binary runs on Deno's stock `denort` 2.9.7**, not denext's
+  toolchain build, so it has no `Deno.SQL` (Postgres goes through `fromPostgresJs(postgres(url))`;
+  `db migrate` on a plain Postgres `DATABASE_URL` needs `@denext/backend` with that client), and it
+  prints Deno's one-line `request.signal` legacy-abort notice on the first request (`deno compile`
+  does not carry `--unstable-no-legacy-abort`). A SPA has no server to compile. `dev`, `build` and
+  `export` stay on the CLI. next-compat builds and the Pages Router are untested in a binary.
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
   `allowedDevOrigins`; no wildcards), the CVE-2025-48068 defence.
-- **`denext doctor` / `probeApp` see a crash only as the bare 500.** An error an `error.tsx`
-  rendered at 200 is a page to the probe; assert on its content yourself.
+- **`denext doctor` / `probeApp` don't see a streamed Suspense hole whose error nothing inside it
+  catches:** the hole keeps its fallback in a 200 page. Put an `error.tsx` inside the hole, or
+  assert on the route's content yourself.
 - **DevTools hook names are all-or-nothing per component** (a conditional hook, or one imported
   by a bare / `npm:` / `jsr:` / URL specifier, a namespace import or `export *`, aborts naming).
   The bundled App Router path names route files only. Network, Cache, Routes and the MCP snapshot
   need the App Router dev server. React DevTools' hooks view and Profiler read React internals,
   so they don't work; use denext's panel.
-- **The first-party Markdown renderer is a subset:** no nested lists, footnotes, images, indented
-  code, double-backtick spans or raw HTML (escaped). Use an `.mdx` entry for those.
+- **The first-party Markdown renderer escapes raw HTML** (it is not passed through). Use an `.mdx`
+  entry for raw HTML or components.
 - **`denext ui`'s compose editor owns a closed set of fields** (services, image, restart, build,
   ports, volumes, environment, depends_on, networks); the rest is hand-edited, a multi-document
   file is read-only, and a merge-key (`<<`) field can be overridden, not deleted. A third-party
   plugin's form needs a published `denext.catalog.optionsSchema`; code-valued options are
   read-only.
 
-### Lists (`lists: "denext"`)
-
-- **LegendList's DOM build on `VirtualList` ignores a few props:** `waitForInitialLayout` and
-  `itemsAreEqual` have no effect, `adaptiveRender` is always `"normal"`, and the start insets of
-  `contentInset` (`top` / `left`) add no room before the first item (its end does).
-
 ### Remix and React Router
 
 - **`getLoadContext` values read from the Express request are `TODO` stubs** after migration, and
   `cspNonce` is `undefined` (denext's CSP is hash-based). The synthesized `ServerBuild` is flat.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
+- **`@denext/react-router` generates no route types.** `import type { Route } from
+  "./+types/…"` is type-only, so it erases and the app runs, but denext writes no `+types`
+  modules for a type check to resolve. (How `serverLoader()` behaves on a client navigation is a
+  deliberate difference: [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md).)
 - **Prisma auto-migration rewrites runtime source only** (seed and test tooling keep the native
   client); non-SQLite datasources need their own driver adapter.
 
@@ -237,12 +245,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **`LayoutAnimation` animates positions, not sizes**, takes the next DOM change as the commit,
   and skips pages over 3,000 elements. Snap props are CSS scroll snap.
 - **`adjustsFontSizeToFit` shrinks the outer `Text` only** (a nested `Text` with its own
-  `fontSize` keeps it) and needs a box to overflow (`numberOfLines` or a fixed size). The
-  `android_ripple` of `Pressable` is drawn in the Android shell; `TouchableNativeFeedback`'s
-  `background` ripple is not. `ellipsizeMode="head"` / `"middle"` work on one plain-text line
-  only, and `onTextLayout`'s font metrics are estimated from the font size. An iOS
-  `pageSheet` / `formSheet` modal has no swipe-down to dismiss. `Image`'s `crossOrigin` /
-  `referrerPolicy` do nothing, and `fadeDuration` fades only when set.
+  `fontSize` keeps it) and needs a box to overflow (`numberOfLines` or a fixed size).
+  `ellipsizeMode="head"` / `"middle"` work on one plain-text line only, and `onTextLayout`'s font
+  metrics are estimated from the font size. An `Image` with `crossOrigin` / `referrerPolicy` is
+  drawn as an `<img>`, which doesn't draw `tintColor`.
 - **`reactNative` requires `mode: "spa"`.** Fast Refresh reloads on a new dependency import, an
   added or removed route or a lockfile change. Resolution variants (`@2x`) are picked at load.
 - **Can't (no WebView or browser API):** `expo-gl` on a worklet / UI runtime

@@ -29,7 +29,7 @@ export default function LiveComponents() {
 
       <Callout kind="note">
         <code>{"<Live>"}</code> is imported from a dedicated entrypoint,{" "}
-        <code>@denext/denext/live</code>, so an app that never uses it bundles none of the real-time
+        <code>denext/live</code>, so an app that never uses it bundles none of the real-time
         transport. It needs a route that renders through the Flight (RSC) boundary.
       </Callout>
 
@@ -293,6 +293,48 @@ await orderEvents.publish(\`user:\${userId}\`, { status: "shipped" });
 // client
 import { useChannel } from "denext/live";
 const { data: event } = useChannel(orderEvents, \`user:\${userId}\`);`}
+      </Code>
+
+      <p>
+        A channel's message type can be a discriminated union; <code>useChannel</code>{" "}
+        returns the latest message typed as that union, so <code>match</code> from{" "}
+        <code>denext/result</code> handles every member and a missing one is a compile error (see
+        {" "}
+        <a href="/docs/errors-as-values#typed-channel-messages">Typed channel messages</a>).
+      </p>
+
+      <h2 id="restarts">Restarts and per-key publishers</h2>
+      <p>
+        Both halves can recover from a crash on their own, under the same backoff as{" "}
+        <a href="/docs/services">supervised services</a>{" "}
+        (default: 5 restarts a minute, 250 ms doubling to 10 s, 20% jitter):
+      </p>
+      <ul>
+        <li>
+          <code>defineSubscription({"{ …, restart: true }"})</code> restarts a recompute whose{" "}
+          <code>resolve</code> threw, instead of leaving the subscription on a <code>failed</code>
+          {" "}
+          frame until its next invalidation. The socket stays open and the client keeps its last
+          value; past <code>maxRestarts</code> within <code>period</code> (pass{" "}
+          <code>{"{ maxRestarts, period, backoff }"}</code> instead of{" "}
+          <code>true</code>) the client gets <code>failed</code>{" "}
+          as before. A denied, not-found or redirecting resolver is never restarted. Off by default.
+        </li>
+        <li>
+          <code>createChannel({"{ …, publisher }"})</code>{" "}
+          runs a producer for each active key: started when the key gets its first subscriber on
+          this instance, its <code>signal</code>{" "}
+          aborted when the last one leaves. A throw restarts it (<code>publisherRestart</code>{" "}
+          takes the same options); the subscribers stay connected throughout.
+        </li>
+      </ul>
+      <Code lang="ts">
+        {`export const prices = createChannel<{ price: number }>({
+  authorize: () => true,
+  publisher: async ({ key, signal, publish }) => {
+    for await (const tick of upstreamFeed(key, { signal })) await publish({ price: tick.price });
+  },
+});`}
       </Code>
 
       <h2>Delivery semantics &amp; scaling</h2>

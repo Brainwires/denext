@@ -23,10 +23,16 @@ import {
   versionAfter,
 } from "../../server/migration-ops.ts";
 import { checksum, migratePostgres, notifySchemaReload } from "../../server/postgres-migrate.ts";
+import { frameworkMigrationSets } from "../../server/postgres-boot.ts";
 import { isPostgresUrl, runScript, type SqlClient } from "../../server/postgres.ts";
 import { displayTarget } from "../db-admin/connection.ts";
 import type { CommandContext } from "../command.ts";
-import { type BackendDbHooks, backendHooks, type DbIo } from "./project.ts";
+import {
+  type BackendDbHooks,
+  backendHooks,
+  type BackendMigrationSet,
+  type DbIo,
+} from "./project.ts";
 import { type SeedFiles, seedFilesFor, seedHash } from "./seed-files.ts";
 import {
   type DbTarget,
@@ -152,12 +158,44 @@ async function applyBackend(
   hooks: BackendDbHooks | undefined,
   dryRun: boolean,
 ): Promise<string[]> {
-  if (!hooks || target.dialect !== "postgres") return [];
-  const sql = await keyed(target.sql!);
-  const sets = [
+  if (!hooks) return [];
+  return await applySets(target, [
     { table: hooks.table || BACKEND_TABLE, migrations: hooks.migrations() },
     ...hooks.migrationSets?.() ?? [],
-  ];
+  ], dryRun);
+}
+
+/**
+ * Apply `@denext/backend`'s migrations that need the app's tables (realtime's per-table
+ * triggers), after the app's own — what the server's start would otherwise create.
+ */
+async function applyBackendAfterApp(
+  target: DbTarget,
+  hooks: BackendDbHooks | undefined,
+  dryRun: boolean,
+): Promise<string[]> {
+  return hooks?.afterMigrationSets
+    ? await applySets(target, hooks.afterMigrationSets(), dryRun)
+    : [];
+}
+
+/**
+ * Apply the migrations denext's own Postgres stores apply for themselves (the auth adapter, the
+ * session, rate-limit, cache and job-history stores the config builds), each in its tracking
+ * table, under the runner's lock: what a server started with `DENEXT_BOOT_DDL=off` needs.
+ */
+function applyFramework(target: DbTarget, dryRun: boolean): Promise<string[]> {
+  return applySets(target, frameworkMigrationSets(), dryRun);
+}
+
+/** Apply sets of the backend's migrations, one migration at a time, in order (Postgres only). */
+async function applySets(
+  target: DbTarget,
+  sets: BackendMigrationSet[],
+  dryRun: boolean,
+): Promise<string[]> {
+  if (target.dialect !== "postgres" || sets.length === 0) return [];
+  const sql = await keyed(target.sql!);
   const names: string[] = [];
   // One at a time, in the hooks' order (the roles before the schemas that grant to them):
   // `migratePostgres` orders a list by name, and `backend_realtime_*` sorts before `backend_rls_*`.
@@ -165,8 +203,10 @@ async function applyBackend(
     for (const migration of set.migrations) {
       const result = await migratePostgres(sql, {
         table: set.table,
+        ...(set.schema !== undefined ? { schema: set.schema } : {}),
         migrations: [migration],
         dryRun,
+        quiet: true,
       });
       names.push(...dryRun ? result.pending : result.applied);
     }
@@ -258,10 +298,9 @@ export async function upAction(
     const own = await applyBackend(target, backendHooks(), dryRun);
     const verb = dryRun ? "would apply" : "applied";
     const json: { applied: string[]; dryRun: boolean; seeded?: string[] } = { applied: [], dryRun };
-    for (const name of own) {
-      json.applied.push(name);
-      if (!run.ctx.global.json) run.io.log(`  ${verb} ${name}  (@denext/backend)`);
-    }
+    reportBackend(run, verb, own, json.applied);
+    const framework = await applyFramework(target, dryRun);
+    reportBackend(run, verb, framework, json.applied, "denext");
     const names = await migrateUp(history, local.files, {
       to: stringFlag(run.ctx, "to") ?? stringFlag(run.ctx, "version"),
       includeAll: run.ctx.flags["include-all"] === true,
@@ -273,10 +312,29 @@ export async function upAction(
       for (const name of names) run.io.log(`  ${verb} ${name}`);
     }
     json.applied.push(...names);
+    // What needs the app's tables (realtime's per-table triggers), once they exist.
+    const late = await applyBackendAfterApp(target, backendHooks(), dryRun);
+    reportBackend(run, verb, late, json.applied);
     if (options.seed && !dryRun) json.seeded = await seedTarget(run, target, history);
     if (run.ctx.global.json) run.io.log(JSON.stringify(json, null, 2));
-    else if (!own.length && !names.length) run.io.log("The database is up to date.");
+    else if (!own.length && !framework.length && !names.length && !late.length) {
+      run.io.log("The database is up to date.");
+    }
   });
+}
+
+/** Record (and, without `--json`, print) the backend migrations `up` applied. */
+function reportBackend(
+  run: MigrationRun,
+  verb: string,
+  names: string[],
+  applied: string[],
+  by = "@denext/backend",
+): void {
+  for (const name of names) {
+    applied.push(name);
+    if (!run.ctx.global.json) run.io.log(`  ${verb} ${name}  (${by})`);
+  }
 }
 
 /** `--steps` / `--last` as a number. */
@@ -587,6 +645,7 @@ export async function resetAction(
     await dropAll(target, history);
     run.io.log(`Reset ${target.display}.`);
     await applyBackend(target, backendHooks(), false);
+    await applyFramework(target, false);
     const to = forced ? forced.upTo : stringFlag(run.ctx, "version") ?? stringFlag(run.ctx, "to");
     const files = forced?.reapplyNothing ? [] : local.files;
     await migrateUp(history, files, { to: to || undefined, includeAll: true }, (name) => {
@@ -677,9 +736,14 @@ export async function backendAction(run: MigrationRun, action: string): Promise<
           display: "shadow",
           close: async () => {},
         };
-        const own = await applyBackend(shadow, hooks, false);
+        // What a push applies, in its order, so a diff or a lint sees the database a push makes.
+        const own = [
+          ...await applyBackend(shadow, hooks, false),
+          ...await applyFramework(shadow, false),
+        ];
         const history = await historyFor(shadow, local.dir, local.exists);
-        return [...own, ...await migrateUp(history, local.files, { includeAll: true })];
+        const app = await migrateUp(history, local.files, { includeAll: true });
+        return [...own, ...app, ...await applyBackendAfterApp(shadow, hooks, false)];
       },
       recordApplied: async (name) => {
         const fresh = await localMigrations(run.projectDir);

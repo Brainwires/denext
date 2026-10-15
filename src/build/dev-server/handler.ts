@@ -27,7 +27,7 @@ import {
   devRoutesResponse,
 } from "./devtools-endpoints.ts";
 import { getManifest, getUnbundled } from "./manifest.ts";
-import { broadcastError, reloadStream } from "./reload.ts";
+import { broadcastError, explainForOverlay, reloadStream } from "./reload.ts";
 import { DEV_RELOAD_SCRIPT } from "./reload-script.ts";
 import { devErrorPage } from "./error-page.ts";
 import { serveImmutableAsset } from "../../server/serve-utils.ts";
@@ -59,6 +59,8 @@ function jsResponse(code: string): Response {
 /** A bundling failure: log it, push it to the overlay, and ship a console.error stub. */
 function bundleErrorResponse(st: DevState, title: string, err: unknown): Response {
   console.error(`denext: ${title.toLowerCase()}`, err);
+  const { explained } = explainForOverlay(st, err instanceof Error ? err.message : String(err));
+  if (explained) console.error(`\n${explained}\n`);
   broadcastError(st, title, err);
   const msg = err instanceof Error ? err.message : String(err);
   return new Response(

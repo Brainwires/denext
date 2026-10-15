@@ -36,9 +36,11 @@ import { anonymousRoutes } from "./routes-anonymous.ts";
 import { emailCallbacks } from "./routes-email.ts";
 import { mfaRoutes } from "./routes-mfa.ts";
 import { nativeRoutes } from "./routes-native.ts";
+import { nativeMfaRoutes } from "./routes-native-mfa.ts";
 import { handleOAuthCallback, handleOAuthFormPost, handleSignin } from "./routes-oauth.ts";
 import { passkeyRoutes } from "./routes-passkeys.ts";
 import { phoneCallbacks } from "./routes-phone.ts";
+import { handleSamlAcs, samlRoutes, startSamlSignIn } from "./routes-saml.ts";
 import { handleProviders, handleSession, handleSignout } from "./routes-session.ts";
 import {
   type AuthRoute,
@@ -49,7 +51,7 @@ import {
   json,
 } from "./routes-shared.ts";
 import { handleCreateToken, handleListTokens, handleRevokeToken } from "./routes-tokens.ts";
-import type { AuthProvider } from "./types.ts";
+import { type AuthProvider, isSamlProvider } from "./types.ts";
 
 /** The limiter and key builder behind one {@link AuthRouteLimit}. */
 const LIMITS: Record<AuthRouteLimit, {
@@ -133,6 +135,7 @@ const CALLBACKS: {
   phone: phoneCallbacks,
   oauth: { GET: handleOAuthCallback, POST: handleOAuthFormPost },
   oidc: { GET: handleOAuthCallback, POST: handleOAuthFormPost },
+  saml: { POST: handleSamlAcs },
 };
 
 /** Whether `method` is a verb some callback answers. */
@@ -167,12 +170,23 @@ function handleCallback(ctx: AuthRouteContext): Promise<Response> | Response {
   return handler ? handler(ctx, provider) : json({ error: "method not allowed" }, 405);
 }
 
+/** `GET {basePath}/signin/:provider` — a SAML provider's AuthnRequest, else the OAuth/OIDC start. */
+function handleProviderSignin(ctx: AuthRouteContext): Promise<Response> {
+  const provider = findProvider(ctx.config, ctx.params.provider);
+  return provider && isSamlProvider(provider) ? startSamlSignIn(ctx, provider) : handleSignin(ctx);
+}
+
 /** Every auth endpoint, in match order. */
 const declaredRoutes: readonly AuthRoute[] = [
   { method: "GET", pattern: "/session", handler: handleSession, limit: "session-read" },
   { method: "GET", pattern: "/providers", handler: handleProviders },
   { method: "POST", pattern: "/signout", handler: handleSignout },
-  { method: "GET", pattern: "/signin/:provider", handler: handleSignin, limit: "signin-start" },
+  {
+    method: "GET",
+    pattern: "/signin/:provider",
+    handler: handleProviderSignin,
+    limit: "signin-start",
+  },
   { method: "*", pattern: "/callback/:provider", handler: handleCallback },
   // Bearer API tokens. Cookie session only — these three never read `Authorization`, so a
   // token can't mint or revoke another one. They answer `null` (→ a plain 404) when no
@@ -204,7 +218,11 @@ const declaredRoutes: readonly AuthRoute[] = [
   // Native app sessions (`native` config): authorize/complete in the browser sheet, the token /
   // revoke / nonce calls, native Apple/Google id_token sign-in — plus `POST /account/delete`.
   // They answer `null` when the feature (or the adapter group behind it) isn't configured.
+  ...nativeMfaRoutes,
   ...nativeRoutes,
+  // SAML providers (`saml()`): the SP metadata. Their sign-in and ACS ride `/signin/:provider`
+  // and `/callback/:provider`; the metadata answers `null` for any other provider.
+  ...samlRoutes,
 ];
 
 /** The table the dispatcher matches against: every row with its `limit` gate applied. */

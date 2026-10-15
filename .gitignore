@@ -41,3 +41,6 @@ tests/.tmp/
 # Local secrets for examples (e.g. examples/clerk/.env.local); .env.example stays tracked
 examples/*/.env
 examples/*/.env.local
+# a project's sqlite auth store (`sqliteAuthAdapter()`'s default `auth.db`), if an example or a
+# test's config is ever imported from the repo root
+/auth.db*

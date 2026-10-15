@@ -17,6 +17,7 @@ import {
   desktopBridgeOrigins,
   desktopInspectable,
   desktopLaunchConfig,
+  desktopNavigationOrigins,
   desktopRequireSandbox,
   laufeyLaunchEnv,
   laufeyLaunchPath,
@@ -415,6 +416,70 @@ Deno.test("sync: deep links without an origin still write app.json (no origin ke
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("sync: allowedNavigationOrigins go to app.json, normalized, only when configured", async () => {
+  const dir = await project("{}\n");
+  try {
+    const config = {
+      desktop: {
+        app: {
+          ...T3.desktop.app,
+          allowedNavigationOrigins: ["https://IdP.example/", "https://idp.example:443"],
+        },
+      },
+    };
+    assertEquals((await syncDesktopAppConfigAt(dir, config)).appJson, "written");
+    assertEquals(JSON.parse(await Deno.readTextFile(join(dir, DESKTOP_APP_CONFIG_FILE))), {
+      origin: "t3code://app",
+      identifier: "com.t3.code",
+      allowedNavigationOrigins: ["https://idp.example"],
+    });
+    // Without the key (or with an empty list) app.json carries none: a runtime before
+    // 2.9.7-denext.18 refuses an app.json that has it.
+    await syncDesktopAppConfigAt(dir, T3);
+    assertEquals(
+      "allowedNavigationOrigins" in
+        JSON.parse(await Deno.readTextFile(join(dir, DESKTOP_APP_CONFIG_FILE))),
+      false,
+    );
+    // The list alone is a reason to write app.json.
+    const alone = { desktop: { app: { allowedNavigationOrigins: ["https://idp.example"] } } };
+    await syncDesktopAppConfigAt(dir, alone);
+    assertEquals(JSON.parse(await Deno.readTextFile(join(dir, DESKTOP_APP_CONFIG_FILE))), {
+      allowedNavigationOrigins: ["https://idp.example"],
+    });
+    await assertRejects(
+      () =>
+        syncDesktopAppConfigAt(dir, {
+          desktop: { app: { allowedNavigationOrigins: ["https://*.example"] } },
+        }),
+      Error,
+      "allowedNavigationOrigins",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktopNavigationOrigins: empty when unset, throws on a non-origin", () => {
+  assertEquals(desktopNavigationOrigins({}), []);
+  assertEquals(
+    desktopNavigationOrigins({ desktop: { app: { allowedNavigationOrigins: [] } } }),
+    [],
+  );
+  for (const bad of ["*", "https://a.example/x", 5]) {
+    assertThrows(
+      () => desktopNavigationOrigins({ desktop: { app: { allowedNavigationOrigins: [bad] } } }),
+      Error,
+      "allowedNavigationOrigins",
+    );
+  }
+  assertThrows(
+    () => desktopNavigationOrigins({ desktop: { app: { allowedNavigationOrigins: "x" } } }),
+    Error,
+    "must be an array",
+  );
 });
 
 Deno.test("launch file: desktop.linux.requireSandbox is written for Linux only", async () => {

@@ -2,7 +2,7 @@
 // in this test, its attestation and assertions encoded by hand): register from a fresh session,
 // sign in usernameless, complete a pending second factor, list and delete — and the refusals:
 // a stale session, a replayed response (single-use challenge), a response from another browser
-// (cookie binding), a wrong origin / RP ID, a counter that went backwards, another user's
+// or tab (the ceremony id), ceremonies in parallel tabs, a wrong origin / RP ID, a counter that went backwards, another user's
 // credential at a step-up, a user handle that isn't the owner, a duplicate credential ID, the
 // config-time checks, and both adapters' passkey group.
 
@@ -77,9 +77,14 @@ function withConfig(a: App, patch: Partial<AuthConfig>): App {
   return { ...a, config: { ...a.config, ...patch } };
 }
 
-/** A browser: a cookie jar it sends with every request and updates from every answer. */
+/**
+ * A browser tab: a cookie jar it sends with every request and updates from every answer, and —
+ * as `denext/client`'s passkey calls do — the `ceremonyId` of the last options answer, carried
+ * in the verifying POST unless the body names one itself.
+ */
 class Browser {
   private jar = new Map<string, string>();
+  private ceremonyId: string | undefined;
   constructor(private readonly a: App) {}
 
   get cookie(): string {
@@ -87,6 +92,21 @@ class Browser {
   }
 
   async send(method: string, path: string, body?: unknown, origin = ORIGIN): Promise<Response> {
+    const res = await this.raw(method, path, this.withCeremony(path, body), origin);
+    if (path.endsWith("/options") && res.ok) {
+      this.ceremonyId = (await res.clone().json()).ceremonyId;
+    }
+    return res;
+  }
+
+  /** A verifying POST's body with this tab's ceremony id, unless it carries its own. */
+  private withCeremony(path: string, body: unknown): unknown {
+    const verifying = path === "/passkey/register" || path === "/passkey/authenticate";
+    if (!verifying || !body || typeof body !== "object" || "ceremonyId" in body) return body;
+    return { ...body, ceremonyId: this.ceremonyId };
+  }
+
+  private async raw(method: string, path: string, body: unknown, origin: string) {
     const headers: Record<string, string> = { accept: "application/json", origin };
     if (body !== undefined) headers["content-type"] = "application/json";
     if (this.jar.size) headers.cookie = this.cookie;
@@ -327,14 +347,87 @@ Deno.test("passkeys: a replayed assertion is refused — the challenge is single
   assertEquals(a.failures, ["invalid_passkey"]);
 });
 
+Deno.test("passkeys: two ceremonies in parallel in one browser both succeed", async () => {
+  const a = await app();
+  const auth = await Authenticator.create();
+  await registered(a, auth);
+  const b = new Browser(a); // one cookie jar, two tabs
+  const [first, second] = await Promise.all([signInOptions(b), signInOptions(b)]);
+  assert(first.ceremonyId && second.ceremonyId && first.ceremonyId !== second.ceremonyId);
+  // The second tab finishes first, then the first: neither ceremony displaced the other.
+  for (const options of [second, first]) {
+    const res = await b.send("POST", "/passkey/authenticate", {
+      credential: await auth.assert(options),
+      ceremonyId: options.ceremonyId,
+    });
+    assertEquals(res.status, 200, await res.clone().text());
+  }
+  assert(await b.session());
+  // Registration too: a second registration ceremony in another tab doesn't cancel the first.
+  const reg = await Authenticator.create();
+  const reg2 = await Authenticator.create();
+  const one = await (await b.send("POST", "/passkey/register/options", {})).json();
+  const two = await (await b.send("POST", "/passkey/register/options", {})).json();
+  for (const [key, options] of [[reg2, two], [reg, one]] as const) {
+    const res = await b.send("POST", "/passkey/register", {
+      credential: await key.register(options),
+      ceremonyId: options.ceremonyId,
+    });
+    assertEquals(res.status, 200, await res.clone().text());
+  }
+});
+
+Deno.test("passkeys: a swapped, replayed or missing ceremony id is refused", async () => {
+  const a = await app();
+  const auth = await Authenticator.create();
+  await registered(a, auth);
+  const b = new Browser(a);
+  const [first, second] = [await signInOptions(b), await signInOptions(b)];
+  // Swapped: each tab's response carries the other tab's id. Both refused, both challenges spent.
+  for (const [options, other] of [[first, second], [second, first]]) {
+    const res = await b.send("POST", "/passkey/authenticate", {
+      credential: await auth.assert(options),
+      ceremonyId: other.ceremonyId,
+    });
+    assertEquals(res.status, 401);
+  }
+  assertEquals(await b.session(), null);
+  // Replayed: a used id with a fresh assertion over its spent challenge.
+  const third = await signInOptions(b);
+  const credential = await auth.assert(third);
+  const ok = await b.send("POST", "/passkey/authenticate", {
+    credential,
+    ceremonyId: third.ceremonyId,
+  });
+  assertEquals(ok.status, 200);
+  const again = await b.send("POST", "/passkey/authenticate", {
+    credential: await auth.assert(third),
+    ceremonyId: third.ceremonyId,
+  });
+  assertEquals(again.status, 401);
+  // Missing, or not a string: refused.
+  for (const ceremonyId of [undefined, 42, "", "x".repeat(200)]) {
+    const options = await signInOptions(new Browser(a));
+    const res = await new Browser(a).send("POST", "/passkey/authenticate", {
+      credential: await auth.assert(options),
+      ceremonyId,
+    });
+    assertEquals(res.status, 401, String(ceremonyId));
+  }
+  // The options answer carries no ceremony cookie any more.
+  const fresh = new Browser(a);
+  await signInOptions(fresh);
+  assertEquals(fresh.cookie, "");
+});
+
 Deno.test("passkeys: an assertion is accepted only from the browser that asked for it", async () => {
   const a = await app();
   const auth = await Authenticator.create();
   await registered(a, auth);
   const victim = new Browser(a);
   const options = await signInOptions(victim);
-  // The response is relayed to another browser (no ceremony cookie): refused, and the challenge
-  // is spent, so the victim can't be raced with it either.
+  // The response is relayed to another browser (without the ceremony id the victim's tab holds):
+  // refused, and the challenge is spent, so the victim can't be raced with it either.
   const attacker = new Browser(a);
   const relayed = await attacker.send("POST", "/passkey/authenticate", {
     credential: await auth.assert(options),
@@ -782,8 +875,10 @@ Deno.test("passkeys: an SSO user registers none, and one from before it became o
     id: a.userId,
     appMetadata: { provider: "sso:acme", providers: ["sso:acme"] },
   });
+  // Its cookie session is signed out at its next read (the user is re-read), before the
+  // registration's own SSO check (403 sso_user) is reached.
   const res = await owner.send("POST", "/passkey/register/options", {});
-  assertEquals([res.status, (await res.json()).error], [403, "sso_user"]);
+  assertEquals([res.status, (await res.json()).error], [401, "unauthorized"]);
   const b = new Browser(a);
   const options = await signInOptions(b);
   const refused = await b.send("POST", "/passkey/authenticate", {

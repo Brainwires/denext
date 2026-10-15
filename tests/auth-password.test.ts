@@ -2,8 +2,28 @@
 // wrong-password / malformed-input rejection (never a throw), and the parameter caps.
 
 import { assert, assertEquals, assertNotEquals, assertStringIncludes } from "@std/assert";
-import { hashPassword, verifyPassword } from "../src/server/auth/password.ts";
+import {
+  __observeScryptForTests,
+  hashPassword,
+  verifyPassword,
+} from "../src/server/auth/password.ts";
 import { scryptHasher } from "../src/server/auth/hasher.ts";
+
+/**
+ * The scrypt derivations `fn` completed, as `N=…,r=…,p=…` in order. Equal work is the same
+ * derivation at the same work factor — asserted on the parameters, never on a wall clock that
+ * a loaded machine skews.
+ */
+async function derivations(fn: () => Promise<unknown>): Promise<string[]> {
+  const seen: string[] = [];
+  const previous = __observeScryptForTests((p) => seen.push(`N=${p.N},r=${p.r},p=${p.p}`));
+  try {
+    await fn();
+  } finally {
+    __observeScryptForTests(previous);
+  }
+  return seen;
+}
 
 Deno.test("hashPassword → verifyPassword round-trips; a wrong password fails", async () => {
   const stored = await hashPassword("correct horse battery staple");
@@ -69,17 +89,13 @@ Deno.test("verifyPassword rejects a tampered hash (constant-time compare path)",
 
 Deno.test("verifyPassword: a missing/malformed stored hash still does full scrypt work (no timing oracle)", async () => {
   const stored = await hashPassword("pw");
-  const timed = async (s: string) => {
-    const t = performance.now();
-    assertEquals(await verifyPassword("wrong", s), false);
-    return performance.now() - t;
-  };
-  const real = await timed(stored);
-  const empty = await timed("");
-  const garbage = await timed("md5$nope");
-  // Same order of magnitude: the rejection derives a dummy key at the default cost.
-  assert(empty > real / 4, `empty stored rejected too fast: ${empty}ms vs ${real}ms`);
-  assert(garbage > real / 4, `malformed stored rejected too fast: ${garbage}ms vs ${real}ms`);
+  const rejected = (s: string) =>
+    derivations(async () => assertEquals(await verifyPassword("wrong", s), false));
+  const real = await rejected(stored);
+  assertEquals(real, ["N=16384,r=8,p=1"], "a known hash is checked at its own cost");
+  // The rejection derives a dummy key at the default cost: the same work as a real check.
+  assertEquals(await rejected(""), real, "an empty stored value is rejected after equal work");
+  assertEquals(await rejected("md5$nope"), real, "a malformed one is rejected after equal work");
 });
 
 Deno.test("verifyPassword: a stored hash demanding a huge scrypt working set is refused, not allocated", async () => {
@@ -93,37 +109,29 @@ Deno.test("verifyPassword: the equal-work rejection burns the CONFIGURED cost, n
   // has to be told what this deployment hashes at. Burning the built-in default instead
   // made an unknown identifier reject several times faster than a known one — a
   // user-enumeration timing oracle that got WORSE the more you raised `cost`.
-  const time = async (options: { cost: number }) => {
-    const at = performance.now();
-    await verifyPassword("whatever", "", options);
-    return performance.now() - at;
-  };
-  await time({ cost: 2 }); // warm the gate + the scrypt binding
-  const cheap = await time({ cost: 2 });
-  const dear = await time({ cost: 1 << 15 });
-  assert(
-    dear > cheap + 20,
-    `a high configured cost must cost time even with no stored hash (${cheap}ms vs ${dear}ms)`,
+  const burned = (options: { cost: number }) =>
+    derivations(async () => assertEquals(await verifyPassword("whatever", "", options), false));
+  assertEquals(await burned({ cost: 2 }), ["N=2,r=8,p=1"]);
+  assertEquals(
+    await burned({ cost: 1 << 15 }),
+    ["N=32768,r=8,p=1"],
+    "a high configured cost is the cost burned even with no stored hash",
   );
 });
 
 Deno.test("scryptHasher: verify threads the hasher's own cost into both halves", async () => {
   const hasher = scryptHasher({ cost: 1 << 15 });
   const stored = await hasher.hash("correct horse");
+  assertStringIncludes(stored, "scrypt$N=32768,r=8,p=1$");
   assertEquals(await hasher.verify("correct horse", stored), true);
-  assertEquals(await hasher.verify("wrong", stored), false);
-  // Known-account and unknown-account rejections now do comparable work.
-  const at = (fn: () => Promise<unknown>) =>
-    (async () => {
-      const start = performance.now();
-      await fn();
-      return performance.now() - start;
-    })();
-  await hasher.verify("warm", stored);
-  const known = await at(() => hasher.verify("wrong", stored));
-  const unknown = await at(() => hasher.verify("wrong", ""));
-  assert(
-    unknown > known * 0.5,
-    `no user-enumeration oracle: known ${known}ms vs unknown ${unknown}ms`,
+  // Known-account and unknown-account rejections do the same work: one derivation each, at
+  // the hasher's cost.
+  const known = await derivations(async () =>
+    assertEquals(await hasher.verify("wrong", stored), false)
   );
+  const unknown = await derivations(async () =>
+    assertEquals(await hasher.verify("wrong", ""), false)
+  );
+  assertEquals(known, ["N=32768,r=8,p=1"]);
+  assertEquals(unknown, known, "no user-enumeration oracle: the unknown account burns the same");
 });

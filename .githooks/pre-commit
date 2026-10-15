@@ -42,6 +42,28 @@ if ! git diff --quiet -- .github/badges/tests.json; then
   git add -- .github/badges/tests.json
 fi
 
+# `check:fix` also regenerated the CLI's verb table (`deno task gen:command-table`): the
+# entrypoint parses from it, so a flag added to a verb — or pulled in by a rebase — that the
+# committed table lacks is an "unknown flag" on development. Stage it when it moved (the drift
+# test in tests/cli-startup-graph.test.ts stays the backstop).
+for generated in src/cli/command-table.generated.ts src/cli/lazy-modules.generated.ts; do
+  if ! git diff --quiet -- "$generated"; then
+    git add -- "$generated"
+  fi
+done
+
+# The generated docs corpus (src/mcp/docs-corpus.ts) and llms files (site/public/llms*.txt) are
+# derived from the docs pages, the root guides, the example READMEs and their generators. Parallel
+# docs edits each leave them stale against the combined tip (CI: tests/mcp-docs-corpus.test.ts,
+# tests/docs-generated.test.ts). When the commit stages any input, regenerate both and stage them.
+# Only then, so every other commit stays fast.
+if git diff --cached --name-only --diff-filter=ACMDR \
+  | grep -Eq '^(site/app/docs/|AGENTS\.md$|[^/]+\.md$|examples/[^/]+/README\.md$|site/lib/examples\.ts$|site/lib/markdown\.ts$|site/components/ui\.tsx$|scripts/(gen-docs-corpus|gen-llms-txt)\.ts$|scripts/lib/docs-corpus\.ts$|src/mcp/(guide|tools)\.ts$)'; then
+  "$DENO" task docs:corpus
+  "$DENO" task docs:llms
+  git add -- src/mcp/docs-corpus.ts site/public/llms.txt site/public/llms-full.txt
+fi
+
 # Fallow code-intelligence gate. `fallow audit` scopes dead-code + complexity +
 # duplication to the changeset and exits 1 on a `fail` verdict (0 otherwise), so
 # `set -e` aborts the commit on failure. Fallow is REQUIRED — resolve it like
@@ -79,5 +101,13 @@ fi
 # two hours or more — a running audit touches its own, so it is never removed under it.
 find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'fallow-audit-base-cache-*' -mmin +120 \
   -exec rm -rf {} + 2>/dev/null || true
+
+# A detached worktree (how parallel work is done here) has no upstream, so fallow's default
+# base falls back to origin/main and every commit since the last release counts as new. All
+# work lands on development: audit against it unless a base is already pinned.
+if [ -z "${FALLOW_AUDIT_BASE:-}" ] && ! git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1 \
+  && git rev-parse --verify -q origin/development >/dev/null; then
+  export FALLOW_AUDIT_BASE=origin/development
+fi
 
 $FALLOW audit --quiet --explain --gate-marker git --no-css $COV

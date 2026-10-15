@@ -266,7 +266,15 @@ async function buildAppRouterImports(
     for (const spec of ["@remix-run/react", "react-router", "react-router-dom"]) {
       imports[spec] = imports["denext/remix"];
     }
-    for (const spec of ["@remix-run/node", "@remix-run/server-runtime", "@remix-run/cloudflare"]) {
+    for (
+      const spec of [
+        "@remix-run/node",
+        "@remix-run/server-runtime",
+        "@remix-run/cloudflare",
+        "@remix-run/deno",
+        "@remix-run/css-bundle",
+      ]
+    ) {
       imports[spec] = imports["denext/remix/server"];
     }
   }

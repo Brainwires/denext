@@ -26,6 +26,29 @@ export function isBanned(
 }
 
 /**
+ * How a read answers a credential (a session, a token) for its user: usable, refused for now (a
+ * ban that ends before the credential does), or refused for good — which the read may also
+ * delete, since no later read could accept it.
+ */
+export type CredentialVerdict = "ok" | "refused" | "dead";
+
+/**
+ * The verdict on a banned user's credential that expires at `expiresAt` (epoch seconds): dead
+ * when the ban lasts at least as long (it can never be used again), refused otherwise (it works
+ * once the ban ends). A credential with no expiry outlives every ban.
+ *
+ * @param user The stored, banned user.
+ * @param expiresAt When the credential expires, if it does.
+ * @returns `"dead"` or `"refused"`.
+ */
+export function banVerdict(user: AdapterUser, expiresAt: number | undefined): "refused" | "dead" {
+  const until = user.bannedUntil;
+  return typeof expiresAt === "number" && typeof until === "number" && expiresAt <= until
+    ? "dead"
+    : "refused";
+}
+
+/**
  * Whether the user `userId` is banned, read from the config's adapter (never banned without one).
  *
  * @param config The auth config.

@@ -9,6 +9,11 @@
 
 import { cronError, type CronExpr, cronMatches, parseCron, toDenoCron } from "../runtime/cron.ts";
 import { detachedFromRequest } from "../runtime/root-context-bridge.ts";
+import {
+  backoffDelay as restartDelay,
+  MAX_TIMER_DELAY,
+  sleepUnlessAborted,
+} from "../runtime/restart.ts";
 
 /** Context passed to a job's handler. */
 export interface JobContext {
@@ -97,8 +102,6 @@ const MAX_RETRIES = 100;
 const DEFAULT_RETRY_DELAY = 1000;
 /** Default longest retry delay, ms. */
 const DEFAULT_MAX_RETRY_DELAY = 300_000;
-/** The longest delay a timer can hold: `setTimeout` fires at once past 2^31-1 ms (~24.8 days). */
-const MAX_TIMER_DELAY = 2 ** 31 - 1;
 
 /** A validated retry policy: how many retries, and the wait before retry `n` (1-based). */
 interface RetryPolicy {
@@ -148,9 +151,14 @@ function backoffDelay(backoff: JobBackoff | undefined): (retry: number) => numbe
   if (!isDelay(delayMs) || !isDelay(max)) retryError("backoff delays must be numbers of ms (>= 0)");
   // A longer cap would overflow the timer and retry at once, not after the wait.
   const cap = Math.min(max, MAX_TIMER_DELAY);
-  return strategy === "fixed"
-    ? () => Math.min(delayMs, cap)
-    : (n) => Math.min(delayMs * 2 ** (n - 1), cap);
+  // The shared restart backoff, exact (no jitter): a job's documented delays are 1 s, 2 s, 4 s….
+  const policy = {
+    initialMs: delayMs,
+    maxMs: cap,
+    factor: strategy === "fixed" ? 1 : 2,
+    jitter: 0,
+  };
+  return (n) => restartDelay(n, policy);
 }
 
 /** True if `value` came from {@linkcode defineJob}. */
@@ -372,7 +380,7 @@ async function runWithRetries(
     // Runs when the attempt fails: wait the backoff, unless retries are spent or it aborts.
     const willRetry = async () => {
       retry = attempt <= policy.retries && !signal.aborted &&
-        await waitUnlessAborted(policy.delay(attempt), signal);
+        await sleepUnlessAborted(policy.delay(attempt), signal);
       return retry;
     };
     try {
@@ -381,21 +389,6 @@ async function runWithRetries(
       if (!retry) throw err;
     }
   }
-}
-
-/** Wait `ms`; resolves `false` early when `signal` aborts. */
-function waitUnlessAborted(ms: number, signal: AbortSignal): Promise<boolean> {
-  return new Promise((resolve) => {
-    const onAbort = () => {
-      clearTimeout(timer);
-      resolve(false);
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve(true);
-    }, ms);
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
 }
 
 // ---- Scheduling ------------------------------------------------------------

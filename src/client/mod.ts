@@ -163,6 +163,7 @@ export type {
 export { nativeSession, NativeSessionError } from "../runtime/native-session.ts";
 export type {
   NativeIdTokenSignIn,
+  NativeMfaChallenge,
   NativeSession,
   NativeSessionOptions,
   NativeSessionStorage,

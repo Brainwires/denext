@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.5.0
+
+### Added
+
+- **Runs inside a `denext build --compile` binary.** A relative `fs({ dir })` and `metadataPath`
+  resolve against the binary's working directory (its embedded project is read-only). Without
+  `metadataPath`, the storage metadata goes to `storage.db` in the binary's state directory
+  (`./.denext`).
+
+- **`postgres.directUrl` (default `DATABASE_DIRECT_URL`)** for a pooler in transaction mode:
+  LISTEN, reserved connections and migrations go to the direct connection, queries to the pooler.
+- **Rate limits for the auto-REST routes.** Each client has a request budget (`rest.rateLimit`,
+  default 1200 a minute): a signed-in user by user id, anyone else by client address
+  (`clientIpForLimits()`), the secret key never. A request with a refused credential counts
+  against its address. Past it: `429` `over_request_rate_limit` (PostgREST's error shape) with
+  `Retry-After`, before any statement. `{ max, windowMs, store }`, or `false` to turn it off.
+- **`DENEXT_BOOT_DDL=off` (denext's) is honoured by every service:** the RLS roles, storage,
+  realtime (its triggers and publications too), vault, queues and webhooks create nothing, and the
+  server's start checks that their migrations are recorded. `denext db push` applies realtime's
+  per-table triggers after the app's migrations.
+- **Webhook events are deleted after a retention:** delivered ones after 7 days, failed ones
+  after 30 (`webhooks.retention`, or `false`). The background deliverer cleans up hourly;
+  `webhookCleanupJob()` and `purgeWebhookEvents()` (`@denext/backend/server`) for
+  `delivery: "manual"`. New migration `backend_webhooks_0002` (an index).
+- **An admin endpoint, `/_denext/backend/admin/*`, for `denext ui` and the stack's dashboard.** It
+  answers only the secret key, and only `GET`. It reports realtime's live channels (subscriber
+  counts) and `postgres_changes` bindings, a channel's presence keys (a key's payloads only when
+  asked for by key), Edge Functions with their recent invocations, and the `services/`
+  supervision tree. The functions runtime keeps the last 200 invocations in a bounded ring:
+  function, status, duration and time only.
+- **An `upload` operation for `denext ui` and the stack's dashboard.** The storage runtime's admin
+  operations can now store an object as the service, through the same path as any upload: the
+  bucket's size cap and type list apply, and the metadata row is written with the bytes.
+- **Image transforms take AVIF sources** (`render/image`, signed transform URLs), decoded by
+  `@denext/avif` once the declared size passed the decompression-bomb checks (needs denext with
+  AVIF decoding in `transformImageBytes`; an older one answers `400`).
+
+### Changed
+
+- **The logical realtime source honours a table's `events`:** a change of a kind the table leaves
+  out (a `TRUNCATE`, say) is dropped, as the triggers of the notify source never fire for it.
+
+### Fixed
+
+- **Realtime returns its reserved connections clean.** A failed `revalidate.owner: "one"` check
+  no longer returns its connection to the pool with the owner's advisory lock held (every advisory
+  lock is released first), and a stopped engine reserves no new one. A failed logical-slot read
+  drops the temporary slot and resets `TimeZone` before the connection goes back, so the slot
+  pins no WAL and the source can reopen.
+
+- **Realtime's startup DDL runs under the migration lock** of `backend_migrations` (publication
+  triggers, the trigger switch, the `denext_realtime` publication), re-checked once the lock is
+  held, so replicas starting together don't race. Its migrations print one line, with the
+  server's notices silenced.
+
 ## 0.4.0 - 2026-10-14
 
 ### Security

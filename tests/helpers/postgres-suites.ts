@@ -13,6 +13,7 @@ import { migratePostgres, postgresMigrationStatus } from "../../src/server/postg
 import type { PasskeyRecord } from "../../src/server/auth/adapter.ts";
 import type { CachedPage } from "../../src/server/cache.ts";
 import { adapterContract } from "./auth-adapter-contract.ts";
+import { DELETED_USER_CASES } from "./deleted-user-tokens.ts";
 
 /** A fresh database for one case: a client, and the schema to keep its tables in. */
 export interface Fresh {
@@ -384,4 +385,21 @@ export async function postgresSuites(
   await runCases(t, fresh, RATE_LIMIT_CASES);
   await runCases(t, fresh, CACHE_CASES);
   await runCases(t, fresh, MIGRATION_CASES);
+  for (const [name, run] of Object.entries(DELETED_USER_CASES)) {
+    await t.step(name, async () => {
+      const db = await fresh();
+      const adapter = postgresAuthAdapter(db);
+      const users = db.schema ? `"${db.schema}".auth_users` : "auth_users";
+      try {
+        // The user's row alone, as a deletion that left its sessions behind would.
+        await run({
+          adapter,
+          forget: async (id) =>
+            void await db.sql.unsafe(`DELETE FROM ${users} WHERE id = $1`, [id]),
+        });
+      } finally {
+        await adapter.close?.();
+      }
+    });
+  }
 }

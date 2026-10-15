@@ -10,6 +10,7 @@ import type { Hasher } from "./hasher.ts";
 import type { RateLimitOptions } from "./rate-limit.ts";
 import type { SessionStore } from "./session-store.ts";
 import type { GoTrueCaptchaOptions, GoTrueHooks, GoTrueSmsMessage } from "./gotrue/options.ts";
+import type { SamlPrivateKey } from "./saml/config.ts";
 
 /** A normalized user profile — the non-sensitive identity denext stores in the session. */
 export interface AuthUser {
@@ -186,6 +187,15 @@ export interface OAuthProvider {
    */
   strictAudience?: boolean;
   /**
+   * A multi-tenant issuer (`microsoftEntra({ tenant: "common" | "organizations" })`): `issuer`
+   * is a template carrying `{tenantid}`, and an `id_token` is accepted only when its `iss` is
+   * exactly that template with the token's own tenant claim (`claim`, a GUID) substituted —
+   * the templated issuer the provider's discovery document declares. `allowedTenants` limits
+   * which tenants may sign in; `excludedTenants` refuses some (`organizations` excludes the
+   * personal-account tenant).
+   */
+  tenantIssuer?: TenantIssuer;
+  /**
    * DANGEROUS: when this provider returns an email that already belongs to a local
    * account, link to it even though that account's address is **unverified**. Off by
    * default, and off is the safe answer — an attacker who registers an unverified local
@@ -193,6 +203,16 @@ export interface OAuthProvider {
    * provider login.
    */
   allowDangerousEmailAccountLinking?: boolean;
+}
+
+/** How a multi-tenant provider's `id_token` issuer is checked (see {@link OAuthProvider.tenantIssuer}). */
+export interface TenantIssuer {
+  /** The claim naming the token's tenant (Microsoft Entra: `tid`). Its value must be a GUID. */
+  claim: string;
+  /** Only these tenants (GUIDs) may sign in; unset admits every tenant. */
+  allowedTenants?: readonly string[];
+  /** These tenants (GUIDs) may never sign in. */
+  excludedTenants?: readonly string[];
 }
 
 /** A Credentials (e.g. email/password) provider. */
@@ -229,7 +249,10 @@ export interface EmailProvider {
   name: string;
   /** Discriminant marking this as an email provider. */
   type: "email";
-  /** `"magic"` mails a link (redeemed by its GET); `"otp"` mails a code (redeemed by a POST). */
+  /**
+   * `"magic"` mails a link (opened on a confirmation page whose button redeems it, unless
+   * `confirm: false`); `"otp"` mails a code (redeemed by a POST).
+   */
   mode: "magic" | "otp";
   /**
    * Whether an address with no account may sign up by proving its mailbox. With `false`
@@ -237,9 +260,10 @@ export interface EmailProvider {
    */
   allowSignUp: boolean;
   /**
-   * `magicLink({ confirm: true })`: the link's GET renders a confirmation page whose form POSTs
-   * the token, instead of spending it — so a mail gateway that pre-fetches links can't burn
-   * one, and nobody is signed in without pressing the button. Absent for `emailOtp()`.
+   * `magicLink()` (unless `confirm: false`): the link's GET renders a confirmation page whose
+   * form POSTs the token, instead of spending it — so a mail gateway that pre-fetches links
+   * can't burn one, and nobody is signed in without pressing the button. Absent for
+   * `emailOtp()`; only an explicit `false` (`magicLink({ confirm: false })`) redeems on the GET.
    */
   confirm?: boolean;
 }
@@ -263,8 +287,70 @@ export interface PhoneProvider {
   allowSignUp: boolean;
 }
 
+/**
+ * A SAML 2.0 identity provider on denextAuth's own endpoints (`saml({ … })`): `GET
+ * {basePath}/signin/:id` sends the browser to the IdP with a signed-when-configured
+ * AuthnRequest, the IdP posts its Response back to `POST {basePath}/callback/:id`, and
+ * `GET {basePath}/saml/:id/metadata` publishes this service provider's metadata. The Response is
+ * verified by the same SAML implementation `/auth/v1` uses, and the user is resolved by the same
+ * SSO rules: the account is an SSO user, signed in through this IdP only.
+ */
+export interface SamlProvider {
+  /** Provider id (the `[provider]` route segment). */
+  id: string;
+  /** Always `"saml"`. */
+  type: "saml";
+  /** Display name for a sign-in button. */
+  name?: string;
+  /** The IdP's metadata XML (entity id, SSO URL, signing certificates). */
+  metadataXml: string;
+  /**
+   * The email domains this IdP speaks for. An asserted address on one of them becomes the
+   * account's verified email; any other address is never bound to an account (the user signs in
+   * with no email). Without domains, no email is bound.
+   */
+  domains?: string[];
+  /**
+   * Map the assertion's attributes to user metadata (`{ email: "mail", name: "displayName" }`);
+   * the email defaults to the NameID when it is an address, else to `email` / `mail`.
+   */
+  attributeMapping?: Record<string, string>;
+  /**
+   * Link a first sign-in to an EXISTING account with the same email address when the address is
+   * on one of {@linkcode domains} (default `false`: such a sign-in is refused,
+   * `?error=account_not_linked`). Turn it on only for an IdP you trust to speak for every address
+   * in its domains.
+   */
+  linkExistingAccounts?: boolean;
+  /** Create a new user on a first sign-in (default `true`). */
+  allowSignUp?: boolean;
+  /** The NameID format to request (e.g. `urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress`). */
+  nameIdFormat?: string;
+  /** This service provider's entity id and keys (see {@link SamlProviderSp}). */
+  sp?: SamlProviderSp;
+}
+
+/** This service provider, as one {@link SamlProvider} presents itself to its IdP. */
+export interface SamlProviderSp {
+  /** The SP entity id (default: `{canonicalOrigin}{basePath}/saml/:id/metadata`). */
+  entityId?: string;
+  /** Signs AuthnRequests (RSA-SHA256): a PKCS #8 PEM or an RSA private JWK. */
+  signingKey?: SamlPrivateKey;
+  /** The X.509 certificate (PEM) of {@linkcode signingKey}, published in the SP metadata. */
+  signingCertificate?: string;
+  /** Decrypts encrypted assertions (RSA-OAEP): a PKCS #8 PEM or an RSA private JWK. */
+  encryptionKey?: SamlPrivateKey;
+  /** The X.509 certificate (PEM) of {@linkcode encryptionKey}, published `use="encryption"`. */
+  encryptionCertificate?: string;
+}
+
 /** Any configured provider. */
-export type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider | PhoneProvider;
+export type AuthProvider =
+  | OAuthProvider
+  | CredentialsProvider
+  | EmailProvider
+  | PhoneProvider
+  | SamlProvider;
 
 /**
  * True for an OAuth/OIDC provider (vs. Credentials or Email).
@@ -294,6 +380,16 @@ export function isEmailProvider(p: AuthProvider): p is EmailProvider {
  */
 export function isPhoneProvider(p: AuthProvider): p is PhoneProvider {
   return p.type === "phone";
+}
+
+/**
+ * True for a SAML 2.0 provider (`saml()`).
+ *
+ * @param p Any configured provider.
+ * @returns Whether `p` is a {@link SamlProvider}.
+ */
+export function isSamlProvider(p: AuthProvider): p is SamlProvider {
+  return p.type === "saml";
 }
 
 /** What {@link AuthCallbacks.authorized} is asked about. */
@@ -374,6 +470,8 @@ export type SignInFailedReason =
 /** Why an API token was revoked, as `apiTokenRevoked` reports it. */
 export type ApiTokenRevokedReason =
   | "revoked"
+  /** Refused for good at a use: its owner is gone, an SSO user, or banned past its expiry. */
+  | "owner_refused"
   | "password_reset"
   | "email_verified"
   | "phone_verified";
@@ -599,9 +697,9 @@ export interface VerificationRequestParams {
 }
 
 /**
- * Deliver a verification token. denext ships **no mailer** — email verification,
- * password reset, magic links and one-time codes all call this, and the flows that need
- * it refuse to start when it is absent.
+ * Deliver a verification token — `smtpMailer({ … })` is one; email verification, password
+ * reset, magic links and one-time codes all call this, and the flows that need it refuse to
+ * start when it is absent.
  */
 export type SendVerificationRequest = (
   params: VerificationRequestParams,
@@ -699,6 +797,49 @@ export interface AuthPasskeyConfig {
   userVerification?: "required" | "preferred";
   /** How long a ceremony's challenge lives, in seconds. Default `300`; clamped to `30..900`. */
   timeout?: number;
+  /**
+   * Attestation policy for new passkeys. Off by default: any `none` or `packed` attestation
+   * registers, and a certificate in it is not chained to anything.
+   */
+  attestation?: {
+    /**
+     * Check registrations against the FIDO Metadata Service (MDS3): the authenticator's
+     * certificate must chain to its model's metadata roots, and a model whose metadata reports
+     * a compromise is refused. Registration options then ask for `attestation: "direct"`. See
+     * {@link AuthPasskeyMdsConfig}.
+     */
+    mds?: AuthPasskeyMdsConfig;
+  };
+}
+
+/** `passkeys.attestation.mds`: where the metadata comes from and what it lets through. */
+export interface AuthPasskeyMdsConfig {
+  /**
+   * The BLOB's URL (`https:` only). Default: `https://mds.fidoalliance.org/`. A mirror works:
+   * the BLOB is verified against the pinned FIDO root wherever it came from.
+   */
+  url?: string;
+  /**
+   * The BLOB itself (the JWT text), or a function returning it — for a server without
+   * outbound network. Verified exactly like a fetched one; when set, `url` is never fetched.
+   */
+  blob?: string | (() => string | Promise<string>);
+  /** The fetch timeout, ms. Default `15000`. */
+  timeoutMs?: number;
+  /** The largest BLOB accepted, bytes. Default 32 MiB. */
+  maxBytes?: number;
+  /**
+   * Accept `none` and self attestation (no certificate, so no model is proven), still refusing
+   * an AAGUID whose metadata reports compromise. Default `false`: only an attestation that
+   * chains to its authenticator's metadata roots registers. Synced passkeys attest `none`, so
+   * turn this on unless every user has a certified security key.
+   */
+  allowUnattested?: boolean;
+  /**
+   * Accept a certificate attestation whose AAGUID has no metadata entry (its chain is then not
+   * checked). Default `false`.
+   */
+  allowUnknownAuthenticators?: boolean;
 }
 
 /** A provider whose `id_token`s a native app may exchange at `POST {basePath}/native/<id>`. */
@@ -771,9 +912,10 @@ export interface AuthNativeConfig {
    * task and the foreground app, two processes). Within this long after a rotation, presenting
    * the IMMEDIATELY previous refresh token answers the same token pair that rotation issued,
    * instead of treating it as a replay and revoking the family. An older generation, or the
-   * previous one after the window, is still a replay. Default `0` (strict: any reuse revokes);
-   * clamped to 0..60. It weakens replay detection for a token replayed within the window of
-   * its legitimate use — see the docs before enabling it.
+   * previous one after the window, is still a replay. Default `10`, as GoTrue's
+   * `GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL`; `0` is strict (any reuse revokes); clamped
+   * to 0..60. Inside the window a replayed previous token gets the pair its legitimate use
+   * got — set `0` where that matters more than a refresh race.
    */
   refreshReuseInterval?: number;
   /** One-time code lifetime in seconds (default 60; clamped to 10..600). */
@@ -917,7 +1059,8 @@ export interface AuthConfig {
   hasher?: Hasher;
   /**
    * Deliver a verification token (email verification, password reset, magic link, OTP).
-   * denext ships no mailer; the flows that need one refuse to start without this.
+   * `smtpMailer({ host, user, pass, from })` sends them over SMTP (TLS required); the flows
+   * that need one refuse to start without this (or `hooks.sendEmail`).
    */
   sendVerificationRequest?: SendVerificationRequest;
   /**

@@ -86,6 +86,12 @@ export interface Dispatcher {
    * `fn` — a closure per call, which the client fiber dispatcher avoids by implementing this.
    */
   useCallback?<T>(fn: T, deps?: DependencyList): T;
+  /**
+   * The rendering component's owner stack, formatted as React's `captureOwnerStack()`.
+   * Optional: only the client fiber dispatcher implements it, and only in development; without
+   * it the public `captureOwnerStack()` returns `null`.
+   */
+  captureOwnerStack?(): string | null;
 }
 
 /**
@@ -323,6 +329,16 @@ export function useDebugValue<T>(value: T, format?: (value: T) => unknown): void
     value,
     format as ((value: unknown) => unknown) | undefined,
   );
+}
+
+/**
+ * The owner stack at the call site (`React.captureOwnerStack`): the installed dispatcher's,
+ * read from the slot directly so a call outside a render returns `null` instead of throwing.
+ *
+ * @returns The owner stack, or `null` (production, the server, or outside a render).
+ */
+export function currentOwnerStack(): string | null {
+  return (globalThis as DispatcherHolder)[DISPATCHER_KEY]?.captureOwnerStack?.() ?? null;
 }
 
 /**

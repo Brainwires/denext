@@ -671,3 +671,44 @@ Deno.test("setRequestAdapter: one registration serves every copy of the middlewa
     setRequestAdapter((r) => r);
   }
 });
+
+Deno.test("a proxy.ts module's named `proxy` export runs (Next.js 16)", async () => {
+  const app = appWith({
+    proxy: (req: Request) =>
+      new URL(req.url).pathname === "/secret" ? new Response("blocked", { status: 401 }) : next(),
+    config: { matcher: "/secret" },
+  });
+  assertEquals((await app(new Request("http://localhost/secret"))).status, 401);
+  assertEquals((await app(new Request("http://localhost/home"))).status, 200);
+});
+
+Deno.test("createMiddlewareRunner reads proxy, middleware and default exports", () => {
+  const handler = () => next();
+  assertEquals(createMiddlewareRunner({ proxy: handler }) !== null, true);
+  assertEquals(createMiddlewareRunner({ middleware: handler }) !== null, true);
+  assertEquals(createMiddlewareRunner({ default: handler }) !== null, true);
+});
+
+Deno.test("createMiddlewareRunner fails closed when no handler is exported", () => {
+  // A module that exports no runnable handler must not start with its gate skipped.
+  const handler = () => next();
+  for (
+    const mod of [
+      {},
+      { config: { matcher: "/secret" } },
+      { default: { matcher: "/secret" } },
+      { proxy: "not a function" },
+      { middleware: [] },
+      { default: [handler, { config: {} }] },
+    ]
+  ) {
+    const err = assertThrows(() => createMiddlewareRunner(mod as never, "proxy.ts"), Error);
+    assertStringIncludes(err.message, "proxy.ts must export a function");
+  }
+  // An array of handlers / entries is still fine.
+  assertEquals(
+    createMiddlewareRunner({ default: [handler, { handler, config: { matcher: "/x" } }] }) !==
+      null,
+    true,
+  );
+});

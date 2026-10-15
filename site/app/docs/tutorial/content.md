@@ -637,5 +637,7 @@ denext task build && denext task start
 installed, `deno task dev` runs the same task.
 
 From there it is a Deno process behind whatever you already run: Deno Deploy, a
-container, systemd, or a single `deno serve`. [Deploying](/docs/deploy) has the
-targets, the environment variables, and the static-export path.
+container, systemd — or one executable: `denext build --compile` writes the app's
+server as a single binary ([Deployment targets](/docs/deployment-targets#a-single-binary-with-denext-build---compile)).
+[Deploying](/docs/deploy) has the targets, the environment variables, and the
+static-export path.

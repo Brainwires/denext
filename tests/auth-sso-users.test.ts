@@ -24,6 +24,9 @@ import {
   verifyNativeAccessToken,
 } from "../src/server/auth/native.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
+import { auth } from "../src/server/auth/mod.ts";
+import { issueApiToken, verifyApiToken } from "../src/server/auth/api-token.ts";
+import { installedSupabaseKeys, signSupabaseJwt } from "../src/server/auth/gotrue/keys.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp, totpCode } from "./_supabase-auth-app.ts";
 import { ACS, requestIdOf, type TestIdp, testIdp } from "./_saml-idp.ts";
 
@@ -681,7 +684,7 @@ function cookieSession(app: SupabaseAuthApp, cookie: string, slide = true) {
   });
 }
 
-Deno.test("denextAuth: an SSO user's cookie session ends when it is due to slide", async () => {
+Deno.test("denextAuth: an SSO user's cookie session ends at its next read, slide or not", async () => {
   await withApp(
     async (h) => {
       const id = await passwordUser(h.app, SSO_EMAIL);
@@ -690,9 +693,8 @@ Deno.test("denextAuth: an SSO user's cookie session ends when it is due to slide
       const regular = await cookieSignIn(h.app, "regular@corp.example");
       assert(await cookieSession(h.app, cookie, false), "live");
       await makeSso(h.app, id);
-      assert(await cookieSession(h.app, cookie, false), "auth() still reads it (no user read)");
+      assertEquals(await cookieSession(h.app, cookie, false), null, "the read re-reads the user");
       assertEquals(await cookieSession(h.app, cookie), null);
-      assertEquals(await cookieSession(h.app, cookie, false), null, "its record is gone");
       assert(await cookieSession(h.app, regular), "another user's still slides");
     },
     {},
@@ -846,6 +848,311 @@ Deno.test("SAML linkExistingAccounts: another identity provider's SSO user is ne
           linkExistingAccounts: true,
         },
       ],
+    },
+  });
+});
+
+// ── what an SSO user's credentials rest on: the stored session, read fresh ───
+
+Deno.test("/auth/v1: a hook-written sso/saml amr never lets a non-SSO session link an identity", async () => {
+  await withApp(async (h) => {
+    const id = await passwordUser(h.app, SSO_EMAIL);
+    const old = await api(h.app, "/token?grant_type=password", {
+      body: { email: SSO_EMAIL, password: PASSWORD },
+    });
+    assertEquals(old.status, 200);
+    const claims = JSON.parse(
+      atob(old.json.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")),
+    );
+    assert(
+      claims.amr.some((entry: { method: string }) => entry.method === "sso/saml"),
+      "the hook wrote it into the token",
+    );
+    await makeSso(h.app, id);
+    const link = await api(
+      h.app,
+      "/user/identities/authorize?provider=nope&skip_http_redirect=true",
+      {
+        token: old.json.access_token,
+      },
+    );
+    assertNotEquals(link.status, 400, "never reaches the provider lookup");
+    assert([403, 422].includes(link.status), JSON.stringify(link.json));
+  }, {
+    hooks: {
+      customAccessToken: ({ claims }) => ({
+        claims: {
+          ...claims,
+          amr: [...(claims.amr as unknown[]), { method: "sso/saml", timestamp: 1 }],
+        },
+      }),
+    },
+  });
+});
+
+Deno.test("/auth/v1: a token with no stored session claiming sso/saml links no identity onto an SSO user", async () => {
+  await withApp(async (h) => {
+    const { id, token: sso } = await ssoUser(h.app);
+    const keys = installedSupabaseKeys()!;
+    const now = Math.floor(Date.now() / 1000);
+    // What `denext backend token --sub <id> --claims '{"amr":[…]}'` mints: no `session_id`.
+    const sessionless = await signSupabaseJwt(keys, {
+      sub: id,
+      role: "authenticated",
+      aud: "authenticated",
+      iat: now,
+      exp: now + 600,
+      aal: "aal1",
+      amr: [{ method: "sso/saml", timestamp: now }],
+    });
+    const link = (token: string) =>
+      api(h.app, "/user/identities/authorize?provider=nope&skip_http_redirect=true", { token });
+    const refused = await link(sessionless);
+    assertEquals([refused.status, refused.json.error_code], [422, "user_sso_managed"]);
+    const allowed = await link(sso);
+    assertEquals([allowed.status, allowed.json.error_code], [400, "validation_failed"]);
+  });
+});
+
+/** `auth()` in a fresh request carrying `headers`. */
+function authIn(headers: Record<string, string>) {
+  const ctx = createRequestContext(new Request(`${ORIGIN}/`, { headers }));
+  return runWithContext(ctx, () => auth());
+}
+
+Deno.test("denextAuth: auth() reads null at once for a banned, a deleted and an SSO-converted user", async () => {
+  await withApp(async (h) => {
+    const adapter = h.app.config.adapter!;
+    const users: Record<string, { id: string; cookie: string }> = {};
+    for (const name of ["banned", "deleted", "converted", "regular"]) {
+      const email = `${name}@corp.example`;
+      const id = await passwordUser(h.app, email);
+      users[name] = { id, cookie: await cookieSignIn(h.app, email) };
+      assert(await authIn({ cookie: users[name].cookie }), `${name} is signed in`);
+    }
+    await adapter.updateUser({
+      id: users.banned.id,
+      bannedUntil: Math.floor(Date.now() / 1000) + 3600,
+    });
+    await adapter.deleteUser!(users.deleted.id);
+    await makeSso(h.app, users.converted.id);
+    // No slide in between: the very next request reads the stored user.
+    for (const name of ["banned", "deleted", "converted"]) {
+      assertEquals(await authIn({ cookie: users[name].cookie }), null, name);
+    }
+    assertEquals((await authIn({ cookie: users.regular.cookie }))?.user.id, users.regular.id);
+  });
+});
+
+Deno.test("denextAuth: two auth() calls in one request read the stored user once", async () => {
+  await withApp(async (h) => {
+    await passwordUser(h.app, "regular@corp.example");
+    const cookie = await cookieSignIn(h.app, "regular@corp.example");
+    const adapter = h.app.config.adapter!;
+    const getUser = adapter.getUser.bind(adapter);
+    let reads = 0;
+    adapter.getUser = (id) => {
+      reads++;
+      return getUser(id);
+    };
+    try {
+      const ctx = createRequestContext(new Request(`${ORIGIN}/`, { headers: { cookie } }));
+      await runWithContext(ctx, async () => {
+        assert(await auth());
+        assert(await auth());
+      });
+      assertEquals(reads, 1);
+    } finally {
+      adapter.getUser = getUser;
+    }
+  });
+});
+
+/** An `/auth/v1` call that needs the raw response (a redirect, a form body, no apikey). */
+function rawCall(
+  app: SupabaseAuthApp,
+  path: string,
+  init: { form?: Record<string, string>; basic?: [string, string] } = {},
+) {
+  const headers: Record<string, string> = {};
+  if (init.basic) headers.authorization = `Basic ${btoa(init.basic.join(":"))}`;
+  if (init.form) headers["content-type"] = "application/x-www-form-urlencoded";
+  return app.fetch(`${ORIGIN}/auth/v1${path}`, {
+    method: init.form ? "POST" : "GET",
+    headers,
+    body: init.form ? new URLSearchParams(init.form).toString() : undefined,
+    redirect: "manual",
+  });
+}
+
+const CLIENT_REDIRECT = "https://client.test/callback";
+
+/** An OAuth-server client, and the code-flow tokens it gets on `userToken`'s consent. */
+async function oauthClientTokens(app: SupabaseAuthApp, userToken: string, clientId?: string) {
+  let client: { client_id: string; client_secret: string } | undefined;
+  if (!clientId) {
+    const created = await api(app, "/admin/oauth/clients", {
+      key: app.secretKey,
+      token: app.secretKey,
+      body: { client_name: "Client", redirect_uris: [CLIENT_REDIRECT] },
+    });
+    assertEquals(created.status, 201, JSON.stringify(created.json));
+    client = created.json;
+  }
+  const verifier = base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)));
+  const challenge = base64UrlEncode(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))),
+  );
+  const start = await rawCall(
+    app,
+    `/oauth/authorize?${new URLSearchParams({
+      response_type: "code",
+      client_id: client!.client_id,
+      redirect_uri: CLIENT_REDIRECT,
+      scope: "openid email",
+      state: "s",
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+    })}`,
+  );
+  await start.body?.cancel();
+  assertEquals(start.status, 302);
+  const id = new URL(start.headers.get("location")!).searchParams.get("authorization_id")!;
+  const approved = await api(app, `/oauth/authorizations/${id}/consent`, {
+    token: userToken,
+    body: { action: "approve" },
+  });
+  assertEquals(approved.status, 200, JSON.stringify(approved.json));
+  const code = new URL(approved.json.redirect_url).searchParams.get("code")!;
+  const exchange = () =>
+    rawCall(app, "/oauth/token", {
+      basic: [client!.client_id, client!.client_secret],
+      form: {
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: CLIENT_REDIRECT,
+        code_verifier: verifier,
+      },
+    });
+  const refresh = async (refreshToken: string) => {
+    const res = await rawCall(app, "/oauth/token", {
+      basic: [client!.client_id, client!.client_secret],
+      form: { grant_type: "refresh_token", refresh_token: refreshToken },
+    });
+    return { status: res.status, json: await res.json() };
+  };
+  return { client: client!, exchange, refresh };
+}
+
+Deno.test("/auth/v1 OAuth server: an SSO user's grant consented outside an SSO session is refused", async () => {
+  await withApp(async (h) => {
+    const id = await passwordUser(h.app, SSO_EMAIL);
+    const session = await api(h.app, "/token?grant_type=password", {
+      body: { email: SSO_EMAIL, password: PASSWORD },
+    });
+    // Consented and exchanged before the account became an SSO user.
+    const before = await oauthClientTokens(h.app, session.json.access_token);
+    const issued = await before.exchange();
+    const tokens = await issued.json();
+    assertEquals(issued.status, 200, JSON.stringify(tokens));
+    assertEquals((await api(h.app, "/user", { token: tokens.access_token })).status, 200);
+    // Consented before, exchanged after.
+    const pending = await oauthClientTokens(h.app, session.json.access_token);
+    await makeSso(h.app, id);
+    const used = await api(h.app, "/user", { token: tokens.access_token });
+    assertEquals([used.status, used.json.error_code], [403, "session_not_found"]);
+    const refreshed = await before.refresh(tokens.refresh_token);
+    assertEquals([refreshed.status, refreshed.json.error], [400, "invalid_grant"]);
+    const family = await h.app.config.adapter!.getNativeSession!(
+      tokens.refresh_token.split(".")[0],
+    );
+    assert(family?.revokedAt !== undefined, "revoked at refresh");
+    const late = await pending.exchange();
+    assertEquals([late.status, (await late.json()).error], [400, "invalid_grant"]);
+  }, { oauthServer: {} });
+});
+
+Deno.test("/auth/v1 OAuth server: an SSO user's grant consented from an SSO session keeps working", async () => {
+  await withApp(async (h) => {
+    const { token } = await ssoUser(h.app);
+    const flow = await oauthClientTokens(h.app, token);
+    const issued = await flow.exchange();
+    const tokens = await issued.json();
+    assertEquals(issued.status, 200, JSON.stringify(tokens));
+    assertEquals((await api(h.app, "/user", { token: tokens.access_token })).status, 200);
+    const refreshed = await flow.refresh(tokens.refresh_token);
+    assertEquals(refreshed.status, 200, JSON.stringify(refreshed.json));
+    assertEquals(
+      (await api(h.app, "/user", { token: refreshed.json.access_token })).status,
+      200,
+    );
+  }, { oauthServer: {} });
+});
+
+Deno.test("denextAuth API tokens: an SSO user's token minted outside an SSO session is refused", async () => {
+  await withApp(async (h) => {
+    const id = await passwordUser(h.app, SSO_EMAIL);
+    const plain = await issueApiToken(h.app.config, { userId: id, name: "before" });
+    assert(await verifyApiToken(h.app.config, plain.token), "live before");
+    await makeSso(h.app, id);
+    assertEquals(await verifyApiToken(h.app.config, plain.token), null);
+    // From a session its identity provider started, a token works.
+    const sso = await issueApiToken(h.app.config, {
+      userId: id,
+      name: "sso",
+      session: { amr: ["sso/saml"] },
+    });
+    assertEquals(sso.record.ssoSession, true);
+    assertEquals((await verifyApiToken(h.app.config, sso.token))?.userId, id);
+    // A token with no SSO mark (minted without a session, or older data) is refused, and so is
+    // one minted from any other session.
+    const unmarked = await issueApiToken(h.app.config, { userId: id });
+    assertEquals(unmarked.record.ssoSession, undefined);
+    assertEquals(await verifyApiToken(h.app.config, unmarked.token), null);
+    const other = await issueApiToken(h.app.config, { userId: id, session: { amr: ["pwd"] } });
+    assertEquals(await verifyApiToken(h.app.config, other.token), null);
+  });
+});
+
+Deno.test("denextAuth API tokens: a banned or deleted owner's token is refused", async () => {
+  await withApp(async (h) => {
+    const id = await passwordUser(h.app, "owner@corp.example");
+    const { token } = await issueApiToken(h.app.config, { userId: id });
+    assert(await verifyApiToken(h.app.config, token));
+    await h.app.config.adapter!.updateUser({
+      id,
+      bannedUntil: Math.floor(Date.now() / 1000) + 3600,
+    });
+    assertEquals(await verifyApiToken(h.app.config, token), null, "banned");
+    await h.app.config.adapter!.updateUser({ id, bannedUntil: 0 });
+    assert(await verifyApiToken(h.app.config, token), "the ban ended");
+    // An adapter that keeps a deleted user's tokens (no cascade) still authenticates nobody.
+    const adapter = h.app.config.adapter!;
+    const getUser = adapter.getUser.bind(adapter);
+    adapter.getUser = (userId) => userId === id ? undefined : getUser(userId);
+    try {
+      assertEquals(await verifyApiToken(h.app.config, token), null, "deleted");
+    } finally {
+      adapter.getUser = getUser;
+    }
+  });
+});
+
+Deno.test("denextAuth: a JWT bearer session's amr is the stored session's, not the hook's", async () => {
+  await withApp(async (h) => {
+    await passwordUser(h.app, "regular@corp.example");
+    const grant = await api(h.app, "/token?grant_type=password", {
+      body: { email: "regular@corp.example", password: PASSWORD },
+    });
+    assertEquals(grant.status, 200);
+    const session = await authIn({ authorization: `Bearer ${grant.json.access_token}` });
+    assert(session, "signed in");
+    assertEquals(session.amr, ["password"]);
+  }, {
+    hooks: {
+      customAccessToken: ({ claims }) => ({
+        claims: { ...claims, amr: [{ method: "sso/saml", timestamp: 1 }] },
+      }),
     },
   });
 });

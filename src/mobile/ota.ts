@@ -204,7 +204,8 @@ export interface OtaCheckOptions {
    * `error` result with code `native_too_old` (the manifest's `minNative` is above this build) or
    * `native_mismatch` (it was built for another native fingerprint). The usual answer is a
    * store-update prompt. It is fired once per call after the result is known, not awaited into
-   * it; a throw or rejection is swallowed and the result is returned unchanged.
+   * it; what it returns (such as `promptStoreUpdate`'s promise) is ignored, and a throw or
+   * rejection is swallowed and the result is returned unchanged.
    *
    * @example
    * ```ts
@@ -218,7 +219,7 @@ export interface OtaCheckOptions {
    */
   onNativeUpdateRequired?: (
     refusal: { code: "native_too_old" | "native_mismatch"; reason: string },
-  ) => void | Promise<void>;
+  ) => unknown | Promise<unknown>;
 }
 
 /** The outcome of {@linkcode checkForUiUpdate}. It never throws; every failure is a value. */

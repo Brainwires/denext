@@ -20,6 +20,10 @@
 //   });
 //   // Without middleware the same endpoint is `defineApi(def, handler)`, and `ctx` is `{}`.
 //
+// A handler may also RETURN `err("code", { message?, data?, fieldErrors?, headers? })` from
+// `denext/result` instead of calling `fail()`: the code must be one of `errors` (a type error
+// otherwise) and the response is the same envelope `fail()` produces.
+//
 // Order per request: body cap (handleApi) → middleware → validate params, query, body →
 // handler → response validation. Auth and rate-limit middleware therefore reject BEFORE any
 // schema runs, so an unauthenticated caller learns nothing about the endpoint's shape. A
@@ -46,6 +50,8 @@ import {
 import { ApiError, type ApiErrorInit, ApiValidationError } from "./api-error.ts";
 import { json } from "./typed-response.ts";
 import { decodeWire, WIRE_HEADER } from "../runtime/wire-codec.ts";
+import { isReturnedErr } from "../runtime/result-brand.ts";
+import type { Err } from "../result.ts";
 
 /** How a declared error code maps to HTTP: a status, or a status with a default message. */
 export type ErrorSpec = number | { status: number; message?: string };
@@ -110,10 +116,33 @@ export interface ApiHandlerInput<D extends ApiDefinition, Ctx extends object> {
   fail(code: ApiErrorCodes<D>, init?: ApiErrorInit): never;
 }
 
-/** What a handler may return: a value matching `def.response` (or anything), or a `Response`. */
+/**
+ * A failure a handler may RETURN instead of calling `fail()`: `err(code, init?)` from
+ * `denext/result`, with `code` one of the endpoint's declared `errors`.
+ */
+export type ApiErr<D extends ApiDefinition> = Err<ApiErrorCodes<D>, ApiErrorInit | undefined>;
+
+/**
+ * What a handler may return: a value matching `def.response` (or anything), a `Response`, or
+ * an {@link ApiErr}.
+ */
 export type ApiHandlerResult<D extends ApiDefinition> = D extends { response: infer S }
-  ? SchemaInput<S> | Response
+  ? SchemaInput<S> | Response | ApiErr<D>
   : unknown;
+
+/**
+ * `unknown` when every `err(...)` a handler returns uses a declared code; otherwise a type the
+ * handler can't satisfy, whose one key names the offending code — so `return err("typo")` is a
+ * compile error even on an endpoint without a `response` schema.
+ */
+export type ApiErrGuard<D extends ApiDefinition, R> =
+  Exclude<Extract<Awaited<R>, Err<unknown, unknown>>, ApiErr<D>> extends infer U
+    ? [U] extends [never] ? unknown
+    : {
+      readonly "denext: err() code is not declared in this endpoint's `errors`": U extends
+        Err<infer C, unknown> ? C : never;
+    }
+    : never;
 
 /**
  * The route handler `defineApi` returns: a plain {@link ApiHandler} at runtime, carrying the
@@ -240,7 +269,7 @@ export interface ApiBuilder<Ctx extends object> {
   /** Define the endpoint: its schemas/errors and the handler over the parsed input. */
   define<const D extends ApiDefinition, R extends ApiHandlerResult<D>>(
     def: D,
-    handler: (input: ApiHandlerInput<D, Ctx>) => R | Promise<R>,
+    handler: ((input: ApiHandlerInput<D, Ctx>) => R | Promise<R>) & ApiErrGuard<D, R>,
   ): ApiRouteHandler<D, R>;
 }
 
@@ -275,7 +304,9 @@ export function createApi(): ApiBuilder<Record<never, never>> {
  */
 export function defineApi<const D extends ApiDefinition, R extends ApiHandlerResult<D>>(
   def: D,
-  handler: (input: ApiHandlerInput<D, Record<never, never>>) => R | Promise<R>,
+  handler:
+    & ((input: ApiHandlerInput<D, Record<never, never>>) => R | Promise<R>)
+    & ApiErrGuard<D, R>,
 ): ApiRouteHandler<D, R> {
   return createApi().define(def, handler);
 }
@@ -317,7 +348,7 @@ function builder<Ctx extends object>(
         : def;
       const meta: ApiRouteMeta = { def: effectiveDef, middleware: chain };
       const run: ApiHandler = (request, context) =>
-        runDefined(meta, request, context, handler as DefinedHandler);
+        runDefined(meta, request, context, handler as unknown as DefinedHandler);
       Object.defineProperty(run, API_META, { value: meta });
       return run as ApiRouteHandler<typeof def, Awaited<ReturnType<typeof handler>>>;
     },
@@ -347,7 +378,10 @@ async function runDefined(
     ctx,
     fail: (code: string, init?: ApiErrorInit) => failWith(def, code, init),
   } as unknown as ApiHandlerInput<ApiDefinition, object>;
-  return await respond(def, await handler(input));
+  const result = await handler(input);
+  // A returned `err(code, init?)` is the same failure `fail(code, init)` throws.
+  if (isReturnedErr(result)) failWith(def, String(result.error), result.details as ApiErrorInit);
+  return await respond(def, result);
 }
 
 /** Run the chain: an extension merges into `ctx`; a `Response` ends the request. */

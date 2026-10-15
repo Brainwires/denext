@@ -12,7 +12,7 @@
 
 import { resolveProject } from "../build/paths.ts";
 import { applyPlugins, getPluginCommands, pluginGeneration } from "../plugin/mod.ts";
-import { defaultLoader } from "../server/mod.ts";
+import { defaultLoader } from "../server/default-loader.ts";
 import type { CommandRegistry, CommandSpec } from "./command.ts";
 import { isReservedDenoVerb } from "./deno-verbs.ts";
 

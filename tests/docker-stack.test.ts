@@ -37,6 +37,8 @@ const FULL: DockerOptions = {
   pgvector: true,
   storage: true,
   migrate: true,
+  dashboard: true,
+  dashboardLogs: true,
   dev: true,
   auth: true,
   backend: true,
@@ -90,8 +92,12 @@ interface ComposeDoc {
     healthcheck?: { test: string[] };
     depends_on?: Record<string, { condition: string }>;
     volumes?: string[];
+    user?: string;
+    pull_policy?: string;
+    networks?: string[];
   }>;
   volumes?: Record<string, null>;
+  networks?: Record<string, { internal?: boolean }>;
 }
 
 function compose(options: DockerOptions): ComposeDoc {
@@ -115,8 +121,10 @@ Deno.test("every long-running service has a health check; the app waits on each 
     "db-init",
     "minio",
     "minio-init",
+    "dashboard",
+    "dashboard-logs",
   ]);
-  for (const name of ["web", "db", "minio"]) {
+  for (const name of ["web", "db", "minio", "dashboard"]) {
     assert(doc.services[name].healthcheck?.test.length, `${name} has a health check`);
     assertEquals(doc.services[name].restart, "unless-stopped");
   }
@@ -150,6 +158,101 @@ Deno.test("Postgres alone: plain 17 image, opt-in loopback port, no storage or m
   const exposed = compose({ mode: "server", postgres: true, exposeDb: true });
   assertEquals(exposed.services.db.ports, ["127.0.0.1:${DB_PORT:-5432}:5432"]);
   assertEquals(Object.keys(doc.volumes ?? {}), ["db-data"]);
+});
+
+Deno.test("the dashboard: the app's image and env, its password, loopback only, no socket", () => {
+  const doc = compose(FULL);
+  const dash = doc.services.dashboard;
+  assertEquals(dash.image, doc.services.web.image);
+  assertEquals(dash.pull_policy, "never");
+  assertEquals(dash.command, [
+    "deno",
+    "run",
+    "-A",
+    ...FULL.cli!,
+    "dashboard",
+    "--host",
+    "0.0.0.0",
+    "--port",
+    "3100",
+  ]);
+  // Published on this machine's loopback only.
+  assertEquals(dash.ports, ["127.0.0.1:${DASHBOARD_PORT:-3100}:3100"]);
+  // The app's own database and storage, plus the password (never required: a stack generated
+  // before it keeps starting, with the dashboard locked).
+  assertEquals(dash.environment?.DATABASE_URL, doc.services.web.environment?.DATABASE_URL);
+  assertEquals(dash.environment?.DASHBOARD_PASSWORD, "${DASHBOARD_PASSWORD:-}");
+  assertEquals(dash.environment?.DASHBOARD_LOGS_URL, "http://dashboard-logs:3101");
+  // The running app, for the realtime, functions and health pages.
+  assertEquals(dash.environment?.DASHBOARD_APP_URL, "http://web:3000");
+  assertEquals(dash.depends_on, { "db-init": { condition: "service_completed_successfully" } });
+  assertEquals(dash.volumes, undefined, "the dashboard never mounts the Docker socket");
+  assertEquals(dash.user, undefined);
+  assertStringIncludes(renderEnvExample(FULL), "\nDASHBOARD_PASSWORD=\n");
+});
+
+Deno.test("the log relay: the only service with the Docker socket, on a network of its own", () => {
+  const doc = compose(FULL);
+  const relay = doc.services["dashboard-logs"];
+  assertEquals(relay.volumes, ["${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro"]);
+  assertEquals(relay.ports, undefined, "the relay publishes no port");
+  assertEquals(relay.networks, ["dashboard-logs"]);
+  assertEquals(relay.user, "root");
+  assertEquals(relay.environment, { DASHBOARD_PASSWORD: "${DASHBOARD_PASSWORD:-}" });
+  assertEquals(doc.services.dashboard.networks, ["default", "dashboard-logs"]);
+  assertEquals(doc.networks, { "dashboard-logs": { internal: true } });
+  for (const [name, service] of Object.entries(doc.services)) {
+    if (name === "dashboard-logs") continue;
+    assert(
+      !(service.volumes ?? []).some((v) => v.includes("docker.sock")),
+      `${name} must not mount the Docker socket`,
+    );
+  }
+  // Without --dashboard-logs: no relay, no network, no socket anywhere.
+  const plain = compose({ ...FULL, dashboardLogs: false });
+  assertEquals(plain.services["dashboard-logs"], undefined);
+  assertEquals(plain.networks, undefined);
+  assertEquals(plain.services.dashboard.environment?.DASHBOARD_LOGS_URL, undefined);
+  assert(!renderCompose({ ...FULL, dashboardLogs: false }).includes("docker.sock"));
+});
+
+Deno.test("the dashboard follows Postgres: on with it, off with --no-dashboard, never without", async () => {
+  const detection: StackDetection = {
+    features: {
+      postgres: true,
+      pgvector: false,
+      storage: false,
+      migrate: false,
+      dashboard: true,
+    },
+    reasons: { postgres: "test", dashboard: "a database to manage" },
+    auth: false,
+    backend: false,
+    backendStorage: false,
+    backendVault: false,
+    realtimeLogical: false,
+    cli: ["jsr:@denext/denext/cli"],
+    migrateCommand: [],
+    warnings: [],
+  };
+  assertEquals(resolveStack(detection).dashboard, true);
+  assertEquals(resolveStack(detection, { dashboard: false }).dashboard, false);
+  assertEquals(resolveStack(detection, { postgres: false, dashboard: true }).dashboard, false);
+  assertEquals(compose({ mode: "server", dashboard: true }).services.dashboard, undefined);
+  assertEquals(stackEnv({ dashboard: true }).some((v) => v.name === "DASHBOARD_PASSWORD"), false);
+  const dir = await Deno.makeTempDir({ prefix: "denext_dash_stack_" });
+  try {
+    await Deno.writeTextFile(join(dir, ".env"), "DATABASE_URL=postgres://a:b@h/d\n");
+    const found = await detectDockerStack(dir);
+    assertEquals(found.reasons.dashboard, "a database to manage");
+    const asked = await resolveDocker(dir, { dashboardLogs: true });
+    assertEquals([asked.options.dashboard, asked.options.dashboardLogs], [true, true]);
+    const off = await resolveDocker(dir, { overrides: { dashboard: false }, dashboardLogs: true });
+    assertEquals(off.options.dashboardLogs, undefined);
+    assert(off.warnings.some((w) => w.includes("--dashboard-logs needs the dashboard")));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 /** The `${NAME:?…}` / `${NAME:-…}` reference a variable gets in the compose file. */
@@ -204,6 +307,12 @@ Deno.test("the secrets follow the features: auth, backend, storage", () => {
     "DENEXT_SECRET_KEY",
     "DENEXT_JWT_SIGNING_KEYS",
     "DENEXT_JWT_SECRET",
+    "GOTRUE_SMTP_HOST",
+    "GOTRUE_SMTP_PORT",
+    "GOTRUE_SMTP_USER",
+    "GOTRUE_SMTP_PASS",
+    "GOTRUE_SMTP_ADMIN_EMAIL",
+    "GOTRUE_SMTP_SENDER_NAME",
     "DENEXT_RATE_LIMIT_LOCAL_ADDRESSES",
   ]);
   // The vault key is required, so it is listed only when `vault` is configured.
@@ -276,7 +385,13 @@ const auth = denextAuth({ secret: "x" });
 
 Deno.test("detect: a plain app needs nothing", async () => {
   const d = await detect({ "deno.json": "{}" });
-  assertEquals(d.features, { postgres: false, pgvector: false, storage: false, migrate: false });
+  assertEquals(d.features, {
+    postgres: false,
+    pgvector: false,
+    storage: false,
+    migrate: false,
+    dashboard: false,
+  });
   assertEquals([d.auth, d.backend, d.backendStorage, d.backendVault], [false, false, false, false]);
   assertEquals(d.cli, ["--config", "deno.json", "jsr:@denext/denext/cli"]);
   assertEquals(d.warnings, []);
@@ -363,7 +478,13 @@ Deno.test("detect: a Postgres DATABASE_URL in .env, migrations + runner, the vec
     "migrations/001_init.sql": "create extension if not exists vector;\n",
     "jobs/migrate.ts": "export default {};\n",
   });
-  assertEquals(d.features, { postgres: true, pgvector: true, storage: false, migrate: true });
+  assertEquals(d.features, {
+    postgres: true,
+    pgvector: true,
+    storage: false,
+    migrate: true,
+    dashboard: true,
+  });
   assertEquals(d.migrateCommand, ["deno", "task", "migrate"], "the project's own task wins");
 });
 

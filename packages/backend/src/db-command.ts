@@ -31,6 +31,8 @@ export interface DbCommandConfig {
   backendMigrations: () => Migration[];
   /** Further sets of the backend's migrations, each in its own tracking table (storage's). */
   migrationSets?: () => MigrationSet[];
+  /** Sets that need the app's tables (realtime's per-table triggers): applied after its own. */
+  afterMigrationSets?: () => MigrationSet[];
   /** The schemas the backend's services own (dropped by `reset`). */
   serviceSchemas: string[];
   /**
@@ -92,6 +94,8 @@ export interface DbHooks {
   table: string;
   /** Further sets, applied after {@linkcode DbHooks.migrations}, each in its own table. */
   migrationSets?(): MigrationSet[];
+  /** Sets applied after the app's own migrations (they need its tables). */
+  afterMigrationSets?(): MigrationSet[];
   /** The schemas `reset` drops. */
   serviceSchemas: string[];
   /** Wraps the client migrations run on. */
@@ -128,6 +132,7 @@ export function createDbHooks(
     migrations: config.backendMigrations,
     table: BACKEND_TABLE,
     ...(config.migrationSets ? { migrationSets: config.migrationSets } : {}),
+    ...(config.afterMigrationSets ? { afterMigrationSets: config.afterMigrationSets } : {}),
     serviceSchemas: config.serviceSchemas,
     ...(config.keyed ? { keyed: config.keyed } : {}),
     ...(config.seedBuckets ? { seedBuckets: config.seedBuckets } : {}),

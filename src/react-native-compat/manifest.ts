@@ -611,9 +611,9 @@ export const COMMUNITY_ALIASES: Readonly<Record<string, CommunityAlias>> = {
     module: "./fast-image.ts",
     pinned: "8.6.3",
     status: "partial",
-    implementation: "React Native's Image (react-native-web)",
-    notes: "FastImage is React Native's Image (the browser's image cache) instead of a native " +
-      "view that rendered nothing: source { uri, headers } or a bundled image, resizeMode " +
+    implementation: "denext's FastImage (fast-image.ts), drawing React Native's Image",
+    notes: "FastImage is denext's own module, which draws React Native's Image (the browser's " +
+      "image cache) instead of a native view that rendered nothing: source { uri, headers } or a bundled image, resizeMode " +
       "(contain, cover, stretch, center), tintColor, defaultSource, onLoadStart / onLoad " +
       "(nativeEvent { width, height }) / onError / onLoadEnd, and children drawn over the " +
       "image. priority and cache are ignored, onProgress never fires, preload() warms the " +

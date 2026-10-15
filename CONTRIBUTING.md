@@ -11,7 +11,7 @@ deno task check      # deno fmt --check && deno lint && deno test  (the CI gate)
 Two helpers make it painless:
 
 ```sh
-deno task check:fix  # test-count badge + deno fmt + deno lint --fix, then a report-only deno lint
+deno task check:fix  # test-count badge + command table + deno fmt + deno lint --fix, then a report-only deno lint
 deno task hooks:install   # install the pre-commit hook (once per clone)
 deno task release-check   # check + doc-lint + deno publish --dry-run (run before tagging)
 ```
@@ -452,7 +452,12 @@ Some docs are **generated** and must never be hand-edited — regenerate them
 instead: `deno task docs:cli` (the CLI reference), `deno task docs:examples`
 (the examples index), `deno task docs:mcp` (the MCP reference),
 `deno task gen:config-schema` (`denext.config.schema.json` +
-`src/server/config-keys.generated.ts`) and `deno task gen:plugin-catalog`
+`src/server/config-keys.generated.ts`), `deno task gen:command-table`
+(`src/cli/command-table.generated.ts` + `src/cli/lazy-modules.generated.ts`: the
+verbs' names and flags the `denext` entrypoint dispatches from, so a verb's
+implementation loads only when it runs; `check:fix` and the pre-commit hook
+regenerate and stage it, so a new verb in `src/cli/register.ts` or a changed flag
+or help line is picked up on commit) and `deno task gen:plugin-catalog`
 (`src/plugin/catalog.json` — the first-party package catalog the plugins page,
 `denext migrate` and the `denext ui` plugins panel all read; a new `packages/*`
 needs a `"denext": { "catalog": { … } }` block in its `deno.json` to appear, and a
@@ -476,6 +481,8 @@ src/compat    the React / Next / next-intl / Remix compat surface
 src/desktop   the Deno Desktop runtime: bridge, capabilities, window, app, updaters, Clerk
 src/mobile    denext/mobile: the Capacitor shell runtime and its desktop branches
 src/react-native, src/expo, src/navigation   React Native mode, the expo-* shims, native-feel nav
+src/lists     the LegendList that `lists: "denext"` builds on VirtualList
+src/standalone  the entry a `denext build --compile` executable runs
 src/mcp       the `denext mcp` server and its docs corpus
 src/ui        the `denext ui` project GUI
 src/plugin, src/lint, src/testing            plugin kit, lint plugin, denext/testing
@@ -528,7 +535,7 @@ is on the local filesystem. In particular:
   `readFrameworkText(rel)` / `readFrameworkJson(rel)` (fetch when remote), and
   `frameworkImports()`. `frameworkRoot()` remains only for the narrow case of a
   `startsWith` prefix check (it returns the remote URL when not local).
-- The esbuild [`@luca/esbuild-deno-loader`] resolves `https://`/`jsr:`
+- The esbuild loader ([`@luca/esbuild-deno-loader`](https://jsr.io/@luca/esbuild-deno-loader)) resolves `https://`/`jsr:`
   specifiers, so pass framework module refs as URLs (not `file://` paths) and
   give it a **local** temp config when it needs one (see `prebuildDenextRuntime`
   writing `frameworkImports()` to a temp `deno.json`).

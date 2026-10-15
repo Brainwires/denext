@@ -71,3 +71,137 @@ Deno.test("renderMarkdown is deterministic and handles CRLF + empty input", () =
   assertEquals(renderMarkdown("a\r\n\r\nb"), "<p>a</p>\n<p>b</p>");
   assertEquals(renderMarkdown("# H"), renderMarkdown("# H"));
 });
+
+Deno.test("renderMarkdown nests a list indented under an item", () => {
+  const html = renderMarkdown(
+    ["- one", "  - one.a", "  - one.b", "    1. deep", "- two", "  wrapped"].join("\n"),
+  );
+  assertEquals(
+    html,
+    "<ul><li>one<ul><li>one.a</li><li>one.b<ol><li>deep</li></ol></li></ul></li>" +
+      "<li>two wrapped</li></ul>",
+  );
+  // A blank line before a nested item keeps it in the parent item.
+  assertEquals(
+    renderMarkdown("1. a\n\n   - b\n2. c"),
+    "<ol><li>a<ul><li>b</li></ul></li><li>c</li></ol>",
+  );
+});
+
+Deno.test("renderMarkdown renders footnotes with back-links, numbered by first reference", () => {
+  const html = renderMarkdown(
+    [
+      "Second[^b] then first[^a] and again[^b]; undefined[^zz] stays text.",
+      "",
+      "[^a]: The *a* note.",
+      "[^b]: The b note.",
+      "[^unused]: Never referenced.",
+    ].join("\n"),
+  );
+  assertStringIncludes(
+    html,
+    `Second<sup class="footnote-ref"><a href="#fn-1" id="fnref-1">1</a></sup>`,
+  );
+  assertStringIncludes(html, `first<sup class="footnote-ref"><a href="#fn-2" id="fnref-2">2</a>`);
+  assertStringIncludes(html, `again<sup class="footnote-ref"><a href="#fn-1" id="fnref-1-2">1</a>`);
+  assertStringIncludes(html, "undefined[^zz] stays text.");
+  assertStringIncludes(
+    html,
+    `<section class="footnotes"><ol><li id="fn-1">The b note. ` +
+      `<a href="#fnref-1" class="footnote-backref">↩</a> ` +
+      `<a href="#fnref-1-2" class="footnote-backref">↩</a></li>` +
+      `<li id="fn-2">The <em>a</em> note. <a href="#fnref-2" class="footnote-backref">↩</a></li>` +
+      `</ol></section>`,
+  );
+  assert(!html.includes("Never referenced"), "an unreferenced definition renders nothing");
+  assert(!html.includes("[^a]:"), "definitions are not paragraphs");
+});
+
+Deno.test("renderMarkdown renders images with an escaped alt and a sanitized src", () => {
+  assertEquals(
+    renderMarkdown(`![A "cat" <pic>](/img/cat.png "Its 'title'")`),
+    `<p><img src="/img/cat.png" alt="A &quot;cat&quot; &lt;pic&gt;" ` +
+      `title="Its &#39;title&#39;" /></p>`,
+  );
+  assertEquals(
+    renderMarkdown("[![logo](/l_a_b.png)](/home) ![r][logo]\n\n[logo]: /ref.png"),
+    `<p><a href="/home"><img src="/l_a_b.png" alt="logo" /></a> <img src="/ref.png" alt="r" /></p>`,
+  );
+  // Script-bearing sources are refused exactly as link targets are: the alt text stays.
+  const bad = renderMarkdown(
+    "![x](javascript:alert(1)) ![y](JAVA\tSCRIPT:x) ![z](data:image/svg+xml,<svg>) " +
+      `![q" onerror="alert(1)](/ok.png) ![w](/ok.png "t\\" onload=\\"x")`,
+  );
+  // Every emitted <img> is exactly src + alt (+ title), each a closed, quoted attribute.
+  const imgs = bad.match(/<img[^>]*>/g) ?? [];
+  assertEquals(imgs.length, 1, bad);
+  for (const tag of imgs) {
+    assert(/^<img src="[^"]*" alt="[^"]*"(?: title="[^"]*")? \/>$/.test(tag), tag);
+    assert(!/src="[^"]*(javascript|data:)/i.test(tag), tag);
+  }
+  assertStringIncludes(bad, `alt="q&quot; onerror=&quot;alert(1)"`);
+});
+
+Deno.test("renderMarkdown renders indented code blocks", () => {
+  assertEquals(
+    renderMarkdown("Para.\n\n    const a = 1 < 2;\n\n    b();\n\tc();\n\nAfter."),
+    `<p>Para.</p>\n<pre class="code"><code>const a = 1 &lt; 2;\n\nb();\nc();</code></pre>\n` +
+      "<p>After.</p>",
+  );
+  // An indented line can't interrupt a paragraph (CommonMark): it is a continuation.
+  assertEquals(renderMarkdown("Para\n    more"), "<p>Para more</p>");
+});
+
+Deno.test("renderMarkdown takes code spans of any backtick-run length", () => {
+  assertEquals(
+    renderMarkdown("Use `` a ` b `` or ``` `` ``` or `` `x` `` then ``a``."),
+    "<p>Use <code>a ` b</code> or <code>``</code> or <code>`x`</code> then <code>a</code>.</p>",
+  );
+  // An unmatched run stays literal; a one-space pad is stripped only when both sides have one.
+  assertEquals(renderMarkdown("``open and `` x`"), "<p><code>open and </code> x`</p>");
+  assertEquals(renderMarkdown("`` `a``"), "<p><code> `a</code></p>");
+  assertEquals(renderMarkdown("``a *b* _c_``"), "<p><code>a *b* _c_</code></p>");
+});
+
+Deno.test("renderMarkdown keeps a code span inside an image's alt or title out of the markup", () => {
+  const html = renderMarkdown('![a `"><x` b](/i.png "t `"q"`")');
+  assertEquals(
+    html,
+    `<p><img src="/i.png" alt="a &quot;&gt;&lt;x b" title="t &quot;q&quot;" /></p>`,
+  );
+});
+
+Deno.test("renderMarkdown leaves _ and * in link, image and reference destinations alone", () => {
+  assertEquals(
+    renderMarkdown("[x](https://a.test/_x_/y) and [z](https://a.test/*x*/y)"),
+    `<p><a href="https://a.test/_x_/y" rel="noopener noreferrer" target="_blank">x</a> and ` +
+      `<a href="https://a.test/*x*/y" rel="noopener noreferrer" target="_blank">z</a></p>`,
+  );
+  assertEquals(
+    renderMarkdown("![i](/a/_x_/b.png) ![j](/a/*x*/b.png)"),
+    `<p><img src="/a/_x_/b.png" alt="i" /> <img src="/a/*x*/b.png" alt="j" /></p>`,
+  );
+  assertEquals(
+    renderMarkdown("[ref] and [t][r2]\n\n[ref]: https://a.test/_x_/y\n[r2]: https://a.test/*x*/y"),
+    `<p><a href="https://a.test/_x_/y" rel="noopener noreferrer" target="_blank">ref</a> and ` +
+      `<a href="https://a.test/*x*/y" rel="noopener noreferrer" target="_blank">t</a></p>`,
+  );
+  // A URL used as the link text and destination alike: the text is emphasized, the href is not.
+  assertEquals(
+    renderMarkdown("[https://a.test/_x_](https://a.test/_x_/y)"),
+    `<p><a href="https://a.test/_x_/y" rel="noopener noreferrer" target="_blank">` +
+      `https://a.test/<em>x</em></a></p>`,
+  );
+  // Emphasis in the link text still works.
+  assertEquals(
+    renderMarkdown("[a *b* and _c_ **d**](/p_q_)"),
+    `<p><a href="/p_q_">a <em>b</em> and <em>c</em> <strong>d</strong></a></p>`,
+  );
+});
+
+Deno.test("renderMarkdown renders a backtick line that opens no fence as text, never looping", () => {
+  // Each of these starts a block (a paragraph stops before it) but parseFence refuses it: the
+  // paragraph must still consume it, or the renderer spins at that line until memory runs out.
+  assertEquals(renderMarkdown("````ts\nx\n``` Size it"), "<p>````ts x</p>\n<p>``` Size it</p>");
+  assertEquals(renderMarkdown("text\n``` prose after"), "<p>text</p>\n<p>``` prose after</p>");
+});

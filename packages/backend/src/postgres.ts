@@ -9,7 +9,9 @@ import {
   postgresAuthAdapter,
   type PostgresAuthAdapterOptions,
   postgresClient,
+  sessionClient,
   type SqlClient,
+  withDirectConnection,
 } from "@denext/denext/server";
 import { identityScope, isRequestIdentity, resolveIdentity } from "./identity.ts";
 import {
@@ -39,6 +41,14 @@ export interface PostgresOptions {
    * plugin.
    */
   sql?: SqlClient;
+  /**
+   * A direct `postgres://` URL to the same database (default: `DATABASE_DIRECT_URL`), for when
+   * `url` / `sql` is a pooler in transaction mode (PgBouncer, Supavisor). What needs a session of
+   * its own runs on it: realtime's LISTEN, its reserved connections (`revalidate.owner: "one"`,
+   * the logical source), webhook delivery's wake-up, the REST schema-reload listener, and every
+   * migration and its lock. Queries, `db()` included, keep using the pooled one.
+   */
+  directUrl?: string;
   /**
    * Row-level security: `db()` runs every query as `anon` or `authenticated` with the request's
    * claims, so Supabase-style policies apply. The roles and `auth.*` functions are created by a
@@ -76,7 +86,16 @@ export function openPostgres(
   env: (name: string) => string | undefined,
 ): { slot: PostgresSlot; owned: boolean } {
   const rls = options.rls ?? {};
-  if (options.sql) return { slot: { sql: options.sql, rls }, owned: false };
+  const directUrl = options.directUrl ?? env("DATABASE_DIRECT_URL");
+  if (options.sql) {
+    if (!options.directUrl) return { slot: { sql: options.sql, rls }, owned: false };
+    // Yours stays open: closing the pair closes only the direct connection it opened.
+    const direct = postgresClient(options.directUrl, "backend({ postgres })");
+    return {
+      slot: { sql: withDirectConnection(options.sql, direct, { pooled: false }), rls },
+      owned: true,
+    };
+  }
   const url = options.url ?? env("DATABASE_URL");
   if (!url) {
     return {
@@ -85,7 +104,11 @@ export function openPostgres(
     };
   }
   try {
-    return { slot: { sql: postgresClient(url, "backend({ postgres })"), rls }, owned: true };
+    const pooled = postgresClient(url, "backend({ postgres })");
+    const sql = directUrl
+      ? withDirectConnection(pooled, postgresClient(directUrl, "backend({ postgres })"))
+      : pooled;
+    return { slot: { sql, rls }, owned: true };
   } catch (error) {
     return { slot: { error: error as Error }, owned: false };
   }
@@ -274,6 +297,8 @@ export function deferredClient(): SqlClient {
   client.unsafe = (text, params) => db.service().unsafe(text, params);
   client.begin = (fn) => db.service().begin(fn);
   client.close = () => Promise.resolve(); // the plugin owns the pool
+  // Migrations go to the backend's direct connection, when it has one.
+  Object.defineProperty(client, "direct", { get: () => sessionClient(db.service()) });
   return client;
 }
 

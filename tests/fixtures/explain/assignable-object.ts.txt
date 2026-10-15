@@ -1,0 +1,10 @@
+// A plain object literal that does not match its annotation, two levels deep.
+interface Settings {
+  theme: { mode: "light" | "dark"; accent: string };
+  pageSize: number;
+}
+
+export const settings: Settings = {
+  theme: { mode: "blue", accent: "#0af" },
+  pageSize: 20,
+};

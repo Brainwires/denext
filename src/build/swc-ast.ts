@@ -359,6 +359,57 @@ export function absolutizeSpecifiers(
   return any;
 }
 
+/**
+ * The specifier a module at `fromUrl` imports `targetUrl` by, relative (`./x.ts`, `../app/x.ts`,
+ * `/`-separated): both are `file:` URLs. `null` when no relative path reaches the target (another
+ * Windows drive) or either is not a `file:` URL.
+ *
+ * @param fromUrl The importing module's URL.
+ * @param targetUrl The imported module's URL.
+ */
+export function relativeSpecifier(fromUrl: string, targetUrl: string): string | null {
+  if (!fromUrl.startsWith("file:") || !targetUrl.startsWith("file:")) return null;
+  const from = new URL(fromUrl);
+  const target = new URL(targetUrl);
+  if (from.host !== target.host) return null;
+  // On the URLs' own (encoded) paths, so the result resolves back to exactly `targetUrl`.
+  const dir = from.pathname.split("/").slice(1, -1);
+  const segs = target.pathname.split("/").slice(1);
+  let common = 0;
+  while (common < dir.length && common < segs.length - 1 && dir[common] === segs[common]) common++;
+  if (common === 0 && /^[a-zA-Z]:$/.test(segs[0] ?? "")) return null; // another Windows drive
+  const up = dir.length - common;
+  const rest = segs.slice(common).join("/");
+  return (up === 0 ? `./${rest}` : "../".repeat(up) + rest) + target.search + target.hash;
+}
+
+/**
+ * `source` (a module that will live at `copyUrl`) with every literal `file:` specifier — static,
+ * and each `import()` written as a literal — rewritten relative to `copyUrl`, so the module and
+ * what it imports can move together (a `deno compile`d app embeds them under another root). A
+ * specifier no relative path reaches is kept as written. The source is returned as is when it
+ * names no `file:` specifier or does not parse.
+ *
+ * @param source The module's code.
+ * @param copyUrl The `file:` URL the module is written to.
+ */
+export async function relativizeFileSpecifiers(source: string, copyUrl: string): Promise<string> {
+  if (!source.includes("file:")) return source;
+  const parsed = await parseModule(source);
+  if (!parsed) return source;
+  const edits: Edit[] = [];
+  for (const { node, value } of literalSpecifiers(parsed.body)) {
+    const rel = value.startsWith("file:") ? relativeSpecifier(copyUrl, value) : null;
+    if (rel === null) continue;
+    edits.push({
+      start: startOf(parsed.ctx, node),
+      end: endOf(parsed.ctx, node),
+      text: JSON.stringify(rel),
+    });
+  }
+  return edits.length === 0 ? source : applyEdits(parsed.ctx.bytes, edits);
+}
+
 /** Deterministic short filename for a transformed module URL (djb2 of the URL). */
 function hashedModuleFileName(url: string): string {
   let h = 5381;
@@ -426,30 +477,28 @@ const PINNED_META = new Set(["url", "filename", "dirname", "resolve"]);
  * neither, and the browser resolves both against the chunk, exactly as for the module it stands
  * in for — a pinned `file:` URL would ship a build-machine path in the client JS.
  *
+ * With `copyUrl` (a relocatable copy: `denext build` writes the server render's, and a
+ * `deno compile`d app embeds them under another root), the pins are computed at run time from the
+ * copy's own `import.meta.url` and the path from the copy to the original, rather than written as
+ * the build machine's absolute path.
+ *
  * @param source The copy's code.
  * @param originalUrl The `file:` URL of the module the copy stands in for.
- * @param opts `dynamicImports`: also re-root non-literal `import()` specifiers.
+ * @param opts `dynamicImports`: also re-root non-literal `import()` specifiers. `copyUrl`: where
+ *   the copy is written, for relocatable pins.
  */
 export async function pinImportMeta(
   source: string,
   originalUrl: string,
-  opts: { dynamicImports?: boolean } = {},
+  opts: { dynamicImports?: boolean; copyUrl?: string } = {},
 ): Promise<string> {
   const dynamic = opts.dynamicImports === true && source.includes("import(");
   if (!source.includes("import.meta") && !dynamic) return source;
   const parsed = await parseModule(source);
   if (!parsed) return source;
-  const path = fromFileUrl(originalUrl);
-  const url = JSON.stringify(originalUrl);
-  const resolve =
-    `((s) => /^\\.\\.?\\//.test(s) ? new URL(s, ${url}).href : import.meta.resolve(s))`;
+  const { literal, helpers } = pinnedMeta(originalUrl, opts.copyUrl);
+  const url = literal.url;
   const relativeTo = `((s) => /^\\.\\.?\\//.test(s) ? new URL(s, ${url}).href : s)`;
-  const literal: Record<string, string> = {
-    url,
-    filename: JSON.stringify(path),
-    dirname: JSON.stringify(dirname(path)),
-    resolve,
-  };
   const edits: Edit[] = [];
   const members = new Set<Node>();
   const visit = (n: Node) => {
@@ -482,5 +531,49 @@ export async function pinImportMeta(
     }
   };
   for (const item of parsed.body) walkAst(item, visit);
-  return edits.length === 0 ? source : applyEdits(parsed.ctx.bytes, edits);
+  if (edits.length === 0) return source;
+  const code = applyEdits(parsed.ctx.bytes, edits);
+  // Imports hoist, so the relocatable pins' helpers can follow the code (a leading one would sit
+  // ahead of a `"use server"` / `"use client"` prologue).
+  return helpers ? `${code}\n${RELOCATABLE_META_HELPERS}\n` : code;
+}
+
+/** The helpers relocatable `import.meta.filename` / `.dirname` pins call. */
+const RELOCATABLE_META_HELPERS =
+  'import { fileURLToPath as __dnxFileUrlToPath } from "node:url";\n' +
+  'import { dirname as __dnxDirname } from "node:path";';
+
+/**
+ * The code each pinned `import.meta` member is replaced with: the original's values as literals,
+ * or with `copyUrl`, expressions over the copy's own `import.meta.url` (`helpers`: they call
+ * {@linkcode RELOCATABLE_META_HELPERS}). A copy no relative path reaches the original from keeps
+ * the literals.
+ */
+function pinnedMeta(
+  originalUrl: string,
+  copyUrl: string | undefined,
+): { readonly literal: Record<string, string>; readonly helpers: boolean } {
+  const rel = copyUrl === undefined ? null : relativeSpecifier(copyUrl, originalUrl);
+  const url = rel === null
+    ? JSON.stringify(originalUrl)
+    : `new URL(${JSON.stringify(rel)}, import.meta.url).href`;
+  const resolve =
+    `((s) => /^\\.\\.?\\//.test(s) ? new URL(s, ${url}).href : import.meta.resolve(s))`;
+  if (rel !== null) {
+    const filename = `__dnxFileUrlToPath(${url})`;
+    return {
+      literal: { url, filename, dirname: `__dnxDirname(${filename})`, resolve },
+      helpers: true,
+    };
+  }
+  const path = fromFileUrl(originalUrl);
+  return {
+    literal: {
+      url,
+      filename: JSON.stringify(path),
+      dirname: JSON.stringify(dirname(path)),
+      resolve,
+    },
+    helpers: false,
+  };
 }

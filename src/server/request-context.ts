@@ -177,6 +177,11 @@ export interface RequestContext {
   /** Re-arms `createApp`'s timer for a new {@linkcode RequestContext.timeoutMs}. */
   rearmTimeout?: () => void;
   /**
+   * Stops `createApp`'s deadline clock until the returned release is called (see
+   * {@linkcode holdRequestDeadline}); unset when the request has no deadline.
+   */
+  holdDeadline?: () => () => void;
+  /**
    * Whether the app trusts `x-forwarded-for` for the client address — mirrors
    * {@linkcode AppConfig.trustForwardedHeaders}. Read by {@linkcode clientIp}; set by
    * `createApp` from the config. When unset (a direct handler call in a test), only the
@@ -216,6 +221,13 @@ export interface RequestContext {
   localeNegotiated?: boolean;
   /** Per-request render collectors (signal state, `useServerInsertedHTML`) — see `render-scope.ts`. */
   renderScope?: RenderScope;
+  /**
+   * The render's cache scope behind `cacheSignal()` (see {@linkcode renderCacheSignal}): created on the
+   * first call, aborted when the render ends or the request is aborted.
+   */
+  cacheScope?: AbortController;
+  /** Set once the render's cache scope has ended ({@linkcode endCacheScope}). */
+  cacheScopeEnded?: boolean;
   /** Routing facts the pipeline resolved (`NextRequest.nextUrl.basePath` / `.locale` read them). */
   routing?: { basePath: string; locale?: string };
   /** Memoized read-only view handed out by {@linkcode headers}. */
@@ -672,6 +684,25 @@ export function setRequestTimeout(ms: number): void {
 }
 
 /**
+ * Run `work` with the current request's deadline clock stopped: the time it takes does not
+ * count against `requestTimeout`. For framework work done on the request's behalf that is not
+ * the app's own handler time — `denext dev` building a target's bundles on its first request.
+ * Holds nest and overlap; the clock runs again once the last one ends. A plain call outside a
+ * request or without a deadline.
+ *
+ * @param work The work to run.
+ * @returns Whatever `work` resolves to.
+ */
+export async function holdRequestDeadline<T>(work: () => Promise<T>): Promise<T> {
+  const release = currentContext()?.holdDeadline?.();
+  try {
+    return await work();
+  } finally {
+    release?.();
+  }
+}
+
+/**
  * Mark `ctx`'s response as a streamed body whose headers are now committed. Called by the
  * streaming document assemblers at their first flush: from here on {@link cookies} writes
  * can't reach the response (see {@link RequestContext.headersCommitted}), and the
@@ -693,8 +724,14 @@ export function beginStreamedBody(ctx: RequestContext): () => void {
   };
 }
 
-/** Run all {@link after} callbacks registered on `ctx` (errors are swallowed). */
+/**
+ * End `ctx`'s render and run all {@link after} callbacks registered on it (errors are
+ * swallowed). Every render ends here — the pipeline's drain, a streamed body's end, a
+ * sub-request — so this is also where the render's cache scope ends: `cacheSignal()`'s
+ * signal aborts first ({@linkcode endCacheScope}).
+ */
 export async function runDeferred(ctx: RequestContext): Promise<void> {
+  endCacheScope(ctx);
   if (ctx.deferred.length === 0) return;
   const tasks = ctx.deferred.splice(0);
   await Promise.allSettled(tasks.map(async (fn) => {
@@ -744,15 +781,21 @@ const UNCAPTURED_HEADERS =
  * they did for the original. Capture BEFORE `Deno.upgradeWebSocket`, which consumes the request.
  * Outside a request the function runs `fn` as it is.
  *
+ * @param init.headers Headers set on the copy (replacing the captured ones of the same name) —
+ *   a credential the client sent after the upgrade (a GraphQL over WebSocket `connection_init`
+ *   token as `authorization`), so the session is read as if the request had carried it.
  * @returns A runner: `(fn) => fn()` in a context equivalent to the captured request's.
  */
-export function captureRequestContext(): <T>(fn: () => T) => T {
+export function captureRequestContext(
+  init: { headers?: Record<string, string> } = {},
+): <T>(fn: () => T) => T {
   const ctx = currentContext();
   if (!ctx) return (fn) => fn();
   const headers = new Headers();
   for (const [name, value] of ctx.request.headers) {
     if (!UNCAPTURED_HEADERS.test(name)) headers.append(name, value);
   }
+  for (const [name, value] of Object.entries(init.headers ?? {})) headers.set(name, value);
   const template = new Request(ctx.request.url, { headers });
   copyRemoteAddr(ctx.request, template);
   const trust: RequestContextTrust = {
@@ -795,12 +838,69 @@ export function currentLimitPolicy(): LimitAddrPolicy | undefined {
   return currentContext()?.limitPolicy;
 }
 
+// ---- React.cacheSignal() -------------------------------------------------------------
+// An `AbortSignal` per server render, aborted when the render's cache scope ends — the render
+// finished (a streamed body's last byte included) or failed ({@link runDeferred}, which every
+// render reaches), or the request was aborted (client disconnect, request timeout).
+
+/** React's abort reason for a render that completed. */
+const RENDER_COMPLETE =
+  "This render completed successfully. All cacheSignals are now aborted to allow clean up of any unused resources.";
+
+/** Request signals' abort listeners, removed when the scope ends. */
+const unlinkers = new WeakMap<RequestContext, () => void>();
+
+/** `ctx`'s cache-scope controller, created on first use and linked to the request's signal. */
+function scopeController(ctx: RequestContext): AbortController {
+  if (ctx.cacheScope) return ctx.cacheScope;
+  const controller = ctx.cacheScope = new AbortController();
+  const request = ctx.signal;
+  if (ctx.cacheScopeEnded) controller.abort(new Error(RENDER_COMPLETE));
+  else if (request?.aborted) controller.abort(request.reason);
+  else if (request) {
+    const onAbort = () => controller.abort(request.reason);
+    request.addEventListener("abort", onAbort, { once: true });
+    unlinkers.set(ctx, () => request.removeEventListener("abort", onAbort));
+  }
+  return controller;
+}
+
+/**
+ * End `ctx`'s render cache scope: the signal `cacheSignal()` handed out aborts with React's
+ * "render completed" reason, and a later call gets an aborted signal. Idempotent.
+ *
+ * @param ctx The request context whose render ended.
+ */
+function endCacheScope(ctx: RequestContext): void {
+  if (ctx.cacheScopeEnded) return;
+  ctx.cacheScopeEnded = true;
+  unlinkers.get(ctx)?.();
+  unlinkers.delete(ctx);
+  ctx.cacheScope?.abort(new Error(RENDER_COMPLETE));
+}
+
+/**
+ * The current server render's cache signal (`React.cacheSignal()`).
+ *
+ * @returns The signal, or `null` outside a request or inside a `"use cache"` scope (a cached
+ *   fill is shared by single-flight followers and background refreshes, so one request's end
+ *   must not abort it).
+ */
+function renderCacheSignal(): AbortSignal | null {
+  if (currentCacheScope()) return null;
+  const ctx = currentContext();
+  return ctx ? scopeController(ctx).signal : null;
+}
+
 // Bridge for client-safe modules (e.g. the `react` compat shim's request-scoped
 // `cache`) to reach the current request context WITHOUT statically importing this
 // server module (which would pull `node:async_hooks` into a browser/compat bundle).
 // Installed on the server only; absent in a client bundle.
 (globalThis as { __denextCurrentRequestContext?: () => RequestContext | undefined })
   .__denextCurrentRequestContext = currentContext;
+// The same for `cacheSignal()` (the `react` compat shim's; `null` where this is absent).
+(globalThis as { __denextCacheSignal?: () => AbortSignal | null }).__denextCacheSignal =
+  renderCacheSignal;
 
 // The recorder the renderers (a root layout's `<html>`/`<body>`) and the Remix compat's
 // document components hand their attributes to: the assembler merges them onto the real

@@ -1,0 +1,15 @@
+// A switch over a union that forgot two members, guarded by a `never` check.
+type Status = "draft" | "review" | "published" | "archived";
+
+export function label(status: Status): string {
+  switch (status) {
+    case "draft":
+      return "Draft";
+    case "published":
+      return "Live";
+    default: {
+      const unhandled: never = status;
+      return unhandled;
+    }
+  }
+}

@@ -1,10 +1,11 @@
-// The DEVELOPMENT mailer. denext ships no mailer: every emailed token — an email
+// The DEVELOPMENT mailer. Every emailed token — an email
 // verification link, a password-reset link, a magic sign-in link — is handed to the
 // `sendVerificationRequest` you configure. This one keeps the message in an in-process
 // outbox (listed at /dev/outbox, so you can click the links) and prints the link.
 //
-// A real app plugs its mail service in here instead — an SMTP relay, Postmark, SES, Resend
-// — and sends `url` to `identifier`. In production this mailer REFUSES: a reset link on a
+// A real app plugs its mail service in here instead — `smtpMailer({ host, user, pass, from })`
+// from denext/server for an SMTP relay, or Postmark, SES, Resend — and sends `url` to
+// `identifier`. In production this mailer REFUSES: a reset link on a
 // page or in a log is a live credential, so nothing is captured or printed there, and the
 // flows stay silent until a real mailer is configured (denext logs the failed delivery
 // through `logger.error`, never the link).

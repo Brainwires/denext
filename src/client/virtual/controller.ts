@@ -325,6 +325,7 @@ type ControllerProps<T> =
       | "findInPage"
       | "typeahead"
       | "keyboardInset"
+      | "startInset"
     >
   >;
 
@@ -1317,9 +1318,11 @@ export class VirtualController<T> {
     const inner = rectOf(this.inner);
     this.#tailObscured = false;
     if (!hasLayout(inner)) {
-      // No layout (tests): the keyboard spacer is the only known space after the rows.
-      const inset = Math.max(0, this.props.keyboardInset ?? 0);
-      return inset > 0 ? { lead: 0, tail: inset } : NO_LAYOUT;
+      // No layout (tests): the start inset and the keyboard spacer are the only known space
+      // before and after the rows.
+      const lead = Math.max(0, this.props.startInset ?? 0);
+      const tail = Math.max(0, this.props.keyboardInset ?? 0);
+      return lead > 0 || tail > 0 ? { lead, tail } : NO_LAYOUT;
     }
     const start = a.lead(inner);
     const win = rectOf(this.win);

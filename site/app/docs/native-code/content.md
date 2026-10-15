@@ -174,7 +174,9 @@ reach `addListener`. A call to an extension that is not enabled rejects with the
 - **Native views as Fabric components**: `requireNativeComponent` and Expo's `requireNativeView`
   become [native view slots](/docs/mobile#native-views), a native view kept on the element's
   box (embedded in the page's layers on iOS, under or over the WebView elsewhere), not a view
-  laid out by Fabric. Register the view type natively; its view commands are not wired.
+  laid out by Fabric. Register the view type natively; its commands run through
+  `UIManager.dispatchViewManagerCommand` / `codegenNativeCommands` once the view is native (see
+  the table above).
 - **Codegen**: denext does not run React Native codegen or Expo's module autolinking. The
   generated TypeScript client is typed by hand-kept `Spec` / `Events` types.
 - **Android on a device**: the Kotlin module is compile-checked; like every Android claim in

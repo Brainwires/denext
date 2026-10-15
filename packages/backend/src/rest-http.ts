@@ -347,6 +347,10 @@ export function errorResponse(error: unknown): Response {
       errorBody(error.code, error.message, error.details, error.hint),
     );
     if (error.status === 503) response.headers.set("retry-after", "1");
+    const retryAfter = (error as { retryAfter?: unknown }).retryAfter;
+    if (error.status === 429 && typeof retryAfter === "number") {
+      response.headers.set("retry-after", String(retryAfter));
+    }
     if (error.status === 401) {
       response.headers.set("www-authenticate", 'Bearer error="invalid_token"');
     }

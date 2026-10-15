@@ -367,7 +367,10 @@ should import from **only the first two**:
    hydration + Fast Refresh (`hydrateRoot`, `registerFamily`, `enableFastRefresh`), ISR
    (`PageCache`) — and the primitives an **API-class** plugin needs: `apiDefinitionOf`
    (a route's `defineApi` definition), `tapChannel` (observe a channel's pushes on the
-   server), `verifyOrigin` (the same-origin gate for a plugin's own POST endpoint), and
+   server), `tapChannelAuthorized` + `ChannelAccessError` (the same observation behind the
+   channel's `authorize`, re-checked and revocable, for a bridge that delivers a channel to a
+   viewer), `verifyOrigin` (the same-origin gate for a plugin's own POST endpoint), `hmacSign` /
+   `hmacVerify` (signed tokens for a plugin's own cookies, under a plugin-specific `domain`), and
    the body caps (`cappedBody`, `readCappedBody`, `bufferedRequest`, `TOO_LARGE`,
    `STALLED`). **Stable by signature** — the names and shapes are covered by
    semver; _where they live inside `src/` is not_ and may move between minors. This
@@ -521,7 +524,8 @@ The walk-throughs below are the ones worth **reading as models** of a seam — t
   `apiDefinitionOf` — the model for a plugin that _describes_ an app rather than renders it.
 - **[`@denext/graphql`](https://github.com/Brainwires/denext/tree/main/packages/graphql)** — mounts a third-party HTTP handler (GraphQL
   Yoga) through the **request handler** seam, bridges the app's `createChannel` pushes into
-  GraphQL subscriptions with the plugin-kit's `tapChannel`, writes the SDL as a **build
+  GraphQL subscriptions with the plugin-kit's `tapChannelAuthorized` (so the channel's
+  `authorize` gates every subscriber), writes the SDL as a **build
   step**, and adds `denext graphql sdl | diff` (**CLI verb**). The model for wrapping an
   npm server library as a denext plugin.
 - **[`@denext/react-router`](https://github.com/Brainwires/denext/tree/main/packages/react-router)** — a full React Router v7 framework

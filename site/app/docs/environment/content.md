@@ -24,6 +24,10 @@ directory, in this order, later files overriding earlier ones:
 | 3    | `.env.local`        | every mode **except `test`**                      |
 | 4    | `.env.<mode>.local` | always (`.env.production.local`, …)               |
 
+A binary built with [`denext build --compile`](/docs/deployment-targets#a-single-binary-with-denext-build---compile)
+loads the same tiers (production unless `DENEXT_ENV` / `NODE_ENV` says otherwise) from its
+**working directory**; no `.env` file is ever embedded in it.
+
 A missing file is skipped. The format is the usual dotenv one: `KEY=value`,
 `export KEY=value`, `#` comments, single or double quotes (double quotes
 interpret `\n`, `\r`, `\t`, `\"`, `\\`), and an inline `# comment` after an
@@ -193,7 +197,7 @@ everywhere: `denext start` listens on `--port`, else `$PORT`, else the default.
 
 ## Variables denext reads
 
-The framework's own knobs. The first four are fallbacks for the matching
+The framework's own knobs. The first seven are fallbacks for the matching
 `denext.config.ts` keys — **config > env > default** — and a malformed value is
 ignored with one warning at boot rather than failing it (see
 [Configuration](/docs/config#production-server)).
@@ -203,38 +207,46 @@ ignored with one warning at boot rather than failing it (see
 | `DENEXT_CANONICAL_ORIGIN`           | `start`, `dev`            | The public origin (`https://example.com`, no path) when `canonicalOrigin` is unset. Pins absolute URLs, the Server Action origin check and HSTS.                                                                               |
 | `DENEXT_TRUST_PROXY`                | `start`, `dev`            | `1`/`true`/`yes`/`on` trusts `X-Forwarded-Proto` / `X-Forwarded-Host` (`trustForwardedHeaders`), and `X-Forwarded-For` for `clientIp()`, `requestId()` and the rate limiter. Only when clients cannot reach denext directly.   |
 | `DENEXT_RATE_LIMIT_HEADER`          | `start`, `dev`            | The header naming the client address for per-address limits (`rateLimitHeader`, e.g. `cf-connecting-ip`). A value that is not a header name is ignored with a warning.                                                         |
+| `DENEXT_RATE_LIMIT_TRUSTED_PROXIES` | `start`, `dev`            | Comma-separated CIDRs of the proxies whose `DENEXT_RATE_LIMIT_HEADER` is believed (`rateLimitTrustedProxies`). See [Deployment](/docs/deploy#per-address-limits-behind-a-proxy).                                               |
 | `DENEXT_RATE_LIMIT_LOCAL_ADDRESSES` | `start`, `dev`            | `1`/`true`/`yes`/`on` applies per-address limits to loopback/private socket peers too (`rateLimitLocalAddresses`).                                                                                                             |
-| `DENEXT_REQUEST_TIMEOUT_MS`         | `start`, `dev`            | Per-request deadline in ms (`requestTimeout`; default 30 000, `0` disables). Past it the request is aborted with a `503`.                                                                                                      |
+| `DENEXT_REQUEST_TIMEOUT_MS`         | `start`, `dev`            | Per-request deadline in ms (`requestTimeout`; default 30 000, `0` disables). Past it the request is aborted with a `503`. Under `dev`, the dev server's own build work does not count.                                         |
 | `DENEXT_MAX_CONCURRENCY`            | `start`, `dev`            | In-process concurrency ceiling (`maxConcurrency`, integer ≥ 1). At capacity a request is shed with `503` + `Retry-After`.                                                                                                      |
 | `DENEXT_ENV`                        | every verb                | The mode: names the `.env.<mode>` tiers and, as `production`, arms the production-only guards. Wins over `NODE_ENV`.                                                                                                           |
 | `NODE_ENV`                          | every verb                | Read when `DENEXT_ENV` is unset (the mode) and set for npm code by `start` (`production`) and `dev` (`development`).                                                                                                           |
 | `PORT`                              | `start`, `dev`, `desktop` | The listen port when `--port` is not given — what Heroku, Cloud Run, Fly and Railway inject.                                                                                                                                   |
 | `DENEXT_LOG`                        | `start`, `dev`            | Enables the default request log: `json` for one JSON object per request, any other value for a compact line. Unset: no request log.                                                                                            |
-| `DENEXT_SHUTDOWN_DRAIN_MS`          | `start`                   | How long a shutdown waits for in-flight requests before exiting (default 10 000; `0` waits indefinitely).                                                                                                                      |
+| `DENEXT_SHUTDOWN_DRAIN_MS`          | `start`                   | How long a shutdown waits for in-flight requests before exiting, and the latest it exits after them when an open handle (a database pool) remains (default 10 000; `0` waits indefinitely).                                    |
+| `DENEXT_BOOT_DDL`                   | `start`, `dev`, `job`     | `off` (or `0`, `false`, `no`) stops denext's Postgres features creating their own tables at boot or first use; `dev` / `start` then check those migrations are applied. See [Databases](/docs/database#schema-at-startup).     |
+| `DENEXT_STATE_DIR`                  | a compiled app            | Where a [`build --compile`](/docs/deployment-targets#a-single-binary-with-denext-build---compile) binary writes its cache, job history and storage metadata (default `./.denext`).                                             |
+| `DENEXT_DENO`                       | every verb that runs Deno | `stock` runs stock Deno instead of [denext's toolchain](/docs/toolchain); a path uses that binary, unverified; unset or `pinned` is the default. One pair of surrounding quotes is stripped (Windows `set X="…"`).             |
+| `DENEXT_PLATFORM`                   | `export`                  | The [platform-file](/docs/platform-files) target to export for when `--platform` is not given.                                                                                                                                 |
+| `DENEXT_DESKTOP_RUNTIME`            | `desktop`                 | `stock` builds and runs a desktop app on the stock Deno Desktop runtime instead of [denext's pinned one](/docs/desktop-runtime).                                                                                               |
 | `DENEXT_MIN_DEP_AGE`                | `build`, `dev`            | Forwards Deno's minimum-dependency-age override to the `deno bundle` child (`0` to accept a version published minutes ago).                                                                                                    |
 | `DENEXT_BUILD_ID`                   | `build`                   | The build id that keys cached pages (random per build when unset). Pin it (the commit sha) when separately built replicas share one cache store. See [Multi-instance](/docs/multi-instance#page-keys-and-builds).              |
-| `DENO_BIN`, `TAILWIND_BIN`          | `build`, `dev`            | Path to the Deno binary the bundler shells out to, and to a local Tailwind standalone binary.                                                                                                                                  |
-| `DENEXT_TAILWIND_VERSION`           | `build`, `dev`            | The Tailwind standalone release to download when no binary is given.                                                                                                                                                           |
+| `DENO_BIN`, `TAILWIND_BIN`          | `build`, `dev`            | Path to the Deno binary the CLI's child processes run (it wins over the toolchain), and to a local Tailwind standalone binary.                                                                                                 |
+| `DENEXT_TAILWIND_VERSION`           | `build`, `dev`            | The Tailwind standalone release to download when no binary is given (`DENEXT_TAILWIND_SHA256` pins the download's hash).                                                                                                       |
 | `DENEXT_OTA_SIGNING_KEY`            | `export`, `ota manifest`  | The PEM contents of the OTA signing key (a CI secret): `ota manifest` without `--sign`, and `export` with `spa.ota`, sign with it and stamp a `sequence`. See [Over-the-air UI updates](/docs/mobile#over-the-air-ui-updates). |
 | `DENEXT_LOCK_TIMEOUT`               | every locking verb        | Seconds to wait for a [build lock](/docs/cli#build-locks) another denext process holds before failing (unset: wait until it is free).                                                                                          |
 
 Development and diagnostics — all opt-in, none read in production paths:
 
-| Variable                         | Meaning                                                                                   |
-| -------------------------------- | ----------------------------------------------------------------------------------------- |
-| `DENEXT_DEV_UNBUNDLED=0`         | Force the bundled whole-route refresh instead of the default per-module HMR loop.         |
-| `DENEXT_DEV_TYPECHECK=0`         | Turn off the dev server's background type-check (and its overlay).                        |
-| `DENEXT_DEV_CAPTURE_CONSOLE=0`   | Stop the dev server buffering the server console for `denext_dev_logs`.                   |
-| `DENEXT_DEV_INSPECT=1`           | Arm the live component-tree inspector from the first render (the MCP DevTools tools).     |
-| `DENEXT_DEV_META=0`              | Kill switch for the DevTools metadata the dev build emits.                                |
-| `DENEXT_NO_MINIFY=1`             | Emit readable, unminified production bundles (`denext profile` sets it for you).          |
-| `DENEXT_ANALYZE=1`               | Capture the esbuild metafile for `denext analyze --md` (set by the verb).                 |
-| `DENEXT_TIMING=1`                | Print wall-time instrumentation for a slow build or render.                               |
-| `DENEXT_DEBUG_CACHE=1`           | Log every `"use cache"` hit and miss to stderr.                                           |
-| `DENEXT_DEBUG_SUSPENSE=1`        | Record where each `use()` suspension started, for a Suspense boundary that never settles. |
-| `DENEXT_PROXY_DEBUG=1`           | Log the SPA dev proxy's decisions.                                                        |
-| `DENEXT_NEXT_EVAL_TIMEOUT_MS`    | Deadline for evaluating a migrated app's `next.config.*` in a child process.              |
-| `DENEXT_UI_DISCOVERY_TIMEOUT_MS` | Deadline for `denext ui`'s project-verb discovery child (default 8 000).                  |
+| Variable                         | Meaning                                                                                                                 |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `DENEXT_DEV_UNBUNDLED=0`         | Force the bundled whole-route refresh instead of the default per-module HMR loop.                                       |
+| `DENEXT_DEV_TYPECHECK=0`         | Turn off the dev server's background type-check (and its overlay).                                                      |
+| `DENEXT_RAW_DIAGNOSTICS=1`       | Print diagnostics as Deno reports them, unexplained (= `--raw`; [details](/docs/error-handling#explained-type-errors)). |
+| `DENEXT_DEV_CAPTURE_CONSOLE=0`   | Stop the dev server buffering the server console for `denext_dev_logs`.                                                 |
+| `DENEXT_DEV_INSPECT=1`           | Arm the live component-tree inspector from the first render (the MCP DevTools tools).                                   |
+| `DENEXT_DEV_META=0`              | Kill switch for the DevTools metadata the dev build emits.                                                              |
+| `DENEXT_NO_MINIFY=1`             | Emit readable, unminified production bundles (`denext profile` sets it for you).                                        |
+| `DENEXT_ANALYZE=1`               | Capture the esbuild metafile for `denext analyze --md` (set by the verb).                                               |
+| `DENEXT_TIMING=1`                | Print wall-time instrumentation for a slow build or render.                                                             |
+| `DENEXT_DEBUG_CACHE=1`           | Log every `"use cache"` hit and miss to stderr.                                                                         |
+| `DENEXT_DEBUG_SUSPENSE=1`        | Record where each `use()` suspension started, for a Suspense boundary that never settles.                               |
+| `DENEXT_PROXY_DEBUG=1`           | Log the SPA dev proxy's decisions.                                                                                      |
+| `DENEXT_NEXT_EVAL_TIMEOUT_MS`    | Deadline for evaluating a migrated app's `next.config.*` in a child process.                                            |
+| `DENEXT_EDITOR`                  | The command the dev overlay's open-in-editor link runs (else `VISUAL`, `EDITOR`, then `code`).                          |
+| `DENEXT_UI_DISCOVERY_TIMEOUT_MS` | Deadline for `denext ui`'s project-verb discovery child (default 8 000).                                                |
 
 The desktop packaging verbs read their signing inputs from `DENEXT_APP_NAME`,
 `DENEXT_CODESIGN_IDENTITY`, `DENEXT_ENTITLEMENTS`, `DENEXT_PROVISIONING_PROFILE`, `DENEXT_NOTARY_PROFILE`,

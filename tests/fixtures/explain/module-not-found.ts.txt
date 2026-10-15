@@ -1,0 +1,4 @@
+// A relative import with a typo in the file name.
+import { formatDate } from "./utlis.ts";
+
+export const today = formatDate(new Date());

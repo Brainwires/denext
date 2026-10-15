@@ -6,10 +6,11 @@
 // `storage` reads), so after the child has set the project's plugins up the driver and buckets
 // are there — described structurally here, since denext does not depend on the package.
 
-import { encodeBase64 } from "@std/encoding/base64";
+import { decodeBase64, encodeBase64 } from "@std/encoding/base64";
 import {
   DB_DOWNLOAD_MAX_BYTES,
   DB_OBJECTS_PAGE,
+  DB_UPLOAD_MAX_BYTES,
   type DbReplies,
 } from "../../ui/database/protocol.ts";
 import { AdminRefusal, assertWritable } from "./tables.ts";
@@ -46,11 +47,23 @@ interface Bucket {
   mime?: string[];
 }
 
+/** How an upload is stored: its type, and whether it may replace an object. */
+type UploadOptions = { contentType?: string; upsert: boolean };
+
+/** Stores one object as the service (`@denext/backend` 0.5.0 on). */
+type Upload = (
+  bucket: string,
+  key: string,
+  bytes: Uint8Array,
+  options: UploadOptions,
+) => Promise<{ key: string; size: number }>;
+
 /** The plugin's operations for this page (`@denext/backend` ≥ the release that added them). */
 interface StorageAdmin {
   buckets(): Promise<{ name: string; public: boolean; maxBytes: number; mime: string[] | null }[]>;
   hasBucket(name: string): Promise<boolean>;
   remove(bucket: string, key: string): Promise<void>;
+  upload?: Upload;
 }
 
 /** The installed storage. */
@@ -220,4 +233,53 @@ export async function removeObject(
     else await rt.driver.remove(bucket.name, key);
   }
   return { bucket: bucket.name, key, applied: confirm };
+}
+
+/** The longest content type an upload may name. */
+const MAX_CONTENT_TYPE = 255;
+
+/**
+ * Upload one object through the plugin's own operations (as the service), so the bucket's size
+ * cap and type allow-list apply and the metadata row is written with the bytes.
+ *
+ * @param name The bucket.
+ * @param key The object's key.
+ * @param base64 Its bytes, base64.
+ * @param options Its content type, and whether an existing object may be replaced.
+ * @param readOnly `--read-only`: refused.
+ * @returns The stored object.
+ */
+export async function uploadObject(
+  name: string,
+  key: string,
+  base64: string,
+  options: UploadOptions,
+  readOnly: boolean,
+): Promise<DbReplies["upload"]> {
+  assertWritable(readOnly);
+  const { rt, bucket } = await bucketOf(name);
+  checkKey(key);
+  if (!rt.admin?.upload) {
+    throw new AdminRefusal(
+      "unsupported",
+      "uploading needs a newer @denext/backend (its storage admin has no upload)",
+    );
+  }
+  if (typeof base64 !== "string" || base64.length > Math.ceil(DB_UPLOAD_MAX_BYTES / 3) * 4) {
+    throw new AdminRefusal("bad_request", `the UI uploads at most ${DB_UPLOAD_MAX_BYTES} bytes`);
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = decodeBase64(base64);
+  } catch {
+    throw new AdminRefusal("bad_request", "the upload is not valid base64");
+  }
+  const type = typeof options.contentType === "string" && options.contentType !== ""
+    ? options.contentType.slice(0, MAX_CONTENT_TYPE)
+    : undefined;
+  const stored = await rt.admin.upload(bucket.name, key, bytes, {
+    ...(type ? { contentType: type } : {}),
+    upsert: options.upsert === true,
+  });
+  return { bucket: bucket.name, key: stored.key, size: stored.size };
 }

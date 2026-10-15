@@ -1110,7 +1110,8 @@ export function declaredBucketRows(buckets: Map<string, ResolvedBucket>): Bucket
 
 /**
  * The operations `denext ui` uses through the runtime slot: every bucket (declared and runtime),
- * and removal as the service through the same ops (so the metadata rows go with the bytes).
+ * and removal and upload as the service through the same ops (so the metadata rows go with the
+ * bytes, and an upload meets the bucket's size cap and type allow-list).
  *
  * @param rt The runtime.
  * @returns The admin operations.
@@ -1148,6 +1149,16 @@ export function storageAdmin(rt: StorageRuntime): StorageAdmin {
       const bucket = await resolveBucket(rt, name);
       const k = normalizeKey(key);
       await removeObjects(rt, bucket, [k], SERVICE_CALLER);
+    },
+    async upload(name, key, bytes, options) {
+      const bucket = await resolveBucket(rt, name);
+      const k = normalizeKey(key);
+      const row = await putObject(rt, bucket, k, new Blob([bytes as BlobPart]).stream(), {
+        ...(options.contentType ? { contentType: options.contentType } : {}),
+        upsert: options.upsert,
+        size: bytes.length,
+      }, SERVICE_CALLER);
+      return { key: row.name, size: row.metadata?.size ?? bytes.length };
     },
   };
 }

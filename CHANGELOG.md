@@ -8,6 +8,630 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-10-15
+
+### Breaking
+
+- **`@denext/graphql` 0.4.0: `fromChannel(channel, key)` runs the channel's `authorize`.** It
+  used to subscribe any caller to any key, so a key built from a client-supplied argument could
+  read another viewer's channel unless the resolver checked it. It now applies the Live socket's
+  gate for the subscribing request (`ctx` = `{ origin, url, cookie, peerId }`, the key, a throw
+  is a deny) and refuses with a GraphQL error (`extensions.code: "FORBIDDEN"`); an active
+  subscription is re-checked lazily after `authTtlSeconds` and ends when the check fails or on
+  `channel.revoke(key)` (or a revoke naming its peer). `fromChannel` now returns a promise; a
+  `subscribe` resolver returns it as is.
+- **`magicLink()` opens a confirmation page by default (`confirm: true`).** The link's GET renders
+  a page naming the account whose button POSTs the token, so a mail gateway that pre-fetches
+  links can't spend one and a link someone else requested signs nobody in without a click. A
+  provider built by hand without `confirm` gets the page too. `magicLink({ confirm: false })`
+  signs in on the GET as before. `/auth/v1/verify` keeps Supabase's GET behaviour.
+- **`native.refreshReuseInterval` defaults to 10 seconds**, as GoTrue's
+  `GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL` does. Two refreshes racing with one native refresh
+  token (a background task and the app) both get the same new pair and the family advances once,
+  instead of the loser revoking the family and signing the user out. `refreshReuseInterval: 0`
+  keeps the strict behaviour.
+- **One passkey ceremony per tab, not per browser; a client that calls the passkey endpoints
+  itself must send `ceremonyId`.** The passkey options answers carry a random
+  `ceremonyId` (only its SHA-256 is stored with the challenge) and `POST /passkey/register` /
+  `/passkey/authenticate` must send it back; `registerPasskey()` / `signInWithPasskey()` do. The
+  per-browser ceremony cookie is gone, so ceremonies in two tabs no longer cancel each other. A
+  missing, swapped or replayed id is refused, and the challenge is still single-use and expires
+  after `passkeys.timeout`.
+
+### Added
+
+- **The dashboard's Realtime, Edge Functions and Health pages, in `denext ui` too.** Realtime
+  shows the publication tables opt in through, each table's triggers, key and RLS. Adding a
+  table to the publication, or dropping it, is previewed and run like every other write. It also
+  shows the running app's live channels with their subscriber counts and every `postgres_changes`
+  binding's table, filter and events. Presence shows keys only; a key's payloads appear only when
+  that key is expanded. Edge Functions lists the deployed functions (`verifyJwt`, last change)
+  and their recent invocations: status, duration and time, never a request's body or headers.
+  Health shows each service's health check (from `docker compose ps`, or the stack's relay), the
+  app's `/_denext/health` checks and the `services/` supervision tree, with error messages
+  redacted. It refreshes itself through a `<noscript>` meta refresh with scripting off, and in
+  place with it on. The stack's dashboard reads the running app at `DASHBOARD_APP_URL`, which
+  `denext generate docker --stack` sets.
+- **`@denext/backend` 0.5.0: an admin endpoint for `denext ui` and the stack's dashboard.**
+  `GET /_denext/backend/admin/status` and `/_denext/backend/admin/presence` report what only the
+  running app knows: realtime's live channels with their subscriber counts and every
+  `postgres_changes` binding's table, filter and events; a channel's presence keys, and one key's
+  tracked payloads only when it is asked for by key; the Edge Functions with their `verifyJwt` and
+  last change, and the last 200 invocations (function, status, duration and time, never a
+  request's body, headers, query or caller); and the `services/` supervision tree. It answers only
+  the secret key (`apikey` or bearer) and only GET, and with no keys installed it refuses
+  everything.
+- **`denext build --compile [--target <triple>] [--output <path>]`: the app's server as one
+  executable.** After the build, `deno compile` (on denext's Deno toolchain) embeds the server
+  modules, `.denext/`, `public/`, `jobs/`, `services/`, `functions/`, the migrations and `compile.include`
+  paths behind a `denext/standalone` entry. `./app` serves the app as `denext start` does
+  (`--port` / `$PORT`, `--host`, the drain, every config key), and `./app job <name>` and
+  `./app db migrate` run the jobs and migrations. Stylesheet imports need no import map. Neither
+  `.env` files nor SQLite databases are embedded. The binary reads its environment and `.env`
+  files from the working directory at run time, and writes its page cache, job history and
+  storage metadata under `./.denext` (`DENEXT_STATE_DIR` moves them). It bakes the Docker image's
+  least-privilege `--allow-*` plus `compile.permissions` (`write` / `run` / `ffi` / `sys`), and
+  `--allow-all` only with `permissions: "all"`. It cross-compiles to every `deno compile` target.
+  The runtime is Deno's stock `denort`, so it has no `Deno.SQL`: Postgres goes through
+  `fromPostgresJs(postgres(url))`.
+- **`denext db push` / `migration up` apply denext's own Postgres schemas.** Each Postgres store
+  the config builds now declares its migrations: the auth adapter, the session, rate-limit, cache
+  and job-history stores (a `migrate: false` one too), and the auth tables `@denext/backend`'s
+  defaults use under `denextAuth`. The command applies them after the backend's and before the
+  app's, in their own tracking tables, under the runner's lock, idempotently (printed as
+  `(denext)`). With the logical realtime source, the `denext_realtime` publication is applied after
+  the app's migrations. So a deployment with `DENEXT_BOOT_DDL=off` applies its whole schema with
+  one command. `db reset`, `db diff` and `lint` include them. New in `denext/server`:
+  `registerFrameworkMigrations`, `frameworkMigrationSets`.
+- **`directUrl`: Postgres behind PgBouncer in transaction mode.** `backend({ postgres })` (default
+  `DATABASE_DIRECT_URL`) and every denext Postgres store take a direct URL to the server beside
+  the pooled one, as Prisma's `directUrl` does. Queries, `db()` included, go through the pooler.
+  What needs a session of its own uses the direct connection: realtime's LISTEN, its reserved
+  connections (`revalidate.owner: "one"`, the logical source), webhook delivery's wake-up, the
+  REST schema-reload listener, and every migration and its lock. Through a transaction-mode pooler
+  alone, LISTEN silently heard nothing. New in `denext/server`: `withDirectConnection(pooled,
+  direct)` pairs two clients, and `sessionClient(sql)` returns the one session work uses.
+- **`@denext/backend` 0.5.0: webhook events are deleted after a retention.** Delivered events are
+  kept 7 days and failed ones 30 (`webhooks.retention: { deliveredMs, failedMs }`, counted from the
+  change; `false` keeps them all). Before, every event stayed in
+  `supabase_functions.webhook_events` for good. The background deliverer deletes the expired
+  ones once an hour, in batches, through a new index (`backend_webhooks_0002`). Under
+  `delivery: "manual"`, schedule `webhookCleanupJob()`. `purgeWebhookEvents()` runs the cleanup
+  on demand.
+- **`DENEXT_BOOT_DDL=off`: no schema changes at startup, and a server that won't start without
+  its schema.** For deployments that apply migrations out of band, no denext feature creates a
+  table, role, function, trigger or publication: the Postgres auth adapter, the session,
+  rate-limit, cache and job-history stores, and `@denext/backend`'s RLS roles, storage, realtime,
+  vault, queues and webhooks schemas. `denext dev` / `denext start` instead check that every
+  migration those features would apply is recorded, and fail with a `BootSchemaError`
+  (`code: "boot_schema_missing"`) naming each missing migration and its tracking table; a store
+  built later checks on first use. `denext migration up` / `db push` now also apply
+  `@denext/backend` realtime's per-table triggers, after the app's migrations, so the backend's
+  whole schema can be applied out of band. New in `denext/server`: `bootMigrate`,
+  `bootDdlEnabled`, `registerBootCheck`, `BootSchemaError`, and `withMigrationLock` (run DDL that
+  is not a recorded migration under a runner's advisory lock).
+- **Type, lint and build errors are explained in plain language.** `denext check`, `denext lint`,
+  `denext build` and `denext dev` print each diagnostic they recognize as one line naming the
+  problem, a codeframe, why it happens and a concrete fix, with the original diagnostic under it
+  unchanged. Assignability errors through `defineApi`, schemas, `useApi` and `createApiClient`
+  collapse to the one property path that mismatches; "possibly null/undefined" errors get a
+  narrowing for the line; non-exhaustive switches list the missing union members; `react` /
+  `next/*` imports point to the denext import; an unknown typed-API route, route param or module
+  gets a did-you-mean; and denext's lint rules are explained with the fix. The dev overlay shows
+  the explanation with the original in a collapsed section. `--raw` (or
+  `DENEXT_RAW_DIAGNOSTICS=1`) prints Deno's output unchanged. The new `denext_explain_error` MCP
+  tool explains pasted tool output or a structured diagnostic.
+- **Supervised services: `supervise()` and `defineService()` (`denext/server`), and the
+  `services/` directory.** Long-lived server work (a queue consumer, a feed tail, a connection to
+  an upstream) runs under a supervisor that starts its children in order, restarts a crashed one
+  with exponential backoff and jitter, and applies a strategy (`one_for_one`, `one_for_all`,
+  `rest_for_one`). More than `intensity` restarts within `period` stops the children and fails
+  the supervisor: a nested one counts as a crashed child of its parent, and a top-level one
+  reports a `SupervisorError` to `onError`, to a new `instrumentation.ts` hook `onServiceError`,
+  to the log and to a `services` check on `/_denext/health`. Each `services/<name>.ts` default
+  export runs under one root supervisor in `denext dev` and `denext start`. On shutdown the
+  services stop in reverse start order after in-flight requests have drained and before plugin
+  teardowns. `jobService(name)` supervises a long-running job loop and `sidecarService(handle)`
+  a Deno Desktop sidecar. `supervisionStatus()` returns every tree's state, restart counts and
+  last error, and `denext ui` has a Services page that reads the `.denext/services.json` snapshot
+  the server writes. Crashes, restarts and give-ups are logged, as JSON with `DENEXT_LOG=json`.
+  This provides restart semantics, not process isolation: there is no preemption and no
+  separate heap, and a blocking loop still blocks the whole process
+  (https://denext.dev/docs/services).
+- **Opt-in restarts for Live work.** `defineSubscription({ restart })` restarts a recompute whose
+  resolver threw, with backoff, instead of leaving the subscription on a `failed` frame until its
+  next invalidation. The socket stays open and the client sees no `failed` frame until the
+  restarts run out. `createChannel({ publisher, publisherRestart })` runs a producer for each
+  active key, restarts it with backoff when it throws, and stops it when the key goes idle.
+- **One restart backoff helper.** Sidecar restarts, job retries, supervisors and Live restarts
+  now compute their delays with the same helper. Sidecar and job delays are unchanged, except
+  that a sidecar's `maxBackoffMs` above 2^31-1 ms is now capped at the timer limit. Before, a
+  timer given that delay fired immediately.
+- **`denext/result`: errors as values and exhaustive matching, opt-in.** `Result<T, E>`, `ok`,
+  `err` (a string literal keeps its literal type), `isOk` / `isErr`, `map`, `mapErr`, `andThen`,
+  `unwrapOr`, and `trySync` / `tryAsync` with a typed error mapper. `tryAsync` re-throws Suspense
+  promises and `notFound()` / `redirect()` / `forbidden()` / `unauthorized()` rather than
+  capturing them. `match(value).with(pattern, fn)…exhaustive()` matches literal and
+  discriminated unions, and a missing case is a compile error that names it; `.otherwise()` is
+  the catch-all. `assertNever(x)` does the same for a `switch`. The module works on the server
+  and the client, and an app that doesn't import it bundles none of it.
+- **`defineApi` and `defineAction` handlers may return `err()`.** In `defineApi`,
+  `return err("code", { message?, data?, fieldErrors?, headers? })` sends the same envelope as
+  `fail()`. The code must be one of the endpoint's `errors` (otherwise it's a compile error), the
+  `Err` is left out of the response type the typed client sees, and `isApiClientError` narrows
+  as before. In `defineAction`, `return err("message", { fieldErrors })` resolves to the same
+  failed `ActionResult` as a thrown `ActionValidationError`. A plain `{ ok: false }` object that
+  `err()` didn't make is still an ordinary return value, and `fail()` / throws are unchanged.
+- **Opt-in lint rules `denext/exhaustive-switch` and `denext/no-throw`.**
+  `denextLintPlugin({ exhaustiveSwitch, noThrow: { include } })` from `denext/lint-plugin`
+  returns the plugin with them added, and the default plugin is unchanged.
+  `exhaustive-switch` names the unhandled members when the file declares the discriminant's
+  literal union. Otherwise it asks for a `default` (ideally `assertNever`), because Deno lint
+  plugins have no type information. `no-throw` reports `throw` statements in the listed
+  directories. Docs: https://denext.dev/docs/errors-as-values
+- **`smtpMailer({ host, port, secure, user, pass, from })` (`denext/server`): an SMTP client with
+  no npm dependency, usable as `sendVerificationRequest`.** It runs on `Deno.connect` /
+  `Deno.connectTls` / `Deno.startTls`. TLS is required: port 465 (or `secure`) is implicit TLS,
+  any other port must offer STARTTLS and the upgrade must succeed, and bytes sent before the
+  handshake abort the send. Plaintext needs `insecure: true` and a loopback host. It
+  authenticates with AUTH PLAIN or LOGIN and opens one connection per message. Every step has a
+  timeout (`timeoutMs`, 10 s). A CR or LF in any header value is refused, as is a recipient
+  that isn't one plain address. Non-ASCII subjects and names are RFC 2047-encoded, and the body
+  is quoted-printable with dot-stuffing. `render` shapes each purpose's mail;
+  `mailer.send({ to, subject, text, html? })` sends anything else.
+- **`/auth/v1` sends mail over SMTP from Supabase Auth's settings.** With neither `hooks.sendEmail`
+  nor `sendVerificationRequest`, it reads `GOTRUE_SMTP_HOST`, `_PORT`, `_USER`, `_PASS`,
+  `_ADMIN_EMAIL` and `_SENDER_NAME`, plus `GOTRUE_MAILER_SUBJECTS_*` and `GOTRUE_MAILER_TEMPLATES_*`
+  (template URLs with GoTrue's placeholders, HTML-escaped). The `supabase.auth.smtp` option sets
+  the same in code. `denext generate docker --stack` lists the variables in `.env.example`.
+- **A Studio-style dashboard for the self-hosted stack: `denext dashboard`.** It serves
+  `denext ui`'s Database section, and nothing else, behind `DASHBOARD_PASSWORD`: tables and rows,
+  the SQL editor, RLS policies, migrations, storage, auth users and logs. With Postgres,
+  `denext generate docker --stack` adds a `dashboard` service published on `127.0.0.1:3100`
+  (`DASHBOARD_PORT`; `--no-dashboard` leaves it out), and `denext stack up` generates the password
+  into a new `.env`. Without one it stays locked and says how to set one. It binds `127.0.0.1`
+  unless `--host` says otherwise and accepts only a loopback `Host` or that of an `--origin`
+  (a public origin behind a TLS proxy). A sign-in is a same-origin form carrying its own token,
+  the password is compared in constant time (as two HMAC digests), and failures are rate limited
+  per client address and overall. The session is an in-memory 256-bit id in an
+  `HttpOnly; SameSite=Strict` cookie (`__Host-` and `Secure` over https, directly or through an
+  https `--origin`; a plain-http `--origin` off this machine is refused at startup) that ends
+  after 30 idle minutes or 12 hours. Every
+  change needs the session's CSRF token and a same-origin `Origin`, and a body over 16 MB is a
+  `413`. `denext stack status` prints the dashboard's URL, and `denext stack passwd` recreates
+  the dashboard's containers when a password changes.
+- **The dashboard's logs, through a relay: `denext generate docker --dashboard-logs`.** The
+  dashboard's container has no Docker, so this opt-in `dashboard-logs` service is the only one
+  that mounts the Docker socket. It sits on an internal network with the dashboard alone and
+  answers two GETs for its own compose project, the services and their logs, behind a bearer
+  token derived from the dashboard password. It reads no other container's settings and never
+  runs or changes anything.
+- **`denext ui` → Database: a SQL editor, user administration, uploads and logs.** The SQL editor
+  runs as the connecting role: read-only runs one statement in a `READ ONLY` transaction (the
+  extended protocol, so a `COMMIT;` can't end it early), and read-write runs a script that
+  commits. Users can be created (with a `hashPassword` credential and, optionally, a verified
+  address), banned for a listed length through `banned_until` (which every sign-in and token
+  check reads) or unbanned, and given a new password, each ending the user's sessions. A form
+  carrying a password runs on submit, and no password or hash is ever rendered. Storage uploads
+  go through the plugin's own operation, up to 10 MB. Logs show one service or every one, a
+  time window, a level and plain-text search, from `docker compose logs` or the relay, every
+  line redacted (connection-string passwords and every secret-looking variable) before it is
+  shown or searched.
+- **Operating the self-hosted stack: `denext stack health | passwd | roll | backup | restore`, and
+  filtered `logs`.** `health` lists every service's compose health check and the app's
+  `/_denext/health` checks as a table (`--json`, `--watch [seconds]`) and exits 1 when anything
+  is unhealthy. `logs` gains `--service`, `--level`, `--since` / `--until` and `--grep` (text or
+  `/regex/flags`). `passwd --postgres` changes the superuser's and the app role's passwords with
+  `ALTER ROLE` inside the running database before it writes `.env`, and `--dashboard` sets
+  `DASHBOARD_PASSWORD`. Each password comes from stdin or `--generate`, never from an argument.
+  `roll` replaces the publishable and secret keys, and `--include-secret` (with a warning and a
+  confirmation, or `--yes`) also the JWT signing keys / `DENEXT_JWT_SECRET`. Both edit `.env`
+  in place: comments, layout and every other variable keep their bytes, and the file is replaced
+  atomically with its mode. They then restart the affected containers (`--restart`), leave them
+  (`--no-restart`), ask on a terminal, or print the command. `backup` writes a `pg_dump`
+  custom-format file. `backup --full` writes one `.tar.gz` with the roles, extensions, the dump,
+  the settings, the storage objects (the MinIO bucket or the `fs()` dir) and a `MANIFEST.txt` of
+  the restore order. `restore` recognizes either kind, refuses a database with tables unless
+  `--yes`, and rejects an archive entry with an absolute path, `..` or a link that leaves the
+  backup. Every Postgres tool runs inside the stack's `db` container, so the machine needs no
+  Postgres client.
+- **`tapChannelAuthorized(channel, key, { onPayload, onEnd, peerId })` (`denext/plugin-kit`,
+  `denext/server`).** A server-side channel subscriber behind the channel's own `authorize`, with
+  the Live socket's context, lazy re-authorization (the held payload is delivered only after the
+  re-check allows it) and revocation; it rejects with `ChannelAccessError` when refused. For a
+  plugin that delivers a channel to a viewer over another protocol. `tapChannel`'s handlers take
+  a `peerId` so a revoke naming that peer is reported, and `captureRequestContext({ headers })`
+  sets headers on the captured copy (a credential sent after a WebSocket upgrade).
+- **`@denext/graphql` 0.4.0: GraphQL over WebSocket.** The `graphql-ws` protocol (subprotocol
+  `graphql-transport-ws`) on the GraphQL path next to SSE, implemented without a new dependency
+  over Yoga's pipeline (the depth and cost limits, introspection blocking and error masking
+  apply). The handshake needs the app's own `Origin` (or an allowed one), as Live's does in
+  production; identity is the upgrade's cookies / `Authorization` or a `connection_init` token;
+  `websocket: { connectionInitTimeoutMs, maxSubscriptions }` bounds a socket.
+- **`@denext/graphql` 0.4.0: connection caps for subscriptions.** Open WebSockets and streamed
+  (SSE / multipart) responses count against `maxConnections` and a per-address
+  `maxConnectionsPerIp` keyed on `clientIpForLimits()` as Live's are (defaults: the app's
+  `live.limits`, else 10 000 / 64); past a cap the request is a `429` before the upgrade or the
+  response, and a slot is freed on every close path.
+- **`@denext/backend` 0.5.0: rate limits for the auto-REST routes.** `backend({ rest })` gives each
+  client a request budget, 1200 a minute by default: a signed-in user is counted by user id, anyone
+  else by client address (`clientIpForLimits()`'s rule), and the secret key never. A request whose
+  credential is refused counts against its address. Past the budget the answer is `429` with
+  PostgREST's error shape (`code: "over_request_rate_limit"`) and `Retry-After`, before any
+  statement runs. `rest.rateLimit: { max, windowMs, store }` tunes it (a shared `store` such as
+  `postgresRateLimitStore()` counts across replicas), and `false` turns it off.
+- **Image transforms take AVIF sources.** `transformImageBytes` (storage's `createSignedUrl(key, {
+  transform })` and `/storage/v1/render/image/…`, and the `/_denext/image` endpoint) decodes an
+  AVIF still image with `@denext/avif` once the size its `ispe` box declares passes the
+  decompression-bomb limits; `format: "origin"` keeps it AVIF. `@denext/avif` 0.2.0 adds
+  `decode(bytes)` (libavif's decoder from the same `@jsquash/avif@2.1.1`, compiled once and
+  instantiated per call so a large image's memory is released).
+- **`denext stack roll --keep-old` / `--drop-old`: key rotation with a window.** `--keep-old` puts
+  the new publishable, secret and (with `--include-secret`) signing key first and keeps the one in
+  effect until now listed after it, so clients and tokens holding the old keys keep working and
+  nothing has to be confirmed; the single-valued legacy `DENEXT_JWT_SECRET` is left as it is.
+  `--drop-old` finishes the rotation, keeping only the newest key of each kind.
+- **`@denext/graphql` 0.4.0: the schema reloads in `denext dev`.** `schema` takes the module path
+  that exports it; an edit beside it (or under the `watch` globs) loads the schema again for the
+  next request, and subscriptions on the old schema complete.
+- **`captureOwnerStack()` returns the owner stack in development.** Called while a component
+  renders on the client, React 19's `captureOwnerStack()` (from the `react` alias) returns the
+  components above it, nearest first, formatted as React formats it
+  (`"\n    at Parent (file:line:column)\n    at App (…)"`): the chain denext's DevTools panel
+  shows, each frame's location being where the component was declared. It returns `null` in
+  production, outside a render and during a server render.
+- **`cacheSignal()` returns the server render's cache-scope signal.** During a server render,
+  React 19.2's `cacheSignal()` returns an `AbortSignal` that aborts when the render ends (its last
+  streamed byte included), fails, or is aborted by a client disconnect or the request timeout,
+  with React's "render completed" reason. Thread it into work a `cache()`d function or a Server
+  Component starts. It returns `null` on the client, outside a request and inside a
+  `"use cache"` scope, whose fill other readers share.
+- **`denext doctor` / `probeApp` fail a page an `error.tsx` rendered.** A server error that a
+  segment `error.tsx` caught renders the fallback at 200; the new `no-caught-error` check fails
+  that route with the error's message and the digest the server logged it under. The probe reads
+  the error through its own `onRequestError` hook, so responses carry nothing new, in production
+  or otherwise.
+- **React Native mode's `Image` takes `crossOrigin` and `referrerPolicy`.** With either set, the
+  image is drawn as a real `<img>` carrying them (react-native-web's CSS background can't):
+  `resizeMode` as `object-fit`, `blurRadius` as a blur, `defaultSource` until it loads, and the
+  load events in react-native-web's shapes.
+- **An iOS `pageSheet` / `formSheet` `Modal` swipes down to dismiss.** In React Native mode's iOS
+  shell, dragging the sheet past half its height (or flicking it) slides it away and calls
+  `onRequestClose`, as React Native does; `onDismiss` follows once the app hides it, and a sheet
+  the app keeps visible slides back. A scroll view inside moves the sheet only from its top.
+- **`TouchableNativeFeedback` draws its `background` ripple** in the Android shell, as
+  `Pressable`'s `android_ripple`: `TouchableNativeFeedback.Ripple(color, borderless, radius)`
+  in its colour, and `SelectableBackground()` (the default) / `SelectableBackgroundBorderless()`
+  in the theme's highlight.
+- **LegendList on `VirtualList` honours `waitForInitialLayout`, `itemsAreEqual`,
+  `experimental_adaptiveRender` and the start of `contentInset`.** In React Native mode and with
+  `lists: "denext"`, `contentInset.top` (`left` when horizontal) adds room before the content
+  (through `VirtualList`'s new `startInset`). `waitForInitialLayout` keeps the list invisible
+  until its first items are measured. `itemsAreEqual` (with a `keyExtractor`) keeps an equal
+  item's rendered element, so neither `renderItem` nor its components run again.
+  `useAdaptiveRender()` / `useAdaptiveRenderChange()` report `"light"` while the list scrolls
+  faster than `enterVelocity`, with LegendList's web thresholds (6 / 3 px per ms, 250 ms) and
+  `onChange(mode, reason)`.
+- **The first-party Markdown renderer covers more of CommonMark and GFM.** A content
+  collection's `.md` entries (and anything else rendered through
+  `@denext/content-collections/markdown`) now get nested lists (an item indented two or more
+  columns past its parent's marker; a further paragraph of an item stays inside it), GFM
+  footnotes (`[^1]` with `[^1]: …`, a numbered section with back-links, numbered by first
+  reference), inline and reference images (`![alt](src "title")`; the alt and title are
+  attribute-escaped and `src` is refused exactly as a link target is), indented code blocks and
+  code spans of any backtick-run length (``a ` b``). Raw HTML is still escaped.
+- **`denext auth reseal`: TOTP factors leave a retired `secret` without waiting for a code.**
+  The `denextAuth()` plugin contributes the verb: it opens every TOTP factor (`/auth/v1`'s
+  included) with the configured secrets and re-seals each one a retired secret, a pre-sealing
+  plaintext row or a pre-4.0 record still holds under the current one, through
+  `updateMfaFactor`. It is idempotent and resumable, ends with a read-only verification pass, and
+  reports counts only (`--dry-run`, `--json`); a run that leaves any behind exits 1. Remove the
+  retired secret once it reports zero remaining. The same job is `resealTotpFactors(config)` from
+  `denext/server`, for a `jobs/` module.
+- **`microsoftEntra({ tenant: "common" | "organizations" | "consumers" })`.** A multi-tenant
+  `id_token`'s issuer is checked against its own `tid` claim
+  (`https://login.microsoftonline.com/{tid}/v2.0`, the template issuer Microsoft's discovery
+  document declares), with the signature checked against the common key set; a token whose `iss`
+  and `tid` disagree, or whose `tid` is missing or not a GUID, is refused. `organizations` refuses
+  personal accounts, and `consumers` takes the personal-account tenant's fixed issuer.
+  `allowedTenants` limits which tenants may sign in — recommended, since `common` and
+  `organizations` admit any tenant. Generic providers can use the same check through
+  `OAuthProvider.tenantIssuer`. In these modes the account is keyed on `tid` + `oid` (a token
+  without both is refused), and the `email` claim — which any tenant's admin can set — is kept
+  only when the optional claim `xms_edov` (email domain owner verified) is `true`, as a verified
+  address; otherwise it is dropped, so an attacker's tenant can neither occupy a victim's
+  address nor link to their account. A single tenant keys on `sub` as before and marks its email
+  verified on `xms_edov`.
+- **A native `id_token` sign-in finishes a second factor instead of answering
+  `403 mfa_required`.** For a user with a verified factor, `POST {basePath}/native/apple` |
+  `/native/google` answers `{ mfa_required: true, mfa_token, expires_in, factors }` — no tokens,
+  no `signIn` event — and `POST {basePath}/native/mfa` (`{ mfa_token, code }`: a TOTP, backup or,
+  after `POST {basePath}/native/mfa-challenge`, SMS code) answers the native tokens. The
+  `mfa_token` is single-use (a wrong code answers a fresh one, one attempt fewer, at most five),
+  lives five minutes from the sign-in, is not a bearer or refresh token, and is refused once its
+  user is banned or deleted. `nativeSession()` throws it as `NativeSessionError` `mfa_required`
+  with `error.mfa`, finished by `completeMfa(mfa, code)` (and `sendMfaSms`). Native grants gain
+  the `"mfa"` kind. Under `mfa.required: "always"`, a user with no factor yet still gets
+  `403 mfa_required` and enrolls through the browser flow.
+- **`saml()`: SAML 2.0 identity providers on denextAuth's own endpoints.** `GET
+  {basePath}/signin/:id` sends an AuthnRequest (signed with `sp.signingKey`), the IdP posts its
+  Response to `POST {basePath}/callback/:id`, and `GET {basePath}/saml/:id/metadata` publishes
+  this service provider. It reuses `/auth/v1`'s SAML implementation — the same verifier
+  (signature wrapping, comment injection, audience, recipient, destination, `InResponseTo`,
+  validity, the shared replay cache, encrypted assertions) and the same SSO account rules (email
+  bound only on the provider's `domains`, no takeover of an existing account unless
+  `linkExistingAccounts`, an SSO user of another IdP never linked). Its users are SSO users, and
+  its sessions are SSO sign-ins (`amr` `sso/saml`), the only kind an SSO user's session may be.
+  Only SP-initiated logins are accepted; Single Logout stays `/auth/v1`'s.
+- **Passkeys: optional FIDO Metadata Service checks** (`passkeys: { attestation: { mds: {} } }`,
+  off by default). New passkeys are held to the FIDO Metadata Service (MDS3) BLOB: a `packed`
+  certificate attestation must chain to its authenticator model's metadata roots, a model whose
+  status reports a compromise (`REVOKED`, `USER_VERIFICATION_BYPASS`, a key compromise) is
+  refused, and `none` / self attestation registers only with `allowUnattested`. The BLOB's
+  signature is checked against a FIDO root pinned in denext (never one the response carries),
+  it is kept until its `nextUpdate`, a rollback to an older BLOB is refused, and it is fetched on
+  the server only, with a timeout and a size cap — or supplied offline with `blob`. Registration
+  options ask for `"direct"` attestation while it is on.
+- **A regression suite for the Next.js advisories published 2026-08-31 – 2026-10-15.**
+  `tests/security-nextjs-advisories.test.ts` replays each advisory's attack against denext, one
+  test per advisory named by its GHSA / CVE id: the image optimizer SSRF (GHSA-cjq9-62q9-8jv4)
+  and SVG decoder RCE (GHSA-2464-fhr4-w9xw), the ISR cache poisoning via encoded and `/index`
+  paths (GHSA-mcj8-r9mp-w47p) and in the Pages Router (GHSA-4jqv-mc3x-m676), the metadata image
+  `dynamicParams` bypass (GHSA-f87g-xv8r-7p7x), the `use cache` root-param, Draft Mode and
+  typed-array advisories (GHSA-h694-7cp9-m8p3, GHSA-3w37-wq28-93x7, GHSA-673q-mjm6-r5xr), the dev
+  server MCP endpoint (GHSA-39w2-rjm5-chcv), the Server Actions DoS (GHSA-p3m5-59mp-jv5r with
+  React's GHSA-h3gv-c5rc-p453), React's Server Components RCE (GHSA-xqc2-xf4c-x3h3) and
+  `next/og` (GHSA-vcvr-r3jv-pc5j). `security/nextjs-advisories.json` catalogs each advisory with
+  denext's status and its test, and a test fails when an entry has no matching test.
+
+### Changed
+
+- **The build's server copies are relocatable.** Each copy imports the modules it reaches by a
+  path relative to itself, and pins `import.meta.url` / `.filename` / `.dirname` relative to its
+  own URL instead of the build machine's absolute path. `denext start` keeps using them after the
+  project moves (it used to recompile them at startup), and a compiled binary serves them from
+  its embedded file system.
+- **The next-compat build prebuilds the denext runtime once per process.** The runtime depends
+  only on the framework, `classComponents` and the project's denext patch, but every compat
+  build rebuilt it for its server and client bundles. In `denext dev` that was four identical
+  builds on a shell's first request and two more for each target after every edit. Each distinct
+  runtime is now built once and written where later builds need it. Editing a framework source
+  file or the denext patch builds it again.
+- **A credential refused for good is deleted when a read meets it.** The answer is unchanged.
+  A server-side cookie session whose user is gone, which the user ended (`sessionsValidAfter`),
+  or which is an SSO user's session its identity provider didn't start, is deleted from the
+  session store. A bearer API token whose owner is gone or an SSO user is revoked, with
+  `apiTokenRevoked` firing `reason: "owner_refused"`. A ban that outlasts a credential (a cookie
+  session, a bearer token, a native or `/auth/v1` refresh family) ends it the same way. A ban that
+  ends first still only refuses, and the credential works again after it. The Postgres and SQLite
+  adapters now delete API tokens 30 days after they were revoked or expired, as they already did
+  for native session families.
+- **denext pins Deno toolchain and Deno Desktop runtime 2.9.7-denext.19** (both pins from the same
+  release). denext.18 brought the desktop navigation guard (Security, below) and left the toolchain
+  otherwise unchanged from denext.17; denext.19 adds the fix for an intermittent crash at exit
+  (Fixed, below).
+- **The `denext` CLI starts in a fraction of the time: a verb's implementation loads only when it
+  runs.** Every invocation used to load every verb (about 1,050 modules: the dev server, the
+  bundler, the desktop and mobile tooling), so `denext --version` took as long as a build's
+  startup. The entrypoint now reads a generated table of the verbs' names and flags and imports
+  a verb when it runs; `--version` and `--help` load 85 modules and `denext commands` about 170,
+  and neither loads `denext/server` (on an idle Linux host, `--version` went from about 0.9 s to
+  0.13 s and `commands` from 1.1 s to 0.4 s). A compiled binary embeds the verbs through
+  `deno compile --include src/cli/lazy-modules.generated.ts` (`deno task compile`). A CLI run
+  from JSR caches every verb's modules once per version — in the background on its first run, or
+  up front with `denext toolchain install` — so a verb first used offline (`--cached-only`) still
+  loads.
+- **A first run on Postgres prints one line per store instead of the server's notices.** The
+  migrations denext's stores and `@denext/backend` apply for themselves raise
+  `client_min_messages` inside their transactions, so `relation … already exists, skipping` and
+  `… does not exist, skipping` stay on the server (postgres.js printed each as a multi-line
+  object). A run that applies migrations prints one line, such as `[denext] postgresAuthAdapter:
+  applied 8 migrations to auth_migrations (0001_auth_tables … 0008_auth_sessions_valid_after)`.
+  `migratePostgres` takes `quiet: true` for the same.
+- **Revoking a user's sessions in `denext ui` also ends their stateless cookie sessions.** It sets
+  the user's "sessions valid after" mark as well as deleting the stored sessions, so a cookie
+  signed in before the revoke stops working instead of living until it expires.
+- **`@denext/backend` 0.5.0: realtime from the logical source honours a table's `events`.** A
+  change of a kind the table leaves out (a `TRUNCATE`, say) is dropped, as the notify source's
+  triggers never fire for it; before, the WAL source delivered every kind.
+- **The self-hosted stack's MinIO is healthy only once its setup is over.** Bitnami's image runs
+  a setup server, stops it and starts the real one; the health check passed during setup, so
+  whatever waited for it (`minio-init`, the app, `docker compose up --wait`) could hit the restart
+  gap with `connection refused`. The check now also requires that PID 1 is no longer the image's
+  `entrypoint.sh`.
+- **`.env.example` points at `denext stack passwd --postgres`** for changing `POSTGRES_PASSWORD`
+  on an existing volume. Before, it said that changing the password locked the stack out.
+- **`Image`'s `fadeDuration` follows React Native:** the Android shell fades by 300 ms when it is
+  unset, iOS never fades, and a browser fades only when it is set.
+- **`onRequestError` hears an error an `error.tsx` caught in a streamed Suspense hole.** A catch
+  in a hole that streams after the shell is reported as it happens (`routeType: "render"`), as
+  the shell's catches already were; before, only the server log had it.
+
+### Fixed
+
+- **`canonicalOrigin` no longer masks `i18n.domains`.** With both set, every request's locale host
+  came from `canonicalOrigin`, so no domain but the canonical one could select its locale. The
+  render path and `localeMiddleware` now match the request's host (`X-Forwarded-Host` only under
+  `trustForwardedHeaders`) against the configured domains, an exact allowlist that only picks a
+  locale; an unlisted host gets the default locale, and `canonicalOrigin` still governs absolute
+  URLs. `localeMiddleware` also used the raw `Host` header where the render path used the trusted
+  one, so behind a trusted proxy a domain's visitor could be redirected to a locale prefix.
+- **`nativeSession({ storage: secureStore })` type-checks.** `NativeSessionStorage.set` required
+  `Promise<void>`, while `secureStore.set` resolves `{ stored }`, so the documented pairing failed
+  `deno check`. `set` may now resolve anything; the result is ignored.
+- **`onNativeUpdateRequired` takes `() => promptStoreUpdate(…)`.** The OTA check's callback was
+  typed to return `void | Promise<void>`, which refused the promise `promptStoreUpdate` resolves.
+  It may now return anything (still fired, not awaited into the result).
+- **The Android OTA plugin's `checkTrust` comment** said a binary with no public key accepts any
+  https server; the code (unchanged) accepts an unsigned UI only from a pinned https origin or a
+  loopback host. A comment-only template change: no new app binary is needed.
+- **The dev overlay's codeframe caret sits under the error's column.** It was one column to the
+  left, because the prefix was counted as the gutter plus four columns where `> N |` is five.
+- **A library importing `react-dom/static`, `next/head`, `@remix-run/deno` or
+  `@remix-run/css-bundle` resolves to denext like an app's own import.** `react-dom/static` used
+  to fall back to the base `react-dom` runtime with a build warning and `next/head` loaded the
+  real `next` package from `node_modules`; both now resolve to denext's compat modules (`next/head`
+  for `node_modules` importers only, as `next/router`: an app's own is the Pages Router
+  plugin's). The Remix migration's import map now carries the two Remix packages it left out.
+- **`denext start` (and a `denext build --compile` binary) exits by the drain deadline after
+  SIGTERM, even with an open handle.** An app-owned database pool (postgres.js), a timer or a
+  socket kept the event loop alive after the drain, so the process never exited until the
+  orchestrator killed it. Now the in-flight requests finish, the `services/` tree, the plugin
+  teardowns and the new `onShutdown()` run, and the process exits once
+  `DENEXT_SHUTDOWN_DRAIN_MS` has passed since the signal, with a warning naming the cause. The
+  new `onShutdown()` export of `instrumentation.ts` closes what the app opened (a pool's
+  `sql.end()`), so the process exits as soon as it is done.
+- **`denext dev` no longer answers a request with the `requestTimeout` 503 because a build ran
+  inside it.** A next-compat app builds a shell's bundles on that shell's first request (web's
+  too, on the first request of a generation), and on a loaded machine that build alone could pass
+  the 30 s deadline. Time spent on the dev server's own work (route scans, boundary crawls and
+  next-compat builds) no longer counts against `requestTimeout`; the app's own handler time
+  still does. `denext start` is unchanged.
+- **A `next.config.*` evaluation never outlives the process that started it.** `denext migrate`
+  and `denext ui` evaluate the config in a child that is killed at its deadline, but the deadline
+  was a timer in the parent: a parent that died mid-evaluation left a config that never finishes
+  (`while (true) {}`) running, and one ran for three days. A small reaper process now ties the
+  child to its parent: when the parent exits, or the deadline passes with no answer, the child is
+  killed.
+- **`@denext/backend` 0.5.0: `denext db diff`, `pull` and `lint` build their shadow database as
+  `db push` does.** The shadow got the backend's migrations and the app's, but not realtime's
+  per-table triggers, which a push applies after the app's migrations. A diff against a pushed
+  database then showed those triggers as drift.
+- **A quoted `DENEXT_DENO` value is read without its quotes.** Windows cmd's
+  `set DENEXT_DENO="C:\Program Files\deno\deno.exe"` keeps the quotes in the value, so the path
+  was not a file and the command ran on stock Deno. One pair of matching surrounding quotes
+  (`"…"` or `'…'`) is now stripped before the value is read as a path or as `stock` / `pinned`.
+- **An intermittent crash at exit (seen in `deno lint` with a plugin) in the bundled Deno
+  toolchain.** The runtime now keeps op contexts alive until the isolate is disposed
+  (2.9.7-denext.19; upstream denoland/deno#37026).
+- **The compiled `denext` binary lists and runs a plugin project's verbs.** `denext commands`,
+  `denext <project verb>` and shell completions imported `denext.config.ts` inside the binary,
+  which resolves imports through its own embedded import map rather than the project's
+  `deno.json`, so a config importing a plugin package failed (`Module not found:
+  …/deno-compile-denext/packages/backend/mod.ts`, then `unknown command`). They now run on the
+  denext the project pins, as the binary's build and serve verbs already did.
+- **Project-verb discovery imports the config from the project's directory.** `denext commands
+  --cwd <app>` (and a project verb dispatched with `--cwd`) run from another directory evaluated
+  the config there, so a relative path the app opens at import time (a sqlite `auth.db`) was
+  created in the caller's directory.
+- **`/auth/v1` `GET /admin/users` with empty paging values returns the default page.**
+  supabase-js's `auth.admin.listUsers()` with no options sends `?page=&per_page=`, which was
+  read as one user per page; an empty value now means GoTrue's defaults (page 1, 50 per page).
+- **`@denext/backend` 0.5.0: realtime's startup DDL runs under the migration lock.** The
+  triggers of a publication's tables, the trigger switch between the notify and logical sources,
+  and the `denext_realtime` publication were created outside the advisory lock every other boot
+  migration takes. Replicas starting together could race each other and a migration run on the
+  same tables. They now run in a transaction holding the lock of `backend_migrations`, and a
+  table's triggers are checked again once the lock is held, so they are created once.
+- **`@denext/backend` 0.5.0: realtime returns its reserved connections clean.** A failed
+  `revalidate: { owner: "one" }` check (a statement timeout or a cancel, with the session still
+  alive) sent the connection back to the pool still holding the owner's advisory lock, so no
+  instance could take it until that pooled connection closed and nothing revalidated. The engine
+  now releases every advisory lock it holds first, and reserves nothing once stopped. A failed
+  read of the logical source's slot returned its connection with the temporary slot and the
+  session's `TimeZone` still set. The slot pinned WAL for as long as the connection lived, and the
+  source could not reopen because a slot of that name already existed. The slot is dropped and
+  the setting reset before the connection goes back.
+- **`@denext/content-collections` Markdown: `_x_` / `*x*` in a link destination** (inline or
+  reference, e.g. `[x](https://a.test/_x_/y)`) is no longer turned into `<em>`, which corrupted
+  the `href`. The destination is held out before emphasis runs; the link text still takes it.
+
+### Security
+
+- **A root middleware or proxy file can no longer be skipped silently.** Three ways an app's
+  `middleware.ts` / `proxy.ts` (an auth gate, say) never ran, with every request served
+  unchecked:
+  - **Next.js 16's `proxy` export was ignored.** denext found `proxy.ts` / `proxy.js` (at the
+    root, or in `src/` with the `src/app` layout) but read only a `middleware` or default export
+    from it, so `export function proxy(request)` never ran, in dev, `build` / `start`, a compiled
+    app, the next-compat drop-in and `denext doctor` alike. The `proxy` export is read now.
+  - **A file exporting no handler started anyway.** One with no `proxy`, `middleware` or default
+    function (a `config` alone, a function left under another name after renaming middleware to
+    proxy, an object or empty array) built no runner. denext now refuses to start, in dev, `start`,
+    `createTestApp` and `denext doctor`, naming the file and the exports it reads, as Next fails
+    the build.
+  - **Only `.ts` and `.js` were found.** A `middleware.tsx`, `proxy.jsx` or `middleware.mjs` was
+    ignored. Every extension Next accepts (`tsx`, `ts`, `jsx`, `js`) and `mts` / `mjs` are found
+    now, at the root and in `src/`. Two such files (`middleware.ts` beside `proxy.tsx`, or
+    `middleware.ts` beside `middleware.js`) fail at startup naming both, as Next does, instead
+    of one being picked.
+- **A nested metadata image honours `dynamicParams = false` (GHSA-f87g-xv8r-7p7x /
+  CVE-2026-94485).** `app/blog/[slug]/opengraph-image.tsx` (or `twitter-image`) rendered for any
+  param, so a request for `/blog/<excluded>/opengraph-image` produced the image for a param that
+  `generateStaticParams()` deliberately left out and that the page itself 404s. The image now
+  reads the segment config of the layouts above it, the page beside it and its own module, and
+  answers 404 for a param set they do not enumerate.
+- **The wire codec no longer decodes an `N` tag to a prototype or a constructor
+  (GHSA-xqc2-xf4c-x3h3 class).** The non-finite-number tag was looked up with `v in {…}`, which
+  also answers for inherited names, so `{ "$": "N", "v": "__proto__" }` in a Server Action's
+  arguments, a typed API body or a Live frame decoded to `Object.prototype` (and `"constructor"`
+  to the `Object` function), handing a handler a prototype-pollution and gadget primitive. Only
+  `NaN`, `Infinity`, `-Infinity` and `-0` decode now; any other name is a malformed payload
+  (400).
+- **`@denext/og` 0.1.2 escapes inline SVG (GHSA-vcvr-r3jv-pc5j / CVE-2026-94545).** The vendored
+  satori serializer joined an inline `<svg>`'s text, attribute values and styles into the SVG it
+  rasterizes without escaping them, so a request value placed in an SVG `<title>`, attribute or
+  style could inject arbitrary SVG into an `ImageResponse` / `opengraph-image`. Element and
+  attribute names are now checked against XML's `Name` rule and every value and text node is
+  escaped; `scripts/og-harden-svg.ts` applies this to the bundle after each regeneration.
+- **A desktop window stays on the app's origin** (Deno Desktop runtime 2.9.7-denext.18). A
+  top-level navigation to any other origin (a link, `location = …`, a form, a server redirect,
+  `window.open()`, `target="_blank"`) no longer loads in the window, on every backend (WKWebView,
+  WebView2, WebKitGTK, CEF): an `http(s)` destination opens in the user's browser instead, and any
+  other URL is dropped. Before, only a user's click on a link was redirected, so a script
+  navigation or a redirect could replace the app's page with a remote one. Iframes are unaffected
+  (the CSP decides). `desktop.app.allowedNavigationOrigins` lists exact origins the window itself
+  may load, such as an identity provider that signs in inside the window; packaging writes them to
+  `.deno-desktop/app.json`.
+- **`/auth/v1` `logout?scope=global` and `scope=others` end the user's denextAuth cookie
+  sessions.** They ended only `/auth/v1` and native token sessions, so a cookie session (a stolen
+  one included) outlived "sign out everywhere". Both now clear the session store's records and
+  stamp `sessionsValidAfter`, so stateless cookies end too; `others` keeps the caller's own token
+  session, and `local` is unchanged.
+- **An `/auth/v1` mail template fetch follows a redirect only to `https:` on the same origin**
+  (at most 3). Before, it followed any redirect, so a template host could point the server at
+  another host (an internal address) or downgrade the fetch to plaintext.
+- **Stateless cookie sessions can be ended early: a per-user `sessionsValidAfter`.** Every read
+  of a denextAuth cookie session (stateless or store-backed) refuses one that signed in
+  (`authTime`, else its issue time) before the user's `sessionsValidAfter`. The time is set by
+  `revokeAllSessions(userId)`, a password reset, the pre-account-hijacking eviction, account
+  deletion, and `/auth/v1`'s ban, password change (by the user or an admin) and user deletion.
+  Before, those reached only a `sessionStore`'s records, so a stolen stateless cookie outlived a
+  password reset, and a cookie from before a ban worked again once the ban was lifted. The time
+  is stored on the user by every adapter (memory, SQLite, and Postgres through migration
+  `0008_auth_sessions_valid_after`). `revokeAllSessions` now works with an adapter and no
+  `sessionStore`; it throws only when neither is configured.
+- **A cookie session ends at its user's next request after a ban, a deletion or an SSO
+  conversion.** With an adapter, every read of a denextAuth cookie session (`auth()`,
+  `requireAuth()`, `requireSession()`, the `/auth/*` endpoints) re-reads its user, once per
+  request however many times `auth()` is called, and a deleted or banned user, or an SSO user,
+  reads as signed out. Before, a bare `auth()` read no user, so such a session (a stateless one
+  especially) lived until it next slid or expired.
+- **Whether a session was SSO-started comes from the stored session, never the token's claim.**
+  Linking an identity onto an SSO user on `/auth/v1` checked the access token's `amr` claim, which
+  the custom access token hook can rewrite; it now reads the stored session, as the session checks
+  already did. The `amr` of the session `auth()` returns for a `/auth/v1` access token is the
+  stored session's too.
+- **An SSO user's OAuth-server grants rest on a consent its identity provider's session gave.**
+  The OAuth 2.1 server records, on each approval, whether the approving session was SSO-started.
+  An SSO user's client tokens from a grant approved any other way (before the account became an
+  SSO user, or recorded before this release) are refused at use and revoked at refresh, and such a
+  code can't be exchanged; grants approved from an SSO session keep working.
+- **A deleted user's native and `/auth/v1` access tokens authenticate nothing.** A native access
+  token was still accepted when its user was gone but its session survived (an adapter whose
+  deletion doesn't cascade, a row deleted out of band), and an `/auth/v1` access token with no
+  `session_id` was never checked against the stored user. Both now re-read the user and refuse a
+  missing one — the access token with the error a revoked session gets (`403
+  session_not_found` on `/auth/v1`, signed out in `auth()`); nothing is deleted at read time.
+- **API tokens: an SSO user's token needs an SSO-started minting session, and a deleted owner's
+  token authenticates nothing.** `issueApiToken({ session })` records whether the minting session
+  was SSO-started, and an SSO user's token without that record — minted without a session, from
+  any other session, or before this release — is refused by `verifyApiToken` / `requireBearer`.
+  A token whose owner no longer exists (an adapter that keeps a deleted user's rows) is refused
+  too, as a banned owner's already was. Stored data: the SQLite tables gain a column on first
+  use, and the Postgres migration `0007_auth_sso_session_records` adds `sso_consent` and
+  `sso_session`.
+
 ## [4.0.0] - 2026-10-14
 
 ### Added
@@ -7916,7 +8540,7 @@ compiled into the app. Unedited templates from 2.7.0 … 2.8.3 are upgraded in p
   when it has no frontmatter and rewrites relative links to the rendering docs page or the GitHub
   blob/tree URL — `/docs/contributing` was showing its two tables as literal pipes, an empty `<h1>`,
   and five 404 links. Groundwork for rendering every root guide on denext.dev from one source.
-- **Docs site: eleven new pages.** A generated [CLI reference](https://denext.dev/docs/cli) (`scripts/gen-cli-reference.ts`, from the command registry, with a drift test) and a generated [examples index](https://denext.dev/docs/examples) (`scripts/gen-examples-index.ts`, from every example's README and config, with a drift test); a [tutorial](https://denext.dev/docs/tutorial) that narrates `examples/notes` end to end with every code block pinned to the example by a test; [Troubleshooting](https://denext.dev/docs/troubleshooting) (symptom → cause → fix, each linking its owner); [Upgrading](https://denext.dev/docs/upgrading) (breaking changes and renamed config keys per minor, linked to the changelog); and narrative pages for shipped features that had none — [Error handling](https://denext.dev/docs/error-handling), [Project layout](https://denext.dev/docs/project-layout), [Internationalization](https://denext.dev/docs/i18n), [Fonts](https://denext.dev/docs/fonts), [Pages Router](https://denext.dev/docs/pages-router) and [Doctor, audit & info](https://denext.dev/docs/doctor-audit). Both generators run in `deno task docs:build`.
+- **Docs site: eleven new pages.** A generated [CLI reference](https://denext.dev/docs/cli) (`scripts/gen-cli-reference.ts`, from the command registry, with a drift test) and a generated [examples index](https://denext.dev/docs/examples) (`scripts/gen-examples-index.ts`, from every example's README and config, with a drift test); a [tutorial](https://denext.dev/docs/tutorial) that narrates `examples/notes` end to end with every code block pinned to the example by a test; [Troubleshooting](https://denext.dev/docs/troubleshooting) (symptom → cause → fix, each linking its owner); Upgrading (breaking changes and renamed config keys per minor, linked to the changelog; since retired, as the changelog is the record); and narrative pages for shipped features that had none — [Error handling](https://denext.dev/docs/error-handling), [Project layout](https://denext.dev/docs/project-layout), [Internationalization](https://denext.dev/docs/i18n), [Fonts](https://denext.dev/docs/fonts), [Pages Router](https://denext.dev/docs/pages-router) and [Doctor, audit & info](https://denext.dev/docs/doctor-audit). Both generators run in `deno task docs:build`.
 
 ### Changed
 
@@ -8113,7 +8737,7 @@ compiled into the app. Unedited templates from 2.7.0 … 2.8.3 are upgraded in p
   deployment setup (registry, host, secrets, DNS), so it added nothing over
   invoking the underlying tool directly. Deploy with `deployctl` (Deno Deploy) or
   your host's own tooling — the Deno Deploy, Docker, and systemd recipes in
-  [DEPLOYMENT.md](./DEPLOYMENT.md) are unchanged. `denext generate docker` still
+  [the deployment guide](https://denext.dev/docs/deploy) are unchanged. `denext generate docker` still
   scaffolds a Dockerfile.
 
 ### Added
@@ -14496,7 +15120,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.0.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.1.0...development
+[4.1.0]: https://jsr.io/@denext/denext@4.1.0
 [4.0.0]: https://jsr.io/@denext/denext@4.0.0
 [4.0.0-rc.2]: https://jsr.io/@denext/denext@4.0.0-rc.2
 [4.0.0-rc.1]: https://jsr.io/@denext/denext@4.0.0-rc.1

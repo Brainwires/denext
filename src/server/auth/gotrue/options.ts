@@ -9,6 +9,7 @@
 import type { AdapterUser } from "../adapter.ts";
 import type { SamlPrivateKey } from "../saml/config.ts";
 import type { NativeIdTokenProviderConfig } from "../types.ts";
+import type { GoTrueSmtpOptions } from "./smtp-mail.ts";
 
 /** What {@linkcode GoTrueOptions.sendSms} delivers. */
 export interface GoTrueSmsMessage {
@@ -156,6 +157,13 @@ export interface GoTrueOptions {
   captcha?: GoTrueCaptchaOptions;
   /** Supabase's auth hooks. */
   hooks?: GoTrueHooks;
+  /**
+   * Send `/auth/v1`'s emails over SMTP when neither `hooks.sendEmail` nor the auth config's
+   * `sendVerificationRequest` is set: the server (TLS required), GoTrue's subjects and its
+   * template URLs. Unset, it is read from the environment: `GOTRUE_SMTP_*`,
+   * `GOTRUE_MAILER_SUBJECTS_*` and `GOTRUE_MAILER_TEMPLATES_*`.
+   */
+  smtp?: GoTrueSmtpOptions;
   /**
    * A password change on an account that already has one needs a fresh reauthentication nonce
    * (`reauthenticate()`, then `updateUser({ password, nonce })`). Default `false`.

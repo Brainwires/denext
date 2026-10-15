@@ -45,6 +45,11 @@ export const DOCKER_FLAGS: readonly FlagSpec[] = [
     help: "docker: also write compose.dev.yml (denext dev on a bind mount)",
   },
   {
+    name: "dashboard-logs",
+    type: "boolean",
+    help: "docker: the dashboard's Logs page — a relay service that mounts the Docker socket",
+  },
+  {
     name: "port",
     type: "number",
     valueName: "<port>",
@@ -82,6 +87,7 @@ function dockerRequest(ctx: CommandContext, target: string): DockerRequest {
     ...(tag !== undefined ? { denoTag: tag } : {}),
     exposeDb: flags["expose-db"] === true,
     dev: flags.dev === true,
+    dashboardLogs: flags["dashboard-logs"] === true,
   };
 }
 

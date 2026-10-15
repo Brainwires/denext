@@ -1,0 +1,11 @@
+TS2307 [ERROR]: Import "react" not a dependency and not in import map from "file:///app/react-import.tsx"
+  hint: If you want to use the npm package, try running `deno add npm:react`
+    at file:///app/react-import.tsx:3:26
+
+TS2307 [ERROR]: Import "next/link" not a dependency and not in import map from "file:///app/react-import.tsx"
+  hint: If you want to use the npm package, try running `deno add npm:next/link`
+    at file:///app/react-import.tsx:4:18
+
+Found 2 errors.
+
+error: Type checking failed.

@@ -1,7 +1,7 @@
 // Self-hosted image optimization for the built-in `/_denext/image` endpoint,
 // backed by `@denext/photon` (decode → resize) with WebP output, or AVIF
 // (`@denext/avif`) negotiated from the `Accept` header when `images.formats`
-// enables it. Local `public/` assets are optimized by default; remote sources
+// enables it. AVIF sources are decoded by `@denext/avif` (`image-avif.ts`). Local `public/` assets are optimized by default; remote sources
 // require an explicit host allowlist (SSRF protection).
 
 // The wasm-backed codecs (@denext/photon, @denext/avif) are imported LAZILY at
@@ -14,6 +14,7 @@ import type { PhotonImage as PhotonImageT } from "@denext/photon";
 import { serveStatic } from "./static.ts";
 import { createGate, GateOverloadError } from "./gate.ts";
 import { inRootContext } from "./root-context.ts";
+import { decodeAvif, isAvif, probeAvif } from "./image-avif.ts";
 import type { ImagesConfig, LocalPattern, RemotePattern } from "./config.ts";
 import { isForbiddenAddress, makePinnedFetch, pinnedFetch } from "./safe-fetch.ts";
 
@@ -187,7 +188,8 @@ export function probeImageDimensions(
   b: Uint8Array,
 ): { width: number; height: number } | null {
   const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-  return probePng(b, dv) ?? probeGif(b, dv) ?? probeJpeg(b, dv) ?? probeWebp(b, dv);
+  return probePng(b, dv) ?? probeGif(b, dv) ?? probeJpeg(b, dv) ?? probeWebp(b, dv) ??
+    probeAvif(b);
 }
 
 type Dims = { width: number; height: number } | null;
@@ -705,7 +707,11 @@ async function decodeResizeEncode(
   quality: number,
 ): Promise<Uint8Array | Response> {
   if (looksLikeSvg(bytes)) return new Response("unsupported image type", { status: 400 });
+  const avif = isAvif(bytes);
   const probed = probeImageDimensions(bytes);
+  // An AVIF is decoded only once its declared size passed the limits: libavif would allocate
+  // whatever the file claims.
+  if (avif && !probed) return new Response("unsupported image type", { status: 400 });
   if (probed && exceedsSourceLimits(probed.width, probed.height)) {
     return new Response("image too large", { status: 413 });
   }
@@ -717,7 +723,12 @@ async function decodeResizeEncode(
   let resized: PhotonImageT | undefined;
   let cropped: PhotonImageT | undefined;
   try {
-    img = PhotonImage.new_from_byteslice(bytes);
+    if (avif) {
+      const decoded = await decodeAvif(bytes);
+      img = new PhotonImage(decoded.rgba, decoded.width, decoded.height);
+    } else {
+      img = PhotonImage.new_from_byteslice(bytes);
+    }
     const sw = img.get_width();
     const sh = img.get_height();
     if (exceedsSourceLimits(sw, sh)) return new Response("image too large", { status: 413 });
@@ -764,7 +775,7 @@ export interface ImageTransform {
   quality?: number;
   /**
    * Output format: `"webp"` (the default), `"avif"` when `images.formats` lists `image/avif`, or
-   * `"origin"` to keep the source's own format (PNG, JPEG and WebP; a GIF becomes a PNG).
+   * `"origin"` to keep the source's own format (PNG, JPEG, WebP and AVIF; a GIF becomes a PNG).
    */
   format?: "webp" | "avif" | "origin";
   /**
@@ -801,7 +812,7 @@ export interface TransformImageOptions {
  * so a caller cannot ask for an unbounded number of distinct encodes. With both, the image is
  * fitted inside the box (aspect ratio kept); it is never enlarged past the source.
  *
- * @param bytes The source image (PNG, JPEG, GIF or WebP).
+ * @param bytes The source image (PNG, JPEG, GIF, WebP, or an AVIF still image).
  * @param transform The target size, quality and format.
  * @param options The app's `images` config and an optional cache identity.
  * @param gate Concurrency gate (defaults to the shared optimizer gate; injectable for tests).
@@ -913,6 +924,7 @@ function transformFormat(format: string | undefined, images?: ImagesConfig): str
 /** The encoder type that keeps a source's own format (a GIF, which Photon cannot write, → PNG). */
 function originFormat(bytes: Uint8Array): string {
   if (bytes[0] === 0xff && bytes[1] === 0xd8) return "image/jpeg";
+  if (isAvif(bytes)) return "image/avif";
   const riff = String.fromCharCode(...bytes.subarray(0, 4));
   const webp = String.fromCharCode(...bytes.subarray(8, 12));
   return riff === "RIFF" && webp === "WEBP" ? "image/webp" : "image/png";

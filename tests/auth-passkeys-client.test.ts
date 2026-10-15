@@ -83,7 +83,7 @@ function attestationCredential() {
   };
 }
 
-Deno.test("registerPasskey: options decoded, credential encoded, label sent", async () => {
+Deno.test("registerPasskey: options decoded, credential encoded, label and ceremony id sent", async () => {
   const options = {
     challenge: b64u(Uint8Array.of(1, 2, 3, 4)),
     rp: { id: "app.test", name: "app.test" },
@@ -93,7 +93,7 @@ Deno.test("registerPasskey: options decoded, credential encoded, label sent", as
   };
   await withBrowser(
     {
-      "/auth/passkey/register/options": [200, options],
+      "/auth/passkey/register/options": [200, { ...options, ceremonyId: "tab-1" }],
       "/auth/passkey/register": [200, {
         ok: true,
         passkey: { id: "AQID", createdAt: 1, backedUp: false },
@@ -108,6 +108,7 @@ Deno.test("registerPasskey: options decoded, credential encoded, label sent", as
         Uint8Array.of(1, 2, 3, 4),
       );
       assertEquals(new TextDecoder().decode(seen.created!.user.id as ArrayBuffer), "u1");
+      assert(!("ceremonyId" in seen.created!), "the id is not handed to the authenticator");
       assertEquals(
         new Uint8Array(seen.created!.excludeCredentials![0].id as ArrayBuffer),
         Uint8Array.of(5, 6),
@@ -120,6 +121,7 @@ Deno.test("registerPasskey: options decoded, credential encoded, label sent", as
           response: { clientDataJSON: "CQk", attestationObject: "Bw", transports: ["internal"] },
           clientExtensionResults: {},
         },
+        ceremonyId: "tab-1",
         name: "Laptop",
       });
     },
@@ -133,6 +135,7 @@ Deno.test("signInWithPasskey: an assertion is encoded and the server's vetted UR
         challenge: "AAAA",
         rpId: "app.test",
         allowCredentials: [],
+        ceremonyId: "tab-2",
       }],
       "/auth/passkey/authenticate": [200, { ok: true, url: "/dashboard" }],
     },
@@ -156,7 +159,11 @@ Deno.test("signInWithPasskey: an assertion is encoded and the server's vetted UR
         "/dashboard",
         "the server's coerced URL, not the raw callbackUrl",
       );
-      const sent = seen.posts[1].body as { credential: { response: Record<string, string> } };
+      const sent = seen.posts[1].body as {
+        credential: { response: Record<string, string> };
+        ceremonyId: string;
+      };
+      assertEquals(sent.ceremonyId, "tab-2", "the verifying POST carries its ceremony's id");
       assertEquals(sent.credential.response, {
         clientDataJSON: "AQ",
         authenticatorData: "Ag",

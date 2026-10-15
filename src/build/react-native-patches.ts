@@ -26,7 +26,8 @@
 //   - `Image` is wrapped by `withImageProps` (over `withImageStatics`): the `resolveAssetSource`,
 //     `getSizeWithHeaders`, `prefetchWithMetadata` and `abortPrefetch` statics react-native-web
 //     lacks, React Native 0.71's `src` / `srcSet` / `alt` / `width` / `height`, a `source`
-//     array, `loadingIndicatorSource` and (Android shell) `fadeDuration`. `PixelRatio` gains
+//     array, `loadingIndicatorSource`, `fadeDuration` and, with react-native-web's `View`, a
+//     real `<img>` for `crossOrigin` / `referrerPolicy`. `PixelRatio` gains
 //     React Native's no-op `startDetecting`.
 //   - `Switch` is wrapped by `withSwitchProps`: `ios_backgroundColor` and `onChange`.
 //   - `AppRegistry` is passed through `withAppRegistry` (with react-native-web's `View`):
@@ -68,7 +69,7 @@ const WRAPPED: Readonly<Record<string, string>> = {
 };
 
 /** The wrapped modules whose wrapper also takes react-native-web's `View` (`../View`). */
-const WRAPPED_WITH_VIEW: ReadonlySet<string> = new Set(["AppRegistry", "Modal"]);
+const WRAPPED_WITH_VIEW: ReadonlySet<string> = new Set(["AppRegistry", "Image", "Modal"]);
 
 /** A wrapped module, ES or CommonJS build: group 1 is `cjs/`, group 2 the name. */
 const WRAPPED_MODULE = new RegExp(

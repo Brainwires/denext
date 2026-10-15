@@ -5,14 +5,14 @@
  *
  * Both are plain data: the flow lives in {@link ./routes-email.ts | routes-email.ts}, on
  * `{basePath}/callback/:provider`. Either one needs `sendVerificationRequest` or
- * `hooks.sendEmail` (denext ships no mailer) and an adapter with the verification-token group plus `getUserByEmail`,
- * `createUser` and `updateUser`.
+ * `hooks.sendEmail` (`smtpMailer()`, or your own) and an adapter with the verification-token
+ * group plus `getUserByEmail`, `createUser` and `updateUser`.
  *
  * ```ts
  * denextAuth({
  *   providers: [magicLink(), emailOtp({ allowSignUp: false })],
  *   adapter: sqliteAuthAdapter({ path: "auth.db" }),
- *   sendVerificationRequest: ({ identifier, url, token, purpose }) => mailer.send(…),
+ *   sendVerificationRequest: smtpMailer({ host, user, pass, from }),
  *   secret,
  * });
  * ```
@@ -45,7 +45,8 @@ export interface MagicLinkOptions extends EmailProviderOptions {
    * address and a "Sign in" button that POSTs the token to the same URL, which spends it. A
    * link scanner (a mail gateway that pre-fetches every URL) then can't burn the link, and a
    * link someone else requested signs nobody in without a click on a page that names the
-   * account. Default `false`: the GET signs in, as in Auth.js.
+   * account. Default `true`; `false` signs in on the GET, as in Auth.js (a link scanner can
+   * then spend the link, and a link someone else requested signs the opener into their account).
    */
   confirm?: boolean;
 }
@@ -77,16 +78,16 @@ function emailProvider(
 /**
  * Passwordless sign-in by **magic link**: `POST {basePath}/callback/email` with `{ email }`
  * mails a single-use link (10 minutes by default, `email.magicMaxAge`); opening it signs
- * the user in. By default the link is consumed by its GET, so a mail gateway that pre-fetches
- * links can spend it — pass `confirm: true` to open a confirmation page whose button POSTs
- * the token instead, or prefer {@linkcode emailOtp}.
+ * the user in. By default the link opens a confirmation page (naming the account) whose button
+ * POSTs the token, so a mail gateway that pre-fetches links can't spend it and nobody is signed
+ * in without a click; `confirm: false` redeems on the GET instead, as in Auth.js.
  *
  * @param options The provider id, display name, sign-up policy and confirmation page.
  * @returns The configured provider (`id: "email"`, `mode: "magic"`).
  */
 export function magicLink(options: MagicLinkOptions = {}): EmailProvider {
   const provider = emailProvider("magic", options, { id: "email", name: "Email" });
-  return options.confirm ? { ...provider, confirm: true } : provider;
+  return { ...provider, confirm: options.confirm !== false };
 }
 
 /**
@@ -117,8 +118,8 @@ export function assertEmailProviderConfig(config: AuthConfig): void {
   if (typeof mailerOf(config) !== "function") {
     throw new Error(
       `denextAuth: the email provider "${provider.id}" needs \`sendVerificationRequest\` ` +
-        "(or `hooks.sendEmail`) — denext ships no mailer; pass a function that delivers " +
-        "{ identifier, url, token, purpose, expiresAt }.",
+        "(or `hooks.sendEmail`) — pass `smtpMailer({ host, user, pass, from })`, or a " +
+        "function that delivers { identifier, url, token, purpose, expiresAt }.",
     );
   }
   assertProviderAdapter(config, `the email provider "${provider.id}"`, REQUIRED_ADAPTER_METHODS);

@@ -31,8 +31,8 @@ On top of sign-in, the plugin runs the account flows an app would otherwise hand
 [email verification and password reset](#email-verification-and-password-reset),
 [passwordless magic links and one-time codes](#passwordless-magic-links-and-one-time-codes)
 and [TOTP two-factor authentication](#two-factor-authentication-totp). All four need an
-`adapter`; the emailed ones also need your `sendVerificationRequest`, because denext ships
-no mailer.
+`adapter`; the emailed ones also need a `sendVerificationRequest` — denext's
+[`smtpMailer()`](#sending-mail-over-smtp), or your own.
 
 ## Quick start
 
@@ -60,15 +60,15 @@ export default {
 };
 ```
 
-`secret` must be at least 32 characters (shorter warns in development and **throws in
-production**) and accepts an array to rotate — every secret verifies, the first one
-signs. The same list seals TOTP secrets at rest ([Secrets at rest](#secrets-at-rest)), so
-keep a retired secret in it until the factors sealed under it have been re-sealed — list
-the new secret first, never replace the old one (see [Secrets at rest](#secrets-at-rest)). `canonicalOrigin` warns in development and throws in production: without it the
-OAuth `redirect_uri` and the same-origin checks derive from the attacker-controllable
-`Host` header. An OAuth provider whose `clientId` / `clientSecret` is empty — or the
-literal string `"undefined"`, which a missing `Deno.env.get("…")!` produces — is refused
-at config time rather than failing every login later.
+`secret` must be at least 32 characters (shorter warns in development and **throws in production**)
+and accepts an array to rotate — every secret verifies, the first one signs. The same list seals
+TOTP secrets at rest ([Secrets at rest](#secrets-at-rest)), so list the new secret first, never
+replace the old one, and remove the old one once `denext auth reseal` reports zero remaining (see
+[Secrets at rest](#secrets-at-rest)). `canonicalOrigin` warns in development and throws in
+production: without it the OAuth `redirect_uri` and the same-origin checks derive from the
+attacker-controllable `Host` header. An OAuth provider whose `clientId` / `clientSecret` is empty —
+or the literal string `"undefined"`, which a missing `Deno.env.get("…")!` produces — is refused at
+config time rather than failing every login later.
 
 With an `adapter` that stores password hashes, `credentials()` needs no `authorize` at
 all — see [Password sign-in without an `authorize`](#password-sign-in-without-an-authorize).
@@ -125,42 +125,45 @@ function UserMenu() {
 
 Every path is relative to `basePath` (default `/auth`).
 
-| Endpoint              | Method      | What it does                                                                                                                                                                  |
-| --------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/session`            | GET         | `{ user, expires }` (or nulls). `no-store`. The sliding-expiry path. Rate-limited.                                                                                            |
-| `/providers`          | GET         | The configured providers' `id` + `type` (and an email or phone provider's `name`) — never client ids, secrets or endpoints.                                                   |
-| `/signin/:provider`   | GET         | Starts the OAuth flow (PKCE + `state` + `nonce`). Rate-limited per client IP.                                                                                                 |
-| `/callback/:provider` | GET or POST | By provider type: GET is the OAuth callback and the magic-link click; POST is the Credentials sign-in and the email or phone send / redeem. A verb the type lacks is a `405`. |
-| `/anonymous`          | POST        | With `anonymous: true`: create an anonymous user and sign it in. See [Anonymous sign-in](#anonymous-sign-in).                                                                 |
-| `/signout`            | POST        | Clears the cookie (and the store record). Same-origin only.                                                                                                                   |
-| `/tokens`             | POST, GET   | Mint / list bearer API tokens. Cookie session only; minting needs a recent sign-in.                                                                                           |
-| `/tokens/:id`         | DELETE      | Revoke one of your own tokens. Cookie session only.                                                                                                                           |
-| `/verify`             | GET, POST   | Redeem an email-verification token — the emailed link (GET) or a form / JSON body.                                                                                            |
-| `/reset`              | POST        | Request a password-reset link. One answer for every address.                                                                                                                  |
-| `/reset/confirm`      | POST        | `{ email, token, password }`: set the new password.                                                                                                                           |
-| `/mfa`                | POST        | Finish a pending sign-in with a TOTP, SMS or backup code.                                                                                                                     |
-| `/mfa/challenge`      | POST        | `{ factorId }`: text a code to a verified phone factor for the pending sign-in; answers `{ challengeId, expiresAt }`.                                                         |
-| `/mfa/enroll`         | POST        | Start a TOTP enrollment: `{ secret, uri }`. A complete session must have signed in recently, else `403 reauth_required`.                                                      |
-| `/mfa/confirm`        | POST        | Confirm the enrollment; the backup codes come back once.                                                                                                                      |
-| `/mfa/disable`        | POST        | Remove the user's TOTP factors (and the backup codes, unless another verified factor remains), given a fresh second factor.                                                   |
-| `/passkey/*`          | POST        | Passkeys: `register/options` + `register` from a recent session, `authenticate/options` + `authenticate` to sign in or step up. See [Passkeys](#passkeys-webauthn).           |
-| `/passkeys`           | GET         | The signed-in user's passkeys (no key material).                                                                                                                              |
-| `/passkeys/:id`       | DELETE      | Remove one of your passkeys. Needs a recent sign-in.                                                                                                                          |
-| `/native/authorize`   | GET         | Native session mode: start a sign-in for an app (PKCE `S256` challenge, registered `redirect_uri`). See [App backend](/docs/app-backend).                                     |
-| `/native/complete`    | GET         | Where that sign-in lands: a one-time code to the app's redirect URI, only for a sign-in made after `/native/authorize` began.                                                 |
-| `/native/token`       | POST        | Code + verifier → bearer access token + rotating refresh token; or rotate a refresh token. A replayed refresh token revokes its session family.                               |
-| `/native/revoke`      | POST        | Sign a native session out (refresh token in the body, or the access token as a bearer). Always `200`.                                                                         |
-| `/native/nonce`       | POST        | A single-use nonce for a native Apple / Google sign-in.                                                                                                                       |
-| `/native/:provider`   | POST        | `apple` / `google`: verify a native sign-in sheet's `id_token` and answer the native session tokens.                                                                          |
-| `/account/delete`     | POST        | Delete the signed-in user (cookie, same-origin; or a native bearer). Needs a recent sign-in, else `403 reauth_required`. Revokes Sign in with Apple tokens.                   |
+| Endpoint                   | Method      | What it does                                                                                                                                                                  |
+| -------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/session`                 | GET         | `{ user, expires }` (or nulls). `no-store`. The sliding-expiry path. Rate-limited.                                                                                            |
+| `/providers`               | GET         | The configured providers' `id` + `type` (and an email or phone provider's `name`) — never client ids, secrets or endpoints.                                                   |
+| `/signin/:provider`        | GET         | Starts the OAuth flow (PKCE + `state` + `nonce`). Rate-limited per client IP.                                                                                                 |
+| `/callback/:provider`      | GET or POST | By provider type: GET is the OAuth callback and the magic-link click; POST is the Credentials sign-in and the email or phone send / redeem. A verb the type lacks is a `405`. |
+| `/anonymous`               | POST        | With `anonymous: true`: create an anonymous user and sign it in. See [Anonymous sign-in](#anonymous-sign-in).                                                                 |
+| `/signout`                 | POST        | Clears the cookie (and the store record). Same-origin only.                                                                                                                   |
+| `/tokens`                  | POST, GET   | Mint / list bearer API tokens. Cookie session only; minting needs a recent sign-in.                                                                                           |
+| `/tokens/:id`              | DELETE      | Revoke one of your own tokens. Cookie session only.                                                                                                                           |
+| `/verify`                  | GET, POST   | Redeem an email-verification token — the emailed link (GET) or a form / JSON body.                                                                                            |
+| `/reset`                   | POST        | Request a password-reset link. One answer for every address.                                                                                                                  |
+| `/reset/confirm`           | POST        | `{ email, token, password }`: set the new password.                                                                                                                           |
+| `/mfa`                     | POST        | Finish a pending sign-in with a TOTP, SMS or backup code.                                                                                                                     |
+| `/mfa/challenge`           | POST        | `{ factorId }`: text a code to a verified phone factor for the pending sign-in; answers `{ challengeId, expiresAt }`.                                                         |
+| `/mfa/enroll`              | POST        | Start a TOTP enrollment: `{ secret, uri }`. A complete session must have signed in recently, else `403 reauth_required`.                                                      |
+| `/mfa/confirm`             | POST        | Confirm the enrollment; the backup codes come back once.                                                                                                                      |
+| `/mfa/disable`             | POST        | Remove the user's TOTP factors (and the backup codes, unless another verified factor remains), given a fresh second factor.                                                   |
+| `/passkey/*`               | POST        | Passkeys: `register/options` + `register` from a recent session, `authenticate/options` + `authenticate` to sign in or step up. See [Passkeys](#passkeys-webauthn).           |
+| `/passkeys`                | GET         | The signed-in user's passkeys (no key material).                                                                                                                              |
+| `/passkeys/:id`            | DELETE      | Remove one of your passkeys. Needs a recent sign-in.                                                                                                                          |
+| `/native/authorize`        | GET         | Native session mode: start a sign-in for an app (PKCE `S256` challenge, registered `redirect_uri`). See [App backend](/docs/app-backend).                                     |
+| `/native/complete`         | GET         | Where that sign-in lands: a one-time code to the app's redirect URI, only for a sign-in made after `/native/authorize` began.                                                 |
+| `/native/token`            | POST        | Code + verifier → bearer access token + rotating refresh token; or rotate a refresh token. A replayed refresh token revokes its session family.                               |
+| `/native/revoke`           | POST        | Sign a native session out (refresh token in the body, or the access token as a bearer). Always `200`.                                                                         |
+| `/native/nonce`            | POST        | A single-use nonce for a native Apple / Google sign-in.                                                                                                                       |
+| `/native/:provider`        | POST        | `apple` / `google`: verify a native sign-in sheet's `id_token` and answer the native session tokens.                                                                          |
+| `/native/mfa`              | POST        | `{ mfa_token, code[, factor_id, challenge_id] }`: finish a native `id_token` sign-in that owes a second factor.                                                               |
+| `/native/mfa-challenge`    | POST        | `{ mfa_token, factor_id }`: text a code to a verified phone factor for that pending native sign-in.                                                                           |
+| `/saml/:provider/metadata` | GET         | A [`saml()`](#saml-providers) provider's SP metadata, to give its identity provider.                                                                                          |
+| `/account/delete`          | POST        | Delete the signed-in user (cookie, same-origin; or a native bearer). Needs a recent sign-in, else `403 reauth_required`. Revokes Sign in with Apple tokens.                   |
 
-A row claims only its own verb, so `GET {basePath}/reset` and `GET {basePath}/mfa` fall
-through to your app — that is where a reset link and `pages.mfa` can land. The account rows
-exist only when the adapter can run them — `/verify` and `/reset*` need the
-verification-token group (`/reset*` also `setCredential`), `/mfa*` the MFA factor and backup-code groups,
-`/passkey*` a `passkeys` config — and are otherwise a plain 404, like `/tokens`. The `/native/*` rows exist only with a `native`
-config (and an adapter with the native session group), and `/account/delete` only with an
-adapter that implements `deleteUser`.
+A row claims only its own verb, so `GET {basePath}/reset` and `GET {basePath}/mfa` fall through to
+your app — that is where a reset link and `pages.mfa` can land. The account rows exist only when the
+adapter can run them — `/verify` and `/reset*` need the verification-token group (`/reset*` also
+`setCredential`), `/mfa*` the MFA factor and backup-code groups, `/passkey*` a `passkeys` config —
+and are otherwise a plain 404, like `/tokens`. The `/native/*` rows exist only with a `native`
+config (and an adapter with the native session group), and `/account/delete` only with an adapter
+that implements `deleteUser`.
 
 `examples/auth` is a runnable app with adapter-backed credentials sign-in (scrypt-hashed
 passwords in `node:sqlite`, no `authorize`), the rate-limited login, revocable sessions and
@@ -173,7 +176,7 @@ production, where that mailer refuses to send). See
 
 ## Providers
 
-Sixteen presets ship in `denext/server`. Every OAuth preset takes
+Seventeen presets ship in `denext/server`. Every OAuth preset takes
 `{ clientId, clientSecret, scopes? }`; `scopes` replaces the defaults rather than adding
 to them.
 
@@ -181,7 +184,7 @@ to them.
 | --------------- | ------------------ | -------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | Google          | `google()`         | —                                      | OIDC. Endpoints pinned (they live on a sibling host), so no discovery.                                     |
 | GitHub          | `github()`         | —                                      | OAuth. Reads `/user` + `/user/emails`; only a _verified_ address reaches the session.                      |
-| Microsoft Entra | `microsoftEntra()` | `tenant` (required)                    | OIDC v2.0. Single-tenant only — see the note below.                                                        |
+| Microsoft Entra | `microsoftEntra()` | `tenant` (required), `allowedTenants`  | OIDC v2.0. A tenant, or `common` / `organizations` / `consumers` — see the note below.                     |
 | Apple           | `apple()`          | —                                      | OIDC over `response_mode=form_post`, with name and email — see the section below.                          |
 | Discord         | `discord()`        | —                                      | OAuth. An unverified address is dropped like `email_verified: false`.                                      |
 | GitLab          | `gitlab()`         | `baseUrl` (default `gitlab.com`)       | OIDC. Self-managed must be `https:` at the host root.                                                      |
@@ -195,6 +198,7 @@ to them.
 | Magic link      | `magicLink()`      | `id`, `name`, `allowSignUp`            | Passwordless: mails a single-use sign-in link — see [below](#passwordless-magic-links-and-one-time-codes). |
 | Email code      | `emailOtp()`       | `id`, `name`, `allowSignUp`            | Passwordless: mails a one-time numeric code.                                                               |
 | Phone code      | `phoneOtp()`       | `id`, `name`, `allowSignUp`            | Passwordless: texts a one-time code through `sendSms` — see [Phone sign-in](#phone-sign-in).               |
+| SAML 2.0        | `saml()`           | `id`, `metadataXml`, `domains`         | An enterprise IdP's SSO — see [SAML providers](#saml-providers).                                           |
 
 A `domain` / `baseUrl` is validated before it is interpolated: `https:` only, host only,
 no credentials, path, query or fragment. A `tenant` / `realm` /
@@ -257,12 +261,118 @@ A session cookie set with `SameSite=Strict` is not sent on the redirect that fol
 cross-site POST, so the user lands signed out until the next navigation; keep the session
 cookie at its default `Lax`.
 
-> [!NOTE]
-> **Microsoft Entra** requires a
-> specific `tenant` (a GUID or a verified domain): the multi-tenant aliases `common`,
-> `organizations` and `consumers` are refused, because their discovery document declares
-> the template issuer `https://login.microsoftonline.com/{tenantid}/v2.0` while the
-> `id_token` carries the tenant-specific one, and denext compares `iss` by exact match.
+### Microsoft Entra: one tenant or many
+
+`tenant` is a single directory (a GUID or a verified domain) or one of Microsoft's multi-tenant
+aliases:
+
+| `tenant`        | Who signs in                                     | How the `id_token`'s issuer is checked                                        |
+| --------------- | ------------------------------------------------ | ----------------------------------------------------------------------------- |
+| a tenant        | that directory's users                           | exactly `https://login.microsoftonline.com/<tenant>/v2.0` (discovery on)      |
+| `organizations` | any work or school tenant; personal accounts no  | against the token's own `tid`: `https://login.microsoftonline.com/{tid}/v2.0` |
+| `common`        | any work or school tenant, and personal accounts | against the token's own `tid`, as above                                       |
+| `consumers`     | personal Microsoft accounts only                 | exactly the personal-account tenant's issuer (`9188040d-…`)                   |
+
+For `common` and `organizations` the discovery document declares a template issuer
+(`https://login.microsoftonline.com/{tenantid}/v2.0`), so denext fills it from the token's own
+`tid` claim — which must be a GUID — and compares `iss` to the result exactly, after checking the
+signature against the common key set. A token can only claim the issuer of the tenant it says it
+is from, and a token whose `iss` names one tenant and whose `tid` names another is refused.
+
+> [!WARNING]
+> `common` and `organizations` admit a user of **any** Entra tenant, including one an attacker
+> creates for the purpose (and Entra's `email` claim is whatever that tenant's admin set). List
+> the tenants you serve:
+>
+> ```ts
+> microsoftEntra({
+>   clientId,
+>   clientSecret,
+>   tenant: "organizations",
+>   allowedTenants: ["72f988bf-86f1-41af-91ab-2d7cd011db47"], // tenant ids (GUIDs)
+> });
+> ```
+>
+> A token from a tenant outside the list is refused before anything else.
+
+**Which account, and which address.** Any tenant's admin can put any `email` on a user, so for
+`common`, `organizations` and `consumers` denext never trusts the address on its own (the
+"nOAuth" class):
+
+- The account is keyed on the token's **`tid` + `oid`** (the user's object id in the tenant
+  whose issuer was checked) — not on `sub` alone, and never on the email. A token without both
+  is refused.
+- The email counts only when Microsoft says the domain's owner verified it: the optional claim
+  **`xms_edov`** is `true`. Then it is the account's verified address, and it links to an
+  existing verified account like any verified provider email (see
+  [Account linking rules](#account-linking-rules)).
+- Otherwise the email is **dropped**: the account is created with no address, so it can't
+  occupy one, block the real owner's sign-up or magic link, or link to an account later. The
+  personal-account tenant (`9188040d-6c67-4c5b-b112-36a304b66dad`, `consumers` and `common`)
+  follows the same rule.
+
+To receive `xms_edov`, add it to the app registration: **Token configuration → Add optional
+claim → ID → `xms_edov`** (and `email`), or `"optionalClaims": { "idToken": [{ "name":
+"xms_edov" }, { "name": "email" }] }` in the manifest. Without it, multi-tenant sign-ins carry no
+email at all. A single `tenant` (your own directory) keeps the standard mapping on `sub`, and
+marks the email verified when `xms_edov` is `true`.
+
+### SAML providers
+
+`saml()` signs users in through an enterprise identity provider (Okta, Entra ID, Google
+Workspace, ADFS, Keycloak, …) on denextAuth's own endpoints — no `/auth/v1` needed:
+
+```ts
+import { denextAuth, saml, sqliteAuthAdapter } from "denext/server";
+
+denextAuth({
+  secret: Deno.env.get("AUTH_SECRET")!,
+  canonicalOrigin: "https://example.com",
+  adapter: sqliteAuthAdapter({ path: "auth.db" }), // required: the account is stored
+  providers: [
+    saml({
+      id: "acme",
+      name: "Acme SSO",
+      metadataXml: await Deno.readTextFile("./acme-idp-metadata.xml"),
+      domains: ["acme.com"], // the addresses this IdP speaks for
+      attributeMapping: { name: "displayName" },
+      // sp: { signingKey, signingCertificate, encryptionKey, encryptionCertificate, entityId },
+    }),
+  ],
+});
+```
+
+| Endpoint                            | What it does                                                                     |
+| ----------------------------------- | -------------------------------------------------------------------------------- |
+| `GET {basePath}/signin/acme`        | Sends the browser to the IdP with an AuthnRequest (signed with `sp.signingKey`). |
+| `POST {basePath}/callback/acme`     | The Assertion Consumer Service: the IdP posts its Response here.                 |
+| `GET {basePath}/saml/acme/metadata` | This SP's metadata (also the default entity id) — give it to the IdP.            |
+
+`signIn("acme")` from `denext/client` starts it like any provider. Only SP-initiated logins are
+accepted: the AuthnRequest's ID and a fresh RelayState ride the signed, single-use transaction
+cookie (`SameSite=None`, since the IdP's POST is cross-site), and the Response must answer that
+request exactly.
+
+**The same SAML code as `/auth/v1`.** The Response is verified by the implementation behind
+[SAML single sign-on](#saml-single-sign-on) — a strict XML parser, XML-DSig over exclusive c14n
+against the metadata's certificates only, signature-wrapping and comment-injection defenses, the
+audience (this SP's entity id), the recipient and destination (this ACS), the validity window,
+`InResponseTo`, the shared assertion replay cache, and encrypted assertions — and the user by
+its SSO rules:
+
+- An address is bound to the account (as verified) only on one of the provider's `domains`; any
+  other address is never bound. Without `domains`, no email is bound.
+- The provider's NameID signs in the same user every time. A first sign-in never takes over an
+  existing account with the same address (`?error=account_not_linked`) unless
+  `linkExistingAccounts: true` and the address is on the provider's domains; an SSO user of
+  another identity provider is never linked.
+- A new user is created unless `allowSignUp: false`, as an **SSO user** (`sso:acme`): its
+  identity provider is its only way in. Password, code, link, passkey and OAuth sign-ins never
+  find it, and only a session its IdP started (`amr` includes `sso/saml`) lives — see the SAML
+  trust model under [Threat notes](#threat-notes).
+- A user with a second factor gets the pending step-up, like any other sign-in.
+
+Single Logout is `/auth/v1`'s only; a `saml()` sign-in ends with `signOut()` like any session.
 
 ## OIDC discovery and key caching
 
@@ -321,8 +431,9 @@ denextAuth({
 });
 ```
 
-`"cookie"` (the default) keeps the whole payload in the signed cookie: stateless,
-multi-replica-safe, and only expiry ends it. `"database"` stores the payload server-side
+`"cookie"` (the default) keeps the whole payload in the signed cookie: stateless and
+multi-replica-safe; expiry ends it, and with an `adapter` so does the user's
+[`sessionsValidAfter`](#revocation). `"database"` stores the payload server-side
 and puts only a random id in the cookie, so sessions are revocable. It needs somewhere
 to put them — either `sessionStore` or an `adapter` that exposes `sessions` — and
 **throws at config time** when neither is present, because an app that asked for
@@ -395,10 +506,25 @@ await revokeAllSessions(session.user.id);
 await revokeSession(session.sessionId!);
 ```
 
-Both throw when sessions are stateless, rather than pretending to revoke something. Both
-fire the `sessionRevoked` event. Anything holding a resource is released on server drain
-through the plugin teardown seam — a closable session store **and** a closable `adapter`,
-so a `sqliteAuthAdapter` no longer keeps its file handle for the life of the process.
+`revokeAllSessions(userId)` ends stateless cookie sessions too, through the user record: it
+sets the user's `sessionsValidAfter` to now, and every read of a cookie session (stateless or
+store-backed) refuses one that signed in (`authTime`, else its issue time) before it. The same
+stamp is set by a password reset, the pre-account-hijacking eviction, account deletion, and
+`/auth/v1`'s ban, password change (by the user or an admin) and user deletion; a sign-in
+after it is unaffected, and the stamp never moves back. The comparison is to the second, so
+a session signed in during the very second of the stamp survives it. It needs an `adapter`
+(the time is stored on the user, in every adapter: memory, SQLite, Postgres);
+`revokeAllSessions` throws with neither an adapter nor a `sessionStore`, and `revokeSession`
+(one session by id) needs the store. Both fire the `sessionRevoked` event.
+
+A user who can no longer sign in needs no revocation to be signed out: with an `adapter`, every read
+of a cookie session — `auth()`, `requireAuth()`, `requireSession()`, the `/auth/*` endpoints —
+re-reads its user through the adapter (once per request, however many times `auth()` is called), and
+a deleted or banned user, or an SSO user whose session its identity provider did not start (a
+[`saml()`](#saml-providers) sign-in is the one that does), reads as signed out from their very next
+request, stateless cookies included. Anything holding a resource is released on server drain through
+the plugin teardown seam — a closable session store **and** a closable `adapter`, so a
+`sqliteAuthAdapter` no longer keeps its file handle for the life of the process.
 
 > [!NOTE]
 > A store is per node: `sqliteSessionStore` is a local file and `inMemorySessionStore` a
@@ -410,16 +536,16 @@ so a `sqliteAuthAdapter` no longer keeps its file handle for the life of the pro
 
 ### The session payload
 
-Sessions issued now carry `v: 2`, `issuedAt` (epoch seconds — re-stamped by every slide,
-so with sliding expiry on it is the last re-issue, not the sign-in), `authTime` (epoch
-seconds of the last sign-in or second-factor step-up, which a slide never moves) and `amr` (RFC 8176
-authentication-method references) alongside `user`, `provider` and `expiresAt`, plus
-`mfaPending` while a second factor is still owed. `amr` records how the user got in: `pwd`
-(a password), `ext` (an OAuth / OIDC provider), `email` (a magic link) or `otp` (an emailed
-code), and after a step-up `totp` or `bcp` (a backup code) as well. The cookie name, signing secret and MAC domain are unchanged,
-so a **cookie issued by an older denext keeps verifying**: a missing `issuedAt` is
-inferred from `expiresAt - maxAge`, a missing `amr` reads as `[]`, and a missing
-`mfaPending` means the session is complete. Nobody is logged out by upgrading.
+Sessions issued now carry `v: 2`, `issuedAt` (epoch seconds — re-stamped by every slide, so with
+sliding expiry on it is the last re-issue, not the sign-in), `authTime` (epoch seconds of the last
+sign-in or second-factor step-up, which a slide never moves) and `amr` (RFC 8176
+authentication-method references) alongside `user`, `provider` and `expiresAt`, plus `mfaPending`
+while a second factor is still owed. `amr` records how the user got in: `pwd` (a password), `ext`
+(an OAuth / OIDC provider), `email` (a magic link) or `otp` (an emailed code), and after a step-up
+`totp` or `bcp` (a backup code) as well. The cookie name, signing secret and MAC domain are
+unchanged, so a **cookie issued by an older denext keeps verifying**: a missing `issuedAt` is
+inferred from `expiresAt - maxAge`, a missing `amr` reads as `[]`, and a missing `mfaPending` means
+the session is complete. Nobody is logged out by upgrading.
 
 ## Database adapter
 
@@ -453,17 +579,20 @@ Every method may be sync or async — the exported alias for that is `MaybePromi
 miss is `undefined` (never `null`). The users and accounts groups are required; everything
 else is optional and gates the feature that needs it.
 
-| Group               | Methods                                                                                                                          | Gates                                               |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| Users (required)    | `createUser`, `getUser`, `getUserByEmail`, `getUserByAccount`, `updateUser`                                                      | Adapter-backed sign-in at all                       |
-| Accounts (required) | `linkAccount` — plus optional `unlinkAccount`, `listAccounts`                                                                    | Account linking                                     |
-| Verification tokens | `createVerificationToken`, `useVerificationToken`                                                                                | Email verification, reset, magic links, email codes |
-| Credentials         | `getCredential`, `setCredential`, optional `deleteCredential`                                                                    | `credentials()` without `authorize`, password reset |
-| API tokens          | `createApiToken`, `getApiTokenByHash`, `touchApiToken`, `revokeApiToken`, `listApiTokens`                                        | Bearer tokens and `/auth/tokens`                    |
-| MFA factors         | `createMfaFactor`, `listMfaFactors`, `updateMfaFactor`, `claimMfaFactorStep`, `deleteMfaFactor`                                  | TOTP, phone and WebAuthn second factors             |
-| Backup codes        | `getMfa`, `setMfa`, `consumeBackupCode`, optional `deleteMfa`, `replaceMfaSecret`                                                | Backup codes; moving a pre-4.0 TOTP secret          |
-| Passkeys            | `createPasskey`, `getPasskey`, `listPasskeys`, `updatePasskey`, `deletePasskey`, `createPasskeyChallenge`, `usePasskeyChallenge` | WebAuthn sign-in and step-up                        |
-| Sessions, lifecycle | `sessions?: SessionStore`, `close?()`                                                                                            | `session.strategy: "database"`, drain               |
+| Group               | Methods                                                                                                                                                      | Gates                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| Users (required)    | `createUser`, `getUser`, `getUserByEmail`, `getUserByAccount`, `updateUser`                                                                                  | Adapter-backed sign-in at all                            |
+| Accounts (required) | `linkAccount` — plus optional `unlinkAccount`, `listAccounts`                                                                                                | Account linking                                          |
+| Verification tokens | `createVerificationToken`, `useVerificationToken`                                                                                                            | Email verification, reset, magic links, email codes      |
+| Credentials         | `getCredential`, `setCredential`, optional `deleteCredential`                                                                                                | `credentials()` without `authorize`, password reset      |
+| API tokens          | `createApiToken`, `getApiTokenByHash`, `touchApiToken`, `revokeApiToken`, `listApiTokens`                                                                    | Bearer tokens and `/auth/tokens`                         |
+| MFA factors         | `createMfaFactor`, `listMfaFactors`, `updateMfaFactor`, `claimMfaFactorStep`, `deleteMfaFactor`                                                              | TOTP, phone and WebAuthn second factors                  |
+| Backup codes        | `getMfa`, `setMfa`, `consumeBackupCode`, optional `deleteMfa`, `replaceMfaSecret`                                                                            | Backup codes; moving a pre-4.0 TOTP secret               |
+| Passkeys            | `createPasskey`, `getPasskey`, `listPasskeys`, `updatePasskey`, `deletePasskey`, `createPasskeyChallenge`, `usePasskeyChallenge`                             | WebAuthn sign-in and step-up                             |
+| Native sessions     | `createNativeGrant`, `useNativeGrant`, `createNativeSession`, `getNativeSession`, `rotateNativeSession`, `revokeNativeSession`, `revokeNativeSessionsByUser` | [Native session mode](#native-apps-and-account-deletion) |
+| SSO                 | `createSsoProvider`, `getSsoProvider`, `listSsoProviders`, `createSsoSession`, `claimSamlMessageId`, …                                                       | [SAML](#saml-providers) (`saml()` and `/auth/v1`)        |
+| Users, extra        | optional `getUserByPhone`, `listUsers`, `deleteUser`                                                                                                         | Phone sign-in, `denext auth reseal`, account deletion    |
+| Sessions, lifecycle | `sessions?: SessionStore`, `close?()`                                                                                                                        | `session.strategy: "database"`, drain                    |
 
 Three methods are **consume-once** and must be atomic against concurrent callers — a
 compare-and-delete or conditional update inside one transaction, not a read followed by a
@@ -488,14 +617,16 @@ runs against every shipped adapter.
 
 ### The SQLite schema
 
-Six `auth_`-prefixed tables: `auth_users` (with a unique index on the lower-cased email,
-`WHERE NOT NULL`, so there is one account per address and any number of address-less
-users), `auth_accounts` (primary key `(provider, provider_account_id)`),
-`auth_verification_tokens` (primary key `(identifier, purpose)`, so re-sending a link
-invalidates the previous one — a mailbox can never hold two working reset links),
-`auth_credentials`, `auth_api_tokens` (unique on the token hash), `auth_mfa`, the native
-session tables, `auth_passkeys` (primary key the credential ID) and
-`auth_passkey_challenges` (only the challenge's SHA-256).
+`auth_`-prefixed tables: `auth_users` (with a unique index on the lower-cased email, `WHERE NOT
+NULL`, so there is one account per address and any number of address-less users), `auth_accounts`
+(primary key `(provider, provider_account_id)`), `auth_verification_tokens` (primary key
+`(identifier, purpose)`, so re-sending a link invalidates the previous one — a mailbox can never
+hold two working reset links), `auth_credentials`, `auth_api_tokens` (unique on the token hash),
+`auth_mfa` (backup codes) and `auth_mfa_factors`, the native session tables (`auth_native_grants`,
+`auth_native_sessions`), `auth_passkeys` (primary key the credential ID), `auth_passkey_challenges`
+(only the challenge's SHA-256), and the SSO tables (`auth_sso_providers`, `auth_sso_domains`,
+`auth_sso_sessions`, `auth_saml_message_ids`) — plus the `/auth/v1` OAuth-server, stored-provider
+and Web3 nonce tables.
 
 Schema policy: `CREATE TABLE IF NOT EXISTS` on every open, then every declared column a
 table is missing is added with `ALTER TABLE … ADD COLUMN`, decided by
@@ -536,13 +667,13 @@ denextAuth({
 });
 ```
 
-The same contract as the SQLite adapter, method for method (the shared contract suite runs
-against it on a real server), on a database every replica shares. `url` opens a client on
-`Deno.SQL`, the Postgres client built into [denext's Deno toolchain](/docs/toolchain); on stock Deno pass
+The same contract as the SQLite adapter, method for method (the shared contract suite runs against
+it on a real server), on a database every replica shares. `url` opens a client on `Deno.SQL`, the
+Postgres client built into [denext's Deno toolchain](/docs/toolchain); on stock Deno pass
 `sql: fromPostgresJs(postgres(url))` with the npm `postgres` package instead (see
 [Databases › Postgres](/docs/database#postgres)) — a `url` there throws an error with
-`code: "unsupported"`. A client you pass is never closed by the adapter; one it opened is
-closed on drain.
+`code: "unsupported"`. A client you pass is never closed by the adapter; one it opened is closed on
+drain.
 
 The tables are the SQLite adapter's `auth_*` set plus `auth_sessions` (the adapter's
 `sessions` store, also `postgresSessionStore({ sql })`) and `auth_rate_limits`
@@ -646,8 +777,8 @@ construction**, instead of every login quietly answering `401`.
 
 Both flows mail a single-use link, so they need two things: an adapter with the
 verification-token group (`createVerificationToken` + `useVerificationToken`; a reset also
-needs `setCredential`), and `sendVerificationRequest` — **denext ships no mailer**. Every
-emailed token, from these flows and from the
+needs `setCredential`), and `sendVerificationRequest`: [`smtpMailer()`](#sending-mail-over-smtp)
+or a function of your own. Every emailed token, from these flows and from the
 [passwordless providers](#passwordless-magic-links-and-one-time-codes), goes through that
 one function.
 
@@ -669,6 +800,51 @@ mailer runs **after the response** (`after()`), so its latency can't reveal that
 address has an account; a throw is logged — without the token or the link — and never
 surfaces, and `verificationRequested` fires only for a delivery that succeeded.
 
+### Sending mail over SMTP
+
+`smtpMailer()` from `denext/server` is a `sendVerificationRequest` that talks SMTP itself —
+no npm package, `Deno.connect` / `Deno.connectTls` / `Deno.startTls` underneath:
+
+```ts
+import { denextAuth, smtpMailer } from "denext/server";
+
+denextAuth({
+  // …
+  sendVerificationRequest: smtpMailer({
+    host: "smtp.example.com", // port 587 + STARTTLS by default
+    // port: 465,             // implicit TLS (or `secure: true`)
+    user: Deno.env.get("SMTP_USER")!,
+    pass: Deno.env.get("SMTP_PASS")!,
+    from: "Example <noreply@example.com>",
+  }),
+});
+```
+
+| Option       | Default                         | What it does                                                                                 |
+| ------------ | ------------------------------- | -------------------------------------------------------------------------------------------- |
+| `host`       | required                        | The server; its certificate must name it                                                     |
+| `port`       | `465` with `secure`, else `587` | The port                                                                                     |
+| `secure`     | `true` on port 465              | Implicit TLS from the first byte; otherwise STARTTLS, which must be offered and must succeed |
+| `user`       | none                            | AUTH PLAIN (preferred) or LOGIN, whichever the server offers; give `pass` with it            |
+| `from`       | required                        | `noreply@example.com` or `Name <noreply@example.com>`                                        |
+| `insecure`   | `false`                         | Plaintext without STARTTLS, allowed only to a loopback host (a local mail catcher)           |
+| `timeoutMs`  | `10000`                         | Each step's limit: the connect, the TLS handshake, every reply and every write               |
+| `clientName` | `"localhost"`                   | The name sent with `EHLO` (letters, digits, `.` and `-` only)                                |
+| `caCerts`    | system roots                    | Extra trusted CAs (PEM), for a server with a private CA                                      |
+| `render`     | an English message per purpose  | `(params) => ({ subject, text, html? })` — shape the mail for each `purpose`                 |
+
+TLS is not optional: a server that offers no STARTTLS, a STARTTLS that fails, a certificate
+that doesn't verify, or bytes the server sent after its `220` to `STARTTLS` (a reply injected
+into the plaintext phase) end the send before any credential or address goes out. Every
+message opens its own connection and closes it, so no session — and no authenticated state —
+is shared between two messages, or between tenants. Every header value is refused if it
+holds a CR or LF, the recipient must be one plain `local@domain.tld` address (a list, an
+angle bracket or an SMTP argument smuggled into it is refused), a non-ASCII subject or sender
+name is RFC 2047-encoded, and the body is quoted-printable with dot-stuffing. `mailer.send({ to,
+subject, text, html? })` sends any other message the same way. A refusal is an `SmtpError`
+(with the server's reply `code`) or an `SmtpMessageError`; neither carries the password or the
+message.
+
 The `email` block tunes every emailed token. Lifetimes are in seconds (a non-finite or
 non-positive one falls back to its default), and a link path must be a same-origin path —
 one leading `/`, no whitespace or backslash — or `denextAuth()` throws:
@@ -683,16 +859,16 @@ one leading `/`, no whitespace or backslash — or `denextAuth()` throws:
 | `verifyPath`   | `{basePath}/verify`     | The page a verification link opens — by default the built-in endpoint |
 | `resetPath`    | `{basePath}/reset`      | The page a reset link opens — one your app renders                    |
 
-**Verifying an address.** `requestEmailVerification(authConfig, userOrEmail)` mails a link
-to `verifyPath?token=…&email=…`; it sends nothing for an address with no account, one
-already verified, or a value that isn't exactly one address. Opening it hits
-`GET {basePath}/verify`, which sets the user's `emailVerified` (epoch seconds, through
-`updateUser`), fires `emailVerified`, and redirects to `pages.verifyRequest` with
-`?verified=1` — or, for a wrong, spent or expired token, to `pages.error` with
-`?error=invalid_token`. `POST {basePath}/verify` takes the same two fields from a form or
-a JSON body, and `verifyEmail(authConfig, { email, token })` is the function underneath (it answers `{ ok: true, user }` or `{ ok: false, error: "invalid_token" }`).
-Verifying signs nobody in and leaves the account's password alone — someone else may have
-registered the address, so word the mail so that ignoring it is safe.
+**Verifying an address.** `requestEmailVerification(authConfig, userOrEmail)` mails a link to
+`verifyPath?token=…&email=…`; it sends nothing for an address with no account, one already verified,
+or a value that isn't exactly one address. Opening it hits `GET {basePath}/verify`, which sets the
+user's `emailVerified` (epoch seconds, through `updateUser`), fires `emailVerified`, and redirects
+to `pages.verifyRequest` with `?verified=1` — or, for a wrong, spent or expired token, to
+`pages.error` with `?error=invalid_token`. `POST {basePath}/verify` takes the same two fields from a
+form or a JSON body, and `verifyEmail(authConfig, { email, token })` is the function underneath (it
+answers `{ ok: true, user }` or `{ ok: false, error: "invalid_token" }`). Verifying signs nobody in
+and leaves the account's password alone — someone else may have registered the address, so word the
+mail so that ignoring it is safe.
 
 **Resetting a password.** A form posting `email` to `POST {basePath}/reset` — or
 `requestPasswordReset(authConfig, email)` in a Server Action — mails a link to
@@ -768,17 +944,17 @@ denextAuth({
 types. Both are `type: "email"` providers on `{basePath}/callback/:provider` — ids
 `"email"` and `"email-otp"` by default, with a display `name` (`"Email"`, `"Email code"`)
 that `GET {basePath}/providers` echoes — and both take `{ id?, name?, allowSignUp? }`
-(`magicLink` also `confirm`, below).
+(`magicLink` also `confirm`, on by default — below).
 Configuring one without `sendVerificationRequest`, or with an adapter missing
 `createVerificationToken`, `useVerificationToken`, `getUserByEmail`, `createUser` or
 `updateUser`, makes `denextAuth()` throw.
 
-| Request                                        | What it does                                                                                                    |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `POST /callback/email` — `{ email }`           | Mails a link to `/callback/email?token=…&email=…` (10 minutes by default)                                       |
-| `GET /callback/email?token=…&email=…`          | The click: consumes the token, signs the user in, redirects — or, with `confirm`, renders the confirmation page |
-| `POST /callback/email-otp` — `{ email }`       | Mails a code (6 digits, 5 minutes by default) as `token`; `url` never carries it                                |
-| `POST /callback/email-otp` — `{ email, code }` | Redeems the code (spaces and hyphens ignored) and signs the user in                                             |
+| Request                                        | What it does                                                                                                   |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `POST /callback/email` — `{ email }`           | Mails a link to `/callback/email?token=…&email=…` (10 minutes by default)                                      |
+| `GET /callback/email?token=…&email=…`          | The click: renders the confirmation page — or, with `confirm: false`, consumes the token and signs the user in |
+| `POST /callback/email-otp` — `{ email }`       | Mails a code (6 digits, 5 minutes by default) as `token`; `url` never carries it                               |
+| `POST /callback/email-otp` — `{ email, code }` | Redeems the code (spaces and hyphens ignored) and signs the user in                                            |
 
 A body carrying a `token` (a magic-link provider — how a JS client redeems) or a `code` (an
 email-code provider) redeems; anything else sends. A `callbackUrl` sent along rides in the
@@ -820,31 +996,31 @@ address on the user record is the identity. `callbacks.signIn` can still veto th
 [second factor](#two-factor-authentication-totp). The session's `amr` is `["email"]` for a
 link and `["otp"]` for a code.
 
-**Pre-account hijacking.** An existing account whose `emailVerified` is unset was set up by
-someone who never proved the mailbox — possibly an attacker who registered the victim's
-address with a password and is waiting for the victim to sign in by email. So before a
-first email sign-in marks that address verified, everything set up without the proof is
-retired: the password (deleted, or — with an adapter that has no `deleteCredential` — replaced
-with the hash of a random secret), any TOTP factor and its backup codes, every passkey, every
-bearer API token and every server-side session (`sessionRevoked`); then `emailVerified` fires.
-(A password reset into such an account does the same.) An adapter that holds passkeys it can't
-delete — or `passkeys` configured over an adapter without `listPasskeys` — fails the step
-closed. Passkey registration is refused (`403 email_unverified`) while an account's address is
-unverified, so a passkey can't be planted ahead of the owner in the first place. If any step fails, the
-address stays unverified and the redeem gets the generic failure. An account that was
-already verified keeps all of it. A stateless cookie session can't be revoked and lives
-until it expires — another reason to run a `sessionStore` in production.
+**Pre-account hijacking.** An existing account whose `emailVerified` is unset was set up by someone
+who never proved the mailbox — possibly an attacker who registered the victim's address with a
+password and is waiting for the victim to sign in by email. So before a first email sign-in marks
+that address verified, everything set up without the proof is retired: the password (deleted, or —
+with an adapter that has no `deleteCredential` — replaced with the hash of a random secret), any
+TOTP factor and its backup codes, every passkey, every bearer API token and every server-side
+session (`sessionRevoked`); then `emailVerified` fires. (A password reset into such an account does
+the same.) An adapter that holds passkeys it can't delete — or `passkeys` configured over an adapter
+without `listPasskeys` — fails the step closed. Passkey registration is refused (`403
+email_unverified`) while an account's address is unverified, so a passkey can't be planted ahead of
+the owner in the first place. If any step fails, the address stays unverified and the redeem gets
+the generic failure. An account that was already verified keeps all of it. Stateless cookie sessions
+end too, through the user's `sessionsValidAfter` (see [Revocation](#revocation)).
 
-**The confirmation page.** By default opening a magic link spends it (Auth.js does the same),
-so a mail gateway that pre-fetches links to scan them can burn one before the user clicks,
-and a link someone else requested signs the clicker straight into that account.
-`magicLink({ confirm: true })` closes both: the link's GET renders a small page — "Continue as
-**ada@example.com**?" — whose button POSTs the token back to the same URL, and only that POST
-spends it. A scanner's GET (any number of them) changes nothing, and nobody is signed in
-without pressing a button that names the account.
+**The confirmation page.** Opening a magic link does not spend it: the link's GET renders a
+small page — "Continue as **ada@example.com**?" — whose button POSTs the token back to the
+same URL, and only that POST spends it. A mail gateway that pre-fetches links to scan them
+(any number of times) changes nothing, and a link someone else requested signs nobody in
+without a press of a button that names the account. `confirm: false` restores Auth.js's
+behaviour, where the GET spends the link and signs in; a scanner can then burn it first, and
+an attacker's link signs the clicker into the attacker's account.
 
 ```ts
-providers: [magicLink({ confirm: true })],
+providers: [magicLink()], // confirm: true is the default
+providers: [magicLink({ confirm: false })], // the GET signs in
 ```
 
 The page is denext's own: no script, `default-src 'none'` with its one style allowed by hash,
@@ -973,16 +1149,15 @@ answer or no answer within 10 seconds counts as unsolved — the endpoints fail 
   into); `site_url` the `canonicalOrigin`; `user` the account in GoTrue's JSON shape (or
   `{ email }` when the address has none). On denext's endpoints `token_hash` and `redirect_to`
   are `""`: denext's links verify through `action_link`, not `/auth/v1/verify`.
-- **`customAccessToken`** shapes the claims of every session: an `/auth/v1` access token when it
-  is minted, and the `request.jwt.claims` a cookie or native session's queries run with through
+- **`customAccessToken`** shapes the claims of every session: an `/auth/v1` access token when it is
+  minted, and the `request.jwt.claims` a cookie or native session's queries run with through
   `@denext/backend` (`db()`, auto-REST, storage). It receives `{ user_id, claims,
   authentication_method }` and returns `{ claims }`; `sub`, `role`, `aud`, `session_id`, `iat`,
-  `exp`, `aal`, `is_anonymous` and `email` are restored after it runs. For a denext session it
-  runs once per session and its result is reused for 60 seconds (up to 1000 sessions), not on
-  every query (the hook on `denextAuth()` is used, else the one under
-  `backend({ supabase: { auth: { hooks } } })`) — so a claim it reads from the database can be up to a minute old. A hook that
-  throws or returns no claims object **fails the request**; a query never runs with half-shaped
-  claims.
+  `exp`, `aal`, `is_anonymous` and `email` are restored after it runs. For a denext session it runs
+  once per session and its result is reused for 60 seconds (up to 1000 sessions), not on every query
+  (the hook on `denextAuth()` is used, else the one under `backend({ supabase: { auth: { hooks } }
+  })`) — so a claim it reads from the database can be up to a minute old. A hook that throws or
+  returns no claims object **fails the request**; a query never runs with half-shaped claims.
 
 ## Two-factor authentication (TOTP)
 
@@ -1015,19 +1190,18 @@ denextAuth({
 answer JSON only: a secret never rides a redirect) or the same functions in a Server
 Action:
 
-1. `POST {basePath}/mfa/enroll` / `enrollTotp(authConfig, session)` mints a 160-bit secret,
-   stores it **unconfirmed**, and returns `{ ok: true, secret, uri }` — the base32 secret for manual
-   entry and the `otpauth://totp/…` URI (SHA-1, 6 digits, 30 seconds; the account label is
-   the user's email, else their id) to render as a QR code — `totpQrSvg(uri)` does that
-   with no library (below). Enrolling again replaces an
-   unconfirmed enrollment. With a confirmed TOTP factor on file, enrolling another (a second
-   authenticator) needs a session whose own second factor is fresh (`mfa.freshness`), else it
-   is a `409` (`error: "already_enrolled"` from the function); a pending session never enrolls
-   next to a verified factor of any kind. From a complete session the route also needs a recent sign-in (`authTime`
-   within `mfa.freshness`, five minutes at least) and answers
-   `403 { error: "reauth_required" }` otherwise, so a stolen session can't enroll a factor of
-   its own. The function applies the same rule and answers `{ ok: false, error:
-   "reauth_required" }`, so a Server Action gets it for free.
+1. `POST {basePath}/mfa/enroll` / `enrollTotp(authConfig, session)` mints a 160-bit secret, stores
+   it **unconfirmed**, and returns `{ ok: true, secret, uri }` — the base32 secret for manual entry
+   and the `otpauth://totp/…` URI (SHA-1, 6 digits, 30 seconds; the account label is the user's
+   email, else their id) to render as a QR code — `totpQrSvg(uri)` does that with no library
+   (below). Enrolling again replaces an unconfirmed enrollment. With a confirmed TOTP factor on
+   file, enrolling another (a second authenticator) needs a session whose own second factor is fresh
+   (`mfa.freshness`), else it is a `409` (`error: "already_enrolled"` from the function); a pending
+   session never enrolls next to a verified factor of any kind. From a complete session the route
+   also needs a recent sign-in (`authTime` within `mfa.freshness`, five minutes at least) and
+   answers `403 { error: "reauth_required" }` otherwise, so a stolen session can't enroll a factor
+   of its own. The function applies the same rule and answers `{ ok: false, error: "reauth_required"
+   }`, so a Server Action gets it for free.
 2. `POST {basePath}/mfa/confirm` with `{ code }` / `confirmTotp(authConfig, { user, code })`
    checks a first code from the app, marks the factor confirmed and returns
    `{ ok: true, backupCodes }` — `mfa.backupCodes` single-use codes formatted `xxxxx-xxxxx`,
@@ -1124,27 +1298,26 @@ export default async function Mfa({ searchParams }: PageProps) {
 Keep that page out of your `requireAuth` matcher: a pending session never passes
 `requireAuth`.
 
-`POST {basePath}/mfa` takes a TOTP code (from any of the user's TOTP factors), a backup code
-(the hyphen is optional), or — after `POST {basePath}/mfa/challenge` with `{ factorId }`
-texted a phone factor a code through `sendSms` — `{ code, challengeId, factorId }`. A challenge
-is single-use, right or wrong, and lives five minutes; sends draw on the verification-send
-budget, not the code budget. A right one mints a **fresh**, complete session — the pending one is discarded (its store record
-deleted), never upgraded in place, so there is nothing to fixate — with `amr` extended by
+`POST {basePath}/mfa` takes a TOTP code (from any of the user's TOTP factors), a backup code (the
+hyphen is optional), or — after `POST {basePath}/mfa/challenge` with `{ factorId }` texted a phone
+factor a code through `sendSms` — `{ code, challengeId, factorId }`. A challenge is single-use,
+right or wrong, and lives five minutes; sends draw on the verification-send budget, not the code
+budget. A right one mints a **fresh**, complete session — the pending one is discarded (its store
+record deleted), never upgraded in place, so there is nothing to fixate — with `amr` extended by
 `totp`, `sms` or `bcp`, fires `signIn`, and answers `{ ok: true, user }` or a `303` to the
 `callbackUrl`. A wrong one is a `401`, or for a form a `303` back to `pages.mfa` with
-`?error=CredentialsSignin`, and fires `signInFailed` with `"invalid_mfa_code"`. The
-endpoint serves only a pending session: none is a `401`, a complete one a `403`. Under
-`mfa.required: "always"` a user with no factor enrolls from the pending session —
-`/mfa/enroll`, then `/mfa/confirm`, whose answer also carries the new session's `user`,
-because confirming completes the step-up.
+`?error=CredentialsSignin`, and fires `signInFailed` with `"invalid_mfa_code"`. The endpoint serves
+only a pending session: none is a `401`, a complete one a `403`. Under `mfa.required: "always"` a
+user with no factor enrolls from the pending session — `/mfa/enroll`, then `/mfa/confirm`, whose
+answer also carries the new session's `user`, because confirming completes the step-up.
 
-**Every code works once.** A TOTP code is accepted within ±`mfa.window` steps, and its step
-is then claimed on its factor through the adapter's atomic `claimMfaFactorStep`, so it can't be presented
-twice — not even to confirm an enrollment and then step up with it. A backup code is spent
-through the atomic `consumeBackupCode`. Every code check on `/mfa`, `/mfa/confirm` and
-`/mfa/disable` spends one unit of the per-user budget — 5 per 5 minutes (`rateLimit.mfa`),
-plus an IP-wide bucket at ten times that — and **every** attempt counts, not only
-failures, so a correct guess can't reset the counter.
+**Every code works once.** A TOTP code is accepted within ±`mfa.window` steps, and its step is then
+claimed on its factor through the adapter's atomic `claimMfaFactorStep`, so it can't be presented
+twice — not even to confirm an enrollment and then step up with it. A backup code is spent through
+the atomic `consumeBackupCode`. Every code check on `/mfa`, `/mfa/confirm` and `/mfa/disable` spends
+one unit of the per-user budget — 5 per 5 minutes (`rateLimit.mfa`), plus an IP-wide bucket at ten
+times that — and **every** attempt counts, not only failures, so a correct guess can't reset the
+counter.
 
 **Disabling.** `POST {basePath}/mfa/disable` needs a complete session **and** a fresh
 second factor: a `code` that verifies now, or — with no code — a session whose own step-up
@@ -1156,15 +1329,14 @@ codes go too (`deleteMfa`, else an empty record in their place) unless a verifie
 WebAuthn factor remains, which keeps the user enrolled. `disableTotp(authConfig, userId)` does
 the same with no freshness check — gate it yourself.
 
-For a settings page, `mfaStatus(authConfig, userId)` answers
-`{ enrolled, pendingConfirmation, backupCodesRemaining }` (`enrolled` means a confirmed factor,
-as in `mfa.required: "enrolled"`), and `verifySecondFactor(authConfig, { userId, code })`
-checks a code (claiming or spending it) — with `challengeId` and `factorId` an SMS challenge's
-code — and answers `{ ok: true, method: "totp" | "sms" | "bcp", factorId? }` or
-`{ ok: false, error: "invalid_code" | "not_enrolled" }`. The RFC 6238 primitives underneath are exported too:
-`generateTotpSecret()`, `totpAuthUri({ secret, account, issuer })`, `totpQrSvg(uri)`,
-`verifyTotp(secret, code, { window })` — which returns the matched `step` and does **not**
-stop a replay, so claim it — plus `generateBackupCodes(hasher, count)` and
+For a settings page, `mfaStatus(authConfig, userId)` answers `{ enrolled, pendingConfirmation,
+backupCodesRemaining }` (`enrolled` means a confirmed factor, as in `mfa.required: "enrolled"`), and
+`verifySecondFactor(authConfig, { userId, code })` checks a code (claiming or spending it) — with
+`challengeId` and `factorId` an SMS challenge's code — and answers `{ ok: true, method: "totp" |
+"sms" | "bcp", factorId? }` or `{ ok: false, error: "invalid_code" | "not_enrolled" }`. The RFC 6238
+primitives underneath are exported too: `generateTotpSecret()`, `totpAuthUri({ secret, account,
+issuer })`, `totpQrSvg(uri)`, `verifyTotp(secret, code, { window })` — which returns the matched
+`step` and does **not** stop a replay, so claim it — plus `generateBackupCodes(hasher, count)` and
 `backupCodeMatcher(hasher, code)`.
 
 ### Secrets at rest
@@ -1181,11 +1353,10 @@ opens it only to check a code:
 - The stored value carries its version, nonce and ciphertext together:
   `totp.v1.<nonce>.<ciphertext>`. Store it as an opaque string.
 - **Rotation.** With `secret: [current, previous]`, a factor sealed under `previous` still
-  opens, and is re-sealed under `current` **only when a TOTP code from that factor passes** —
-  through the adapter's `updateMfaFactor`. Keep a retired secret in the list
-  until every factor sealed under it has been re-sealed that way: a user who only ever signs in
-  with a passkey under user verification (or a backup code) is never checked, so never
-  re-sealed. **Replacing** the secret instead of listing both bricks every factor
+  opens, and is re-sealed under `current` when a TOTP code from that factor passes — through
+  the adapter's `updateMfaFactor`. `denext auth reseal` re-seals the rest without waiting for a
+  code (see [Re-sealing after a rotation](#re-sealing-after-a-rotation)); remove `previous` once
+  it reports zero remaining. **Replacing** the secret instead of listing both bricks every factor
   sealed under the old one: it **fails closed** — no TOTP code verifies, the user still owes a
   second factor, a backup code still works, and the logger warns with the user id (never the
   secret).
@@ -1195,18 +1366,64 @@ opens it only to check a code:
   userId)`. `enrollTotp` keeps answering `already_enrolled` over such a factor on purpose: a
   pending session — a password alone — may enroll, and must never be able to replace a second
   factor.
-- **Existing rows.** Before 4.0 the one TOTP secret lived in the user's MFA record. The first
-  time a user's factors are read it moves, as stored, into a TOTP factor (verified when the
-  record was confirmed; its spent step kept), and the record keeps only the backup codes — the
-  move clears the record's secret with `replaceMfaSecret`'s compare-and-swap (or `setMfa`). It
-  needs no key: a secret no configured `secret` opens moves too, and the user stays enrolled.
-  Sealed for the user, or plaintext from before sealing, it keeps verifying and is re-sealed
-  for the factor after the first code it accepts. A tampered row, an unknown version or anything that is neither
-  sealed nor base32 is refused, never used as a plaintext secret.
+- **Existing rows.** Before 4.0 the one TOTP secret lived in the user's MFA record. The first time a
+  user's factors are read it moves, as stored, into a TOTP factor (verified when the record was
+  confirmed; its spent step kept), and the record keeps only the backup codes — the move clears the
+  record's secret with `replaceMfaSecret`'s compare-and-swap (or `setMfa`). It needs no key: a
+  secret no configured `secret` opens moves too, and the user stays enrolled. Sealed for the user,
+  or plaintext from before sealing, it keeps verifying and is re-sealed for the factor after the
+  first code it accepts. A tampered row, an unknown version or anything that is neither sealed nor
+  base32 is refused, never used as a plaintext secret.
 - **A writable database is out of scope.** A plain base32 value always opens as a legacy row
   (no per-row marker says it was ever sealed), so whoever can write the MFA table can swap a
   sealed secret for a plaintext one they know. That access could equally rewrite a password
   hash or delete the factor; sealing protects a copied database, not a writable one.
+
+### Re-sealing after a rotation
+
+`denext auth reseal` (contributed by the `denextAuth()` plugin, so it runs against your config's
+adapter and `secret`) opens every TOTP factor with the configured secrets and re-seals each one
+that a retired secret — or a pre-sealing plaintext row, or a pre-4.0 record — still holds under
+the current one, writing it back through `updateMfaFactor`:
+
+```sh
+denext auth reseal --dry-run   # counts only, writes nothing
+denext auth reseal             # re-seal, then verify
+denext auth reseal --json      # the report as JSON (for a script or a scheduler)
+denext auth reseal --page-size 500   # users read per page (default 200, at most 1000)
+```
+
+```
+auth reseal:
+  users scanned:      1204
+  TOTP factors:       311
+  already current:    250
+  re-sealed:          61
+  remaining:          0
+No factor needs a retired secret: secrets after the first can be removed.
+```
+
+- **Idempotent and resumable.** Each factor is written on its own; a factor already sealed under
+  the current secret is left alone, so an interrupted run is finished by running it again.
+- **Verified.** A real run ends with a read-only pass over every user, and that pass's count is
+  `remaining`: when it is `0`, no factor needs a retired secret any more. A run that leaves any
+  behind exits `1`.
+- **Both sign-in paths.** `/auth/v1`'s TOTP factors (`supabase.auth.mfa.enroll`) live in the
+  same store, sealed the same way, so they are covered too.
+- **Counts only.** Nothing prints, logs or returns a secret. A factor no configured secret opens
+  is reported as `unopenable` and never written — removing a retired secret can't change it, and
+  `disableTotp(authConfig, userId)` is its user's recovery.
+- **As a job.** The same function is `resealTotpFactors(config, { dryRun?, pageSize? })` from
+  `denext/server`; it needs an adapter with `listUsers` (every first-party adapter has it):
+
+```ts
+// jobs/reseal.ts — `denext job reseal`
+import { activeAuthConfig, defineJob, resealTotpFactors } from "denext/server";
+export default defineJob({
+  description: "re-seal TOTP factors under the current auth secret",
+  handler: async () => console.log(await resealTotpFactors(activeAuthConfig())),
+});
+```
 
 ### One factor store for both sign-in paths
 
@@ -1259,22 +1476,22 @@ denextAuth({
 });
 ```
 
-| Key       | Default                  | What it sets                                                                                                  |
-| --------- | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `rpId`    | `canonicalOrigin`'s host | The RP ID credentials are scoped to — the host, or a registrable suffix of it to span subdomains              |
-| `rpName`  | the RP ID                | The name an authenticator may show                                                                            |
-| `origins` | `[canonicalOrigin]`      | Origins a ceremony may come from, matched exactly; each must be `https:` (or `http://localhost`) on the RP ID |
+| Key                | Default                  | What it sets                                                                                                  |
+| ------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `rpId`             | `canonicalOrigin`'s host | The RP ID credentials are scoped to — the host, or a registrable suffix of it to span subdomains              |
+| `rpName`           | the RP ID                | The name an authenticator may show                                                                            |
+| `origins`          | `[canonicalOrigin]`      | Origins a ceremony may come from, matched exactly; each must be `https:` (or `http://localhost`) on the RP ID |
+| `userVerification` | `"required"`             | `"preferred"` accepts a presence-only assertion — one factor instead of two                                   |
+| `timeout`          | `300`                    | Seconds a ceremony's challenge lives (`30–900`)                                                               |
 
 `origins` lists what `clientDataJSON.origin` may say; it does not open the endpoints to other
-origins. Every `/passkey/*` row is same-origin gated (`403` otherwise) and binds its ceremony
-with a cookie, so each listed origin must serve the auth routes itself — an app answering on
+origins. Every `/passkey/*` row is same-origin gated (`403` otherwise), so each listed origin
+must serve the auth routes itself — an app answering on
 several hosts under one RP ID (no `canonicalOrigin`, so the request's `Host` decides; with one,
 only that origin is same-origin). A page on another origin can't run a ceremony against these
 endpoints, and neither can a native Android app (`android:apk-key-hash:…` is accepted in the
-signed client data, but the routes need a same-origin browser request carrying the ceremony
-cookie) — such a client needs endpoints of your own.
-| `userVerification` | `"required"` | `"preferred"` accepts a presence-only assertion — one factor instead of two |
-| `timeout` | `300` | Seconds a ceremony's challenge lives (`30–900`) |
+signed client data, but the routes need a same-origin browser request) — such a client needs
+endpoints of your own.
 
 It needs an adapter with the passkey group (both shipped adapters have it), and a relying
 party that doesn't come from the request: with neither `rpId` nor `canonicalOrigin`,
@@ -1305,20 +1522,22 @@ and `crossOrigin` (a call from a cross-origin iframe is refused); the authentica
 RP ID hash, User Present, User Verified under `"required"`, and the backup flags; the
 credential's algorithm — ES256, RS256 or Ed25519, nothing else; the attestation statement,
 `none` or `packed` (self, or an `x5c` leaf whose signature and certificate profile are
-checked — denext does not chain it to an authenticator vendor's root); and each assertion's
+checked — chained to the authenticator vendor's root only with
+[`attestation.mds`](#attestation-the-fido-metadata-service)); and each assertion's
 signature, its backup-eligibility flag against the stored record, and the signature counter.
 A counter that doesn't increase means a cloned authenticator: the sign-in is refused and
 `signInFailed` fires. A counter that stays at `0` — a synced passkey keeps none — is fine.
 
 Every challenge is 32 random bytes, stored only as its SHA-256 through the adapter's atomic
-`usePasskeyChallenge`, and bound to the browser that asked for it by a short-lived signed
-cookie: a replayed response, or one relayed to another browser, is refused. That cookie is one
-per browser, so starting a second ceremony (another tab, a retry) supersedes the first: finish
-one before starting the next. Registration needs a complete session that signed in within
+`usePasskeyChallenge`, and bound to a random `ceremonyId` that the options answer hands the tab that
+asked (only its SHA-256 is stored) and the verifying POST must carry back (the client helpers do): a
+replayed response, a swapped or missing id, or a response relayed to another browser without the id
+is refused, and the challenge is spent either way. Each ceremony is its own, so several tabs of one
+browser can run one at the same time. Registration needs a complete session that signed in within
 `mfa.freshness` (five minutes at least), like `/mfa/enroll`, so a stolen session can't plant a
 passkey of its own — and an account with an email address needs it verified (`403
-email_unverified`), so nobody can leave a passkey on an account whose mailbox they never
-proved. A password reset removes every passkey of the account.
+email_unverified`), so nobody can leave a passkey on an account whose mailbox they never proved. A
+password reset removes every passkey of the account.
 
 **Factors.** Under `userVerification: "required"` a passkey proves possession and the user's
 PIN or biometric, so it **completes a sign-in on its own** — a user with TOTP isn't asked for a
@@ -1334,6 +1553,71 @@ code. It spends the same per-user MFA budget.
 For a settings page, `listPasskeys(authConfig, userId)` answers `{ id, name, createdAt,
 lastUsedAt, backedUp, transports }[]` and `deletePasskey(authConfig, { userId, id })` removes
 one — gate that yourself, as `DELETE {basePath}/passkeys/:id` does with the recent-sign-in rule.
+
+### Attestation: the FIDO Metadata Service
+
+By default any `none` or `packed` attestation registers: a certificate in it is checked for
+its profile but not chained to anything, so it proves no authenticator model. An app that must
+know which authenticators its users hold — security keys of certified models, nothing reported
+compromised — turns on the FIDO Metadata Service (MDS3) checks:
+
+```ts
+denextAuth({
+  // …
+  passkeys: {
+    attestation: {
+      mds: {
+        allowUnattested: true, // let synced passkeys (which attest `none`) register too
+      },
+    },
+  },
+});
+```
+
+With `mds` set, registration options ask for `attestation: "direct"`, and each new passkey is
+held to the metadata after the WebAuthn checks:
+
+- **A certificate attestation** (`packed` with `x5c`) must come from an AAGUID the metadata
+  lists, and its `x5c` chain must validate to that entry's `attestationRootCertificates`
+  (signatures, validity, `cA`, `pathLenConstraint`, `keyUsage`, no unknown critical extension).
+  An AAGUID with no entry is refused unless `allowUnknownAuthenticators: true` (its chain is
+  then not checked).
+- **`none` and self attestation** prove no model, so they are refused unless
+  `allowUnattested: true`. Most phone and password-manager passkeys attest `none`; leave it off
+  only when every user registers a certified security key. A format denext doesn't verify
+  (`tpm`, `android-key`, `apple`, `fido-u2f` — `"direct"` brings them) counts as unattested: it
+  registers under `allowUnattested`, and is refused otherwise.
+- **A compromised model is refused** whatever the attestation: an entry whose latest status
+  report is `USER_VERIFICATION_BYPASS`, `ATTESTATION_KEY_COMPROMISE`,
+  `USER_KEY_REMOTE_COMPROMISE`, `USER_KEY_PHYSICAL_COMPROMISE` or `REVOKED`, or that was ever
+  `REVOKED` or `ATTESTATION_KEY_COMPROMISE`. (An unattested AAGUID is the authenticator's own
+  claim, so this can only refuse it.)
+
+**The metadata BLOB** is fetched on the first registration that needs it — server-side, from
+`https://mds.fidoalliance.org/` (or `url`), with a timeout (`timeoutMs`, default 15 s) and a size
+cap (`maxBytes`, default 32 MiB); nothing is fetched while `mds` is unset. It is a signed JWT: its
+`x5c` chain must validate to the FIDO root **pinned in denext** (GlobalSign Root CA - R3), never to
+a certificate the response carries, its signing certificate must be issued for
+`mds.fidoalliance.org`, and its signature must verify — so a mirror (`url`) or an offline copy
+(`blob: string | () => string | Promise<string>`, for a server without outbound network) needs no
+trust of its own. The verified BLOB is kept in memory until its `nextUpdate`; a BLOB with a lower
+serial number than the one held, or already a day past its own `nextUpdate`, is refused, so a
+replayed old BLOB can't bring back a revoked model. When a refresh fails, the held BLOB serves for
+one more day, then registrations are refused (`400 { code: "attestation" }`; `registerPasskey()`
+answers `invalid`) until a refresh succeeds — retried at most every five minutes. Sign-ins never
+consult the metadata.
+
+| Key                          | Default                         | What it sets                                           |
+| ---------------------------- | ------------------------------- | ------------------------------------------------------ |
+| `url`                        | `https://mds.fidoalliance.org/` | Where the BLOB is fetched (`https:` only)              |
+| `blob`                       | —                               | The BLOB itself, or a loader; `url` is then unused     |
+| `timeoutMs`                  | `15000`                         | The fetch timeout                                      |
+| `maxBytes`                   | 32 MiB                          | The largest BLOB accepted                              |
+| `allowUnattested`            | `false`                         | Accept `none` / self attestation                       |
+| `allowUnknownAuthenticators` | `false`                         | Accept a certificate attestation the BLOB doesn't list |
+
+Certificate revocation lists (of the BLOB's chain and of attestation chains) are not fetched;
+the pinned root expires on 2029-03-18, and a denext release before then pins its successor.
 
 ## Roles and authorization
 
@@ -1397,25 +1681,36 @@ awaited, so an audit row is written before the response is built.
 | `linkAccount`           | `{ user, account }`                               | A provider account was linked to an existing user                     |
 | `verificationRequested` | `{ identifier, purpose, expiresAt }`              | A verification, reset, magic-link or code mail went to the mailer     |
 | `emailVerified`         | `{ user }`                                        | An address was proven — a verification link, or a first email sign-in |
+| `phoneVerified`         | `{ user }`                                        | A number was proven by a first phone sign-in into an existing account |
+| `userConverted`         | `{ user, provider }`                              | An anonymous user proved an email or phone and became permanent       |
 | `passwordReset`         | `{ user }`                                        | A reset token set a new password (the sessions are already revoked)   |
 | `apiTokenIssued`        | `{ userId, tokenId, name?, scopes?, expiresAt? }` | A bearer API token was minted (`issueApiToken`, `POST /tokens`)       |
 | `apiTokenRevoked`       | `{ tokenId, userId?, reason }`                    | A bearer API token was revoked — `reason` says how (below)            |
 
 `signInFailed.reason` is the closed `SignInFailedReason` union, so a `switch` over it can be
-exhaustive: `"invalid_credentials"` (a wrong password, or a wrong, spent or expired email link
-or code), `"invalid_mfa_code"` (a wrong TOTP or backup code, or passkey, at the step-up),
-`"invalid_passkey"`, `"rate_limited"`, `"access_denied"`, `"account_not_linked"`,
-`"adapter_error"` (the persistence step threw — see below), the OAuth failures
-`"invalid_state"`, `"invalid_request"`, `"config"` and `"oauth_failed"`, the native `id_token`
-failures `"invalid_nonce"` and `"invalid_token"`, and `"provider_error"` — the provider itself
-answered `?error=`, its protocol-shaped code (`access_denied`, `login_required`, …) in
-`providerError` and on the sign-in page's `?error=`.
+exhaustive: `"invalid_credentials"` (a wrong password, or a wrong, spent or expired email link or
+code), `"invalid_mfa_code"` (a wrong TOTP or backup code, or passkey, at the step-up),
+`"invalid_passkey"`, `"rate_limited"`, `"access_denied"`, `"account_not_linked"`, `"adapter_error"`
+(the persistence step threw — see below), the OAuth failures `"invalid_state"`, `"invalid_request"`,
+`"config"` and `"oauth_failed"`, the native `id_token` failures `"invalid_nonce"` and
+`"invalid_token"`, `"captcha_failed"` (see [Captcha](#captcha)), and `"provider_error"` — the
+provider itself answered `?error=`, its protocol-shaped code (`access_denied`, `login_required`, …)
+in `providerError` and on the sign-in page's `?error=`.
 
 `apiTokenIssued` and `apiTokenRevoked` never carry the token or its hash. `apiTokenRevoked`'s
 `reason` is `"revoked"` (`revokeApiToken`, `DELETE /tokens/:id`), `"password_reset"` (a reset
-revokes every token) or `"email_verified"` (the first proof of an unverified account's mailbox
-retires tokens set up without it — see pre-account hijacking). `userId` is absent only for a
-bare `revokeApiToken(config, id)`; pass `{ userId }` as its third argument to carry it.
+revokes every token), `"email_verified"` (the first proof of an unverified account's mailbox retires
+tokens set up without it — see pre-account hijacking), `"phone_verified"` (the same for a first
+phone proof) or `"owner_refused"` (a use met a token no later use could accept: its owner is gone or
+an SSO user, or banned until after it expires). `userId` is absent only for a bare
+`revokeApiToken(config, id)`; pass `{ userId }` as its third argument to carry it.
+
+A read that refuses a credential for good also removes it, and still answers the same refusal. A
+server-side session whose user is gone, which the user ended, or which is an SSO user's session
+its identity provider didn't start is deleted from the session store. Such a bearer token is
+revoked. A ban that outlasts a credential (it expires before the ban ends) ends it the same way,
+native and `/auth/v1` refresh families included. A shorter ban only refuses. The Postgres and
+SQLite adapters delete API tokens 30 days after they were revoked or expired.
 
 `verificationRequested` never carries the token or the link, and fires only for a delivery
 that succeeded. A sign-in that stops at a second factor fires `signIn` only when the
@@ -1477,12 +1772,12 @@ denextAuth({
 });
 ```
 
-`basePath` gets a leading slash added and a trailing one stripped, and must be one or
-more non-empty URL-safe segments. `"/"` is refused — the handler would then claim every
-request on the site — and so is any `.` or `..` segment: a dot is URL-safe, but
-`"/auth/.."` is not a place, and the handler would claim (and the routes advertise) a
-prefix that resolves somewhere else entirely. Client-side, pass the same prefix to `SessionProvider` /
-`signIn` / `signOut` via their `basePath` prop or option.
+`basePath` gets a leading slash added and a trailing one stripped, and must be one or more non-empty
+URL-safe segments. `"/"` is refused — the handler would then claim every request on the site — and
+so is any `.` or `..` segment: a dot is URL-safe, but `"/auth/.."` is not a place, and the handler
+would claim (and the routes advertise) a prefix that resolves somewhere else entirely. Client-side,
+pass the same prefix to `SessionProvider` / `signIn` / `signOut` via their `basePath` prop or
+option.
 
 Two cookies exist: the session cookie (default `__Host-denext_auth`) and the short-lived
 OAuth transaction cookie that carries the PKCE verifier, `state` and `nonce` (default
@@ -1624,43 +1919,42 @@ denextAuth({
 });
 ```
 
-`max` / `windowMs` / `keyGenerator` belong to the credentials limiter and never apply to
-the other five, which are tuned under `signin`, `session`, `verification`, `mfa` and
-`captcha` (`captcha: false` turns just that one off).
-`store` is shared by all six (their keys are namespaced apart). The default store is a bounded per-process map —
-fine for a single instance, but each replica counts on its own, so pass a shared `store`
-behind several — `postgresRateLimitStore({ sql })` is one (see [Postgres](#postgres)). With
-[`@denext/backend`](/docs/backend#postgres)'s Postgres (`backend({ postgres })`) and no `store`
-set, the limiters count in `auth_rate_limits` on that database (the adapter's own table with
-`backendAuthAdapter()`), so every replica already shares one budget.
+`max` / `windowMs` / `keyGenerator` belong to the credentials limiter and never apply to the other
+five, which are tuned under `signin`, `session`, `verification`, `mfa` and `captcha` (`captcha:
+false` turns just that one off). `store` is shared by all six (their keys are namespaced apart). The
+default store is a bounded per-process map — fine for a single instance, but each replica counts on
+its own, so pass a shared `store` behind several — `postgresRateLimitStore({ sql })` is one (see
+[Postgres](#postgres)). With [`@denext/backend`](/docs/backend#postgres)'s Postgres (`backend({
+postgres })`) and no `store` set, the limiters count in `auth_rate_limits` on that database (the
+adapter's own table with `backendAuthAdapter()`), so every replica already shares one budget.
 
 ## API tokens and `requireBearer`
 
-`issueApiToken(config, { userId, name?, scopes?, expiresInSeconds? })` mints `tok_` plus
-256 bits of CSPRNG entropy and returns the **plaintext exactly once**; what is stored is
-the SHA-256 (hex) of the full presented string, so a database read yields nothing usable
-and verification is an indexed exact-match lookup rather than an in-process comparison —
-there is no timing oracle to equalise.
-`requireBearer(authConfig, { scope, role })` — or `requireBearer({ scope, role })`, which reads
-the config `denextAuth()` was built with (`activeAuthConfig()`) — is the `createApi()` middleware that
-authenticates `Authorization: Bearer tok_…` and extends the handler's context with
-`{ token, user, session }`, where `session` has the same shape `requireSession()`
-provides — so a handler written against `ctx.session.user.id` works under either
-credential. Every authentication failure (absent header, wrong scheme, unknown, revoked,
-expired, or a token whose user was deleted) is the **identical** `401` with
-`WWW-Authenticate: Bearer`, so the response can't be used to probe which tokens exist; a
-valid token that lacks the required scope or role gets a `403` instead, keeping "who are
-you" distinguishable from "may you". Scope and role are any-of, and a **scopeless token
-satisfies no scope requirement** — scoping an endpoint never silently admits older,
-scopeless tokens. The middleware is pre-tagged with
-`documentsSecurity(…, [{ bearerAuth: [] }])`, so `@denext/openapi` marks every endpoint
-that applies it as secured with nothing written on the definition. What it cannot do is
-describe the scheme: declare the matching
-`securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } }` **once** in the
-`openapi()` plugin options, or the document references a scheme it never defines (and
-Swagger UI shows no Authorize button). Bearer auth **never
-sets a cookie** and never slides a session forward: a token carries its own credential on
-every call and can't be escalated into a browser session.
+`issueApiToken(config, { userId, name?, scopes?, expiresInSeconds?, session? })` mints `tok_` plus
+256 bits of CSPRNG entropy and returns the **plaintext exactly once**; what is stored is the SHA-256
+(hex) of the full presented string, so a database read yields nothing usable and verification is an
+indexed exact-match lookup rather than an in-process comparison — there is no timing oracle to
+equalise. `session` is the session minting the token (what `auth()` returned): the token records
+whether the user's identity provider started it, and an SSO user's token authenticates only when it
+did — one minted without a session, or from any other, is refused. Every verification re-reads the
+owner: a banned owner's tokens authenticate nothing while the ban lasts, and a deleted owner's
+nothing at all. `requireBearer(authConfig, { scope, role })` — or `requireBearer({ scope, role })`,
+which reads the config `denextAuth()` was built with (`activeAuthConfig()`) — is the `createApi()`
+middleware that authenticates `Authorization: Bearer tok_…` and extends the handler's context with
+`{ token, user, session }`, where `session` has the same shape `requireSession()` provides — so a
+handler written against `ctx.session.user.id` works under either credential. Every authentication
+failure (absent header, wrong scheme, unknown, revoked, expired, or a token whose user was deleted)
+is the **identical** `401` with `WWW-Authenticate: Bearer`, so the response can't be used to probe
+which tokens exist; a valid token that lacks the required scope or role gets a `403` instead,
+keeping "who are you" distinguishable from "may you". Scope and role are any-of, and a **scopeless
+token satisfies no scope requirement** — scoping an endpoint never silently admits older, scopeless
+tokens. The middleware is pre-tagged with `documentsSecurity(…, [{ bearerAuth: [] }])`, so
+`@denext/openapi` marks every endpoint that applies it as secured with nothing written on the
+definition. What it cannot do is describe the scheme: declare the matching `securitySchemes: {
+bearerAuth: { type: "http", scheme: "bearer" } }` **once** in the `openapi()` plugin options, or the
+document references a scheme it never defines (and Swagger UI shows no Authorize button). Bearer
+auth **never sets a cookie** and never slides a session forward: a token carries its own credential
+on every call and can't be escalated into a browser session.
 
 ```ts
 // lib/auth.ts
@@ -1673,15 +1967,15 @@ export const authed = createApi().use(requireBearer(authConfig, { scope: "pets:w
 export const POST = authed.define({ body: NewPet }, ({ body, ctx }) => add(ctx.user.id, body));
 ```
 
-The management endpoints are `POST {basePath}/tokens` (mint — returns the plaintext once,
-`201`, and a `409` once you already hold 50 live tokens, so a compromised session cannot
-mint credentials without bound), `GET {basePath}/tokens` (list, redacted: no hashes, and
-the plaintext no longer exists anywhere) and `DELETE {basePath}/tokens/:id` (revoke). All three are **cookie
-session only** — they never read the `Authorization` header, so a leaked token can't mint
-another one, widen its own scopes or revoke a sibling — and they require a **complete**
-session, so a first factor alone can't produce a credential that outlives the
-second-factor requirement. The mutations are same-origin-gated like every other auth
-POST. Revoking a token you don't own answers the same `404` an unknown id gets.
+The management endpoints are `POST {basePath}/tokens` (mint — returns the plaintext once, `201`, and
+a `409` once you already hold 50 live tokens, so a compromised session cannot mint credentials
+without bound), `GET {basePath}/tokens` (list, redacted: no hashes, and the plaintext no longer
+exists anywhere) and `DELETE {basePath}/tokens/:id` (revoke). All three are **cookie session only**
+— they never read the `Authorization` header, so a leaked token can't mint another one, widen its
+own scopes or revoke a sibling — and they require a **complete** session, so a first factor alone
+can't produce a credential that outlives the second-factor requirement. The mutations are
+same-origin-gated like every other auth POST. Revoking a token you don't own answers the same `404`
+an unknown id gets.
 
 All of this needs an adapter implementing the API-token group. Without one the functions
 throw with an actionable message at the call that needs them, and `{basePath}/tokens`
@@ -1716,10 +2010,21 @@ gets a short-lived bearer access token (`nat_…`) and a rotating refresh token 
 slides and sets no cookie); the `/tokens` and `/mfa*` endpoints still read the cookie only.
 `revokeAllSessions(userId)`, a password reset and a pre-account-hijacking eviction end the
 native sessions too. `POST {basePath}/account/delete` deletes the signed-in user after a
-recent sign-in, revoking their Sign in with Apple tokens.
+recent sign-in, revoking their Sign in with Apple tokens. Deletion ends every credential the
+user held, whether or not the adapter's `deleteUser` removed it: each verification re-reads the
+user, so a deleted user's cookie session, native access token, bearer API token and `/auth/v1`
+access token (one with no `session_id` included) authenticate nothing from the next request.
+
+A user with a second factor who signs in with a native `id_token` gets a pending sign-in, not
+tokens: `{ mfa_required: true, mfa_token, expires_in, factors }`, finished at `POST
+{basePath}/native/mfa` with a TOTP, backup or SMS code (`nativeSession()`'s `completeMfa`; `POST
+{basePath}/native/mfa-challenge` texts a phone factor first). The `mfa_token` is single-use, lives
+five minutes, and is not a credential for anything else. Under `mfa.required: "always"` a user with
+no factor yet can't enroll from a native `id_token` sign-in (`403 mfa_required`); the browser flow
+enrolls.
 
 The whole flow — CORS for the app's origin, the client helper `nativeSession()`,
-`createApiClient({ base, auth })`, the id_token checks and deletion — is on
+`createApiClient({ base, auth })`, the id_token checks, the second factor and deletion — is on
 [App backend](/docs/app-backend).
 
 ## Client
@@ -1967,21 +2272,23 @@ await supabase.auth.admin.listUsers(); // with the secret key, on a server
 
 What it serves: `signup` (email or phone with a password, or anonymous), `token` with
 `grant_type=password | refresh_token | pkce | id_token` (Google / Apple id tokens, from
-`idTokenProviders` or `native.google` / `native.apple`), `otp` and `magiclink`, `verify` (POST,
-and the GET an emailed link opens — implicit fragment or PKCE `?code=`), `resend`, `recover`,
-`user` (GET and PUT: metadata, password, email and phone changes), `reauthenticate`, `logout`
-(`scope=local | others | global`), `authorize` (OAuth through the providers you configured; their
-callback stays `{basePath}/callback/:provider`), `user/identities/authorize` and identity
-unlinking, `factors` (TOTP, phone and WebAuthn: enroll, challenge, verify, unenroll; recovery
-codes; `aal2` after a verified factor), `settings`, `sso` (SAML 2.0, below), `token?grant_type=web3` (Web3 sign-in, below), the
-OAuth 2.1 server (`oauth/*`, `user/oauth/grants`, below), and the admin API — `admin/users`
-(paginated list, create, read, update incl. `ban_duration`, delete), `invite`,
-`admin/generate_link`, `admin/users/:id/factors`, `admin/oauth/clients` and
-`admin/custom-providers`. Errors are GoTrue's `{ code, error_code, msg }`, so `supabase-js` raises
-`AuthApiError` with the same `code`s.
+`idTokenProviders` or `native.google` / `native.apple`), `otp` and `magiclink`, `verify` (POST, and
+the GET an emailed link opens — implicit fragment or PKCE `?code=`), `resend`, `recover`, `user`
+(GET and PUT: metadata, password, email and phone changes), `reauthenticate`, `logout` (`scope=local
+| others | global`; `global` also ends the user's denextAuth cookie sessions, stateless ones
+included, and `others` all of them while keeping the caller's token session), `authorize` (OAuth
+through the providers you configured; their callback stays `{basePath}/callback/:provider`),
+`user/identities/authorize` and identity unlinking, `factors` (TOTP, phone and WebAuthn: enroll,
+challenge, verify, unenroll; recovery codes; `aal2` after a verified factor), `settings`, `sso`
+(SAML 2.0, below), `token?grant_type=web3` (Web3 sign-in, below), the OAuth 2.1 server (`oauth/*`,
+`user/oauth/grants`, below), and the admin API — `admin/users` (paginated list, create, read, update
+incl. `ban_duration`, delete), `invite`, `admin/generate_link`, `admin/users/:id/factors`,
+`admin/oauth/clients` and `admin/custom-providers`. Errors are GoTrue's `{ code, error_code, msg }`,
+so `supabase-js` raises `AuthApiError` with the same `code`s.
 
 Users gain Supabase's fields on every adapter: `phone`, `userMetadata` / `appMetadata` (free-form
-JSON; only the admin API writes `app_metadata`), `isAnonymous`, timestamps, `bannedUntil`, and
+JSON; only the admin API writes `app_metadata`), `isAnonymous`, timestamps, `bannedUntil`,
+`sessionsValidAfter`, and
 identity rows with `identityData`. Access tokens carry Supabase's claims (`sub`, `role`, `aud`,
 `email`, `phone`, `app_metadata`, `user_metadata`, `aal`, `amr`, `session_id`, `is_anonymous`,
 `exp`, `iat`, `iss`), so RLS policies written for Supabase work through `db()` and auto-REST.
@@ -2008,6 +2315,7 @@ The `/auth/v1` options (`backend({ supabase: { auth } })`):
 | `sendSms`                          | none                             | Deliver SMS codes (phone sign-up, phone OTP, phone MFA)                                                                  |
 | `captcha`                          | off                              | `{ provider: "hcaptcha" \| "turnstile", secret }` — checks `captchaToken`                                                |
 | `hooks`                            | none                             | `customAccessToken`, `sendEmail`, `sendSms` (Supabase's auth hooks)                                                      |
+| `smtp`                             | `GOTRUE_SMTP_*`                  | Send `/auth/v1`'s mail over SMTP: `smtpMailer()`'s options plus GoTrue's `subjects` and `templates` (below)              |
 | `requireReauthentication`          | `false`                          | A password change needs a `reauthenticate()` nonce                                                                       |
 | `manualLinking`                    | `true`                           | Allow `linkIdentity()`                                                                                                   |
 | `mfa`                              | TOTP                             | `{ phone: true }` adds SMS factors; `maxFactors` (10)                                                                    |
@@ -2020,6 +2328,22 @@ The `/auth/v1` options (`backend({ supabase: { auth } })`):
 options set their own (a hook set here wins over the same hook there, and any `hooks.sendSms`
 wins over a plain `sendSms`) — see
 [Captcha](#captcha) and [Hooks](#hooks).
+
+**Email delivery.** `/auth/v1` mails through `hooks.sendEmail` when set, else the auth config's
+`sendVerificationRequest`, else SMTP: the `smtp` option, or — when it is unset — Supabase Auth's own
+settings from the environment, `GOTRUE_SMTP_HOST`, `GOTRUE_SMTP_PORT`, `GOTRUE_SMTP_USER`,
+`GOTRUE_SMTP_PASS`, `GOTRUE_SMTP_ADMIN_EMAIL` (the sender) and `GOTRUE_SMTP_SENDER_NAME`, with
+`GOTRUE_MAILER_SUBJECTS_<KIND>` and `GOTRUE_MAILER_TEMPLATES_<KIND>` (`CONFIRMATION`, `INVITE`,
+`RECOVERY`, `MAGIC_LINK`, `EMAIL_CHANGE`, `REAUTHENTICATION`); the environment is read only when
+both `GOTRUE_SMTP_HOST` and `GOTRUE_SMTP_ADMIN_EMAIL` are set. The transport is
+[`smtpMailer()`](#sending-mail-over-smtp), so TLS is required (465 is implicit TLS, any other port
+must offer STARTTLS). Subjects default to GoTrue's ("Confirm Your Email", "Your Magic Link", …). A
+template is a URL of an HTML file, fetched on first use (http(s), 10 s, a redirect followed only to
+`https:` on the same origin, at most 1 MiB) and kept for 10 minutes; it takes `{{ .ConfirmationURL
+}}`, `{{ .Token }}`, `{{ .TokenHash }}`, `{{ .SiteURL }}`, `{{ .Email }}`, `{{ .NewEmail }}` and `{{
+.RedirectTo }}`, each HTML-escaped. A template with any other Go template action (`{{ if }}`, `{{
+.Data }}`), or one that can't be fetched, is replaced by the built-in one and the reason logged.
+`denext generate docker --stack` lists the `GOTRUE_SMTP_*` variables in `.env.example`.
 
 ### SAML single sign-on
 
@@ -2129,8 +2453,8 @@ export default defineJob({
 ```
 
 `refreshSsoMetadata(config?, { force?, jitterMs? })` uses the active `denextAuth()` config unless
-given one, and shares the fetch limiter with sign-ins. supabase-js 2.117 has no `auth.admin.sso` client; call
-the endpoints with the secret key.
+given one, and shares the fetch limiter with sign-ins. supabase-js 2.117 has no `auth.admin.sso`
+client; call the endpoints with the secret key.
 
 **Single Logout** is on when `saml.signingKey` is set, and the SP metadata then advertises
 `/auth/v1/sso/saml/slo` (HTTP-Redirect and HTTP-POST):
@@ -2215,21 +2539,21 @@ and returned but not applied: PKCE and the nonce are always used and checked.
 
 ### Web3 sign-in
 
-`web3: { ethereum: {}, solana: {} }` turns on `supabase.auth.signInWithWeb3({ chain, wallet })`:
-the wallet signs a Sign-In with Ethereum (EIP-4361) or Sign-In with Solana message, and the user
-whose identity is that address is signed in (created on first sign-in unless `disableSignup`).
-The identity is GoTrue's: provider `web3`, `sub` / provider id `web3:<chain>:<address>` with the
-address exactly as the message writes it (supabase-js writes Ethereum addresses lower-case, so a
-checksummed spelling is another identity, as in GoTrue), `identity_data.custom_claims`
-`{ address, chain, network, domain, statement }`, `app_metadata.provider` `web3`, and `amr`
-method `web3`. Refusals are GoTrue's too: a disabled chain answers `422 web3_provider_disabled`,
-an unknown one `400 web3_unsupported_chain`, a malformed request or message `400
-validation_failed`, and a signature or message that doesn't sign in here (wrong signer, URI, domain,
-chain id, time window, a used nonce) the OAuth-style `400 { error: "invalid_grant",
-error_description }` with GoTrue's descriptions. Ethereum signatures are verified by recovering the signer
-(secp256k1 and Keccak-256 in denext's own TypeScript; Web Crypto has neither), Solana's with Web
-Crypto's Ed25519. `ethereum.chainIds` restricts the `Chain ID`, `domains` allows message domains
-besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At` may be.
+`web3: { ethereum: {}, solana: {} }` turns on `supabase.auth.signInWithWeb3({ chain, wallet })`: the
+wallet signs a Sign-In with Ethereum (EIP-4361) or Sign-In with Solana message, and the user whose
+identity is that address is signed in (created on first sign-in unless `disableSignup`). The
+identity is GoTrue's: provider `web3`, `sub` / provider id `web3:<chain>:<address>` with the address
+exactly as the message writes it (supabase-js writes Ethereum addresses lower-case, so a checksummed
+spelling is another identity, as in GoTrue), `identity_data.custom_claims` `{ address, chain,
+network, domain, statement }`, `app_metadata.provider` `web3`, and `amr` method `web3`. Refusals are
+GoTrue's too: a disabled chain answers `422 web3_provider_disabled`, an unknown one `400
+web3_unsupported_chain`, a malformed request or message `400 validation_failed`, and a signature or
+message that doesn't sign in here (wrong signer, URI, domain, chain id, time window, a used nonce)
+the OAuth-style `400 { error: "invalid_grant", error_description }` with GoTrue's descriptions.
+Ethereum signatures are verified by recovering the signer (secp256k1 and Keccak-256 in denext's own
+TypeScript; Web Crypto has neither), Solana's with Web Crypto's Ed25519. `ethereum.chainIds`
+restricts the `Chain ID`, `domains` allows message domains besides the app's own host, and `maxAge`
+(600 seconds) bounds how old `Issued At` may be.
 
 ### Threat notes
 
@@ -2267,10 +2591,13 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   endpoints refuse it.
 - **One user store.** A ban (`ban_duration`) refuses denextAuth's own sign-ins too and ends every
   session of both kinds; while it lasts, the user's tokens (bearer API tokens, native tokens,
-  access and refresh tokens) are refused at every use as well, and a stateless cookie still owing
-  its second factor can't finish the step-up. A password change through `/auth/v1` ends the user's other sessions,
-  including denextAuth cookie sessions in the `sessionStore` (a stateless cookie can't be revoked
-  and lives until it expires); an admin password change ends all of them, as in GoTrue.
+  access and refresh tokens) are refused at every use as well, and so is every denextAuth cookie
+  session, a stateless one included (each read re-reads the user) — so a stateless cookie still
+  owing its second factor can't finish the step-up either. A ban also stamps the user's
+  `sessionsValidAfter`, so a cookie session from before it stays ended once the ban is lifted. A
+  password change through `/auth/v1` ends the user's other sessions, including every denextAuth
+  cookie session, stateless ones included (`sessionsValidAfter`); an admin password change ends
+  all of them, as in GoTrue.
   `session.user.emailVerified` of an access token is read from the stored user, never from the
   user-writable `user_metadata`, whose `email_verified` / `phone_verified` are always the stored
   flags.
@@ -2333,18 +2660,24 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   one). An existing account an IdP was linked to (`linkExistingAccounts`) is not an SSO user and
   keeps its other sign-in methods; an SSO user another provider signed up is never linked
   (`email_exists`).
-- **An SSO user's sessions are the ones its IdP started.** A session of an SSO user whose `amr`
-  has no `sso/saml` entry — one from before the account became an SSO user, or from before
+- **An SSO user's sessions are the ones its IdP started.** A session of an SSO user whose stored
+  `amr` has no `sso/saml` entry — one from before the account became an SSO user, or from before
   non-SSO sign-ins of SSO users were refused — is refused at every use (`403 session_not_found`)
   and at refresh (`refresh_token_not_found`, and its session is revoked). A session that stepped
-  up with MFA after a SAML sign-in keeps its `sso/saml` entry and keeps working; a token issued to
-  an OAuth client is unaffected (its consent needed a live session). denextAuth's own sessions
-  never come from an IdP: an SSO user's native session is refused at use and revoked at refresh,
-  and its cookie session ends when it is next due to slide (`session.updateAge`, in
-  `requireAuth()`, `requireSession()`, `updateAuthSession()` and `GET {basePath}/session`; a bare
-  `auth()` reads no user, so without sliding it lasts until it expires — call
-  `revokeAllSessions(userId)` to end it at once). `GET /reauthenticate` for an SSO user answers
-  `422 user_sso_managed` and sends nothing (GoTrue sends a nonce `PUT /user` then refuses).
+  up with MFA after a SAML sign-in keeps its `sso/saml` entry and keeps working. Whether a session
+  was SSO-started is read from its stored session, never from the access token's `amr` claim,
+  which the custom access token hook may rewrite: linking an identity onto an SSO user, and the
+  `amr` of the session `auth()` returns for a bearer access token, both come from the stored
+  session. A token issued to an OAuth client lives only when its grant was approved from a session
+  the IdP started; one approved from any other session (or recorded before denext kept that fact)
+  is refused at use and revoked at refresh, and its code can't be exchanged. denextAuth's own
+  sessions never come from an IdP: an SSO user's native session is refused at use and revoked at
+  refresh, and its cookie session reads as signed out from its next request (every cookie-session
+  read re-reads the user). A bearer API token of an SSO user authenticates only when it was minted
+  from a session the IdP started (`issueApiToken({ session })`); one minted without a session or
+  from any other — `POST {basePath}/tokens` mints from a cookie session, so never — is refused.
+  `GET /reauthenticate` for an SSO user answers `422 user_sso_managed` and sends nothing (GoTrue
+  sends a nonce `PUT /user` then refuses).
 - **SAML endpoints.** The SingleSignOnService and SingleLogoutService URLs in IdP metadata are sent
   to the browser, so they must be `https:` (a loopback `http:` one only under
   `dangerouslyAllowInsecureProviders`); any other scheme refuses the metadata at registration, at
@@ -2384,10 +2717,9 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
 ## Security notes
 
 - **CSRF.** Every state-changing auth POST — the Credentials, email and phone callbacks,
-  `/anonymous`, `/signout`, `/verify`, `/reset`, `/reset/confirm`, the `/mfa` steps and the `/tokens`
-  mutations — is gated on a same-origin `Origin` / `Referer`. With
-  `canonicalOrigin` set it is matched exactly and scheme-strictly; otherwise the request's
-  own `Host` is the fallback.
+  `/anonymous`, `/signout`, `/verify`, `/reset`, `/reset/confirm`, the `/mfa` steps and the
+  `/tokens` mutations — is gated on a same-origin `Origin` / `Referer`. With `canonicalOrigin` set
+  it is matched exactly and scheme-strictly; otherwise the request's own `Host` is the fallback.
 - **Cookies.** Signed, `__Host-`-prefixed, `HttpOnly`, `SameSite=Lax`, and `Secure`
   pinned even behind a proxy that omits `x-forwarded-proto`. The payload never stores
   provider tokens or secrets. A session secret under 32 characters is refused in
@@ -2426,20 +2758,20 @@ besides the app's own host, and `maxAge` (600 seconds) bounds how old `Issued At
   the password, any TOTP factor and backup codes, passkeys, bearer tokens, server-side
   sessions and native app sessions — before marking it verified, and no passkey can be
   registered on it until then.
-- **Native sessions.** The one-time code is hashed at rest, bound to the registered
-  redirect URI and a PKCE `S256` challenge, lives 60 seconds (`codeTtl`) and gets one try; it is
-  minted only for a sign-in made after `/native/authorize` began, so a lingering browser
-  session can't be handed to whatever app started the flow. Access tokens are HMAC-signed
-  under their own MAC domain and re-checked against their session family on every request,
-  so a revoked family stops at once. A replayed refresh token (an older generation with a
-  valid MAC) revokes its whole family; a forged one (bad MAC) is refused without touching
-  it. Two opt-ins adjust this: `native.refreshTokenMaxAge` caps a family absolutely from its
-  sign-in (default none), and `native.refreshReuseInterval` (default `0`, at most 60 seconds)
-  lets the immediately previous refresh token re-fetch the same pair shortly after its
-  rotation, for apps whose refreshes can race — at the cost of missing a replay inside that
-  window. The native POSTs take no ambient credential, so a request with no `Origin` (a native
-  HTTP client) passes, while a present `Origin` must be this app or one the `cors` config
-  allows, and `"null"` never is. See [App backend](/docs/app-backend#security).
+- **Native sessions.** The one-time code is hashed at rest, bound to the registered redirect URI and
+  a PKCE `S256` challenge, lives 60 seconds (`codeTtl`) and gets one try; it is minted only for a
+  sign-in made after `/native/authorize` began, so a lingering browser session can't be handed to
+  whatever app started the flow. Access tokens are HMAC-signed under their own MAC domain and
+  re-checked against their session family on every request, so a revoked family stops at once. A
+  replayed refresh token (an older generation with a valid MAC) revokes its whole family; a forged
+  one (bad MAC) is refused without touching it. Two settings adjust this:
+  `native.refreshTokenMaxAge` caps a family absolutely from its sign-in (default none), and
+  `native.refreshReuseInterval` (default 10 seconds, as GoTrue's, at most 60; `0` is strict) lets
+  the immediately previous refresh token re-fetch the same pair shortly after its rotation, so
+  refreshes that race don't sign the user out — at the cost of missing a replay inside that window.
+  The native POSTs take no ambient credential, so a request with no `Origin` (a native HTTP client)
+  passes, while a present `Origin` must be this app or one the `cors` config allows, and `"null"`
+  never is. See [App backend](/docs/app-backend#security).
 
 The [security posture guide](/docs/security) maps every Next.js, React and next-auth /
 Auth.js CVE class against denext's own implementation, with a live parity test suite.
@@ -2463,31 +2795,28 @@ in its test mode (`+clerk_test` addresses verify with `424242`).
 What the first-party auth layer still does not do — the full ledger is
 [Known limitations](/docs/limitations):
 
-- **No mailer, no next-auth compatibility shim.** Every emailed token goes through your
-  `sendVerificationRequest`; a `next-auth` shim is on the roadmap.
-- **Passkeys: no attestation trust, three algorithms.** A `packed` attestation's certificate
-  is checked but not chained to a vendor root (no FIDO Metadata Service), so it can't prove a
-  specific authenticator model; `tpm`, `android-key`, `apple` and `fido-u2f` statements are
-  refused, as are ES384, ES512 and Ed448 keys. Browsers send `none` unless asked otherwise.
+- **No next-auth compatibility shim.** Every emailed token goes through your
+  `sendVerificationRequest` (`smtpMailer()` or your own), handed over after the response, so
+  delivery is best-effort where the platform freezes the isolate; a `next-auth` shim is on the
+  roadmap.
+- **Passkeys: two attestation formats, three algorithms.** Only `none` and `packed` statements
+  are verified — `tpm`, `android-key`, `apple` and `fido-u2f` are refused, or with
+  [`attestation.mds`](#attestation-the-fido-metadata-service) and `allowUnattested` registered
+  as unattested — as are ES384, ES512 and Ed448 keys. The Metadata Service checks fetch no
+  certificate revocation lists.
 - **Single-node SQLite, additive schema only, and sliding expiry only on paths that own a
   `Response`** — see [Database adapter](#database-adapter) and [Sessions](#sessions).
 - **`verifyTotp` is SHA-1 only**, the algorithm every authenticator app supports.
 - **Apple's name arrives once.** Apple posts the user's name on their first authorization
   only; without an adapter to store it, later sessions carry no name.
-- **Deleting an account can't end stateless cookie sessions on other devices** — they
-  reference a user that no longer exists until they expire. Run a `sessionStore`.
-- **By default a GET spends a magic link**, so a mail gateway that pre-fetches links can burn
-  one — use `magicLink({ confirm: true })`, or `emailOtp()`.
+- **`magicLink({ confirm: false })` spends a link on its GET**, so a mail gateway that
+  pre-fetches links can burn one; the default confirmation page (or `emailOtp()`) avoids it.
 - **Rotating `secret` invalidates the one-time codes in flight**: they are keyed under the
-  current (first) secret, and live for minutes. A retired secret must stay in the list until
-  the TOTP factors sealed under it are re-sealed, which happens only when a TOTP code from that
-  factor passes (never for a user who steps up only with a passkey or a backup code).
-- **One passkey ceremony per browser at a time**: the ceremony cookie is per browser, so a
-  second ceremony supersedes the first.
-- **Stateless cookie sessions survive a password reset** — and a pre-account-hijacking
-  eviction — until they expire. Run a `sessionStore` (or `session.strategy: "database"`) so
-  either one signs out every device. A pending second-factor session in a cookie can't be
-  ended early either; it lasts 15 minutes.
+  current (first) secret, and live for minutes. A retired secret can be removed once
+  `denext auth reseal` reports zero remaining.
+- **Stateless cookie sessions end early only through an adapter**: a password reset, a ban or
+  `revokeAllSessions` stamps the stored user's `sessionsValidAfter`; with no adapter there is
+  no user to stamp, and a cookie lives until it expires.
 - **`mfa.required: "always"` is trust-on-first-use**: a user with no factor enrolls one
   during the step-up, so whoever holds the first factor at that moment chooses the second.
 - **A Server Action must spend the MFA attempt budget itself.** The endpoints spend it; a

@@ -1,0 +1,11 @@
+TS2353 [ERROR]: Object literal may only specify known properties, and 'ids' does not exist in type '{ id: string; }'.
+await api("/api/user/[id]", "GET", { params: { ids: "1" } });
+                                               ~~~
+    at file:///app/api-client-param.ts:6:48
+
+    The expected type comes from property 'params' which is declared here on type 'RequestOf<NonNullable<InferEndpoint<() => TypedResponse<{ id: string; name: string; }>, { id: string; }>>>'
+      & (E extends { params: infer P } ? { params: P } : unknown)
+                                           ~~~~~~
+        at file:///denext/src/runtime/api-client.ts:66:40
+
+error: Type checking failed.

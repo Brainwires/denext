@@ -505,6 +505,7 @@ pre.out {
   white-space: pre-wrap;
   font-size: var(--text-sm);
 }
+pre.out.log-lines { max-height: 70vh; white-space: pre; }
 .diff { font: inherit; }
 .diff .add { color: var(--success); }
 .diff .del { color: var(--destructive); }
@@ -551,4 +552,16 @@ form.op { display: inline-block; margin: var(--space-1) var(--space-2) var(--spa
 .badge.warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 40%, var(--border)); }
 .badge.fail { color: var(--destructive); border-color: color-mix(in srgb, var(--destructive) 40%, var(--border)); }
 .badge.info { color: var(--muted-foreground); }
+
+/* ── the database dashboard ─────────────────────────────────────────────── */
+.sql-editor textarea {
+  width: 100%;
+  min-height: 10rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.sign-out { padding: var(--space-2) 10px 0; }
+.sign-out button { width: 100%; }
+main.login { display: flex; justify-content: center; padding-top: 12vh; }
+main.login .panel { width: min(24rem, 100%); }
+main.login input[type="password"] { width: 100%; }
 `;

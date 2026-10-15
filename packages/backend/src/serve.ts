@@ -13,7 +13,7 @@ import type { ByteRange, ObjectInfo, StoredObject } from "./types.ts";
 /** The largest source an image transform reads into memory. */
 const TRANSFORM_SOURCE_LIMIT = 25 * 1024 * 1024;
 /** Raster types the image pipeline decodes. */
-const TRANSFORMABLE = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const TRANSFORMABLE = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"]);
 
 /**
  * Split `<bucket>/<key…>` (percent-encoded) into a bucket and a normalized key.
@@ -114,7 +114,7 @@ export function objectResponse(
 }
 
 /**
- * Read an image object to transform: PNG, JPEG, GIF or WebP, at most 25 MiB.
+ * Read an image object to transform: PNG, JPEG, GIF, WebP or AVIF, at most 25 MiB.
  *
  * @param object The object.
  * @returns Its bytes.
@@ -123,7 +123,10 @@ export function objectResponse(
 export async function transformSource(object: StoredObject): Promise<Uint8Array> {
   if (!TRANSFORMABLE.has(essence(object.contentType))) {
     await object.body.cancel();
-    throw new StorageError("bad_request", "only PNG, JPEG, GIF and WebP images can be transformed");
+    throw new StorageError(
+      "bad_request",
+      "only PNG, JPEG, GIF, WebP and AVIF images can be transformed",
+    );
   }
   if (object.size > TRANSFORM_SOURCE_LIMIT) {
     await object.body.cancel();

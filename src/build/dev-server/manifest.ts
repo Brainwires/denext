@@ -30,6 +30,7 @@ import type { DevBoundary, DevState } from "./state.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
 import type { NpmBoundaryFinder } from "../module-graph.ts";
 import { broadcast } from "./reload.ts";
+import { holdRequestDeadline } from "../../server/request-context.ts";
 
 /** The unbundled dev loop, created on first use (after compat detection settled). */
 export function getUnbundled(st: DevState): UnbundledDev {
@@ -100,7 +101,13 @@ async function resolveUnbundledMode(st: DevState): Promise<void> {
 }
 
 /** The current route manifest, with the boundary, CSS and dev-loop mode brought up to date. */
-export async function getManifest(st: DevState): Promise<RouteManifest> {
+export function getManifest(st: DevState): Promise<RouteManifest> {
+  // Scans, crawls and (next-compat) builds on the request's behalf: not its handler time.
+  return holdRequestDeadline(() => currentManifest(st));
+}
+
+/** The work behind the wrapper above (the deadline held by it). */
+async function currentManifest(st: DevState): Promise<RouteManifest> {
   // Single-flight: `st.manifest ??= await scan()` reads and writes around the await, so N
   // requests arriving after a rebuild each ran their own scan (and typed-module emit). The
   // `??=` on the PROMISE is atomic.
@@ -154,7 +161,13 @@ function tagLoaderFor(st: DevState, platform: Platform): ModuleLoader {
  * @param st The dev state.
  * @param platform The rendered request's target.
  */
-export async function compatLoaderFor(st: DevState, platform: Platform): Promise<ModuleLoader> {
+export function compatLoaderFor(st: DevState, platform: Platform): Promise<ModuleLoader> {
+  // A shell's first request builds its target's compat bundles: not the request's own time.
+  return holdRequestDeadline(() => compatLoader(st, platform));
+}
+
+/** The work behind the wrapper above (the deadline held by it). */
+async function compatLoader(st: DevState, platform: Platform): Promise<ModuleLoader> {
   await devBoundaryFor(st, platform);
   const load = compatBuildOf(st, await devBuildTarget(st, platform)).load;
   if (!load) throw new Error(`denext: the next-compat dev build for ${platform} did not complete`);
@@ -260,7 +273,13 @@ async function compatPlatformBoundary(
  * @param st The dev state.
  * @param platform The rendered request's target.
  */
-export async function devBoundaryFor(st: DevState, platform: Platform): Promise<DevBoundary> {
+export function devBoundaryFor(st: DevState, platform: Platform): Promise<DevBoundary> {
+  // The target's crawl (and, for next-compat, its build): not the request's own time.
+  return holdRequestDeadline(() => boundaryFor(st, platform));
+}
+
+/** The work behind the wrapper above (the deadline held by it). */
+async function boundaryFor(st: DevState, platform: Platform): Promise<DevBoundary> {
   const m = await getManifest(st);
   if (await devBuildTarget(st, platform) === "web") return webBoundary(st);
   const compat = await isCompat(st);

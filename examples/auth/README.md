@@ -70,11 +70,10 @@ disabled (`tests/auth-example.test.ts` drives the app that way in CI).
   session that `auth()` and `requireAuth` read as signed out; the code posts to
   `POST /auth/mfa`, which swaps it for a fresh, complete session. A TOTP code and a
   backup code each work once.
-- **A development mailer** — denext ships no mailer: every emailed token goes to
-  `sendVerificationRequest`. `lib/outbox.ts` keeps each message in an in-process
+- **A development mailer** — every emailed token goes to `sendVerificationRequest`. `lib/outbox.ts` keeps each message in an in-process
   outbox and prints its link; **`/dev/outbox`** lists them so you can click
-  through. In production the mailer refuses and the page is a 404 — plug your mail
-  service in there instead.
+  through. In production the mailer refuses and the page is a 404 — plug
+  `smtpMailer({ host, user, pass, from })` (or your mail service) in there instead.
 - **The whole client surface** — `auth()` in Server Components, `requireAuth`
   middleware, and `SessionProvider` / `useSession` / `signIn` / `signOut` in
   `app/user-menu.tsx` and `app/login/login-form.tsx`.

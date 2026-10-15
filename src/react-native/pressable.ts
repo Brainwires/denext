@@ -149,7 +149,7 @@ export function endRipple(circle: RippleNode): void {
 }
 
 /** The layer's style: the pressable's box and corners, clipped unless borderless. */
-function layerStyle(config: RippleConfig): Record<string, unknown> {
+export function rippleLayerStyle(config: RippleConfig): Record<string, unknown> {
   return {
     position: "absolute",
     top: 0,
@@ -199,7 +199,7 @@ export function withPressableRipple(Pressable: VNodeType): VNodeType {
       },
       children: (state: unknown) => [
         (typeof children === "function" ? children(state) : children) as VNodeChild,
-        h("span", { ref: layer, "aria-hidden": "true", style: layerStyle(ripple) }),
+        h("span", { ref: layer, "aria-hidden": "true", style: rippleLayerStyle(ripple) }),
       ],
     };
     return h(Pressable, wrapped as VProps);

@@ -655,6 +655,18 @@ denext mobile add haptics share network secure-store`}
         <code>ActionSheetIOS.dismissActionSheet()</code>). None needs a usage string, a permission
         or a privacy-manifest entry. A new plugin is native code: ship a new app binary afterwards.
       </p>
+      <p>
+        Some of React Native mode&apos;s components follow the shell they run in, with no plugin. In
+        the Android shell <code>TouchableNativeFeedback</code> draws its <code>background</code>
+        {" "}
+        ripple from the touch point, and <code>Image</code> fades in by 300 ms when{" "}
+        <code>fadeDuration</code>{" "}
+        is unset (as React Native does; never on iOS, and in a browser only when set). In the iOS
+        shell a <code>pageSheet</code> / <code>formSheet</code> <code>Modal</code>{" "}
+        follows a downward drag: past half its height, or a flick, slides it away and calls{" "}
+        <code>onRequestClose</code>. See{" "}
+        <a href="/docs/react-native#component-props">React Native mode › Component props</a>.
+      </p>
 
       <h2 id="keyboard-back-system-bars">Keyboard, back, system bars and safe areas</h2>
       <p>
@@ -1729,11 +1741,11 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
   scheduleNotification,
 } from "denext/mobile";
 
-await scheduleNotification({ title: "Ann", body: "Lunch?", threadId: "chat-7" });
-// APNs: { "aps": { "alert": …, "thread-id": "chat-7" } } groups a push into the same thread.
+await scheduleNotification({ title: "Order 7", body: "Out for delivery", threadId: "order-7" });
+// APNs: { "aps": { "alert": …, "thread-id": "order-7" } } groups a push into the same thread.
 
-// The user opened (or muted) chat 7: clear its notifications, pushes included.
-await removeDeliveredNotifications({ threadId: "chat-7" });
+// The user opened order 7: clear its notifications, pushes included.
+await removeDeliveredNotifications({ threadId: "order-7" });
 const left = await deliveredNotifications(); // [{ id, threadId?, tag?, title?, data? }, …]`}
       </Code>
       <ul>
@@ -1913,6 +1925,21 @@ const session = nativeSession({
 const user = await signInNative(session, "apple");
 // or: await signInNative(session, "google", { webClientId, iosClientId });`}
       </Code>
+      <p>
+        A user with a verified second factor is not signed in by the sheet alone: the server answers
+        a pending sign-in (<code>mfa_required</code> with an <code>mfa_token</code>{" "}
+        that lives five minutes and grants nothing else), and <code>signInNative</code>{" "}
+        rejects with a <code>NativeSessionError</code> whose <code>code</code> is{" "}
+        <code>"mfa_required"</code> and whose <code>mfa</code>{" "}
+        lists the factors. Ask for a code and finish with{" "}
+        <code>session.completeMfa(error.mfa, code)</code> (a TOTP or backup code;{" "}
+        <code>session.sendMfaSms(error.mfa, factorId)</code>{" "}
+        texts one for a phone factor first). A wrong code rejects <code>invalid_code</code>{" "}
+        with a fresh <code>error.mfa</code> to retry with, five attempts at most. See{" "}
+        <a href="/docs/app-backend#native-sign-in-with-apple-and-google">
+          App backend › Native Sign in with Apple and Google
+        </a>.
+      </p>
       <p>
         Setup: in <code>capacitor.config</code> set <code>plugins.SocialLogin.providers</code> to
         {" "}
@@ -2258,7 +2285,7 @@ const status = await requestTrackingPermission();       // "authorized" | "denie
           <code>performImmediateUpdate()</code> / <code>startFlexibleUpdate()</code> +{" "}
           <code>onFlexibleUpdateProgress</code> / <code>completeFlexibleUpdate()</code>{" "}
           are Android’s in-app updates. <code>promptStoreUpdate(&#123; confirm &#125;)</code>{" "}
-          checks, optionally asks, then runs Play’s update or opens the store. Pass it as{" "}
+          checks, optionally asks, then runs Play’s update or opens the store. Call it from{" "}
           <code>checkForUiUpdate</code>’s <code>onNativeUpdateRequired</code>{" "}
           so an over-the-air UI that needs a newer binary (<code>native_too_old</code>,{" "}
           <code>native_mismatch</code>) sends the user to the store.
@@ -2532,7 +2559,7 @@ export function ShareTarget() {
 
 export async function publish(running: number) {
   // The generated widget shows title and body; edit its view to show more.
-  await setWidgetData("Status", { title: \`\${running} agents running\`, body: "Updated just now" });
+  await setWidgetData("Status", { title: \`\${running} orders in progress\`, body: "Updated just now" });
   // A configurable widget: one snapshot per value you tailor, plus the fallback.
   await setWidgetData("Usage", { title: "Weekly", body: "41% left" }, { params: { period: "weekly" } });
   await setWidgetData("Usage", { title: "Usage", body: "41% weekly, 80% session" });
@@ -2872,7 +2899,8 @@ denext ota manifest out --sign ota.key           # adds "signature" to _denext/o
         (repeatable, or comma-separated; https only, plain http only to loopback) writes the
         Info.plist string <code>DenextOtaOrigins</code> and the <code>dev.denext.ota.ORIGINS</code>
         {" "}
-        meta-data, and the app then refuses a <code>baseUrl</code> on any other origin (code{" "}
+        meta-data, and the app then refuses a <code>baseUrl</code>{" "}
+        on any other origin except loopback (code{" "}
         <code>insecure</code>), signed or not. A binary with no public key accepts an unsigned UI
         only from a pinned https origin or loopback: any script in the page can call the plugin, so
         an unsigned update from whatever server it names would replace the UI for good.{" "}
@@ -2938,11 +2966,11 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
           <code>signature</code>), over <code>https</code> and <code>http</code> alike;
         </li>
         <li>
-          with no key, refuses plain <code>http</code> (code{" "}
-          <code>insecure</code>) unless the host is loopback: <code>localhost</code>,{" "}
-          <code>127.0.0.1</code>, <code>::1</code>, or the Android emulator's <code>10.0.2.2</code>
-          {" "}
-          in a debuggable Android build. Unsigned updates over <code>https</code> still work;
+          with no key, refuses the manifest (code{" "}
+          <code>insecure</code>) unless it comes from a pinned <code>https</code>{" "}
+          origin or a loopback host: <code>localhost</code>, <code>127.0.0.1</code>,{" "}
+          <code>::1</code>, or the Android emulator's <code>10.0.2.2</code>{" "}
+          in a debuggable Android build. An unpinned <code>https</code> server is refused too;
         </li>
         <li>
           refuses an older <code>sequence</code> (code <code>downgrade</code>), a{" "}
@@ -3002,7 +3030,9 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
           embedded key does not parse);
         </li>
         <li>
-          <code>insecure</code>: no key, and plain <code>http</code> to a non-loopback host;
+          <code>insecure</code>: a <code>baseUrl</code>{" "}
+          outside the pinned origins, or no key and a host that is neither a pinned{" "}
+          <code>https</code> origin nor loopback;
         </li>
         <li>
           <code>downgrade</code>: an older <code>sequence</code>, or none after a sequenced release;
@@ -3094,7 +3124,7 @@ export function OtaWatch() {
       </Code>
       <Callout kind="warn">
         <strong>Limits.</strong>{" "}
-        Downgrade protection covers sequenced (v2) releases: a device that never accepted a
+        Downgrade protection covers sequenced (v2 and v3) releases: a device that never accepted a
         sequenced manifest still takes an older v1 one. Without an embedded key, the transport (TLS)
         is the only thing standing between the app and a hostile UI. Rotating the key takes an app
         release, and a leaked key is valid until then. A file already verified in a process is not
@@ -3752,7 +3782,11 @@ npx @sentry/cli sourcemaps upload \\
           Virtual) work too: on iOS WebKit denext keeps the momentum fling alive while such a list
           corrects its scroll offset (<a href="#the-denextmobile-runtime">
             momentum-safe scrolling
-          </a>, on by default).
+          </a>, on by default). With <code>lists: "denext"</code>, LegendList itself runs on{" "}
+          <code>VirtualList</code>, its <code>waitForInitialLayout</code>,{" "}
+          <code>itemsAreEqual</code>, <code>contentInset</code> start and{" "}
+          <code>experimental_adaptiveRender</code>{" "}
+          included (<a href="/docs/lists#legendlist-on-the-web">LegendList on the web</a>).
         </li>
         <li>
           <strong>iOS.</strong>{" "}

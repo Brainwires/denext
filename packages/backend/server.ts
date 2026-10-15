@@ -70,7 +70,14 @@ export {
   VectorUnavailableError,
 } from "./src/vector.ts";
 export type { DocumentMatch, MatchDocumentsOptions, VectorSearchSqlOptions } from "./src/vector.ts";
-export { deliverWebhooks, signWebhook, verifyWebhook, webhookEvents } from "./src/webhooks.ts";
+export {
+  deliverWebhooks,
+  purgeWebhookEvents,
+  signWebhook,
+  verifyWebhook,
+  webhookCleanupJob,
+  webhookEvents,
+} from "./src/webhooks.ts";
 export type { DeliveryResult, WebhookEvent } from "./src/webhooks.ts";
 export { isStorageError, StorageError } from "./src/errors.ts";
 export type { StorageErrorCode } from "./src/errors.ts";

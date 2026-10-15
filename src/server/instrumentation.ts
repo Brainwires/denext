@@ -7,6 +7,12 @@
 //                         error while handling a request (report to Sentry/etc.);
 //   - `onRequest(info)`  — called once after every response with its method, path,
 //                         status and duration (request metrics / a custom access log).
+//   - `onServiceError(error, context)` — called when a top-level supervisor (the `services/`
+//                         tree, or one an app started) gives up after too many restarts.
+//   - `onShutdown()`     — called once when the production server shuts down, after it has
+//                         drained and stopped its services and plugins: close what `register`
+//                         (or the app) opened — a database pool, an exporter — so the process
+//                         can exit before the drain deadline forces it to.
 // All may be async and are optional; each may be a named export or a property
 // of the module's default export.
 
@@ -66,6 +72,27 @@ export type OnRequestError = (
  */
 export type OnRequest = (info: RequestLogInfo) => void;
 
+/** Where a supervision failure happened ({@linkcode OnServiceError}). */
+export interface ServiceErrorContext {
+  /** The supervisor that gave up, as its path in the tree (`services`, `services/workers`). */
+  path: string;
+}
+
+/**
+ * The `onServiceError` export (a denext extension, shaped like `onRequestError`): a top-level
+ * supervisor exceeded its restart intensity, stopped its children and failed. Report it the way a
+ * request error is reported. A throw from it is logged and swallowed.
+ */
+export type OnServiceError = (error: unknown, context: ServiceErrorContext) => void | Promise<void>;
+
+/**
+ * The `onShutdown` export (a denext extension): run once when the production server shuts down,
+ * after the drain, the `services/` tree and the plugin teardowns. Close app-owned resources here
+ * (a postgres.js pool: `await sql.end()`), or the drain deadline (`DENEXT_SHUTDOWN_DRAIN_MS`)
+ * ends the process with them open. A throw from it is logged and swallowed.
+ */
+export type OnShutdown = () => void | Promise<void>;
+
 /** The shape of a project's `instrumentation` module. */
 export interface Instrumentation {
   /** Run once when the server starts. */
@@ -74,6 +101,10 @@ export interface Instrumentation {
   onRequestError?: OnRequestError;
   /** Called once after every response, with its method, path, status and duration. */
   onRequest?: OnRequest;
+  /** Called when a top-level supervisor gives up (see `supervise` / `services/`). */
+  onServiceError?: OnServiceError;
+  /** Called once when the production server shuts down, to close app-owned resources. */
+  onShutdown?: OnShutdown;
 }
 
 /**
@@ -97,6 +128,8 @@ export async function loadInstrumentation(path: string | null): Promise<Instrume
       register: mod.register ?? mod.default?.register,
       onRequestError: mod.onRequestError ?? mod.default?.onRequestError,
       onRequest: mod.onRequest ?? mod.default?.onRequest,
+      onServiceError: mod.onServiceError ?? mod.default?.onServiceError,
+      onShutdown: mod.onShutdown ?? mod.default?.onShutdown,
     };
   } catch (err) {
     console.error("denext: failed to load instrumentation module", err);
@@ -128,5 +161,20 @@ export async function runRegister(instrumentation: Instrumentation): Promise<voi
     await instrumentation.register();
   } catch (err) {
     console.error("denext: instrumentation register() threw", err);
+  }
+}
+
+/**
+ * Invoke `onShutdown` once, swallowing and logging any error so a failing hook cannot keep the
+ * shutdown from finishing.
+ *
+ * @param instrumentation The loaded instrumentation hooks.
+ */
+export async function runShutdownHook(instrumentation: Instrumentation): Promise<void> {
+  if (!instrumentation.onShutdown) return;
+  try {
+    await instrumentation.onShutdown();
+  } catch (err) {
+    console.error("denext: instrumentation onShutdown() threw", err);
   }
 }

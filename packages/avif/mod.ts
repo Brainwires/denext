@@ -1,20 +1,23 @@
 /**
- * `@denext/avif` — a Deno-native AVIF **encoder**, the first-party replacement for
- * the npm `@jsquash/avif` peer codec denext's image optimizer used to lazily import.
+ * `@denext/avif` — a Deno-native AVIF **encoder and decoder**, the first-party
+ * replacement for the npm `@jsquash/avif` peer codec denext's image optimizer used to
+ * lazily import.
  *
- * It wraps the **libavif** (AOM/AV1) WebAssembly encoder from
+ * It wraps the **libavif** (AOM/AV1) WebAssembly codecs from
  * [jSquash](https://github.com/jamsinclair/jSquash) `@jsquash/avif@2.1.1` (itself
  * repackaged from Google's Squoosh, Apache-2.0). denext forks the **prebuilt
- * single-threaded encoder** (`lib/avif_enc.{js,wasm}`) and drives it through the
- * emscripten module's `instantiateWasm` hook, so the codec carries **zero npm
- * dependencies** and runs under Deno with no `--unstable-*` flag. See
- * `THIRD-PARTY-LICENSES.md` for the libavif / libaom / emscripten licenses it embeds.
+ * single-threaded encoder and decoder** (`lib/avif_enc.{js,wasm}`,
+ * `lib/avif_dec.{js,wasm}`) and drives them through the emscripten module's
+ * `instantiateWasm` hook, so the codec carries **zero npm dependencies** and runs
+ * under Deno with no `--unstable-*` flag. See `THIRD-PARTY-LICENSES.md` for the
+ * libavif / libaom / emscripten licenses it embeds.
  *
- * Only the encode path is vendored — the optimizer never decodes AVIF (Photon does
- * source decode). The wasm is compiled from `fetch(new URL(..., import.meta.url))`,
- * so a consumer needs read access to the package file locally (`--allow-read`) or
- * net access when loaded from JSR (`--allow-net`); it is a server-only codec and is
- * never shipped to the browser.
+ * denext's image optimizer decodes AVIF sources with {@linkcode decode} (Photon
+ * decodes the other formats) and encodes AVIF output with {@linkcode encode}. The
+ * wasm is compiled from `fetch(new URL(..., import.meta.url))`, so a consumer needs
+ * read access to the package file locally (`--allow-read`) or net access when loaded
+ * from JSR (`--allow-net`); it is a server-only codec and is never shipped to the
+ * browser.
  *
  * @example Encode an RGBA frame to AVIF
  * ```ts
@@ -30,6 +33,7 @@
 
 // The vendored emscripten glue is untyped JS; its default export is the module factory.
 import moduleFactory from "./lib/avif_enc.js";
+import decoderFactory from "./lib/avif_dec.js";
 
 /** Raw pixel input: RGBA (8-bit) bytes plus dimensions. Mirrors the DOM `ImageData` shape. */
 export interface AvifImageData {
@@ -143,4 +147,75 @@ export async function encode(
   const output = module.encode(bytes, image.width, image.height, opts);
   if (!output) throw new Error("@denext/avif: AVIF encoding failed");
   return output.buffer as ArrayBuffer;
+}
+
+/** A decoded AVIF image: 8-bit RGBA pixels plus dimensions (the DOM `ImageData` shape). */
+export interface AvifDecodedImage {
+  /** Row-major RGBA bytes, length `width * height * 4`. */
+  data: Uint8ClampedArray;
+  /** Width in pixels. */
+  width: number;
+  /** Height in pixels. */
+  height: number;
+}
+
+type AvifDecoderModule = {
+  decode(data: Uint8Array, bitDepth: 8): AvifDecodedImage | null;
+};
+
+let decoderWasm: Promise<WebAssembly.Module> | undefined;
+
+/**
+ * The decoder: the wasm is compiled once, but every call gets a fresh instance, so the memory a
+ * large image grew is released with it instead of staying with the process.
+ */
+async function newDecoder(): Promise<AvifDecoderModule> {
+  decoderWasm ??= WebAssembly.compileStreaming(
+    fetch(new URL("./lib/avif_dec.wasm", import.meta.url)),
+  ).catch((error) => {
+    decoderWasm = undefined;
+    throw error;
+  });
+  const wasmModule = await decoderWasm;
+  // deno-lint-ignore no-explicit-any
+  return await (decoderFactory as any)({
+    noInitialRun: true,
+    instantiateWasm: (
+      // deno-lint-ignore no-explicit-any
+      imports: any,
+      callback: (i: WebAssembly.Instance) => void,
+    ) => {
+      const instance = new WebAssembly.Instance(wasmModule, imports);
+      callback(instance);
+      return instance.exports;
+    },
+  }) as AvifDecoderModule;
+}
+
+/**
+ * Decode an AVIF file (still image, or the first frame of an image sequence) to 8-bit RGBA.
+ * Check the image's dimensions before calling it on untrusted input: the decoder allocates the
+ * whole raster.
+ *
+ * @example Decode, then re-encode smaller
+ * ```ts
+ * import { decode } from "@denext/avif";
+ * const { data, width, height } = await decode(await Deno.readFile("photo.avif"));
+ * ```
+ *
+ * @param bytes The AVIF file.
+ * @returns Its pixels and dimensions.
+ * @throws {Error} When the bytes are not an AVIF image libavif can decode.
+ */
+export async function decode(bytes: Uint8Array | ArrayBuffer): Promise<AvifDecodedImage> {
+  const module = await newDecoder();
+  const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const image = module.decode(input, 8);
+  if (!image) throw new Error("@denext/avif: AVIF decoding failed");
+  // Copied out of the instance (and plain RGBA whatever ImageData class the glue used).
+  return {
+    data: new Uint8ClampedArray(image.data),
+    width: image.width,
+    height: image.height,
+  };
 }

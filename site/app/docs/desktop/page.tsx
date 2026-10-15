@@ -104,7 +104,9 @@ await runDesktop({
       </p>
       <p>
         <code>runDesktop</code> resolves once the server is up to{" "}
-        <code>{"{ window, trust, emit }"}</code>: <code>window</code> is the adopted{" "}
+        <code>{"{ window, trust, emit, sidecar }"}</code> (<code>sidecar(name)</code> controls a
+        {" "}
+        <a href="#desktop-sidecars">sidecar</a>): <code>window</code> is the adopted{" "}
         <code>Deno.BrowserWindow</code> (<code>undefined</code> outside the desktop runtime),{" "}
         <code>trust</code> is the world the gates enforce (<code>loopback</code>{" "}
         under the stock runtime, <code>memory</code>{" "}
@@ -537,7 +539,20 @@ desktop: {
           self-signed development certificate must be trusted (Trusted Root and Trusted Publishers)
           before a build signed with it runs.
         </li>
+        <li>
+          <strong>An app from before the layout can&apos;t update into it.</strong>{" "}
+          A CEF app packaged with denext 3.1.x or earlier (runtime 2.9.7-denext.8) can&apos;t
+          replace itself with one in the new layout through a{" "}
+          <a href="#desktop-app-updates">full-app update</a>: reinstall it once.
+        </li>
       </ul>
+      <p>
+        A CEF window on Windows can also wait for slow proxy auto-detection: on a network where WPAD
+        / PAC discovery is slow, Chromium waits for the proxy configuration before it applies its
+        loopback bypass, so a WebSocket through the runtime&apos;s loopback relay (the Live socket,
+        say) can take 10 s or more to connect at startup. The webview backend and macOS / Linux are
+        unaffected.
+      </p>
 
       <h2 id="notarization">Notarization</h2>
       <p>
@@ -667,6 +682,14 @@ denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         </a>), until WebKitGTK ships the fix. Default readers, <code>text()</code>,{" "}
         <code>arrayBuffer()</code> and <code>{`new ReadableStream({ type: "bytes" })`}</code>{" "}
         are unaffected.
+      </p>
+      <p>
+        On Windows&apos; WebView2 backend only what the page <code>fetch</code>es (or reads through
+        {" "}
+        <code>EventSource</code>) streams: navigations and subresources arrive whole
+        (<a href="https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519">
+          WebView2Feedback#3519
+        </a>). Stream through those, or use the <code>cef</code> backend.
       </p>
       <p>
         The probe&apos;s answer can change while the app runs: when a tray host starts or goes away
@@ -833,7 +856,8 @@ denext desktop package --target-os windows --format msi,zip`}
         are not built: MSIX needs a trusted signing certificate even to sideload and runs the app in
         a container that the runtime's per-app storage and deep-link registration do not account
         for; Flatpak needs a runtime/SDK manifest and a portal-aware WebKitGTK sandbox. Both are
-        better served by the formats above today.
+        better served by the formats above today. Snap and a Mac App Store build are not made
+        either: their sandboxes break the same per-app storage and deep-link registration.
       </Callout>
 
       <h2 id="desktop-sign-in">Sign-in on Deno Desktop</h2>
@@ -1224,14 +1248,14 @@ export default {
         in the page:
       </p>
       <Code lang="ts">
-        {`import { runDesktop } from "denext/desktop";
+        {`import config from "./.deno-desktop/config.json" with { type: "json" };
+import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 import {
   applyDesktopUpdate,
   checkForDesktopUpdate,
   type DesktopUpdaterConfig,
   prepareDesktopUpdate,
 } from "denext/desktop/updater";
-import config from "./denext.config.ts";
 
 const updater: DesktopUpdaterConfig = {
   feedUrl: "https://updates.example.com/desktop-ui", // serves the signed export
@@ -1239,7 +1263,11 @@ const updater: DesktopUpdaterConfig = {
   appId: "com.example.app",
 };
 
-await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy, updater });
+await runDesktop({
+  importMetaUrl: import.meta.url,
+  ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),
+  updater,
+});
 
 // Stage a newer UI in the background; the window switches to it at the next launch.
 try {
@@ -1610,8 +1638,10 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
               <code>secureStore</code> (Keychain · PasswordVault · libsecret)
             </td>
             <td>
-              <code>--allow-run</code>: security · powershell.exe; Linux an unscoped{" "}
-              <code>--allow-sys</code> (the runtime&apos;s libsecret)
+              an unscoped <code>--allow-sys</code> (the runtime&apos;s store) and{" "}
+              <code>--allow-run</code>: security ·{" "}
+              <code>--allow-run</code>: powershell.exe · an unscoped <code>--allow-sys</code>{" "}
+              (the runtime&apos;s libsecret)
             </td>
             <td>full</td>
           </tr>
@@ -1840,9 +1870,9 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <strong>Native vs the WebView on Deno Desktop.</strong>{" "}
         Most capabilities run in the Deno process: <code>fs</code>, <code>sqlite</code> and{" "}
         <code>secure-store</code> keep data that survives a relaunch (<code>secure-store</code>{" "}
-        uses the <code>security</code>{" "}
-        tool on macOS, the runtime&apos;s libsecret on Linux and, on Windows, WinRT{" "}
-        <code>PasswordVault</code> via <code>powershell.exe</code>{" "}
+        uses the pinned runtime&apos;s own Keychain store on macOS (the <code>security</code>{" "}
+        tool under an older or the stock runtime), the runtime&apos;s libsecret on Linux and, on
+        Windows, WinRT <code>PasswordVault</code> via <code>powershell.exe</code>{" "}
         — the Windows backend is verified by the Windows CI round-trip); <code>shell</code>,{" "}
         <code>dialogs</code> and <code>keep-awake</code>{" "}
         drive OS programs. Under denext&apos;s pinned runtime, <code>dialogs</code>{" "}
@@ -1937,14 +1967,12 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         The new desktop-only functions reject with code <code>unavailable</code> elsewhere:{" "}
         <code>openPath</code>, <code>revealInFileManager</code> and <code>moveToTrash</code>;{" "}
         <code>saveFile</code> downloads in a browser and <code>pickFolder</code> uses{" "}
-        <code>showDirectoryPicker</code> where the browser has it. Storage matters most: without
+        <code>showDirectoryPicker</code>{" "}
+        where the browser has it. Storage matters most: under the stock runtime a Deno Desktop
+        window gets a new origin each launch, so browser storage starts empty every time
+        (denext&apos;s pinned runtime keeps <a href="#desktop-app-origin">one origin</a>). Enable
         {" "}
-        <a href="#desktop-app-origin">
-          <code>desktop.app.origin</code>
-        </a>{" "}
-        (or under the stock runtime) a Deno Desktop window gets a new origin each launch, so browser
-        storage starts empty every time. Enable <code>secure-store</code>, <code>fs</code> and{" "}
-        <code>sqlite</code>{" "}
+        <code>secure-store</code>, <code>fs</code> and <code>sqlite</code>{" "}
         for anything that must survive a relaunch; without them the functions fall back to browser
         storage and warn once.
       </p>
@@ -2123,7 +2151,8 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
         pixels. A dropped path is untrusted input like an opened file, so the page reads it through
         the handle (with the <code>fs</code>{" "}
         capability), never by path. The page keeps its own DOM drag events for a hover style; on
-        Windows&apos; WebView2 the paths arrive only with the drop.{" "}
+        Windows&apos; WebView2 the paths arrive only with the drop, and on Wayland a CEF window gets
+        no paths from a drop (use the <code>webview</code> backend there).{" "}
         <code>startFileDrag(items)</code>{" "}
         drags files out to another app or the desktop, as a copy: call it from the page&apos;s{" "}
         <code>dragstart</code> (after{" "}
@@ -2392,8 +2421,10 @@ await bounce({ critical: true }); // until the app is focused`}
         {" "}
         <code>setLaunchAtLogin</code> (a macOS 13+ login item, a Windows <code>Run</code>{" "}
         value, a Linux XDG autostart entry, named after{" "}
-        <code>desktop.app.identifier</code>); turn it on from a setting the user controls. Neither
-        adds a Deno permission.
+        <code>desktop.app.identifier</code>); turn it on from a setting the user controls. Each
+        bakes an unscoped <code>--allow-sys</code>, which the pinned runtime requires for it (see
+        {" "}
+        <a href="#desktop-capabilities">the capability table</a>).
       </p>
       <Code lang="ts">
         {`import {
@@ -2821,6 +2852,17 @@ const stop = onSidecarStatus("server", (s) => setBanner(s.state === "ready" ? nu
 await restartSidecar("server"); // after it gave up (state "failed")`}
       </Code>
       <p>
+        To start a sidecar again after it gives up, put it under a supervisor:{" "}
+        <code>sidecarService(app.sidecar("server"))</code> from <code>denext/server</code>{" "}
+        is a child of{" "}
+        <a href="/docs/services#supervising-what-denext-already-runs">
+          <code>supervise()</code>
+        </a>{" "}
+        in <code>desktop.ts</code>. The sidecar keeps its own restarts with backoff; once it is{" "}
+        <code>failed</code>, the supervisor counts a crash and starts it again with a fresh attempt
+        count.
+      </p>
+      <p>
         A module sidecar runs with the app&apos;s permissions (one process):{" "}
         <code>permissions</code> is baked into the package like{" "}
         <code>desktop.extraPermissions</code>, and a program of the project bakes an unscoped{" "}
@@ -2905,7 +2947,10 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
           requests a CEF window makes are the app&apos;s
           (<a href="/docs/desktop-runtime#no-network-requests-from-the-cef-backend">
             what it turns off
-          </a>).
+          </a>). So a Linux CEF app has no spellcheck unless it ships Hunspell dictionaries: put the
+          {" "}
+          <code>.bdic</code> files in <code>&lt;data dir&gt;/CEF/Dictionaries</code>{" "}
+          (Windows and macOS use the OS spellchecker).
         </li>
         <li>
           <code>denext doctor</code>{" "}
@@ -2930,9 +2975,10 @@ DENEXT_DESKTOP_RUNTIME_DIR=~/src/deno-runtime denext desktop run   # a local run
       <p>
         The stock Deno Desktop runtime serves the window from{" "}
         <code>http://127.0.0.1:&lt;port&gt;</code>{" "}
-        with a new port every launch, so the page's origin changes each time. Set{" "}
-        <code>desktop.app.origin</code>{" "}
-        to give the window one origin that never changes, on every launch and machine:
+        with a new port every launch, so the page's origin changes each time. denext&apos;s pinned
+        runtime serves it from one origin instead: <code>app://localhost</code>{" "}
+        by default, or your own with <code>desktop.app.origin</code> (with{" "}
+        <code>desktop.app.identifier</code>), the same on every launch and machine:
       </p>
       <Code lang="ts">
         {`// denext.config.ts
@@ -2972,6 +3018,23 @@ export default {
           <code>desktop.app.bridgeOrigins</code> and in that binding&apos;s{" "}
           <code>bind(name, fn, {"{ origins }"})</code>. <code>denext desktop run</code> and{" "}
           <code>dev</code> write the same <code>app.json</code>.
+        </li>
+        <li>
+          <strong>The window stays on the app origin</strong>{" "}
+          (runtime 2.9.7-denext.18), whichever origin it is (<code>app://localhost</code>{" "}
+          included). A top-level navigation to any other origin (a link,{" "}
+          <code>location = …</code>, a form, a server redirect, <code>window.open()</code>,{" "}
+          <code>target="_blank"</code>) never loads in the window: an <code>http(s)</code>{" "}
+          destination opens in the user&apos;s browser instead (a popup only from a user action: one
+          a script opens on a timer or on load opens nothing), and anything else (<code>
+            file:
+          </code>, a custom scheme) is dropped. Iframes are not affected; the CSP&apos;s{" "}
+          <code>frameSrc</code>{" "}
+          decides what the page may frame. To let the window itself navigate to another origin, such
+          as an identity provider that signs in inside the window, list it in{" "}
+          <code>desktop.app.allowedNavigationOrigins</code> (exact origins, written to{" "}
+          <code>app.json</code>). On Linux (WebKitGTK) the refused request has already been sent
+          when the window stops it; nothing it returns is shown or run.
         </li>
         <li>
           In the window, the app's server code reads the origin from{" "}
@@ -3171,6 +3234,9 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           / <code>Sec-Fetch-Site</code>), and no <code>/_denext/desktop/*</code>{" "}
           endpoint serves a marked request. The window's native JS bridge serves only the app origin
           (<code>desktop.app.bridgeOrigins</code>{" "}
+          adds others), and the window itself loads no other origin (the{" "}
+          <a href="#desktop-app-origin">navigation guard</a>;{" "}
+          <code>desktop.app.allowedNavigationOrigins</code>{" "}
           adds others). The runtime is detected at startup from{" "}
           <code>DENO_DESKTOP_APP_ORIGIN</code>; without it the loopback rules above apply unchanged.
         </li>

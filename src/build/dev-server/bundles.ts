@@ -1,6 +1,7 @@
 // On-demand client bundles (per route, and the app-wide Flight entry), the client entry /
 // stylesheet URLs a rendered page links, and the per-generation middleware runner.
 
+import { relative } from "@std/path";
 import type { Platform } from "../platform-extensions.ts";
 import type { PageRoute } from "../../router/manifest.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../../server/middleware.ts";
@@ -210,7 +211,10 @@ export async function getMiddleware(st: DevState): Promise<MiddlewareRunner> {
   if (!st.paths.middlewarePath) return null;
   if (st.middlewareGen !== st.generation) {
     const mod = await st.load(st.paths.middlewarePath);
-    st.middlewareRunner = createMiddlewareRunner(mod as never);
+    st.middlewareRunner = createMiddlewareRunner(
+      mod as never,
+      relative(st.paths.projectDir, st.paths.middlewarePath),
+    );
     st.middlewareGen = st.generation;
   }
   return st.middlewareRunner;

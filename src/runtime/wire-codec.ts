@@ -76,13 +76,18 @@ export const NOT_TAGGED: unique symbol = /* @__PURE__ */ Symbol("denext.wire.not
 const MAX_ENCODE_DEPTH = 64;
 /** BigInt digits accepted on decode — `BigInt()` on a huge string is quadratic. */
 const BIGINT_RE = /^-?\d{1,1024}$/;
-/** The non-finite / negative-zero enum carried by the `N` tag. */
-const NON_FINITE: Record<string, number> = {
-  NaN: NaN,
-  Infinity: Infinity,
-  "-Infinity": -Infinity,
-  "-0": -0,
-};
+/**
+ * The non-finite / negative-zero enum carried by the `N` tag. A `Map`, not an object literal:
+ * `v in {…}` also answers for inherited names, so `{ $: "N", v: "__proto__" }` would decode to
+ * `Object.prototype` and `v: "constructor"` to the `Object` function — a prototype-pollution /
+ * gadget primitive in Server Action args and API bodies.
+ */
+const NON_FINITE = new Map<string, number>([
+  ["NaN", NaN],
+  ["Infinity", Infinity],
+  ["-Infinity", -Infinity],
+  ["-0", -0],
+]);
 
 interface EncodeCtx {
   tagged: boolean;
@@ -277,8 +282,8 @@ export function decodeTagged(
       if (typeof v !== "string" || !BIGINT_RE.test(v)) throw malformed("n");
       return BigInt(v);
     case "N":
-      if (typeof v !== "string" || !(v in NON_FINITE)) throw malformed("N");
-      return NON_FINITE[v];
+      if (typeof v !== "string" || !NON_FINITE.has(v)) throw malformed("N");
+      return NON_FINITE.get(v);
     case "M":
       return decodeMap(v, recurse);
     case "S":

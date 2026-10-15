@@ -110,7 +110,11 @@ Config, written the same way as the Next path:
   `react` / `react-dom` / `next/*` family aliases, your `tsconfig` path
   aliases, and a pinned `npm:name@version` passthrough for the app's own
   dependencies. `@remix-run/*` and `@react-router/*` are **dropped** from those
-  pins: their route and data model is ported, not run.
+  pins: their route and data model is ported, not run. The map still resolves
+  `@remix-run/react`, `react-router` and `react-router-dom` to `denext/remix`, and
+  `@remix-run/node`, `cloudflare`, `deno`, `server-runtime` and `css-bundle` to
+  `denext/remix/server`, for the npm libraries that import them (`remix-utils`,
+  `remix-auth`, `@sentry/remix`).
 - **`denext.config.ts`** with `compatibilityMode: true` (never clobbering an
   existing one).
 - **`.gitignore`** entries for `.denext/` and `out/`, and a `.vscode` Deno LSP

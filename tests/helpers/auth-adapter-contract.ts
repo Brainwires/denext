@@ -326,6 +326,9 @@ const API_TOKEN_CASES: Record<string, Case> = {
     assertEquals(found?.userId, user.id);
     assertEquals(await byHash.call(adapter, "hash-t"), undefined, "no prefix matching");
     assertEquals(await byHash.call(adapter, "hash-t1 "), undefined, "no trimming");
+    assertEquals(found?.ssoSession, undefined, "no SSO mark unless one was stored");
+    await create.call(adapter, { ...apiToken("t2", user.id), ssoSession: true });
+    assertEquals((await byHash.call(adapter, "hash-t2"))?.ssoSession, true, "the SSO mark");
   },
   "touchApiToken records the last use": async (adapter) => {
     const create = adapter.createApiToken;
@@ -681,6 +684,20 @@ const PROFILE_CASES: Record<string, Case> = {
     const promoted = await adapter.updateUser({ id: user.id, isAnonymous: false });
     assert(!promoted.isAnonymous);
     assert(!(await adapter.getUser(user.id))?.isAnonymous);
+  },
+  "sessionsValidAfter round-trips, moves forward, and survives other updates": async (adapter) => {
+    const user = await adapter.createUser({ email: "stamp@x.test" });
+    assertEquals((await adapter.getUser(user.id))?.sessionsValidAfter, undefined);
+    const first = at(-60);
+    await adapter.updateUser({ id: user.id, sessionsValidAfter: first });
+    assertEquals((await adapter.getUser(user.id))?.sessionsValidAfter, first);
+    // An unrelated update leaves it as stored.
+    await adapter.updateUser({ id: user.id, name: "Stamp" });
+    const read = await adapter.getUser(user.id);
+    assertEquals([read?.sessionsValidAfter, read?.name], [first, "Stamp"]);
+    const later = at(0);
+    await adapter.updateUser({ id: user.id, sessionsValidAfter: later });
+    assertEquals((await adapter.getUserByEmail("stamp@x.test"))?.sessionsValidAfter, later);
   },
   "listUsers pages oldest first and counts every user": async (adapter) => {
     for (let i = 0; i < 5; i++) await adapter.createUser({ email: `u${i}@x.test` });

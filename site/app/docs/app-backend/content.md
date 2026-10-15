@@ -51,7 +51,7 @@ endpoints. The rules:
   suffixes, and `"null"` can't be configured at all.
 - **Never `*` with credentials.** `origins: ["*"]` answers `Access-Control-Allow-Origin: *`
   and is refused at boot next to `credentials: true` (and next to any other origin).
-- **`Vary: Origin`** is on every answer the policy touches, allowed or not.
+- **`Vary: Origin`** is on every answer a policy other than `["*"]` touches, allowed or not.
 - **Preflights are answered before middleware.** An `OPTIONS` with `Origin` and
   `Access-Control-Request-Method` for an API route is answered `204` under the route's
   policy, so an auth guard in `middleware.ts` never refuses a preflight (which carries no
@@ -71,6 +71,10 @@ export const cors = false;
 // app/api/public/route.ts — a different audience
 export const cors = { origins: ["https://partner.example.com"] };
 ```
+
+One method of a `defineApi` route can do the same with the `cors()` middleware from `denext/server`:
+`createApi().use(cors({ origins: [...] })).define(…)`. It wins over both the route's export and the
+app policy for the method it guards, and its preflight is answered before `middleware.ts` too.
 
 The native auth endpoints (`/auth/native/*`, `/auth/account/delete`) answer their own
 preflights under the app `cors` policy; they run after `middleware.ts`, so a middleware
@@ -104,7 +108,7 @@ export default {
         // accessTokenTtl: 900,          seconds (60..3600)
         // refreshTokenTtl: 2_592_000,   seconds, slides on each refresh (1 hour..1 year)
         // refreshTokenMaxAge: 7_776_000, absolute cap from sign-in (default: none)
-        // refreshReuseInterval: 0,      concurrent-refresh grace, seconds (0..60)
+        // refreshReuseInterval: 10,     concurrent-refresh grace, seconds (0..60; 0 = strict)
         // codeTtl: 60,                  seconds (10..600)
       },
     }),
@@ -112,12 +116,12 @@ export default {
 };
 ```
 
-Two refresh policies are off by default and worth deciding on:
+Two refresh policies are worth deciding on:
 
 | Option                 | Default | What it does                                                                                                                                                                                                                                                                       |
 | ---------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `refreshTokenMaxAge`   | none    | An absolute lifetime, in seconds from the original sign-in (1 hour..10 years). Each refresh still slides the expiry by `refreshTokenTtl`, but never past this cap; past it the refresh is `invalid_grant` like an expired one, the family is revoked, and the user signs in again. |
-| `refreshReuseInterval` | `0`     | A grace window, in seconds (0..60), for two refreshes racing with one refresh token. Within it, the immediately previous refresh token answers the same pair its rotation issued instead of revoking the family. See [Security](#security) for the tradeoff.                       |
+| `refreshReuseInterval` | `10`    | A grace window, in seconds (0..60), for two refreshes racing with one refresh token (GoTrue's default). Within it, the immediately previous refresh token answers the same pair its rotation issued instead of revoking the family; `0` is strict. See [Security](#security).      |
 
 Without `refreshTokenMaxAge`, an app opened at least once every `refreshTokenTtl` stays
 signed in indefinitely. Set it when a session should end on a schedule however active it is
@@ -125,7 +129,7 @@ signed in indefinitely. Set it when a session should end on a schedule however a
 
 `refreshReuseInterval` is for an app with more than one refresher: a background task or a
 second process holding the same stored refresh token. `nativeSession()` is single-flight
-within one JavaScript context, so a single-process app doesn't need it.
+within one JavaScript context, so a single-process app can set it to `0` (strict).
 
 The flow, in the order it happens:
 
@@ -276,8 +280,48 @@ it raw or as its SHA-256 hex, so a captured `id_token` can't be replayed. Set
 The account is then created or linked by the usual [linking rules](/docs/auth#account-linking-rules):
 an existing local account with the same address links only when both sides are verified. The
 email comes from the verified token only; the client's first-login payload contributes a
-display name at most. A user with a second factor gets `403 { "error": "mfa_required" }` —
-send them through the browser flow, which runs the step-up.
+display name at most.
+
+A user with a verified second factor is not signed in by the `id_token` alone. The sign-in
+answers a pending result instead of tokens — `{ "mfa_required": true, "mfa_token": "nmf_…",
+"expires_in": 300, "factors": [{ "id", "type": "totp" | "phone" }] }` — and `nativeSession()`
+throws it as a `NativeSessionError` with `code: "mfa_required"` and the pending sign-in on
+`error.mfa`. Finish it with a code:
+
+```ts
+try {
+  await session.signInWithIdToken("apple", input);
+} catch (error) {
+  if (!(error instanceof NativeSessionError) || error.code !== "mfa_required" || !error.mfa) {
+    throw error;
+  }
+  // An SMS factor texts a code first: `await session.sendMfaSms(error.mfa, factorId)` answers
+  // `{ challengeId, mfa }`, then `completeMfa(mfa, code, { factorId, challengeId })`.
+  try {
+    await session.completeMfa(error.mfa, await askForCode()); // a TOTP or backup code
+  } catch (wrong) {
+    // `invalid_code` carries a fresh `wrong.mfa` (one attempt fewer) to retry with.
+  }
+}
+```
+
+On the wire that is `POST /auth/native/mfa` `{ mfa_token, code[, factor_id, challenge_id] }` and
+`POST /auth/native/mfa-challenge` `{ mfa_token, factor_id }`. The `mfa_token` is the pending
+state, and nothing else:
+
+- **Single-use.** Every presentation spends it. A wrong code answers
+  `401 { error: "invalid_code", mfa_token, attempts_left }` with a fresh token (same expiry);
+  after five wrong codes the sign-in is over (`400 invalid_grant`). Code checks draw on the same
+  `rateLimit.mfa` budget as the web step-up.
+- **Short-lived.** Five minutes from the `id_token` sign-in, never extended.
+- **Grants nothing.** It is not an access or refresh token, and no session, tokens or `signIn`
+  event exist until the second factor passes. A user banned or deleted in between, or whose
+  address was first proven after the sign-in, never finishes it.
+
+This mirrors `/auth/v1`, where GoTrue's `grant_type=id_token` issues an `aal1` session that the
+MFA verify calls raise; a native session has no lesser level, so the pending state is a token
+that is not a session at all. Under `mfa.required: "always"`, a user with no factor yet still
+gets `403 { "error": "mfa_required" }`: enrollment runs in the browser flow (`signIn`).
 
 With Apple, pass the `authorizationCode` too. When `clientSecret` is configured (or an
 `apple()` web provider has one), the server exchanges the code at Apple's token endpoint and
@@ -293,11 +337,12 @@ delete them in the app. `POST /auth/account/delete` does it for the signed-in us
 - It needs a **recent sign-in**: `authTime` within `mfa.freshness` (at least five minutes),
   the rule that enrolling a second factor uses. Otherwise it answers
   `403 { "error": "reauth_required" }`; sign in again and retry.
-- It revokes the user's Sign in with Apple tokens at `https://appleid.apple.com/auth/revoke`
-  (the stored refresh token, else the access token), ends their native session families and
-  server-side sessions, then calls the adapter's `deleteUser`, which removes the user, linked
-  accounts, the password hash, bearer API tokens, the TOTP factor, native sessions and the
-  verification tokens sent to their address (one transaction in SQLite).
+- It revokes the user's Sign in with Apple tokens at `https://appleid.apple.com/auth/revoke` (the
+  stored refresh token, else the access token), ends their native session families, server-side
+  sessions and stateless cookie sessions (through the user's
+  [`sessionsValidAfter`](/docs/auth#revocation)), then calls the adapter's `deleteUser`, which
+  removes the user, linked accounts, the password hash, bearer API tokens, the TOTP factor, native
+  sessions and the verification tokens sent to their address (one transaction in SQLite).
 - Then `onAccountDeleted({ user, appleRevoked })` runs: delete the app's own rows for the
   user there. `appleRevoked` is `true` when every Apple token was revoked, `false` when one
   could not be (no secret, or Apple refused — deletion still happens, and the logger says
@@ -327,7 +372,8 @@ The checks, in one place:
   whole family is revoked, which signs out the thief and the app alike. A token whose MAC
   doesn't verify is refused without touching the family, so knowing a family id is not
   enough to sign someone out. Two concurrent refreshes with one token produce exactly one
-  new pair (the loser is treated as a replay) — the client is single-flight for that reason.
+  new pair: inside the reuse interval the loser gets that same pair, outside it (or with
+  `refreshReuseInterval: 0`) it is treated as a replay — the client is single-flight anyway.
 - **The reuse interval weakens replay detection, slightly.** With `refreshReuseInterval: N`,
   the immediately previous refresh token is accepted for `N` seconds after its rotation and
   answers the same pair that rotation issued (byte-identical; the family advances once).
@@ -337,7 +383,7 @@ The checks, in one place:
   next rotation, because whichever party then presents a spent token outside the window
   revokes the family. An older generation is a replay even inside the window, and the window
   never revives a revoked, expired or capped family or a deleted user. Keep it as short as
-  your race needs (a few seconds), or leave it at `0`.
+  your race needs (the default is 10 seconds, GoTrue's), or set `0` for strict detection.
 - **Nothing is stored to answer the reuse interval.** The pair is re-derived, not kept: the
   refresh token is an HMAC of the family, the generation and a server-only salt, and the
   access token's issue time is the stored rotation time and its id an HMAC of the same
@@ -359,10 +405,9 @@ The checks, in one place:
 
 ## Limitations
 
-- **Sessions on other devices using stateless cookies outlive account deletion** until they
-  expire; run a `sessionStore` (`session.strategy: "database"`).
-- **A user with a second factor can't use a native id_token sign-in**; the browser flow
-  handles the step-up.
+- **Enrolling a second factor needs the browser flow.** A native `id_token` sign-in can finish an
+  enrolled factor, but under `mfa.required: "always"` a user with no factor yet gets
+  `403 mfa_required` and enrolls through `signIn`.
 - **Apple revocation needs the client secret JWT** (`native.apple.clientSecret`, or an
   `apple()` provider's) — minting it from your `.p8` key is yours to do.
 - **CORS does not cover pages, Server Actions, the API batch endpoint or Live.**

@@ -1,0 +1,10 @@
+// useApi with a query object whose field has the wrong type.
+"use client";
+import { useApi } from "denext";
+import "./.denext/api.ts";
+
+export function Posts() {
+  const query = { page: "2" };
+  const { data } = useApi("/api/posts", "POST", { body: { title: "x" }, query });
+  return <p>{data?.id}</p>;
+}

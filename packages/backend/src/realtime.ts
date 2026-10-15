@@ -39,13 +39,17 @@
 
 import { inRoot } from "./root-context.ts";
 import {
+  BOOT_DDL_ENV,
+  bootDdlEnabled,
+  bootMigrate,
+  BootSchemaError,
   clientIpForLimits,
   createChannel,
-  migratePostgres,
   type Migration,
   revalidateTag,
   type SqlClient,
   type SqlListener,
+  withMigrationLock,
 } from "@denext/denext/server";
 import { type DbIdentity, ensureRlsMigrated, type RlsScope } from "./rls.ts";
 import { resolveScope, rlsReady, scopedFor } from "./postgres.ts";
@@ -74,7 +78,7 @@ import {
   tableTrigger,
   triggerArgs,
 } from "./realtime-sql.ts";
-import { LogicalSource } from "./realtime-logical.ts";
+import { LogicalSource, releaseReserved, type Reserved } from "./realtime-logical.ts";
 
 /** A change as the database reported it — keys only, before any re-read. */
 export interface TableChangeEvent {
@@ -307,8 +311,12 @@ export const REVALIDATE_OWNER_SQL = "select case when exists (select 1 from pg_l
   `objid = ${OWNER_LOCK[1]} and objsubid = 2 and granted) then true else ` +
   `pg_try_advisory_lock(${OWNER_LOCK[0]}, ${OWNER_LOCK[1]}) end as owner`;
 
-/** A reserved connection, as `SqlClient.reserve` hands it out. */
-type Reserved = SqlClient & { release(): void | Promise<void> };
+/**
+ * Gives up every session-level advisory lock the connection holds. A failed owner check can't
+ * tell whether the lock was taken before the failure, so it releases them all — the reserved
+ * connection is this engine's alone — before the connection goes back to the pool.
+ */
+const UNLOCK_ALL_SQL = "select pg_advisory_unlock_all()";
 
 /** The realtime engine of one server instance. */
 export class RealtimeEngine {
@@ -417,9 +425,11 @@ export class RealtimeEngine {
     return table;
   }
 
-  /** Apply the trigger migrations once (a failure is retried on the next call). */
-  #migrate(sql: SqlClient): Promise<void> {
-    if (!this.config.migrate) return Promise.resolve();
+  /**
+   * The migrations this engine applies on start: the realtime schema and the configured tables'
+   * triggers (none of the triggers for the logical source).
+   */
+  migrations(): Migration[] {
     const configured = [...this.config.tables.values()].filter((t) => !t.fromPublication);
     const all: Migration[] = realtimeMigrations({
       tables: Object.fromEntries(
@@ -430,14 +440,24 @@ export class RealtimeEngine {
       publication: this.config.publication ?? false,
     });
     // The logical source needs no triggers.
-    const migrations = this.config.source === "logical"
+    return this.config.source === "logical"
       ? all.filter((m) => !m.name.startsWith("backend_realtime_t_"))
       : all;
+  }
+
+  /** Apply the trigger migrations once (a failure is retried on the next call). */
+  #migrate(sql: SqlClient): Promise<void> {
+    if (!this.config.migrate) return Promise.resolve();
+    const migrations = this.migrations();
     // The `anon` / `authenticated` roles first: the realtime schema grants to them. (An engine
     // built on its own client, with no `backend({ postgres })` installed, migrates that client.)
     this.#migrated ??= inRoot(() =>
       rlsReady().catch(() => ensureRlsMigrated(sql)).then(() =>
-        migratePostgres(sql, { migrations, table: "backend_migrations" })
+        bootMigrate(sql, {
+          migrations,
+          table: BACKEND_MIGRATIONS,
+          feature: "backend({ realtime })",
+        })
       )
     ).then(() => undefined, (error) => {
       this.#migrated = null;
@@ -524,7 +544,7 @@ export class RealtimeEngine {
     for (const [name, table] of this.config.tables) {
       if (!table.fromPublication || seen.has(name)) continue;
       this.config.tables.delete(name);
-      if (this.config.source === "notify") await runStatements(sql, dropTriggersSql(table));
+      if (this.config.source === "notify") await dropTriggers(sql, table);
     }
   }
 
@@ -559,16 +579,19 @@ export class RealtimeEngine {
     console.warn(`[@denext/backend] realtime: skipping publication table ${message}`);
   }
 
+  /**
+   * Create a table's triggers unless they are there with the same arguments — under the
+   * migration lock, re-checked once it is held, so instances starting together create them
+   * once and never race a migration run.
+   */
   async #installTriggers(sql: SqlClient, table: ResolvedTable): Promise<void> {
-    const rows = await sql.unsafe<{ name: string; args: string }>(
-      "select tgname::text as name, encode(tgargs, 'escape') as args from pg_trigger " +
-        "where tgrelid = $1::regclass and tgname in ('denext_realtime', 'denext_realtime_truncate')",
-      [table.qualified],
-    );
-    const expected = triggerArgs(table).map((arg) => `${arg}\\000`).join("");
-    const row = rows.find((r) => r.name === "denext_realtime");
-    if (row?.args === expected && rows.length === 2) return;
-    await runStatements(sql, tableTrigger(table));
+    if (await triggersCurrent(sql, table)) return;
+    if (!bootDdlEnabled()) {
+      throw new BootSchemaError(`${BOOT_DDL_ENV}=off and its triggers are missing or out of date`);
+    }
+    await underMigrationLock(sql, async (tx) => {
+      if (!(await triggersCurrent(tx, table))) await runStatements(tx, tableTrigger(table));
+    });
   }
 
   /**
@@ -590,7 +613,11 @@ export class RealtimeEngine {
       if (!mine || String(row.enabled) === want) continue;
       const verb = want === "O" ? "ENABLE" : "DISABLE";
       try {
-        await sql.unsafe(`ALTER TABLE ${row.rel} ${verb} TRIGGER ${row.name}`);
+        if (!bootDdlEnabled()) throw new Error(`${BOOT_DDL_ENV}=off`);
+        await underMigrationLock(
+          sql,
+          async (tx) => void await tx.unsafe(`ALTER TABLE ${row.rel} ${verb} TRIGGER ${row.name}`),
+        );
       } catch (error) {
         console.warn(
           `[@denext/backend] realtime: cannot ${verb.toLowerCase()} the trigger on ${row.rel}: ` +
@@ -603,15 +630,7 @@ export class RealtimeEngine {
   /** `source: "logical"`: keep the configured tables in `denext_realtime`, then open the slot. */
   async #startLogical(sql: SqlClient): Promise<void> {
     const configured = [...this.config.tables.values()].filter((t) => !t.fromPublication);
-    if (configured.length > 0) {
-      const list = configured.map((t) => t.qualified).join(", ");
-      await sql.unsafe(
-        `DO $do$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_publication WHERE pubname = ` +
-          `'${DENEXT_PUBLICATION}') THEN CREATE PUBLICATION ${DENEXT_PUBLICATION}; END IF; ` +
-          `EXCEPTION WHEN duplicate_object THEN NULL; END $do$`,
-      );
-      await sql.unsafe(`ALTER PUBLICATION ${DENEXT_PUBLICATION} SET TABLE ${list}`);
-    }
+    if (configured.length > 0) await ensurePublication(sql, configured);
     const publications = [
       ...(configured.length > 0 ? [DENEXT_PUBLICATION] : []),
       ...(this.config.publication ? [this.config.publication] : []),
@@ -660,7 +679,11 @@ export class RealtimeEngine {
    * @param event The change.
    */
   ingest(event: TableNotification): void {
-    if (!this.config.tables.has(event.table)) return;
+    const table = this.config.tables.get(event.table);
+    if (!table) return;
+    // The triggers fire only for the table's `events`; the WAL carries every change, so a kind
+    // the table does not send is dropped here (a resync always passes).
+    if (event.op !== "resync" && !table.events.includes(event.op)) return;
     if (event.op === "truncate") {
       // Changes earlier in the burst are moot (the rows are gone); later ones follow it.
       const dropped = this.#pending.get(event.table)?.size ?? 0;
@@ -826,6 +849,9 @@ export class RealtimeEngine {
    * cannot hold the lock: every instance revalidates (warned once), never none.
    */
   async #ownsRevalidation(): Promise<boolean> {
+    // Stopped: the lock connection was (or is being) given back; reserving another would leave
+    // it out of the pool with nobody to return it.
+    if (this.#stopped) return false;
     const sql = this.#client();
     if (typeof sql.reserve !== "function") {
       if (!this.#warnedReserve) {
@@ -842,8 +868,10 @@ export class RealtimeEngine {
       const [row] = await (await pending).unsafe<{ owner: boolean }>(REVALIDATE_OWNER_SQL);
       return row?.owner === true;
     } catch {
+      // The connection may be dead (its lock went with it) or alive with the lock held (a
+      // statement timeout, a cancel): release every advisory lock before it returns to the pool.
       if (this.#lockConn === pending) this.#lockConn = null;
-      void pending.then((conn) => conn.release()).catch(() => {});
+      void pending.then((conn) => releaseReserved(conn, [[UNLOCK_ALL_SQL]])).catch(() => {});
       return false;
     }
   }
@@ -854,11 +882,10 @@ export class RealtimeEngine {
     this.#lockConn = null;
     if (!pending) return;
     try {
-      const conn = await pending;
-      await conn.unsafe(`select pg_advisory_unlock(${OWNER_LOCK[0]}, ${OWNER_LOCK[1]})`)
-        .then(() => {}, () => {});
-      await conn.release();
-    } catch { /* never reserved, or already gone: nothing is held */ }
+      await releaseReserved(await pending, [
+        [`select pg_advisory_unlock(${OWNER_LOCK[0]}, ${OWNER_LOCK[1]})`],
+      ]);
+    } catch { /* never reserved: nothing is held */ }
   }
 
   /** Re-read the burst's rows once for the group, then work out each audience's changes. */
@@ -1353,12 +1380,77 @@ function sameTable(a: ResolvedTable, b: ResolvedTable): boolean {
   return a.key === b.key && a.old === b.old && a.qualified === b.qualified;
 }
 
-/** Run a script of statements (`;` + newline separated) in one transaction. */
-async function runStatements(sql: SqlClient, script: string): Promise<void> {
-  const statements = script.split(/;\s*\n/).map((s) => s.trim().replace(/;$/, "")).filter(Boolean);
-  await sql.begin(async (tx) => {
-    for (const statement of statements) await tx.unsafe(statement);
+/** The tracking table of the backend's migrations, whose runner's lock realtime DDL takes. */
+const BACKEND_MIGRATIONS = "backend_migrations";
+
+/**
+ * Run realtime's DDL in a transaction holding the backend's migration lock (the one every boot
+ * migration takes), with the server's notices silenced.
+ */
+function underMigrationLock<T>(sql: SqlClient, fn: (tx: SqlClient) => Promise<T>): Promise<T> {
+  return withMigrationLock(sql, { table: BACKEND_MIGRATIONS, quiet: true }, fn);
+}
+
+/**
+ * Drop a table's realtime triggers (it left the publication), under the migration lock. With boot
+ * DDL off they stay: they notify for a table no longer listened to.
+ */
+async function dropTriggers(sql: SqlClient, table: ResolvedTable): Promise<void> {
+  if (!bootDdlEnabled()) return;
+  await underMigrationLock(sql, (tx) => runStatements(tx, dropTriggersSql(table)));
+}
+
+/** Whether a table's two triggers are there with the arguments it needs now. */
+async function triggersCurrent(sql: SqlClient, table: ResolvedTable): Promise<boolean> {
+  const rows = await sql.unsafe<{ name: string; args: string }>(
+    "select tgname::text as name, encode(tgargs, 'escape') as args from pg_trigger " +
+      "where tgrelid = $1::regclass and tgname in ('denext_realtime', 'denext_realtime_truncate')",
+    [table.qualified],
+  );
+  const expected = triggerArgs(table).map((arg) => `${arg}\\000`).join("");
+  const row = rows.find((r) => r.name === "denext_realtime");
+  return row?.args === expected && rows.length === 2;
+}
+
+/**
+ * `source: "logical"`: the `denext_realtime` publication holds exactly the configured tables —
+ * made so under the migration lock, or, with boot DDL off, checked (a {@linkcode BootSchemaError}
+ * names what is missing).
+ */
+async function ensurePublication(sql: SqlClient, configured: ResolvedTable[]): Promise<void> {
+  if (!bootDdlEnabled()) {
+    const rows = await sql.unsafe<{ name: string }>(
+      "select schemaname || '.' || tablename as name from pg_catalog.pg_publication_tables " +
+        "where pubname = $1",
+      [DENEXT_PUBLICATION],
+    );
+    const have = new Set(rows.map((r) => r.name));
+    const missing = configured.map((t) => t.qualified.replaceAll('"', ""))
+      .map((name) => name.includes(".") ? name : `public.${name}`)
+      .filter((name) => !have.has(name));
+    if (missing.length === 0) return;
+    throw new BootSchemaError(
+      `backend({ realtime }): ${BOOT_DDL_ENV}=off and the ${DENEXT_PUBLICATION} publication ` +
+        `does not hold ${missing.join(", ")}: create it out of band ` +
+        `(CREATE PUBLICATION ${DENEXT_PUBLICATION} FOR TABLE …)`,
+      missing.map((name) => `publication:${DENEXT_PUBLICATION}:${name}`),
+    );
+  }
+  const list = configured.map((t) => t.qualified).join(", ");
+  await underMigrationLock(sql, async (tx) => {
+    await tx.unsafe(
+      `DO $do$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_publication WHERE pubname = ` +
+        `'${DENEXT_PUBLICATION}') THEN CREATE PUBLICATION ${DENEXT_PUBLICATION}; END IF; ` +
+        `EXCEPTION WHEN duplicate_object THEN NULL; END $do$`,
+    );
+    await tx.unsafe(`ALTER PUBLICATION ${DENEXT_PUBLICATION} SET TABLE ${list}`);
   });
+}
+
+/** Run a script of statements (`;` + newline separated), in order, on `tx`. */
+async function runStatements(tx: SqlClient, script: string): Promise<void> {
+  const statements = script.split(/;\s*\n/).map((s) => s.trim().replace(/;$/, "")).filter(Boolean);
+  for (const statement of statements) await tx.unsafe(statement);
 }
 
 /** Audiences that see exactly the same rows share a re-read. */

@@ -16,15 +16,15 @@
 // The refresh token lives in `storage` (the Keychain / Keystore through `secureStore`); the
 // access token only in memory. Refreshes are single-flight, so a burst of 401s rotates the
 // refresh token once — a second rotation with the same token would read as a replay and sign
-// the user out on the server (unless the server sets `native.refreshReuseInterval`, which
-// answers a racing second process within that window with the same pair instead).
+// the user out on the server outside `native.refreshReuseInterval` (10 s by default), within
+// which a racing second process is answered with the same pair instead.
 
 /** Where the refresh token is kept — `secureStore` from `denext/mobile` fits as is. */
 export interface NativeSessionStorage {
   /** The value under `key`, or `null`. */
   get(key: string): Promise<string | null>;
-  /** Store `value` under `key`. */
-  set(key: string, value: string): Promise<void>;
+  /** Store `value` under `key`; what it resolves (`secureStore`'s `{ stored }`) is ignored. */
+  set(key: string, value: string): Promise<unknown>;
   /** Remove `key`. */
   delete(key: string): Promise<void>;
 }
@@ -69,24 +69,52 @@ export interface NativeIdTokenSignIn {
   name?: string;
 }
 
+/**
+ * A native sign-in that still owes a second factor: finish it with
+ * {@link NativeSession.completeMfa}. Single-use — every call answers a fresh one on the error it
+ * throws — and short-lived (five minutes from the id_token sign-in).
+ */
+export interface NativeMfaChallenge {
+  /** The pending sign-in's token (`nmf_…`) — not a credential for anything else. */
+  token: string;
+  /** Seconds it has left, when the server said. */
+  expiresIn?: number;
+  /** The factors it can be finished with (a backup code always works too). */
+  factors: Array<{ id: string; type: "totp" | "phone"; friendlyName?: string }>;
+  /** Wrong codes still allowed, after a wrong one. */
+  attemptsLeft?: number;
+}
+
 /** A failed native-session call. */
 export class NativeSessionError extends Error {
   /** The HTTP status (0 for a network failure). */
   readonly status: number;
-  /** The server's error code (`invalid_grant`, `reauth_required`, `mfa_required`, …). */
+  /**
+   * The server's error code (`invalid_grant`, `reauth_required`, `mfa_required`,
+   * `invalid_code`, …).
+   */
   readonly code: string;
+  /**
+   * With `code: "mfa_required"` (an id_token sign-in for a user with a second factor) and after
+   * a wrong code (`"invalid_code"`): the pending sign-in to pass to
+   * {@link NativeSession.completeMfa}. Absent when the sign-in can't be finished natively (under
+   * `mfa.required: "always"`, a user with no factor yet enrolls through `signIn`).
+   */
+  readonly mfa?: NativeMfaChallenge;
 
   /**
    * Build the error for a failed native-session call.
    *
    * @param status The HTTP status (0 for a network failure).
    * @param code The server's error code.
+   * @param mfa The pending second factor, when there is one to finish.
    */
-  constructor(status: number, code: string) {
+  constructor(status: number, code: string, mfa?: NativeMfaChallenge) {
     super(`denext native session: ${code} (${status})`);
     this.name = "NativeSessionError";
     this.status = status;
     this.code = code;
+    if (mfa) this.mfa = mfa;
   }
 }
 
@@ -109,6 +137,31 @@ export interface NativeSession {
     provider: "apple" | "google",
     input: NativeIdTokenSignIn,
   ): Promise<NativeSessionUser>;
+  /**
+   * Finish an id_token sign-in that threw `mfa_required`: a TOTP code, a backup code, or (with
+   * `challengeId` from {@link sendMfaSms}) an SMS code. A wrong code throws `invalid_code` with a
+   * fresh `error.mfa` to retry with; once the attempts run out, `invalid_grant`.
+   *
+   * @param mfa The pending sign-in (`error.mfa`).
+   * @param code The code the user typed.
+   * @param options `factorId` + `challengeId` for an SMS code.
+   */
+  completeMfa(
+    mfa: NativeMfaChallenge,
+    code: string,
+    options?: { factorId?: string; challengeId?: string },
+  ): Promise<NativeSessionUser>;
+  /**
+   * Text an SMS code to one of the pending user's phone factors.
+   *
+   * @param mfa The pending sign-in.
+   * @param factorId A `phone` factor from `mfa.factors`.
+   * @returns The challenge id for {@link completeMfa}, and the pending sign-in to use next.
+   */
+  sendMfaSms(
+    mfa: NativeMfaChallenge,
+    factorId: string,
+  ): Promise<{ challengeId: string; expiresAt: number; mfa: NativeMfaChallenge }>;
   /** A single-use server nonce to give the native sign-in sheet. */
   nonce(): Promise<string>;
   /** The access token (refreshed first when missing or about to expire), or `null`. */
@@ -132,6 +185,28 @@ interface TokenAnswer {
   expires_in: number;
   refresh_token: string;
   user: NativeSessionUser;
+}
+
+/** The pending second factor a server answer carries, or `undefined`. */
+function mfaOf(
+  json: Record<string, unknown>,
+  previous?: NativeMfaChallenge,
+): NativeMfaChallenge | undefined {
+  if (typeof json.mfa_token !== "string") return undefined;
+  const factors = Array.isArray(json.factors)
+    ? (json.factors as Array<{ id: string; type: "totp" | "phone"; friendly_name?: string }>)
+      .map((f) => ({
+        id: f.id,
+        type: f.type,
+        ...(f.friendly_name ? { friendlyName: f.friendly_name } : {}),
+      }))
+    : previous?.factors ?? [];
+  return {
+    token: json.mfa_token,
+    factors,
+    ...(typeof json.expires_in === "number" ? { expiresIn: json.expires_in } : {}),
+    ...(typeof json.attempts_left === "number" ? { attemptsLeft: json.attempts_left } : {}),
+  };
 }
 
 /** Refresh this long before the access token actually expires (ms). */
@@ -170,7 +245,12 @@ export function nativeSession(options: NativeSessionOptions): NativeSession {
   let access: { token: string; expiresAt: number } | null = null;
   let refreshing: Promise<string | null> | null = null;
 
-  const post = async (path: string, body: Record<string, string>, bearer?: string) => {
+  const post = async (
+    path: string,
+    body: Record<string, string>,
+    bearer?: string,
+    pending?: NativeMfaChallenge,
+  ) => {
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (bearer) headers.authorization = `Bearer ${bearer}`;
     let res: Response;
@@ -188,6 +268,7 @@ export function nativeSession(options: NativeSessionOptions): NativeSession {
       throw new NativeSessionError(
         res.status,
         typeof json.error === "string" ? json.error : "http_error",
+        mfaOf(json, pending),
       );
     }
     return json;
@@ -255,9 +336,33 @@ export function nativeSession(options: NativeSessionOptions): NativeSession {
       if (input.nonce) body.nonce = input.nonce;
       if (input.authorizationCode) body.authorization_code = input.authorizationCode;
       if (input.name) body.name = input.name;
+      const answer = await post(`/native/${encodeURIComponent(provider)}`, body);
+      // A user with a second factor: nothing is signed in until `completeMfa`.
+      if (answer.mfa_required === true) {
+        throw new NativeSessionError(401, "mfa_required", mfaOf(answer));
+      }
+      return await accept(answer as unknown as TokenAnswer);
+    },
+    async completeMfa(mfa, code, mfaOptions = {}) {
+      const body: Record<string, string> = { mfa_token: mfa.token, code };
+      if (mfaOptions.factorId) body.factor_id = mfaOptions.factorId;
+      if (mfaOptions.challengeId) body.challenge_id = mfaOptions.challengeId;
       return await accept(
-        await post(`/native/${encodeURIComponent(provider)}`, body) as unknown as TokenAnswer,
+        await post("/native/mfa", body, undefined, mfa) as unknown as TokenAnswer,
       );
+    },
+    async sendMfaSms(mfa, factorId) {
+      const answer = await post(
+        "/native/mfa-challenge",
+        { mfa_token: mfa.token, factor_id: factorId },
+        undefined,
+        mfa,
+      );
+      return {
+        challengeId: String(answer.challenge_id),
+        expiresAt: Number(answer.expires_at),
+        mfa: mfaOf(answer, mfa)!,
+      };
     },
     async nonce() {
       const answer = await post("/native/nonce", {});

@@ -9,7 +9,8 @@
 
 import type { Middleware } from "./middleware.ts";
 import { next, redirectResponse } from "./middleware.ts";
-import { currentContext } from "./request-context.ts";
+import { requestOrigin } from "./absolute-url.ts";
+import { currentContext, trustsForwardedHeaders } from "./request-context.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 
 /** Internationalization configuration. */
@@ -46,9 +47,9 @@ export interface I18nConfig {
    * `example.fr/about` renders French with no `/fr`. Each entry pins a host to a
    * `defaultLocale` (served unprefixed on that host); a host's other `locales` (if
    * listed) are still prefixed there. Locales not tied to any domain keep the normal
-   * prefix behavior on the primary host. Host resolution uses the request's trusted
-   * host (honoring `trustForwardedHeaders`), never a raw `Host` header on the render
-   * path.
+   * prefix behavior on the primary host. The host is the request's (`X-Forwarded-Host`
+   * only under `trustForwardedHeaders`), compared against these domains only;
+   * `canonicalOrigin` does not override it (it governs absolute URLs).
    */
   domains?: I18nDomain[];
 }
@@ -205,6 +206,22 @@ export function detectLocale(request: Request, i18n: I18nConfig): string {
 }
 
 /**
+ * The host `i18n.domains` is matched against, shared by the render path and
+ * {@link localeMiddleware}: `X-Forwarded-Host` only under `trustForwardedHeaders`, else `Host`.
+ * `canonicalOrigin` deliberately does not override it — it governs absolute-URL building, and
+ * letting it win here would pin every request to the canonical host, so no other domain could
+ * select its locale. Taking the host from the request is safe because it is only compared
+ * against the configured `domains` allowlist to pick a locale; no URL is built from it.
+ *
+ * @param request The incoming request.
+ * @param trustForwardedHeaders Whether `X-Forwarded-Host` may be believed.
+ * @returns The host (with any port; {@link peelLocale} strips it).
+ */
+export function localeDomainHost(request: Request, trustForwardedHeaders?: boolean): string {
+  return new URL(requestOrigin(request, { trustForwardedHeaders })).host;
+}
+
+/**
  * A middleware entry that redirects an unprefixed request to the visitor's
  * detected locale when it differs from the default. Compose it into the
  * middleware chain to get automatic locale routing:
@@ -222,7 +239,7 @@ export function detectLocale(request: Request, i18n: I18nConfig): string {
 export function localeMiddleware(i18n: I18nConfig): Middleware {
   return (request) => {
     const url = new URL(request.url);
-    const host = request.headers.get("host") ?? url.host;
+    const host = i18n.domains ? localeDomainHost(request, trustsForwardedHeaders()) : undefined;
     const { locale } = peelLocale(url.pathname, i18n, host);
     const first = url.pathname.split("/").filter(Boolean)[0];
 

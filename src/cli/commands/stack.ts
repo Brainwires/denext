@@ -1,35 +1,38 @@
-// `denext stack <up|down|status|logs>` — the Supabase CLI's `start` / `stop` / `status` over the
-// Docker Compose stack `denext generate docker` writes:
+// `denext stack <action>` — the Supabase CLI's `start` / `stop` / `status` and the self-hosted
+// stack's operations, over the Docker Compose stack `denext generate docker` writes:
 //
 //   up [--dev] [--build] [generate docker flags]   write the stack when it is missing (with
 //        --stack unless flags say otherwise), fill a missing .env with generated secrets, then
 //        `docker compose up -d --wait`, then print `status`
 //   down [--volumes]                               `docker compose down` (-v drops the data)
 //   status [--json] [--show-secrets]               the API URL, the database URL, the keys
-//   logs [service] [--follow]                      `docker compose logs`
+//   logs [service] [filters] [--follow]            `docker compose logs` (stack-health.ts)
+//   health [--json] [--watch [s]]                  every service's health check + the app's
+//   passwd / roll                                  change passwords / keys (stack-ops.ts)
+//   backup / restore                               the database and storage (stack-backup.ts)
 //
 // Secrets: `status` prints the publishable key; the secret key, the database password and
 // the S3 secret only with --show-secrets. A generated .env is written 0600.
 
 import { join, resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { parseEnv } from "../../server/env.ts";
 import { generateSupabaseKeys } from "../../server/auth/gotrue/keys.ts";
 import { DOCKER_FLAGS, runDocker } from "./generate-docker.ts";
-
-/** How the verb reaches Docker and the files (injectable for tests). */
-export interface StackIo {
-  /** Run `docker` with `args` in `cwd`; output streams through unless `capture`. */
-  docker(
-    args: string[],
-    cwd: string,
-    capture: boolean,
-  ): Promise<{ code: number; stdout: string; stderr: string }>;
-  /** Write `docker-compose.yml` & co. (`denext generate docker`). */
-  generate(ctx: CommandContext, dir: string): Promise<void>;
-  log(line: string): void;
-  error(line: string): void;
-}
+import { backupAction, restoreAction } from "./stack-backup.ts";
+import { generatePassword } from "./stack-env.ts";
+import { healthAction, logsAction } from "./stack-health.ts";
+import {
+  composeArgs,
+  exists,
+  NO_DOCKER,
+  type PsRow,
+  psRows,
+  published,
+  readEnvFile,
+  type StackIo,
+  terminalIo,
+} from "./stack-io.ts";
+import { passwdAction, rollAction } from "./stack-ops.ts";
 
 /**
  * Run `docker` (the default {@linkcode StackIo.docker}): streamed through, or captured.
@@ -47,9 +50,7 @@ export async function dockerCli(
   const io = capture ? "piped" : "inherit";
   const out = await new Deno.Command("docker", { args, cwd, stdout: io, stderr: io }).output()
     .catch((error) => {
-      throw error instanceof Deno.errors.NotFound
-        ? new Error("docker is not on PATH: install Docker (with the compose plugin)")
-        : error;
+      throw error instanceof Deno.errors.NotFound ? new Error(NO_DOCKER) : error;
     });
   const text = (b: Uint8Array) => new TextDecoder().decode(b);
   return {
@@ -60,35 +61,12 @@ export async function dockerCli(
 }
 
 const defaultIo: StackIo = {
+  ...terminalIo,
   docker: dockerCli,
   generate: (ctx, dir) => runDocker(ctx, dir, "", {}),
   log: (line) => console.log(line),
   error: (line) => console.error(line),
 };
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await Deno.stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** The compose files: the stack, plus the dev overlay with `--dev`. */
-function composeArgs(ctx: CommandContext): string[] {
-  const files = ["-f", "docker-compose.yml"];
-  if (ctx.flags.dev === true) files.push("-f", "compose.dev.yml");
-  return ["compose", ...files];
-}
-
-/** Random bytes as hex / base64. */
-function random(kind: "hex" | "base64", bytes: number): string {
-  const data = crypto.getRandomValues(new Uint8Array(bytes));
-  return kind === "hex"
-    ? Array.from(data, (b) => b.toString(16).padStart(2, "0")).join("")
-    : btoa(String.fromCharCode(...data));
-}
 
 /** The value `.env.example`'s `# Generate:` hint asks for, or `undefined` when it can't make one. */
 async function generated(
@@ -96,8 +74,10 @@ async function generated(
   hint: string,
   keys: () => Promise<Awaited<ReturnType<typeof generateSupabaseKeys>>>,
 ): Promise<string | undefined> {
-  if (hint.includes("rand -hex")) return random("hex", 24);
-  if (hint.includes("rand -base64")) return random("base64", 32);
+  if (hint.includes("rand -hex")) return generatePassword(24);
+  if (hint.includes("rand -base64")) {
+    return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+  }
   if (!hint.startsWith("denext backend keys") || hint.includes("--legacy")) return undefined;
   const k = await keys();
   const values: Record<string, string> = {
@@ -131,30 +111,6 @@ export async function fillEnv(example: string): Promise<{ text: string; filled: 
   return { text: lines.join("\n"), filled };
 }
 
-/** One service of `docker compose ps --format json`. */
-interface PsRow {
-  Service: string;
-  State: string;
-  Health?: string;
-  Publishers?: { URL?: string; TargetPort: number; PublishedPort: number }[];
-}
-
-/** `docker compose ps --format json`: one JSON array, or one object per line (older compose). */
-export function parsePs(text: string): PsRow[] {
-  const trimmed = text.trim();
-  if (!trimmed) return [];
-  if (trimmed.startsWith("[")) return JSON.parse(trimmed) as PsRow[];
-  return trimmed.split("\n").filter(Boolean).map((line) => JSON.parse(line) as PsRow);
-}
-
-/** The loopback URL a service's published port answers on. */
-function published(row: PsRow | undefined, target?: number): number | undefined {
-  const pub = row?.Publishers?.find((p) =>
-    p.PublishedPort > 0 && (target === undefined || p.TargetPort === target)
-  );
-  return pub?.PublishedPort;
-}
-
 /** What `status` reports. */
 export interface StackStatus {
   services: { name: string; state: string; health?: string }[];
@@ -162,6 +118,8 @@ export interface StackStatus {
   restUrl?: string;
   databaseUrl?: string;
   s3Url?: string;
+  dashboardUrl?: string;
+  dashboardPassword?: string;
   publishableKey?: string;
   secretKey?: string;
 }
@@ -202,24 +160,20 @@ export function stackStatus(
   }
   const s3 = published(by("minio"), 9000);
   if (s3) status.s3Url = `http://localhost:${s3}`;
+  const dashboard = published(by("dashboard"), 3100);
+  if (dashboard) {
+    // 127.0.0.1, not localhost: the dashboard's session cookie stays on the address it is opened at.
+    status.dashboardUrl = `http://127.0.0.1:${dashboard}`;
+    if (showSecrets && env.DASHBOARD_PASSWORD) status.dashboardPassword = env.DASHBOARD_PASSWORD;
+  }
   if (env.DENEXT_PUBLISHABLE_KEY) status.publishableKey = env.DENEXT_PUBLISHABLE_KEY;
   if (showSecrets && env.DENEXT_SECRET_KEY) status.secretKey = env.DENEXT_SECRET_KEY;
   return status;
 }
 
-async function readEnvFile(dir: string): Promise<Record<string, string>> {
-  try {
-    return parseEnv(await Deno.readTextFile(join(dir, ".env")));
-  } catch {
-    return {};
-  }
-}
-
 async function statusAction(ctx: CommandContext, dir: string, io: StackIo): Promise<void> {
-  const ps = await io.docker([...composeArgs(ctx), "ps", "--all", "--format", "json"], dir, true);
-  if (ps.code !== 0) throw new Error(`docker compose ps failed: ${ps.stderr.trim()}`);
   const status = stackStatus(
-    parsePs(ps.stdout),
+    await psRows(ctx, dir, io),
     await readEnvFile(dir),
     ctx.flags["show-secrets"] === true,
   );
@@ -239,6 +193,8 @@ async function statusAction(ctx: CommandContext, dir: string, io: StackIo): Prom
     ["REST URL", status.restUrl],
     ["DB URL", status.databaseUrl],
     ["S3 URL", status.s3Url],
+    ["Dashboard URL", status.dashboardUrl],
+    ["Dashboard password", status.dashboardPassword],
     ["Publishable key", status.publishableKey],
     ["Secret key", status.secretKey],
   ];
@@ -320,20 +276,23 @@ async function downAction(ctx: CommandContext, dir: string, io: StackIo): Promis
   io.log(ctx.flags.volumes === true ? "Stopped; the data volumes were removed." : "Stopped.");
 }
 
-async function logsAction(ctx: CommandContext, dir: string, io: StackIo): Promise<void> {
-  const args = [...composeArgs(ctx), "logs"];
-  if (ctx.flags.follow === true) args.push("--follow");
-  if (ctx.positionals[1]) args.push(ctx.positionals[1]);
-  const logs = await io.docker(args, dir, false);
-  if (logs.code !== 0) throw new Error(`docker compose logs exited ${logs.code}`);
-}
+/** One action: resolves nothing (success) or an exit code. */
+type StackAction = (ctx: CommandContext, dir: string, io: StackIo) => Promise<void | number>;
 
-const ACTIONS: Record<string, typeof upAction> = {
+const ACTIONS: Record<string, StackAction> = {
   up: upAction,
   down: downAction,
   status: statusAction,
   logs: logsAction,
+  health: healthAction,
+  passwd: passwdAction,
+  roll: rollAction,
+  backup: backupAction,
+  restore: restoreAction,
 };
+
+/** The actions, as help and completions list them. */
+const ACTION_NAMES = Object.keys(ACTIONS).join(" | ");
 
 /**
  * Run one `denext stack` action; resolves the exit code.
@@ -347,15 +306,12 @@ export async function runStack(ctx: CommandContext, io: StackIo = defaultIo): Pr
   const action = ACTIONS[name];
   if (!action) {
     io.error(
-      `denext stack: ${
-        name ? `unknown action "${name}"` : "no action"
-      } (expected up | down | status | logs)`,
+      `denext stack: ${name ? `unknown action "${name}"` : "no action"} (expected ${ACTION_NAMES})`,
     );
     return 1;
   }
   try {
-    await action(ctx, ctx.global.cwd ?? ".", io);
-    return 0;
+    return await action(ctx, ctx.global.cwd ?? ".", io) ?? 0;
   } catch (error) {
     io.error(`denext stack ${name}: ${(error as Error)?.message ?? error}`);
     return 1;
@@ -365,28 +321,112 @@ export async function runStack(ctx: CommandContext, io: StackIo = defaultIo): Pr
 export const stackCommand: CommandSpec = {
   name: "stack",
   summary:
-    "Start, stop and inspect the local Docker stack (app, Postgres, MinIO), like supabase start",
+    "Start, stop, inspect and operate the local Docker stack (app, Postgres, MinIO), like supabase start",
   usage: [
-    "Usage: denext stack <up|down|status|logs> [flags]",
+    "Usage: denext stack <action> [flags]",
     "",
-    "  up      Write the stack if missing (denext generate docker --stack, or your flags), fill a",
-    "          missing .env with generated secrets, docker compose up -d --wait, then status",
-    "          (--dev: the dev overlay; --build: rebuild the app image)",
-    "  down    Stop it (--volumes also drops the database and storage data)",
-    "  status  The API, REST, database and S3 URLs and the publishable key (--json;",
-    "          --show-secrets adds the secret key and the passwords)",
-    "  logs    docker compose logs [service] (--follow)",
+    "  up       Write the stack if missing (denext generate docker --stack, or your flags), fill",
+    "           a missing .env with generated secrets, docker compose up -d --wait, then status",
+    "           (--dev: the dev overlay; --build: rebuild the app image)",
+    "  down     Stop it (--volumes also drops the database and storage data)",
+    "  status   The API, REST, database and S3 URLs and the publishable key (--json;",
+    "           --show-secrets adds the secret key and the passwords)",
+    "  logs     docker compose logs [service] (--follow). Filters: --service <s> (repeatable),",
+    "           --level debug|info|warn|error (that level and above), --since / --until",
+    "           (2026-10-14T09:00:00Z or 30m), --grep <text> or --grep '/regex/i'",
+    "  health   Each service's health check and the app's /_denext/health checks, as a table",
+    "           (--json; --watch [seconds], default 5). Exits 1 when anything is unhealthy",
+    "  passwd   New passwords: --postgres (the superuser from stdin or --generate, the app",
+    "           role a fresh one; ALTER ROLE runs in the database first) and / or --dashboard",
+    "           (DASHBOARD_PASSWORD). One password per line on stdin; never as an argument",
+    "  roll     New publishable and secret keys; --include-secret also new JWT signing keys /",
+    "           DENEXT_JWT_SECRET, which ends every issued token (confirm, or --yes).",
+    "           --keep-old starts a rotation: the previous keys stay valid next to the new",
+    "           ones (the legacy DENEXT_JWT_SECRET is left as it is); --drop-old finishes it",
+    "  backup   [file] The database (pg_dump custom format, default under .denext/backups/);",
+    "           --full: one .tar.gz with roles, extensions, the dump, settings, storage and a",
+    "           MANIFEST.txt of the restore order",
+    "  restore  <file> A dump or a full backup (detected); a database with tables needs --yes",
+    "",
+    "passwd and roll edit .env in place, then --restart recreates the affected containers,",
+    "--no-restart leaves them, and with neither a terminal is asked (else the command printed).",
+    "--show-secrets prints the new secrets.",
   ].join("\n"),
   positionals: [
-    { name: "action", help: "up | down | status | logs", required: true },
-    { name: "service", help: "logs: one service" },
+    { name: "action", help: ACTION_NAMES, required: true },
+    {
+      name: "target",
+      help: "logs: a service; backup / restore: the file; health --watch: the seconds",
+    },
   ],
   flags: [
     { name: "build", type: "boolean", help: "up: rebuild the app image" },
     { name: "volumes", type: "boolean", help: "down: remove the data volumes too" },
     { name: "follow", type: "boolean", help: "logs: keep following" },
-    { name: "show-secrets", type: "boolean", help: "status: print the secret key and passwords" },
-    ...DOCKER_FLAGS,
+    {
+      name: "show-secrets",
+      type: "boolean",
+      help: "status / passwd / roll: print the secret key and passwords",
+    },
+    {
+      name: "service",
+      type: "string",
+      repeatable: true,
+      valueName: "<name>",
+      help: "logs: only this service (repeatable)",
+    },
+    {
+      name: "level",
+      type: "string",
+      valueName: "<level>",
+      help: "logs: debug | info | warn | error and above",
+    },
+    { name: "since", type: "string", valueName: "<time>", help: "logs: from (timestamp or 30m)" },
+    { name: "until", type: "string", valueName: "<time>", help: "logs: until (timestamp or 5m)" },
+    {
+      name: "grep",
+      type: "string",
+      valueName: "<text>",
+      help: "logs: lines containing the text, or matching /regex/flags",
+    },
+    { name: "watch", type: "boolean", help: "health: repeat every [seconds] (default 5)" },
+    {
+      name: "dashboard",
+      type: "boolean",
+      help: "passwd: the dashboard password (DASHBOARD_PASSWORD); up: the dashboard service",
+    },
+    { name: "generate", type: "boolean", help: "passwd: generate strong passwords" },
+    {
+      name: "include-secret",
+      type: "boolean",
+      help: "roll: also the JWT signing keys / DENEXT_JWT_SECRET (ends every issued token)",
+    },
+    {
+      name: "keep-old",
+      type: "boolean",
+      help: "roll: keep the previous keys valid next to the new ones (a rotation window)",
+    },
+    {
+      name: "drop-old",
+      type: "boolean",
+      help: "roll: finish a rotation, keeping only the newest key of each kind",
+    },
+    { name: "restart", type: "boolean", help: "passwd / roll: restart the affected containers" },
+    { name: "no-restart", type: "boolean", help: "passwd / roll: leave the containers running" },
+    {
+      name: "yes",
+      type: "boolean",
+      help: "roll --include-secret / restore: go ahead without asking",
+    },
+    { name: "full", type: "boolean", help: "backup: roles, settings, extensions and storage too" },
+    {
+      name: "storage-dir",
+      type: "string",
+      valueName: "<dir>",
+      help: "backup / restore: the fs storage driver's dir in the app container",
+    },
+    // `--dashboard` is declared above (passwd's target, and up's docker switch alike).
+    ...DOCKER_FLAGS.filter((f) => f.name !== "dashboard"),
   ],
   run: async (ctx) => {
     const dir = resolve(ctx.global.cwd ?? ".");

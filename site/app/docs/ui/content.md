@@ -1,7 +1,7 @@
 ---
 title: Project UI
 slug: ui
-lead: denext ui serves a loopback GUI for the project in front of you — a schema-driven denext.config.ts editor that preserves your comments, a Cron page for schedules and run history, plugin management with per-plugin option forms and JSR search, a GUI over generate, Docker regeneration plus an in-place compose editor, a Desktop signing panel, a Setup page that readies a fresh clone, a Dev page for the dev server, a Tasks page for your deno.json scripts, and your project's own CLI verbs.
+lead: denext ui serves a loopback GUI for the project in front of you — a schema-driven denext.config.ts editor that preserves your comments, a Cron page for schedules and run history, plugin management with per-plugin option forms and JSR search, a GUI over generate, Docker regeneration plus an in-place compose editor, a Desktop signing panel, a Setup page that readies a fresh clone, a Dev page for the dev server, a Tasks page for your deno.json scripts, a Services page for the supervised services/ tree, a Database section for a Postgres project (tables and rows, SQL, policies, migrations, storage, users, realtime, Edge Functions, logs and health, also served on its own as the password-gated denext dashboard), and your project's own CLI verbs.
 ---
 
 `denext ui` is a browser GUI for the project you are standing in — the `vue ui` idea,
@@ -167,7 +167,7 @@ flag can sandbox is refused:
 | `deno task` (the Tasks page)                     | Refused with a `503` — a task is arbitrary shell, and no flag can keep it off the network                                                            |
 | The Dev page's "Start denext dev"                | Refused with a `503` — a dev server needs net permission to listen                                                                                   |
 | Plugin add and remove                            | Refused with a `503`, preview included — `deno add` needs the registry, and `deno remove` can re-resolve the remaining dependencies over the network |
-| The Database section                             | Refused with a `503` — reaching a database, even one on this machine, is a network connection                                                        |
+| The Database section                             | Refused with a `503` — reaching a database, even one on this machine, is a network connection (Logs excepted: `docker compose logs` stays local)     |
 
 `--cached-only` is there because the net permission does not govern Deno's module loader: a
 child denied net would still download an uncached import. A refused control renders disabled
@@ -663,19 +663,9 @@ steps were places rather than steps, and they are pages of their own now.
 ## The dev server
 
 `/dev` says whether a dev server is running, starts and stops it, and keeps the console its
-output streams into. The JSON twin answers `{ ok, dir, running, origin, pid }`.
-
-## Tasks
-
-`/tasks` lists the scripts your `deno.json` declares, each with the command it runs and a
-button. The buttons post to `/tasks/run`, the SSE runner that is the only route which spawns:
-it refuses any name the project does not declare, passes it as an argv element rather than
-through a shell, and ties the child to the stream so closing the page takes the task with it.
-A task runs exactly as `denext task <name>` would: on [denext's Deno toolchain](/docs/toolchain),
-with that `deno` first on the task's `PATH`.
-
-Not to be confused with the Cron page's scheduled jobs: those are `jobs/<name>.ts` modules
-registered with `defineJob`; these are `deno.json` scripts.
+output streams into. The JSON twin answers `{ ok, dir, running, origin, pid }`. That output is
+what `denext dev` prints, so a type or build error arrives
+[explained](/docs/error-handling#explained-type-errors), with Deno's original text under it.
 
 **The dev server, and stopping it.** Starting `denext dev` answers _in place_ rather than
 redirecting, and the step keeps a `<pre class="out">` that the server's output streams into over
@@ -699,20 +689,46 @@ signalled nor cleaned up. Stopping asks the server to drain first and kills the 
 if it will not — and "gone" means the origin no longer answers as _that_ server; on Windows, which
 has no such signal, it is a hard kill and says so.
 
+## Tasks
+
+`/tasks` lists the scripts your `deno.json` declares, each with the command it runs and a
+button. The buttons post to `/tasks/run`, the SSE runner that is the only route which spawns:
+it refuses any name the project does not declare, passes it as an argv element rather than
+through a shell, and ties the child to the stream so closing the page takes the task with it.
+A task runs exactly as `denext task <name>` would: on [denext's Deno toolchain](/docs/toolchain),
+with that `deno` first on the task's `PATH`.
+
+Not to be confused with the Cron page's scheduled jobs: those are `jobs/<name>.ts` modules
+registered with `defineJob`; these are `deno.json` scripts.
+
+## Services
+
+`/services` shows the [supervised services](/docs/services): the files under `services/`, and
+for each supervisor the state of every child (`running`, `restarting`, `failed`, …), its restart
+count and its last error. The UI never runs project code, so it reads the snapshot a running
+`denext dev` or `denext start` keeps in `.denext/services.json`, and says when that was written;
+with no server running it is the last one. Read-only. The JSON twin answers
+`{ ok, dir, files, snapshot }`.
+
 ## Database
 
 `/database` is shown in the navigation when the project uses Postgres: `DATABASE_URL` is a
 `postgres://` URL (in the environment, `.env` or `.env.local`), or the config declares
 `postgres:` — `backend({ postgres })` from [`@denext/backend`](/docs/backend). Its tabs:
 
-| Tab        | What it shows                                                                                                                                      | Writes                                                              |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Tables     | Every table, view and materialized view: the planner's row estimate, row-level security, the primary key; a table's columns, indexes, foreign keys | —                                                                   |
-| Rows       | A table's rows, 50 a page — sort by any column, filter `column = value` (or `IS NULL`), open one row                                               | Edit a value, insert a row, delete a row                            |
-| Policies   | Each table's row-level security (enabled, forced) and every policy in `pg_policies`                                                                | "Enable RLS" writes a migration — it does not alter the table       |
-| Migrations | `migrations/*.sql` — applied, pending, or applied and since edited — and what applying would run                                                   | Apply the pending ones                                              |
-| Storage    | The buckets `backend({ storage })` declares and their objects (paged, size, type); download one (up to 10 MB)                                      | Delete an object                                                    |
-| Users      | denext auth's users from its Postgres tables: live sessions, a confirmed second factor, passkeys                                                   | Revoke a user's sessions; delete a user and every row keyed by them |
+| Tab        | What it shows                                                                                                                                                                     | Writes                                                                                                         |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Tables     | Every table, view and materialized view: the planner's row estimate, row-level security, the primary key; a table's columns, indexes, foreign keys                                | —                                                                                                              |
+| Rows       | A table's rows, 50 a page — sort by any column, filter `column = value` (or `IS NULL`), open one row                                                                              | Edit a value, insert a row, delete a row                                                                       |
+| SQL        | The [SQL editor](#the-sql-editor): a statement or a script, and the last statement's rows                                                                                         | Whatever a read-write run does                                                                                 |
+| Policies   | Each table's row-level security (enabled, forced) and every policy in `pg_policies`                                                                                               | "Enable RLS" writes a migration — it does not alter the table                                                  |
+| Migrations | `migrations/*.sql` — applied, pending, or applied and since edited — and what applying would run                                                                                  | Apply the pending ones                                                                                         |
+| Storage    | The buckets `backend({ storage })` declares and their objects (paged, size, type); download one (up to 10 MB)                                                                     | Upload an object (up to 10 MB); delete an object                                                               |
+| Users      | denext auth's users from its Postgres tables: live sessions, a confirmed second factor, passkeys, a ban in force; one user's page                                                 | Create a user; ban, unban, set a password; revoke a user's sessions; delete a user and every row keyed by them |
+| Realtime   | The publication tables opt in through, each table's triggers; the running app's live channels, subscribers, presence keys and `postgres_changes` bindings ([Realtime](#realtime)) | Add a table to the publication, or drop it                                                                     |
+| Functions  | The Edge Functions under `functions/`, their `verifyJwt` and their recent invocations ([Edge Functions](#edge-functions))                                                         | —                                                                                                              |
+| Logs       | The stack's [logs](#logs): one service or every one, a time window, a level, a text search                                                                                        | —                                                                                                              |
+| Health     | Each service's health check, the app's `/_denext/health` checks and the `services/` supervision tree, refreshing itself ([Health](#health))                                       | —                                                                                                              |
 
 **Where the work happens.** The UI process never opens the database: it would need the
 project's config, and the UI never runs project code. Each page writes one JSON request to a
@@ -750,9 +766,25 @@ project has none): an `ALTER TABLE … ENABLE ROW LEVEL SECURITY` and a commente
 Add the policies the table needs — with RLS on and none, only its owner sees its rows — then
 apply it from Migrations.
 
-**Revoking sessions** deletes the user's rows in the session store (`auth_sessions`) and marks
-their native-app sessions revoked. A stateless cookie session is not stored anywhere, so it can
-be neither counted nor revoked here; it ends when it expires.
+**Revoking sessions** deletes the user's rows in the session store (`auth_sessions`), marks
+their native-app sessions revoked, and moves the user's "sessions valid after" mark to now, so a
+stateless cookie session signed in before it ends too (it is not stored, so it is not counted).
+
+**Users.** "Create a user" writes the `auth_users` row the adapter's `createUser` would, with a
+`hashPassword` credential when a password is given (8 to 1024 characters; without one the user
+signs in another way, a link or a provider), and can mark the address verified; an address
+already taken is refused. A user's page bans them for a listed length (an hour up to "until
+unbanned") by setting `banned_until`, the column the `/auth/v1` admin API's `ban_duration`
+writes and every sign-in and token check reads, and ends every session; "Unban" clears it. "Set
+password" stores a new hash and ends every session. A ban previews first, like every other
+write. Creating a user and setting a password run on submit instead: a preview would have to
+carry the password back into the page, and no password or hash is ever rendered (a statement's
+hash parameter shows as `•••`).
+
+**Uploading** goes through the storage plugin's own operation, as the service: the bucket's
+size cap and type list apply, and the object's metadata row is written with its bytes. The key
+is the one typed, or the listed prefix plus the file's name; an object already there is refused
+unless "Replace" is ticked. It needs a `@denext/backend` from 0.5.0 on.
 
 **Safety.** `--read-only` refuses every write in the server before any child runs — the
 preview included — and the child refuses writes on its own as well. Every post carries the
@@ -760,7 +792,117 @@ CSRF token, like every other form. The connection is shown with its password mas
 (`postgres://app:•••@db:5432/app`), and so is any URL an error message mentions. A downloaded
 object is always served as an `application/octet-stream` attachment with `nosniff`, whatever
 type it was stored with, so a stored HTML or SVG file can never run on the UI's origin.
-`--offline` refuses the section (`503`).
+`--offline` refuses the section (`503`), Logs, Functions and Health excepted.
+
+### The SQL editor
+
+`/database/sql` runs what you type as the connecting role, which is admin by design: in
+`denext ui` you own the project, and the [dashboard](#the-stack-dashboard) is behind its password.
+Row-level security does not apply to that role. Pick the transaction:
+
+- **Read-only** runs ONE statement in a `READ ONLY` transaction, over the extended protocol, which
+  refuses a second statement, so a `COMMIT;` cannot end the read-only transaction and run what
+  follows outside it.
+- **Read-write** runs a script (several statements, the simple protocol) in a transaction that
+  commits when the last statement succeeds and rolls back otherwise.
+
+Both carry a 30-second statement timeout. The page shows the last statement's rows as text (up to
+500; JSON as JSON, `bytea` as `\x…`), keeps the text in the editor, and shows a failure the same
+way. `--read-only` refuses every run. Everything else in the section builds its SQL from the
+catalog and binds every value as a parameter; the editor is the one place that runs SQL it did not
+build.
+
+### Logs
+
+`/database/logs` reads the stack's logs: one service or every one, the last 100 to 5000 lines,
+within a window (5 minutes to 7 days), at a level and above (from a JSON or logfmt `level` field
+or a level word, as `denext stack logs --level` reads it), containing some text. Every choice is a
+fixed list; the search is plain text, never a pattern. Two sources:
+
+- **`docker compose logs`** for the project's compose file, when Docker is on this machine
+  (`denext ui`, or `denext dashboard` run next to the stack). Argv only, never a shell.
+- **The stack's `dashboard-logs` relay**, inside the stack, where the dashboard's container has
+  no Docker (see [the stack dashboard](#the-stack-dashboard)).
+
+Every line is redacted before it is shown or searched: a `postgres://` password, and the value of
+every secret-looking variable (`*PASSWORD*`, `*SECRET*`, `*TOKEN*`, `*_KEY`, …) in the process's
+environment and the project's `.env`. A search runs on the redacted text, so it cannot find a
+secret either.
+
+### Realtime
+
+`/database/realtime` shows realtime from both sides. From the database (the `db-admin` child):
+the publication tables opt in through (`realtime({ publication })`, Supabase's
+`supabase_realtime` by default), each table's place in it, the events its `denext_realtime`
+triggers send, its primary key and row-level security. The one write here is that opt-in: "Add
+to publication…" / "Remove from publication…" previews the `ALTER PUBLICATION` (and a `CREATE
+PUBLICATION` when there is none yet) and runs it on the second post, like every other write; the
+running app re-reads the publication and creates or drops the table's triggers itself. A table
+needs a one-column primary key to opt in. Tables listed in `realtime({ tables })` are code and are
+marked, not changed.
+
+From the running app: its live channels with their subscriber counts, and every
+`postgres_changes` binding's channel, table, filter (redacted like the Logs page) and events.
+"Presence keys" lists a channel's presence keys and how many presences each has, never what they
+tracked; a key's payloads are shown only when you expand that key.
+
+**Reaching the running app.** Channels, presence, invocations and the supervision tree live in
+the app's process, so the page asks it: `@denext/backend` serves `/_denext/backend/admin/*`,
+which answers only the secret key (`DENEXT_SECRET_KEY`, sent as the `apikey` header and never
+shown). `denext ui` asks the dev server `.denext/dev.json` names (a loopback address), with the
+key from the environment or the project's `.env`; the stack's dashboard asks `DASHBOARD_APP_URL`.
+Without a running app, or without the key, those parts say so and the rest of the page renders.
+
+### Edge Functions
+
+`/database/functions` lists the functions the running app serves: each one's name, whether it
+requires a caller (`verifyJwt`) and when its entry file last changed, with how many of its recent
+calls failed. Below, the recent invocations, newest first, for one function or all of them (a
+fixed list): status, duration and time. The functions runtime keeps the last 200 in a ring in the
+app's process; it records only those four facts, never a request's body, headers, query or
+caller, so none can be shown. Without a running app the page lists the files under `functions/`,
+`verifyJwt` unknown.
+
+### Health
+
+`/database/health` is what `denext stack health` prints: each service's compose health check (a
+one-shot that exited 0 counts as done) from `docker compose ps`, or in the stack's dashboard from
+the `dashboard-logs` relay; the app's own `/_denext/health` verdict and each readiness check (the
+`services` supervision check among them); and the `services/` supervision tree, from the running
+app, else the last snapshot a server wrote (`.denext/services.json`). Error messages are
+redacted. The page refreshes itself every 15 seconds by default (a fixed list, `No refresh`
+included): with scripting off through a `<noscript>` meta refresh, with it on by swapping the panel
+in place.
+
+### The stack dashboard
+
+`denext dashboard` serves this same Database section — and nothing else: no configuration,
+plugins, tasks, dev server or commands — behind a password instead of a launch token. The
+self-hosted stack runs it as its `dashboard` service ([Deploy](/docs/deploy#the-dashboard)); it
+runs next to the stack on the host as well:
+
+```sh
+denext dashboard                 # http://127.0.0.1:3100, password from DASHBOARD_PASSWORD
+denext dashboard --read-only     # browse without offering any write
+denext dashboard --host 0.0.0.0 --origin https://dash.example.com   # behind a TLS proxy
+```
+
+| Guard         | What it does                                                                                                                                                                                                                                                                                |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Binding       | `127.0.0.1` unless `--host` says otherwise                                                                                                                                                                                                                                                  |
+| Host          | A loopback name, or the host of an `--origin` (a DNS-rebinding defence); a browser's `Sec-Fetch-Site` must be same-origin                                                                                                                                                                   |
+| Password      | `DASHBOARD_PASSWORD` from the environment, else the project's `.env`; never an argument. Under 12 characters, or unset, the dashboard is locked                                                                                                                                             |
+| Sign-in       | A same-origin form carrying the login form's own token (double-submitted through a short-lived cookie); the password compared in constant time, as two HMAC-SHA256 digests                                                                                                                  |
+| Rate limit    | 5 failed sign-ins per client address and 30 overall per 15 minutes, then `429` with `Retry-After`; while limited even the right password waits, so the limit is no oracle                                                                                                                   |
+| Session       | A fresh 256-bit id per sign-in, held in memory, in an `HttpOnly; SameSite=Strict` cookie — `__Host-`-named and `Secure` over https (directly or through an https `--origin`), plain on an http loopback address; it ends after 30 idle minutes, 12 hours, a restart, or "Sign out" (a POST) |
+| Mutations     | Every write needs the session's CSRF token and a same-origin `Origin` — the dashboard's public `--origin` behind a proxy                                                                                                                                                                    |
+| What it shows | Connection strings masked, passwords never rendered, log lines redacted; a body over 16 MB is a `413` before anything parses it. Nothing writes project files: "Enable RLS" is not offered (add the migration in the project)                                                               |
+
+Behind a reverse proxy, pass the Host through (nginx: `proxy_set_header Host $host;`) and
+terminate TLS there. Over https the session cookie is `__Host-denext_dash` with `Secure`; on a
+plain-http loopback address it is `denext_dash` without `Secure`, so no browser has to bend its
+rules for it. An `--origin` that is plain http on another host is refused at startup: the password
+would cross the network in the clear.
 
 ## Cron
 
@@ -1045,6 +1187,7 @@ the browser and a machine client exercise identical code:
 | `/setup`           | `GET` `POST`            | `/api/setup`           |
 | `/dev`             | `GET` `POST`            | `/api/dev`             |
 | `/tasks`           | `GET`                   | `/api/tasks`           |
+| `/services`        | `GET`                   | `/api/services`        |
 | `/commands`        | `GET` `POST`            | `/api/commands`        |
 | `/database/…`      | `GET` (`POST` to write) | `/api/database/…`      |
 | `/tasks/run`       | `POST`                  | `/api/tasks/run` (SSE) |
@@ -1065,6 +1208,7 @@ describes what its panel does, it does not flatten every panel into one shape:
 | `/api/setup`           | `{ ok, dir, kind, steps }` — one entry per step                                       | `{ ok, … }` the step outcome                                                                     |
 | `/api/dev`             | `{ ok, dir, running, origin, pid }`                                                   | `{ ok, … }` the start/stop outcome                                                               |
 | `/api/tasks`           | `{ ok, dir, tasks }` — the declared names                                             | — (runs go to `/api/tasks/run`)                                                                  |
+| `/api/services`        | `{ ok, dir, files, snapshot }` — the last status snapshot, or `null`                  | — (read-only)                                                                                    |
 | `/api/database/…`      | the child's reply: `{ ok, tables }`, `{ ok, rows, next?, statement }`, …              | `{ ok, statement, applied, affected? }` — `applied: false` for the preview                       |
 
 So `{ ok, applied, diff }` — the diff-then-confirm envelope — is what the writers that

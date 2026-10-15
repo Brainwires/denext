@@ -15,6 +15,7 @@ export function devErrorPage(event: DevEvent | undefined, reloadScriptSrc: strin
     stack?: string;
     codeframe?: string;
     frame?: string;
+    explained?: string;
   };
   const section = (label: string, body: string | undefined) =>
     body ? `<h2>${escapeHtml(label)}</h2><pre>${escapeHtml(body)}</pre>` : "";
@@ -26,9 +27,19 @@ export function devErrorPage(event: DevEvent | undefined, reloadScriptSrc: strin
 <body><main>
 <p class="k">denext dev · server error</p>
 <h1>${escapeHtml(e.title ?? "Error")}</h1>
-<p class="m">${escapeHtml(e.message ?? "")}</p>
+${
+    e.explained
+      ? section("Explained", e.explained)
+      : `<p class="m">${escapeHtml(e.message ?? "")}</p>`
+  }
 ${e.frame ? `<p class="f">${escapeHtml(e.frame)}</p>` : ""}
-${section("Source", e.codeframe)}
+${
+    e.explained
+      ? `<details><summary>Original diagnostic</summary><pre>${
+        escapeHtml(e.message ?? "")
+      }</pre></details>`
+      : section("Source", e.codeframe)
+  }
 ${section("Stack", e.stack)}
 <p class="hint">Fix the file and save — this page reloads when the dev server rebuilds.</p>
 </main><script src="${escapeHtml(reloadScriptSrc)}"></script></body></html>`;

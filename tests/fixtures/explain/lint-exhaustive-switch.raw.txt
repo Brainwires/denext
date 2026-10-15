@@ -1,0 +1,13 @@
+error[denext/exhaustive-switch]: This switch over `status` does not handle "done". Add the missing case(s), or `default: assertNever(status)` (denext/result) so the compiler checks it. [denext/exhaustive-switch]
+    --> /app/lint-exhaustive-switch.ts:5:3
+     | 
+>  5 |   switch (status) {
+     |   ^^^^^^^^^^^^^^^^^
+>  6 |     case "idle":
+    ...
+>  9 |       return "Loading…";
+> 10 |   }
+     |   ^
+
+Found 1 problem
+Checked 1 file

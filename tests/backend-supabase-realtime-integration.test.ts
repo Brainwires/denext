@@ -802,6 +802,15 @@ Deno.test({
       await until(() => seenB.length === 2, 10_000, "B's app.things changes");
       assertEquals(seenB[1].old, { id: 5, label: "x" });
       assertEquals(seenB.filter((p) => p.table === "notes"), [], "B's policies see no note");
+      // TRUNCATE from the WAL's Truncate message: A, who could see a note, is told; B is not.
+      await env.app.unsafe("insert into notes (owner, body) values ($1, 'again')", [A]);
+      await until(() => seenA.length === 4, 10_000, "the insert before the truncate");
+      await env.app.unsafe("truncate notes");
+      await until(() => seenA.length === 5, 10_000, "the truncate");
+      assertEquals(seenA[4].eventType, "TRUNCATE");
+      assertEquals([seenA[4].new, seenA[4].old], [{}, {}], "no row data");
+      await settle(150);
+      assertEquals(seenB.filter((p) => p.table === "notes"), []);
       // No trigger runs on the write path.
       const triggers = await env.app.unsafe(
         "select tgname from pg_trigger where tgname like 'denext_realtime%' and tgenabled <> 'D'",

@@ -55,8 +55,17 @@
  * @module
  */
 
+import { handleAdminRequest } from "./src/admin.ts";
 import type { DenextPlugin, PluginContext } from "@denext/denext/server";
-import { handleGoTrueRequest, installGoTrue, registerHealthCheck } from "@denext/denext/server";
+import {
+  bootMigrate,
+  handleGoTrueRequest,
+  installGoTrue,
+  type Migration,
+  registerBootCheck,
+  registerHealthCheck,
+} from "@denext/denext/server";
+import { rlsMigrations } from "./src/rls.ts";
 import { installSupabaseAuthHooks } from "./src/identity.ts";
 import { checkBucketName } from "./src/keys.ts";
 import { handleStorageRequest } from "./src/handler.ts";
@@ -69,7 +78,7 @@ import {
 import { sqliteMetaStore } from "./src/storage-meta-sqlite.ts";
 import type { BucketWrite, MetaStore } from "./src/storage-meta.ts";
 import { declaredBucketRows, storageAdmin } from "./src/storage-ops.ts";
-import { resolve as resolvePath } from "@std/path";
+import { join, resolve as resolvePath } from "@std/path";
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MULTIPART_THRESHOLD,
@@ -89,6 +98,7 @@ import { channelPermissions } from "./src/realtime-authz.ts";
 import {
   type RealtimeOptions,
   realtimeSchemaMigrations,
+  realtimeTableMigrations,
   resolveRealtime,
 } from "./src/realtime-sql.ts";
 import { resolveRest, type RestOptions, setupRest } from "./src/rest.ts";
@@ -115,6 +125,7 @@ import {
 } from "./src/webhooks.ts";
 import { backendMigrationsOf, createDbHooks, installDbHooks } from "./src/db-command.ts";
 import { seedBuckets } from "./src/storage-seed.ts";
+import { compiledStateDir, dataRoot } from "./src/data-root.ts";
 import { createStorageCommand } from "./src/storage-command.ts";
 
 export { backendAuthAdapter } from "./src/postgres.ts";
@@ -133,6 +144,7 @@ export type {
 export type { FilterOp, TableEvent } from "./src/realtime-shared.ts";
 export type { RlsOptions } from "./src/rls.ts";
 export type { RestOptions } from "./src/rest.ts";
+export type { RestRateLimitOptions } from "./src/rest-limit.ts";
 export type { FunctionConfig, FunctionsOptions } from "./src/functions.ts";
 export type { SupabaseOptions } from "./src/supabase.ts";
 export type { VaultOptions } from "./src/vault.ts";
@@ -280,6 +292,16 @@ function setupDeadlines(
 /** The default sqlite metadata file (no Postgres), relative to the project root. */
 const METADATA_FILE = ".denext-storage.db";
 
+/**
+ * The storage metadata file when `metadataPath` is not set: `.denext-storage.db` in the project,
+ * or in a `denext build --compile` binary `storage.db` in its state directory (`./.denext`, which
+ * the binary may write), since its embedded project is read-only.
+ */
+function defaultMetadataPath(projectRoot: string): string {
+  const state = compiledStateDir();
+  return state === undefined ? resolvePath(projectRoot, METADATA_FILE) : join(state, "storage.db");
+}
+
 /** Where the Storage API is served, or `null` when it is off. */
 function storageApiBase(api: StorageOptions["api"]): string | null {
   if (api === false) return null;
@@ -317,7 +339,7 @@ function setupRealtime(
   ctx: PluginContext,
   options: RealtimeOptions,
   slot: ReturnType<typeof openPostgres>["slot"],
-): void {
+): RealtimeEngine {
   const channel = createRealtimeChannel();
   const engine = new RealtimeEngine(
     options,
@@ -348,13 +370,14 @@ function setupRealtime(
       installRealtimeHub(undefined);
     });
   }
-  if (ctx.mode !== "dev") return;
+  if (ctx.mode !== "dev") return engine;
   const missing = "error" in slot
     ? slot.error.message
     : typeof slot.sql.listen !== "function"
     ? "this Postgres client has no listen() (LISTEN/NOTIFY)"
     : undefined;
   if (missing) console.warn(`[@denext/backend] realtime is unsupported here: ${missing}`);
+  return engine;
 }
 
 /** Install the Supabase keys, `/auth/v1` (with the JWKS) and `denext backend keys`. */
@@ -385,15 +408,64 @@ function setupPostgres(
   const { slot, owned } = openPostgres(options.postgres!, env);
   installPostgres(slot);
   if (owned && "sql" in slot) ctx.addTeardown(() => slot.sql.close());
-  if (options.realtime) setupRealtime(ctx, options.realtime, slot);
+  const engine = options.realtime ? setupRealtime(ctx, options.realtime, slot) : undefined;
   if (rest) setupRest(ctx, rest, "sql" in slot ? slot.sql : undefined);
   installVault(options.vault);
   installQueues(options.queues);
   installWebhooks(webhooks);
   if (ctx.mode === "dev" || ctx.mode === "prod") {
+    registerBackendBootCheck(options, webhooks, engine);
     startServices(ctx, options, webhooks);
     ctx.addTeardown(registerHealthCheck("database", () => databaseReachable(slot)));
   }
+}
+
+/** Whether a service is on and applies its own migrations (no `migrate: false`). */
+function migrates(service: { migrate?: boolean } | undefined): boolean {
+  return !!service && service.migrate !== false;
+}
+
+/** The vault's migrations (its SQL functions' too, with `vault.sql`). */
+function vaultBootMigrations(vault: VaultOptions): Migration[] {
+  return [...vaultMigrations(), ...(vault.sql ? vaultSqlMigrations() : [])];
+}
+
+/** What the enabled services apply to `backend_migrations` on their own (each unless `migrate: false`). */
+function bootMigrationsOf(
+  options: BackendOptions,
+  webhooks: ReturnType<typeof resolveWebhooks> | undefined,
+  engine: RealtimeEngine | undefined,
+): Migration[] {
+  const parts: Array<[boolean, () => Migration[]]> = [
+    [options.postgres?.rls?.migrate !== false, rlsMigrations],
+    [engine?.config.migrate === true, () => engine!.migrations()],
+    [migrates(options.vault), () => vaultBootMigrations(options.vault!)],
+    [migrates(options.queues), queuesMigrations],
+    [webhooks?.migrate === true, webhooksMigrations],
+  ];
+  return parts.flatMap(([on, migrations]) => on ? migrations() : []);
+}
+
+/**
+ * `DENEXT_BOOT_DDL=off`: before the server serves, check that every migration the enabled
+ * services would apply on their own is recorded (a no-op with boot DDL on).
+ */
+function registerBackendBootCheck(
+  options: BackendOptions,
+  webhooks: ReturnType<typeof resolveWebhooks> | undefined,
+  engine: RealtimeEngine | undefined,
+): void {
+  const migrations = bootMigrationsOf(options, webhooks, engine);
+  registerBootCheck(async () => {
+    const sql = db.service();
+    await bootMigrate(sql, { migrations, table: "backend_migrations", feature: "@denext/backend" });
+    if (!options.storage) return;
+    await bootMigrate(sql, {
+      migrations: storageMigrations(),
+      table: STORAGE_MIGRATIONS_TABLE,
+      feature: "backend({ storage })",
+    });
+  });
 }
 
 /**
@@ -431,6 +503,11 @@ function installDbHooksFor(
             on.queues ? queuesMigrations : () => [],
             on.webhooks ? webhooksMigrations : () => [],
           ])
+          : [],
+      // Realtime's per-table triggers need the app's tables: after its migrations.
+      afterMigrationSets: () =>
+        postgres && realtimeOptions
+          ? [{ table: "backend_migrations", migrations: realtimeTableMigrations(realtimeOptions) }]
           : [],
       // Storage's metadata lives on the backend's Postgres: its schema, in its own table.
       migrationSets: () =>
@@ -523,6 +600,8 @@ export function backend(options: BackendOptions = {}): DenextPlugin {
         storageApiBase: apiBase,
       });
       if (options.supabase) await setupSupabase(ctx, options.supabase);
+      // The admin endpoint denext ui and the stack's dashboard read (the secret key only).
+      ctx.addRequestHandler(handleAdminRequest);
       if (options.postgres) setupPostgres(ctx, options, rest, webhooks);
       if (options.postgres || options.storage) installDbHooksFor(ctx, options, webhooks);
       if (functions) await setupFunctionsService(ctx, functions);
@@ -551,7 +630,9 @@ async function setupStorage(
   await storageOptions.driver.init?.({ projectRoot: ctx.projectRoot });
   const meta = seededStore(
     postgres ? postgresMetaStore() : sqliteMetaStore(
-      resolvePath(ctx.projectRoot, storageOptions.metadataPath ?? METADATA_FILE),
+      storageOptions.metadataPath !== undefined
+        ? resolvePath(dataRoot(ctx.projectRoot), storageOptions.metadataPath)
+        : defaultMetadataPath(ctx.projectRoot),
     ),
     declaredBucketRows(buckets),
   );

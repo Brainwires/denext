@@ -12,7 +12,13 @@ import {
   schemaPrefix,
   type SqlClient,
 } from "../postgres.ts";
-import { migratePostgres, type Migration } from "../postgres-migrate.ts";
+import type { Migration } from "../postgres-migrate.ts";
+import {
+  bootMigrate,
+  type FrameworkMigrationSet,
+  registerBootCheck,
+  registerFrameworkMigrations,
+} from "../postgres-boot.ts";
 import { inRootContext } from "../root-context.ts";
 import { oauthServerPostgresSql } from "./sql-adapter-oauth-server.ts";
 
@@ -145,6 +151,22 @@ CREATE INDEX IF NOT EXISTS auth_saml_message_ids_expiry ON ${p}auth_saml_message
 ALTER TABLE ${p}auth_sso_providers ADD COLUMN metadata_valid_until BIGINT;
 ALTER TABLE ${p}auth_sso_providers ADD COLUMN metadata_refresh_after BIGINT;
 `,
+  }, {
+    // Whether a credential came from a session an SSO user's identity provider started: an
+    // OAuth-server approval (its client's tokens) and a bearer API token. A row without it reads
+    // as not SSO-started, so an SSO user's older grants and tokens stop working.
+    name: "0007_auth_sso_session_records",
+    sql: `
+ALTER TABLE ${p}auth_oauth_authorizations ADD COLUMN sso_consent BIGINT;
+ALTER TABLE ${p}auth_api_tokens ADD COLUMN sso_session BOOLEAN;
+`,
+  }, {
+    // The per-user "sessions valid after" time: a cookie session signed in before it is ended
+    // (a ban, a password reset or change, a deletion, revokeAllSessions).
+    name: "0008_auth_sessions_valid_after",
+    sql: `
+ALTER TABLE ${p}auth_users ADD COLUMN sessions_valid_after BIGINT;
+`,
   }];
 }
 
@@ -168,6 +190,25 @@ export interface AuthDb {
 }
 
 /**
+ * The auth tables' migrations in `schema`, as `bootMigrate` and `denext db push` take them.
+ *
+ * @param schema The schema (default: the search path).
+ * @param feature The store that applies them.
+ * @returns The set.
+ */
+export function authMigrationSet(
+  schema: string | undefined,
+  feature = "postgresAuthAdapter",
+): FrameworkMigrationSet {
+  return {
+    feature,
+    migrations: authMigrations(schemaPrefix(schema, feature)),
+    table: AUTH_MIGRATIONS_TABLE,
+    ...(schema !== undefined ? { schema } : {}),
+  };
+}
+
+/**
  * Build the shared handle.
  *
  * @param options The store's options.
@@ -179,15 +220,14 @@ export function authDb(options: PostgresAuthStoreOptions, feature: string): Auth
   const { sql, owned } = resolveConnection(options, feature);
   let migrated: Promise<void> | undefined;
   let closed = false;
+  const set = authMigrationSet(options.schema, feature);
   const migrate = (): Promise<void> => {
     if (options.migrate === false) return Promise.resolve();
-    return migratePostgres(sql, {
-      migrations: authMigrations(prefix),
-      table: AUTH_MIGRATIONS_TABLE,
-      schema: options.schema,
-    }).then(() => undefined);
+    return bootMigrate(sql, set);
   };
-  return {
+  // `denext db push` applies them out of band (a `migrate: false` store's too).
+  registerFrameworkMigrations(`auth:${options.schema ?? ""}`, set);
+  const handle: AuthDb = {
     async ready() {
       // A closed store must not reach the database again: the server is draining.
       if (closed) {
@@ -214,4 +254,7 @@ export function authDb(options: PostgresAuthStoreOptions, feature: string): Auth
       if (owned) await sql.close();
     },
   };
+  // DENEXT_BOOT_DDL=off: the server checks the tables before it serves.
+  if (options.migrate !== false) registerBootCheck(async () => void await handle.ready());
+  return handle;
 }

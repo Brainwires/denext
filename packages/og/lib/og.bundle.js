@@ -17874,9 +17874,24 @@ function Ve(e, t, n) {
   }
   return hr.set(r, i), i;
 }
+/* denext: hardened SVG serialization (GHSA-vcvr-r3jv-pc5j) */
+var __denextXmlNameRe = new RegExp("^[:A-Z_a-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD][:A-Z_a-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD\-.0-9\u00B7\u0300-\u036F\u203F-\u2040]*$", "u");
+var __denextXmlNames = /* @__PURE__ */ new Set();
+function __denextXmlName(e, t) {
+  if (__denextXmlNames.has(e)) return;
+  if (typeof e != "string" || !__denextXmlNameRe.test(e)) throw new Error(`Invalid XML ${t} name: ${JSON.stringify(e)}`);
+  __denextXmlNames.add(e);
+}
+function __denextXmlAttr(e) {
+  return typeof e == "number" || typeof e == "bigint" || typeof e == "boolean" ? "" + e : (0, import_escape_html.default)(String(e));
+}
+function __denextXmlText(e) {
+  return (0, import_escape_html.default)(String(e));
+}
 function M(e, t, n) {
+  __denextXmlName(e, "element");
   let r = "";
-  for (let [i, o] of Object.entries(t)) typeof o < "u" && (r += ` ${i}="${o}"`);
+  for (let [i, o] of Object.entries(t)) typeof o < "u" && (__denextXmlName(i, "attribute"), r += ` ${i}="${__denextXmlAttr(o)}"`);
   return n ? `<${e}${r}>${n}</${e}>` : `<${e}${r}/>`;
 }
 function ha(e = 20) {
@@ -18168,15 +18183,24 @@ function td2(e) {
   return o;
 }
 var zi = { accentHeight: "accent-height", alignmentBaseline: "alignment-baseline", arabicForm: "arabic-form", baselineShift: "baseline-shift", capHeight: "cap-height", clipPath: "clip-path", clipRule: "clip-rule", colorInterpolation: "color-interpolation", colorInterpolationFilters: "color-interpolation-filters", colorProfile: "color-profile", colorRendering: "color-rendering", dominantBaseline: "dominant-baseline", enableBackground: "enable-background", fillOpacity: "fill-opacity", fillRule: "fill-rule", floodColor: "flood-color", floodOpacity: "flood-opacity", fontFamily: "font-family", fontSize: "font-size", fontSizeAdjust: "font-size-adjust", fontStretch: "font-stretch", fontStyle: "font-style", fontVariant: "font-variant", fontWeight: "font-weight", glyphName: "glyph-name", glyphOrientationHorizontal: "glyph-orientation-horizontal", glyphOrientationVertical: "glyph-orientation-vertical", horizAdvX: "horiz-adv-x", horizOriginX: "horiz-origin-x", href: "href", imageRendering: "image-rendering", letterSpacing: "letter-spacing", lightingColor: "lighting-color", markerEnd: "marker-end", markerMid: "marker-mid", markerStart: "marker-start", overlinePosition: "overline-position", overlineThickness: "overline-thickness", paintOrder: "paint-order", panose1: "panose-1", pointerEvents: "pointer-events", renderingIntent: "rendering-intent", shapeRendering: "shape-rendering", stopColor: "stop-color", stopOpacity: "stop-opacity", strikethroughPosition: "strikethrough-position", strikethroughThickness: "strikethrough-thickness", strokeDasharray: "stroke-dasharray", strokeDashoffset: "stroke-dashoffset", strokeLinecap: "stroke-linecap", strokeLinejoin: "stroke-linejoin", strokeMiterlimit: "stroke-miterlimit", strokeOpacity: "stroke-opacity", strokeWidth: "stroke-width", textAnchor: "text-anchor", textDecoration: "text-decoration", textRendering: "text-rendering", underlinePosition: "underline-position", underlineThickness: "underline-thickness", unicodeBidi: "unicode-bidi", unicodeRange: "unicode-range", unitsPerEm: "units-per-em", vAlphabetic: "v-alphabetic", vHanging: "v-hanging", vIdeographic: "v-ideographic", vMathematical: "v-mathematical", vectorEffect: "vector-effect", vertAdvY: "vert-adv-y", vertOriginX: "vert-origin-x", vertOriginY: "vert-origin-y", wordSpacing: "word-spacing", writingMode: "writing-mode", xHeight: "x-height", xlinkActuate: "xlink:actuate", xlinkArcrole: "xlink:arcrole", xlinkHref: "xlink:href", xlinkRole: "xlink:role", xlinkShow: "xlink:show", xlinkTitle: "xlink:title", xlinkType: "xlink:type", xmlBase: "xml:base", xmlLang: "xml:lang", xmlSpace: "xml:space", xmlnsXlink: "xmlns:xlink" };
-var rd = /[\r\n%#()<>?[\\\]^`{|}"']/g;
+var rd = /[\r\n%#()<>?[\\\]^`{|}"'&]/g;
 function Yn(e, t) {
   if (!e) return "";
   if (Array.isArray(e)) return e.map((f) => Yn(f, t)).join("");
-  if (typeof e != "object") return String(e);
+  if (typeof e != "object") return __denextXmlText(e);
   let n = e.type;
   if (n === "text") throw new Error("<text> nodes are not currently supported, please convert them to <path>");
-  let { children: r, style: i, ...o } = e.props || {}, s = (i == null ? void 0 : i.color) || t, a = `${Object.entries(o).map(([f, l2]) => (typeof l2 == "string" && l2.toLowerCase() === "currentcolor" && (l2 = s), (f === "href" || f === "xlinkHref") && n === "image" ? ` ${zi[f] || f}="${Ot.get(l2)[0]}"` : ` ${zi[f] || f}="${l2}"`)).join("")}`, u2 = i ? ` style="${Object.entries(i).map(([f, l2]) => `${va(f)}:${l2}`).join(";")}"` : "";
-  return n === Ia ? Yn(r, s) : `<${n}${a}${u2}>${Yn(r, s)}</${n}>`;
+  let { children: r, style: i, ...o } = e.props || {}, s = (i == null ? void 0 : i.color) || t;
+  if (n === Ia) return Yn(r, s);
+  if (typeof n != "string") throw new Error("Only intrinsic elements are supported inside <svg>");
+  let a = {};
+  for (let [f, l2] of Object.entries(o)) {
+    typeof l2 == "string" && l2.toLowerCase() === "currentcolor" && (l2 = s);
+    (f === "href" || f === "xlinkHref") && n === "image" && (l2 = Ot.get(l2)[0]);
+    a[zi[f] || f] = l2;
+  }
+  i && (a.style = Object.entries(i).map(([f, l2]) => `${va(f)}:${l2}`).join(";"));
+  return M(n, a, Yn(r, s));
 }
 async function $a(e) {
   let t = /* @__PURE__ */ new Set(), n = (r) => {
@@ -18197,7 +18221,10 @@ async function Ba(e, t) {
   let { viewBox: n, viewbox: r, width: i, height: o, className: s, style: a, children: u2, ...f } = e.props || {};
   n ||= r, f.xmlns = "http://www.w3.org/2000/svg";
   let l2 = (a == null ? void 0 : a.color) || t, p = gr(n), h2 = p ? p[3] / p[2] : null;
-  return i = i || h2 && o ? o / h2 : null, o = o || h2 && i ? i * h2 : null, f.width = i, f.height = o, n && (f.viewBox = n), `data:image/svg+xml;utf8,${`<svg ${Object.entries(f).map(([m2, b]) => (typeof b == "string" && b.toLowerCase() === "currentcolor" && (b = l2), ` ${zi[m2] || m2}="${b}"`)).join("")}>${Yn(u2, l2)}</svg>`.replace(rd, encodeURIComponent)}`;
+  i = i || h2 && o ? o / h2 : null, o = o || h2 && i ? i * h2 : null, f.width = i, f.height = o, n && (f.viewBox = n);
+  let m2 = {};
+  for (let [y, b] of Object.entries(f)) m2[zi[y] || y] = typeof b == "string" && b.toLowerCase() === "currentcolor" ? l2 : b;
+  return `data:image/svg+xml;utf8,${M("svg", m2, Yn(u2, l2)).replace(rd, encodeURIComponent)}`;
 }
 var at = "flex";
 var Ua = { p: { display: at, marginTop: "1em", marginBottom: "1em" }, div: { display: at }, blockquote: { display: at, marginTop: "1em", marginBottom: "1em", marginLeft: 40, marginRight: 40 }, center: { display: at, textAlign: "center" }, hr: { display: at, marginTop: "0.5em", marginBottom: "0.5em", marginLeft: "auto", marginRight: "auto", borderWidth: 1, borderStyle: "solid" }, h1: { display: at, fontSize: "2em", marginTop: "0.67em", marginBottom: "0.67em", marginLeft: 0, marginRight: 0, fontWeight: "bold" }, h2: { display: at, fontSize: "1.5em", marginTop: "0.83em", marginBottom: "0.83em", marginLeft: 0, marginRight: 0, fontWeight: "bold" }, h3: { display: at, fontSize: "1.17em", marginTop: "1em", marginBottom: "1em", marginLeft: 0, marginRight: 0, fontWeight: "bold" }, h4: { display: at, marginTop: "1.33em", marginBottom: "1.33em", marginLeft: 0, marginRight: 0, fontWeight: "bold" }, h5: { display: at, fontSize: "0.83em", marginTop: "1.67em", marginBottom: "1.67em", marginLeft: 0, marginRight: 0, fontWeight: "bold" }, h6: { display: at, fontSize: "0.67em", marginTop: "2.33em", marginBottom: "2.33em", marginLeft: 0, marginRight: 0, fontWeight: "bold" }, u: { textDecoration: "underline" }, strong: { fontWeight: "bold" }, b: { fontWeight: "bold" }, i: { fontStyle: "italic" }, em: { fontStyle: "italic" }, code: { fontFamily: "monospace" }, kbd: { fontFamily: "monospace" }, pre: { display: at, fontFamily: "monospace", whiteSpace: "pre", marginTop: "1em", marginBottom: "1em" }, mark: { backgroundColor: "yellow", color: "black" }, big: { fontSize: "larger" }, small: { fontSize: "smaller" }, s: { textDecoration: "line-through" } };

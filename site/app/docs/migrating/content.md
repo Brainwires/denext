@@ -51,7 +51,9 @@ address (see §7).
 (`ready`, `review` or `blocked`). It needs read access to the project, run access to evaluate
 your `next.config.*` (in a `deno` subprocess that can only read the project) and jsr.io when run
 from JSR; add `--json` for a machine-readable report. Without `--allow-run` the report says the
-config couldn't be evaluated, instead of listing its keys as not migrating:
+config couldn't be evaluated, instead of listing its keys as not migrating. A config that
+never finishes is killed after 15 seconds (`DENEXT_NEXT_EVAL_TIMEOUT_MS` changes it), and the
+evaluator is also killed when the `migrate` that started it dies:
 
 ```sh
 deno run --allow-read --allow-env --allow-run --allow-net=jsr.io jsr:@denext/denext/cli migrate --check
@@ -137,8 +139,10 @@ the React family and the Next compat surface at denext:
 ```
 
 `denext migrate` (run in the Next project) writes ALL of this for you — the map
-above is what it generates, shown so you can audit or hand-tune it; a fresh
-compat project gets the same map from `denext create --compatibility`.
+above is an excerpt of what it generates, shown so you can audit or hand-tune it
+(the real one also maps `denext` itself, the rest of the `react-dom/*` family, and
+every `next/*` and `next-intl/*` subpath denext ships); a fresh compat project gets
+the same map from `denext create --compatibility`.
 
 ```sh
 denext migrate
@@ -323,7 +327,11 @@ Radix, recharts, react-hook-form, dnd-kit, sonner, embla, cmdk, vaul,
 react-day-picker, lucide, react-markdown, katex, fabric — these are real npm
 packages built on React. They run on denext's single React through
 `buildNextCompatPages`, which bundles each page's server (SSR) and client
-(hydration) bundles with `react`/`react-dom`/`react-is` aliased to denext:
+(hydration) bundles with `react`/`react-dom`/`react-is` aliased to denext. A
+library's own `react-dom/server`, `react-dom/static`, `next/navigation`,
+`next/link` and the like resolve to denext too; `next/router` and `next/head`
+are rewritten only for imports from `node_modules` (an app's own are the Pages
+Router plugin's):
 
 ```ts
 import { buildNextCompatPages, renderNextCompatPage } from "jsr:@denext/denext/build/next-compat";
@@ -418,7 +426,7 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
 
 - **App Router is the core** — the legacy Pages Router is the first-party
   `@denext/pages-router` plugin, which `denext migrate` wires up automatically
-  when it finds a `pages/` tree. See [Known limitations](/docs/limitations).
+  when it finds a `pages/` tree. See [Pages Router](/docs/pages-router).
 - **A strict default CSP blocks external scripts/styles/images** until you opt
   the host in per route with
   `export const csp = { scriptSrc: ["https://…"], styleSrc: ["https://…"], imgSrc: ["https://…"] }`

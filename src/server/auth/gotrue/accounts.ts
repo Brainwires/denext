@@ -6,6 +6,7 @@
  * @module
  */
 
+import { endUserSessions } from "../session.ts";
 import type { AdapterUser } from "../adapter.ts";
 import { evictUnprovenAccess } from "../email.ts";
 import { emitAuthEvent } from "../events.ts";
@@ -14,6 +15,12 @@ import { nativeAdapterOf } from "../native.ts";
 import { resolveAuthOptions } from "../options.ts";
 import { type GoTrueContext, nowSeconds } from "./context.ts";
 import { GoTrueError } from "./errors.ts";
+
+/**
+ * The part of the `/auth/v1` context the account helpers read — so a sign-in on denextAuth's own
+ * endpoints (a SAML provider) can share them.
+ */
+export type AccountContext = Pick<GoTrueContext, "adapter" | "config">;
 
 /** The minimum password length. */
 function minPasswordLength(ctx: GoTrueContext): number {
@@ -41,7 +48,7 @@ export function checkPassword(ctx: GoTrueContext, password: string): void {
 }
 
 /** Hash a password with the auth config's hasher. */
-export function hashPassword(ctx: GoTrueContext, password: string): Promise<string> {
+export function hashPassword(ctx: AccountContext, password: string): Promise<string> {
   return resolveAuthOptions(ctx.config).hasher.hash(password);
 }
 
@@ -65,7 +72,7 @@ export async function passwordMatches(
 
 /** A fingerprint of the stored password hash, bound into a sign-up confirmation. */
 export async function credentialFingerprint(
-  ctx: GoTrueContext,
+  ctx: AccountContext,
   userId: string,
 ): Promise<string | undefined> {
   const stored = await ctx.adapter.getCredential?.(userId);
@@ -89,7 +96,7 @@ export async function credentialFingerprint(
  *   other code).
  */
 export async function retireForeignPassword(
-  ctx: GoTrueContext,
+  ctx: AccountContext,
   user: AdapterUser,
   bound: string | undefined,
 ): Promise<void> {
@@ -138,9 +145,10 @@ async function deletePassword(
 
 /**
  * End a user's sessions of both kinds: the `/auth/v1` (and native) session families — all but
- * `keepFamily` — and every denextAuth cookie session in the session store. A changed password,
- * a ban and a retired password reach a stolen cookie as well as a stolen refresh token. Fires
- * `sessionRevoked` when a store was cleared.
+ * `keepFamily` — and every denextAuth cookie session: the session store's records, and through
+ * the user's `sessionsValidAfter` every cookie signed in before now, stateless ones included. A
+ * changed password, a ban, a deletion and a retired password reach a stolen cookie as well as a
+ * stolen refresh token. Fires `sessionRevoked` when a store was cleared.
  *
  * @param ctx The context.
  * @param userId The user.
@@ -152,6 +160,7 @@ export async function revokeEverySession(
   keepFamily?: string,
 ): Promise<void> {
   await nativeAdapterOf(ctx.adapter)?.revokeNativeSessionsByUser(userId, keepFamily);
+  await endUserSessions(ctx.adapter, userId);
   const options = resolveAuthOptions(ctx.config);
   if (!options.sessionStore) return;
   await options.sessionStore.deleteByUser(userId);
@@ -202,7 +211,7 @@ export async function signUpExisting(
 
 /** Link (or refresh) an identity row. */
 export async function linkIdentity(
-  ctx: GoTrueContext,
+  ctx: AccountContext,
   user: AdapterUser,
   input: {
     provider: string;
@@ -253,7 +262,7 @@ export interface NewUser {
  * @returns The stored user.
  * @throws {GoTrueError} `email_exists` / `phone_exists` when the store refuses a duplicate.
  */
-export async function createAccount(ctx: GoTrueContext, input: NewUser): Promise<AdapterUser> {
+export async function createAccount(ctx: AccountContext, input: NewUser): Promise<AdapterUser> {
   let user: AdapterUser;
   try {
     user = await ctx.adapter.createUser(newRecord(input));
@@ -336,7 +345,7 @@ function addressIdentity(
  * @returns The updated user.
  */
 export async function updateAccount(
-  ctx: GoTrueContext,
+  ctx: AccountContext,
   patch: Partial<AdapterUser> & { id: string },
 ): Promise<AdapterUser> {
   try {
@@ -358,7 +367,7 @@ export async function updateAccount(
 
 /** Mark an identity's verified flag in its identity data. */
 export async function markIdentityVerified(
-  ctx: GoTrueContext,
+  ctx: AccountContext,
   user: AdapterUser,
   provider: "email" | "phone",
 ): Promise<void> {

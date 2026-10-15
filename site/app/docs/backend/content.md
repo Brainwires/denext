@@ -8,8 +8,8 @@ lead: "@denext/backend puts backend services inside your app as one opt-in plugi
 denext plugin add @denext/backend
 ```
 
-Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.4.0"` to `deno.json`'s `imports`,
-then the plugin to `denext.config.ts`.
+Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.5.0"` to `deno.json`'s `imports`, then
+the plugin to `denext.config.ts`.
 
 Moving a project from Supabase? [Coming from Supabase](/docs/coming-from-supabase) maps each
 Supabase feature to its denext equivalent and walks through moving the schema, policies, users and
@@ -65,9 +65,9 @@ copy is `download` on the source and `upload` on the destination, a move adds `d
 source. `session` is `auth()` from [`denextAuth`](/docs/auth) — `null` when signed out or when the
 app has no auth. A supabase-js caller's access token counts: its session is the one `auth()` reads
 from the bearer (a revoked token, or one still owing a second factor, is `null`), or, without
-`denextAuth`, the token's verified claims. `identity` is who the request acts as: `{ role: "anon" | "authenticated", claims,
-userId? }`, the claims shaped like a Supabase access token's. A request that presents the secret
-key (the service role) skips `authorize`.
+`denextAuth`, the token's verified claims. `identity` is who the request acts as:
+`{ role: "anon" | "authenticated", claims, userId? }`, the claims shaped like a Supabase access
+token's. A request that presents the secret key (the service role) skips `authorize`.
 
 Besides `driver` and `buckets`, `storage` takes:
 
@@ -79,6 +79,10 @@ Besides `driver` and `buckets`, `storage` takes:
 | `metadataPath`          | `.denext-storage.db`    | Without `postgres`: the `node:sqlite` file holding bucket and object metadata (relative to the project root). With `postgres` it is the `storage` schema. |
 | `maxTransformDimension` | `2500`                  | The largest width or height the API's `render/image` routes produce.                                                                                      |
 | `secret`                | `DENEXT_STORAGE_SECRET` | The HMAC secret for signed URLs and tokens (below).                                                                                                       |
+
+In a `denext build --compile` binary the embedded project is read-only: a relative `fs({ dir })` or
+`metadataPath` resolves against the binary's working directory, and with no `metadataPath` the
+metadata goes to `storage.db` in the binary's state directory (`./.denext`).
 
 **When `authorize` runs.** On every storage call made inside a request: the plugin's own endpoints,
 and the server API called from a route handler, Server Action or Server Component, with that
@@ -95,17 +99,16 @@ restart. In production a missing secret is an error the first time a URL is sign
 
 ### Drivers
 
-**`s3({ region, bucket, endpoint?, credentials?, pathStyle?, publicEndpoint?, fetch? })`** talks to AWS S3, Cloudflare R2,
-MinIO and other S3-compatible stores over `fetch`, with AWS Signature Version 4 computed by
-`crypto.subtle` (no SDK). Every denext bucket is a key prefix in the one S3 bucket:
+**`s3({ region, bucket, endpoint?, credentials?, pathStyle?, publicEndpoint?, fetch? })`** talks to
+AWS S3, Cloudflare R2, MinIO and other S3-compatible stores over `fetch`, with AWS Signature Version
+4 computed by `crypto.subtle` (no SDK). Every denext bucket is a key prefix in the one S3 bucket:
 `avatars/u1/me.png`. Credentials default to `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
 `AWS_SESSION_TOKEN`; the endpoint defaults to AWS, or `AWS_ENDPOINT_URL_S3` / `AWS_ENDPOINT_URL`.
 AWS is addressed virtual-host style, a custom `endpoint` path style; `pathStyle` overrides either.
 When browsers reach the store under another name than the server does (the Docker stack's
 `http://minio:9000` is only resolvable inside the containers), set `publicEndpoint` (or
 `S3_PUBLIC_ENDPOINT`): every URL handed to a browser — presigned uploads, downloads and multipart
-parts — is signed for that host (SigV4 signs `Host`), while the server's own calls keep
-`endpoint`.
+parts — is signed for that host (SigV4 signs `Host`), while the server's own calls keep `endpoint`.
 
 | Store         | Options                                                                             |
 | ------------- | ----------------------------------------------------------------------------------- |
@@ -253,13 +256,16 @@ await storage.bucket("avatars").createSignedUrl("u1/me.png", {
 // public bucket: /_denext/storage/o/avatars/u1/me.png?w=256&h=256&q=75&fmt=webp
 ```
 
-A PNG, JPEG, GIF or WebP object is resized to fit inside the box (aspect ratio kept, never
+A PNG, JPEG, GIF, WebP or AVIF object is resized to fit inside the box (aspect ratio kept, never
 enlarged) and re-encoded through denext's [image pipeline](/docs/images), with its output cache,
-concurrency limit and decompression-bomb checks. `width` and `height` must each be one of
-`images.deviceSizes ∪ images.imageSizes`, `quality` is rounded to the nearest of
-`images.qualities`, and `format: "avif"` needs `images.formats` to list `image/avif` — so the number
-of distinct encodes per object stays bounded. Sources over 25 MiB are not transformed. On a private
-bucket the transform is part of the signature; on a public one anyone may ask for any allowed size.
+concurrency limit and decompression-bomb checks. An AVIF source is decoded by the first-party
+`@denext/avif` codec (libavif, wasm) once the size its `ispe` box declares passed those checks; one
+that declares no size (an image sequence with no still image) is refused with `400`. `width` and
+`height` must each be one of `images.deviceSizes ∪ images.imageSizes`, `quality` is rounded to the
+nearest of `images.qualities`, and `format: "avif"` needs `images.formats` to list `image/avif` — so
+the number of distinct encodes per object stays bounded. Sources over 25 MiB are not transformed. On
+a private bucket the transform is part of the signature; on a public one anyone may ask for any
+allowed size.
 
 ### Endpoints
 
@@ -282,14 +288,14 @@ redirect to a presigned URL that lives five minutes.
 
 Every upload, copy, move and delete also keeps a row per object — its size, type, `Cache-Control`,
 ETag, owner and free-form `metadata` — and a row per bucket. With `postgres` they are Supabase's own
-tables, `storage.objects` and `storage.buckets` (same columns, same unique index, row-level
-security enabled, `anon` / `authenticated` granted access), plus `storage.foldername(name)`,
+tables, `storage.objects` and `storage.buckets` (same columns, same unique index, row-level security
+enabled, `anon` / `authenticated` granted access), plus `storage.foldername(name)`,
 `storage.filename(name)` and `storage.extension(name)`, created by the `backend_storage_0001`
-migration on first use (`backend_storage_0002` adds the versioning and lifecycle columns) (`storageMigrations()` returns it for a DBA). A database restored from
-Supabase keeps its tables and gains any missing column. Without `postgres` the same rows live in a
-`node:sqlite` file (`storage.metadataPath`), which serves one server process: several replicas
-sharing storage need the Postgres store. Listings, `info()` and the bucket API read the rows; the
-bytes stay in the driver.
+migration on first use (`backend_storage_0002` adds the versioning and lifecycle columns)
+(`storageMigrations()` returns it for a DBA). A database restored from Supabase keeps its tables and
+gains any missing column. Without `postgres` the same rows live in a `node:sqlite` file
+(`storage.metadataPath`), which serves one server process: several replicas sharing storage need the
+Postgres store. Listings, `info()` and the bucket API read the rows; the bytes stay in the driver.
 
 ### Supabase Storage API
 
@@ -327,12 +333,12 @@ with `Bucket not found` (Supabase's `storage.buckets` has row-level security and
 service role sees every bucket, and under `rls: true` your policies on `storage.buckets` decide.
 
 Who a request is comes from the backend's shared identity, with
-[`backend({ supabase })`](#supabase-keys-and-access-tokens) providing the keys: a user's access token
-(`Authorization: Bearer <jwt>`) is that user (`authenticated`); the secret key (`apikey` or bearer)
-is the service role, which skips `authorize` and policies; a signed-in denext session is that user;
-anything else (the publishable key, or nothing) is `anon`. A token or key that is presented and
-refused is an error — `400 InvalidJWT` for a bad or expired token, `401 Unauthorized` for an
-unknown key — never a silent `anon`. A write that carries the session cookie follows the
+[`backend({ supabase })`](#supabase-keys-and-access-tokens) providing the keys: a user's access
+token (`Authorization: Bearer <jwt>`) is that user (`authenticated`); the secret key (`apikey` or
+bearer) is the service role, which skips `authorize` and policies; a signed-in denext session is
+that user; anything else (the publishable key, or nothing) is `anon`. A token or key that is
+presented and refused is an error — `400 InvalidJWT` for a bad or expired token, `401 Unauthorized`
+for an unknown key — never a silent `anon`. A write that carries the session cookie follows the
 [`csrf()`](/docs/typed-api) rule. The size cap, allow-list and content sniffing apply on every path,
 the service role and signed uploads included. Signed URLs and upload tokens are HMAC-signed with the
 storage secret and checked in constant time; a signed upload URL lives two hours.
@@ -354,18 +360,18 @@ noncurrent versions and delete markers your policies let the caller delete.
 `render/image` transforms take Supabase's options: `width` and `height` (any size up to
 `maxTransformDimension`), `resize` (`cover`, the default, fills the box and crops the overflow;
 `contain` fits inside it; `fill` stretches to it), `quality` (1–100) and `format: "origin"` (keep
-the source's format; the default is WebP). They run through the same image pipeline, cache and
-decompression-bomb checks as the transforms above.
+the source's format — an AVIF source stays AVIF, a GIF becomes PNG; the default is WebP). They run
+through the same image pipeline, cache and decompression-bomb checks as the transforms above.
 
 Without supabase-js, `@denext/backend/client` calls the same API from the browser with the page's
 cookies: `listFiles(bucket, prefix, { limit, offset, search, sortBy, noncurrentVersions })`,
 `listFilesV2(bucket, { prefix, cursor, limit, withDelimiter })`, `getFileInfo` (`versionId`),
 `removeFiles(bucket, keys)`, `moveFile` and `copyFile` (`{ destinationBucket }`),
 `getSignedUrls(bucket, keys, { expiresIn })`, `getPublicUrl(bucket, key, { transform, download })`
-and `uploadResumable(bucket, key, file, { chunkSize, upsert, onProgress, signal, signature })` — a TUS upload
-that retries a dropped chunk from the offset the server reports and terminates a cancelled one.
-A refused call throws `StorageApiClientError` (`code` is Storage's error name, `status` the HTTP
-status).
+and `uploadResumable(bucket, key, file, { chunkSize, upsert, onProgress, signal, signature })` — a
+TUS upload that retries a dropped chunk from the offset the server reports and terminates a
+cancelled one. A refused call throws `StorageApiClientError` (`code` is Storage's error name,
+`status` the HTTP status).
 
 ### Resumable uploads (TUS)
 
@@ -488,16 +494,23 @@ text spliced into the query. It also has `unsafe(text, params)` and `begin(async
 transaction. Every query it runs is scoped by [row-level security](#row-level-security) to the
 request's user; `db.service()` is the unscoped connection.
 
-The client is `Deno.SQL`, the Postgres client built into [denext's Deno toolchain](/docs/toolchain), opened at startup
-and closed when the server drains. On stock Deno there is none: the app still builds and starts,
-and `db()` throws an error with `code: "unsupported"` that says so. Pass a client of your own as
-`postgres: { sql }` instead — the npm `postgres` package through `fromPostgresJs` from
-`denext/server` works on any Deno; a client you pass is never closed by the plugin.
+The client is `Deno.SQL`, the Postgres client built into [denext's Deno toolchain](/docs/toolchain),
+opened at startup and closed when the server drains. On stock Deno there is none: the app still
+builds and starts, and `db()` throws an error with `code: "unsupported"` that says so. Pass a client
+of your own as `postgres: { sql }` instead — the npm `postgres` package through `fromPostgresJs`
+from `denext/server` works on any Deno; a client you pass is never closed by the plugin.
 
 `backendAuthAdapter({ schema?, migrate? })` is `postgresAuthAdapter` on that client (see
-[Auth › Postgres](/docs/auth#postgres)): its `auth_*` tables are created by migrations on first
-use. Your own tables come from `denext generate migration <name>` and `denext job migrate`
-([Databases › Postgres migrations](/docs/database#plain-sql-files-on-postgres)).
+[Auth › Postgres](/docs/auth#postgres)): its `auth_*` tables are created by migrations on first use.
+Your own tables come from `denext generate migration <name>` and `denext migration up`
+([Databases › Postgres migrations](/docs/database#plain-sql-files-on-postgres)), which also applies
+the backend's and denext's own schemas first ([`denext db`](#denext-db)).
+
+Behind a pooler in transaction mode (PgBouncer, Supavisor), give the backend a direct connection
+too: `postgres: { directUrl }` (default `DATABASE_DIRECT_URL`). Realtime's `LISTEN` and reserved
+connections, webhook delivery's wake-up, the REST schema-reload listener and every migration and its
+lock use it; queries, `db()` included, keep the pooled one. See
+[Databases › Pool sizing, timeouts and PgBouncer](/docs/database#pool-sizing-timeouts-and-pgbouncer).
 
 ## Row-level security
 
@@ -576,15 +589,16 @@ With `backend({ supabase: true })` the backend also recognizes Supabase's creden
 
 The same option mounts GoTrue's `/auth/v1` over your `denextAuth()` users, so `supabase.auth.*`
 works unchanged; its options go under `supabase: { auth: { … } }` — see
-[Supabase clients](/docs/auth#supabase-clients-authv1).
+[Supabase clients](/docs/auth#supabase-clients-authv1). Its mail goes out over SMTP from
+Supabase Auth's own `GOTRUE_SMTP_*` settings when no sender is configured in code.
 
-`denext backend keys` prints a fresh set as environment variables (`--json` as JSON; `--legacy`
-adds a JWT secret and the legacy JWT keys); under `denext dev` with none configured, a set is generated once into
-`.denext/backend-keys.json`. Store them as secrets; never commit them. `denext backend token
---sub <user-id>` signs an access token with the app's key (`--role anon | service_role`,
-`--exp <seconds>`, `--claims '{…}'`), like `supabase gen bearer-jwt`. It prints only the token,
-for a test or a `curl`. `denext gen keys` and `denext gen bearer-jwt` are the same commands under
-the Supabase CLI's names.
+`denext backend keys` prints a fresh set as environment variables (`--json` as JSON; `--legacy` adds
+a JWT secret and the legacy JWT keys); under `denext dev` with none configured, a set is generated
+once into `.denext/backend-keys.json`. Store them as secrets; never commit them.
+`denext backend token --sub <user-id>` signs an access token with the app's key
+(`--role anon | service_role`, `--exp <seconds>`, `--claims '{…}'`), like `supabase gen bearer-jwt`.
+It prints only the token, for a test or a `curl`. `denext gen keys` and `denext gen bearer-jwt` are
+the same commands under the Supabase CLI's names.
 
 Every request is resolved by one function, `resolveIdentity()` from `@denext/backend/server`, which
 `db()`, auto-REST and the other endpoints share. The first that applies wins:
@@ -649,9 +663,10 @@ a `begin` inside it is a savepoint. A thrown error rolls back the transaction an
 ```
 
 `aal` is `aal2` once the session has a second factor (`amr` includes `totp`, `bcp` or `mfa`);
-`app_metadata.roles` are the denext session's `roles`. Signed out, the claims are `{ "role": "anon" }`.
-Add your own with `backend({ postgres: { rls: { claims: (session) => ({ tenant: … }) } } })` and read
-them as `auth.jwt() ->> 'tenant'`; `sub`, `role` and `email` cannot be overridden.
+`app_metadata.roles` are the denext session's `roles`. Signed out, the claims are
+`{ "role": "anon" }`. Add your own with
+`backend({ postgres: { rls: { claims: (session) => ({ tenant: … }) } } })` and read them as
+`auth.jwt() ->> 'tenant'`; `sub`, `role` and `email` cannot be overridden.
 
 ### Setup: the roles and `auth.*`
 
@@ -666,9 +681,14 @@ The first scoped query applies the migration `backend_rls_0001` (recorded in `ba
 
 That needs a database user that may create roles (`CREATEROLE`). Where it may not, have a database
 administrator run the same setup once — `rlsSetupSql("app_user")` from `@denext/backend` prints it —
-and set `backend({ postgres: { rls: { migrate: false } } })`. Without the grant, the first scoped query fails with
-`… may not grant itself the role anon` and a hint naming the `GRANT`. A superuser connection works
-too, but connect as an ordinary role in production: a superuser could switch to any role.
+and set `backend({ postgres: { rls: { migrate: false } } })`. Without the grant, the first scoped
+query fails with `… may not grant itself the role anon` and a hint naming the `GRANT`. A superuser
+connection works too, but connect as an ordinary role in production: a superuser could switch to any
+role.
+
+With [`DENEXT_BOOT_DDL=off`](/docs/database#schema-at-startup) the backend
+creates none of its schemas: `denext db push` applies them out of band, and `denext start` refuses
+to start until every migration the enabled services need is recorded.
 
 ### Coming from Supabase: your policies work as-is
 
@@ -885,11 +905,11 @@ security, else the key. `realtime({ tables })` still works, alongside — a tabl
 the configured one — and `publication: false` turns the publication off (or names another one).
 
 **postgres_changes.** A binding's `schema` and `table` select among those tables (`*` or no table:
-all of them in the schema; a configured table's schema is `public` unless set); `event` is `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE` or `*`; `filter` takes one
-column and one of `eq neq lt lte gt gte in` (`"status=in.(open,blocked)"`, up to 100 values), on a
-single table. The payload has Supabase's shape — `schema`, `table`, `commit_timestamp`,
-`eventType`, `new`, `old`, `errors`, typed through `columns` — and, as in Supabase under row-level
-security:
+all of them in the schema; a configured table's schema is `public` unless set); `event` is `INSERT`,
+`UPDATE`, `DELETE`, `TRUNCATE` or `*`; `filter` takes one column and one of
+`eq neq lt lte gt gte in` (`"status=in.(open,blocked)"`, up to 100 values), on a single table. The
+payload has Supabase's shape — `schema`, `table`, `commit_timestamp`, `eventType`, `new`, `old`,
+`errors`, typed through `columns` — and, as in Supabase under row-level security:
 
 - an `INSERT` or `UPDATE` reaches a subscriber only when their SELECT policies (and the filter)
   return the row, re-read as them, exactly as for `useTableChanges`; an update that moves a row out
@@ -902,15 +922,19 @@ security:
   before the change. Under row-level security a row that only just entered their view, or a later
   change in the same burst, carries the key alone. A row too large to deliver (1 MiB) arrives as
   its key with the same error;
-- `TRUNCATE` reaches subscribers who could see rows of the table;
+- `TRUNCATE` reaches subscribers who could see rows of the table, as `eventType: "TRUNCATE"` with
+  empty `new` and `old`: clear what you show and read the table again. Supabase Realtime sends no
+  TRUNCATE at all (its change stream asks only for inserts, updates and deletes), so a `*` handler
+  written for Supabase sees an `eventType` it did not expect; a binding with `event: "TRUNCATE"`
+  (which Supabase would treat as `*`) gets only these;
 - every change to a row within one burst (changes 16 ms apart are one) is sent, in commit order,
   with the row as it is after the burst — so `new` of an INSERT followed by an UPDATE in the same
   burst is the updated row. A row inserted and deleted within one burst is sent to nobody (except
   the DELETE, to a subscriber who could already see it): once it is gone there is nothing to check
   against the subscriber's policies.
 
-A joined channel gets Supabase's `system` messages: `Subscribed to PostgreSQL` once its bindings
-are live, `Replication connection established` when it asked for `config.broadcast.replication_ready`
+A joined channel gets Supabase's `system` messages: `Subscribed to PostgreSQL` once its bindings are
+live, `Replication connection established` when it asked for `config.broadcast.replication_ready`
 (the change stream is up before any join is answered), and `status: "error"` when changes may have
 been missed (the listener reconnected): re-read.
 
@@ -967,18 +991,18 @@ INSERT lets them send broadcasts and track presence; without SELECT the join is 
 runs once per join — a transaction that inserts probe messages, switches to the user's role and
 claims, and is always rolled back.
 
-**Who is connected.** With [`backend({ supabase })`](#supabase-keys-and-access-tokens) keys installed, the socket
-must carry a valid `apikey` (refused with a 401 otherwise), and the channel's `access_token` decides
-who it is, verified as `resolveIdentity()` verifies a bearer: a user's access token is that user
-under their policies, until its `exp` — then the channel closes ("Token has expired"), as
-Supabase's does, unless a refreshed token arrived first (supabase-js pushes it on refresh, and it is
-verified again); the secret key is `service_role` (past every policy, private channels included);
-the publishable or anon key means "no user". A token that is refused (a bad signature, expired, an
-unknown key) refuses the join, or closes a joined channel. Without a user token, a socket opened
-from the app's own origin is the visitor's denext session — re-read every minute; a session that
-ends or changes closes the socket so the client reconnects as whoever it is now — and a socket from
-another origin is `anon` (a cross-site page must not act as the visitor). The REST broadcast
-resolves its caller the same way (`apikey` header, `Authorization: Bearer`).
+**Who is connected.** With [`backend({ supabase })`](#supabase-keys-and-access-tokens) keys
+installed, the socket must carry a valid `apikey` (refused with a 401 otherwise), and the channel's
+`access_token` decides who it is, verified as `resolveIdentity()` verifies a bearer: a user's access
+token is that user under their policies, until its `exp` — then the channel closes ("Token has
+expired"), as Supabase's does, unless a refreshed token arrived first (supabase-js pushes it on
+refresh, and it is verified again); the secret key is `service_role` (past every policy, private
+channels included); the publishable or anon key means "no user". A token that is refused (a bad
+signature, expired, an unknown key) refuses the join, or closes a joined channel. Without a user
+token, a socket opened from the app's own origin is the visitor's denext session — re-read every
+minute; a session that ends or changes closes the socket so the client reconnects as whoever it is
+now — and a socket from another origin is `anon` (a cross-site page must not act as the visitor).
+The REST broadcast resolves its caller the same way (`apikey` header, `Authorization: Bearer`).
 
 **Limits** (`realtime({ socket: { … } })`): `maxConnections` (10 000 per instance),
 `maxConnectionsPerAddress` (100 per client address, `clientIpForLimits()`),
@@ -1013,11 +1037,11 @@ export function Room({ id, me }: { id: string; me: { id: string; name: string } 
 `useBroadcast(topic, { event?, onMessage?, private?, self?, replay?, enabled? })` returns
 `{ last, status, error, send }` — `send(event, payload)` resolves `"ok"` once the server has
 published it. `useRealtimePresence(topic, state?, { presenceKey?, private?, enabled? })` returns
-`{ peers, status, error }`: it tracks `state` (a new value re-tracks, `undefined` untracks) and lists
-everyone present by key. Hooks on one topic in a page share its channel (the first one's options
-apply). `realtimeClient()` is the page's client, and `new RealtimeClient(url)` one for another
-endpoint. These are separate from [Live](/docs/live)'s `useChannel` / `usePresence`, which keep
-their own contracts (Live presence is per server instance).
+`{ peers, status, error }`: it tracks `state` (a new value re-tracks, `undefined` untracks) and
+lists everyone present by key. Hooks on one topic in a page share its channel (the first one's
+options apply). `realtimeClient()` is the page's client, and `new RealtimeClient(url)` one for
+another endpoint. These are separate from [Live](/docs/live)'s `useChannel` / `usePresence`, which
+keep their own contracts (Live presence is per server instance).
 
 ### The logical-replication source
 
@@ -1029,7 +1053,9 @@ each server instance creates a temporary `pgoutput` slot on a reserved connectio
 `logical.maxChanges` is followed at once), for the tables of `supabase_realtime` and of
 `denext_realtime` (which holds the configured tables). No trigger runs on the write path (existing
 ones are disabled; switching back enables them), and `commit_timestamp` is the real commit time.
-The rows are still re-read as each subscriber. It needs `wal_level = logical` (a server restart),
+The rows are still re-read as each subscriber, a `TRUNCATE` arrives as the WAL's Truncate message,
+and a change of a kind the table's `events` leaves out is dropped, as the triggers would not have
+fired for it. It needs `wal_level = logical` (a server restart),
 the connecting role's `REPLICATION` attribute (`alter role app replication`) and a client with
 `reserve()`; a temporary slot ends with its connection, so a dead instance holds no WAL back, and a
 lost connection is reopened with a re-read signal. All instances must use the same source.
@@ -1064,13 +1090,14 @@ logical when many connections write realtime tables at once.
 | `queryTimeoutMs`              | 5 000                 | `statement_timeout` of each re-read and subscribe-time query (transaction-local).                                                                                            |
 | `socket`                      | `true`                | Serve `/realtime/v1/*` for supabase-js; `false` turns it off; an object sets its [limits](#supabase-realtime-supabasechannel).                                               |
 
-Realtime needs a Postgres client with `listen`: `Deno.SQL` (denext's [Deno toolchain](/docs/toolchain)), or the npm
-`postgres` package through `postgres: { sql: fromPostgresJs(postgres(url)) }` on stock Deno.
-Without one, `onTableChange` and `tableChanges` throw `RealtimeUnsupportedError`
-(`code: "unsupported"`), browser subscriptions are refused, and `denext dev` says so at startup.
-NOTIFY payloads are capped at 8000 bytes (why rows are re-read rather than carried, and why a full
-old row has a size limit under the notify source), and notifications serialize committing writers —
-the [logical source](#the-logical-replication-source) removes both.
+Realtime needs a Postgres client with `listen`: `Deno.SQL` (denext's
+[Deno toolchain](/docs/toolchain)), or the npm `postgres` package through
+`postgres: { sql: fromPostgresJs(postgres(url)) }` on stock Deno. Without one, `onTableChange` and
+`tableChanges` throw `RealtimeUnsupportedError` (`code: "unsupported"`), browser subscriptions are
+refused, and `denext dev` says so at startup. NOTIFY payloads are capped at 8000 bytes (why rows are
+re-read rather than carried, and why a full old row has a size limit under the notify source), and
+notifications serialize committing writers — the [logical source](#the-logical-replication-source)
+removes both.
 
 ## Auto-REST
 
@@ -1137,10 +1164,10 @@ routes. Pass the generated `Database` type to `createClient<Database>()` for typ
 `backend({ supabase })` they read supabase-js's `apikey` and `Authorization: Bearer` headers — a
 user's access token runs as `authenticated` with its claims, the publishable key as `anon`, and the
 secret key as `service_role`, which bypasses row-level security and — as in PostgREST — sees every
-relation and function of the exposed schemas, granted or not (still only by catalog name). Without a token, the denext session (the auth cookie,
-or a native app's `nat_…` token) decides, then `anon`. A token or key that is presented and refused
-is a `401` before any statement — `PGRST303` for an expired token, `PGRST301` otherwise — with
-`WWW-Authenticate: Bearer error="invalid_token"`.
+relation and function of the exposed schemas, granted or not (still only by catalog name). Without a
+token, the denext session (the auth cookie, or a native app's `nat_…` token) decides, then `anon`. A
+token or key that is presented and refused is a `401` before any statement — `PGRST303` for an
+expired token, `PGRST301` otherwise — with `WWW-Authenticate: Bearer error="invalid_token"`.
 
 ### Routes
 
@@ -1201,28 +1228,41 @@ for one; an anonymous one is refused with `400` (`PGRST100`) and a hint (`exactC
 allows everyone, `"never"` no one). `count=planned` (the planner's estimate) is open to everyone,
 and `count=estimated` counts exactly only while the estimate is at most `maxRows`.
 
-The plugin does not rate-limit the routes itself. [`middleware.ts`](/docs/middleware) runs before
-them, so `rateLimit` from `denext/server` can guard them there:
+**Rate limits.** Each client has a request budget across the routes: 1200 requests a minute by
+default (20 a second on average — far above a page of supabase-js calls). A signed-in user is
+counted by their user id, so users behind one address don't share a budget; anyone else by their
+client address (`clientIpForLimits()`'s rule: the socket peer, a trusted proxy's hop or the
+`rateLimitHeader` address, an IPv6 address by its `/64`). The secret key is never limited. A
+request whose credential is refused (a `401`) counts against its address too, so forged tokens
+can't get round it. Past the budget a request is answered `429` before any statement runs, with
+`Retry-After` (seconds) and PostgREST's error shape:
 
-```ts
-// middleware.ts
-import { apiErrorResponse, isApiError, next, rateLimit } from "denext/server";
-
-// Per client address (an IPv6 /64), method and path; off for an untrusted loopback/private peer.
-const limitRest = rateLimit({ max: 300, windowMs: 60_000 });
-
-export async function middleware(request: Request) {
-  if (new URL(request.url).pathname.startsWith("/rest/v1/")) {
-    try {
-      await limitRest({ request, params: {}, ctx: {}, method: request.method as "GET" });
-    } catch (error) {
-      if (isApiError(error)) return apiErrorResponse(error); // 429 with Retry-After
-      throw error;
-    }
-  }
-  return next();
+```json
+{
+  "code": "over_request_rate_limit",
+  "details": null,
+  "hint": "Retry after the number of seconds in the Retry-After header.",
+  "message": "Too many requests: try again in 42 seconds"
 }
 ```
+
+As with every per-address limit in denext, a request from a loopback or private peer with no
+trusted proxy hop has no address of its own (it is most likely the proxy every visitor shares)
+and is not counted by address: set `trustForwardedHeaders` (or `rateLimitHeader`) behind a proxy,
+or `rateLimitLocalAddresses: true` where such peers are real clients. Counts live in memory, per
+process; behind several replicas pass a shared store:
+
+```ts
+import { postgresRateLimitStore } from "denext/server";
+
+backend({
+  postgres: {},
+  rest: { rateLimit: { max: 600, windowMs: 60_000, store: postgresRateLimitStore({ url }) } },
+});
+```
+
+`rest: { rateLimit: false }` turns the budget off (guard the routes yourself, for example with
+`rateLimit` from `denext/server` in [`middleware.ts`](/docs/middleware)).
 
 **CSRF.** A write carrying cookies follows the same rule as Server Actions and `csrf()`: a
 cross-site one is refused (`403`, `csrf_failed`). A request whose identity is a Supabase access
@@ -1245,19 +1285,20 @@ logged).
 ### Which tables and functions
 
 The plugin reads the catalog when the server starts, and again when a request names a table or
-function it does not know (at most every 2 s under `denext dev`, every 10 s otherwise), so a table
-a migration creates while the server runs gets its route without a restart. A change to a table it
+function it does not know (at most every 2 s under `denext dev`, every 10 s otherwise), so a table a
+migration creates while the server runs gets its route without a restart. A change to a table it
 already knows (a new column, a changed grant) is picked up on PostgREST's own signal,
 `NOTIFY pgrst, 'reload schema'`: every replica listens, and `denext migration up` (with the stack's
-migrations service and `migratePostgres`) sends it after applying anything. Send it yourself after
-a manual DDL change, or make Postgres send it on every one with PostgREST's event trigger
+migrations service and `migratePostgres`) sends it after applying anything. Send it yourself after a
+manual DDL change, or make Postgres send it on every one with PostgREST's event trigger
 (`create event trigger … on ddl_command_end execute procedure …` calling
-`notify pgrst, 'reload schema'`; creating it needs a superuser). The relations of the exposed schemas that the `anon`
-or `authenticated` role holds a privilege on — `SELECT`, `INSERT` or `UPDATE` on any column, or
-`DELETE` — the foreign keys between them, and the functions either role may `EXECUTE`. A table
-with no grant to either role gets no route, so a table stays private until you `grant`; a function
-stays private once you `revoke execute … from public` (Postgres grants EXECUTE to everyone by
-default). A function runs as the caller unless it is `security definer`, as in Supabase.
+`notify pgrst, 'reload schema'`; creating it needs a superuser). The relations of the exposed
+schemas that the `anon` or `authenticated` role holds a privilege on — `SELECT`, `INSERT` or
+`UPDATE` on any column, or `DELETE` — the foreign keys between them, and the functions either role
+may `EXECUTE`. A table with no grant to either role gets no route, so a table stays private until
+you `grant`; a function stays private once you `revoke execute … from public` (Postgres grants
+EXECUTE to everyone by default). A function runs as the caller unless it is `security definer`, as
+in Supabase.
 
 With the default `tables: "*"`, a reachable relation is served only when row-level security
 applies to the caller:
@@ -1292,18 +1333,19 @@ the plugin says so, keeps an earlier generated file, or writes a stub under whic
 
 ### Options
 
-| Option             | Default                       | What it does                                                                                                                                                                                     |
-| ------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `schemas`          | `["public"]`                  | The schemas served, the default first; `Accept-Profile` / `Content-Profile` pick another. `schema: "api"` is a shorthand for one.                                                                |
-| `tables`           | `"*"`                         | `"*"`: the reachable RLS tables and `security_invoker` views; or a list of names (`"notes"` or `"api.notes"`), served as named (a listed table the roles cannot reach gets no route).            |
-| `basePath`         | `"/rest/v1"`                  | Where the routes live (app-relative; `basePath` is prepended).                                                                                                                                   |
-| `maxRows`          | 1000                          | The most rows one read (or set-returning call) returns, whatever `limit` asks for.                                                                                                               |
-| `maxBodyBytes`     | 1 MiB                         | The largest request body.                                                                                                                                                                        |
-| `statementTimeout` | 5000                          | Each request's `statement_timeout`, in milliseconds.                                                                                                                                             |
-| `maxConcurrent`    | half the pool's `max`, else 5 | The most REST statements at once; past it a request waits up to 1 s, then gets `503` + `Retry-After`.                                                                                            |
-| `exactCount`       | `"authenticated"`             | Who may send `Prefer: count=exact`: `"authenticated"`, `"all"` or `"never"` (refused with `400`).                                                                                                |
-| `explain`          | `false`                       | Serve execution plans (`Accept: application/vnd.pgrst.plan`). Plans show table sizes and indexes: development only.                                                                              |
-| `aggregates`       | `false`                       | Allow aggregate functions in `select=` (PostgREST's `db-aggregates-enabled`). An aggregate reads every matching row whatever `limit` says; enable it when the statement timeout bounds the cost. |
+| Option             | Default                           | What it does                                                                                                                                                                                                      |
+| ------------------ | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schemas`          | `["public"]`                      | The schemas served, the default first; `Accept-Profile` / `Content-Profile` pick another. `schema: "api"` is a shorthand for one.                                                                                 |
+| `tables`           | `"*"`                             | `"*"`: the reachable RLS tables and `security_invoker` views; or a list of names (`"notes"` or `"api.notes"`), served as named (a listed table the roles cannot reach gets no route).                             |
+| `basePath`         | `"/rest/v1"`                      | Where the routes live (app-relative; `basePath` is prepended).                                                                                                                                                    |
+| `maxRows`          | 1000                              | The most rows one read (or set-returning call) returns, whatever `limit` asks for.                                                                                                                                |
+| `maxBodyBytes`     | 1 MiB                             | The largest request body.                                                                                                                                                                                         |
+| `statementTimeout` | 5000                              | Each request's `statement_timeout`, in milliseconds.                                                                                                                                                              |
+| `maxConcurrent`    | half the pool's `max`, else 5     | The most REST statements at once; past it a request waits up to 1 s, then gets `503` + `Retry-After`.                                                                                                             |
+| `exactCount`       | `"authenticated"`                 | Who may send `Prefer: count=exact`: `"authenticated"`, `"all"` or `"never"` (refused with `400`).                                                                                                                 |
+| `explain`          | `false`                           | Serve execution plans (`Accept: application/vnd.pgrst.plan`). Plans show table sizes and indexes: development only.                                                                                               |
+| `aggregates`       | `false`                           | Allow aggregate functions in `select=` (PostgREST's `db-aggregates-enabled`). An aggregate reads every matching row whatever `limit` says; enable it when the statement timeout bounds the cost.                  |
+| `rateLimit`        | `{ max: 1200, windowMs: 60_000 }` | Each client's request budget (a user by id, else an address; never the secret key); past it `429` `over_request_rate_limit` with `Retry-After`. `store` shares the counts between replicas; `false` turns it off. |
 
 Two features are off until you turn them on, because each can cost a lot or reveal a lot:
 aggregates (`aggregates: true`) and execution plans (`explain: true`). Everything else on this page
@@ -1359,17 +1401,18 @@ const res = await fetch("/functions/v1/hello", { method: "POST", body: JSON.stri
   `backend({ supabase: … })` — as on Supabase, where the anon key passes `verify_jwt` — or a denext
   auth session (the page's cookie, or a native app's bearer token). A presented credential that is
   refused (a bad or expired token) is a `401` too. A cookie-carrying write from another site is
-  refused (`403`), as for Server Actions. `verifyJwt: false`, for the directory or one function, lets anyone call it. A CORS
-  preflight (`OPTIONS`) is never checked: the function answers it, as in Supabase's `corsHeaders`
-  recipe.
+  refused (`403`), as for Server Actions. `verifyJwt: false`, for the directory or one function,
+  lets anyone call it. A CORS preflight (`OPTIONS`) is never checked: the function answers it, as in
+  Supabase's `corsHeaders` recipe.
 - **Environment.** `Deno.env.get("SUPABASE_URL")` is the app's own URL: `url`, else the app's
   `canonicalOrigin` (or `DENEXT_CANONICAL_ORIGIN`) plus its `basePath`, else the address the server
-  listens on as this machine reaches it (`http://127.0.0.1:<port>`). It is never a request's
-  `Host`, which a client chooses: a worker keeps its environment for life, next to the service
-  key. With none of them known, functions get no `SUPABASE_URL`, and a warning says so. And `SUPABASE_DB_URL` is `DATABASE_URL`; `SUPABASE_ANON_KEY` / `SUPABASE_PUBLISHABLE_KEY` and
+  listens on as this machine reaches it (`http://127.0.0.1:<port>`). It is never a request's `Host`,
+  which a client chooses: a worker keeps its environment for life, next to the service key. With
+  none of them known, functions get no `SUPABASE_URL`, and a warning says so. And `SUPABASE_DB_URL`
+  is `DATABASE_URL`; `SUPABASE_ANON_KEY` / `SUPABASE_PUBLISHABLE_KEY` and
   `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_SECRET_KEY` come from `DENEXT_PUBLISHABLE_KEY` and
-  `DENEXT_SECRET_KEY`; `env` adds variables
-  for every function or for one. The process environment is visible too.
+  `DENEXT_SECRET_KEY`; `env` adds variables for every function or for one. The process environment
+  is visible too.
 - **`EdgeRuntime.waitUntil(promise)`** is accepted: the worker stays up, so the work finishes.
 - **Errors** come back in Supabase's relay shape, `{ code, message }`: `404 NOT_FOUND`,
   `401 UNAUTHORIZED`, `503 BOOT_ERROR` (the module failed to load, or exports no handler),
@@ -1378,15 +1421,15 @@ const res = await fetch("/functions/v1/hello", { method: "POST", body: JSON.stri
 
 ### Isolation
 
-Each function runs in a Deno Worker of its own, started on its first request and kept warm: its
-own globals and module graph, so a function cannot reach the app's in-memory state or another
-function's. A worker that throws outside a request is replaced on the next one. Under
-`denext dev` an edit anywhere in the functions directory restarts the workers, and a function
-added while the server runs is found on its first request. By default a worker has the server's
-permissions; `permissions` gives one its own (`{ net: true, env: true, read: false }`), which needs
-Deno's worker options: add `"unstable": ["worker-options"]` to `deno.json` (the plugin refuses to
-start without it rather than let Deno exit on the first request). Functions run from source — `denext
-build` does not bundle them — so deploy the `functions/` directory with the app, as with `jobs/`.
+Each function runs in a Deno Worker of its own, started on its first request and kept warm: its own
+globals and module graph, so a function cannot reach the app's in-memory state or another
+function's. A worker that throws outside a request is replaced on the next one. Under `denext dev`
+an edit anywhere in the functions directory restarts the workers, and a function added while the
+server runs is found on its first request. By default a worker has the server's permissions;
+`permissions` gives one its own (`{ net: true, env: true, read: false }`), which needs Deno's worker
+options: add `"unstable": ["worker-options"]` to `deno.json` (the plugin refuses to start without it
+rather than let Deno exit on the first request). Functions run from source — `denext build` does not
+bundle them — so deploy the `functions/` directory with the app, as with `jobs/`.
 
 The directory is `functions/`, or `supabase/functions/` when only that exists (a project moved from
 the Supabase CLI). Entries starting with `_` (`_shared/`) or `.` are not functions, nor are test
@@ -1415,6 +1458,20 @@ There is nothing to `download` or `deploy`: the functions ship inside the app, w
 A function's worker acknowledges each abort. One that does not within a second (busy in synchronous
 code, such as a `while (true) {}`) is terminated and replaced: the requests it was still serving
 get `504`, and the next call starts on a fresh worker.
+
+## The admin endpoint
+
+`/_denext/backend/admin/*` is how [`denext ui`](/docs/ui#realtime) and the stack's dashboard read
+what only the running app knows: realtime's live channels (with their subscriber counts) and
+`postgres_changes` bindings, a channel's presence keys (a key's payloads only when asked for by
+key), Edge Functions with the last 200 invocations (function, status, duration and time; never a
+request's body or headers), and the `services/` supervision tree. It answers only the secret key
+(`apikey: sb_secret_…`, or as a bearer), and only `GET`; with no keys installed
+(`backend({ supabase })` off) it refuses everything.
+
+```sh
+curl -H "apikey: $DENEXT_SECRET_KEY" http://127.0.0.1:3000/_denext/backend/admin/status
+```
 
 ## Vault
 
@@ -1487,9 +1544,10 @@ with `vault.get()` / `vault.decryptedSecrets()`.
 
 ## Queues
 
-`backend({ postgres: {}, queues: {} })` adds message queues with [pgmq](https://github.com/pgmq/pgmq)'s
-API, written in plain SQL: no extension to install. SQL written for Supabase Queues runs
-unchanged, and so do Supabase's `pgmq_public` functions for the REST API.
+`backend({ postgres: {}, queues: {} })` adds message queues with
+[pgmq](https://github.com/pgmq/pgmq)'s API, written in plain SQL: no extension to install. SQL
+written for Supabase Queues runs unchanged, and so do Supabase's `pgmq_public` functions for the
+REST API.
 
 ```ts
 import { queue, queueConsumer, queues } from "@denext/backend/server";
@@ -1615,6 +1673,18 @@ create trigger order_created after insert on orders for each row
   instances share the work without sending one event twice at once; delivery is at least once,
   so receivers dedupe on `webhook-id`. `delivery: "manual"` leaves it to `deliverWebhooks()` (from
   a job), and `webhookEvents({ status })` lists recent events.
+- **Retention.** Settled events are deleted once they are old enough, counted from the change:
+  delivered ones after 7 days, failed ones after 30 (`retention: { deliveredMs, failedMs }`, or
+  `false` to keep every event). Pending ones are never deleted. The background deliverer cleans
+  up once an hour. Under `delivery: "manual"`, schedule the cleanup job:
+
+  ```ts
+  // jobs/webhook-cleanup.ts
+  import { webhookCleanupJob } from "@denext/backend/server";
+  export default webhookCleanupJob({ schedule: "17 * * * *" });
+  ```
+
+  `purgeWebhookEvents()` runs it once and returns `{ deleted }`.
 - **Signing** follows [Standard Webhooks](https://www.standardwebhooks.com): `webhook-id`,
   `webhook-timestamp` and `webhook-signature: v1,<base64 HMAC-SHA256>`, with the hook's `secret`
   or `webhooks.secret` (`DENEXT_WEBHOOK_SECRET`). A receiver checks it with
@@ -1624,15 +1694,19 @@ create trigger order_created after insert on orders for each row
 
 `denext db` and `denext migration` are the Supabase CLI's `supabase db` and `supabase migration`.
 The migration verbs are denext's own and also run without this plugin, on SQLite too (see
-[Migrations](/docs/database#migrations--seeding)). With `backend({ postgres })` in the config,
-they also apply the plugin's own migrations first, and `db reset` drops the plugin's schemas too.
-The plugin also adds the Postgres tooling. Migrations are `migrations/*.sql` (what
-`denext migration new` writes), or `supabase/migrations/*.sql` in a Supabase project, whose
-`supabase_migrations.schema_migrations` history is kept and updated in the Supabase CLI's shape.
+[Migrations](/docs/database#migrations--seeding)). With `backend({ postgres })` in the config, they
+also apply the plugin's own migrations first, then the schemas denext's own Postgres stores create
+for themselves (the auth adapter's tables, a Postgres cache or job-history store; printed as
+`(denext)`), then yours, then realtime's per-table triggers and the logical source's publication —
+so with [`DENEXT_BOOT_DDL=off`](/docs/database#schema-at-startup) a push leaves the server nothing
+to create. `db reset` drops the plugin's schemas too and re-applies all of it. The plugin also adds
+the Postgres tooling. Migrations are `migrations/*.sql` (what `denext migration new` writes), or
+`supabase/migrations/*.sql` in a Supabase project, whose `supabase_migrations.schema_migrations`
+history is kept and updated in the Supabase CLI's shape.
 
 | Command                                                          | What it does                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `denext db migrate [--to v] [--include-all] [--dry-run]`         | `denext migration up`: apply the plugin's migrations (row-level security, and vault, queues or webhooks when enabled), then the pending ones, each in its own transaction.                                                                                                                                                                                                                                    |
+| `denext db migrate [--to v] [--include-all] [--dry-run]`         | `denext migration up`: apply the plugin's migrations (row-level security, and storage, realtime, vault, queues or webhooks when enabled) and denext's own, then the pending ones, each in its own transaction under the runner's lock.                                                                                                                                                                        |
 | `denext db rollback [--steps n \| --to v] [--force-reset --yes]` | `denext migration down`: run the newest applied migrations' down scripts, newest first. `--force-reset` instead resets the database and re-applies everything up to the target, as `supabase migration down` does.                                                                                                                                                                                            |
 | `denext db status [--json]`                                      | `denext migration list`: local and applied versions side by side. A file changed after it was applied is flagged, and so is one with no down script.                                                                                                                                                                                                                                                          |
 | `denext db push [--dry-run] [--include-seed]`                    | Like `migrate`; `--include-seed` runs the seed afterwards. Use `--linked` or `--db-url` to push to another database.                                                                                                                                                                                                                                                                                          |
@@ -1656,28 +1730,36 @@ triggers and enum types. It does not compare grants, comments, extensions or seq
 
 ## Browse it in `denext ui`
 
-[`denext ui`](/docs/ui#database) has a Database section for a project that uses Postgres: tables
-and their rows (paged, editable, each write previewed as the exact SQL first), row-level security
-policies — with an "as user" preview of what a user id sees under them — migrations, the storage
-buckets (declared and created at runtime) and their objects — a delete there goes through the
-same storage operations as the app's, so the object's metadata row goes too — and denext auth's
-users. It runs on loopback with the rest of the UI,
-and honours `--read-only`.
+[`denext ui`](/docs/ui#database) has a Database section for a project that uses Postgres: tables and
+their rows (paged, editable, each write previewed as the exact SQL first), a SQL editor, row-level
+security policies — with an "as user" preview of what a user id sees under them — migrations, the
+storage buckets (declared and created at runtime) and their objects — an upload or a delete there
+goes through the same storage operations as the app's, so the bucket's size cap and type list apply
+and the object's metadata row follows — denext auth's users (create, ban, set a password, revoke,
+delete), realtime (the publication, and the running app's live channels and presence keys), Edge
+Functions with their recent invocations, logs and health. The live parts come from the running app's
+[admin endpoint](#the-admin-endpoint). It runs on loopback with the rest of the UI, and honours
+`--read-only`.
+
+`denext dashboard` serves the same section, and nothing else, behind `DASHBOARD_PASSWORD`: the
+self-hosted stack runs it as its `dashboard` service. See
+[the stack dashboard](/docs/ui#the-stack-dashboard).
 
 ## Self-hosting with Docker
 
-`denext generate docker` sees `backend()` in your config and writes the compose stack it needs:
-the app, Postgres 17 (`DATABASE_URL` wired in), MinIO with a one-shot bucket bootstrap when the
-storage driver is `s3()`, and a migrations service when you have `migrations/` — every service
-health-checked, the app started only after the database is healthy and the one-shots have
-finished. The migrations service runs `denext migration up`: the backend's own migrations first
-(the `anon` / `authenticated` roles, the `auth` functions, the storage and realtime schemas and the
-`supabase_realtime` publication), then yours, so a first migration that grants to `anon` or adds
-a table to the publication works on a fresh database. With `realtime({ source: "logical" })` the
+`denext generate docker` sees `backend()` in your config and writes the compose stack it needs: the
+app, Postgres 17 (`DATABASE_URL` wired in), MinIO with a one-shot bucket bootstrap when the storage
+driver is `s3()`, a migrations service when you have `migrations/`, and with Postgres the
+[`dashboard`](/docs/deploy#the-dashboard) service (`--no-dashboard` leaves it out) — every service
+health-checked, the app started only after the database is healthy and the one-shots have finished.
+The migrations service runs `denext migration up`: the backend's own migrations first (the `anon` /
+`authenticated` roles, the `auth` functions, the storage and realtime schemas and the
+`supabase_realtime` publication), then yours, so a first migration that grants to `anon` or adds a
+table to the publication works on a fresh database. With `realtime({ source: "logical" })` the
 database runs with `wal_level=logical` and the app's role gets `REPLICATION`.
 
 ```sh
-denext generate docker --stack   # web, db, minio + minio-init, migrate; .env.example
+denext generate docker --stack   # web, db, minio + minio-init, migrate, dashboard; .env.example
 cp .env.example .env             # fill in POSTGRES_PASSWORD, DENEXT_STORAGE_SECRET, …
 docker compose up -d --build
 ```
@@ -1687,22 +1769,36 @@ Or let `denext stack` do all three, the way `supabase start` does:
 ```sh
 denext stack up            # writes the stack if it is missing (--stack, or your generate flags),
                            # fills a missing .env with generated secrets (0600), compose up --wait
-denext stack status        # API, REST, database and S3 URLs, the publishable key (--json);
-                           # --show-secrets adds the secret key and the passwords
-denext stack logs db -f    # docker compose logs
+denext stack status        # API, REST, database, S3 and dashboard URLs, the publishable key
+                           # (--json); --show-secrets adds the secret key and the passwords
+denext stack logs db -f    # docker compose logs (--service, --level, --since / --until, --grep)
+denext stack health        # every service's health check and the app's /_denext/health
+denext stack passwd --postgres --generate   # ALTER ROLE in the database, then .env
+                           # (--dashboard: DASHBOARD_PASSWORD)
+denext stack roll          # new publishable + secret keys (--include-secret: JWT keys too;
+                           # --keep-old keeps the previous ones valid until --drop-old)
+denext stack backup --full # roles, extensions, dump, settings and storage in one .tar.gz
+denext stack restore <file>
 denext stack down          # --volumes also drops the data
 ```
 
-`.env.example` names every secret the backend reads, with how to generate each; the compose
-file refuses to start while a required one is empty. The image runs on denext's Deno toolchain,
-which has the `Deno.SQL` client `backend({ postgres })` uses. `--pgvector` swaps in the
-`pgvector/pgvector:pg17` image (detected from a `create extension vector` migration), and `--dev`
-adds an overlay running `denext dev` against the same services. Flags, the service table and the
-storage-endpoint note: [Deployment › Self-hosted stack](/docs/deploy#self-hosted-stack-postgres-storage-migrations).
+The operations commands (health, logs filters, passwords, key rolls, backup and restore):
+[Deployment › Operating the stack](/docs/deploy#operating-the-stack). The dashboard, its password
+and the opt-in `--dashboard-logs` relay that feeds its Logs page:
+[Deployment › The dashboard](/docs/deploy#the-dashboard).
+
+`.env.example` names every secret the backend reads (and the `GOTRUE_SMTP_*` settings `/auth/v1`
+mails through), with how to generate each; the compose file refuses to start while a required one is
+empty. The image runs on denext's Deno toolchain, which has the `Deno.SQL` client
+`backend({ postgres })` uses. `--pgvector` swaps in the `pgvector/pgvector:pg17` image (detected
+from a `create extension vector` migration), and `--dev` adds an overlay running `denext dev`
+against the same services. Flags, the service table and the storage-endpoint note:
+[Deployment › Self-hosted stack](/docs/deploy#self-hosted-stack-postgres-storage-migrations).
 
 ## More services
 
-Storage, Postgres, row-level security, realtime from the database, auto-REST, Edge Functions,
-Vault, queues, vector search and database webhooks are the services in `@denext/backend`. Auth ([`denextAuth`](/docs/auth)), push and live data
-([Live](/docs/live)), typed [route handlers](/docs/typed-api) and scheduled [jobs](/docs/jobs) are
-already part of denext itself.
+Storage, Postgres, row-level security, realtime from the database, auto-REST, Edge Functions, Vault,
+queues, vector search and database webhooks are the services in `@denext/backend`. Auth
+([`denextAuth`](/docs/auth)), push and live data ([Live](/docs/live)), typed
+[route handlers](/docs/typed-api) and scheduled [jobs](/docs/jobs) are already part of denext
+itself.

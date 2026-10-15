@@ -54,6 +54,11 @@ export interface PageRequest {
   isRegen: boolean;
   /** Errors an error.tsx boundary caught during the render, reported after it. */
   boundaryErrors: unknown[];
+  /**
+   * Set once {@link reportBoundaryErrors} ran: the render source a later catch (a streamed
+   * Suspense hole, rendering after the response left) is reported with, as it happens.
+   */
+  boundaryReportSource?: RequestErrorContext["renderSource"];
 }
 
 /** The per-navigation data the client hydrates / soft-navigates with. */
@@ -100,7 +105,11 @@ export function renderOptions(pr: PageRequest) {
     flight: pr.useFlight,
     messages: pr.messages,
     signal: pr.state.ctx.signal,
-    onCaughtError: (e: unknown) => pr.boundaryErrors.push(e),
+    onCaughtError: (e: unknown) => {
+      const source = pr.boundaryReportSource;
+      if (source === undefined) pr.boundaryErrors.push(e);
+      else void reportBoundaryError(pr, e, source);
+    },
   };
 }
 
@@ -125,21 +134,30 @@ export function renderSourceOf(pr: PageRequest): RequestErrorContext["renderSour
   return pr.useFlight ? "react-server-components" : "server-rendering";
 }
 
+/** Report one error an error.tsx boundary caught to onRequestError (routeType "render"). */
+function reportBoundaryError(
+  pr: PageRequest,
+  error: unknown,
+  renderSource: RequestErrorContext["renderSource"],
+): Promise<void> {
+  return reportRequestError(pr.state.app.config, error, pr.state.request, pr.page.route.routePath, {
+    routeType: "render",
+    renderSource,
+  });
+}
+
 /**
  * Report errors an error.tsx boundary caught during the render to onRequestError
  * (routeType "render"). The render succeeded (the boundary shows its fallback), so
- * without this they'd be invisible to instrumentation; H1 already logged them.
+ * without this they'd be invisible to instrumentation; H1 already logged them. A catch
+ * after this — in a Suspense hole streamed after the shell — is reported as it happens.
  */
 export async function reportBoundaryErrors(
   pr: PageRequest,
   renderSource: RequestErrorContext["renderSource"],
 ): Promise<void> {
-  for (const be of pr.boundaryErrors) {
-    await reportRequestError(pr.state.app.config, be, pr.state.request, pr.page.route.routePath, {
-      routeType: "render",
-      renderSource,
-    });
-  }
+  pr.boundaryReportSource = renderSource;
+  for (const be of pr.boundaryErrors.splice(0)) await reportBoundaryError(pr, be, renderSource);
 }
 
 /**

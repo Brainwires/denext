@@ -148,6 +148,7 @@ export const USER_MAP: FieldMap<AdapterUser> = {
   updatedAt: ["updated_at", INT],
   lastSignInAt: ["last_sign_in_at", INT],
   bannedUntil: ["banned_until", INT],
+  sessionsValidAfter: ["sessions_valid_after", INT],
 };
 
 export const ACCOUNT_MAP: FieldMap<AdapterAccount> = {
@@ -187,6 +188,7 @@ export const API_TOKEN_MAP: FieldMap<ApiTokenRecord> = {
   expiresAt: ["expires_at", INT],
   lastUsedAt: ["last_used_at", INT],
   revokedAt: ["revoked_at", INT],
+  ssoSession: ["sso_session", FLAG],
 };
 
 export const MFA_MAP: FieldMap<MfaRecord> = {

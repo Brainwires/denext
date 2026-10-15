@@ -4,6 +4,13 @@
 libavif/`@jsquash/avif` codec it vendors (see [README](./README.md#versioning)).
 Each entry records the upstream version wrapped.
 
+## 0.2.0 — wraps `@jsquash/avif@2.1.1` (libavif, single-threaded encoder and decoder)
+
+- `decode(bytes)` → `{ data, width, height }` (8-bit RGBA): the prebuilt single-threaded
+  libavif decoder (`lib/avif_dec.{js,wasm}`, libaom's AV1 decoder) from the same
+  `@jsquash/avif@2.1.1`, so denext's image transforms take AVIF sources. The wasm is compiled
+  once and instantiated per call, so the memory a large image needed is released with it.
+
 ## 0.1.2
 
 - No code change. Every `AvifImageData` / `AvifEncodeOptions` property is documented

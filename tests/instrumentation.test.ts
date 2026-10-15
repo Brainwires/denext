@@ -3,6 +3,7 @@ import { join, toFileUrl } from "@std/path";
 import {
   loadInstrumentation,
   runRegister,
+  runShutdownHook,
   setNextRuntimeEnv,
 } from "../src/server/instrumentation.ts";
 import { resolveProject } from "../src/build/paths.ts";
@@ -283,4 +284,33 @@ Deno.test("setNextRuntimeEnv sets NEXT_RUNTIME=nodejs when unset, and leaves an 
     if (prev !== undefined) Deno.env.set("NEXT_RUNTIME", prev);
     else Deno.env.delete("NEXT_RUNTIME");
   }
+});
+
+Deno.test("loadInstrumentation reads onShutdown, named or on the default export", async () => {
+  const named = await loadInstrumentation(await tempModule("export function onShutdown() {}\n"));
+  assertEquals(typeof named.onShutdown, "function");
+  const dflt = await loadInstrumentation(
+    await tempModule("export default { onShutdown() {} };\n"),
+  );
+  assertEquals(typeof dflt.onShutdown, "function");
+});
+
+Deno.test("runShutdownHook runs onShutdown once and swallows a throw", async () => {
+  let calls = 0;
+  await runShutdownHook({ onShutdown: () => void calls++ });
+  assertEquals(calls, 1);
+  const errors: unknown[] = [];
+  const error = console.error;
+  console.error = (...a: unknown[]) => void errors.push(a[0]);
+  try {
+    await runShutdownHook({
+      onShutdown: () => {
+        throw new Error("pool already closed");
+      },
+    });
+  } finally {
+    console.error = error;
+  }
+  assertStringIncludes(String(errors[0]), "onShutdown() threw");
+  await runShutdownHook({}); // no hook: nothing to do
 });

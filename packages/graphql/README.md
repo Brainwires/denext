@@ -2,20 +2,27 @@
 
 A **GraphQL endpoint** for a [denext](https://denext.dev) app, as a plugin. It mounts a
 [GraphQL Yoga](https://the-guild.dev/graphql/yoga-server) server at `/graphql`, bridges
-**subscriptions onto denext channels** (the app's push primitive — no second event bus,
-no separate WebSocket server), writes the schema SDL at build, and adds a
-`denext graphql` verb for CI.
+**subscriptions onto denext channels** (the app's push primitive — no second event bus),
+serves them over SSE and over WebSocket (`graphql-ws`), reloads the schema on an edit in
+`denext dev`, writes the schema SDL at build, and adds a `denext graphql` verb for CI.
 
 ```ts
 // denext.config.ts
 import { graphql } from "@denext/graphql";
-import { schema } from "./app/graphql/schema.ts";
 
-export default { plugins: [graphql({ schema, context: ({ signal }) => ({ signal }) })] };
+export default {
+  plugins: [
+    graphql({
+      schema: "./app/graphql/schema.ts", // its `schema` export; reloads on an edit in dev
+      context: ({ signal }) => ({ signal }),
+    }),
+  ],
+};
 ```
 
 (`context` hands your resolvers the request's abort signal, which a subscription uses to end
-on disconnect.) Any `GraphQLSchema` works. [Pothos](https://pothos-graphql.dev) (code-first, fully typed,
+on disconnect.) `schema` also takes a `GraphQLSchema` object or a factory for one — only the
+module path form reloads in dev. Any `GraphQLSchema` works. [Pothos](https://pothos-graphql.dev) (code-first, fully typed,
 **no decorators**) is the recommended builder; `createSchema` (re-exported from Yoga)
 covers SDL + resolvers.
 
@@ -25,7 +32,7 @@ covers SDL + resolvers.
 // deno.json
 {
   "imports": {
-    "@denext/graphql": "jsr:@denext/graphql@^0.3.0",
+    "@denext/graphql": "jsr:@denext/graphql@^0.4.0",
     "graphql": "npm:graphql@^16.9.0",
     "graphql-yoga": "npm:graphql-yoga@^5.10.0",
     "@pothos/core": "npm:@pothos/core@^4" // if you use Pothos
@@ -89,37 +96,106 @@ Resolvers run inside denext's request context: `cookies()`, `headers()`, `auth()
 
 ## Subscriptions over channels
 
-`fromChannel(channel, key, { signal, buffer })` returns the payloads published to one key
-of a `createChannel` as an `AsyncIterable` — what a `subscribe` resolver returns. Yoga
-streams it to the client as GraphQL over SSE (`accept: text/event-stream`), which every
-GraphQL client supports. It ends when the key is revoked, when `signal` aborts, or when
-the client disconnects; past the buffer cap (64) the oldest undelivered payload is dropped
-— a subscription is a live feed, not a log.
+`fromChannel(channel, key, { signal, buffer })` resolves to the payloads published to one key
+of a `createChannel` as an `AsyncIterable` — what a `subscribe` resolver returns. It ends when
+the key is revoked, when `signal` aborts, or when the client disconnects; past the buffer cap
+(64) the oldest undelivered payload is dropped — a subscription is a live feed, not a log.
 
 A publisher burst within 16 ms delivers only the last value per key (the hub coalesces
 publishes, independent of back-pressure) — a channel carries state, not a log; keep a
-list in a Server Action for chat-style history. The same `publish` also reaches every
+list in a Server Action when you need the history. The same `publish` also reaches every
 `useChannel` subscriber on the Live socket, and a `ChannelTransport`
 (`broadcastChannelTransport`, Redis/NATS) carries it across instances — the GraphQL side
 follows automatically.
 
-**Authorization is yours.** A channel's `authorize` gates Live-socket subscribers; a
-server-side subscription sees every publish to the key. Check the viewer in the resolver
-(`auth()`, the context) before returning `fromChannel(...)`.
+**Authorization is the channel's.** `fromChannel` runs the channel's `authorize(ctx, key)` for
+the subscribing request — the same context (`{ origin, url, cookie, peerId }`) and key the Live
+socket passes, inside the request so `auth()` answers for the viewer — and refuses the
+subscription with a GraphQL error (`extensions.code: "FORBIDDEN"`) when it says no. So a key
+built from an argument is safe to subscribe to:
+
+```ts
+// channels.ts ("use server")
+export const inbox = createChannel<{ text: string }>({
+  authorize: async (_ctx, key) => key === `user:${(await auth())?.user.id}`,
+});
+// schema.ts
+subscribe: (_root, { user }, ctx) => fromChannel(inbox, `user:${user}`, { signal: ctx.signal }),
+```
+
+An active subscription is re-checked lazily: the first payload after the channel's
+`authTtlSeconds` (default `live.limits.channelAuthTtlSeconds`, 300) waits for `authorize` again,
+and the subscription ends when it says no. `channel.revoke(key)` ends every subscription to the
+key at once; `channel.revoke(key, { peerId })` ends one connection's (`ctx.peerId` — each SSE
+request is a peer, and every operation of one WebSocket is the same peer).
+
+## GraphQL over WebSocket
+
+The endpoint also speaks the [`graphql-ws`](https://the-guild.dev/graphql/ws) protocol
+(subprotocol `graphql-transport-ws`) on the same path, so `createClient({ url:
+"wss://app.example.com/graphql" })` from `graphql-ws` (or urql / Apollo through it) works
+unchanged. It is implemented in the package over Yoga's own pipeline — no extra dependency, and
+the depth and cost limits, introspection blocking and error masking apply to every operation.
+
+- **The handshake is same-origin.** As on the Live socket in production, the upgrade needs a
+  browser `Origin` on the app's own host (or in `allowedOrigins`, or the app's
+  `desktop.app.origin`); anything else is a 403 before the upgrade. A non-browser client sets
+  `Origin` itself. `requireSameOrigin: false` lifts the check, for a public, cookie-free API only.
+- **Identity** is the upgrade request's cookies and `Authorization`. A browser can't set headers
+  on a WebSocket, so a `connection_init` payload token (`connectionParams: { authorization:
+  "Bearer …" }` or `{ token }`) becomes the socket's `Authorization` when the upgrade carried
+  none. Resolvers and `authorize` run in a copy of that request's context.
+- **Limits:** a socket must send `connection_init` within `websocket.connectionInitTimeoutMs`
+  (3000) or it is closed (4408); it may run `websocket.maxSubscriptions` operations at once (32;
+  past it a `subscribe` gets an `error` frame); a message over `maxBodyBytes` closes it. A slow
+  socket back-pressures its subscriptions, which drop their oldest payloads past the buffer cap.
+- `websocket: false` turns the transport off (SSE stays).
+
+## Connection caps
+
+Every open WebSocket and every streamed (SSE / multipart) response holds a connection slot, as a
+Live socket does: `maxConnections` across all clients and `maxConnectionsPerIp` per client
+address. Past either, the request is refused with `429` before the upgrade or the response (a
+plain JSON query takes no slot). The per-address cap keys on `clientIpForLimits({ bucket: true
+})`, exactly as Live's does: a trusted proxy's last hop or your `rateLimitHeader` address, an IPv6
+client's /64, and no per-address cap for a loopback/private peer behind an untrusted proxy (every
+visitor would share the proxy's address — set `trustForwardedHeaders`, `rateLimitHeader` or
+`rateLimitLocalAddresses`). The defaults are the app's `live.limits.maxConnections` /
+`maxConnectionsPerIp`, else Live's own 10 000 / 64 — the budget denext already applies to a
+long-lived push connection: a page rarely holds more than a couple, and 64 still leaves room for
+a NAT or an office behind one address. A slot is freed however the connection ends: a client
+close or disconnect, a protocol error, the `connection_init` timeout, a stream that completes or
+fails, a dev schema reload ending it.
+
+## Schema reload in `denext dev`
+
+With `schema` given as a module path, an edit to a script or `.graphql` file in that module's
+directory (or below) loads the schema again for the next request — no restart. Subscriptions
+on the old schema complete (over SSE and WebSocket), so a client resubscribes against the new
+one. `watch: ["app/graphql/**/*.ts", "lib/resolvers/**/*.ts"]` names the files yourself. A schema
+object or factory imported into `denext.config.ts` still needs a restart.
 
 ## Options
 
-| Option        | Default          | What                                                                               |
-| ------------- | ---------------- | ---------------------------------------------------------------------------------- |
-| `schema`      | required         | A `GraphQLSchema`, or a factory resolved once on first use                         |
-| `path`        | `/graphql`       | Mount point (prefixed with `basePath`)                                             |
-| `graphiql`    | dev only         | Serve GraphiQL on a browser `GET`                                                  |
-| `context`     | `{}`             | `({ request, signal }) => object` — your resolvers' context                        |
-| `maxDepth`    | `12`             | Reject a query nested deeper than this; `false` disables it                        |
-| `maxCost`     | `false` (off)    | Reject a query over this estimated cost (the multiplicative-fan-out guard); opt-in |
-| `costOptions` | —                | Tune `maxCost`: `fieldCost`, `listMultiplierArgs`, `defaultMultiplier`             |
-| `yoga`        | —                | Passthrough: `plugins`, `maskedErrors`, `cors`, `batching`, `logging`              |
-| `outFile`     | `schema.graphql` | The SDL `denext build` writes into the output dir; `false` skips it                |
+| Option                | Default                | What                                                                               |
+| --------------------- | ---------------------- | ---------------------------------------------------------------------------------- |
+| `schema`              | required               | A module path (reloads in dev), a `GraphQLSchema`, or a factory resolved once      |
+| `path`                | `/graphql`             | Mount point (prefixed with `basePath`)                                             |
+| `graphiql`            | dev only               | Serve GraphiQL on a browser `GET`                                                  |
+| `context`             | `{}`                   | `({ request, signal }) => object` — your resolvers' context                        |
+| `introspection`       | dev only               | Answer introspection queries                                                       |
+| `maxBodyBytes`        | 1 MiB                  | Request body cap; over it `413` (a WebSocket message over it closes the socket)    |
+| `requireSameOrigin`   | `true`                 | Same-origin proof on non-`GET` requests and the WebSocket handshake                |
+| `allowedOrigins`      | —                      | Extra origins allowed past `requireSameOrigin`                                     |
+| `maxDepth`            | `12`                   | Reject a query nested deeper than this; `false` disables it                        |
+| `maxCost`             | `false` (off)          | Reject a query over this estimated cost (the multiplicative-fan-out guard); opt-in |
+| `costOptions`         | —                      | Tune `maxCost`: `fieldCost`, `listMultiplierArgs`, `defaultMultiplier`             |
+| `yoga`                | —                      | Passthrough: `plugins`, `maskedErrors`, `cors`, `batching`, `logging`              |
+| `outFile`             | `schema.graphql`       | The SDL `denext build` writes into the output dir; `false` skips it                |
+| `websocket`           | `{}` (on)              | GraphQL over WebSocket: `connectionInitTimeoutMs`, `maxSubscriptions`; `false` off |
+| `watch`               | schema's dir           | Dev: globs whose edit reloads a module-path `schema`                               |
+| `maxConnections`      | `live.limits` / 10 000 | Open WebSockets + streamed responses, all clients; past it `429`                   |
+| `maxConnectionsPerIp` | `live.limits` / 64     | The same, per client address (`clientIpForLimits`)                                 |
 
 ## CI
 
@@ -138,6 +214,10 @@ file into the output directory.
   matching the host, or one in `allowedOrigins`); a cross-site `<form>` or fetch gets a 403
   before Yoga parses it. `requireSameOrigin: false` turns this off — only for a public,
   cookie-free API, because resolvers run in the viewer's session.
+- **The WebSocket handshake needs the app's own `Origin`** (or an allowed one) — the Live
+  socket's production rule, since a WebSocket is not covered by CORS.
+- **Subscriptions are authorized by the channel.** `fromChannel` runs the channel's
+  `authorize` for the subscribing viewer, re-checks it lazily, and ends on `revoke`.
 - **CORS is off** unless you set `yoga.cors` (Yoga's own default would reflect any `Origin`
   with credentials).
 - **Bodies are capped** at `maxBodyBytes` (default 1 MiB, like a route handler) → 413.
@@ -157,12 +237,13 @@ file into the output directory.
 ## Package surface
 
 - `@denext/graphql` — `graphql()`, `fromChannel`, `createSchema` (from Yoga), `schemaSdl`,
-  `diffSdl`, `createGraphqlCommand`.
+  `diffSdl`, `createGraphqlCommand`; types `GraphqlOptions`, `WebSocketOptions`, `CostOptions`.
 - `@denext/graphql/subscriptions` — `fromChannel` alone (for a schema module that should not
   import the plugin).
 - `@denext/graphql/command` — the CLI verb builder.
 
-Requires `@denext/denext@^4.0.0-rc.1` (pinned in this package's `deno.json`).
+Requires the denext release after 4.0.0 (`tapChannelAuthorized` in `@denext/denext/plugin-kit`;
+pinned in this package's `deno.json`).
 
 ## License
 

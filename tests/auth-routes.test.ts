@@ -81,7 +81,7 @@ async function mount(
     trustForwardedHeaders: false,
     providers: [
       credentials(),
-      magicLink(),
+      magicLink({ confirm: false }),
       github({ clientId: "gh-client", clientSecret: "gh-secret" }),
     ],
     adapter,
@@ -335,7 +335,7 @@ Deno.test("a verb the provider type doesn't answer is a 405: credentials GET, OA
   const app = await mount({
     providers: [
       credentials(),
-      magicLink(),
+      magicLink({ confirm: false }),
       emailOtp(),
       github({ clientId: "a", clientSecret: "b" }),
     ],

@@ -6,9 +6,9 @@
 // backdropColor / presentationStyle (src/react-native/modal.ts). Stand-ins record the props
 // react-native-web's components would get; DOM measurements are faked.
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import type { VNode } from "../src/jsx/types.ts";
+import type { VNode, VNodeChild } from "../src/jsx/types.ts";
 import { render } from "../src/testing/mod.ts";
 import {
   withImageProps,
@@ -30,9 +30,9 @@ import {
   restoreAnchor,
   type ScrollNode,
 } from "../src/react-native/scroll-view.ts";
-import { imageProps, parseSrcSet, pickSource } from "../src/react-native/image-props.ts";
+import { imageFade, imageProps, parseSrcSet, pickSource } from "../src/react-native/image-props.ts";
 import { switchProps } from "../src/react-native/switch.ts";
-import { modalFrame } from "../src/react-native/modal.ts";
+import { attachSheetSwipe, modalFrame } from "../src/react-native/modal.ts";
 import { inShell, settle, withGlobals } from "./helpers/mobile-fakes.ts";
 
 /** A component stand-in that records its props and hands its ref `node`. */
@@ -295,22 +295,115 @@ Deno.test("imageProps: web-style props as react-native-web's", () => {
   assertEquals(imageProps({ source: { uri: "x" } }).source, { uri: "x" }, "unchanged");
 });
 
-Deno.test("withImageProps: statics kept; fadeDuration fades in the Android shell", async () => {
+Deno.test("withImageProps: statics kept; fadeDuration fades in the Android shell and when set", async () => {
   const seen: Record<string, unknown>[] = [];
   const Base = Object.assign(recorder(seen), { getSize() {}, queryCache() {} });
   const Image = withImageProps(Base as never) as unknown as
     & ((p: Record<string, unknown>) => VNode)
     & Record<string, unknown>;
   assert(typeof Image.getSize === "function" && typeof Image.abortPrefetch === "function");
-  const web = await render(h(Image, { source: { uri: "a" }, fadeDuration: 200 }));
-  assertEquals(seen.at(-1)!.style, undefined, "no fade off Android");
+  const web = await render(h(Image, { source: { uri: "a" } }));
+  assertEquals(seen.at(-1)!.style, undefined, "a browser: no fade unless set");
   await web.unmount();
+  const set = await render(h(Image, { source: { uri: "a" }, fadeDuration: 200 }));
+  assertEquals((seen.at(-1)!.style as unknown[])[1], { opacity: 0, transition: "opacity 200ms" });
+  await set.unmount();
   await inShell("android", {}, async () => {
     const screen = await render(h(Image, { source: { uri: "a" }, fadeDuration: 200 }));
     const style = seen.at(-1)!.style as Record<string, unknown>[];
     assertEquals(style[1], { opacity: 0, transition: "opacity 200ms" });
     await screen.unmount();
   });
+});
+
+Deno.test("imageFade: fadeDuration is Android's (300 ms unset), never iOS, only when set elsewhere", () => {
+  assertEquals(imageFade(undefined, "android"), 300, "React Native's Android default");
+  assertEquals(imageFade(120, "android"), 120);
+  assertEquals(imageFade(0, "android"), 0, "0 turns it off");
+  assertEquals(imageFade(200, "ios"), 0, "iOS does not fade");
+  assertEquals(imageFade(undefined, "web"), 0, "a browser fades only when set");
+  assertEquals(imageFade(150, "web"), 150);
+});
+
+Deno.test("withImageProps: the Android shell fades by 300 ms when fadeDuration is unset", async () => {
+  const seen: Record<string, unknown>[] = [];
+  const Image = withImageProps(recorder(seen) as never) as unknown as (
+    p: Record<string, unknown>,
+  ) => VNode;
+  await inShell("android", {}, async () => {
+    const screen = await render(h(Image, { source: { uri: "a" } }));
+    const style = seen.at(-1)!.style as Record<string, unknown>[];
+    assertEquals(style[1], { opacity: 0, transition: "opacity 300ms" });
+    await screen.unmount();
+  });
+  await inShell("ios", {}, async () => {
+    const screen = await render(h(Image, { source: { uri: "a" }, fadeDuration: 200 }));
+    assertEquals(seen.at(-1)!.style, undefined, "no fade on iOS");
+    await screen.unmount();
+  });
+});
+
+/** The `<img>` elements under `node` (the test DOM has no selectors). */
+// deno-lint-ignore no-explicit-any
+function imgsIn(node: any): any[] {
+  const out = [];
+  for (const child of node.childNodes ?? []) {
+    if (String(child.tagName ?? "").toLowerCase() === "img") out.push(child);
+    out.push(...imgsIn(child));
+  }
+  return out;
+}
+
+Deno.test("withImageProps: crossOrigin / referrerPolicy reach a real <img>", async () => {
+  const seen: Record<string, unknown>[] = [];
+  function View(props: Record<string, unknown>): VNode {
+    return h(
+      "div",
+      { "data-view": "1", "aria-label": props["aria-label"] },
+      props.children as VNodeChild,
+    );
+  }
+  const Image = withImageProps(recorder(seen) as never, View as never) as unknown as (
+    p: Record<string, unknown>,
+  ) => VNode;
+  const events: unknown[] = [];
+  const screen = await render(h(Image, {
+    source: { uri: "https://cdn.example/a.png" },
+    defaultSource: { uri: "/placeholder.png" },
+    crossOrigin: "anonymous",
+    referrerPolicy: "no-referrer",
+    resizeMode: "contain",
+    alt: "A cat",
+    onLoadStart: () => events.push("start"),
+    onLoad: (e: { nativeEvent: unknown }) => events.push(e.nativeEvent),
+    onLoadEnd: () => events.push("end"),
+  }));
+  assertEquals(seen.length, 0, "react-native-web's background Image is not used");
+  const imgs = imgsIn(screen.container);
+  assertEquals(imgs.length, 2, "the defaultSource while loading, and the image");
+  const img = imgs[1];
+  assertEquals(img.getAttribute("src"), "https://cdn.example/a.png");
+  assertEquals(img.getAttribute("crossOrigin") ?? img.getAttribute("crossorigin"), "anonymous");
+  assertEquals(
+    img.getAttribute("referrerPolicy") ?? img.getAttribute("referrerpolicy"),
+    "no-referrer",
+  );
+  assertEquals(img.getAttribute("alt"), "A cat");
+  assertStringIncludes(String(img.getAttribute("style")).replace(/\s/g, ""), "object-fit:contain");
+  assertEquals(events, ["start"]);
+  Object.assign(img, { naturalWidth: 40, naturalHeight: 30 });
+  await screen.fireEvent(img, "load");
+  assertEquals(events.slice(1), [
+    { source: { uri: "https://cdn.example/a.png", width: 40, height: 30 } },
+    "end",
+  ]);
+  assertEquals(imgsIn(screen.container).length, 1, "the placeholder goes");
+  await screen.unmount();
+
+  const plain = await render(h(Image, { source: { uri: "b.png" } }));
+  assertEquals(seen.length, 1, "without them: react-native-web's Image, as before");
+  assertEquals(imgsIn(plain.container).length, 0);
+  await plain.unmount();
 });
 
 // ---- Switch ------------------------------------------------------------------------------------
@@ -373,4 +466,110 @@ Deno.test("withModalBackHandler: a framed modal is transparent, its children in 
   assertEquals(frame.type, "section", "drawn in react-native-web's View");
   assertEquals(frame.props.style, { flex: 1, backgroundColor: "#111" });
   await screen.unmount();
+});
+
+// ---- Modal: the iOS sheet's swipe-down ---------------------------------------------------------
+
+/** A sheet element stand-in: listeners by type, a fixed height, a writable style. */
+function fakeSheet(height = 600) {
+  const listeners = new Map<string, Set<(e: unknown) => void>>();
+  const el = {
+    style: { transform: "", transition: "" },
+    getBoundingClientRect: () => ({ height }),
+    addEventListener(type: string, fn: (e: unknown) => void) {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type)!.add(fn);
+    },
+    removeEventListener(type: string, fn: (e: unknown) => void) {
+      listeners.get(type)?.delete(fn);
+    },
+    fire(type: string, e: Record<string, unknown> = {}) {
+      for (const fn of [...(listeners.get(type) ?? [])]) fn({ pointerId: 1, button: 0, ...e });
+    },
+    count: () => [...listeners.values()].reduce((n, s) => n + s.size, 0),
+  };
+  return el;
+}
+
+/** A drag from `from` to `to` (px), `ms` long. */
+function drag(
+  el: ReturnType<typeof fakeSheet>,
+  from: number,
+  to: number,
+  ms = 400,
+  target?: unknown,
+) {
+  el.fire("pointerdown", { clientY: from, timeStamp: 0, target });
+  const steps = 8;
+  for (let i = 1; i <= steps; i++) {
+    el.fire("pointermove", { clientY: from + (to - from) * i / steps, timeStamp: ms * i / steps });
+  }
+  el.fire("pointerup", { clientY: to, timeStamp: ms });
+}
+
+Deno.test("attachSheetSwipe: a drag past half the sheet slides it away and calls onRequestClose", () => {
+  const el = fakeSheet();
+  let closes = 0;
+  let open = true;
+  const detach = attachSheetSwipe(el as never, () => closes++, () => open);
+  drag(el, 100, 500);
+  assertEquals(closes, 1, "onRequestClose, as React Native's iOS sheet calls it");
+  assertEquals(el.style.transform, "translateY(640px)", "slid off below the screen");
+  el.fire("transitionend");
+  assertEquals(el.style.transform, "translateY(0px)", "kept visible by the app: it slides back");
+  drag(el, 100, 500);
+  open = false;
+  el.fire("transitionend");
+  assertEquals(el.style.transform, "translateY(640px)", "hidden: it stays away");
+  detach();
+  assertEquals(el.count(), 0, "every listener removed");
+});
+
+Deno.test("attachSheetSwipe: a short slow drag settles back; a flick dismisses", () => {
+  const el = fakeSheet();
+  let closes = 0;
+  attachSheetSwipe(el as never, () => closes++, () => true);
+  drag(el, 100, 160, 2000);
+  assertEquals(closes, 0);
+  assertEquals(el.style.transform, "translateY(0px)");
+  drag(el, 100, 200, 40);
+  assertEquals(closes, 1, "a fast downward flick dismisses");
+});
+
+Deno.test("attachSheetSwipe: over a scrolled scroll view the drag is the content's", () => {
+  const el = fakeSheet();
+  const list = { scrollTop: 120, scrollHeight: 2000, clientHeight: 400, parentNode: el };
+  let closes = 0;
+  withGlobals({ getComputedStyle: () => ({ overflowY: "auto" }) }, () => {
+    attachSheetSwipe(el as never, () => closes++, () => true);
+    drag(el, 100, 500, 400, list);
+    assertEquals(closes, 0, "the list scrolls; the sheet stays");
+    list.scrollTop = 0;
+    drag(el, 100, 500, 400, list);
+    assertEquals(closes, 1, "from the list's top a downward drag moves the sheet");
+  });
+});
+
+Deno.test("withModalBackHandler: the iOS sheet's view gets the swipe, calling the latest onRequestClose", async () => {
+  const seen: Record<string, unknown>[] = [];
+  const Modal = withModalBackHandler(recorder(seen) as never, "section") as unknown as (
+    p: Record<string, unknown>,
+  ) => VNode;
+  const calls: string[] = [];
+  await inShell("ios", {}, async () => {
+    const screen = await render(h(Modal, {
+      visible: true,
+      presentationStyle: "pageSheet",
+      onRequestClose: () => calls.push("close"),
+    }, "body"));
+    const outer = seen.at(-1)!.children as { props: { children: VNode } };
+    const sheet = outer.props.children as unknown as { props: { ref: (n: unknown) => void } };
+    const el = fakeSheet();
+    sheet.props.ref(el);
+    drag(el, 100, 500);
+    assertEquals(calls, ["close"]);
+    sheet.props.ref(null);
+    assertEquals(el.count(), 0, "detached with the view");
+    await screen.unmount();
+  });
 });

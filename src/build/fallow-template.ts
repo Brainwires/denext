@@ -98,6 +98,8 @@ entry = [
   "desktop.ts",
   "middleware.ts",
   "src/middleware.ts",
+  "proxy.ts",
+  "src/proxy.ts",
   "instrumentation.ts",
   "src/instrumentation.ts",
   "instrumentation-client.ts",

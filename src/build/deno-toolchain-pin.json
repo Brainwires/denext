@@ -1,15 +1,15 @@
 {
   "schema": 1,
-  "version": "2.9.7-denext.17",
-  "tag": "denext-runtime-v2.9.7-denext.17",
+  "version": "2.9.7-denext.19",
+  "tag": "denext-runtime-v2.9.7-denext.19",
   "repository": "https://github.com/Brainwires/deno",
   "deno": "2.9.7",
   "targets": {
     "darwin-aarch64": {
-      "file": "deno-cli-2.9.7-denext.17-aarch64-apple-darwin.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v2.9.7-denext.17/deno-cli-2.9.7-denext.17-aarch64-apple-darwin.zip",
-      "sha256": "be7737d300df1cbbf9601521ad9895dd58a9329e3af2a18d26b35f8be9f3525b",
-      "size": 50468171,
+      "file": "deno-cli-2.9.7-denext.19-aarch64-apple-darwin.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v2.9.7-denext.19/deno-cli-2.9.7-denext.19-aarch64-apple-darwin.zip",
+      "sha256": "db4de7b2e6fc0a0a80e936ddf0ab977f327cad960fc690311aefa6d70fba722a",
+      "size": 50473390,
       "format": "zip",
       "esbuild": {
         "version": "0.25.5",
@@ -17,10 +17,10 @@
       }
     },
     "darwin-x86_64": {
-      "file": "deno-cli-2.9.7-denext.17-x86_64-apple-darwin.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v2.9.7-denext.17/deno-cli-2.9.7-denext.17-x86_64-apple-darwin.zip",
-      "sha256": "4357aef7c082335d816de62a1a675d87faa0816f6c975d26cd56c2a1f747e367",
-      "size": 54798985,
+      "file": "deno-cli-2.9.7-denext.19-x86_64-apple-darwin.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v2.9.7-denext.19/deno-cli-2.9.7-denext.19-x86_64-apple-darwin.zip",
+      "sha256": "8324b9bab207c8bdde9484f374cba10fbb5e3e62ba2f303f21cb58506b3f6e62",
+      "size": 54801087,
       "format": "zip",
       "esbuild": {
         "version": "0.25.5",
@@ -28,10 +28,10 @@
       }
     },
     "linux-aarch64": {
-      "file": "deno-cli-2.9.7-denext.17-aarch64-unknown-linux-gnu.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v2.9.7-denext.17/deno-cli-2.9.7-denext.17-aarch64-unknown-linux-gnu.zip",
-      "sha256": "9c92eebd4c180759adaf2096bcf7e95d574fcbae605ef5c87d7118f282799938",
-      "size": 82632521,
+      "file": "deno-cli-2.9.7-denext.19-aarch64-unknown-linux-gnu.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v2.9.7-denext.19/deno-cli-2.9.7-denext.19-aarch64-unknown-linux-gnu.zip",
+      "sha256": "14f17780f7ba67096f1d00b78df562220d95da5d4643f7e72d361228a9f50596",
+      "size": 82640550,
       "format": "zip",
       "esbuild": {
         "version": "0.25.5",
@@ -39,10 +39,10 @@
       }
     },
     "linux-x86_64": {
-      "file": "deno-cli-2.9.7-denext.17-x86_64-unknown-linux-gnu.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v2.9.7-denext.17/deno-cli-2.9.7-denext.17-x86_64-unknown-linux-gnu.zip",
-      "sha256": "8bc6da66a864858c6a39a5571f6bf849ae2a4099c8803c3e217839760f626e0f",
-      "size": 82827837,
+      "file": "deno-cli-2.9.7-denext.19-x86_64-unknown-linux-gnu.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v2.9.7-denext.19/deno-cli-2.9.7-denext.19-x86_64-unknown-linux-gnu.zip",
+      "sha256": "e842990b36320ae7835ff72d052b1d69e1d3dc3bbb9196042440332bb2b373bd",
+      "size": 82831170,
       "format": "zip",
       "esbuild": {
         "version": "0.25.5",
@@ -50,10 +50,10 @@
       }
     },
     "windows-x86_64": {
-      "file": "deno-cli-2.9.7-denext.17-x86_64-pc-windows-msvc.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v2.9.7-denext.17/deno-cli-2.9.7-denext.17-x86_64-pc-windows-msvc.zip",
-      "sha256": "d35a858f3395fc94c13676628695eafff3e53d5d64829642dcedff94b6698098",
-      "size": 45779420,
+      "file": "deno-cli-2.9.7-denext.19-x86_64-pc-windows-msvc.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v2.9.7-denext.19/deno-cli-2.9.7-denext.19-x86_64-pc-windows-msvc.zip",
+      "sha256": "44ef0ded4971f856d3588e10f7c976bf695251c3124f528de6b3f46043beaa4e",
+      "size": 45781806,
       "format": "zip",
       "esbuild": {
         "version": "0.25.5",

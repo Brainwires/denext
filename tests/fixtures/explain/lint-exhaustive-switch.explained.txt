@@ -1,0 +1,29 @@
+denext/exhaustive-switch: This switch over `status` misses "done"
+  at lint-exhaustive-switch.ts:5:3
+
+    4 | export function label(status: Status): string {
+  > 5 |   switch (status) {
+          ^^^^^^^^^^^^^^^^^
+    6 |     case "idle":
+
+  `status` is a union this file declares, and no `case` handles "done". Without a `default`, those values fall through the switch silently.
+
+  Fix: Add a `case` for "done". To have the compiler catch the next missing case, end the switch with
+  default:
+    return assertNever(status); // import { assertNever } from "denext/result"
+
+  Original (deno lint):
+  │ error[denext/exhaustive-switch]: This switch over `status` does not handle "done". Add the missing case(s), or `default: assertNever(status)` (denext/result) so the compiler checks it. [denext/exhaustive-switch]
+  │     --> /app/lint-exhaustive-switch.ts:5:3
+  │      | 
+  │ >  5 |   switch (status) {
+  │      |   ^^^^^^^^^^^^^^^^^
+  │ >  6 |     case "idle":
+  │     ...
+  │ >  9 |       return "Loading…";
+  │ > 10 |   }
+  │      |   ^
+
+Found 1 problem
+Checked 1 file
+

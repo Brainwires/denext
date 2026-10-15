@@ -10,7 +10,7 @@
 // is missing, stale or unreadable only costs the listing.
 
 import { dirname, join } from "@std/path";
-import { CONFIG_FILES } from "../build/paths.ts";
+import { CONFIG_FILES } from "../build/config-files.ts";
 import { type ProjectVerb, VERB_NAME } from "./command.ts";
 
 /** The cache file's contents. */

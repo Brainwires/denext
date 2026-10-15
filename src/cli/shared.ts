@@ -7,6 +7,7 @@
 import { join, resolve } from "@std/path";
 import { denoExecutable } from "../build/bundle.ts";
 import type { CommandContext } from "./command.ts";
+import { explainBuildFailure, explainedToolOutput } from "./explain-output.ts";
 
 /** Termination signals to trap for graceful shutdown (platform-dependent). */
 export const SHUTDOWN_SIGNALS: Deno.Signal[] = Deno.build.os === "windows"
@@ -85,7 +86,9 @@ export async function runBuildStep<T>(
     // The cause carries the stack this message hides. A failure inside the build machinery
     // (rather than in the user's code) is unreadable without it, so `--verbose` prints it.
     if (err instanceof Error && err.stack && verboseRun()) console.error(err.stack);
-    throw new Error(`denext: ${label} failed — ${detail}`, { cause: err });
+    throw new Error(`denext: ${label} failed — ${detail}${explainBuildFailure(detail)}`, {
+      cause: err,
+    });
   }
 }
 
@@ -110,6 +113,32 @@ export async function spawnDenoAndExit(
     stderr: "inherit",
   }).spawn();
   const { code } = await relayingSignals(child);
+  Deno.exit(code);
+}
+
+/**
+ * Like {@linkcode spawnDenoAndExit}, but the child's stderr — where `deno check` and
+ * `deno lint` print their diagnostics — is collected and printed explained (each diagnostic
+ * with a plain-language why and fix, then its original). stdout and stdin stay inherited.
+ * Never returns.
+ *
+ * @param args The `deno` arguments.
+ * @param cwd The working directory (paths in the output are shown relative to it).
+ */
+export async function spawnDenoExplainedAndExit(args: string[], cwd: string): Promise<never> {
+  const child = new Deno.Command(denoExecutable(), {
+    args,
+    cwd,
+    env: { NO_COLOR: "1" },
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "piped",
+  }).spawn();
+  const [stderr, { code }] = await Promise.all([
+    new Response(child.stderr).text(),
+    relayingSignals(child),
+  ]);
+  if (stderr) console.error(explainedToolOutput(stderr, cwd).replace(/\n$/, ""));
   Deno.exit(code);
 }
 

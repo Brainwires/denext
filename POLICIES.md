@@ -14,13 +14,13 @@
   the merged-config re-exec (`src/build/module-config.ts`), the ORM-support precedent;
   prefer JSR / zero-dep options where they exist (`@denext/openapi` is zero-dep;
   `@denext/graphql` is a declared npm bridge like `@denext/effect`). What "zero-npm"
-  does and does not mean is spelled out under pillar 1 of [MISSION.md](./MISSION.md).
+  does and does not mean is spelled out under pillar 4 of [MISSION.md](./MISSION.md).
 - **Compatibility is pursued to the limit and never overstated.** The React/Next
   _surface_ is reproduced as completely as we can — that is what makes trying denext
   free — but the public claim is never "100% parity": every gap is listed in
   [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) and every deliberate divergence in
   [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md), and compat is the on-ramp, not the
-  headline (pillar 5 of [MISSION.md](./MISSION.md)). Likewise the typed API surface is
+  headline (pillar 3 of [MISSION.md](./MISSION.md)). Likewise the typed API surface is
   not marketed as "NestJS on Deno".
 - **No decorator-metadata transpile stage.** A proposal for `experimentalDecorators` /
   `emitDecoratorMetadata` must clear a much higher bar than "it's how Nest does it."
@@ -32,7 +32,7 @@
 
 ## Security policy
 
-denext's second mission pillar is _secure by default_ — a strict hash-based CSP, an
+_Secure by default_ is part of denext's second mission pillar — a strict hash-based CSP, an
 SSRF-safe image optimizer, same-origin CSRF-defended Server Actions, signed `httpOnly`
 cookies, and a least-privilege Deno sandbox ([MISSION.md](./MISSION.md),
 [the CVE-defense guide](https://denext.dev/docs/security)). If you find a way through any of that,
@@ -70,8 +70,8 @@ with you. Credit is given in the advisory and the CHANGELOG unless you ask other
 - the build/CLI when its output is what a production server runs (`denext build`,
   `denext start`, `denext export`, the scaffold and `denext migrate` output);
 - the dev server **only** for issues reachable from a foreign origin or another local
-  user (the dev server is loopback-only by design — see the "Security posture" section of
-  [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md));
+  user (the dev server binds loopback unless `--lan` / `--host` opts in, and its assets answer
+  only opted-in hosts — see the Tooling section of [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md));
 - the first-party `@denext/*` packages in `packages/`.
 
 **Out of scope**: vulnerabilities in a user's own application code or third-party

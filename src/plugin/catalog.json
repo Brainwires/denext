@@ -3,25 +3,25 @@
   "plugins": [
     {
       "name": "@denext/avif",
-      "version": "0.1.2",
-      "spec": "jsr:@denext/avif@^0.1.2",
+      "version": "0.2.0",
+      "spec": "jsr:@denext/avif@^0.2.0",
       "exports": [
         "."
       ],
       "kind": "library",
       "title": "@denext/avif",
-      "blurb": "A Deno-native AVIF encoder — denext's first-party, zero-npm replacement for the @jsquash/avif peer codec its image optimizer used to lazily import."
+      "blurb": "A Deno-native AVIF encoder and decoder — denext's first-party, zero-npm replacement for the @jsquash/avif peer codec its image optimizer used to lazily import."
     },
     {
       "name": "@denext/backend",
-      "version": "0.4.0",
-      "spec": "jsr:@denext/backend@^0.4.0",
+      "version": "0.5.0",
+      "spec": "jsr:@denext/backend@^0.5.0",
       "exports": [
         ".",
         "./client",
         "./server"
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "backend",
       "configKeys": [
@@ -199,7 +199,7 @@
                 ]
               },
               "metadataPath": {
-                "description": "Where the bucket and object metadata lives without Postgres: a `node:sqlite` file (default `.denext-storage.db` in the project root). With `postgres`, it is the `storage` schema.",
+                "description": "Where the bucket and object metadata lives without Postgres: a `node:sqlite` file (default `.denext-storage.db` in the project root; in a `denext build --compile` binary, `storage.db` in its state directory, and a relative path resolves against its working directory). With `postgres`, it is the `storage` schema.",
                 "type": "string"
               },
               "maxTransformDimension": {
@@ -222,6 +222,10 @@
               },
               "sql": {
                 "description": "A client to use instead of `url`: any `SqlClient` (on stock Deno, `fromPostgresJs(postgres(url))` with the npm `postgres` package). It is never closed by the plugin."
+              },
+              "directUrl": {
+                "description": "A direct `postgres://` URL to the same database (default: `DATABASE_DIRECT_URL`), for when `url` / `sql` is a pooler in transaction mode (PgBouncer, Supavisor). What needs a session of its own runs on it: realtime's LISTEN, its reserved connections (`revalidate.owner: \"one\"`, the logical source), webhook delivery's wake-up, the REST schema-reload listener, and every migration and its lock. Queries, `db()` included, keep using the pooled one.",
+                "type": "string"
               },
               "rls": {
                 "description": "Row-level security: `db()` runs every query as `anon` or `authenticated` with the request's claims, so Supabase-style policies apply. The roles and `auth.*` functions are created by a migration on first use unless `migrate: false`.",
@@ -453,6 +457,32 @@
               "aggregates": {
                 "description": "Allow aggregate functions in `select=` (`amount.sum()`, `count()`, … grouped by the other selected columns) — PostgREST's `db-aggregates-enabled` (default `false`: a 400). An aggregate reads every matching row whatever `limit` says, so a caller could make the database scan a whole table; turn it on when the tables are small or the statement timeout bounds the cost.",
                 "type": "boolean"
+              },
+              "rateLimit": {
+                "description": "A request budget per client: a signed-in user by their user id, anyone else by their client address (`clientIpForLimits()`'s rule — skipped for an untrusted loopback/private peer), the secret key never. Past it a request is answered 429 `over_request_rate_limit` with `Retry-After`, before any statement runs. Default `{ max: 1200, windowMs: 60_000 }` — 20 requests a second on average, far above what a page of supabase-js calls needs — counted per process unless `store` is shared; `false` turns it off.",
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "max": {
+                        "description": "Requests one client (a user, or an address when signed out) may make per window. Default 1200.",
+                        "type": "number"
+                      },
+                      "windowMs": {
+                        "description": "The window, in milliseconds. Default 60 000 (one minute).",
+                        "type": "number"
+                      },
+                      "store": {
+                        "description": "Where the counts live. Default: a bounded in-memory store, per process — behind several replicas pass a shared one (`postgresRateLimitStore()` from `denext/server`)."
+                      }
+                    }
+                  },
+                  {
+                    "enum": [
+                      false
+                    ]
+                  }
+                ]
               }
             }
           },
@@ -659,8 +689,29 @@
                   "manual"
                 ]
               },
+              "retention": {
+                "description": "How long settled events are kept, in milliseconds from when the change happened: `delivered` ones (default 7 days) and `failed` ones — given up on after `maxAttempts`, or never allowed to go anywhere — (default 30 days). Older ones are deleted by the background deliverer (once an hour) and by `purgeWebhookEvents()` / `webhookCleanupJob()`. `false` keeps every event.",
+                "anyOf": [
+                  {
+                    "enum": [
+                      false
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "deliveredMs": {
+                        "type": "number"
+                      },
+                      "failedMs": {
+                        "type": "number"
+                      }
+                    }
+                  }
+                ]
+              },
               "migrate": {
-                "description": "Apply the `backend_webhooks_0001` migration on first use (default `true`).",
+                "description": "Apply the `backend_webhooks_*` migrations on first use (default `true`).",
                 "type": "boolean"
               },
               "fetch": {
@@ -673,8 +724,8 @@
     },
     {
       "name": "@denext/content-collections",
-      "version": "0.5.0",
-      "spec": "jsr:@denext/content-collections@^0.5.0",
+      "version": "0.6.0",
+      "spec": "jsr:@denext/content-collections@^0.6.0",
       "exports": [
         ".",
         "./command",
@@ -682,7 +733,7 @@
         "./markdown",
         "./runtime"
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "contentCollections",
       "verb": "content",
@@ -714,7 +765,7 @@
       "exports": [
         "."
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "effect",
       "configKeys": [
@@ -736,14 +787,14 @@
     },
     {
       "name": "@denext/graphql",
-      "version": "0.3.0",
-      "spec": "jsr:@denext/graphql@^0.3.0",
+      "version": "0.4.0",
+      "spec": "jsr:@denext/graphql@^0.4.0",
       "exports": [
         ".",
         "./command",
         "./subscriptions"
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "graphql",
       "verb": "graphql",
@@ -760,10 +811,14 @@
         "allowedOrigins",
         "context",
         "yoga",
-        "outFile"
+        "outFile",
+        "websocket",
+        "watch",
+        "maxConnections",
+        "maxConnectionsPerIp"
       ],
       "title": "@denext/graphql",
-      "blurb": "A GraphQL endpoint for a denext app, as a plugin. It mounts a GraphQL Yoga server at /graphql, bridges subscriptions onto denext channels (the app's push primitive — no second event bus, no separate…",
+      "blurb": "A GraphQL endpoint for a denext app, as a plugin. It mounts a GraphQL Yoga server at /graphql, bridges subscriptions onto denext channels (the app's push primitive — no second event bus), serves them…",
       "docs": "/docs/graphql",
       "optionsType": "GraphqlOptions",
       "optionsSchema": {
@@ -787,6 +842,14 @@
           },
           "maxBodyBytes": {
             "description": "Max request body in bytes (default 1 MiB, like a route handler; over → 413).",
+            "type": "number"
+          },
+          "maxConnections": {
+            "description": "Open subscription connections — WebSockets plus streamed (SSE / multipart) responses — across every client; past it a new one is refused with `429` before the upgrade or the response. Default: the app's `live.limits.maxConnections`, else 10 000 (Live's default).",
+            "type": "number"
+          },
+          "maxConnectionsPerIp": {
+            "description": "Open subscription connections from one client address, keyed as Live keys its own: `clientIpForLimits({ bucket: true })` — a trusted proxy's hop or the `rateLimitHeader` address, an IPv6 client's /64, and no per-address cap for a loopback/private peer behind an untrusted proxy (`rateLimitLocalAddresses` counts those). Default: the app's `live.limits.maxConnectionsPerIp`, else 64 (Live's default).",
             "type": "number"
           },
           "maxDepth": {
@@ -865,6 +928,36 @@
                 ]
               }
             ]
+          },
+          "websocket": {
+            "description": "Serve GraphQL over WebSocket — the `graphql-ws` protocol (subprotocol `graphql-transport-ws`) — on the same path, next to GraphQL over SSE. On by default; `false` turns it off. The handshake needs a browser `Origin` on the app's own host (or in `allowedOrigins`, or the app's `desktop.app.origin`) unless `requireSameOrigin: false`; the socket's identity is the upgrade request's cookies / `Authorization`, or a `connection_init` payload token (`{ authorization: \"Bearer …\" }` or `{ token }`) when the upgrade carried no `Authorization`. Every operation passes the same depth / cost limits as over HTTP.",
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "connectionInitTimeoutMs": {
+                    "description": "Close a socket that sent no `connection_init` within this many milliseconds (default 3000).",
+                    "type": "number"
+                  },
+                  "maxSubscriptions": {
+                    "description": "Operations one socket may run at once — subscriptions, queries and mutations alike (default 32, Live's per-connection channel cap). Past it a `subscribe` gets an `error` frame.",
+                    "type": "number"
+                  }
+                }
+              },
+              {
+                "enum": [
+                  false
+                ]
+              }
+            ]
+          },
+          "watch": {
+            "description": "Under `denext dev`, the files whose edit reloads the schema (globs, relative to the project root) when GraphqlOptions.schema is a module path. Default: the scripts and `.graphql` files in the schema module's directory and below (the schema module alone when it sits at the project root). In-flight subscriptions on the old schema end (`complete`).",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -881,7 +974,7 @@
         "./command",
         "./types"
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "htmx",
       "verb": "htmx",
@@ -916,8 +1009,8 @@
     },
     {
       "name": "@denext/og",
-      "version": "0.1.1",
-      "spec": "jsr:@denext/og@^0.1.1",
+      "version": "0.1.2",
+      "spec": "jsr:@denext/og@^0.1.2",
       "exports": [
         "."
       ],
@@ -935,7 +1028,7 @@
         "./spec",
         "./types"
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "openapi",
       "verb": "openapi",
@@ -1095,7 +1188,7 @@
         "./link",
         "./router"
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "pagesRouter",
       "configKeys": [
@@ -1136,7 +1229,7 @@
         "./dom",
         "./routes"
       ],
-      "denext": "^4.0.0",
+      "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "reactRouter",
       "configKeys": [

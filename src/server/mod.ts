@@ -13,11 +13,8 @@
 
 // Server public surface: create/serve a denext app.
 
-import { toFileUrl } from "@std/path";
 import { type AppConfig, createApp, type RequestHandler } from "./app.ts";
-import type { ModuleLoader } from "./types.ts";
 import { serveWithPortFallback } from "./serve-utils.ts";
-import { inRootContext } from "./root-context.ts";
 
 export { createApp } from "./app.ts";
 export type { AppConfig, FlightBoundaryState, RequestHandler, RequestLogInfo } from "./app.ts";
@@ -100,6 +97,8 @@ export { apiDefinitionOf, createApi, defineApi, documentsSecurity } from "./defi
 export type {
   ApiBuilder,
   ApiDefinition,
+  ApiErr,
+  ApiErrGuard,
   ApiErrorCodes,
   ApiHandlerInput,
   ApiHandlerResult,
@@ -122,6 +121,8 @@ export type {
   SubscriptionRef,
 } from "../runtime/define-subscription.ts";
 export type { SubscriptionDef, SubscriptionRunContext } from "../runtime/server-action.ts";
+// The restart policy a Live subscription (`restart`) and a channel publisher share.
+export type { ResolvedBackoff, ResolvedRestart, RestartOptions } from "../runtime/restart.ts";
 // Server-push channels: `createChannel` + `publish(key, payload)` → `useChannel` on the client.
 export {
   broadcastChannelTransport,
@@ -137,10 +138,15 @@ export type {
   ChannelContext,
   ChannelEvent,
   ChannelIdleReason,
+  ChannelPublisher,
+  ChannelPublisherContext,
   ChannelRef,
   ChannelTapHandlers,
   ChannelTransport,
 } from "../runtime/channel.ts";
+// The authorized server-side subscriber a protocol bridge (GraphQL subscriptions) hands a viewer.
+export { ChannelAccessError, tapChannelAuthorized } from "./channel-subscriber.ts";
+export type { AuthorizedTapOptions } from "./channel-subscriber.ts";
 export type {
   ApiRateLimitOptions,
   CsrfDoubleSubmitOptions,
@@ -257,7 +263,9 @@ export {
   type AppLinksConfig,
   type CacheConfig,
   type CdnCacheHeadersConfig,
+  type CompileConfig,
   type CompiledPattern,
+  type CompilePermissions,
   type CompressConfig,
   type CorsConfig,
   type DenextCommand,
@@ -380,6 +388,37 @@ export type { RenderScope } from "../runtime/render-scope.ts";
 export { defineJob, getJob, isJob, jobNames, registerJob, runJob } from "./jobs.ts";
 export type { Job, JobBackoff, JobContext, JobDefinition, JobRetry, JobRunRecord } from "./jobs.ts";
 export { sqliteJobHistoryStore } from "./job-history.ts";
+
+// Supervision for long-lived server work (restart semantics, not process isolation): services in
+// `services/<name>.ts` (or any `supervise(...)` tree), restarted with backoff per strategy,
+// escalated past their intensity, stopped in reverse order on the server drain.
+export {
+  defineService,
+  isService,
+  isSupervisor,
+  jobService,
+  sidecarService,
+  supervise,
+  supervisionStatus,
+  SupervisorError,
+} from "./supervise.ts";
+export type {
+  BackoffOptions,
+  ChildStatus,
+  RestartPolicy,
+  Service,
+  ServiceAdapterOptions,
+  ServiceContext,
+  ServiceDefinition,
+  SupervisableSidecar,
+  SuperviseOptions,
+  SupervisionEvent,
+  SupervisionLog,
+  SupervisionState,
+  SupervisionStrategy,
+  Supervisor,
+  SupervisorStatus,
+} from "./supervise.ts";
 export type {
   JobHistory,
   JobHistoryCleared,
@@ -406,8 +445,11 @@ export { type Instrumentation, type OnRequest } from "./instrumentation.ts";
 export type {
   InstrumentationRequest,
   OnRequestError,
+  OnServiceError,
+  OnShutdown,
   RegisterFn,
   RequestErrorContext,
+  ServiceErrorContext,
 } from "./instrumentation.ts";
 
 // Environment: .env loading + the client/server public-env isolation boundary.
@@ -465,8 +507,11 @@ export {
   POSTGRES_UNSUPPORTED,
   postgresClient,
   PostgresUnsupportedError,
+  sessionClient,
+  withDirectConnection,
 } from "./postgres.ts";
 export type {
+  DirectPairedClient,
   PostgresConnectionOptions,
   PostgresJsLike,
   SqlClient,
@@ -474,7 +519,18 @@ export type {
   SqlQuery,
   SqlRow,
 } from "./postgres.ts";
-export { migratePostgres, postgresMigrationStatus } from "./postgres-migrate.ts";
+export { migratePostgres, postgresMigrationStatus, withMigrationLock } from "./postgres-migrate.ts";
+export {
+  BOOT_DDL_ENV,
+  BOOT_SCHEMA_MISSING,
+  bootDdlEnabled,
+  bootMigrate,
+  BootSchemaError,
+  frameworkMigrationSets,
+  registerBootCheck,
+  registerFrameworkMigrations,
+} from "./postgres-boot.ts";
+export type { BootMigrateOptions, FrameworkMigrationSet, SetSource } from "./postgres-boot.ts";
 export { migrateSqlite, sqliteMigrationStatus } from "./sqlite-migrate.ts";
 export type { SqliteMigrateOptions, SqliteMigrationDb } from "./sqlite-migrate.ts";
 export { vectorSearchSql } from "./vector-sql.ts";
@@ -482,6 +538,7 @@ export type { VectorSearchSqlOptions } from "./vector-sql.ts";
 export type {
   MigrateResult,
   Migration,
+  MigrationLockOptions,
   MigrationState,
   MigrationStatus,
   PostgresMigrateOptions,
@@ -496,6 +553,10 @@ export type { ActionHandlerOptions } from "./action-handler.ts";
 // Typed Server Actions: define an action with a validated, typed input + typed result.
 export { ActionValidationError, defineAction } from "../runtime/define-action.ts";
 export type {
+  ActionData,
+  ActionErr,
+  ActionErrDetails,
+  ActionErrGuard,
   ActionResult,
   FormFields,
   InputSpec,
@@ -554,6 +615,7 @@ export {
   oidc,
   okta,
   phoneOtp,
+  saml,
   slack,
 } from "./auth/providers.ts";
 export type {
@@ -568,7 +630,11 @@ export type {
   OidcOptions,
   OktaOptions,
   PhoneProviderOptions,
+  SamlProviderOptions,
 } from "./auth/providers.ts";
+// A zero-npm SMTP client for `sendVerificationRequest` (TLS required; STARTTLS or SMTPS).
+export { SmtpError, smtpMailer, SmtpMessageError } from "./auth/smtp.ts";
+export type { MailMessage, SmtpContent, SmtpMailer, SmtpMailerOptions } from "./auth/smtp.ts";
 // Password hashing for the Credentials provider (salted scrypt via node:crypto).
 export { hashPassword, verifyPassword } from "./auth/password.ts";
 export type { HashPasswordOptions } from "./auth/password.ts";
@@ -665,6 +731,8 @@ export type {
   SsoMetadataRefreshSummary,
 } from "./auth/gotrue/sso-refresh.ts";
 export type { RefreshOutcome } from "./auth/gotrue/sso-metadata.ts";
+export { goTrueSmtpFromEnv } from "./auth/gotrue/smtp-mail.ts";
+export type { GoTrueMailKind, GoTrueSmtpOptions } from "./auth/gotrue/smtp-mail.ts";
 export { GoTrueError } from "./auth/gotrue/errors.ts";
 export type { GoTrueErrorCode } from "./auth/gotrue/errors.ts";
 export type {
@@ -757,6 +825,9 @@ export type {
   TotpVerifyOptions,
   TotpVerifyResult,
 } from "./auth/totp.ts";
+// `denext auth reseal`: move TOTP factors off a retired `secret` (also callable from a job).
+export { resealTotpFactors } from "./auth/reseal.ts";
+export type { ResealOptions, ResealReport } from "./auth/reseal.ts";
 // Passkeys (WebAuthn): the account-settings helpers behind `{basePath}/passkeys`.
 export { deletePasskey, listPasskeys } from "./auth/passkeys.ts";
 export type { PasskeySummary } from "./auth/passkeys.ts";
@@ -775,6 +846,7 @@ export type {
   AuthNativeConfig,
   AuthorizedCallbackInput,
   AuthPasskeyConfig,
+  AuthPasskeyMdsConfig,
   AuthProvider,
   AuthSession,
   AuthSessionConfig,
@@ -786,8 +858,11 @@ export type {
   OAuthProvider,
   PhoneProvider,
   ProfileInput,
+  SamlProvider,
+  SamlProviderSp,
   SendVerificationRequest,
   SignInFailedReason,
+  TenantIssuer,
   VerificationRequestParams,
 } from "./auth/types.ts";
 
@@ -808,15 +883,8 @@ export type {
   SitemapModule,
 } from "./metadata-files.ts";
 
-/**
- * Default module loader: dynamic import by absolute file path. A module is shared by every
- * request, so it is loaded outside the request that first asks for it: its top-level code, and
- * anything that code schedules, never runs as that request.
- */
-export const defaultLoader: ModuleLoader = (filePath): Promise<unknown> => {
-  const url = filePath.startsWith("file:") ? filePath : toFileUrl(filePath).href;
-  return inRootContext(() => import(url));
-};
+import { defaultLoader } from "./default-loader.ts";
+export { defaultLoader };
 
 /** Options for {@linkcode serve}: app configuration plus HTTP listen settings. */
 export interface ServeOptions extends Partial<AppConfig> {

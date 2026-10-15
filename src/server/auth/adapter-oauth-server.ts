@@ -79,6 +79,12 @@ export interface OAuthAuthorizationRecord {
   codeHash?: string;
   /** The session family the code was exchanged for (revoked when the code is replayed). */
   sessionId?: string;
+  /**
+   * Set at approval when the consenting session was started by the user's identity provider
+   * (a SAML sign-in). The tokens a code from an SSO user's request is exchanged for live only
+   * with it; an approval without it (or a row from before it existed) reads as not SSO-consented.
+   */
+  ssoConsent?: true;
   /** Creation time, epoch seconds. */
   createdAt: number;
   /** When the request (or its unexchanged code) expires, epoch seconds. */
@@ -87,7 +93,10 @@ export interface OAuthAuthorizationRecord {
 
 /** The fields {@linkcode OAuthServerAdapter.updateOAuthAuthorization} may change. */
 export type OAuthAuthorizationPatch = Partial<
-  Pick<OAuthAuthorizationRecord, "userId" | "status" | "codeHash" | "sessionId" | "expiresAt">
+  Pick<
+    OAuthAuthorizationRecord,
+    "userId" | "status" | "codeHash" | "sessionId" | "expiresAt" | "ssoConsent"
+  >
 >;
 
 /** What {@linkcode OAuthServerAdapter.updateOAuthAuthorization} requires of the stored row. */

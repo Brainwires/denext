@@ -3,6 +3,7 @@
 // code switch to it on their own (src/cli/self-exec.ts `maybeReexecToolchain`); these manage it
 // and run it directly.
 
+import { cacheCliModules, isRemoteCli } from "../cli-cache.ts";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { commandCwd, spawnDenoAndExit } from "../shared.ts";
 import { denoExecutable } from "../../build/bundle.ts";
@@ -15,6 +16,7 @@ import {
   staleToolchainLink,
   TOOLCHAIN_ACTIVE_ENV,
   TOOLCHAIN_ENV,
+  toolchainEnvValue,
   unlinkDenoToolchain,
 } from "../../build/deno-toolchain.ts";
 import { esbuildBinaryStatus } from "../../build/esbuild/binary.ts";
@@ -34,7 +36,7 @@ async function requireToolchain(): Promise<{ deno: string; version: string; cach
 
 /** The binary `toolchain path` / `link` name: the pinned one (installed), or a refusal. */
 async function toolchainBinary(): Promise<{ deno: string; marker: string }> {
-  const raw = (Deno.env.get(TOOLCHAIN_ENV) ?? "").trim();
+  const raw = toolchainEnvValue();
   if (raw.toLowerCase() === "stock") {
     console.error(`denext: ${TOOLCHAIN_ENV}=stock — running stock Deno.`);
     return { deno: denoExecutable(), marker: "" };
@@ -67,7 +69,7 @@ export async function runDenoPassthrough(
   cwd = Deno.cwd(),
   forwarded = false,
 ): Promise<never> {
-  const raw = (Deno.env.get(TOOLCHAIN_ENV) ?? "").trim().toLowerCase();
+  const raw = toolchainEnvValue().toLowerCase();
   if (!forwarded && raw === "stock") {
     console.error(`denext: ${TOOLCHAIN_ENV}=stock — running stock Deno.`);
   }
@@ -110,6 +112,22 @@ async function status(ctx: CommandContext): Promise<void> {
   if (!s.ok) Deno.exit(1);
 }
 
+/**
+ * `denext toolchain install`: download and verify the toolchain, and — for a CLI run from JSR,
+ * which loads each verb on first use — cache every verb now, so all of them work offline after
+ * this post-install step (nothing to do for a checkout or a binary).
+ */
+async function install(): Promise<void> {
+  const rt = await requireToolchain();
+  console.log(`  denext's Deno toolchain ${rt.version}: ${rt.deno}${rt.cached ? " (cached)" : ""}`);
+  if (!isRemoteCli()) return;
+  if (!await cacheCliModules()) {
+    console.error("denext: could not cache the CLI's verbs; they load on first use instead");
+    Deno.exit(1);
+  }
+  console.log("  every denext verb is cached for offline use");
+}
+
 /** `toolchain link` / `unlink`. */
 async function link(unlink: boolean): Promise<void> {
   if (unlink) {
@@ -148,13 +166,7 @@ export const toolchainCommand: CommandSpec = {
   run: async (ctx) => {
     const action = ctx.positionals[0];
     if (action === "status") return await status(ctx);
-    if (action === "install") {
-      const rt = await requireToolchain();
-      console.log(
-        `  denext's Deno toolchain ${rt.version}: ${rt.deno}${rt.cached ? " (cached)" : ""}`,
-      );
-      return;
-    }
+    if (action === "install") return await install();
     if (action === "path") {
       console.log((await toolchainBinary()).deno);
       return;

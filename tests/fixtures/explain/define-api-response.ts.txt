@@ -1,0 +1,15 @@
+// A defineApi handler whose return value does not match the declared response schema.
+import { defineApi } from "denext/server";
+import { schema } from "./schema.ts";
+
+interface Post {
+  id: number;
+  title: string;
+  author: { name: string; email: string };
+}
+
+const draft = { id: 1, title: "Hello", author: { name: "Ada", email: 42 } };
+
+export const GET = defineApi({
+  response: schema<Post>(),
+}, () => draft);

@@ -55,10 +55,14 @@ const authConfig: AuthConfig = {
   adapter,
 };
 denextAuth(authConfig);
+// The tokens below act for a stored user: a deleted user's token is refused at every use.
+await adapter.createUser({ id: USER, email: "a@x.test" });
 
 const now = () => Math.floor(Date.now() / 1000);
 
 async function cookieFor(id: string): Promise<string> {
+  // A cookie session is read only while its user is stored (every read re-reads it).
+  if (!(await adapter.getUser(id))) await adapter.createUser({ id, email: "a@x.test" });
   const issuing = createRequestContext(new Request(`${ORIGIN}/`));
   await runWithContext(issuing, () => issueAuthSession(authConfig, { id }, "credentials"));
   return issuing.outgoingHeaders.getSetCookie().find((c) => c.startsWith("__Host-denext_auth="))!
@@ -266,7 +270,8 @@ Deno.test("auth() reads an access token as a session; revoking its session kills
       name: "Ada",
       image: "https://x.test/a.png",
       // `user_metadata.email_verified` is user-writable: it never becomes `emailVerified`
-      // (the stored user decides, and this token's user has no stored record).
+      // (the stored user decides, and this token's user has never verified an address).
+      emailVerified: false,
       roles: ["editor"],
     });
     assertEquals(session?.provider, "email");

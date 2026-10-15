@@ -16,7 +16,7 @@ import {
 } from "../adapter-oauth-server.ts";
 import { constantTimeEqualHex, sha256Hex } from "../hash.ts";
 import { randomToken } from "../oauth.ts";
-import { type GoTrueContext, nowSeconds, ok, readJson } from "./context.ts";
+import { type GoTrueContext, nowSeconds, ok, pageParams, readJson } from "./context.ts";
 import { fail, GoTrueError } from "./errors.ts";
 import { familiesOf } from "./session.ts";
 import { iso } from "./user.ts";
@@ -226,11 +226,7 @@ async function clientById(ctx: GoTrueContext, store: OAuthServerStore): Promise<
 /** `GET /admin/oauth/clients?page=&per_page=`. */
 export async function listClients(ctx: GoTrueContext): Promise<Response> {
   const store = oauthStore(ctx);
-  const page = Math.max(1, Number(ctx.url.searchParams.get("page") || "1") | 0);
-  const perPage = Math.min(
-    1000,
-    Math.max(1, Number(ctx.url.searchParams.get("per_page") || "50") | 0),
-  );
+  const { page, perPage } = pageParams(ctx.url);
   const { clients, total } = await store.listOAuthClients({ page, perPage });
   const last = Math.max(1, Math.ceil(total / perPage));
   const link = (n: number, rel: string) =>

@@ -833,7 +833,7 @@ Deno.test("fs storage: server API — upload kinds, sniffed types, list paging, 
   }
 });
 
-Deno.test("backend(): setup validates options; no storage → no handler; basePath and the dev secret", async () => {
+Deno.test("backend(): setup validates options; no storage → only the admin endpoint; basePath and the dev secret", async () => {
   assertThrows(() => backend({ storage: { buckets: { a: {} } } as never }), TypeError, "driver");
   // No declared bucket is fine: buckets can be created at runtime.
   backend({ storage: { driver: fs({ dir: "x" }), buckets: {} } });
@@ -867,7 +867,15 @@ Deno.test("backend(): setup validates options; no storage → no handler; basePa
     mode: "prod",
     load,
   });
-  assertEquals(getPluginRequestHandler(), undefined);
+  // No storage → no storage handler: the one handler is the admin endpoint (c7979f3d), which
+  // lets every other path through and, with no keys installed, refuses its own.
+  const handler = getPluginRequestHandler();
+  assert(handler, "the admin endpoint is always registered");
+  assertEquals(await handler(new Request("http://app/storage/v1/object/a/x")), null);
+  assertEquals(
+    (await handler(new Request("http://app/_denext/backend/admin/status")))?.status,
+    403,
+  );
 
   const based = await backendApp({ buckets: { docs }, secret: undefined }, {
     config: { basePath: "/base/" },

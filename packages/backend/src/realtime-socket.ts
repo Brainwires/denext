@@ -137,6 +137,21 @@ interface Peer {
   limitIp?: string;
 }
 
+/** The admin snapshot of one instance's realtime ({@linkcode RealtimeHub.adminState}). */
+export interface RealtimeAdminState {
+  /** Open sockets. */
+  connections: number;
+  /** Each joined topic, with how many channels (subscribers) are on it. */
+  channels: { topic: string; private: boolean; subscribers: number }[];
+  /** Each `postgres_changes` binding. */
+  bindings: { topic: string; tables: string[]; filter: string | null; events: string[] }[];
+}
+
+/** A parsed filter as Supabase spells it (`column=op.value`). */
+function filterText(filter: ParsedFilter): string {
+  return `${filter.column}=${filter.op ?? "eq"}.${filter.value}`;
+}
+
 /** What the hub needs from the rest of the backend. */
 export interface HubDeps {
   /** The realtime engine (postgres_changes). */
@@ -469,6 +484,69 @@ export class RealtimeHub {
   /** How many sockets are open. */
   get size(): number {
     return this.#connections.size;
+  }
+
+  /**
+   * What `denext ui` / the stack dashboard show of this instance (through the backend's
+   * admin endpoint, behind the secret key): each live channel with its subscriber count, and
+   * each `postgres_changes` binding's table, filter and events. Presence is NOT here: its keys
+   * come from {@linkcode RealtimeHub.presenceKeys}, and a key's payload only from
+   * {@linkcode RealtimeHub.presenceOf}, when an operator asks for that one.
+   *
+   * @returns The snapshot.
+   */
+  adminState(): RealtimeAdminState {
+    const channels: RealtimeAdminState["channels"] = [];
+    const bindings: RealtimeAdminState["bindings"] = [];
+    for (const [key, set] of this.#topics) {
+      const [flag, ...rest] = key.split(":");
+      const topic = rest.join(":");
+      channels.push({ topic, private: flag === "1", subscribers: set.size });
+      for (const channel of set) {
+        for (const binding of channel.bindings) {
+          bindings.push({
+            topic,
+            tables: binding.tables.map((t) => t.name),
+            filter: binding.filter ? filterText(binding.filter) : null,
+            events: [...binding.events],
+          });
+        }
+      }
+    }
+    channels.sort((a, b) => a.topic.localeCompare(b.topic));
+    return { connections: this.#connections.size, channels, bindings };
+  }
+
+  /**
+   * A live topic's presence keys and how many presences each has — never their payloads.
+   *
+   * @param topic The topic (without `realtime:`).
+   * @param isPrivate A private channel's.
+   * @returns Key → presences.
+   */
+  async presenceKeys(topic: string, isPrivate: boolean): Promise<Record<string, number>> {
+    const out: Record<string, number> = {};
+    for (const entry of await this.#bus.presenceState(topic, isPrivate)) {
+      out[entry.key] = (out[entry.key] ?? 0) + 1;
+    }
+    return out;
+  }
+
+  /**
+   * The payloads tracked under ONE presence key of a topic — what an operator expands.
+   *
+   * @param topic The topic.
+   * @param isPrivate A private channel's.
+   * @param key The presence key.
+   * @returns Each presence's tracked payload.
+   */
+  async presenceOf(
+    topic: string,
+    isPrivate: boolean,
+    key: string,
+  ): Promise<Record<string, unknown>[]> {
+    const entries = await this.#bus.presenceState(topic, isPrivate);
+    return entries.filter((e) => e.key === key).map((e) => e.meta);
   }
 
   /** The engine listener and the bus, up (memoized; a failure is retried next time). */
@@ -1424,6 +1502,15 @@ export function installRealtimeHub(hub: RealtimeHub | undefined): void {
  * @param request The request (app-relative).
  * @returns The response, or `null` for any other path.
  */
+/**
+ * The installed hub, when realtime's socket is on (the backend's admin endpoint reads it).
+ *
+ * @returns The hub, or `undefined`.
+ */
+export function installedRealtimeHub(): RealtimeHub | undefined {
+  return (globalThis as Holder)[SLOT];
+}
+
 export function handleRealtimeRequest(request: Request): Promise<Response> | null {
   const { pathname } = new URL(request.url);
   const hub = (globalThis as Holder)[SLOT];

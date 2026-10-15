@@ -29,7 +29,7 @@ import {
   TOO_LARGE,
   verifyOrigin,
 } from "@denext/denext/plugin-kit";
-import { join } from "@std/path";
+import { dirname, isAbsolute, join, normalize } from "@std/path";
 import type {
   DocumentNode,
   FieldNode,
@@ -49,6 +49,14 @@ import {
   type YogaServerOptions,
 } from "graphql-yoga";
 import { createGraphqlCommand, sdlFromIntrospection } from "./command.ts";
+import { createConnectionLimiter, releaseWhenDone, resolveCaps, wantsStream } from "./limits.ts";
+import {
+  acceptGraphqlWs,
+  type EnvelopedLike,
+  type GraphqlWsDeps,
+  isWebSocketUpgrade,
+  operationOf,
+} from "./websocket.ts";
 
 export { createSchema } from "graphql-yoga";
 export { createGraphqlCommand, diffSdl, schemaSdl } from "./command.ts";
@@ -136,8 +144,27 @@ export type {
   VProps,
 } from "@denext/denext/server";
 
-/** A schema, or a factory for one (resolved once, on first use). */
-export type SchemaSource = GraphQLSchema | (() => GraphQLSchema | Promise<GraphQLSchema>);
+/**
+ * A schema, a factory for one (resolved once, on first use), or the path of the module that
+ * exports it (`"./app/graphql/schema.ts"`, relative to the project root; its `schema` export, else
+ * its default export, either a schema or a factory). Only the module path form reloads on an edit
+ * under `denext dev` — see {@linkcode GraphqlOptions.watch}.
+ */
+export type SchemaSource =
+  | GraphQLSchema
+  | (() => GraphQLSchema | Promise<GraphQLSchema>)
+  | string;
+
+/** GraphQL over WebSocket (the `graphql-ws` protocol) — see {@linkcode GraphqlOptions.websocket}. */
+export interface WebSocketOptions {
+  /** Close a socket that sent no `connection_init` within this many milliseconds (default 3000). */
+  connectionInitTimeoutMs?: number;
+  /**
+   * Operations one socket may run at once — subscriptions, queries and mutations alike (default
+   * 32, Live's per-connection channel cap). Past it a `subscribe` gets an `error` frame.
+   */
+  maxSubscriptions?: number;
+}
 
 /** What a {@linkcode GraphqlOptions.context} factory receives. */
 export interface GraphqlContextInit {
@@ -175,6 +202,20 @@ export interface GraphqlOptions {
   introspection?: boolean;
   /** Max request body in bytes (default 1 MiB, like a route handler; over → 413). */
   maxBodyBytes?: number;
+  /**
+   * Open subscription connections — WebSockets plus streamed (SSE / multipart) responses —
+   * across every client; past it a new one is refused with `429` before the upgrade or the
+   * response. Default: the app's `live.limits.maxConnections`, else 10 000 (Live's default).
+   */
+  maxConnections?: number;
+  /**
+   * Open subscription connections from one client address, keyed as Live keys its own:
+   * `clientIpForLimits({ bucket: true })` — a trusted proxy's hop or the `rateLimitHeader`
+   * address, an IPv6 client's /64, and no per-address cap for a loopback/private peer behind an
+   * untrusted proxy (`rateLimitLocalAddresses` counts those). Default: the app's
+   * `live.limits.maxConnectionsPerIp`, else 64 (Live's default).
+   */
+  maxConnectionsPerIp?: number;
   /**
    * Reject a query nested deeper than this many selection levels — a cheap guard against the
    * DoS where a small deeply-nested query over a cyclic type relation exhausts CPU/memory
@@ -216,6 +257,23 @@ export interface GraphqlOptions {
   yoga?: YogaPassthrough;
   /** The SDL file `denext build` writes into the output directory (default `schema.graphql`); `false` skips it. */
   outFile?: string | false;
+  /**
+   * Serve GraphQL over WebSocket — the `graphql-ws` protocol (subprotocol
+   * `graphql-transport-ws`) — on the same path, next to GraphQL over SSE. On by default; `false`
+   * turns it off. The handshake needs a browser `Origin` on the app's own host (or in
+   * `allowedOrigins`, or the app's `desktop.app.origin`) unless `requireSameOrigin: false`; the
+   * socket's identity is the upgrade request's cookies / `Authorization`, or a `connection_init`
+   * payload token (`{ authorization: "Bearer …" }` or `{ token }`) when the upgrade carried no
+   * `Authorization`. Every operation passes the same depth / cost limits as over HTTP.
+   */
+  websocket?: WebSocketOptions | false;
+  /**
+   * Under `denext dev`, the files whose edit reloads the schema (globs, relative to the project
+   * root) when {@linkcode GraphqlOptions.schema} is a module path. Default: the scripts and
+   * `.graphql` files in the schema module's directory and below (the schema module alone when it
+   * sits at the project root). In-flight subscriptions on the old schema end (`complete`).
+   */
+  watch?: string[];
 }
 
 /**
@@ -228,80 +286,132 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
   return {
     name: "@denext/graphql",
     setup(ctx: PluginContext) {
-      // The pipeline strips `basePath` before the plugin seam, so the path is app-relative.
-      const path = options.path ?? "/graphql";
-      const dev = ctx.mode === "dev";
-      const graphiql = options.graphiql ?? dev;
-      const introspection = options.introspection ?? dev;
-      const maxBodyBytes = options.maxBodyBytes ?? 1024 * 1024;
-      const sameOrigin = options.requireSameOrigin ?? true;
+      const {
+        path,
+        dev,
+        graphiql,
+        introspection,
+        maxBodyBytes,
+        sameOrigin,
+        maxDepth,
+        maxCost,
+      } = settingsOf(options, ctx);
       const originOptions = { allowedOrigins: options.allowedOrigins };
-      const maxDepth = options.maxDepth ?? 12;
-      const maxCost = options.maxCost ?? false;
-      const getSchema = once(() => Promise.resolve(resolveSchema(options.schema)));
-      const getYoga = once(async () =>
-        createYoga({
-          cors: false, // never reflect an arbitrary Origin with credentials; opt in via `yoga.cors`
-          ...options.yoga,
-          plugins: [
-            ...(maxDepth === false ? [] : [limitDepth(maxDepth)]),
-            ...(maxCost === false ? [] : [limitCost(maxCost, options.costOptions)]),
-            ...(introspection ? [] : [disableIntrospection(), blockFieldSuggestions()]),
-            ...(options.yoga?.plugins ?? []),
-          ],
-          schema: await getSchema(),
-          graphqlEndpoint: path,
-          graphiql,
-          context: (init: YogaInitialContext) =>
-            options.context?.({ request: init.request, signal: init.request.signal }) ?? {},
-        })
-      );
+      // One budget for both long-lived transports (WebSocket, streamed responses).
+      const caps = resolveCaps(options, ctx.config.live?.limits);
+      const connections = createConnectionLimiter(() => caps);
+      const upgradeOptions = {
+        allowedOrigins: options.allowedOrigins,
+        desktopAppOrigin: ctx.config.desktop?.app?.origin,
+      };
+      // One schema generation: its schema, Yoga and SDL, and the signal that ends the
+      // subscriptions it serves. A dev reload starts a new one and aborts the old.
+      let ended = new AbortController();
+      let getSchema = once(() => resolveSchema(options.schema, ctx));
+      const yogaFor = (end: AbortSignal) =>
+        once(async () =>
+          createYoga({
+            cors: false, // never reflect an arbitrary Origin with credentials; opt in via `yoga.cors`
+            ...options.yoga,
+            plugins: [
+              endSubscriptionsOn(end),
+              ...(maxDepth === false ? [] : [limitDepth(maxDepth)]),
+              ...(maxCost === false ? [] : [limitCost(maxCost, options.costOptions)]),
+              ...(introspection ? [] : [disableIntrospection(), blockFieldSuggestions()]),
+              ...(options.yoga?.plugins ?? []),
+            ],
+            schema: await getSchema(),
+            graphqlEndpoint: path,
+            graphiql,
+            context: (init: YogaInitialContext) =>
+              options.context?.({ request: init.request, signal: init.request.signal }) ?? {},
+          })
+        );
+      let getYoga = yogaFor(ended.signal);
+      let stale = false;
+      const reload = () => {
+        stale = false;
+        ended.abort();
+        ended = new AbortController();
+        getSchema = once(() => resolveSchema(options.schema, ctx));
+        getYoga = yogaFor(ended.signal);
+        getSdl = sdlOnce();
+      };
+      if (dev && typeof options.schema === "string") {
+        ctx.addPrepareStep(() => {
+          stale = true; // reloaded by the next request, after the dev server applied the edit
+        }, { watch: options.watch ?? defaultSchemaWatch(options.schema) });
+      }
 
-      ctx.addRequestHandler(async (request) => {
-        if (new URL(request.url).pathname !== path) return null;
+      const wsDeps = socketDeps(options.websocket, {
+        getYoga: () => getYoga(),
+        maxBodyBytes,
+        acquire: () => connections.acquire(),
+      });
+      /** A WebSocket upgrade: Live's production handshake rule, then the `graphql-ws` socket. */
+      const upgrade = (request: Request, deps: GraphqlWsDeps): Response => {
+        // A browser `Origin` is required and must be the app's own (or an allowed one) — a
+        // WebSocket handshake is not covered by CORS.
+        const originOk = request.headers.has("origin") && verifyOrigin(request, upgradeOptions);
+        if (sameOrigin && !originOk) return new Response("forbidden", { status: 403 });
+        return acceptGraphqlWs(request, deps);
+      };
+      /** An HTTP request through Yoga; a streamed response holds a connection slot until it ends. */
+      const serveHttp = async (request: Request): Promise<Response> => {
         const mutating = request.method !== "GET" && request.method !== "HEAD";
         if (mutating && sameOrigin && !verifyOrigin(request, originOptions)) {
           return new Response("forbidden", { status: 403 });
         }
         const bounded = mutating ? await capBody(request, maxBodyBytes) : request;
         if (bounded instanceof Response) return bounded;
-        const yoga = await getYoga();
-        const raw: unknown = await yoga.fetch(bounded);
-        // Yoga's Response may come from its own fetch ponyfill; hand the pipeline a native one.
-        if (raw instanceof Response) return raw;
-        const res = raw as Response;
-        return new Response(res.body, {
-          status: res.status,
-          statusText: res.statusText,
-          headers: res.headers,
-        });
+        // SSE / multipart (a subscription) is refused before Yoga runs when the caps are reached.
+        const release = wantsStream(bounded) ? connections.acquire() : null;
+        if (release instanceof Response) return release;
+        let raw: unknown;
+        try {
+          raw = await (await getYoga()).fetch(bounded);
+        } catch (err) {
+          release?.();
+          throw err;
+        }
+        if (release) return releaseWhenDone(raw as Response, release);
+        return nativeResponse(raw);
+      };
+
+      ctx.addRequestHandler((request) => {
+        if (new URL(request.url).pathname !== path) return null;
+        if (stale) reload();
+        if (wsDeps && isWebSocketUpgrade(request)) return upgrade(request, wsDeps);
+        return serveHttp(request);
       });
 
       // The SDL (build step + CLI) comes from an introspection round-trip through a private
       // Yoga instance — never from printing the app's schema OBJECTS with this package's
       // `graphql`, which may be a different realm than the one Pothos/Yoga bound to.
-      const getSdl = once(async () => {
-        const probe = createYoga({
-          schema: await getSchema(),
-          graphqlEndpoint: path,
-          graphiql: false,
-          cors: false,
-          maskedErrors: false,
-          logging: false,
+      const sdlOnce = () =>
+        once(async () => {
+          const probe = createYoga({
+            schema: await getSchema(),
+            graphqlEndpoint: path,
+            graphiql: false,
+            cors: false,
+            maskedErrors: false,
+            logging: false,
+          });
+          const res = await probe.fetch(
+            new Request(`http://denext.internal${path}`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ query: getIntrospectionQuery() }),
+            }),
+          );
+          const body = await res.json() as { data?: IntrospectionQuery; errors?: unknown };
+          if (!body.data) {
+            throw new Error(`denext graphql: introspection failed: ${JSON.stringify(body.errors)}`);
+          }
+          return sdlFromIntrospection(body.data);
         });
-        const res = await probe.fetch(
-          new Request(`http://denext.internal${path}`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ query: getIntrospectionQuery() }),
-          }),
-        );
-        const body = await res.json() as { data?: IntrospectionQuery; errors?: unknown };
-        if (!body.data) {
-          throw new Error(`denext graphql: introspection failed: ${JSON.stringify(body.errors)}`);
-        }
-        return sdlFromIntrospection(body.data);
-      });
+      let getSdl = sdlOnce();
 
       const outFile = options.outFile ?? "schema.graphql";
       // The SDL is a server artifact (a static export serves no GraphQL endpoint), so an export
@@ -314,13 +424,130 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
         });
       }
 
-      ctx.addCommand(createGraphqlCommand(getSdl));
+      ctx.addCommand(createGraphqlCommand(() => getSdl()));
     },
   };
 }
 
-function resolveSchema(source: SchemaSource): GraphQLSchema | Promise<GraphQLSchema> {
-  return typeof source === "function" ? source() : source;
+/** The options with their defaults (dev turns GraphiQL and introspection on). */
+function settingsOf(options: GraphqlOptions, ctx: PluginContext) {
+  const dev = ctx.mode === "dev";
+  return {
+    // The pipeline strips `basePath` before the plugin seam, so the path is app-relative.
+    path: options.path ?? "/graphql",
+    dev,
+    graphiql: options.graphiql ?? dev,
+    introspection: options.introspection ?? dev,
+    maxBodyBytes: options.maxBodyBytes ?? 1024 * 1024,
+    sameOrigin: options.requireSameOrigin ?? true,
+    maxDepth: options.maxDepth ?? 12,
+    maxCost: options.maxCost ?? false,
+  };
+}
+
+/** The WebSocket transport's dependencies, or `null` when `websocket: false`. */
+function socketDeps(
+  websocket: WebSocketOptions | false | undefined,
+  from: {
+    getYoga: () => Promise<unknown>;
+    maxBodyBytes: number;
+    acquire: GraphqlWsDeps["acquire"];
+  },
+): GraphqlWsDeps | null {
+  if (websocket === false) return null;
+  return {
+    getEnveloped: async (init) =>
+      ((await from.getYoga()) as {
+        getEnveloped(init: Record<string, unknown>): EnvelopedLike;
+      }).getEnveloped(init),
+    connectionInitTimeoutMs: websocket?.connectionInitTimeoutMs ?? 3000,
+    maxOperations: websocket?.maxSubscriptions ?? 32,
+    maxMessageBytes: from.maxBodyBytes,
+    acquire: from.acquire,
+  };
+}
+
+/** Yoga's Response may come from its own fetch ponyfill; hand the pipeline a native one. */
+function nativeResponse(raw: unknown): Response {
+  if (raw instanceof Response) return raw;
+  const res = raw as Response;
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  });
+}
+
+async function resolveSchema(source: SchemaSource, ctx: PluginContext): Promise<GraphQLSchema> {
+  if (typeof source === "function") return await source();
+  if (typeof source !== "string") return source;
+  const file = isAbsolute(source) ? source : join(ctx.projectRoot, source);
+  const mod = await ctx.load(file) as Record<string, unknown>;
+  const exported = mod.schema ?? mod.default;
+  if (exported == null) {
+    throw new Error(`graphql(): ${source} exports no \`schema\` (nor a default export)`);
+  }
+  return typeof exported === "function"
+    ? await (exported as () => GraphQLSchema | Promise<GraphQLSchema>)()
+    : exported as GraphQLSchema;
+}
+
+/** The dev watch globs for a schema module path (see {@linkcode GraphqlOptions.watch}). */
+function defaultSchemaWatch(source: string): string[] {
+  const dir = dirname(normalize(source));
+  if (dir === "." || dir === "/") return [source];
+  return [join(dir, "**", "*.{ts,tsx,js,jsx,mts,mjs,graphql,gql}")];
+}
+
+/**
+ * A Yoga (envelop) plugin that ends every subscription stream when `end` aborts — a dev schema
+ * reload, so a client on the old schema gets `complete` and resubscribes against the new one.
+ */
+function endSubscriptionsOn(end: AbortSignal): NonNullable<YogaPassthrough["plugins"]>[number] {
+  return {
+    onSubscribe() {
+      return {
+        onSubscribeResult(
+          { result, setResult }: { result: unknown; setResult: (r: unknown) => void },
+        ) {
+          if (isAsyncIterable(result)) setResult(endOnAbort(result, end));
+        },
+      };
+    },
+  } as NonNullable<YogaPassthrough["plugins"]>[number];
+}
+
+function isAsyncIterable(v: unknown): v is AsyncIterable<unknown> {
+  return typeof v === "object" && v !== null && Symbol.asyncIterator in v;
+}
+
+/** `source`, ended (and returned) as soon as `signal` aborts — even while a `next()` waits. */
+function endOnAbort<T>(source: AsyncIterable<T>, signal: AbortSignal): AsyncIterableIterator<T> {
+  const it = source[Symbol.asyncIterator]();
+  const done = { value: undefined as never, done: true } as IteratorResult<T>;
+  let onAbort = () => {};
+  const ended = new Promise<IteratorResult<T>>((resolve) => {
+    onAbort = () => {
+      void Promise.resolve(it.return?.()).catch(() => {});
+      resolve(done);
+    };
+  });
+  if (signal.aborted) onAbort();
+  else signal.addEventListener("abort", onAbort, { once: true });
+  const release = () => signal.removeEventListener("abort", onAbort);
+  const wrapped: AsyncIterableIterator<T> = {
+    next: () => (signal.aborted ? ended : Promise.race([it.next(), ended])),
+    return: (value?: unknown) => {
+      release();
+      return it.return ? it.return(value) : Promise.resolve(done);
+    },
+    throw: (err?: unknown) => {
+      release();
+      return it.throw ? it.throw(err) : Promise.reject(err);
+    },
+    [Symbol.asyncIterator]: () => wrapped,
+  };
+  return wrapped;
 }
 
 /** Memoize a successful result; a rejection is NOT kept, so a transient failure retries. */
@@ -376,19 +603,6 @@ function collectFragments(document: DocumentNode): Map<string, FragmentDefinitio
     if (def.kind === "FragmentDefinition") fragments.set(def.name.value, def);
   }
   return fragments;
-}
-
-/** The operation `document` would execute for `operationName` (the sole one when unnamed). */
-function resolveOperation(
-  document: DocumentNode,
-  operationName: string | null | undefined,
-): OperationDefinitionNode | undefined {
-  const ops = document.definitions.filter(
-    (d): d is OperationDefinitionNode => d.kind === "OperationDefinition",
-  );
-  if (operationName) return ops.find((o) => o.name?.value === operationName);
-  // No name: valid only when there's exactly one operation; otherwise graphql errors first.
-  return ops.length === 1 ? ops[0] : undefined;
 }
 
 /** A positive integer from an AST `IntValue` string, or `undefined`. */
@@ -456,7 +670,7 @@ function estimateOperationCost(
   argNames: ReadonlySet<string>,
   defaultMultiplier: number,
 ): number {
-  const operation = resolveOperation(document, operationName);
+  const operation = operationOf(document, operationName);
   if (!operation) return 0; // ambiguous / none — let graphql surface the error
   const varDefs = new Map<string, VariableDefinitionNode>();
   for (const vd of operation.variableDefinitions ?? []) varDefs.set(vd.variable.name.value, vd);

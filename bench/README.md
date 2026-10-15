@@ -115,6 +115,11 @@ bench/
   browser/run.ts         # Layers 1 & 3 on the hello app (headless Chromium)
   layer2-ssr/            # Layer 2: shared workloads + per-framework runners
   realapp/run.ts         # Realistic-app tier: bytes on a real library-heavy app
+  load/                  # load & memory tier (deno task bench:load)
+  pages/                 # @denext/pages-router SSR bench + REPORT.md (deno task bench:pages)
+  packages/              # @denext/photon and node:sqlite cache benches + REPORT.md (deno bench)
+  fiber-memory/run.ts    # reconciler fiber memory (deno task bench:fiber-memory)
+  realtime-source.ts     # @denext/backend realtime's write-path cost, notify vs logical source
   fixtures/next-hello/   # the like-for-like Next.js hello app
   fixtures/denext-app/   # real-library denext app (recharts/rhf/radix, classComponents)
   fixtures/next-real-app/# the matching Next.js real-library app

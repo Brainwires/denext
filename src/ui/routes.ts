@@ -42,6 +42,7 @@ import { dockerPanel } from "./features/docker.ts";
 import { desktopPanel } from "./features/desktop.ts";
 import { devPanel } from "./features/dev.ts";
 import { tasksPanel } from "./features/tasks.ts";
+import { servicesPanel } from "./features/services.ts";
 import { setupPanel } from "./features/setup.ts";
 import { commandsPanel } from "./features/commands.ts";
 import { DATABASE_PATHS, databasePanel } from "./features/database.ts";
@@ -75,6 +76,7 @@ const FEATURES: readonly FeatureRoute[] = [
   { path: "/desktop", methods: ["GET"], handle: desktopPanel },
   { path: "/dev", methods: ["GET", "POST"], handle: devPanel },
   { path: "/tasks", methods: ["GET"], handle: tasksPanel },
+  { path: "/services", methods: ["GET"], handle: servicesPanel },
   { path: "/setup", methods: ["GET", "POST"], handle: setupPanel },
   { path: "/commands", methods: ["GET", "POST"], handle: commandsPanel },
   // The Database section: one handler for its pages (tables, rows, policies, migrations,
@@ -120,6 +122,30 @@ function buildRoutes(): Record<string, UiRoute> {
 /** Every path `denext ui` serves, keyed by pathname. */
 export const UI_ROUTES: Record<string, UiRoute> = buildRoutes();
 
+/**
+ * Every path the stack's dashboard (`denext dashboard`) serves once signed in: the Database
+ * section and its `/api` twins, the client module, and `/` (which opens the tables). Nothing
+ * that writes or runs the project — config, plugins, generate, tasks, dev, commands — is here.
+ */
+function buildDashboardRoutes(): Record<string, UiRoute> {
+  const table: Record<string, UiRoute> = {
+    "/": {
+      methods: ["GET", "HEAD"],
+      handle: () =>
+        Promise.resolve(new Response(null, { status: 303, headers: { location: "/database" } })),
+    },
+    [UI_JS_PATH]: assetRoute(UI_JS, "text/javascript; charset=utf-8"),
+  };
+  for (const { path, methods } of DATABASE_PATHS) {
+    table[path] = { methods, handle: databasePanel };
+    table["/api" + path] = { methods, handle: databasePanel };
+  }
+  return table;
+}
+
+/** Every path the stack's dashboard serves behind its password, keyed by pathname. */
+export const DASHBOARD_ROUTES: Record<string, UiRoute> = buildDashboardRoutes();
+
 // ── `/` ──────────────────────────────────────────────────────────────────────
 
 /** What each card on the overview says. */
@@ -131,9 +157,11 @@ const CARD_LEAD: Record<string, string> = {
   "/desktop": "Set up code signing for a packaged desktop build.",
   "/dev": "Start and stop the project's dev server, and watch its output.",
   "/tasks": "Run the scripts your deno.json declares, streaming their output.",
+  "/services": "The supervised services/ tree: running, restarting or failed, with restart counts.",
   "/setup": "Check what this project needs to run, and write the missing pieces.",
   "/commands": "Run this project's own denext verbs.",
-  "/database": "Browse and edit the Postgres tables, policies, migrations, storage and auth users.",
+  "/database":
+    "Browse and edit the Postgres tables, run SQL, and manage policies, migrations, storage, auth users and logs.",
 };
 
 /** What the overview says under `--offline`. */

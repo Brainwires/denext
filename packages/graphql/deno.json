@@ -1,6 +1,6 @@
 {
   "name": "@denext/graphql",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
@@ -8,7 +8,7 @@
     "./command": "./command.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^4.0.0",
+    "@denext/denext": "jsr:@denext/denext@^4.1.0",
     "@std/path": "jsr:@std/path@^1.0.0",
     "graphql": "npm:graphql@^16.9.0",
     "graphql-yoga": "npm:graphql-yoga@^5.10.0"
@@ -32,7 +32,11 @@
         "allowedOrigins",
         "context",
         "yoga",
-        "outFile"
+        "outFile",
+        "websocket",
+        "watch",
+        "maxConnections",
+        "maxConnectionsPerIp"
       ]
     }
   },
@@ -40,6 +44,9 @@
     "include": [
       "mod.ts",
       "subscriptions.ts",
+      "websocket.ts",
+      "peer.ts",
+      "limits.ts",
       "command.ts",
       "README.md",
       "CHANGELOG.md",

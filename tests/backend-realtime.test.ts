@@ -65,6 +65,7 @@ import {
 } from "../packages/backend/src/realtime-shared.ts";
 import { type FakeRealtimeClient, fakeRealtimeClient } from "./helpers/fake-realtime-client.ts";
 import { begin, insert, relation } from "./helpers/pgoutput.ts";
+import { LogicalSource } from "../packages/backend/src/realtime-logical.ts";
 import { parseCidr } from "../src/server/remote-addr.ts";
 import {
   authConfig,
@@ -279,8 +280,12 @@ Deno.test("realtime: a burst of 500 inserts is coalesced into one re-read per id
     for (let i = 1; i <= 500; i++) {
       env.sql.insert("notes", { id: i, owner: i % 2 ? A : B, body: `note ${i} ${"x".repeat(60)}` });
     }
-    await until(() => changesOf(ca).length === 250 && changesOf(cb).length === 250, 5_000);
-    await until(() => changesOf(ca2).length === 250);
+    // Every notification is in (the fake delivers them synchronously): deliver the burst now
+    // instead of racing the 16 ms timer and a wall-clock deadline on a loaded machine. The
+    // counts below still prove the burst was one flush with one re-read per identity.
+    await engine.flush();
+    await until(() => changesOf(ca).length === 250 && changesOf(cb).length === 250, 60_000);
+    await until(() => changesOf(ca2).length === 250, 60_000);
     const stats = engine.stats;
     assertEquals(stats.notifications - before.notifications, 500);
     assertEquals(stats.flushes - before.flushes, 1, "one burst");
@@ -472,6 +477,89 @@ Deno.test("realtime: revalidate { owner: 'one' } revalidates only while this ins
   } finally {
     await env.done();
   }
+});
+
+Deno.test("realtime: a failed owner check gives the lock up before its connection goes back to the pool", async () => {
+  const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
+  const log: string[] = [];
+  let owner: boolean | Error = true;
+  sql.reserve = lockConnection(log, () => owner);
+  const env = await setUp({ revalidate: { owner: "one" } }, sql);
+  try {
+    const engine = realtimeEngine();
+    await engine.start();
+    env.sql.insert("notes", { id: 1, owner: A, body: "x" });
+    await until(() => engine.stats.revalidations === 1, 2_000, "the owner's revalidation");
+    // The check fails while the session lives (a statement timeout, a cancel): the session may
+    // still hold the lock, and a pooled connection must never carry it to its next borrower.
+    owner = new Error("canceling statement due to statement timeout");
+    env.sql.insert("notes", { id: 2, owner: A, body: "y" });
+    await until(() => log.includes("release"), 2_000, "the connection returned");
+    assertEquals(log.slice(-2), ["select pg_advisory_unlock_all()", "release"]);
+    // Once stopped, a late burst reserves nothing (no connection left out of the pool).
+    await engine.stop();
+    const reserves = log.filter((l) => l === "reserve").length;
+    env.sql.insert("notes", { id: 3, owner: A, body: "z" });
+    await settle(60);
+    assertEquals(log.filter((l) => l === "reserve").length, reserves);
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime source logical: a failed read drops its slot and resets the session before the connection goes back", async () => {
+  const conns: string[][] = [];
+  let failNext = true;
+  const answer = (rows: unknown[]) => {
+    const p = Promise.resolve(rows);
+    return { then: p.then.bind(p), simple: () => p };
+  };
+  const client = {
+    reserve: () => {
+      const log: string[] = [];
+      conns.push(log);
+      return Promise.resolve({
+        unsafe: (text: string) => {
+          log.push(text);
+          if (text === "show wal_level") return answer([{ wal_level: "logical" }]);
+          if (text.includes("pg_logical_slot_get_binary_changes") && failNext) {
+            failNext = false;
+            // The session is alive: the error is the statement's (a decode, a timeout).
+            return Promise.reject(new Error("canceling statement due to statement timeout"));
+          }
+          return answer([]);
+        },
+        release: () => void log.push("release"),
+      });
+    },
+  } as unknown as SqlClient;
+  const error = console.error;
+  console.error = () => {};
+  const source = new LogicalSource({
+    client: () => client,
+    publications: () => ["p"],
+    tableOf: () => null,
+    emit: () => {},
+    resync: () => {},
+    pollMs: 5,
+    maxChanges: 10,
+  });
+  try {
+    await source.start();
+    await until(() => conns.length === 2 && conns[1].some((s) => s.includes("get_binary")));
+    const first = conns[0];
+    const released = first.indexOf("release");
+    assert(released > 0, "the first connection was returned");
+    const drop = first.findIndex((s) => s.includes("pg_drop_replication_slot"));
+    const reset = first.indexOf("reset TimeZone");
+    assert(drop >= 0 && drop < released, "its temporary slot dropped before it went back");
+    assert(reset >= 0 && reset < released, "its session TimeZone reset before it went back");
+  } finally {
+    await source.stop();
+    console.error = error;
+  }
+  const second = conns[1];
+  assert(second.indexOf("reset TimeZone") < second.indexOf("release"), "stop() resets it too");
 });
 
 Deno.test("realtime: revalidate { owner: 'one' } without reserve() warns and revalidates everywhere", async () => {
@@ -1280,6 +1368,30 @@ Deno.test("realtime: truncate reaches the subscribers who could see rows; old ro
   }
 });
 
+Deno.test("realtime: a change of a kind the table does not send is dropped, whatever the source", async () => {
+  const env = await setUp();
+  try {
+    const engine = realtimeEngine();
+    const ca = env.hub.conn(env.a);
+    assert((await env.hub.subscribe(ca, "items")).ok);
+    env.sql.insert("items", { sku: "a", label: "x" });
+    await until(() => ca.frames.length === 1);
+    // What the logical source decodes from the WAL, for `items` (events: insert, delete): its
+    // update and its TRUNCATE are not sent, as its triggers would not have fired for them.
+    env.sql.tables.get("items")!.set("a", { sku: "a", label: "y" });
+    engine.ingest({ table: "items", op: "update", key: "a" });
+    engine.ingest({ table: "items", op: "truncate", ts: 1 });
+    await settle(80);
+    assertEquals(ca.frames.length, 1);
+    env.sql.tables.get("items")!.delete("a");
+    engine.ingest({ table: "items", op: "delete", key: "a" });
+    await until(() => ca.frames.length === 2);
+    assertEquals(changesOf(ca).at(-1), { op: "delete", key: "a" });
+  } finally {
+    await env.done();
+  }
+});
+
 Deno.test("realtime: operator filters narrow the re-read; a raw row over 1 MiB is truncated", async () => {
   const env = await setUp();
   try {
@@ -1491,6 +1603,61 @@ Deno.test({
   },
 });
 
+/** The advisory lock every boot migration of the backend takes (`backend_migrations`'). */
+const MIGRATION_LOCK = 'denext:migrate:"backend_migrations"';
+
+/** Assert the first statement `match` finds ran in a transaction holding the migration lock. */
+function assertUnderMigrationLock(sql: FakeRealtimeClient, match: RegExp): void {
+  const at = sql.statements.findIndex((s) => match.test(s));
+  assert(at >= 0, `${match} was sent`);
+  for (let i = at - 1; i >= 0; i--) {
+    const s = sql.statements[i];
+    if (s === "BEGIN" || s === "COMMIT") break;
+    if (/pg_advisory_xact_lock/.test(s) && sql.parameters[i][0] === MIGRATION_LOCK) return;
+  }
+  throw new Error(`${match} ran outside the backend's migration lock`);
+}
+
+Deno.test({
+  name: "realtime DDL at startup runs under the backend's migration lock",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
+    sql.catalog.publication.push({
+      schema: "app",
+      table: "things",
+      pk: "id",
+      ident: "d",
+      rls: false,
+    });
+    // A realtime trigger left disabled (by a logical-source run): the notify source enables it.
+    sql.catalog.triggers.set(
+      "notes",
+      new Map([["denext_realtime", { args: "notes\\000id\\000", enabled: "D" }]]),
+    );
+    const env = await setUp({}, sql);
+    try {
+      const engine = realtimeEngine();
+      const tick = await captureTick(() => engine.start());
+      assertUnderMigrationLock(sql, /^DROP TRIGGER IF EXISTS denext_realtime ON "app"."things"/);
+      assertUnderMigrationLock(sql, /^CREATE TRIGGER denext_realtime AFTER .* ON "app"."things"/s);
+      assertUnderMigrationLock(sql, /^ALTER TABLE notes ENABLE TRIGGER denext_realtime$/);
+      // Leaving the publication drops its triggers, under the lock too.
+      sql.catalog.publication.length = 0;
+      const before = sql.statements.length;
+      tick();
+      await until(() => !engine.config.tables.has("app.things"));
+      await settle(20);
+      const after = { ...sql, statements: sql.statements.slice(before) } as FakeRealtimeClient;
+      Object.assign(after, { parameters: sql.parameters.slice(before) });
+      assertUnderMigrationLock(after, /^DROP TRIGGER IF EXISTS denext_realtime ON "app"."things"/);
+    } finally {
+      await env.done();
+    }
+  },
+});
+
 /** A reserved connection answering the slot statements, fed from `batches`. */
 function fakeSlot(sql: FakeRealtimeClient, batches: Uint8Array[][]) {
   const statements: string[] = [];
@@ -1535,6 +1702,8 @@ Deno.test({
         "the logical source installs no row triggers",
       );
       assert(sql.statements.some((s) => s.includes("CREATE PUBLICATION denext_realtime")));
+      assertUnderMigrationLock(sql, /CREATE PUBLICATION denext_realtime/);
+      assertUnderMigrationLock(sql, /^ALTER PUBLICATION denext_realtime SET TABLE/);
       assert(
         sql.statements.includes('ALTER PUBLICATION denext_realtime SET TABLE "notes", "items"'),
       );

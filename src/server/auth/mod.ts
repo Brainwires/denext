@@ -25,6 +25,9 @@
  * @module
  */
 
+import { registerFrameworkMigrations } from "../postgres-boot.ts";
+import { authMigrationSet } from "./postgres-schema.ts";
+import { backendPostgresClient } from "./backend-postgres.ts";
 import type { DenextPlugin } from "../../plugin/mod.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { isProductionEnv, isWeakSecret } from "../session.ts";
@@ -38,6 +41,7 @@ import { assertAnonymousConfig } from "./routes-anonymous.ts";
 import { resolvePasskeys } from "./passkeys.ts";
 import { authTrustsProxy } from "./rate-limit.ts";
 import { handleAuthRequest } from "./routes.ts";
+import { createAuthCommand } from "./command.ts";
 import {
   nativeAdapterOf,
   nativeBearerOf,
@@ -47,7 +51,7 @@ import {
 import { currentContext, headers } from "../request-context.ts";
 import { jwtBearerOf, sessionFromJwtBearer } from "./gotrue/access.ts";
 import type { SessionStore } from "./session-store.ts";
-import { readAuthSession, refreshLiveSession } from "./session.ts";
+import { endUserSessions, readAuthSession, refreshLiveSession } from "./session.ts";
 import { isOAuthProvider } from "./types.ts";
 import type { AuthConfig, AuthSession, OAuthProvider } from "./types.ts";
 
@@ -306,6 +310,15 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
       if (store?.close) ctx.addTeardown(() => store.close!());
       const adapter = config.adapter;
       if (adapter?.close) ctx.addTeardown(() => adapter.close!());
+      // With `@denext/backend`'s Postgres the rate limits and the SAML replay cache default onto
+      // it (backend-postgres.ts), built on first use: declare their tables for `denext db push`.
+      registerFrameworkMigrations(
+        "auth:backend",
+        () => backendPostgresClient() ? authMigrationSet(undefined, "denextAuth") : undefined,
+      );
+      // `denext auth reseal`: maintenance against this config's adapter and secret. (A
+      // hand-built context in a test may omit the seam.)
+      if (typeof ctx.addCommand === "function") ctx.addCommand(createAuthCommand(config));
     },
   };
 }
@@ -318,8 +331,9 @@ function requireSessionStore(
   if (!options?.sessionStore) {
     throw new Error(
       `${fn}: no \`sessionStore\` is configured — sessions are stateless signed cookies, ` +
-        "which can't be revoked before they expire. Pass `sessionStore` (e.g. " +
-        "`sqliteSessionStore()`) to denextAuth to enable revocation.",
+        "so one session can't be revoked by id (`revokeAllSessions(userId)` ends them all " +
+        "through an adapter). Pass `sessionStore` (e.g. `sqliteSessionStore()`) to denextAuth " +
+        "to revoke single sessions.",
     );
   }
   return { options, store: options.sessionStore };
@@ -340,24 +354,28 @@ export async function revokeSession(sessionId: string): Promise<void> {
 }
 
 /**
- * Revoke every server-side session of `userId` — "sign out everywhere", the right call
- * after a password change or a suspected cookie theft — and every native app session family
- * when the adapter has that group. Fires the `sessionRevoked` event. Requires
- * `denextAuth({ sessionStore })` or native sessions; throws when neither exists.
+ * Revoke every session of `userId` — "sign out everywhere", the right call after a password
+ * change or a suspected cookie theft: the session store's records, every native app session
+ * family when the adapter has that group, and — with an adapter — every cookie session signed
+ * in before now, stateless ones included (the user's `sessionsValidAfter`). Fires the
+ * `sessionRevoked` event. Throws when there is nothing to revoke through: no adapter and no
+ * `sessionStore`.
  *
  * @param userId The user whose sessions end.
  */
 export async function revokeAllSessions(userId: string): Promise<void> {
-  // Native app sessions (`native` config) end too — they need no session store.
-  const native = activeConfig ? nativeAdapterOf(activeConfig.adapter) : null;
-  if (native && !resolveAuthOptions(activeConfig!).sessionStore) {
-    await native.revokeNativeSessionsByUser(userId);
-    await emitAuthEvent(resolveAuthOptions(activeConfig!), "sessionRevoked", { userId });
-    return;
+  const options = activeConfig ? resolveAuthOptions(activeConfig) : undefined;
+  if (!options?.adapter && !options?.sessionStore) {
+    throw new Error(
+      "revokeAllSessions: no `adapter` or `sessionStore` is configured — stateless cookie " +
+        "sessions are ended through the user record (`sessionsValidAfter`), so pass an " +
+        "`adapter` (or a `sessionStore`) to denextAuth to enable revocation.",
+    );
   }
-  const { options, store } = requireSessionStore("revokeAllSessions");
-  await native?.revokeNativeSessionsByUser(userId);
-  await store.deleteByUser(userId);
+  // Native app sessions (`native` config) end too — they need no session store.
+  await nativeAdapterOf(options.adapter)?.revokeNativeSessionsByUser(userId);
+  if (options.adapter) await endUserSessions(options.adapter, userId);
+  await options.sessionStore?.deleteByUser(userId);
   await emitAuthEvent(options, "sessionRevoked", { userId });
 }
 
@@ -399,6 +417,11 @@ function currentSession(): Promise<AuthSession | null> {
  * ({@link AuthSession.mfaPending}) reads as `null` here — it **fails closed**, so every
  * guard built on `auth()` (requireAuth, requireSession, Live `authorize`, Server
  * Actions) refuses it without having to know MFA exists.
+ *
+ * With an adapter, a cookie session's user is re-read on every request (once per request,
+ * however many times `auth()` is called): a deleted or banned user, and an SSO user (whose
+ * identity provider never starts a denextAuth session), read as `null` from their very next
+ * request. A bearer session's user is re-read the same way by its own verification.
  *
  * @returns The {@link AuthSession}, or `null`.
  */

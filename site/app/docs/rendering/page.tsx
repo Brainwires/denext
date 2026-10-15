@@ -130,6 +130,28 @@ export default { streaming: false };`}
         inside a Suspense'd component therefore works as expected: the visitor lands on{" "}
         <code>/login</code>, they just get there via the streamed tail.
       </p>
+      <p>
+        <strong>Cancel work the render no longer needs.</strong> React 19.2's{" "}
+        <code>cacheSignal()</code> (from the <code>react</code> alias, <code>denext/react</code>
+        {" "}
+        in native code) returns, during a server render, an <code>AbortSignal</code>{" "}
+        that aborts when the render ends (its last streamed byte included), fails, or is aborted
+        because the client disconnected or the request timed out. Thread it into a{" "}
+        <code>fetch()</code> started from a{" "}
+        <code>cache()</code>d function or a Server Component. It is <code>null</code>{" "}
+        on the client, outside a request, and inside a <code>"use cache"</code>{" "}
+        scope (a cached fill is shared, so one request ending must not abort it).{" "}
+        <code>requestSignal()</code> from <code>denext/server</code>{" "}
+        is the request's own signal, for work that is not part of the render.
+      </p>
+      <Code lang="tsx">
+        {`import { cache, cacheSignal } from "denext/react";
+
+const getPrice = cache(async (sku: string) => {
+  const res = await fetch(\`https://prices.example.com/\${sku}\`, { signal: cacheSignal() });
+  return (await res.json()) as { amount: number };
+});`}
+      </Code>
 
       <h3>PPR / Cache Components</h3>
       <p>
@@ -351,13 +373,12 @@ export default { asyncContext: true };`}
       <Callout kind="warn">
         <code>asyncContext</code> is opt-in: the transform instruments every <code>await</code>{" "}
         in client code (a small per-<code>await</code>{" "}
-        cost), so it is off by default and the time-window behavior is unchanged. In v1 the
-        transform leaves async generators (<code>
-          async function*
-        </code>) and top-level <code>await</code>{" "}
-        un-instrumented — a rare shape in client code. The synchronous <code>AsyncContext</code>
+        cost), so it is off by default and the time-window behavior is unchanged. Async generators
+        are instrumented too, except one that uses <code>yield*</code> delegation; top-level{" "}
+        <code>await</code> is left alone — both rare shapes in client code. The synchronous{" "}
+        <code>AsyncContext</code> API works with or without the flag; only cross-<code>await</code>
         {" "}
-        API works with or without the flag; only cross-<code>await</code> propagation needs it.
+        propagation needs it.
       </Callout>
     </DocsShell>
   );

@@ -3,7 +3,7 @@
 // parent set with `{ params }` (the parent's values) and its results merged in.
 
 import type { PageRoute } from "../router/manifest.ts";
-import type { RouteParams } from "../router/segments.ts";
+import { paramPath, type RouteParams } from "../router/segments.ts";
 import type { LayoutModule, ModuleLoader, PageModule, StaticParamsGenerator } from "./types.ts";
 
 /** The generator exported by a module, if any. */
@@ -33,18 +33,44 @@ export async function enumerateStaticParams(
   route: PageRoute,
   load: ModuleLoader,
 ): Promise<RouteParams[] | null> {
+  const modules: unknown[] = [];
+  for (const layoutPath of route.layoutChain) {
+    modules.push((await load(layoutPath)) as LayoutModule);
+  }
+  modules.push((await load(route.filePath)) as PageModule);
+  return await enumerateParamSets(modules);
+}
+
+/**
+ * Every param set the `generateStaticParams` exports of `modules` enumerate, outermost first
+ * (each generator is called once per set its ancestors produced). `null` when none of the
+ * modules exports a generator.
+ *
+ * @param modules Loaded layout / page / route modules, outermost first.
+ * @returns The enumerated param sets, or `null`.
+ */
+export async function enumerateParamSets(modules: unknown[]): Promise<RouteParams[] | null> {
   let sets: RouteParams[] = [{}];
   let any = false;
-  for (const layoutPath of route.layoutChain) {
-    const gen = generatorOf((await load(layoutPath)) as LayoutModule);
+  for (const mod of modules) {
+    const gen = generatorOf(mod);
     if (!gen) continue;
     any = true;
     sets = await expand(gen, sets);
   }
-  const pageGen = generatorOf((await load(route.filePath)) as PageModule);
-  if (pageGen) {
-    any = true;
-    sets = await expand(pageGen, sets);
-  }
   return any ? sets : null;
+}
+
+/**
+ * Whether `params` is one of the `known` enumerated sets (every key equal in its path form).
+ * `null` (nothing enumerated) admits nothing — the `dynamicParams = false` rule.
+ *
+ * @param known The sets {@link enumerateParamSets} produced, or `null`.
+ * @param params The request's matched params.
+ * @returns True when the params were enumerated.
+ */
+export function paramsEnumerated(known: RouteParams[] | null, params: RouteParams): boolean {
+  if (known === null) return false;
+  const keys = Object.keys(params);
+  return known.some((set) => keys.every((k) => paramPath(set[k]) === paramPath(params[k])));
 }

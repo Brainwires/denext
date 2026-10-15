@@ -26,6 +26,7 @@ import {
   resolveDenoToolchain,
   staleToolchainLink,
   TOOLCHAIN_STAMP,
+  toolchainEnvValue,
   unlinkDenoToolchain,
 } from "../src/build/deno-toolchain.ts";
 import { denoToolchainCheck } from "../src/cli/commands/doctor.ts";
@@ -130,6 +131,16 @@ Deno.test("the checked-in pin: a schema-1 table whose entries carry url + sha256
     assert(/^https:\/\//.test(a.url), `${target}: an https url`);
     assert(/^[0-9a-f]{64}$/.test(a.sha256), `${target}: a SHA-256`);
   }
+});
+
+Deno.test("ci.yml's backend-integration toolchain matches the checked-in linux-x86_64 pin", async () => {
+  const ci = await Deno.readTextFile(new URL("../.github/workflows/ci.yml", import.meta.url));
+  const env = (name: string) => ci.match(new RegExp(`^\\s+${name}:\\s*(\\S+)\\s*$`, "m"))?.[1];
+  const pin = DENO_TOOLCHAIN.targets["linux-x86_64"];
+  if (DENO_TOOLCHAIN.version === null || !pin) return;
+  assertEquals(env("DENEXT_DENO_RELEASE"), `denext-runtime-v${DENO_TOOLCHAIN.version}`);
+  assertEquals(env("DENEXT_DENO_ZIP"), pin.file);
+  assertEquals(env("DENEXT_DENO_SHA256"), pin.sha256, "re-pin ci.yml's hash with the toolchain");
 });
 
 Deno.test("pin selection: no pin yet, an unpinned host — each a clear unavailable error", async () => {
@@ -427,6 +438,42 @@ Deno.test("resolveDenoToolchain: DENEXT_DENO=<path> runs that binary unverified,
     const missing = await resolveDenoToolchain({ env: envOf({ DENEXT_DENO: join(dir, "nope") }) });
     assert(missing.kind === "stock" && missing.warning);
     assertStringIncludes(missing.warning, "is not a file");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("DENEXT_DENO: one pair of matching surrounding quotes is stripped (Windows cmd keeps them)", async () => {
+  // `set DENEXT_DENO="C:\Program Files\deno\deno.exe"` stores the quotes in the value.
+  const value = (raw: string) => toolchainEnvValue(envOf({ DENEXT_DENO: raw }));
+  assertEquals(value('"C:\\Program Files\\deno\\deno.exe"'), "C:\\Program Files\\deno\\deno.exe");
+  assertEquals(value("  'stock'  "), "stock");
+  assertEquals(value('""'), "");
+  assertEquals(value('""stock""'), '"stock"', "only ONE pair is stripped");
+  for (const mismatched of [`"stock'`, `'stock"`, `"stock`, `stock"`, `"`]) {
+    assertEquals(value(mismatched), mismatched, `${mismatched} is left as is`);
+  }
+  assertEquals(toolchainEnvValue(envOf({})), "");
+
+  const dir = await Deno.makeTempDir({ prefix: "denext path with space " });
+  try {
+    const bin = join(dir, "deno");
+    await Deno.writeTextFile(bin, BINARY);
+    for (const quoted of [`"${bin}"`, `'${bin}'`]) {
+      const choice = await resolveDenoToolchain({ env: envOf({ DENEXT_DENO: quoted }) });
+      assert(choice.kind === "toolchain", `${quoted} names the binary`);
+      assertEquals([choice.deno, choice.version], [bin, "path"]);
+    }
+    for (const stock of [`"stock"`, `'STOCK'`]) {
+      assertEquals(await resolveDenoToolchain({ env: envOf({ DENEXT_DENO: stock }) }), {
+        kind: "stock",
+        reason: "DENEXT_DENO=stock",
+      });
+    }
+    // Mismatched quotes stay part of the value: a path that is not a file.
+    const mismatched = await resolveDenoToolchain({ env: envOf({ DENEXT_DENO: `"${bin}'` }) });
+    assert(mismatched.kind === "stock" && mismatched.warning);
+    assertStringIncludes(mismatched.warning, "is not a file");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

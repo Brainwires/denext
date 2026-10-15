@@ -1,7 +1,8 @@
 // Resolve the conventional paths and config for a denext project directory.
 
-import { join, toFileUrl } from "@std/path";
+import { basename, join, relative, toFileUrl } from "@std/path";
 import { frameworkFileUrl } from "./bundle.ts";
+import { CONFIG_FILES } from "./config-files.ts";
 import type { I18nConfig } from "../server/i18n.ts";
 import { type DenextConfig, featureFlags } from "../server/config.ts";
 import {
@@ -59,6 +60,39 @@ async function firstOf(dir: string, names: string[]): Promise<string | null> {
   return null;
 }
 
+/**
+ * Extensions a root middleware / proxy file may have: Next.js's default `pageExtensions`
+ * (`tsx`, `ts`, `jsx`, `js`) plus the ES-module spellings Deno loads (`mts`, `mjs`).
+ */
+const MIDDLEWARE_EXTENSIONS = ["ts", "tsx", "mts", "js", "jsx", "mjs"];
+
+/**
+ * The root middleware module: `middleware.*`, or Next 16's name for the same hook, `proxy.*` —
+ * beside `app/` (in `src/` with the `src/app` layout), with any of
+ * {@linkcode MIDDLEWARE_EXTENSIONS}. More than one such file is an error rather than a silent
+ * pick: only one can run, and the one left out may be the app's auth gate. (Next raises the same
+ * error for a middleware file beside a proxy file.)
+ */
+async function resolveMiddlewarePath(projectDir: string, srcBase: string): Promise<string | null> {
+  const found: string[] = [];
+  for (const name of ["middleware", "proxy"]) {
+    for (const ext of MIDDLEWARE_EXTENSIONS) {
+      const p = join(srcBase, `${name}.${ext}`);
+      if (await exists(p)) found.push(p);
+    }
+  }
+  if (found.length > 1) {
+    const rel = (p: string) => `"./${relative(projectDir, p).replaceAll("\\", "/")}"`;
+    const proxy = found.find((p) => basename(p).startsWith("proxy."));
+    const keep = proxy ? `keep ${rel(proxy)} (Next.js 16's name for middleware)` : "keep one";
+    throw new Error(
+      `denext: found ${found.map(rel).join(" and ")}. These are the same hook, and only one can ` +
+        `run: ${keep} and delete the other${found.length > 2 ? "s" : ""}.`,
+    );
+  }
+  return found[0] ?? null;
+}
+
 export async function resolveProject(projectDir: string): Promise<ProjectPaths> {
   // Optional `src/` layout (Next.js parity): when `src/app` exists, the app,
   // middleware, and instrumentation live under `src/` — while `public/`,
@@ -77,16 +111,7 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
   // corrupt a URL.
   const configPath = (await exists(projectConfig)) ? projectConfig : frameworkFileUrl("deno.json");
 
-  // middleware.ts is the canonical name; proxy.ts is an accepted alias.
-  const candidates = ["middleware.ts", "middleware.js", "proxy.ts", "proxy.js"];
-  let middlewarePath: string | null = null;
-  for (const name of candidates) {
-    const p = join(srcBase, name);
-    if (await exists(p)) {
-      middlewarePath = p;
-      break;
-    }
-  }
+  const middlewarePath = await resolveMiddlewarePath(projectDir, srcBase);
 
   const instrumentationPath = await firstOf(srcBase, ["instrumentation.ts", "instrumentation.js"]);
   const instrumentationClientPath = await firstOf(srcBase, [
@@ -195,16 +220,7 @@ async function importConfigFile(path: string, name: string): Promise<DenextConfi
 }
 
 /** The config file names probed, in order (Next.js also accepts `.mjs`/`.mts`). */
-/**
- * The denext config file names, in the order the loader resolves them — the one list the
- * loader, the UI's config editor and the plugin manager all probe.
- */
-export const CONFIG_FILES: readonly string[] = [
-  "denext.config.ts",
-  "denext.config.mts",
-  "denext.config.js",
-  "denext.config.mjs",
-];
+export { CONFIG_FILES };
 
 /** Load `denext.config.{ts,mts,js,mjs}` (named exports, a default object, or a factory). */
 async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null> {

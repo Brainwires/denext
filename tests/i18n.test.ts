@@ -10,6 +10,7 @@ import {
   peelLocale,
 } from "../src/server/i18n.ts";
 import { createMiddlewareRunner } from "../src/server/middleware.ts";
+import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { PageProps } from "../src/server/types.ts";
@@ -246,6 +247,57 @@ Deno.test("i18n domains: localeMiddleware never redirects an unprefixed path on 
     new Request("http://example.fr/about", { headers: { "accept-language": "en" } }),
   );
   assertEquals(outcome.type, "next");
+});
+
+Deno.test("i18n domains: localeMiddleware matches the trusted host, as the render path does", async () => {
+  const runner = createMiddlewareRunner({ default: localeMiddleware(DOMAINS) });
+  const behindProxy = () =>
+    new Request("http://10.0.0.5:8000/about", {
+      headers: { "x-forwarded-host": "example.fr", "accept-language": "de" },
+    });
+  // Behind a trusted proxy the public host is the forwarded one: example.fr is French, so a
+  // German-preferring visitor is not redirected to /de (the render path serves it as fr).
+  const trusted = behindProxy();
+  const outcome = await runWithContext(
+    createRequestContext(trusted, undefined, { trustForwardedHeaders: true }),
+    () => runner!(trusted),
+  );
+  assertEquals(outcome.type, "next");
+  // Without trust, a client-sent X-Forwarded-Host is ignored: no domain matches, so the
+  // visitor is negotiated as usual.
+  const untrusted = behindProxy();
+  const spoofed = await runWithContext(
+    createRequestContext(untrusted),
+    () => runner!(untrusted),
+  );
+  assertEquals(spoofed.type, "response");
+});
+
+Deno.test("i18n domains: canonicalOrigin does not mask domain routing", async () => {
+  const app = createApp({
+    getManifest: manifest,
+    load: (fp) => Promise.resolve(modules[fp]),
+    i18n: DOMAINS,
+    canonicalOrigin: "https://example.com",
+  });
+  // A listed domain still selects its locale…
+  const fr = await app(new Request("http://example.fr/about"));
+  assertEquals(fr.status, 200);
+  assertStringIncludes(await fr.text(), "about:fr");
+  // …an unlisted host falls back to the default locale…
+  const other = await app(new Request("http://other.test/about"));
+  assertEquals(other.status, 200);
+  assertStringIncludes(await other.text(), "about:en");
+  // …and absolute URLs (the hreflang alternates) are still built from the configuration.
+  const html = await (await app(new Request("http://example.fr/about"))).text();
+  assertStringIncludes(html, `hreflang="en" href="https://example.com/about"`);
+
+  // localeMiddleware agrees: example.fr is French, so no redirect for a German visitor.
+  const runner = createMiddlewareRunner({ default: localeMiddleware(DOMAINS) });
+  const request = new Request("http://example.fr/about", { headers: { "accept-language": "de" } });
+  const ctx = createRequestContext(request);
+  ctx.originAllowlist = { canonicalOrigin: "https://example.com" };
+  assertEquals((await runWithContext(ctx, () => runner!(request))).type, "next");
 });
 
 // ---- localeMiddleware ------------------------------------------------------

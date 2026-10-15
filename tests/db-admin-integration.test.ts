@@ -32,6 +32,8 @@ import type {
   DbSuccess,
 } from "../src/ui/database/protocol.ts";
 import { postgresEnvironment as environment } from "./helpers/postgres-env.ts";
+import { verifyPassword } from "../src/server/auth/password.ts";
+import { isBanned } from "../src/server/auth/ban.ts";
 import { startUiServer } from "../src/ui/server.ts";
 import { UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
@@ -399,6 +401,206 @@ Deno.test({
       );
     } finally {
       await Deno.remove(dir, { recursive: true });
+      await env.drop();
+    }
+  },
+});
+
+Deno.test({
+  name: `db-admin on a real Postgres: the SQL editor's two transactions${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  async fn() {
+    const env = await environment();
+    try {
+      const sql = env.app;
+      await sql.unsafe("create table kv (k text primary key, v jsonb, at timestamptz)");
+      const wrote = await ask<"sql">(sql, {
+        op: "sql",
+        mode: "write",
+        text: `insert into kv values ('a', '{"x":1}', 'epoch'), ('b', null, null);
+               select k, v, at from kv order by k`,
+      });
+      assertEquals(wrote.columns, ["k", "v", "at"]);
+      // A script runs over the simple protocol: every value comes back as Postgres prints it.
+      assertEquals(wrote.cells.map((r) => [r[0], r[1]]), [["a", '{"x": 1}'], ["b", null]]);
+      const read = await ask<"sql">(sql, {
+        op: "sql",
+        mode: "read",
+        text: "select count(*) as n from kv",
+      });
+      assertEquals(read.cells, [["2"]]);
+      // A read is READ ONLY …
+      const write = await fails(sql, { op: "sql", mode: "read", text: "delete from kv" });
+      assertStringIncludes(write.reason, "25006");
+      // … and one statement: a COMMIT cannot end the read-only transaction and run what follows.
+      const escape = await fails(sql, {
+        op: "sql",
+        mode: "read",
+        text: "commit; delete from kv",
+      });
+      assertEquals(escape.code, "query_failed");
+      assertEquals(
+        (await ask<"sql">(sql, { op: "sql", mode: "read", text: "select count(*) as n from kv" }))
+          .cells,
+        [["2"]],
+      );
+      // A failed write script commits nothing.
+      await fails(sql, { op: "sql", mode: "write", text: "delete from kv; select 1/0" });
+      assertEquals(
+        (await ask<"sql">(sql, { op: "sql", mode: "read", text: "select count(*) as n from kv" }))
+          .cells,
+        [["2"]],
+      );
+    } finally {
+      await env.drop();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    `db-admin on a real Postgres: create, ban, unban and a new password, as auth reads them${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  async fn() {
+    const env = await environment();
+    try {
+      const sql = env.app;
+      const adapter = postgresAuthAdapter({ sql });
+      await adapter.createUser({ email: "seed@x.test" }); // the auth tables, migrated
+      const created = await ask<"createUser">(sql, {
+        op: "createUser",
+        email: "New@X.test",
+        name: "New",
+        password: "first passphrase",
+        verified: true,
+      });
+      const stored = await adapter.getUserByEmail("new@x.test");
+      assertEquals([stored?.id, stored?.name], [created.id, "New"]);
+      assert(typeof stored?.emailVerified === "number", "verified by the admin");
+      const credential = await adapter.getCredential!(created.id);
+      assert(await verifyPassword("first passphrase", credential!));
+      const taken = await fails(sql, { op: "createUser", email: "new@x.TEST", verified: false });
+      assertStringIncludes(taken.reason, "already exists");
+
+      const now = Math.floor(Date.now() / 1000);
+      await sql.unsafe(
+        "insert into auth_sessions (id, user_id, payload, expires_at) values ('s1', $1, '{}', $2)",
+        [created.id, now + 3600],
+      );
+      await ask<"userAction">(sql, {
+        op: "userAction",
+        action: "ban",
+        id: created.id,
+        seconds: 3600,
+        confirm: true,
+      });
+      const banned = await adapter.getUser(created.id);
+      assert(isBanned(banned), "the auth layer sees the ban");
+      assert((banned?.sessionsValidAfter ?? 0) >= now, "cookie sessions signed in before end");
+      const [{ n }] = await sql.unsafe<{ n: number }>(
+        "select count(*)::int as n from auth_sessions where user_id = $1",
+        [created.id],
+      );
+      assertEquals(n, 0);
+      const listed = await ask<"user">(sql, { op: "user", id: created.id });
+      assert((listed.user?.bannedUntil ?? 0) > now);
+      await ask<"userAction">(sql, {
+        op: "userAction",
+        action: "unban",
+        id: created.id,
+        confirm: true,
+      });
+      assertEquals(isBanned(await adapter.getUser(created.id)), false);
+
+      const reset = await ask<"userAction">(sql, {
+        op: "userAction",
+        action: "password",
+        id: created.id,
+        password: "second passphrase",
+        confirm: true,
+      });
+      assert(!JSON.stringify(reset).includes("second passphrase"));
+      const next = await adapter.getCredential!(created.id);
+      assert(await verifyPassword("second passphrase", next!));
+      assertEquals(await verifyPassword("first passphrase", next!), false);
+    } finally {
+      await env.drop();
+    }
+  },
+});
+
+Deno.test({
+  name: `db-admin on a real Postgres: realtime's publication opt-in and trigger status${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  async fn() {
+    const env = await environment();
+    try {
+      const sql = env.app;
+      await sql.unsafe(`
+        create table rt_notes (id bigint primary key, body text);
+        create table rt_pair (a int, b int, primary key (a, b));
+        create function rt_noop() returns trigger language plpgsql as $$ begin return null; end $$;
+        create trigger denext_realtime after insert or delete on rt_notes
+          for each row execute function rt_noop();
+      `).simple!();
+      const before = await ask<"realtimeTables">(sql, { op: "realtimeTables" });
+      assertEquals([before.publication, before.publicationExists], ["supabase_realtime", false]);
+      const notes = before.tables.find((t) => t.name === "rt_notes")!;
+      assertEquals([notes.inPublication, notes.triggerEvents, notes.primaryKeyColumns], [
+        false,
+        ["insert", "delete"],
+        1,
+      ]);
+      assertEquals(before.tables.find((t) => t.name === "rt_pair")?.primaryKeyColumns, 2);
+      const add = (table: string, confirm: boolean) =>
+        ask<"realtimePublication">(sql, {
+          op: "realtimePublication",
+          schema: "public",
+          table,
+          action: "add",
+          confirm,
+        });
+      const preview = await add("rt_notes", false);
+      assertEquals(preview.statements.length, 2, "CREATE PUBLICATION, then ADD TABLE");
+      assertEquals(
+        (await ask<"realtimeTables">(sql, { op: "realtimeTables" })).publicationExists,
+        false,
+      );
+      await add("rt_notes", true);
+      const after = await ask<"realtimeTables">(sql, { op: "realtimeTables" });
+      assertEquals(after.publicationExists, true);
+      assertEquals(after.tables.find((t) => t.name === "rt_notes")?.inPublication, true);
+      const [{ n }] = await sql.unsafe<{ n: number }>(
+        "select count(*)::int as n from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'rt_notes'",
+      );
+      assertEquals(n, 1);
+      assertEquals(
+        (await fails(sql, {
+          op: "realtimePublication",
+          schema: "public",
+          table: "rt_pair",
+          action: "add",
+          confirm: true,
+        })).code,
+        "bad_request",
+      );
+      await ask<"realtimePublication">(sql, {
+        op: "realtimePublication",
+        schema: "public",
+        table: "rt_notes",
+        action: "drop",
+        confirm: true,
+      });
+      assertEquals(
+        (await ask<"realtimeTables">(sql, { op: "realtimeTables" })).tables.find((t) =>
+          t.name === "rt_notes"
+        )?.inPublication,
+        false,
+      );
+    } finally {
       await env.drop();
     }
   },

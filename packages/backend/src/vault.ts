@@ -14,7 +14,7 @@
 // `vault.decryptedSecrets()`. The table has row-level security on and no grants to `anon` or
 // `authenticated`: only the app's own database user (the service role) reaches it.
 
-import { migratePostgres, type Migration, type SqlClient } from "@denext/denext/server";
+import { bootMigrate, type Migration, type SqlClient } from "@denext/denext/server";
 import { db } from "./postgres.ts";
 import { VAULT_KEYS_SETTING, vaultKeysJson, vaultSqlMigrations } from "./vault-sql.ts";
 
@@ -321,7 +321,7 @@ async function client(): Promise<SqlClient> {
     let pending = migrated.get(sql);
     if (!pending) {
       const migrations = [...vaultMigrations(), ...(slot().sql ? vaultSqlMigrations() : [])];
-      pending = migratePostgres(sql, { migrations, table: VAULT_TABLE }).then(() => undefined);
+      pending = bootMigrate(sql, { migrations, table: VAULT_TABLE, feature: "backend({ vault })" });
       pending.catch(() => migrated.delete(sql));
       migrated.set(sql, pending);
     }

@@ -1,8 +1,9 @@
 // Native Apple / Google id_token sign-in (`POST {basePath}/native/:provider`): JWKS
 // verification with an injected fetcher (no network), kid rotation, iss / aud (a SET of
 // client ids) / azp / exp / nonce checks, the single-use server nonce, Apple's first-login
-// name (the email only ever from the token), account linking, the MFA refusal, and the Apple
-// code exchange that later lets account deletion revoke Apple's tokens.
+// name (the email only ever from the token), account linking, the unenrolled-user MFA refusal
+// (an enrolled user's pending second factor is in auth-native-mfa.test.ts), and the Apple code
+// exchange that later lets account deletion revoke Apple's tokens.
 
 import { assert, assertEquals, assertMatch } from "@std/assert";
 import type { AuthAdapter } from "../src/server/auth/adapter.ts";
@@ -325,7 +326,7 @@ Deno.test("linking: a verified local account links; an unverified one is refused
   assertEquals((await refused.json()).error, "account_not_linked");
 });
 
-Deno.test("an MFA-enrolled user is told to use the browser flow (mfa_required)", async () => {
+Deno.test('under mfa.required: "always" a user with no factor yet is sent to the browser flow (mfa_required)', async () => {
   const h = await setup({}, { mfa: { required: "always" } });
   const n = await nonce(h);
   const res = await post(h, "/native/google", {

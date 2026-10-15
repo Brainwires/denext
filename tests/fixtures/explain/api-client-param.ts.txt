@@ -1,0 +1,6 @@
+// A typed client call that names a route param the route does not have.
+import { createApiClient } from "denext";
+import "./.denext/api.ts";
+
+const api = createApiClient();
+await api("/api/user/[id]", "GET", { params: { ids: "1" } });

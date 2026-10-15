@@ -15,12 +15,14 @@ import {
   backoffDelay,
   deliverWebhooks,
   installWebhooks,
+  purgeWebhookEvents,
   resolveWebhooks,
   signWebhook,
   startWebhookDelivery,
   targetFor,
   verifyWebhook,
   WEBHOOK_CHANNEL,
+  webhookCleanupJob,
   webhookEvents,
   webhooksMigrations,
 } from "../packages/backend/src/webhooks.ts";
@@ -410,4 +412,87 @@ Deno.test("webhooks migration: the trigger function, the event table, nothing fo
       "REVOKE ALL ON supabase_functions.webhook_events FROM PUBLIC",
     ]
   ) assertStringIncludes(migration.sql, part);
+});
+
+Deno.test("resolveWebhooks: retention defaults to 7 days delivered, 30 failed; false keeps all", () => {
+  assertEquals(resolveWebhooks({}).retention, {
+    deliveredMs: 7 * 86_400_000,
+    failedMs: 30 * 86_400_000,
+  });
+  assertEquals(resolveWebhooks({ retention: { deliveredMs: 60_000 } }).retention, {
+    deliveredMs: 60_000,
+    failedMs: 30 * 86_400_000,
+  });
+  assertEquals(resolveWebhooks({ retention: false }).retention, null);
+  assertThrows(() => resolveWebhooks({ retention: { failedMs: 0 } }), TypeError, "failedMs");
+  assertThrows(() => resolveWebhooks({ retention: "1d" as unknown as false }), TypeError);
+});
+
+Deno.test("purgeWebhookEvents: deletes settled events past the retention, in batches", async () => {
+  const deletes: unknown[][] = [];
+  let left = 1500;
+  const sql = scriptedSql((text, params) => {
+    if (!text.includes("WITH doomed AS")) return [];
+    deletes.push(params);
+    const n = Math.min(left, 1000);
+    left -= n;
+    return Array.from({ length: n }, (_, i) => ({ id: String(i) }));
+  });
+  installPostgres({ sql, rls: { migrate: false } });
+  try {
+    installWebhooks(resolveWebhooks({ migrate: false, retention: { deliveredMs: 60_000 } }));
+    assertEquals(await purgeWebhookEvents(), { deleted: 1500 });
+    assertEquals(deletes, [[60, 30 * 86_400, 1000], [60, 30 * 86_400, 1000]]);
+    installWebhooks(resolveWebhooks({ migrate: false, retention: false }));
+    assertEquals(await purgeWebhookEvents(), { deleted: 0 });
+    assertEquals(deletes.length, 2, "retention: false deletes nothing");
+    // The job form, for `delivery: "manual"`.
+    installWebhooks(resolveWebhooks({ migrate: false }));
+    left = 3;
+    const job = webhookCleanupJob({ schedule: "17 * * * *" });
+    assertEquals(job.schedule, "17 * * * *");
+  } finally {
+    installWebhooks(undefined);
+    installPostgres(undefined);
+  }
+});
+
+Deno.test("startWebhookDelivery: the retention cleanup runs after a pass, at most once an hour", async () => {
+  let purges = 0;
+  let passes = 0;
+  const sql = scriptedSql((text) => {
+    if (text.includes("WITH due AS")) passes++;
+    if (text.includes("WITH doomed AS")) purges++;
+    return [];
+  });
+  installPostgres({ sql, rls: { migrate: false } });
+  const config = resolveWebhooks({ migrate: false });
+  installWebhooks(config);
+  let tick: (() => void) | undefined;
+  const realSetInterval = globalThis.setInterval;
+  globalThis.setInterval = ((fn: () => void) => {
+    tick = fn;
+    return 0;
+  }) as unknown as typeof setInterval;
+  let stop!: () => Promise<void>;
+  try {
+    stop = startWebhookDelivery(config);
+  } finally {
+    globalThis.setInterval = realSetInterval;
+  }
+  const settled = async (n: number) => {
+    for (let i = 0; i < 50 && passes < n; i++) await new Promise((r) => setTimeout(r, 1));
+    await new Promise((r) => setTimeout(r, 5));
+  };
+  try {
+    await settled(1);
+    assertEquals(purges, 1, "the first pass cleans up");
+    tick!();
+    await settled(2);
+    assertEquals([passes, purges], [2, 1], "not again within the hour");
+  } finally {
+    await stop();
+    installWebhooks(undefined);
+    installPostgres(undefined);
+  }
 });

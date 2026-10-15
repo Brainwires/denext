@@ -95,7 +95,9 @@ export interface StorageOptions {
   api?: boolean | { basePath?: string };
   /**
    * Where the bucket and object metadata lives without Postgres: a `node:sqlite` file (default
-   * `.denext-storage.db` in the project root). With `postgres`, it is the `storage` schema.
+   * `.denext-storage.db` in the project root; in a `denext build --compile` binary, `storage.db`
+   * in its state directory, and a relative path resolves against its working directory). With
+   * `postgres`, it is the `storage` schema.
    */
   metadataPath?: string;
   /** The largest width or height the API's image render routes produce (default 2500). */

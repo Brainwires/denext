@@ -147,6 +147,7 @@ const SCHEMA: TableSpec[] = [
       ["updated_at", "INTEGER"],
       ["last_sign_in_at", "INTEGER"],
       ["banned_until", "INTEGER"],
+      ["sessions_valid_after", "INTEGER"],
     ],
     // Unique WHERE NOT NULL: one account per address, any number of address-less users.
     indexes: [{
@@ -221,6 +222,7 @@ const SCHEMA: TableSpec[] = [
       ["last_used_at", "INTEGER"],
       ["revoked_at", "INTEGER"],
       ["created_at", "INTEGER"],
+      ["sso_session", "INTEGER"],
     ],
     indexes: [
       {
@@ -745,6 +747,11 @@ function apiTokenMethods(
   return {
     createApiToken(token) {
       put(state.db(), "auth_api_tokens", toRow(API_TOKEN_MAP, token));
+      // Tokens dead for NATIVE_SESSION_RETENTION (revoked, or expired) are reclaimed on every
+      // issue, as native families are on every sign-in: every read already refuses them.
+      const cutoff = state.now() - NATIVE_SESSION_RETENTION;
+      state.db().exec("DELETE FROM auth_api_tokens WHERE revoked_at <= ?", [cutoff]);
+      state.db().exec("DELETE FROM auth_api_tokens WHERE expires_at <= ?", [cutoff]);
     },
     getApiTokenByHash(tokenHash) {
       const row = one(

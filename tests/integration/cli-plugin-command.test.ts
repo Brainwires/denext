@@ -11,12 +11,14 @@ import { join } from "@std/path";
 
 const CLI = fromFileUrl(new URL("../../cli.ts", import.meta.url));
 
-/** Run the CLI with `args` and capture its exit code and streams. */
+/** Run the CLI with `args` (from `cwd`) and capture its exit code and streams. */
 async function runCli(
   args: string[],
+  cwd?: string,
 ): Promise<{ code: number; out: string; err: string }> {
   const { code, stdout, stderr } = await new Deno.Command(Deno.execPath(), {
     args: ["run", "-A", CLI, ...args],
+    cwd,
     stdout: "piped",
     stderr: "piped",
   }).output();
@@ -287,5 +289,32 @@ Deno.test("`completions` enumerates a `commands:` verb", async () => {
     assertStringIncludes(out, "seed");
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("discovery imports the config from the project's directory, not the caller's", async () => {
+  // A config whose import writes a relative file (an app opening `auth.db` at module scope):
+  // `denext commands --cwd <app>` / `denext <verb> --cwd <app>` from another directory wrote it
+  // into the CALLER's directory.
+  const dir = await project(
+    "denext_discovery_cwd_",
+    `Deno.writeTextFileSync("written-by-config.txt", "x");
+${COMMANDS_CONFIG}`,
+  );
+  const elsewhere = await Deno.makeTempDir({ prefix: "denext_discovery_caller_" });
+  try {
+    const listing = await runCli(["commands", "--json", "--cwd", dir], elsewhere);
+    assertEquals(listing.code, 0, listing.err);
+    assertEquals([...Deno.readDirSync(elsewhere)], [], "nothing lands in the caller's directory");
+    assertEquals(Deno.readTextFileSync(join(dir, "written-by-config.txt")), "x");
+    Deno.removeSync(join(dir, "written-by-config.txt"));
+    const seed = await runCli(["seed", "rows", "--cwd", dir], elsewhere);
+    assertEquals(seed.code, 0, seed.err);
+    assertStringIncludes(seed.out, "SEED_OK:rows");
+    assertEquals([...Deno.readDirSync(elsewhere)], []);
+    assertEquals(Deno.readTextFileSync(join(dir, "written-by-config.txt")), "x");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(elsewhere, { recursive: true });
   }
 });

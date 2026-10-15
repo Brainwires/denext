@@ -20,6 +20,10 @@ import { overscrollStyle, scrollToStart } from "../src/react-native/scroll-view.
 import { fitFontScale } from "../src/react-native/text-fit.ts";
 import { endRipple, rippleGeometry, startRipple } from "../src/react-native/pressable.ts";
 import { resetBackForTesting } from "../src/mobile/back-handler.ts";
+import {
+  createTouchableNativeFeedback,
+  rippleConfigOf,
+} from "../src/react-native/touchable-native-feedback.ts";
 import { fakePlugin, inShell, settle } from "./helpers/mobile-fakes.ts";
 
 // ---- Modal -------------------------------------------------------------------------------------
@@ -262,6 +266,77 @@ Deno.test("withPressableRipple: a ripple layer in the Android shell only", async
     assertEquals((layer.props.style as Record<string, unknown>).overflow, "visible");
     (got.onPressIn as (e: unknown) => void)({ nativeEvent: {} });
     (got.onPressOut as (e: unknown) => void)({});
+    assertEquals(pressed, ["in", "out"], "the app's handlers still run");
+    await screen.unmount();
+  });
+});
+
+// ---- TouchableNativeFeedback's background ripple ------------------------------------------------
+
+Deno.test("rippleConfigOf: Ripple's colour, the theme highlight by default, borderless kinds", () => {
+  const TNF = createTouchableNativeFeedback(() => ({}));
+  assertEquals(rippleConfigOf(TNF.Ripple("#f00", true, 30)), {
+    color: "#f00",
+    borderless: true,
+    radius: 30,
+  });
+  assertEquals(rippleConfigOf(undefined), {
+    color: undefined,
+    borderless: false,
+    radius: undefined,
+  });
+  assertEquals(rippleConfigOf(TNF.SelectableBackgroundBorderless(12)), {
+    color: undefined,
+    borderless: true,
+    radius: 12,
+  });
+});
+
+/** The elements under `node` with tag `tag` (the test DOM has no selectors). */
+// deno-lint-ignore no-explicit-any
+function byTag(node: any, tag: string): any[] {
+  const out = [];
+  for (const child of node.childNodes ?? []) {
+    if (String(child.tagName ?? "").toLowerCase() === tag) out.push(child);
+    out.push(...byTag(child, tag));
+  }
+  return out;
+}
+
+Deno.test("TouchableNativeFeedback: the Android shell draws background's ripple in the child", async () => {
+  const configs: Record<string, unknown>[] = [];
+  const TNF = createTouchableNativeFeedback((_host, config) => {
+    configs.push(config);
+    return {};
+  });
+  const pressed: string[] = [];
+  const ui = h(TNF as never, {
+    background: TNF.Ripple("#f00", false),
+    onPressIn: () => pressed.push("in"),
+    onPressOut: () => pressed.push("out"),
+  }, h("div", { id: "child" }, "Row"));
+  const web = await render(ui);
+  assertEquals(byTag(web.container, "span").length, 0, "a browser draws none");
+  await web.unmount();
+  await inShell("android", {}, async () => {
+    const screen = await render(ui);
+    const child = byTag(screen.container, "div")[0];
+    assertEquals(child.getAttribute("id"), "child", "still no wrapper view");
+    const [layer] = byTag(child, "span");
+    assert(layer, "the ripple layer is appended to the child");
+    assert(String(layer.getAttribute("style")).includes("hidden"), "bounded: clipped");
+    // The test DOM has no CSSOM: the circle is a plain stand-in.
+    const drawn: { style: Record<string, string>; removed?: boolean }[] = [];
+    Object.defineProperty(layer, "ownerDocument", {
+      value: { createElement: () => ({ style: {}, remove() {} }) },
+    });
+    layer.appendChild = (n: { style: Record<string, string> }) => drawn.push(n);
+    layer.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 40 });
+    const config = configs.at(-1)!;
+    (config.onPressStart as (e: unknown) => void)({ nativeEvent: { clientX: 10, clientY: 20 } });
+    assertEquals(drawn.length, 1, "a circle grows from the press");
+    assertEquals(drawn[0].style.backgroundColor, "#f00");
+    (config.onPressEnd as (e: unknown) => void)({});
     assertEquals(pressed, ["in", "out"], "the app's handlers still run");
     await screen.unmount();
   });

@@ -6,6 +6,7 @@
 // watcher, and the request handler over the `createApp` handler.
 
 import { runPluginTeardown } from "../plugin/mod.ts";
+import { stopServices } from "../server/service-loader.ts";
 import { configuredDesktopAppOrigin } from "../server/config.ts";
 import { setImageRuntimeConfig } from "../runtime/image.ts";
 import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
@@ -61,7 +62,8 @@ function serveDev(st: DevState, handler: (request: Request) => Promise<Response>
     removeDevInfo(paths.outDir);
   };
   options.signal?.addEventListener("abort", cleanup, { once: true });
-  server.finished.then(() => {
+  // The supervised services stop first (reverse start order), then the plugin teardowns.
+  server.finished.then(() => stopServices()).then(() => {
     runPluginTeardown();
     cleanup();
   });

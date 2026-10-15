@@ -140,6 +140,13 @@ jobs:
           restore-keys: ${{ runner.os }}-deno-
 
       - name: Integration tests
+        env:
+          # tests/integration/cli-compiled-binary.test.ts: compile the CLI and run a plugin
+          # project's verbs through the binary (the pinned child fetches denext from JSR).
+          DENEXT_TEST_COMPILED_CLI: "1"
+          # tests/integration/cli-remote-offline.test.ts: a CLI served over HTTP (as from JSR)
+          # caches every verb for offline use (a fresh DENO_DIR: it downloads their dependencies).
+          DENEXT_TEST_REMOTE_CLI: "1"
         run: deno task test:integration
 
   # Real-npm next-compat compatibility tests: SSR of Radix / recharts / react-hook-
@@ -178,11 +185,54 @@ jobs:
 
   # Coverage floor. Re-runs the unit + integration suites with coverage and fails
   # if line/branch/function coverage drops below the threshold in `test:coverage`
-  # (currently 80%; baseline ~84-86%). Parallel with the other jobs.
+  # (currently 85%). Parallel with the other jobs. The backend-integration suites run here too,
+  # against the same service containers as the `backend-integration` job, so the code only a real
+  # Postgres / PostGIS / MinIO reaches counts toward the gate instead of being ignored.
   coverage:
     runs-on: ubuntu-latest
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: pw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+      postgis:
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_PASSWORD: pw
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+      minio:
+        image: bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20
+        env:
+          MINIO_ROOT_USER: dnxtest
+          MINIO_ROOT_PASSWORD: dnxtest-secret
+        ports:
+          - 9100:9000
+    env:
+      # The backend-integration job's service env (see there); `scripts/test-run.ts --coverage`
+      # runs every pass on denext's Deno toolchain, which has the `Deno.SQL` these suites need.
+      DENEXT_TEST_POSTGRES_URL: postgres://postgres:pw@127.0.0.1:5432/postgres
+      DENEXT_TEST_POSTGIS_URL: postgres://postgres:pw@127.0.0.1:5433/postgres
+      DENEXT_TEST_POSTGRES_JS: "1"
+      DENEXT_TEST_POSTGRES_LOGICAL: "1"
+      DENEXT_TEST_SUPABASE_JS: "1"
+      DENEXT_TEST_S3_ENDPOINT: http://127.0.0.1:9100
+      DENEXT_TEST_S3_ACCESS_KEY: dnxtest
+      DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -206,8 +256,50 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Wait for MinIO
+        run: |
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:9100/minio/health/live && exit 0
+            sleep 1
+          done
+          exit 1
+
+      - name: Enable logical decoding on the Postgres service (wal_level = logical)
+        run: |
+          pg=${{ job.services.postgres.id }}
+          docker exec "$pg" psql -U postgres -c "alter system set wal_level = logical"
+          docker restart "$pg"
+          for i in $(seq 1 60); do
+            docker exec "$pg" pg_isready -U postgres && break
+            sleep 1
+          done
+          docker exec "$pg" psql -U postgres -tAc "show wal_level" | grep -qx logical
+
       - name: Coverage (fails under the threshold)
-        run: deno task test:coverage
+        env:
+          NO_COLOR: "1" # plain test names for the grep below
+        run: |
+          set -o pipefail
+          deno task test:coverage 2>&1 | tee "$RUNNER_TEMP/coverage.txt"
+
+      - name: The backend-integration suites ran under coverage (none ignored)
+        run: |
+          # The files the backend-integration job runs: under coverage, none of their tests may be
+          # ignored either (an ignored one means its service env is not wired into this job).
+          files='backend-rls-integration|backend-rest-integration|backend-rest-supabase-integration|backend-realtime-integration|backend-supabase-realtime-integration|backend-auth-integration|db-admin-integration|db-migrations-integration|postgres-integration|backend-s3-minio|backend-supabase-functions|backend-storage-supabase-integration|backend-storage-rls-integration|backend-supabase-auth|backend-supabase-auth-integration|backend-platform-integration|backend-auth-replicas-integration|backend-rest-reload-integration|doctor-backend'
+          awk -v files="^[.]/tests/($files)[.]test[.]ts$" '
+            /^running [0-9]+ tests? from / { current = $NF; next }
+            current ~ files && /\.\.\. ignored/ { print current ": " $0; bad = 1 }
+            current ~ files && /\.\.\. ok/ { ran[current] = 1 }
+            END {
+              n = 0; for (f in ran) n++
+              if (n < 19) { print "only " n " of 19 backend-integration files ran"; bad = 1 }
+              exit bad
+            }
+          ' "$RUNNER_TEMP/coverage.txt" || {
+            echo "::error::a backend integration suite was ignored or missing under coverage"
+            exit 1
+          }
 
   # @denext/backend and denext's Postgres stores against REAL services: Postgres (17, the major
   # Supabase runs) and MinIO (S3) as service containers. The suites connect as
@@ -266,9 +358,9 @@ jobs:
       DENEXT_TEST_S3_ACCESS_KEY: dnxtest
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
-      DENEXT_DENO_RELEASE: denext-runtime-v2.9.7-denext.17
-      DENEXT_DENO_ZIP: deno-cli-2.9.7-denext.17-x86_64-unknown-linux-gnu.zip
-      DENEXT_DENO_SHA256: 8bc6da66a864858c6a39a5571f6bf849ae2a4099c8803c3e217839760f626e0f
+      DENEXT_DENO_RELEASE: denext-runtime-v2.9.7-denext.19
+      DENEXT_DENO_ZIP: deno-cli-2.9.7-denext.19-x86_64-unknown-linux-gnu.zip
+      DENEXT_DENO_SHA256: e842990b36320ae7835ff72d052b1d69e1d3dc3bbb9196042440332bb2b373bd
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -331,7 +423,10 @@ jobs:
             tests/backend-storage-rls-integration.test.ts \
             tests/backend-supabase-auth.test.ts \
             tests/backend-supabase-auth-integration.test.ts \
-            tests/backend-platform-integration.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
+            tests/backend-platform-integration.test.ts \
+            tests/backend-auth-replicas-integration.test.ts \
+            tests/backend-rest-reload-integration.test.ts \
+            tests/doctor-backend.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
 
       - name: No test was ignored (each service was really reached)
         run: |

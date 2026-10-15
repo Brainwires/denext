@@ -8,20 +8,25 @@ lead: One denext process is self-contained by default — its cache, sessions, r
 
 | Component                              | Default                                                               | Across two instances                                                               | Make it shared with                                                                 |
 | -------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Data + ISR page cache                  | `node:sqlite` file, `.denext/cache.db` (memory if unwritable)         | `revalidateTag` on A does **not** purge B; each node renders and caches on its own | `cache.store` → your `CacheStore`                                                   |
-| Auth sessions (`strategy: "database"`) | none until you choose (`inMemorySessionStore` / `sqliteSessionStore`) | a session created on A is unknown to B; a revoke on A does not reach B             | `sessionStore` → your `SessionStore`                                                |
-| Rate-limit counters                    | `inMemoryRateLimitStore()` per process                                | every limit is multiplied by the replica count                                     | `store` → your `RateLimitStore`                                                     |
-| Users, accounts, credentials           | `sqliteAuthAdapter` = one SQLite file                                 | single node (or a shared volume)                                                   | `adapter` → your `AuthAdapter`                                                      |
+| Data + ISR page cache                  | `node:sqlite` file, `.denext/cache.db` (memory if unwritable)         | `revalidateTag` on A does **not** purge B; each node renders and caches on its own | `cache.store` → `postgresCacheStore()` or your `CacheStore`                         |
+| Auth sessions (`strategy: "database"`) | none until you choose (`inMemorySessionStore` / `sqliteSessionStore`) | a session created on A is unknown to B; a revoke on A does not reach B             | `sessionStore` → `postgresSessionStore()` or your `SessionStore`                    |
+| Rate-limit counters                    | `inMemoryRateLimitStore()` per process                                | every limit is multiplied by the replica count                                     | `store` → `postgresRateLimitStore()` or your `RateLimitStore`                       |
+| Users, accounts, credentials           | `sqliteAuthAdapter` = one SQLite file                                 | single node (or a shared volume)                                                   | `adapter` → `postgresAuthAdapter()` / `backendAuthAdapter()` or your `AuthAdapter`  |
 | Live channels + tag pushes             | in-memory loopback transport                                          | a `publish` on A reaches A's sockets only                                          | `setChannelTransport(t)` → `broadcastChannelTransport()` or your `ChannelTransport` |
 | Scheduled jobs (userland)              | minute-tick scheduler in every process                                | **fires on every replica**                                                         | one designated instance, or `Deno.cron`                                             |
-| Job run history                        | `.denext/jobs.db` per process                                         | each node sees its own fragment                                                    | (per node by design)                                                                |
+| Job run history                        | `.denext/jobs.db` per process                                         | each node sees its own fragment                                                    | `jobs: { history: { store: postgresJobHistoryStore() } }` or your `JobHistoryStore` |
+| Connection and concurrency caps        | per process (`maxConcurrency`, `live.limits`, `@denext/graphql`)      | each cap is multiplied by the replica count                                        | (per process by design; size each to one instance, and cap the total at the edge)   |
 
 Signed-cookie sessions (`getSession()` and auth's default `strategy: "cookie"`)
 are the one thing on the list that is already replica-safe: the whole payload is
-in the cookie, verified with the shared `SESSION_SECRET`. No Redis, Postgres or
-KV implementation of any interface ships with denext today — that is a
-[roadmap item](https://github.com/Brainwires/denext/blob/main/ROADMAP.md); each
-interface is small enough that the rest of this page can show the shape.
+in the cookie, verified with the shared `SESSION_SECRET`. For every store
+interface, denext ships a Postgres implementation in `denext/server`
+(`postgresCacheStore`, `postgresSessionStore`, `postgresRateLimitStore`,
+`postgresAuthAdapter`, `postgresJobHistoryStore`; each takes `{ sql | url,
+schema?, directUrl? }` and creates its tables on first use) — see
+[Databases › Postgres](/docs/database#postgres). No Redis or KV implementation
+ships, and no Live `ChannelTransport` beyond `BroadcastChannel`; each interface
+is small enough that the rest of this page can show the shape.
 
 ## The cache: `CacheStore`
 
@@ -125,6 +130,9 @@ export const redisCacheStore: CacheStore = {
 // denext.config.ts
 import { redisCacheStore } from "./lib/redis-cache.ts";
 export default { cache: { store: redisCacheStore } };
+// or the shipped Postgres store:
+// import { postgresCacheStore } from "denext/server";
+// export default { cache: { store: postgresCacheStore({ url: Deno.env.get("DATABASE_URL") }) } };
 ```
 
 ### Page keys and builds
@@ -285,7 +293,40 @@ Make handlers **idempotent** regardless — a retry, a manual `denext job` durin
 a scheduled run on another node, or a redeploy mid-run all produce a second
 execution. Run history (`jobs: { history: true }`) is a per-node SQLite file,
 so the Project UI's Cron page shows the runs of whichever node's project
-directory it reads. See [Scheduled jobs](/docs/jobs).
+directory it reads; `jobs: { history: { store: postgresJobHistoryStore({ url }) } }`
+shares one history across replicas. See [Scheduled jobs](/docs/jobs).
+
+## Postgres behind replicas
+
+When every replica shares one Postgres:
+
+- **Schema at boot.** Each store (and `@denext/backend`) applies its migrations
+  under a transaction-scoped advisory lock, so replicas starting together take
+  turns and the one that waited skips what the other applied. Where a release
+  step applies the schema instead, set `DENEXT_BOOT_DDL=off` on the replicas:
+  they then only check that every migration is recorded and refuse to start
+  with `boot_schema_missing` otherwise. See
+  [Schema at startup](/docs/database#schema-at-startup).
+- **Connections.** Each instance holds up to `max` pooled connections plus one
+  for `LISTEN` when something listens; keep `instances × (max + 1)` under the
+  server's `max_connections`.
+- **A transaction-mode pooler** (PgBouncer, Supavisor) breaks `LISTEN`, reserved
+  connections and session-level locks. Give denext a direct connection with
+  `directUrl` (every store takes it; `backend({ postgres })` reads
+  `DATABASE_DIRECT_URL`): queries keep going through the pooler, while
+  `LISTEN`, reserved connections and every migration and its lock use the
+  direct one. See
+  [Pool sizing, timeouts and PgBouncer](/docs/database#pool-sizing-timeouts-and-pgbouncer).
+
+## Caps are per process
+
+`maxConcurrency`, Live's `live.limits` (`maxConnections`,
+`maxConnectionsPerIp`, subscriptions, rooms) and `@denext/graphql`'s
+subscription connection caps (which default to Live's) are counted inside one
+process. Three replicas each allowing 64 connections per address allow 192 in
+total. Size each cap to what one instance can carry, and put the cluster-wide
+ceiling at the edge (see
+[Put a concurrency ceiling in front of denext](/docs/deploy#1-put-a-concurrency-ceiling-in-front-of-denext-required)).
 
 ## What does not need anything
 

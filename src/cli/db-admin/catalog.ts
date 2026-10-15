@@ -29,7 +29,7 @@ const SUMMARY_COLUMNS = `n.nspname AS schema, c.relname AS name, c.relkind::text
   EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary)::text AS has_pk`;
 
 /** The schemas never listed: Postgres's own. */
-const USER_SCHEMAS = `n.nspname NOT IN ('pg_catalog', 'information_schema')
+export const USER_SCHEMAS = `n.nspname NOT IN ('pg_catalog', 'information_schema')
   AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp%'`;
 
 /** A text column as a string, or `null`. */

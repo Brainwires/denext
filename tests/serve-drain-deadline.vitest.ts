@@ -5,7 +5,7 @@
 // server (`serveWithPortFallback`) is tests/serve-utils.test.ts.
 
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { installDrainDeadline } from "../src/server/serve-utils.ts";
+import { installDrainDeadline, installExitDeadline } from "../src/server/serve-utils.ts";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -75,4 +75,38 @@ it("drainMs <= 0 (or NaN) waits indefinitely: nothing is armed", async () => {
   }
   await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
   expect(onTimeout).not.toHaveBeenCalled();
+});
+
+// ---- installExitDeadline: the process outliving its shutdown -------------------------------
+
+it("exit deadline: once drained and torn down, exits at the deadline for an open handle", async () => {
+  const onLinger = vi.fn();
+  installExitDeadline(Promise.resolve(), Promise.resolve(), 20, onLinger);
+  await vi.advanceTimersByTimeAsync(19);
+  expect(onLinger).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(onLinger).toHaveBeenCalledWith("handles");
+  expect(onLinger).toHaveBeenCalledTimes(1);
+});
+
+it("exit deadline: a teardown still running at the deadline is named", async () => {
+  const onLinger = vi.fn();
+  installExitDeadline(Promise.resolve(), new Promise(() => {}), 20, onLinger);
+  await vi.advanceTimersByTimeAsync(20);
+  expect(onLinger).toHaveBeenCalledWith("teardown");
+});
+
+it("exit deadline: still draining is the drain deadline's job, not this one's", async () => {
+  const onLinger = vi.fn();
+  installExitDeadline(new Promise(() => {}), Promise.resolve(), 20, onLinger);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(onLinger).not.toHaveBeenCalled();
+});
+
+it("exit deadline: drainMs <= 0 waits forever; cancel stops it", async () => {
+  const onLinger = vi.fn();
+  installExitDeadline(Promise.resolve(), Promise.resolve(), 0, onLinger);
+  installExitDeadline(Promise.resolve(), Promise.resolve(), 20, onLinger)();
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(onLinger).not.toHaveBeenCalled();
 });

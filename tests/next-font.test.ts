@@ -16,6 +16,7 @@ import { selfHostFonts } from "../src/build/self-host-fonts.ts";
 import { staticExport } from "../src/build/export.ts";
 import { join } from "@std/path";
 import { walk } from "@std/fs";
+import { removeTempDir } from "./helpers/temp.ts";
 
 Deno.test("localFont emits @font-face + a class, returns a handle", () => {
   resetFonts();
@@ -172,15 +173,17 @@ Deno.test("selfHostFonts is best-effort: a fetch failure is skipped, never throw
   globalThis.fetch = () => Promise.reject(new Error("offline"));
   const warn = console.warn;
   console.warn = () => {};
+  const dir = await Deno.makeTempDir({ prefix: "denext-fonts-" });
   try {
     const manifest = await selfHostFonts(
       ["https://fonts.googleapis.com/css2?family=Inter"],
-      await Deno.makeTempDir({ prefix: "denext-fonts-" }),
+      dir,
     );
     assertEquals(manifest, {}); // nothing self-hosted → all fall back to runtime link
   } finally {
     globalThis.fetch = origFetch;
     console.warn = warn;
+    await removeTempDir(dir);
   }
 });
 

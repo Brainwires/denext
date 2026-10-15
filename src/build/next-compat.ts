@@ -30,6 +30,13 @@ import {
 import { denoLoaderPlugins } from "./deno-loader-plugins.ts";
 import { loadDenextPatchSet, patchPlugin } from "./patches.ts";
 import {
+  cachedRuntime,
+  type PrebuiltRuntime,
+  runtimeCacheKey,
+  stampInputs,
+  writeRuntime,
+} from "./runtime-prebuild-cache.ts";
+import {
   EXPO_RN_BRIDGE,
   expoRuntimeEntries,
   expoRuntimeFiles,
@@ -105,6 +112,7 @@ export const REACT_ALIASES: Record<string, string> = {
   "react-dom/server": "react-dom-server.js",
   "react-dom/server.browser": "react-dom-server.js",
   "react-dom/server.edge": "react-dom-server.js",
+  "react-dom/static": "react-dom-server.js",
   "react-dom/test-utils": "react-dom-test-utils.js",
   "react-is": "react-is.js",
   "react/jsx-runtime": "jsx-runtime.js",
@@ -154,6 +162,8 @@ export const NEXT_ALIASES: Record<string, string> = {
   "next/compat/router": "next-compat-router.js",
   "next/router": "next-router.js",
   "next/form": "next-form.js",
+  // The Pages Router `Head` (a library written for both routers imports it); LIBRARY_ONLY_NEXT.
+  "next/head": "next-head.js",
   "next/font/google": "next-font-google.js",
   "next/font/local": "next-font-local.js",
   // Server-facing surfaces. Safe to include now that the OG/image optimizers
@@ -168,7 +178,11 @@ export const NEXT_ALIASES: Record<string, string> = {
 };
 
 /** {@link NEXT_ALIASES} entries applied to imports from `node_modules` only. */
-const LIBRARY_ONLY_NEXT: ReadonlySet<string> = new Set(["next/router", "next/compat/router"]);
+const LIBRARY_ONLY_NEXT: ReadonlySet<string> = new Set([
+  "next/router",
+  "next/compat/router",
+  "next/head",
+]);
 
 /**
  * The `next/*` alias key for an import specifier as libraries actually write it. Packages
@@ -246,6 +260,8 @@ function coreRuntimeEntries(u: EntryUrl): Record<string, string> {
     "devtools": u("src/devtools.ts"),
     // `denext/feature` — the import survives the build-time fold of `feature()` calls.
     "feature": u("src/feature.ts"),
+    // `denext/result` — Result values + exhaustive match, usable from "use client" modules.
+    "result": u("src/result.ts"),
   };
 }
 
@@ -282,7 +298,7 @@ function compatRuntimeEntries(u: EntryUrl): Record<string, string> {
     "next-intl": u("src/compat/next-intl/index.ts"),
     "next-intl-navigation": u("src/compat/next-intl/navigation.ts"),
     "next-intl-routing": u("src/compat/next-intl/routing.ts"),
-    // `denext/next/head` (the bare `next/head` stays the Pages Router plugin's).
+    // `next/head` for libraries (the app's own stays the Pages Router plugin's).
     "next-head": u("src/compat/next/head.ts"),
     // The empty module behind the runtime-free subpaths (`denext/client-only`,
     // `denext/empty`, the type-only `denext/jsx-directives`).
@@ -385,7 +401,31 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
   // their imports resolve in either mode — the deno loader fetches remote framework sources.
   const rootUrl = options.frameworkRoot ?? frameworkRootUrl();
   const outDir = resolve(options.outDir);
-  await Deno.mkdir(outDir, { recursive: true });
+  const imports = await frameworkImports();
+  const depAge = minDepAgeConfig(undefined);
+  const patch = options.projectDir ? await loadDenextPatchSet(options.projectDir) : null;
+  const classComponents = !!options.classComponents;
+  // The runtime depends on none of the app's files, its target or its generation: a process
+  // builds each distinct one once (see runtime-prebuild-cache.ts).
+  const key = runtimeCacheKey({ rootUrl, classComponents, imports, depAge, patch });
+  const runtime = await cachedRuntime(
+    key,
+    () => buildRuntime({ rootUrl, outDir, imports, depAge, patch, classComponents }),
+  );
+  await writeRuntime(outDir, runtime);
+  return outDir;
+}
+
+/** One uncached prebuild (see {@link prebuildDenextRuntime}): its outputs and its local inputs. */
+async function buildRuntime(options: {
+  rootUrl: string;
+  outDir: string;
+  imports: Record<string, string>;
+  depAge: Record<string, unknown>;
+  patch: Awaited<ReturnType<typeof loadDenextPatchSet>>;
+  classComponents: boolean;
+}): Promise<PrebuiltRuntime> {
+  const { rootUrl, outDir } = options;
   // The deno loader needs a LOCAL config file for jsr:/npm resolution. Materialize denext's
   // own imports (@std, @cf-wasm, npm codecs — the runtime sources' deps) to a temp deno.json,
   // fetched from JSR when denext runs remotely. (The framework's relative self-imports resolve
@@ -393,12 +433,17 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
   const tmpConfig = await Deno.makeTempFile({ suffix: ".deno.json" });
   await Deno.writeTextFile(
     tmpConfig,
-    JSON.stringify({ imports: await frameworkImports(), ...minDepAgeConfig(undefined) }),
+    JSON.stringify({ imports: options.imports, ...options.depAge }),
   );
+  const cwd = Deno.cwd();
   try {
-    await esbuild.build({
+    const result = await esbuild.build({
       entryPoints: runtimeEntryPoints(rootUrl),
       outdir: outDir,
+      // Kept in memory: the cache writes them, here and wherever a later prebuild wants them.
+      write: false,
+      metafile: true,
+      absWorkingDir: cwd,
       bundle: true,
       splitting: true,
       format: "esm",
@@ -412,14 +457,20 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
       define: classDefine(options.classComponents),
       plugins: [
         expoBridgeExternalPlugin(),
-        ...(await frameworkPatchPlugins(options.projectDir, rootUrl)),
+        ...(options.patch ? [patchPlugin(options.patch, rootUrl)] : []),
         ...denoLoaderPlugins({ configPath: tmpConfig }),
       ],
     });
+    return {
+      files: (result.outputFiles ?? []).map((f) => ({
+        path: relative(outDir, f.path),
+        contents: f.contents,
+      })),
+      stamps: await stampInputs(Object.keys(result.metafile?.inputs ?? {}), cwd),
+    };
   } finally {
     await Deno.remove(tmpConfig).catch(() => {});
   }
-  return outDir;
 }
 
 /**
@@ -712,7 +763,7 @@ async function denextExternalPlugin(): Promise<esbuild.Plugin> {
  * Resolve a react-family specifier to its denext runtime file — **never** to the
  * real npm React (which would instantiate a second React alongside denext's). A
  * mapped specifier ({@link REACT_ALIASES}) resolves directly; an unmapped subpath
- * (e.g. `react/experimental`, `react-dom/static`) fails **safe** to the base
+ * (e.g. `react/experimental`) fails **safe** to the base
  * `react`/`react-dom` runtime and returns a `warning` so the gap surfaces at build
  * time rather than silently loading real React. Exported for testing.
  *
@@ -752,6 +803,7 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/client-runtime": "client-runtime.js",
   "denext/devtools": "devtools.js",
   "denext/feature": "feature.js",
+  "denext/result": "result.js",
   "denext/mobile": "mobile.js",
   // `denext/mobile/clerk` shares the one `denext/mobile` instance (its auth-session state).
   "denext/mobile/clerk": "mobile-clerk.js",
@@ -774,9 +826,7 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   // denext's own spellings of the React and Next.js compat modules (`denext/react`,
   // `denext/next/link`), which a migrated app's import map points `react` / `next/*` at.
   ...prefixedAliases(REACT_ALIASES),
-  "denext/react-dom/static": "react-dom-server.js",
   ...prefixedAliases(NEXT_ALIASES),
-  "denext/next/head": "next-head.js",
   "denext/jsx-runtime": "jsx-runtime.js",
   "denext/jsx-dev-runtime": "jsx-runtime.js",
   "denext/compiler-runtime": "compiler-runtime.js",
@@ -827,6 +877,8 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/build/next-mdx",
   "denext/desktop",
   "denext/desktop/updater",
+  // `denext build --compile`'s entry: the compiled binary's server, jobs and migrations.
+  "denext/standalone",
   // The shims' compatibility manifest: metadata for tooling (`denext migrate`, the docs).
   "denext/expo/manifest",
 ]);

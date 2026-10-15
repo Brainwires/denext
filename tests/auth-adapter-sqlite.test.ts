@@ -10,6 +10,7 @@ import { sqliteSessionStore } from "../src/server/auth/sqlite-session-store.ts";
 import type { AuthSession } from "../src/server/auth/types.ts";
 import type { SqliteDb, SqlValue } from "../src/server/sqlite-cache.ts";
 import { adapterContract } from "./helpers/auth-adapter-contract.ts";
+import { makeTempDirUntilExit } from "./helpers/temp.ts";
 
 const at = (offset: number): number => Math.floor(Date.now() / 1000) + offset;
 
@@ -21,7 +22,7 @@ const session = (userId: string, expiresAt = at(3600)): AuthSession => ({
 
 /** A fresh file in a fresh temp directory — one database per caller. */
 function tempDbPath(): string {
-  return `${Deno.makeTempDirSync({ prefix: "denext-auth-adapter-" })}/auth.db`;
+  return `${makeTempDirUntilExit("denext-auth-adapter-")}/auth.db`;
 }
 
 /** The column names a table has on disk, read with a connection of our own. */

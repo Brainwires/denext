@@ -21,6 +21,7 @@ import {
   type SidecarState,
   type SidecarStatus,
 } from "./sidecar.ts";
+import { backoffDelay } from "../runtime/restart.ts";
 
 /** One running instance of a sidecar, as a launcher hands it over. */
 export interface SidecarInstance {
@@ -138,7 +139,8 @@ type Outcome =
 
 /** The delay before retry number `attempt` (1-based): doubling from `base`, capped at `max`. */
 export function sidecarBackoffDelay(attempt: number, base: number, max: number): number {
-  return Math.min(max, base * 2 ** Math.max(0, attempt - 1));
+  // The shared restart backoff, without jitter: a sidecar's documented delays are exact.
+  return backoffDelay(attempt, { initialMs: base, maxMs: max, factor: 2, jitter: 0 });
 }
 
 /** Whether an end of a run counts as a failure (a crash) rather than a clean exit. */

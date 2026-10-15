@@ -61,8 +61,15 @@ export function parseStackFrame(stack: string | undefined, rootDir: string): Sta
  * @param line 1-based error line.
  * @param column 1-based error column (the caret position).
  * @param context Lines of context on each side (default 2).
+ * @param width How many columns the caret underlines (default 1: a single `^`).
  */
-export function codeframe(source: string, line: number, column: number, context = 2): string {
+export function codeframe(
+  source: string,
+  line: number,
+  column: number,
+  context = 2,
+  width = 1,
+): string {
   const lines = source.split("\n");
   if (line < 1 || line > lines.length) return "";
   const start = Math.max(1, line - context);
@@ -74,9 +81,9 @@ export function codeframe(source: string, line: number, column: number, context 
     const gutter = String(n).padStart(gutterW);
     out.push(`${marker} ${gutter} | ${lines[n - 1]}`);
     if (n === line && column >= 1) {
-      // Align the caret: marker(1) + space(1) + gutter + " | " = gutterW + 4 cols.
-      const pad = " ".repeat(gutterW + 4 + (column - 1));
-      out.push(`${pad}^`);
+      // Align the caret: marker(1) + space(1) + gutter + " | "(3) = gutterW + 5 cols.
+      const pad = " ".repeat(gutterW + 5 + (column - 1));
+      out.push(`${pad}${"^".repeat(Math.max(1, width))}`);
     }
   }
   return out.join("\n");

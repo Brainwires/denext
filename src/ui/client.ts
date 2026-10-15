@@ -151,6 +151,28 @@ function markDirty(target) {
 /** Snapshot every tracked form on the page (again after each panel swap). */
 function trackAll() {
   for (const form of document.querySelectorAll("form[data-dirty-track]")) track(form);
+  scheduleRefresh();
+}
+
+let refreshTimer = null;
+
+/**
+ * A panel that asks to be refreshed (an element with \`data-refresh\` seconds) is fetched again in
+ * place on that interval while it is on screen. With scripting off a \`<noscript>\` meta refresh in
+ * the document's head reloads the page instead; with it on, this swap replaces that.
+ */
+function scheduleRefresh() {
+  clearTimeout(refreshTimer);
+  const seconds = Number(document.querySelector("#panel [data-refresh]")?.getAttribute("data-refresh"));
+  if (!(seconds > 0)) return;
+  refreshTimer = setTimeout(() => {
+    if (document.visibilityState !== "visible") {
+      scheduleRefresh();
+      return;
+    }
+    show(location.pathname + location.search, false, true)
+      .catch((error) => console.error("denext ui:", error));
+  }, seconds * 1000);
 }
 
 /** The newest panel asked for, so a slow answer can never land on top of a newer one. */
@@ -522,8 +544,12 @@ const FRAMES = {
 
 trackAll();
 
-const events = new EventSource(EVENTS);
-events.addEventListener("message", (event) => {
+// The stack's dashboard serves no event stream (no page of it needs pushed progress), and says
+// so with \`<meta name="denext-events" content="off">\`: opening one there would retry a 404 forever.
+const events = document.querySelector('meta[name="denext-events"]')?.content === "off"
+  ? null
+  : new EventSource(EVENTS);
+events?.addEventListener("message", (event) => {
   let payload = null;
   try {
     payload = JSON.parse(event.data);

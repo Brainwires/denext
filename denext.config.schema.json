@@ -282,7 +282,7 @@
           "default": true
         },
         "domains": {
-          "description": "Serve a locale per **domain** without a URL prefix (Next's `i18n.domains`): `example.fr/about` renders French with no `/fr`. Each entry pins a host to a `defaultLocale` (served unprefixed on that host); a host's other `locales` (if listed) are still prefixed there. Locales not tied to any domain keep the normal prefix behavior on the primary host. Host resolution uses the request's trusted host (honoring `trustForwardedHeaders`), never a raw `Host` header on the render path.",
+          "description": "Serve a locale per **domain** without a URL prefix (Next's `i18n.domains`): `example.fr/about` renders French with no `/fr`. Each entry pins a host to a `defaultLocale` (served unprefixed on that host); a host's other `locales` (if listed) are still prefixed there. Locales not tied to any domain keep the normal prefix behavior on the primary host. The host is the request's (`X-Forwarded-Host` only under `trustForwardedHeaders`), compared against these domains only; `canonicalOrigin` does not override it (it governs absolute URLs).",
           "type": "array",
           "items": {
             "type": "object",
@@ -1373,6 +1373,13 @@
               "items": {
                 "type": "string"
               }
+            },
+            "allowedNavigationOrigins": {
+              "description": "Origins besides the app's own that the window itself may navigate to (exact origins, e.g. `[\"https://idp.example\"]` for an identity provider that signs in inside the window). Every other top-level navigation in the window (a link, `location = …`, a form, a server redirect, `window.open()`, `target=\"_blank\"`) never loads there: an `http(s)` destination opens in the user's browser instead. Subframes are not affected (the CSP's `frameSrc` decides). Default: none — only the app origin (`desktop.app.origin`, `app://localhost` when unset; the loopback origin under the stock runtime) loads in the window. Written to `.deno-desktop/app.json`; the guard needs denext's pinned runtime (2.9.7-denext.18 or later), which refuses an `app.json` with this key before then.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           }
         },
@@ -2078,6 +2085,62 @@
           "items": {
             "type": "string"
           }
+        }
+      }
+    },
+    "compile": {
+      "description": "`denext build --compile`: the single-executable server build (`deno compile` on denext's Deno toolchain). What the binary embeds beyond what denext finds itself, and the `--allow-*` baked into it beyond the least-privilege baseline. See https://denext.dev/docs/deployment-targets.a-single-binary-with-denext-build---compile.",
+      "type": "object",
+      "properties": {
+        "include": {
+          "description": "More project paths (files or directories, relative to the project) to embed: data files the app reads at run time, or a module only a computed `import()` reaches. denext already embeds `app/`, `.denext/` (the build), `public/`, `jobs/`, `services/`, `functions/`, `migrations/`, `supabase/migrations/` and the root config, middleware and instrumentation modules. `.env` files and SQLite databases are never embedded.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "permissions": {
+          "description": "`--allow-*` baked into the binary beyond the baseline (`--allow-net --allow-env --allow-read --allow-write=.denext`, the Docker image's), unioned per kind; `\"*\"` grants a kind unscoped. `\"all\"` bakes `--allow-all` instead — an explicit opt-in.",
+          "anyOf": [
+            {
+              "enum": [
+                "all"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "write": {
+                  "description": "`--allow-write` paths (relative ones resolve against the working directory at run time).",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "run": {
+                  "description": "`--allow-run` programs; `[\"*\"]` bakes an unscoped `--allow-run`.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "ffi": {
+                  "description": "`--allow-ffi` libraries; `[\"*\"]` bakes an unscoped `--allow-ffi` (a Node-API addon).",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "sys": {
+                  "description": "`--allow-sys` kinds (`hostname`, `osRelease`, …); `[\"*\"]` bakes an unscoped `--allow-sys`.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ]
         }
       }
     },

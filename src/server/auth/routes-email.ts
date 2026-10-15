@@ -332,7 +332,8 @@ export async function handleEmailRedeem(
     secret: query.get("token") ?? "",
     callbackUrl: query.get("callbackUrl") ?? undefined,
   };
-  if (provider.confirm) return await confirmPage(ctx, provider, input);
+  // Only an explicit `confirm: false` redeems on the GET (a hand-built provider confirms too).
+  if (provider.confirm !== false) return await confirmPage(ctx, provider, input);
   return await redeem(ctx, provider, adapter, input, false);
 }
 

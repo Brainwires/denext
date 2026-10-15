@@ -13,7 +13,7 @@ import type { SseClients } from "../build/sse.ts";
 import { serveWithPortFallback } from "../server/serve-utils.ts";
 import { jsonResponse, type UiContext } from "./html.ts";
 import { broadcast, closeAll } from "./events.ts";
-import { UI_ROUTES } from "./routes.ts";
+import { DASHBOARD_ROUTES, UI_ROUTES } from "./routes.ts";
 import { projectUsesDatabase } from "./database/detect.ts";
 import {
   applySecurityHeaders,
@@ -26,6 +26,19 @@ import {
   uiOriginAllowed,
   type UiSession,
 } from "./security.ts";
+import {
+  DASH_LOGIN_PATH,
+  DASH_LOGOUT_PATH,
+  DashboardGate,
+  dashboardLogin,
+  dashboardLogout,
+  type DashboardOptions,
+} from "./dashboard.ts";
+import { boundedRequest, UI_MAX_BODY_BYTES } from "./body.ts";
+import type { RelayConfig } from "./logs/source.ts";
+import type { AppTarget } from "./app-admin.ts";
+import { UI_CSS_PATH } from "./layout.ts";
+import { UI_CSS } from "./styles.ts";
 
 /** The port `denext ui` listens on unless `--port` says otherwise. */
 export const DEFAULT_UI_PORT = 5177;
@@ -57,6 +70,20 @@ export interface UiServerOptions {
   readonly signal?: AbortSignal;
   /** `--ui-dev`: watch `src/ui/**` and push a reload to every open page. */
   readonly uiDev?: boolean;
+  /**
+   * Serve as the stack's dashboard (`denext dashboard`): the Database section only, behind the
+   * dashboard password instead of a launch token.
+   */
+  readonly dashboard?: DashboardOptions;
+  /**
+   * The address to bind — the dashboard's alone (`--host`); `denext ui` always binds
+   * `127.0.0.1`.
+   */
+  readonly hostname?: string;
+  /** The stack's `dashboard-logs` relay, for the Logs page. */
+  readonly logs?: RelayConfig;
+  /** The running app the dashboard reads (realtime, functions, health). */
+  readonly app?: AppTarget;
 }
 
 /** A running UI server. */
@@ -91,19 +118,28 @@ export interface UiServer {
  */
 export async function startUiServer(options: UiServerOptions): Promise<UiServer> {
   const session = await createUiSession(options.token);
+  const gate = options.dashboard ? new DashboardGate(options.dashboard) : undefined;
   const events: SseClients = new Set();
   const controller = new AbortController();
   options.signal?.addEventListener("abort", () => controller.abort(), { once: true });
   controller.signal.addEventListener("abort", () => closeAll(events), { once: true });
-  const server = serveWithPortFallback({
-    port: options.port ?? DEFAULT_UI_PORT,
-    hostname: "127.0.0.1",
-    strict: options.strictPort === true,
-    signal: controller.signal,
-    onListen: () => {},
-  }, (request) => handleUiRequest(request, session, events, controller.signal, options));
+  const server = serveWithPortFallback(
+    {
+      port: options.port ?? DEFAULT_UI_PORT,
+      hostname: gate ? options.hostname ?? "127.0.0.1" : "127.0.0.1",
+      strict: options.strictPort === true,
+      signal: controller.signal,
+      onListen: () => {},
+    },
+    (request) =>
+      gate
+        ? guarded(() => dispatchDashboard(request, gate, events, controller.signal, options))
+        : handleUiRequest(request, session, events, controller.signal, options),
+  );
   const addr = server.addr as Deno.NetAddr;
-  const url = `http://${addr.hostname}:${addr.port}/?t=${session.token}`;
+  const url = gate
+    ? `http://127.0.0.1:${addr.port}${DASH_LOGIN_PATH}`
+    : `http://${addr.hostname}:${addr.port}/?t=${session.token}`;
   if (options.uiDev) watchUiSources(events, controller.signal);
   return {
     url,
@@ -124,19 +160,81 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
  * The detail goes to the server's own stderr — a local page is not the place to echo a stack, a
  * path, or whatever a filesystem error decided to say.
  */
-async function handleUiRequest(
+function handleUiRequest(
   request: Request,
   session: UiSession,
   events: SseClients,
   signal: AbortSignal,
   options: UiServerOptions,
 ): Promise<Response> {
+  return guarded(() => dispatch(request, session, events, signal, options));
+}
+
+/** Run one request's handling, a throw answered with the hardened `500`. */
+async function guarded(run: () => Promise<Response>): Promise<Response> {
   try {
-    return await dispatch(request, session, events, signal, options);
+    return await run();
   } catch (error) {
     console.error("denext ui:", error instanceof Error ? (error.stack ?? error.message) : error);
     return refuse(500, "internal error");
   }
+}
+
+/**
+ * The dashboard's chain: the host and origin check, the login page, the session, then the
+ * dashboard's own (smaller) route table — every mutation through the same CSRF gate as
+ * `denext ui`'s, against the dashboard's canonical origin.
+ */
+async function dispatchDashboard(
+  request: Request,
+  gate: DashboardGate,
+  events: SseClients,
+  signal: AbortSignal,
+  options: UiServerOptions,
+): Promise<Response> {
+  const url = new URL(request.url);
+  if (!uiOriginAllowed(request, url, (u) => gate.hostAllowed(u))) {
+    return refuse(403, "forbidden origin");
+  }
+  const open = await dashboardPublic(request, url, gate);
+  if (open) return applySecurityHeaders(open);
+  const session = gate.session(request);
+  if (session === null) return signInFirst(request, url);
+  const route = url.pathname === DASH_LOGOUT_PATH
+    ? { methods: ["POST"], handle: () => Promise.resolve(dashboardLogout(gate, session, url)) }
+    : DASHBOARD_ROUTES[url.pathname];
+  if (!route) return refuse(404, "not found");
+  if (!route.methods.includes(request.method)) return refuse(405, "method not allowed");
+  const ctx = await buildContext(request, url, session, events, signal, options, {
+    canonicalOrigin: gate.canonicalOrigin(url),
+  });
+  if ("refusal" in ctx) return ctx.refusal;
+  return applySecurityHeaders(await route.handle(request, ctx.ctx));
+}
+
+/**
+ * What the dashboard answers without a session: its stylesheet (the login page needs it) and
+ * the login page itself — else `null`.
+ */
+async function dashboardPublic(
+  request: Request,
+  url: URL,
+  gate: DashboardGate,
+): Promise<Response | null> {
+  if (url.pathname === UI_CSS_PATH) {
+    return new Response(UI_CSS, { headers: { "content-type": "text/css; charset=utf-8" } });
+  }
+  if (url.pathname === DASH_LOGIN_PATH) return await dashboardLogin(request, url, gate);
+  return null;
+}
+
+/** No session: a page load is sent to sign in; a machine client (and a script's fetch) gets a 401. */
+function signInFirst(request: Request, url: URL): Response {
+  const page = !isMutation(request.method) && !url.pathname.startsWith("/api/");
+  if (!page) return refuse(401, "unauthorized");
+  return applySecurityHeaders(
+    new Response(null, { status: 303, headers: { location: DASH_LOGIN_PATH } }),
+  );
 }
 
 /**
@@ -176,14 +274,16 @@ async function buildContext(
   events: SseClients,
   signal: AbortSignal,
   options: UiServerOptions,
+  dashboard?: { readonly canonicalOrigin: string },
 ): Promise<{ ctx: UiContext } | { refusal: Response }> {
   const mutating = isMutation(request.method);
   if (mutating && options.readOnly) return { refusal: refuse(403, "read-only") };
-  const { form, body } = mutating ? await readBody(request) : {};
-  if (mutating) {
-    const bad = checkCsrf(request, url, cookie, form);
-    if (bad) return { refusal: refuse(403, bad) };
-  }
+  const read = mutating ? await readBody(request) : {};
+  if (read === null) return { refusal: refuse(413, "request too large") };
+  const bad = mutating
+    ? checkCsrf(request, url, cookie, read.form, dashboard?.canonicalOrigin)
+    : null;
+  if (bad) return { refusal: refuse(403, bad) };
   return {
     ctx: {
       dir: options.dir,
@@ -194,21 +294,41 @@ async function buildContext(
       csrf: cookie.csrf,
       json: url.pathname.startsWith("/api/"),
       fragment: (request.headers.get("accept") ?? "").includes("text/html-fragment"),
-      form,
-      body,
+      form: read.form,
+      body: read.body,
       events,
       signal,
-      database: await projectUsesDatabase(options.dir),
+      ...await surfaceOf(options, dashboard !== undefined),
     },
   };
 }
 
-/** Decode a mutation's body once, so the CSRF gate and the feature share one read. */
-async function readBody(request: Request): Promise<{ form?: FormData; body?: unknown }> {
+/** Which surface a request is on: the Database-only dashboard, or the whole `denext ui`. */
+async function surfaceOf(
+  options: UiServerOptions,
+  dashboard: boolean,
+): Promise<Pick<UiContext, "database" | "dashboard" | "logs" | "app">> {
+  return {
+    database: dashboard || await projectUsesDatabase(options.dir),
+    ...(dashboard ? { dashboard: true } : {}),
+    ...(options.logs ? { logs: options.logs } : {}),
+    ...(options.app ? { app: options.app } : {}),
+  };
+}
+
+/**
+ * Decode a mutation's body once, so the CSRF gate and the feature share one read — or `null`
+ * when it is larger than {@linkcode UI_MAX_BODY_BYTES} (a `413`, before anything parses it).
+ */
+async function readBody(
+  request: Request,
+): Promise<{ form?: FormData; body?: unknown } | null> {
   const type = request.headers.get("content-type") ?? "";
+  const bounded = await boundedRequest(request, UI_MAX_BODY_BYTES);
+  if (bounded === null) return null;
   try {
-    if (/form-data|x-www-form-urlencoded/.test(type)) return { form: await request.formData() };
-    if (type.includes("json")) return { body: await request.json() };
+    if (/form-data|x-www-form-urlencoded/.test(type)) return { form: await bounded.formData() };
+    if (type.includes("json")) return { body: await bounded.json() };
   } catch { /* malformed body — the gates below see no token and refuse */ }
   return {};
 }

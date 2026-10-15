@@ -110,6 +110,18 @@ import { createPost } from "./actions.ts";
 const [state, action] = useActionState(createPost, idleActionState<{ id: string }>());
 // state.ok ? state.data.id : state.fieldErrors?.title   — both typed`}
       </Code>
+      <p>
+        The handler may also <em>return</em> the failure:{" "}
+        <code>return err("Taken", {'{ fieldErrors: { title: "Taken" } }'})</code> (<code>err</code>
+        {" "}
+        from <code>denext/result</code>) resolves to the same failed <code>ActionResult</code>{" "}
+        as the thrown <code>ActionValidationError</code>, unredacted, and the success type{" "}
+        <code>useActionState</code>{" "}
+        sees excludes it. The message must be a string and the details may carry only{" "}
+        <code>fieldErrors</code> (the <code>ActionErr</code> type from{" "}
+        <code>denext/server</code>); anything else is a compile error. See{" "}
+        <a href="/docs/errors-as-values">Errors as values</a>.
+      </p>
 
       <h2>Refreshing cached data</h2>
       <p>

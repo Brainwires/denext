@@ -173,6 +173,8 @@ export interface MiddlewareModule {
   default?: MiddlewareExport;
   /** The middleware export when exported as `middleware`. */
   middleware?: MiddlewareExport;
+  /** The middleware export when exported as `proxy` (Next.js 16's name, in `proxy.ts`). */
+  proxy?: MiddlewareExport;
   /** Optional matcher configuration gating the whole chain. */
   config?: MiddlewareConfig;
 }
@@ -480,11 +482,21 @@ function compiledMatcher(source: string): RegExp {
 }
 
 /** Normalize a module export into an ordered list of entries. */
-function toEntries(exp: MiddlewareExport): MiddlewareEntry[] {
-  const list = Array.isArray(exp) ? exp : [exp];
-  return list
-    .map((e) => (typeof e === "function" ? { handler: e } : e))
-    .filter((e): e is MiddlewareEntry => typeof e?.handler === "function");
+function toEntries(exp: unknown, file: string): MiddlewareEntry[] {
+  const list: unknown[] = Array.isArray(exp) ? exp : [exp];
+  const entries = list.map((e) => (typeof e === "function" ? { handler: e } : e));
+  const valid = (e: unknown): e is MiddlewareEntry =>
+    typeof (e as MiddlewareEntry | null)?.handler === "function";
+  if (entries.length > 0 && entries.every(valid)) return entries;
+  // Fail closed: a middleware file that exports no runnable handler would otherwise let every
+  // request it is meant to gate (an auth check, a redirect) through unchecked.
+  throw new Error(
+    `denext: ${file} must export a function as \`proxy\`, \`middleware\` or the default ` +
+      "export (or an array of functions / { handler, config } entries)" +
+      (exp === undefined ? ", and it exports none of them" : ", and that export is not one") +
+      ". The app does not start without it, since the requests it gates would go through " +
+      "unchecked.",
+  );
 }
 
 /**
@@ -643,13 +655,22 @@ export function composeMiddleware(
 
 /**
  * Build a runner from a loaded middleware module. The module may export a single
- * handler or an ordered array of handlers/entries (composed into one chain).
- * Returns null if the module exports no handler.
+ * handler or an ordered array of handlers/entries (composed into one chain), named `proxy`
+ * (Next.js 16's `proxy.ts`), `middleware`, or as the default export.
+ *
+ * @param mod The loaded `middleware.*` / `proxy.*` module.
+ * @param file The module's name for the error message (default `"the middleware file"`).
+ * @returns The runner.
+ * @throws When the module exports no handler under any of those names, or the export is not a
+ *   function, an array of them, or `{ handler, config }` entries — the app must not run with its
+ *   middleware silently skipped.
  */
-export function createMiddlewareRunner(mod: MiddlewareModule): MiddlewareRunner {
-  const exp = mod.middleware ?? mod.default;
-  if (exp === undefined) return null;
-  return composeMiddleware(toEntries(exp), mod.config);
+export function createMiddlewareRunner(
+  mod: MiddlewareModule,
+  file = "the middleware file",
+): MiddlewareRunner {
+  const exp = mod.proxy ?? mod.middleware ?? mod.default;
+  return composeMiddleware(toEntries(exp, file), mod.config);
 }
 
 /** Merge extra headers into a response (returning a new Response if needed). */

@@ -1,0 +1,7 @@
+// A typed client call whose body has the wrong shape.
+import { createApiClient } from "denext";
+import "./.denext/api.ts";
+
+const api = createApiClient();
+const input = { body: { title: 1 }, query: { page: 1 } };
+await api("/api/posts", "POST", input);

@@ -9,16 +9,34 @@ import {
   type DbEnvelope,
   type DbFailure,
   type DbFilter,
+  type DbReplies,
   type DbReply,
   type DbRequest,
+  type DbUserAction,
   maskSecrets,
 } from "../../ui/database/protocol.ts";
 import { DbSqlError } from "../../ui/database/sql.ts";
 import { type AdminConnection, ConnectionError } from "./connection.ts";
 import { migrate, migrationStatus } from "./migrations.ts";
-import { downloadObject, hasStorage, listBuckets, listObjects, removeObject } from "./storage.ts";
+import {
+  downloadObject,
+  hasStorage,
+  listBuckets,
+  listObjects,
+  removeObject,
+  uploadObject,
+} from "./storage.ts";
 import { AdminRefusal, browse, describe, overview, policies, readRow, write } from "./tables.ts";
-import { listUsers, userAction } from "./users.ts";
+import {
+  createUser,
+  type CreateUserInput,
+  getUser,
+  listUsers,
+  userAction,
+  type UserActionOptions,
+} from "./users.ts";
+import { runSql } from "./sql-editor.ts";
+import { realtimePublication, realtimeTables } from "./realtime.ts";
 
 /** What a request is answered with besides itself. */
 export interface HandleDeps {
@@ -108,6 +126,80 @@ function actorOf(value: unknown): DbActor | undefined {
   throw new AdminRefusal("bad_request", "bad actor");
 }
 
+/** The user actions the child knows. */
+const USER_ACTIONS: readonly DbUserAction[] = ["revoke", "delete", "ban", "unban", "password"];
+
+/** A user action, refused when unknown. */
+function userActionOf(value: unknown): DbUserAction {
+  if (!USER_ACTIONS.includes(value as DbUserAction)) {
+    throw new AdminRefusal("bad_request", `unknown user action ${JSON.stringify(value)}`);
+  }
+  return value as DbUserAction;
+}
+
+/** The SQL editor's mode (`read` unless `write` is asked for). */
+function sqlModeOf(value: unknown): "read" | "write" {
+  return value === "write" ? "write" : "read";
+}
+
+/** A string field, or `undefined`. */
+function optStr(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+/** A user action's options: a ban's length, a new password. */
+function userActionOptions(r: Record<string, unknown>): UserActionOptions {
+  return {
+    ...(typeof r.seconds === "number" ? { seconds: r.seconds } : {}),
+    ...(typeof r.password === "string" ? { password: r.password } : {}),
+  };
+}
+
+/** What creating a user is given (an empty password is none). */
+function createUserInput(r: Record<string, unknown>): CreateUserInput {
+  const password = optStr(r.password);
+  return {
+    email: str(r.email, "email"),
+    ...(optStr(r.name) !== undefined ? { name: optStr(r.name) } : {}),
+    ...(password ? { password } : {}),
+    verified: r.verified === true,
+  };
+}
+
+/** One operation on users or the SQL editor. */
+type AdminOp = (
+  r: Record<string, unknown>,
+  readOnly: boolean,
+  sql: AdminConnection["sql"],
+) => Promise<object>;
+
+/** The operations on users and the SQL editor (split out of {@linkcode dispatch}). */
+const ADMIN_OPS: Partial<Record<DbRequest["op"], AdminOp>> = {
+  users: (r, _readOnly, sql) => listUsers(sql, optStr(r.after), optStr(r.query)?.slice(0, 200)),
+  user: (r, _readOnly, sql) => getUser(sql, str(r.id, "id")),
+  userAction: (r, readOnly, sql) =>
+    userAction(
+      sql,
+      userActionOf(r.action),
+      str(r.id, "id"),
+      r.confirm === true,
+      readOnly,
+      userActionOptions(r),
+    ),
+  createUser: (r, readOnly, sql) => createUser(sql, createUserInput(r), readOnly),
+  sql: (r, readOnly, sql) => runSql(sql, str(r.text, "text"), sqlModeOf(r.mode), readOnly),
+  realtimeTables: (_r, _readOnly, sql) => realtimeTables(sql),
+  realtimePublication: (r, readOnly, sql) =>
+    realtimePublication(
+      sql,
+      str(r.schema, "schema"),
+      str(r.table, "table"),
+      r.action === "drop" ? "drop" : "add",
+      r.confirm === true,
+      readOnly,
+    ),
+};
+
 /** Run the request against an open connection. */
 async function dispatch(
   request: DbRequest,
@@ -167,29 +259,24 @@ async function dispatch(
       return { ok: true, ...await migrationStatus(sql, deps.projectDir) };
     case "migrate":
       return { ok: true, ...await migrate(sql, deps.projectDir, r.confirm === true, readOnly) };
-    case "users":
-      return {
-        ok: true,
-        ...await listUsers(
-          sql,
-          typeof r.after === "string" ? r.after : undefined,
-          typeof r.query === "string" ? r.query.slice(0, 200) : undefined,
-        ),
-      };
-    case "userAction":
-      return {
-        ok: true,
-        ...await userAction(
-          sql,
-          request.action === "delete" ? "delete" : "revoke",
-          str(r.id, "id"),
-          r.confirm === true,
-          readOnly,
-        ),
-      };
-    default:
+    default: {
+      const admin = ADMIN_OPS[request.op];
+      if (admin) return { ok: true, ...await admin(r, readOnly, sql) } as DbReply;
       throw new AdminRefusal("bad_request", `unknown operation ${JSON.stringify(r.op)}`);
+    }
   }
+}
+
+/** An upload's fields, handed to the plugin's own operation. */
+function uploadFrom(r: Record<string, unknown>, readOnly: boolean): Promise<DbReplies["upload"]> {
+  const contentType = optStr(r.contentType);
+  return uploadObject(
+    str(r.bucket, "bucket"),
+    str(r.key, "key"),
+    optStr(r.base64) ?? "",
+    { ...(contentType ? { contentType } : {}), upsert: r.upsert === true },
+    readOnly,
+  );
 }
 
 /** The storage operations, which need no database. */
@@ -219,6 +306,8 @@ async function storageOp(request: DbRequest, readOnly: boolean): Promise<DbReply
           readOnly,
         ),
       };
+    case "upload":
+      return { ok: true, ...await uploadFrom(r, readOnly) };
     default:
       return null;
   }

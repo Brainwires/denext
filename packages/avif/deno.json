@@ -1,6 +1,6 @@
 {
   "name": "@denext/avif",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "exports": "./mod.ts",
   "denext": { "catalog": { "kind": "library" } },
   "publish": {

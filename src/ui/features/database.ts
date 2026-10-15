@@ -18,34 +18,20 @@
 // catalog and quotes only names found there (`../database/sql.ts`). Values are `$n` parameters.
 
 import { join, relative } from "@std/path";
-import { decodeBase64 } from "@std/encoding/base64";
+import { decodeBase64, encodeBase64 } from "@std/encoding/base64";
 import { h } from "../../jsx/jsx-runtime.ts";
-import type { VNode, VNodeChildren } from "../../jsx/types.ts";
+import type { VNode } from "../../jsx/types.ts";
 import { migrationPlan } from "../../build/generate-ops.ts";
-import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
+import { jsonResponse, type UiContext, type UiHandler } from "../html.ts";
 import { FileDetails, Mono, Note, Out } from "../components.ts";
-import { renderView } from "../view.ts";
-import { cliInvocation, runDeno } from "../proc.ts";
-import { parseJsonDocument } from "../child-json.ts";
 import { OFFLINE_STATUS } from "../offline.ts";
-import { UI_CSRF_FIELD, uiSafeUnder } from "../security.ts";
-import {
-  type DbActor,
-  type DbEnvelope,
-  type DbErrorCode,
-  type DbFailure,
-  type DbReplies,
-  type DbReply,
-  type DbRequest,
-  type DbSuccess,
-  maskSecrets,
-} from "../database/protocol.ts";
+import { uiSafeUnder } from "../security.ts";
+import { DB_UPLOAD_MAX_BYTES, type DbActor, type DbUserAction } from "../database/protocol.ts";
 import { enableRlsMigration } from "../database/sql.ts";
 import {
   type BrowseState,
   BucketsView,
   ConfirmView,
-  DbPanel,
   Failure,
   href,
   MigrationsView,
@@ -53,138 +39,36 @@ import {
   OverviewView,
   PendingSql,
   PoliciesView,
-  readOnlyNote,
   RowsView,
   RowView,
   StatementBlock,
   TableView,
   UsersView,
-  type ViewCtx,
 } from "./database-views.ts";
+import { CreateUserForm, SqlView, UploadForm, UserView } from "./database-admin-views.ts";
+import { logsPanel } from "./logs.ts";
+import { presencePage, realtimePage, realtimeWrite } from "./realtime.ts";
+import { functionsPage } from "./functions.ts";
+import { healthPanel } from "./health.ts";
+import {
+  answer,
+  applying,
+  ask,
+  carried,
+  failure,
+  FAILURE_STATUS,
+  field,
+  page,
+  prefixed,
+  seeOther,
+  viewCtx,
+} from "./database-kit.ts";
+
+export { type DbChildRunner, setDbChildRunner } from "./database-kit.ts";
 
 /** Why `--offline` refuses the section: a database is a network connection. */
 const OFFLINE_DATABASE = "The database is unavailable — the UI runs --offline, and " +
   "reaching a database (even one on this machine) is a network connection.";
-
-/** How long one child may take, in ms (its queries carry their own statement timeout). */
-const CHILD_DEADLINE_MS = 60_000;
-
-/** Runs one envelope in the project. */
-export type DbChildRunner = (
-  envelope: DbEnvelope,
-  dir: string,
-  signal: AbortSignal,
-) => Promise<DbReply>;
-
-/** The last non-empty line of a child's stderr, masked. */
-function lastLine(text: string): string {
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  return maskSecrets(lines[lines.length - 1] ?? "");
-}
-
-/** The real runner: `denext db-admin --json` with the envelope on stdin. */
-async function defaultRunner(
-  envelope: DbEnvelope,
-  dir: string,
-  signal: AbortSignal,
-): Promise<DbReply> {
-  try {
-    const result = await runDeno([...cliInvocation({ dir }), "db-admin", "--json", "--cwd", dir], {
-      cwd: dir,
-      stdin: JSON.stringify(envelope),
-      signal,
-    });
-    const reply = parseJsonDocument<DbReply>(result.stdout);
-    if (reply && typeof reply.ok === "boolean") return reply;
-    const why = lastLine(result.stderr);
-    return failure("query_failed", why || "the database child printed no answer");
-  } catch (error) {
-    return failure(
-      "query_failed",
-      maskSecrets(error instanceof Error ? error.message : String(error)),
-    );
-  }
-}
-
-let runner: DbChildRunner = defaultRunner;
-
-/**
- * Swap the child runner (tests answer in-process).
- *
- * @internal
- * @param next The runner.
- * @returns The runner installed before.
- */
-export function setDbChildRunner(next: DbChildRunner): DbChildRunner {
-  const previous = runner;
-  runner = next;
-  return previous;
-}
-
-/** A failure reply built on this side. */
-function failure(code: DbErrorCode, reason: string): DbFailure {
-  return { ok: false, code, reason };
-}
-
-/** Ask the child. */
-function ask<K extends keyof DbReplies>(ctx: UiContext, request: DbRequest): Promise<DbReply<K>> {
-  const signal = ctx.signal
-    ? AbortSignal.any([ctx.signal, AbortSignal.timeout(CHILD_DEADLINE_MS)])
-    : AbortSignal.timeout(CHILD_DEADLINE_MS);
-  return runner({ readOnly: ctx.readOnly, request }, ctx.dir, signal) as Promise<DbReply<K>>;
-}
-
-/** The HTTP status a failure answers the JSON twin with. */
-const FAILURE_STATUS: Record<DbErrorCode, number> = {
-  not_configured: 409,
-  unsupported: 501,
-  bad_request: 400,
-  read_only: 403,
-  not_found: 404,
-  query_failed: 502,
-};
-
-// ── responses ──────────────────────────────────────────────────────────────
-
-const panelResponse = panelResponder("Database", "/database");
-
-/** The view context. */
-function viewCtx(ctx: UiContext): ViewCtx {
-  return { csrf: ctx.csrf, readOnly: ctx.readOnly };
-}
-
-/** The panel around `children`, on `tab`. */
-function page(ctx: UiContext, tab: string, children: VNodeChildren, status = 200): Response {
-  const body = h(DbPanel, { tab }, readOnlyNote(viewCtx(ctx)), children);
-  return panelResponse(ctx, renderView(body), status);
-}
-
-/**
- * Answer a reply: JSON for the `/api` twin, else the view (a failure as a note — with a 200 for
- * a GET, so `ui.js` swaps it in rather than falling back to a full navigation).
- */
-function answer<K extends keyof DbReplies>(
-  ctx: UiContext,
-  tab: string,
-  reply: DbReply<K>,
-  view: (ok: DbSuccess<K>) => VNode,
-): Response {
-  if (ctx.json) return jsonResponse(reply, reply.ok ? 200 : FAILURE_STATUS[reply.code] ?? 500);
-  if (!reply.ok) {
-    return page(
-      ctx,
-      tab,
-      h(Failure, { failure: reply }),
-      ctx.method === "GET" ? 200 : FAILURE_STATUS[reply.code],
-    );
-  }
-  return page(ctx, tab, view(reply));
-}
-
-/** POST/redirect/GET after a write. */
-function seeOther(location: string): Response {
-  return new Response(null, { status: 303, headers: { location } });
-}
 
 /** What a finished write reports on the page it lands on (`?done=`). */
 const DONE: Record<string, string> = {
@@ -196,61 +80,17 @@ const DONE: Record<string, string> = {
   removed: "Deleted the object.",
   revoked: "Revoked the user's sessions.",
   "user-deleted": "Deleted the user.",
+  "user-created": "Created the user.",
+  banned: "Banned the user and ended every session.",
+  unbanned: "Lifted the ban.",
+  password: "Set the password and ended every session.",
+  uploaded: "Uploaded the object.",
 };
 
 /** The `?done=` note, when a write just landed here. */
 function doneNote(ctx: UiContext): VNode | null {
   const text = DONE[ctx.url.searchParams.get("done") ?? ""];
   return text ? h(Note, { tone: "ok" }, text) : null;
-}
-
-// ── request fields ─────────────────────────────────────────────────────────
-
-/** One submitted field: the form body, the JSON twin's body, else the query. */
-function field(ctx: UiContext, name: string): string {
-  const posted = ctx.form?.get(name);
-  if (typeof posted === "string") return posted;
-  const body = ctx.body as Record<string, unknown> | null | undefined;
-  const value = body && typeof body === "object" ? body[name] : undefined;
-  if (typeof value === "string") return value;
-  return ctx.url.searchParams.get(name) ?? "";
-}
-
-/** Every submitted field whose name starts with `prefix`, the prefix stripped. */
-function prefixed(ctx: UiContext, prefix: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  const add = (name: string, value: unknown) => {
-    if (name.startsWith(prefix) && typeof value === "string") {
-      out[name.slice(prefix.length)] = value;
-    }
-  };
-  if (ctx.form) { for (const [name, value] of ctx.form) add(name, value); }
-  else if (ctx.body && typeof ctx.body === "object") {
-    for (const [name, value] of Object.entries(ctx.body as Record<string, unknown>)) {
-      add(name, value);
-    }
-  } else for (const [name, value] of ctx.url.searchParams) add(name, value);
-  return out;
-}
-
-/** The fields to carry from a preview into its apply form (everything but CSRF and `op`). */
-function carried(ctx: UiContext): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (ctx.form) {
-    for (const [name, value] of ctx.form) {
-      if (typeof value === "string" && name !== "op" && name !== UI_CSRF_FIELD) out[name] = value;
-    }
-  } else if (ctx.body && typeof ctx.body === "object") {
-    for (const [name, value] of Object.entries(ctx.body as Record<string, unknown>)) {
-      if (typeof value === "string" && name !== "op" && name !== UI_CSRF_FIELD) out[name] = value;
-    }
-  }
-  return out;
-}
-
-/** Whether this POST runs (`op=apply`) rather than previews. */
-function applying(ctx: UiContext): boolean {
-  return field(ctx, "op") === "apply";
 }
 
 // ── Tables ─────────────────────────────────────────────────────────────────
@@ -433,6 +273,12 @@ async function policiesPage(ctx: UiContext): Promise<Response> {
   );
 }
 
+/** The dashboard's answer to a write into the project (it owns no project files). */
+function noProjectWrites(ctx: UiContext): Response {
+  const reason = "the dashboard does not write project files: add the migration in the project";
+  return answer(ctx, "/database/policies", failure("unsupported", reason), () => h("div", null));
+}
+
 /** A file name slug from a table name. */
 function slug(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) ||
@@ -569,7 +415,58 @@ async function storagePage(ctx: UiContext): Promise<Response> {
       null,
       doneNote(ctx),
       h(ObjectsView, { ctx: viewCtx(ctx), reply: ok, prefix, first: cursor === "" }),
+      h(UploadForm, { ctx: viewCtx(ctx), bucket: ok.bucket, prefix }),
     ));
+}
+
+/** The key an upload lands at: the field, with the file's name appended to a `…/` (or empty). */
+function uploadKey(key: string, file: File): string {
+  const name = file.name.split(/[\\/]/).pop() || "upload";
+  return key === "" || key.endsWith("/") ? `${key}${name}` : key;
+}
+
+/**
+ * `POST /database/storage/upload`: one file into a bucket, through the plugin's own operations
+ * (so the bucket's cap and type list apply). Runs on submit; an existing key is refused unless
+ * `upsert` is ticked.
+ */
+async function uploadWrite(ctx: UiContext): Promise<Response> {
+  const bucket = field(ctx, "bucket");
+  const file = ctx.form?.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return answer(
+      ctx,
+      "/database/storage",
+      failure("bad_request", "choose a file to upload"),
+      () => h("div", null),
+    );
+  }
+  if (file.size > DB_UPLOAD_MAX_BYTES) {
+    return answer(
+      ctx,
+      "/database/storage",
+      failure("bad_request", `the UI uploads at most ${DB_UPLOAD_MAX_BYTES} bytes`),
+      () => h("div", null),
+    );
+  }
+  const key = uploadKey(field(ctx, "key").trim(), file);
+  const reply = await ask<"upload">(ctx, {
+    op: "upload",
+    bucket,
+    key,
+    base64: encodeBase64(new Uint8Array(await file.arrayBuffer())),
+    ...(file.type ? { contentType: file.type } : {}),
+    upsert: field(ctx, "upsert") === "1",
+  });
+  if (reply.ok && !ctx.json) {
+    return seeOther(href("/database/storage", { bucket, done: "uploaded" }));
+  }
+  return answer(
+    ctx,
+    "/database/storage",
+    reply,
+    (ok) => h(Note, { tone: "ok" }, `Uploaded ${ok.key}.`),
+  );
 }
 
 /** `POST /database/storage`: preview or delete one object. */
@@ -640,28 +537,122 @@ async function usersPage(ctx: UiContext): Promise<Response> {
       null,
       doneNote(ctx),
       h(UsersView, { ctx: viewCtx(ctx), reply: ok, query, first: after === "" }),
+      ok.schema === null ? null : h(CreateUserForm, { ctx: viewCtx(ctx) }),
     ));
 }
 
-/** `POST /database/users`: preview or run revoking a user's sessions, or deleting the user. */
-async function userWrite(ctx: UiContext): Promise<Response> {
-  const action = field(ctx, "action") === "delete" ? "delete" : "revoke";
-  const id = field(ctx, "id");
-  const apply = applying(ctx);
-  const reply = await ask<"userAction">(ctx, { op: "userAction", action, id, confirm: apply });
-  if (apply && reply.ok && !ctx.json) {
-    return seeOther(`/database/users?done=${action === "delete" ? "user-deleted" : "revoked"}`);
+/** `GET /database/user`: one user, and every action on them. */
+async function userPage(ctx: UiContext): Promise<Response> {
+  const reply = await ask<"user">(ctx, { op: "user", id: field(ctx, "id") });
+  return answer(
+    ctx,
+    "/database/users",
+    reply,
+    (ok) => h("div", null, doneNote(ctx), h(UserView, { ctx: viewCtx(ctx), user: ok.user })),
+  );
+}
+
+/**
+ * `POST /database/users/create`: create a user. Runs on submit — the form may carry a
+ * password, which a preview would have to render back into the page.
+ */
+async function userCreate(ctx: UiContext): Promise<Response> {
+  const password = field(ctx, "password");
+  const name = field(ctx, "name").trim();
+  const reply = await ask<"createUser">(ctx, {
+    op: "createUser",
+    email: field(ctx, "email"),
+    ...(name ? { name } : {}),
+    ...(password ? { password } : {}),
+    verified: field(ctx, "verified") === "1",
+  });
+  if (reply.ok && !ctx.json) {
+    return seeOther(href("/database/user", { id: reply.id, done: "user-created" }));
   }
+  return answer(ctx, "/database/users", reply, () => h("div", null));
+}
+
+/** The user actions a form may post. */
+const USER_ACTIONS: readonly DbUserAction[] = ["revoke", "delete", "ban", "unban", "password"];
+
+/** What each user action's confirm page asks. */
+const USER_CONFIRM: Record<DbUserAction, { what: (id: string) => string; label: string }> = {
+  revoke: { what: (id) => `Revoke every session of ${id}?`, label: "Revoke sessions" },
+  delete: { what: (id) => `Delete user ${id}?`, label: "Delete user" },
+  ban: { what: (id) => `Ban ${id} and end every session?`, label: "Ban user" },
+  unban: { what: (id) => `Lift the ban on ${id}?`, label: "Unban user" },
+  password: { what: (id) => `Set the password of ${id}?`, label: "Set password" },
+};
+
+/** Where an applied user action lands. */
+function afterUserAction(action: DbUserAction, id: string): string {
+  if (action === "delete") return "/database/users?done=user-deleted";
+  if (action === "revoke") return "/database/users?done=revoked";
+  const done = action === "ban" ? "banned" : action === "unban" ? "unbanned" : "password";
+  return href("/database/user", { id, done });
+}
+
+/**
+ * `POST /database/users`: preview or run an action on one user — revoke their sessions, delete
+ * them, ban or unban them. Setting a password runs at once: its preview would have to carry the
+ * password back into the page.
+ */
+async function userWrite(ctx: UiContext): Promise<Response> {
+  const posted = field(ctx, "action");
+  const action = USER_ACTIONS.includes(posted as DbUserAction) ? posted as DbUserAction : "revoke";
+  const id = field(ctx, "id");
+  const password = action === "password";
+  const apply = password || applying(ctx);
+  const seconds = Number(field(ctx, "seconds"));
+  const reply = await ask<"userAction">(ctx, {
+    op: "userAction",
+    action,
+    id,
+    ...(action === "ban" ? { seconds } : {}),
+    ...(password ? { password: field(ctx, "password") } : {}),
+    confirm: apply,
+  });
+  if (apply && reply.ok && !ctx.json) return seeOther(afterUserAction(action, id));
+  const fields: Record<string, string> = { action, id };
+  if (action === "ban") fields.seconds = String(seconds);
   return answer(ctx, "/database/users", reply, (ok) =>
     h(ConfirmView, {
       ctx: viewCtx(ctx),
-      what: action === "delete" ? `Delete user ${id}?` : `Revoke every session of ${id}?`,
+      what: USER_CONFIRM[action].what(id),
       body: ok.statements.map((statement, index) => h(StatementBlock, { key: index, statement })),
       action: "/database/users",
-      fields: { action, id },
-      cancel: "/database/users",
-      label: action === "delete" ? "Delete user" : "Revoke sessions",
+      fields,
+      cancel: href("/database/user", { id }),
+      label: USER_CONFIRM[action].label,
     }));
+}
+
+// ── SQL ────────────────────────────────────────────────────────────────────
+
+/** `GET /database/sql`: the editor. */
+function sqlPage(ctx: UiContext): Promise<Response> {
+  return Promise.resolve(
+    page(ctx, "/database/sql", h(SqlView, { ctx: viewCtx(ctx), text: "", mode: "read" })),
+  );
+}
+
+/**
+ * `POST /database/sql`: run what was typed, and show its rows under the editor (the text kept).
+ * A failure is shown the same way, with a 200 so the page keeps the editor: a statement that
+ * fails is an answer, not a broken page.
+ */
+async function sqlRun(ctx: UiContext): Promise<Response> {
+  const text = field(ctx, "sql");
+  const mode = field(ctx, "mode") === "write" ? "write" : "read";
+  const reply = await ask<"sql">(ctx, { op: "sql", text, mode });
+  if (ctx.json) return jsonResponse(reply, reply.ok ? 200 : FAILURE_STATUS[reply.code] ?? 500);
+  const view = h(SqlView, {
+    ctx: viewCtx(ctx),
+    text,
+    mode,
+    ...(reply.ok ? { result: reply } : {}),
+  });
+  return page(ctx, "/database/sql", reply.ok ? view : [h(Failure, { failure: reply }), view]);
 }
 
 // ── the route table ────────────────────────────────────────────────────────
@@ -678,12 +669,28 @@ const PAGES: Record<string, DbRoute> = {
   "/database/table": { get: tablePage },
   "/database/rows": { get: rowsPage, post: rowWrite },
   "/database/row": { get: rowPage },
-  "/database/policies": { get: policiesPage, post: enableRls },
+  // The dashboard owns no project files, so it never writes a migration.
+  "/database/policies": {
+    get: policiesPage,
+    post: (ctx) => ctx.dashboard === true ? Promise.resolve(noProjectWrites(ctx)) : enableRls(ctx),
+  },
   "/database/migrations": { get: migrationsPage, post: migrateWrite },
   "/database/storage": { get: storagePage, post: storageWrite },
   "/database/storage/download": { get: download },
+  "/database/storage/upload": { get: storagePage, post: uploadWrite },
   "/database/users": { get: usersPage, post: userWrite },
+  "/database/users/create": { get: usersPage, post: userCreate },
+  "/database/user": { get: userPage },
+  "/database/sql": { get: sqlPage, post: sqlRun },
+  "/database/logs": { get: (ctx) => logsPanel(ctx) },
+  "/database/realtime": { get: realtimePage, post: realtimeWrite },
+  "/database/realtime/presence": { get: presencePage },
+  "/database/functions": { get: functionsPage },
+  "/database/health": { get: healthPanel },
 };
+
+/** Pages that reach neither a database nor the network (`--offline` keeps them). */
+const OFFLINE_PAGES = new Set(["/database/logs", "/database/functions", "/database/health"]);
 
 /** The section's paths and the methods each answers — what `routes.ts` registers. */
 export const DATABASE_PATHS: readonly { path: string; methods: readonly string[] }[] = Object
@@ -697,7 +704,7 @@ export const databasePanel: UiHandler = (_request: Request, ctx: UiContext): Pro
   const path = ctx.json ? ctx.url.pathname.slice("/api".length) : ctx.url.pathname;
   const route = PAGES[path];
   if (!route) return Promise.resolve(jsonResponse({ ok: false, reason: "not found" }, 404));
-  if (ctx.offline === true) {
+  if (ctx.offline === true && !OFFLINE_PAGES.has(path)) {
     if (ctx.json) {
       return Promise.resolve(jsonResponse({ ok: false, reason: OFFLINE_DATABASE }, OFFLINE_STATUS));
     }

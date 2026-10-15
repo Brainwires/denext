@@ -5,6 +5,17 @@ satori/resvg/`@cf-wasm/og` stack it vendors (see
 [README](./README.md#versioning)). Each entry records the upstream versions
 bundled.
 
+## 0.1.2
+
+- Security (GHSA-vcvr-r3jv-pc5j / CVE-2026-94545, the `next/og` advisory): satori's inline
+  `<svg>` serializer concatenated text children, attribute values and styles into the SVG it
+  hands resvg without escaping them, so a request value placed in an SVG `<title>`, attribute
+  or style could inject arbitrary SVG markup. The vendored bundle now checks every element and
+  attribute name against the XML `Name` production, escapes every attribute value and text
+  node, builds inline-SVG elements through the escaping element builder, and percent-encodes
+  `&` in the data URI. Applied by `scripts/og-harden-svg.ts` after bundling (same upstream
+  versions as 0.1.1).
+
 ## 0.1.1
 
 - No code change. Every property of the option / font interfaces is documented

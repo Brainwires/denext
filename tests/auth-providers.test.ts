@@ -500,14 +500,7 @@ Deno.test("apple: openid name email over response_mode=form_post; the email only
   assertEquals(p.profile({ tokens: {}, claims, callbackParams: { user: "[1]" } }).name, undefined);
 });
 
-Deno.test("microsoftEntra: the multi-tenant aliases are refused (template issuer can't be verified)", () => {
-  for (const tenant of ["common", "organizations", "consumers", "COMMON"]) {
-    assertThrows(
-      () => microsoftEntra({ ...CRED, tenant }),
-      TypeError,
-      "specific tenant",
-    );
-  }
+Deno.test("microsoftEntra: an unsafe tenant segment is refused (the aliases are multi-tenant, see auth-entra-multitenant)", () => {
   assertThrows(() => microsoftEntra({ ...CRED, tenant: "contoso.com/evil" }), TypeError);
   assertThrows(() => microsoftEntra({ ...CRED, tenant: "" }), TypeError);
 });

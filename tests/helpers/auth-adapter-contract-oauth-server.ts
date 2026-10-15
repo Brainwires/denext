@@ -95,6 +95,18 @@ export const OAUTH_SERVER_CASES: Record<string, Case> = {
     const byCode = await oauth.getOAuthAuthorizationByCode("code-1");
     assertEquals(byCode?.id, "a1");
     assertEquals(byCode?.status, "approved");
+    assertEquals(byCode?.ssoConsent, undefined, "not SSO-consented unless recorded");
+    await oauth.createOAuthAuthorization(authorization("a2", "c1"));
+    assertEquals(
+      await oauth.updateOAuthAuthorization("a2", {
+        userId: "u1",
+        status: "approved",
+        codeHash: "code-2",
+        ssoConsent: true,
+      }, { status: "pending" }),
+      true,
+    );
+    assertEquals((await oauth.getOAuthAuthorizationByCode("code-2"))?.ssoConsent, true);
     assertEquals(
       await oauth.updateOAuthAuthorization("a1", { status: "used", sessionId: "s1" }, {
         status: "approved",

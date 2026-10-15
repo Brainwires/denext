@@ -1,0 +1,12 @@
+error[denext/rules-of-hooks]: `useEffect` is called conditionally. Hooks must run in the same order on every render — call it at the top level. [denext/rules-of-hooks]
+    --> /app/lint-rules-of-hooks.tsx:8:5
+     | 
+>  8 |     useEffect(() => {
+     |     ^^^^^^^^^^^^^^^^^
+>  9 |       const t = setInterval(() => setNow(Date.now()), 1000);
+> 10 |       return () => clearInterval(t);
+> 11 |     }, []);
+     |     ^^^^^^
+
+Found 1 problem
+Checked 1 file

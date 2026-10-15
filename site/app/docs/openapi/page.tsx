@@ -31,9 +31,10 @@ export default {
         </a>{" "}
         now serves <code>GET /openapi.json</code> (the document, ETag'd) and <code>GET /docs</code>
         {" "}
-        (the reference page), and <code>denext build</code> writes <code>openapi.json</code>{" "}
-        into the output directory. Both endpoints are plugin request handlers, so an app page at
-        {" "}
+        (the reference page), <code>denext build</code> writes <code>openapi.json</code>{" "}
+        into the output directory, and <code>denext export</code>{" "}
+        publishes the document at its URL in the static site (the docs page renders per request, so
+        it is not exported). Both endpoints are plugin request handlers, so an app page at{" "}
         <code>/docs</code> always wins — the plugin can never shadow your routes.
       </p>
 
@@ -72,6 +73,34 @@ export default {
           is never an operation (denext derives it from <code>GET</code>).
         </li>
       </ul>
+
+      <h2>Security</h2>
+      <p>
+        Declare the schemes once in the plugin options and the interactive renderers show an
+        "Authorize" button. Which operations need one comes from the routes themselves:{" "}
+        <code>requireBearer()</code> documents itself as{" "}
+        <code>bearerAuth</code>, so an endpoint built with{" "}
+        <code>createApi().use(requireBearer(…))</code>{" "}
+        is marked secured with nothing repeated. Tag your own middleware the same way with{" "}
+        <code>documentsSecurity(mw, [{"{ bearerAuth: [] }"}])</code>, or set <code>security</code>
+        {" "}
+        on one <code>defineApi</code>{" "}
+        definition (it wins over both). A middleware's documented error codes (<code>
+          csrf()
+        </code>'s <code>csrf_failed</code>) join the endpoint's responses the same way.
+      </p>
+      <Code lang="ts">
+        {`openapi({
+  securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },
+  // a document-wide default, or per route:
+  security: (route) => (route.routePath.startsWith("/api/public") ? [] : undefined),
+});`}
+      </Code>
+      <Callout kind="note">
+        <code>security</code>{" "}
+        is documentation. It enforces nothing; the middleware on the route is what refuses a
+        request.
+      </Callout>
 
       <h2>JSON Schema from your validator</h2>
       <p>
@@ -186,6 +215,21 @@ const { document, warnings } = await buildOpenApi({
           <code>include(route)</code>, <code>tags(route)</code>{" "}
           — which routes, and how they group (default tag: the first path segment after{" "}
           <code>/api</code>).
+        </li>
+        <li>
+          <code>securitySchemes</code>, <code>security</code>{" "}
+          — the schemes the document advertises, and which operations need them (an array for the
+          whole document, or a function per route; see <a href="#security">Security</a>).
+        </li>
+        <li>
+          <code>toJsonSchema</code>{" "}
+          — a converter for validators the built-in detection cannot describe.
+        </li>
+        <li>
+          <code>expose</code> — <code>"always"</code>{" "}
+          (the default) serves both endpoints in every mode; <code>"dev"</code>{" "}
+          serves them only under <code>denext dev</code>{" "}
+          (and an export then publishes nothing), so production reveals no route map.
         </li>
         <li>
           <code>authorize(request)</code> — return <code>false</code>{" "}

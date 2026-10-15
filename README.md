@@ -193,10 +193,11 @@ WebSocket when a cache tag is invalidated from anywhere — a Server Action, a w
 push; `useLive`, `usePresence` and `useLiveOptimistic` ride the same socket, across instances.
 → [Live](https://denext.dev/docs/live)
 
-**Auth.** `denextAuth()` mounts `/auth/*` with twelve OAuth/OIDC presets, email and password,
-magic links and one-time codes, TOTP second factor with backup codes, email verification and
-password reset, revocable sessions, roles, bearer API tokens, native sign-in for the shells, rate
-limits and account deletion. `auth()`, `requireAuth()` and `requireSession()` cover the server,
+**Auth.** `denextAuth()` mounts `/auth/*` with twelve OAuth/OIDC presets, SAML 2.0 identity
+providers, email and password, magic links and one-time codes (sent with `smtpMailer()` or your
+own mailer), passkeys, TOTP second factor with backup codes, email verification and password
+reset, revocable sessions, roles, bearer API tokens, native sign-in for the shells, rate limits
+and account deletion. `auth()`, `requireAuth()` and `requireSession()` cover the server,
 middleware and API routes. → [Auth](https://denext.dev/docs/auth)
 
 **Data.** Deno's built-in SQLite with no install, Deno KV, Postgres and MySQL drivers, Drizzle and
@@ -215,17 +216,21 @@ realtime, `/functions/v1`), each behind its own option, so the stock `@supabase/
 client works unchanged against the app; plus Vault, pgmq queues, pgvector search, database
 webhooks and `denext db` (migrations, diff, dump, lint, types). Postgres itself is first-party in core: a client on `Deno.SQL`, Postgres
 stores for auth, sessions, rate limits, the cache and job history, and SQL migrations; `denext ui`
-browses the database. → [Backend](https://denext.dev/docs/backend) ·
+browses the database, and `denext dashboard` serves the same Database section behind a password
+for the self-hosted stack (`denext stack up | health | backup | restore`). → [Backend](https://denext.dev/docs/backend) ·
 [Coming from Supabase](https://denext.dev/docs/coming-from-supabase)
 
 **Background work.** `defineJob` in `jobs/<name>.ts`, scheduled with cron expressions
 (`Deno.cron` where the platform has it), run on demand with `runJob()` or `denext job`, with
-run history. → [Jobs](https://denext.dev/docs/jobs)
+run history. Long-lived work (a queue consumer, a feed tail) goes in `services/<name>.ts`, which
+a supervisor restarts with backoff (`supervise()`, `defineService()`).
+→ [Jobs](https://denext.dev/docs/jobs) · [Services](https://denext.dev/docs/services)
 
 **Production.** Graceful drain, per-request timeouts, concurrency ceilings, body caps, gzip and
 brotli, CORS, a security-header set, SSRF-safe fetch and image optimization, CSRF-defended
 actions, request ids, per-address rate limits that key on the client address your proxy sends
-(`rateLimitHeader`), instrumentation, a Docker generator (the image, plus a compose stack with
+(`rateLimitHeader`), instrumentation, `denext build --compile` (the server as one executable), a
+Docker generator (the image, plus a compose stack with
 Postgres, an S3 store and a migrations step detected from your config) and recipes for Docker,
 Deno Deploy and self-hosting. → [Deployment](https://denext.dev/docs/deploy) ·
 [Security](https://denext.dev/docs/security) ·
@@ -244,8 +249,10 @@ One CLI covers the lifecycle: `dev` with per-module HMR and Fast Refresh, `build
 `desktop`, `mobile`, `ota`, `job` and `completions`. Every other Deno verb works through it too
 (`denext compile`, `denext run`, `denext x`, …), and `denext task` runs a `deno.json` task, all on
 denext's own Deno build (`Deno.SQL`, Vitest/Jest compatibility in `deno test`), downloaded and
-SHA-256-verified on first need. → [Toolchain](https://denext.dev/docs/toolchain) A dev-time overlay reports server errors and type
-errors; the DevTools panel shows the live component tree and why a component re-rendered.
+SHA-256-verified on first need. → [Toolchain](https://denext.dev/docs/toolchain) Type, lint and
+build errors are explained in plain language with a fix (`--raw` prints Deno's own); a dev-time
+overlay reports server errors and type errors; the DevTools panel shows the live component tree
+and why a component re-rendered.
 → [CLI reference](https://denext.dev/docs/cli) · [DevTools](https://denext.dev/docs/devtools)
 
 **Tooling that proves things.** `denext doctor` validates the config and renders every route;
@@ -260,7 +267,9 @@ document; a test file that imports `vitest` gets fake timers and `vi.mock` under
 **A GUI over the project.** `denext ui` serves a loopback project dashboard: a schema-driven,
 comment-preserving `denext.config.ts` editor, a Cron page, plugin option forms and JSR search, every
 `generate` kind, Docker (the self-hosted stack's toggles) and `docker-compose.yml` editing, a Desktop panel that sets up code signing
-from the identities in your keychain, and a Setup page for a fresh clone. Project code never runs
+from the identities in your keychain, a Setup page for a fresh clone, a Services page for the
+`services/` supervision tree, and a Database section (tables and rows, a SQL editor, RLS policies,
+migrations, storage, users, logs, realtime, Edge Functions and health). Project code never runs
 in the UI's process. → [Project UI](https://denext.dev/docs/ui)
 
 **Built for AI agents.** `denext mcp` is a first-party MCP server: it lints a snippet before an
@@ -339,7 +348,8 @@ downloaded and SHA-256-verified on first need. Four ways to get it:
    `& ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -Uninstall`). Each release
    also carries a Homebrew formula, a Scoop manifest and a winget manifest set beside the
    archives.
-2. `deno install -A -g -n denext jsr:@denext/denext/cli` — a launcher through your Deno.
+2. `deno install -A -g -n denext jsr:@denext/denext/cli` — a launcher through your Deno (then
+   `denext toolchain install` fetches the toolchain and caches every verb for offline use).
 3. `deno task compile` from a checkout.
 4. Nothing at all: `deno run -A jsr:@denext/denext/cli <verb>` does the same thing, and the
    scaffolded `dev` / `build` / `start` tasks run that CLI pinned to the project's version.

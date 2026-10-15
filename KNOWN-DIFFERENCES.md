@@ -140,6 +140,15 @@ internal design choice with no observable difference lives in
   `afterFiles` / `fallback` rewrites; denext runs its single `rewrites` list after
   middleware and before the filesystem (Next's `beforeFiles` position). Middleware
   matchers therefore always see the URL the client asked for.
+- **`proxy.ts` and `middleware.ts` take either export name.** Next 16 requires a `proxy` (or
+  default) export in `proxy.ts` and a `middleware` (or default) export in `middleware.ts`, and
+  warns that `middleware.ts` is deprecated. denext reads `proxy`, `middleware` or the default
+  export from whichever file the app has, and does not warn. Both files at once is an error in
+  both. denext finds the file with Next's default extensions (`tsx`, `ts`, `jsx`, `js`) plus
+  `mts` / `mjs`; it has no `pageExtensions` option. Two files of the same name
+  (`middleware.ts` and `middleware.js`) are an error too, where Next takes one by extension
+  order. A file that exports no handler stops the app at startup (dev, `start`, `doctor`); Next
+  fails its build, and `denext build` does not import the file.
 - **`nodeResolve` is on by default** for the compat (npm React) build — every bare
   npm specifier resolves from the installed `node_modules` through denext's tolerant
   resolver, which is what lets an unmodified pnpm/npm/yarn app build with no
@@ -230,6 +239,11 @@ internal design choice with no observable difference lives in
   carries the engine's inline `height: 100%`: a `style` height, or a class with a max height, sizes it, where
   the real DOM build's element has no inline height. It applies to apps on npm React (the
   esbuild build path); a denext-native app uses `VirtualList` directly.
+- **`waitForInitialLayout` hides the whole list, not only its items.** Until the first items are
+  measured the list is invisible (`opacity: 0`, no pointer events), headers, footers and empty
+  state included, so it never paints at estimated positions.
+- **`itemsAreEqual` keeps an item's rendered element only while its index is unchanged.** An
+  item the callback calls equal but that moved to another index renders again.
 
 ## Supabase and `@denext/backend`
 
@@ -245,6 +259,16 @@ Where `@denext/backend` deliberately departs from Supabase. See
   reads as its owner), and lists what it skipped in a startup warning. Naming a relation in
   `rest.tables` serves it as is. A full count (`Prefer: count=exact`) is for signed-in callers by
   default (`rest.exactCount`).
+- **Auto-REST has a request budget.** PostgREST (and Supabase's Data API) applies none of its own;
+  `backend({ rest })` answers a client past 1200 requests a minute (a signed-in user by id,
+  anyone else by address; never the secret key) with `429 over_request_rate_limit` and
+  `Retry-After`, so a scraper can't take the database pool. `rest.rateLimit` tunes it, `false`
+  turns it off.
+- **Realtime tells subscribers about a `TRUNCATE`.** Supabase Realtime's `postgres_changes` never
+  delivers one (its change stream asks for inserts, updates and deletes only), leaving clients
+  showing rows that are gone. denext sends `eventType: "TRUNCATE"` (empty `new` and `old`) to a
+  `*` binding of a subscriber who could see rows of the table, and a binding with
+  `event: "TRUNCATE"` — which Supabase turns into `*` — receives only those.
 - **Server code needs no service-role key.** With `backend({ supabase })` the secret key
   (`DENEXT_SECRET_KEY`) is the `service_role`, past every policy, as on Supabase — keep it
   server-side. denext additionally gives server code `db.service()` (and a bucket's
@@ -275,10 +299,31 @@ Where `@denext/backend` deliberately departs from Supabase. See
 - **An SSO user signs in through its identity provider only — linked identities included.**
   Supabase lets an OAuth identity linked to an SSO user sign it in and keeps every session it ever
   issued. denext refuses that sign-in (`422 user_sso_managed`), refuses any session of an SSO user
-  that no SAML sign-in started (at use and at refresh), refuses `GET /reauthenticate` for an SSO
+  that no SAML sign-in started (at use and at refresh) — read from the stored session, not the
+  hook-writable `amr` claim — as well as an OAuth client's tokens whose grant was approved from
+  such a session (Supabase keeps them), refuses `GET /reauthenticate` for an SSO
   user (`422 user_sso_managed`, nothing sent; Supabase sends a nonce `PUT /user` then refuses),
   and never links a `linkExistingAccounts` provider onto another provider's SSO user
-  (`email_exists`; Supabase would create a separate account).
+  (`email_exists`; Supabase would create a separate account). The reason is offboarding: an
+  account a company's identity provider manages must lose access when the provider disables it,
+  and a personal OAuth login linked to it would outlive that. Okta, WorkOS, Clerk and Auth0
+  Organizations enforce the same rule. Linking still works from an SSO session, so the user keeps
+  the provider's tokens for API access; the linked identity only can't sign in.
+- **`/auth/v1` mail templates take GoTrue's placeholders only.** `GOTRUE_MAILER_TEMPLATES_*`
+  are fetched and rendered with `{{ .ConfirmationURL }}`, `{{ .Token }}`, `{{ .TokenHash }}`,
+  `{{ .SiteURL }}`, `{{ .Email }}`, `{{ .NewEmail }}` and `{{ .RedirectTo }}`; a template with any
+  other Go template action (`{{ if }}`, `{{ .Data }}`) gets the built-in one instead. SMTP needs
+  TLS (implicit on 465, else STARTTLS), where GoTrue falls back to plaintext when the server
+  offers no STARTTLS.
+- **`/auth/v1` `logout?scope=global` also ends denextAuth cookie sessions.** GoTrue's global
+  logout ends the user's token sessions; denext ends their cookie sessions too (stateless ones
+  through `sessionsValidAfter`), and `scope=others` ends every cookie session while keeping the
+  caller's token session — "sign out everywhere" covers every surface that signed the user in.
+- **`/auth/v1/verify` still redeems on GET.** denext's own `magicLink()` opens a confirmation
+  page by default, but the GoTrue-compatible `GET /auth/v1/verify` link keeps Supabase's
+  behaviour (the link verifies and redirects), because that is the supabase-js contract: a mail
+  scanner that pre-fetches it can spend it, as on Supabase. Use `verifyOtp({ token_hash })` from
+  a page of your own to put a click in front of it.
 - **A magic link, one-time code or recovery link that first confirms an account retires its
   password.** Supabase keeps a password set by an earlier unconfirmed sign-up; denext keeps only
   the one the account's own sign-up confirmation proves.
@@ -303,12 +348,19 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
   `hsts: false`.
 - **Session cookie isn't `__Host-`-locked by default** (would log everyone out
   on upgrade). Opt in with `hostPrefix: true` on `getSession`.
-- **`denextAuth` sessions are stateless by default, so they can't be revoked before
-  they expire.** Opt in to server-side sessions with `sessionStore`
-  (`inMemorySessionStore()` / `sqliteSessionStore()` or your own) to get
-  `revokeSession`/`revokeAllSessions`. **Configuring an `AuthAdapter` does not change
+- **`denextAuth` sessions are stateless by default.** With an adapter they are still ended
+  early per user (`revokeAllSessions`, a password reset, a ban: the user's
+  `sessionsValidAfter`); to revoke one device's session (`revokeSession`), opt in to
+  server-side sessions with `sessionStore` (`inMemorySessionStore()` / `sqliteSessionStore()`
+  or your own). **Configuring an `AuthAdapter` does not change
   this** — an adapter is a persistence port (users, accounts, tokens), not a session
   mechanism; `session: { strategy: "database" }` is the switch.
+- **Multi-tenant Microsoft Entra ignores an unverified address.** Auth.js's Microsoft Entra
+  provider keys the account on `sub` and takes the token's `email`, which any tenant's admin can
+  set. With `tenant: "common" | "organizations" | "consumers"`, denext keys the account on
+  `tid` + `oid` and keeps the email only when the optional claim `xms_edov` is `true` (add it in
+  the app registration); otherwise the account has no email, so it can't occupy or link an
+  address.
 - **`denextAuth` account linking refuses unverified-email matches**, where Auth.js links
   an OAuth account to an existing user on a bare email match. denext links only when the
   provider's email is verified _and_ the local account's email is verified; anything else
@@ -316,8 +368,9 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
   `allowDangerousEmailAccountLinking`. The default costs a support ticket; the alternative
   costs an account takeover from any IdP that will mint a token for an unverified address.
 - **`magicLink()` / `emailOtp()` are not next-auth's Email provider.** There is no
-  nodemailer `server` option — denext ships no mailer, so you pass
-  `sendVerificationRequest` — and a one-time-code mode (`emailOtp()`) sits next to the link.
+  nodemailer `server` option — you pass `sendVerificationRequest`, e.g. `smtpMailer({ host,
+  user, pass, from })`, which refuses to send without TLS — and a one-time-code mode
+  (`emailOtp()`) sits next to the link.
   Link tokens are stored as a SHA-256 and codes as an HMAC keyed by the auth `secret`;
   `allowSignUp: false` refuses unknown addresses; a known address, an unknown one and a list
   (which sends nothing) all get the identical answer; and the redeem is
@@ -325,7 +378,9 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
   writes no account row — the address on the user record is the identity — but a first
   email sign-in into an account whose address was never verified first retires the
   password, TOTP factor, bearer tokens and server-side sessions set up without that proof
-  (pre-account hijacking), which Auth.js does not do.
+  (pre-account hijacking), which Auth.js does not do. A magic link opens a confirmation page
+  whose button spends it, where Auth.js signs in on the GET (`magicLink({ confirm: false })`
+  restores that).
 - **`id_token` audience validation is strict by default** (`strictAudience`): OIDC Core
   §3.1.3.7 steps 3–5 — a single `aud` must _be_ this client, a multi-valued `aud` needs an
   `azp` naming this client, and a foreign `azp` is refused. Auth.js accepts plain `aud`
@@ -338,7 +393,8 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
   the proxy's client-address header with `rateLimitHeader`.
 - **Graceful shutdown drains up to a deadline** (default 10s;
   `DENEXT_SHUTDOWN_DRAIN_MS`), then force-exits so a stuck client can't pin the
-  process (plugin teardown is skipped on a forced exit).
+  process (the `services/` stop, plugin teardowns and `instrumentation.ts`'s `onShutdown()` are
+  skipped on a forced exit).
 - **Scaffolded `dev`/`build` tasks use `-A`** (they compile/spawn tooling); the
   generated `start` task runs least-privilege and spawns nothing (no `--allow-run`).
 - **`@denext/og` fetches a missing non-Latin font from `fonts.googleapis.com`**

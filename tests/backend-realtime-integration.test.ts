@@ -38,6 +38,7 @@ import {
   seedQuery,
 } from "../packages/backend/src/realtime.ts";
 import { type RealtimeOptions, resolveRealtime } from "../packages/backend/src/realtime-sql.ts";
+import { LogicalSource } from "../packages/backend/src/realtime-logical.ts";
 import { postgresEnvironment } from "./helpers/postgres-env.ts";
 import {
   authConfig,
@@ -184,6 +185,26 @@ Deno.test({
         `real Postgres: 500 notifications → ${flushes} flush(es), ${rereads} re-reads, ${frames} frames`,
       );
       assert(changesOf(ca).slice(2).every((c) => c.op === "insert" && c.row?.owner === A));
+
+      // TRUNCATE: the statement-level trigger's notification tells every subscriber who could
+      // see rows to forget them (no row data), and the server hooks hear it.
+      const truncates: TableChangeEvent[] = [];
+      const off = onTableChange("notes", (event) => {
+        if (event.op === "truncate") truncates.push(event);
+      });
+      await db.service()`truncate notes`;
+      await until(
+        () => changesOf(ca).at(-1)?.op === "truncate" && changesOf(cb).at(-1)?.op === "truncate",
+        5_000,
+        "the truncate",
+      );
+      assertEquals(changesOf(ca).at(-1), { op: "truncate" });
+      assertEquals(truncates.length, 1);
+      assertEquals(truncates[0].table, "notes");
+      off();
+      // After it, both views start empty: the next row is an insert again.
+      await db.service()`insert into notes (owner, body) values (${A}, ${"after"})`;
+      await until(() => changesOf(ca).at(-1)?.op === "insert", 5_000, "the insert after");
     } finally {
       await uninstall(hub);
       await env.drop();
@@ -698,3 +719,174 @@ function usesIndex(text: string, index: string): boolean {
 function spread(query: { text: string; params: unknown[] }): [string, unknown[]] {
   return [query.text, query.params];
 }
+
+// The same TRUNCATE read from the WAL (`source: "logical"`, a pgoutput Truncate message): needs a
+// server with wal_level = logical (`DENEXT_TEST_POSTGRES_LOGICAL=1` says it has one).
+const logicalReason = reason ??
+  (Deno.env.get("DENEXT_TEST_POSTGRES_LOGICAL") === "1"
+    ? undefined
+    : "set DENEXT_TEST_POSTGRES_LOGICAL=1");
+
+Deno.test({
+  name: `realtime on a real Postgres: TRUNCATE from logical decoding reaches who could see rows${
+    logicalReason ? ` (skipped: ${logicalReason})` : ""
+  }`,
+  ignore: logicalReason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    let hub: Harness | undefined;
+    try {
+      await env.admin.unsafe(`alter role ${new URL(env.url).username} replication`);
+      hub = await install(env.app, { notes: {} }, NOTES, {
+        source: "logical",
+        logical: { pollMs: 20 },
+      });
+      const ca = hub.conn(await cookieFor(A));
+      const cb = hub.conn(await cookieFor(B));
+      assert((await hub.subscribe(ca, "notes")).ok, "A subscribed");
+      assert((await hub.subscribe(cb, "notes")).ok, "B subscribed");
+      await db({ as: { id: A } })`insert into notes (owner, body) values (${A}, ${"from the WAL"})`;
+      await until(() => ca.frames.length === 1, 10_000, "A's insert");
+      await db.service()`truncate notes`;
+      await until(() => ca.frames.length === 2, 10_000, "the truncate");
+      assertEquals(ca.frames[1].changes, [{ op: "truncate" }]);
+      await settle(150);
+      assertEquals(changesOf(cb), [], "B saw no rows: nothing to clear");
+      const triggers = await env.app.unsafe(
+        "select tgname from pg_trigger where tgname like 'denext_realtime%' and tgenabled <> 'D'",
+      );
+      assertEquals(triggers.length, 0, "no trigger on the write path");
+    } finally {
+      await uninstall(hub);
+      await env.drop();
+    }
+  },
+});
+
+Deno.test({
+  name: `realtime on a real Postgres: a failed logical read drops its slot and the source reopens${
+    logicalReason ? ` (skipped: ${logicalReason})` : ""
+  }`,
+  ignore: logicalReason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    const error = console.error;
+    console.error = () => {};
+    let source: LogicalSource | undefined;
+    const held: Array<{ release(): void | Promise<void> }> = [];
+    try {
+      await env.admin.unsafe(`alter role ${new URL(env.url).username} replication`);
+      await env.app.unsafe("create table notes (id bigserial primary key, body text not null)");
+      await env.app.unsafe("create publication dnx_pub for table notes");
+      const table = resolveRealtime({ tables: { notes: {} } }).tables.get("notes")!;
+      const keys: string[] = [];
+      let resyncs = 0;
+      let throwOnce = true;
+      // The reopen must land on another pooled connection (as it can on a busy pool): the
+      // second reservation first takes the connection just returned and holds it.
+      let reserves = 0;
+      const sql = {
+        reserve: async () => {
+          if (++reserves === 2) held.push(await env.app.reserve!());
+          return await env.app.reserve!();
+        },
+      } as unknown as SqlClient;
+      source = new LogicalSource({
+        client: () => sql,
+        publications: () => ["dnx_pub"],
+        tableOf: (_schema, name) => name === "notes" ? table : null,
+        emit: (event) => {
+          // A read that fails with its session alive (here: a throw while decoding it).
+          if (throwOnce) {
+            throwOnce = false;
+            throw new Error("decode failed");
+          }
+          if (event.key) keys.push(event.key);
+        },
+        resync: () => void resyncs++,
+        pollMs: 20,
+        maxChanges: 100,
+      });
+      await source.start();
+      await env.app`insert into notes (body) values ('lost to the failed read')`;
+      // Before the fix the old slot stayed on the pooled connection, pinning WAL: re-creating
+      // it elsewhere failed ("already exists") on every retry, and no change was read again.
+      await until(() => resyncs === 1, 10_000, "the source reopened");
+      await env.app`insert into notes (body) values ('after the reopen')`;
+      await until(() => keys.length === 1, 10_000, "a change read on the new slot");
+      const slots = await env.admin.unsafe<{ n: number }>(
+        "select count(*)::int as n from pg_replication_slots where database = $1",
+        [env.database],
+      );
+      assertEquals(slots[0].n, 1, "only the live slot is left");
+    } finally {
+      await source?.stop();
+      for (const conn of held) await conn.release();
+      console.error = error;
+      await env.drop();
+    }
+  },
+});
+
+Deno.test({
+  name: `realtime on a real Postgres: trigger DDL waits for the backend's migration lock${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    let hub: Harness | undefined;
+    let release = () => {};
+    let held: Promise<unknown> = Promise.resolve();
+    try {
+      hub = await install(env.app, {}, `${NOTES}\ncreate publication dnx_lock_pub;`, {
+        publication: "dnx_lock_pub",
+      });
+      // Start (the realtime migrations apply), keeping the publication's re-read to call by hand.
+      const real = globalThis.setInterval;
+      let tick: (() => void) | undefined;
+      globalThis.setInterval = ((handler: () => void, ms?: number) => {
+        if (ms === 10_000) tick = handler;
+        return real(handler, ms);
+      }) as typeof setInterval;
+      try {
+        await realtimeEngine().start();
+      } finally {
+        globalThis.setInterval = real;
+      }
+      // Another instance is mid-migration: it holds the lock every boot migration takes.
+      let locked = () => {};
+      const isLocked = new Promise<void>((resolve) => locked = resolve);
+      held = env.app.begin(async (tx) => {
+        await tx.unsafe("select pg_advisory_xact_lock(hashtext($1))", [
+          'denext:migrate:"backend_migrations"',
+        ]);
+        locked();
+        await new Promise<void>((resolve) => release = resolve);
+      });
+      await isLocked;
+      await db.service()`alter publication dnx_lock_pub add table notes`;
+      tick!();
+      const triggers = () =>
+        env.app.unsafe("select 1 from pg_trigger where tgname = 'denext_realtime'");
+      await settle(400);
+      assertEquals((await triggers()).length, 0, "the trigger waits for the lock");
+      release();
+      await held;
+      const deadline = Date.now() + 10_000;
+      while ((await triggers()).length === 0) {
+        assert(Date.now() < deadline, "the trigger is created once the lock is free");
+        await settle(20);
+      }
+    } finally {
+      release();
+      await held.catch(() => {});
+      await uninstall(hub);
+      await env.drop();
+    }
+  },
+});

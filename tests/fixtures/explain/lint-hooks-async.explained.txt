@@ -1,0 +1,54 @@
+denext/no-hooks-in-async: `useState` in an async Server Component
+  at lint-hooks-async.tsx:5:27
+
+    4 | export default async function Page() {
+  > 5 |   const [open, setOpen] = useState(false);
+                                  ^^^^^^^^^^^^^^^
+    6 |   const data = await Promise.resolve("hi");
+
+  An `async` component is a Server Component: it renders once on the server and never hydrates, so state and effects in it never run in the browser.
+
+  Fix: Move the interactive part into its own file that starts with "use client" and render it from `Page`:
+  // page-client.tsx
+  "use client";
+  export function PageClient(props: { data: string }) {
+    // hooks and handlers live here
+  }
+  Data loading stays in the async Server Component, which passes it down as props.
+
+  Original (deno lint):
+  │ error[denext/no-hooks-in-async]: `useState` is used in async component `Page`. Async components render only on the server and never hydrate, so the hook has no client effect. [denext/no-hooks-in-async]
+  │  --> /app/lint-hooks-async.tsx:5:27
+  │   | 
+  │ 5 |   const [open, setOpen] = useState(false);
+  │   |                           ^^^^^^^^^^^^^^^
+
+denext/no-handlers-in-async: `onClick` in an async Server Component does nothing
+  at lint-hooks-async.tsx:7:32
+
+    6 |   const data = await Promise.resolve("hi");
+  > 7 |   return <button type="button" onClick={() => setOpen(!open)}>{data}</button>;
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    8 | }
+
+  An `async` component renders on the server; functions can't cross to the browser, so the handler is dropped and the element stays inert.
+
+  Fix: Move the interactive part into its own file that starts with "use client" and render it from `Page`:
+  // page-client.tsx
+  "use client";
+  export function PageClient(props: { data: string }) {
+    // hooks and handlers live here
+  }
+  Data loading stays in the async Server Component, which passes it down as props.
+  Or, for a form, pass a Server Action ("use server") as its `action`.
+
+  Original (deno lint):
+  │ error[denext/no-handlers-in-async]: `onClick` receives a function in async component `Page`. An async component is a Server Component: its functions never reach the browser, so the handler is dropped and the element does nothing. Pass a Server Action ("use server") or move the handler into a "use client" component. [denext/no-handlers-in-async]
+  │  --> /app/lint-hooks-async.tsx:7:32
+  │   | 
+  │ 7 |   return <button type="button" onClick={() => setOpen(!open)}>{data}</button>;
+  │   |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Found 2 problems
+Checked 1 file
+

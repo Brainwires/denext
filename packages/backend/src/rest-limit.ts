@@ -1,0 +1,153 @@
+// Auto-REST rate limits: a fixed-window request budget per client in front of the statements, on
+// denext's rate-limit stores. A signed-in user is counted by their user id (so users behind one
+// address don't share a budget), anyone else by their client address (`clientIpForLimits()`: the
+// socket peer, a trusted proxy's hop or the app's `rateLimitHeader`, an IPv6 address by its /64).
+// The secret key (`service_role`) is a trusted server and is never limited. A request whose
+// credential is refused (a 401) is charged to its address too, so a stream of forged tokens is
+// bounded like anonymous reads. When no address can be told apart from a shared proxy's — an
+// untrusted loopback/private peer — the address budget is skipped, as every per-address limit in
+// denext is (`rateLimitLocalAddresses` / `trustForwardedHeaders` / `rateLimitHeader` change that).
+
+import {
+  clientIpForLimits,
+  inMemoryRateLimitStore,
+  type RateLimitStore,
+} from "@denext/denext/server";
+import type { RequestIdentity } from "./identity.ts";
+import { positiveOption } from "./options.ts";
+import { RestError } from "./rest-parse.ts";
+
+/** `backend({ rest: { rateLimit } })`. */
+export interface RestRateLimitOptions {
+  /** Requests one client (a user, or an address when signed out) may make per window. Default 1200. */
+  max?: number;
+  /** The window, in milliseconds. Default 60 000 (one minute). */
+  windowMs?: number;
+  /**
+   * Where the counts live. Default: a bounded in-memory store, per process — behind several
+   * replicas pass a shared one (`postgresRateLimitStore()` from `denext/server`).
+   */
+  store?: RateLimitStore;
+}
+
+/** The resolved budget. */
+export interface ResolvedRestRateLimit {
+  /** Requests per client per window. */
+  max: number;
+  /** The window (ms). */
+  windowMs: number;
+  /** The configured store, or `undefined` for the in-memory default. */
+  store: RateLimitStore | undefined;
+}
+
+/** Requests one client may make per window by default: 20 a second on average. */
+const DEFAULT_MAX = 1200;
+/** The default window: a minute. */
+const DEFAULT_WINDOW_MS = 60_000;
+
+/**
+ * Validate `rest.rateLimit` and apply the defaults.
+ *
+ * @param o The option (`false`: no limit).
+ * @returns The budget, or `null` when the routes are not limited.
+ * @throws {TypeError} For a bad `max`, `windowMs` or `store`.
+ */
+export function resolveRestRateLimit(
+  o: RestRateLimitOptions | false | undefined,
+): ResolvedRestRateLimit | null {
+  if (o === false) return null;
+  if (o !== undefined && (typeof o !== "object" || o === null || Array.isArray(o))) {
+    throw new TypeError("backend(): rest.rateLimit must be an object or false");
+  }
+  const store = o?.store;
+  if (store !== undefined && typeof store?.increment !== "function") {
+    throw new TypeError("backend(): rest.rateLimit.store must be a rate-limit store");
+  }
+  return {
+    max: positiveOption(o?.max, DEFAULT_MAX, "backend(): rest.rateLimit.max"),
+    windowMs: positiveOption(o?.windowMs, DEFAULT_WINDOW_MS, "backend(): rest.rateLimit.windowMs"),
+    store,
+  };
+}
+
+/** A 429: the budget is spent. `retryAfter` is the seconds until the window closes. */
+class RestRateLimited extends RestError {
+  /** Seconds until the client may try again (the `Retry-After` header). */
+  readonly retryAfter: number;
+
+  /**
+   * Build the error.
+   *
+   * @param retryAfter Seconds until the window closes.
+   */
+  constructor(retryAfter: number) {
+    super(
+      429,
+      "over_request_rate_limit",
+      `Too many requests: try again in ${retryAfter} second${retryAfter === 1 ? "" : "s"}`,
+      null,
+      "Retry after the number of seconds in the Retry-After header.",
+    );
+    this.retryAfter = retryAfter;
+  }
+}
+
+/** The client's address bucket, or `undefined` when per-address limits don't apply. */
+function addressBucket(): string | undefined {
+  try {
+    return clientIpForLimits({ bucket: true });
+  } catch {
+    return undefined; // outside a request (a handler called directly): nothing to key on
+  }
+}
+
+/** Counts requests against {@link ResolvedRestRateLimit}'s budget. */
+export class RestLimiter {
+  readonly #limit: ResolvedRestRateLimit;
+  readonly #store: RateLimitStore;
+
+  /**
+   * A limiter.
+   *
+   * @param limit The budget.
+   */
+  constructor(limit: ResolvedRestRateLimit) {
+    this.#limit = limit;
+    this.#store = limit.store ?? inMemoryRateLimitStore({ lockoutAt: limit.max });
+  }
+
+  /**
+   * Count one request by `identity`; throws the 429 past the budget.
+   *
+   * @param identity Who the request is.
+   * @throws {RestRateLimited} When the budget is spent.
+   */
+  async charge(identity: RequestIdentity): Promise<void> {
+    if (identity.role === "service_role") return;
+    const key = identity.role === "authenticated" && identity.userId !== undefined
+      ? `rest|user:${identity.userId}`
+      : this.#addressKey();
+    if (key !== undefined) await this.#count(key);
+  }
+
+  /**
+   * Count a request whose credential was refused against its address.
+   *
+   * @throws {RestRateLimited} When the address's budget is spent.
+   */
+  async chargeRefused(): Promise<void> {
+    const key = this.#addressKey();
+    if (key !== undefined) await this.#count(key);
+  }
+
+  #addressKey(): string | undefined {
+    const bucket = addressBucket();
+    return bucket === undefined ? undefined : `rest|ip:${bucket}`;
+  }
+
+  async #count(key: string): Promise<void> {
+    const window = await this.#store.increment(key, this.#limit.windowMs);
+    if (window.count <= this.#limit.max) return;
+    throw new RestRateLimited(Math.max(1, Math.ceil((window.resetAt - Date.now()) / 1000)));
+  }
+}

@@ -743,6 +743,32 @@ function shortHash(text: string): string {
  * @throws {TypeError} For malformed options.
  */
 export function realtimeMigrations(options: RealtimeOptions): Migration[] {
+  return realtimeMigrationsOf(options);
+}
+
+/**
+ * The migrations a server's start applies for `options` once the app's tables exist: the
+ * per-table triggers (notify source), or the `denext_realtime` publication holding the
+ * configured tables (logical source) — what `denext db push` applies after the app's migrations.
+ *
+ * @param options The realtime options.
+ * @returns The migrations, in order.
+ */
+export function realtimeTableMigrations(options: RealtimeOptions): Migration[] {
+  const resolved = resolveRealtime(options);
+  const tables = [...resolved.tables.values()];
+  if (resolved.source !== "logical") {
+    return realtimeMigrationsOf(options).filter((m) => m.name.startsWith("backend_realtime_t_"));
+  }
+  if (tables.length === 0) return [];
+  const list = tables.map((t) => t.qualified).join(", ");
+  const sql = "DO $do$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_publication WHERE " +
+    "pubname = 'denext_realtime') THEN CREATE PUBLICATION denext_realtime; END IF; END $do$;\n" +
+    `ALTER PUBLICATION denext_realtime SET TABLE ${list};`;
+  return [{ name: `backend_realtime_lpub_${shortHash(sql)}`, sql }];
+}
+
+function realtimeMigrationsOf(options: RealtimeOptions): Migration[] {
   const resolved = resolveRealtime(options);
   const tables = [...resolved.tables.values()].map((table) => {
     const sql = tableTrigger(table);

@@ -16,7 +16,7 @@
  * @module
  */
 
-import type { AuthUser, OAuthProvider, ProfileInput } from "./types.ts";
+import type { AuthUser, OAuthProvider, ProfileInput, TenantIssuer } from "./types.ts";
 
 /** The client credentials every OAuth preset needs. */
 export interface OAuthClientOptions {
@@ -89,6 +89,8 @@ export interface OAuthPresetSpec {
   authorizationParams?: Record<string, string>;
   /** How the authorization response comes back (see {@link OAuthProvider.responseMode}). */
   responseMode?: "query" | "form_post";
+  /** A multi-tenant issuer check (see {@link OAuthProvider.tenantIssuer}). */
+  tenantIssuer?: TenantIssuer;
 }
 
 /**
@@ -122,6 +124,7 @@ export function oauthPreset(spec: OAuthPresetSpec, options: OAuthClientOptions):
     profile: spec.profile ?? oidcClaimProfile,
     authorizationParams: spec.authorizationParams,
     ...(spec.responseMode ? { responseMode: spec.responseMode } : {}),
+    ...(spec.tenantIssuer ? { tenantIssuer: spec.tenantIssuer } : {}),
   };
 }
 
@@ -174,44 +177,168 @@ function providerSegment(value: string, label: string): string {
 /** Options for {@link microsoftEntra}. */
 export interface MicrosoftEntraOptions extends OAuthClientOptions {
   /**
-   * The directory (tenant) id — a GUID, or a verified domain such as `"contoso.com"`.
-   * The multi-tenant aliases `common` / `organizations` / `consumers` are **refused**:
-   * their discovery document declares the template issuer
-   * `https://login.microsoftonline.com/{tenantid}/v2.0` while the `id_token` carries the
-   * tenant-specific one, and denext verifies `iss` by exact match.
+   * The directory (tenant): a tenant id (GUID) or a verified domain such as `"contoso.com"` for
+   * a single-tenant app, or one of the multi-tenant aliases:
+   *
+   * - `"organizations"` — any work or school tenant (personal Microsoft accounts are refused);
+   * - `"common"` — any work or school tenant AND personal Microsoft accounts;
+   * - `"consumers"` — personal Microsoft accounts only.
+   *
+   * For `common` / `organizations` the `id_token`'s issuer is checked against its own `tid`
+   * claim (`https://login.microsoftonline.com/{tid}/v2.0`, the template issuer Microsoft's
+   * discovery document declares), with the signature checked against the common key set. Any
+   * tenant can then sign in, so list the ones you serve in {@linkcode allowedTenants}.
+   *
+   * With any alias the account is keyed on `tid` + `oid`, and the `email` claim is used only
+   * when the optional claim `xms_edov` is `true` (add it to the app registration); otherwise the
+   * account has no email, so another tenant can't claim an address through it.
    */
   tenant: string;
+  /**
+   * With `tenant: "common"` or `"organizations"`: the tenant ids (GUIDs) allowed to sign in.
+   * Recommended — without it, a user of ANY Entra tenant (including one an attacker creates)
+   * can sign in. Not accepted with a single tenant or `consumers`.
+   */
+  allowedTenants?: string[];
 }
 
-/** Tenant aliases whose issuer is a template denext cannot match exactly. */
-const ENTRA_MULTI_TENANT = new Set(["common", "organizations", "consumers"]);
+/** The tenant personal Microsoft accounts (MSA) sign in from. */
+const ENTRA_CONSUMER_TENANT = "9188040d-6c67-4c5b-b112-36a304b66dad";
+/** A tenant id as Microsoft issues it in `tid`: a lower-case GUID. */
+const ENTRA_TENANT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** The validated `allowedTenants` list (lower-case GUIDs), for a multi-tenant alias only. */
+function entraAllowedTenants(
+  alias: string,
+  allowed: string[] | undefined,
+): string[] | undefined {
+  if (allowed === undefined) return undefined;
+  if (alias !== "common" && alias !== "organizations") {
+    throw new TypeError(
+      'auth: microsoftEntra allowedTenants applies to tenant "common" or "organizations" only',
+    );
+  }
+  const tenants = allowed.map((t) => String(t ?? "").trim().toLowerCase());
+  if (tenants.length === 0 || !tenants.every((t) => ENTRA_TENANT_ID.test(t))) {
+    throw new TypeError(
+      "auth: microsoftEntra allowedTenants must be a non-empty list of tenant ids (GUIDs)",
+    );
+  }
+  if (alias === "organizations" && tenants.includes(ENTRA_CONSUMER_TENANT)) {
+    throw new TypeError(
+      'auth: microsoftEntra tenant "organizations" never admits the personal-account tenant',
+    );
+  }
+  return tenants;
+}
+
+/** The provider fields that differ per tenant mode (issuer check, keys, discovery). */
+function entraTenancy(
+  tenant: string,
+  allowed: string[] | undefined,
+): Pick<OAuthPresetSpec, "issuer" | "jwksUrl" | "discovery" | "tenantIssuer"> {
+  const alias = tenant.toLowerCase();
+  const allowedTenants = entraAllowedTenants(alias, allowed);
+  if (alias === "common" || alias === "organizations") {
+    // The discovery document's issuer is the template itself, and lives under the alias, not
+    // the issuer: the pinned endpoints are used, and the issuer is checked per token.
+    return {
+      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0",
+      jwksUrl: `https://login.microsoftonline.com/${alias}/discovery/v2.0/keys`,
+      discovery: false,
+      tenantIssuer: {
+        claim: "tid",
+        ...(allowedTenants ? { allowedTenants } : {}),
+        ...(alias === "organizations" ? { excludedTenants: [ENTRA_CONSUMER_TENANT] } : {}),
+      },
+    };
+  }
+  if (alias === "consumers") {
+    // Personal accounts all come from one tenant: a fixed issuer, checked exactly.
+    return {
+      issuer: `https://login.microsoftonline.com/${ENTRA_CONSUMER_TENANT}/v2.0`,
+      jwksUrl: "https://login.microsoftonline.com/consumers/discovery/v2.0/keys",
+      discovery: false,
+    };
+  }
+  const base = `https://login.microsoftonline.com/${tenant}`;
+  return { issuer: `${base}/v2.0`, jwksUrl: `${base}/discovery/v2.0/keys`, discovery: true };
+}
+
+/** A claim that is `true` the way Microsoft emits booleans (JSON `true`, or the string `"true"`). */
+function claimTrue(value: unknown): boolean {
+  return value === true || value === "true";
+}
+
+/**
+ * The Entra profile for a multi-tenant alias (`common` / `organizations` / `consumers`), where
+ * the issuing tenant may be anyone's — including one an attacker creates and fills with any
+ * `email` (the "nOAuth" class):
+ *
+ * - **The account key is `tid` + `oid`** — the user's object id within the tenant the token's
+ *   issuer was checked against — never `sub` alone and never the email. A token without both is
+ *   refused (no id → the sign-in fails).
+ * - **The email counts only when Microsoft says the domain owner verified it** (the optional
+ *   claim `xms_edov === true`). Then it is the account's verified address. Otherwise it is
+ *   dropped from the profile altogether: the account is created with no email, so it can't
+ *   occupy an address, block a sign-up, or link to an account by email later. The
+ *   personal-account tenant gets the same rule (no `xms_edov`, no email).
+ */
+function entraMultiTenantProfile(input: ProfileInput): AuthUser {
+  const src = { ...input.userinfo, ...input.claims };
+  const tid = typeof src.tid === "string" ? src.tid : "";
+  const oid = typeof src.oid === "string" ? src.oid : "";
+  const verified = claimTrue(src.xms_edov) && typeof src.email === "string" && src.email !== "";
+  return {
+    id: tid && oid ? `${tid}:${oid}` : "",
+    name: src.name as string | undefined,
+    email: verified ? src.email as string : undefined,
+    emailVerified: verified ? true : undefined,
+    image: src.picture as string | undefined,
+  };
+}
+
+/**
+ * The Entra profile for a single tenant: the standard OIDC mapping (keyed on `sub`), with the
+ * email marked verified when the token carries `xms_edov === true`. The tenant is the app's own,
+ * so an unverified address is kept, unverified (it never links to an existing account).
+ */
+function entraSingleTenantProfile(input: ProfileInput): AuthUser {
+  const profile = oidcClaimProfile(input);
+  const edov = { ...input.userinfo, ...input.claims }.xms_edov;
+  return claimTrue(edov) && profile.email ? { ...profile, emailVerified: true } : profile;
+}
+
+/** The tenant aliases whose tokens may come from any tenant. */
+const ENTRA_ALIASES = new Set(["common", "organizations", "consumers"]);
 
 /**
  * Microsoft Entra ID (formerly Azure AD) — OIDC v2.0 endpoints, `id_token` verified
- * against the tenant's JWKS. Single-tenant only (see {@link MicrosoftEntraOptions.tenant});
- * claims come from the verified `id_token`, so no Microsoft Graph call is made.
+ * against the tenant's JWKS. A single tenant, or the multi-tenant aliases (`common`,
+ * `organizations`, `consumers`; see {@link MicrosoftEntraOptions.tenant}). Claims come from
+ * the verified `id_token`, so no Microsoft Graph call is made.
  *
- * @param options Tenant plus the app's client credentials.
+ * @param options Tenant (plus `allowedTenants` for a multi-tenant alias) and the app's client
+ * credentials.
  * @returns The configured Entra provider (`id: "microsoft-entra"`).
  */
 export function microsoftEntra(options: MicrosoftEntraOptions): OAuthProvider {
   const tenant = providerSegment(options.tenant, "microsoftEntra tenant");
-  if (ENTRA_MULTI_TENANT.has(tenant.toLowerCase())) {
-    throw new TypeError(
-      `auth: microsoftEntra needs a specific tenant id or domain — "${tenant}" issues a ` +
-        `template issuer (https://login.microsoftonline.com/{tenantid}/v2.0) that cannot be verified`,
-    );
+  if (options.allowedTenants !== undefined && !Array.isArray(options.allowedTenants)) {
+    throw new TypeError("auth: microsoftEntra allowedTenants must be an array");
   }
+  const tenancy = entraTenancy(tenant, options.allowedTenants);
   const base = `https://login.microsoftonline.com/${tenant}`;
   return oauthPreset({
     id: "microsoft-entra",
     type: "oidc",
-    issuer: `${base}/v2.0`,
+    ...tenancy,
     authorizationUrl: `${base}/oauth2/v2.0/authorize`,
     tokenUrl: `${base}/oauth2/v2.0/token`,
-    jwksUrl: `${base}/discovery/v2.0/keys`,
-    discovery: true,
     scopes: ["openid", "email", "profile"],
+    profile: ENTRA_ALIASES.has(tenant.toLowerCase())
+      ? entraMultiTenantProfile
+      : entraSingleTenantProfile,
   }, options);
 }
 

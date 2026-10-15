@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.4.0
+
+Requires the denext release after 4.0.0 (`tapChannelAuthorized` in `@denext/denext/plugin-kit`).
+
+### Breaking
+
+- **`fromChannel(channel, key)` runs the channel's `authorize`.** It used to subscribe any caller
+  to any key — a server-side tap that skipped the channel's policy — so a key built from a
+  client-supplied argument (``fromChannel(inbox, `user:${args.user}`)``) let a viewer read
+  another user's channel unless the resolver checked it. Now it applies the Live socket's gate:
+  an unknown channel, a malformed key, or an `authorize(ctx, key)` that says no (or throws)
+  refuses the subscription with a GraphQL error (`extensions.code: "FORBIDDEN"`, kept through
+  error masking). `ctx` is `{ origin, url, cookie, peerId }` from the subscribing request, as on
+  the Live socket. An active subscription is re-checked lazily after the channel's
+  `authTtlSeconds` (default `live.limits.channelAuthTtlSeconds`) and ends when that check fails;
+  a `channel.revoke(key)`, or one naming the subscription's peer, ends it at once.
+- **`fromChannel` returns a promise** (`Promise<AsyncIterableIterator<T>>`). A `subscribe`
+  resolver may return it as is (`subscribe: (_r, args, ctx) => fromChannel(...)`); code that
+  called `.next()` on the result directly awaits it first.
+
+### Added
+
+- **GraphQL over WebSocket.** The `graphql-ws` protocol (subprotocol `graphql-transport-ws`) on
+  the same path as GraphQL over SSE, implemented in the package (no new dependency) over Yoga's
+  own pipeline, so the depth and cost limits, introspection blocking and error masking apply to
+  every operation. The handshake needs a browser `Origin` on the app's own host, in
+  `allowedOrigins`, or the app's `desktop.app.origin` (Live's production rule; `requireSameOrigin:
+  false` lifts it). Identity is the upgrade request's cookies / `Authorization`, or a
+  `connection_init` payload token (`{ authorization: "Bearer …" }` or `{ token }`) when the
+  upgrade carried none; every operation of a socket is one peer for `authorize` and
+  `revoke(key, { peerId })`. `websocket: { connectionInitTimeoutMs, maxSubscriptions }` (3000 ms;
+  32 operations per socket); `websocket: false` turns it off. Messages over `maxBodyBytes` close
+  the socket.
+- **Connection caps for both subscription transports** (`maxConnections`, `maxConnectionsPerIp`),
+  mirroring the Live socket's: every open WebSocket and every streamed (SSE / multipart) response
+  holds a slot, refused with `429` before the upgrade or the response past a cap. The per-address
+  cap keys on `clientIpForLimits({ bucket: true })` as Live does (a trusted proxy's hop or the
+  `rateLimitHeader` address, an IPv6 client's /64; a loopback/private peer behind an untrusted
+  proxy counts only against the total unless `rateLimitLocalAddresses`). Defaults: the app's
+  `live.limits.maxConnections` / `maxConnectionsPerIp`, else Live's 10 000 / 64. A slot is
+  released however the connection ends — a client close or disconnect, a protocol error, the
+  `connection_init` timeout, a completed or failed stream, a schema reload ending it.
+- **The schema reloads in `denext dev`.** `schema` takes the module path that exports it
+  (`schema: "./app/graphql/schema.ts"`; its `schema` or default export, a schema or a factory). An
+  edit to a file under that module's directory (or the `watch` globs) loads the schema again for
+  the next request without a restart; subscriptions on the old schema complete, over SSE and
+  WebSocket alike.
+
+### Fixed
+
+- **`denext graphql sdl` / `diff` load a module-path `schema` under the app's own config.** The
+  verb now declares that it loads project modules, as `denext content` and `denext openapi` do,
+  so the CLI re-runs under the project's `deno.json` first; it used to import the schema module
+  with whatever import map the CLI started with, and an npm package the schema imports (Pothos,
+  say) failed to resolve.
+
 ## 0.3.0 - 2026-10-13
 
 - Requires `@denext/denext` ^4.0.0-rc.1 (the jobs rename and the rest of denext 4.0's breaking

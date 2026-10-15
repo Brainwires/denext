@@ -1,0 +1,8 @@
+// A call whose result may be undefined is dereferenced directly.
+interface Session {
+  user: { id: string };
+}
+
+declare function currentSession(): Session | undefined;
+
+export const userId = currentSession().user.id;

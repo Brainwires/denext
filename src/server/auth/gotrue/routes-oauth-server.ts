@@ -29,6 +29,7 @@ import type {
   OAuthServerStore,
 } from "../adapter-oauth-server.ts";
 import { constantTimeEqualHex, sha256Hex } from "../hash.ts";
+import { snapshotAllowed } from "../sso-user.ts";
 import { base64UrlEncode, randomToken } from "../oauth.ts";
 import {
   type CallerUser,
@@ -250,18 +251,24 @@ async function boundRequest(
   return { record: { ...record, userId }, client };
 }
 
-/** Approve: record consent, mint the code, answer the client's redirect. */
+/**
+ * Approve: record consent, mint the code, answer the client's redirect. The approval records
+ * whether the consenting session was one the user's identity provider started (`ssoConsent`):
+ * an SSO user's client tokens live only on such a consent.
+ */
 async function approve(
   ctx: GoTrueContext,
   store: OAuthServerStore,
   record: OAuthAuthorizationRecord,
-  userId: string,
+  caller: CallerUser,
 ): Promise<string> {
+  const userId = caller.user.id;
   const code = randomToken(32);
   const settled = await store.updateOAuthAuthorization(record.id, {
     status: "approved",
     codeHash: await codeHash(code),
     expiresAt: nowSeconds() + codeExpiry(ctx),
+    ...(caller.ssoSession ? { ssoConsent: true as const } : {}),
   }, { status: "pending", userId });
   if (!settled) throw notFound();
   const previous = await store.getOAuthConsent(userId, record.clientId);
@@ -325,10 +332,11 @@ async function requireConsentingUser(ctx: GoTrueContext): Promise<CallerUser> {
 /** `GET /oauth/authorizations/:id` — the consent page's details (or an auto-approval). */
 export async function getAuthorization(ctx: GoTrueContext): Promise<Response> {
   const store = oauthStore(ctx);
-  const { user } = await requireConsentingUser(ctx);
+  const caller = await requireConsentingUser(ctx);
+  const { user } = caller;
   const { record, client } = await boundRequest(ctx, store, user.id);
   if (await alreadyConsented(store, record, user.id)) {
-    return ok({ redirect_url: await approve(ctx, store, record, user.id) });
+    return ok({ redirect_url: await approve(ctx, store, record, caller) });
   }
   return ok({
     authorization_id: record.id,
@@ -347,14 +355,15 @@ export async function getAuthorization(ctx: GoTrueContext): Promise<Response> {
 /** `POST /oauth/authorizations/:id/consent` — `{ action: "approve" | "deny" }`. */
 export async function consent(ctx: GoTrueContext): Promise<Response> {
   const store = oauthStore(ctx);
-  const { user } = await requireConsentingUser(ctx);
+  const caller = await requireConsentingUser(ctx);
+  const { user } = caller;
   const body = await readJson(ctx);
   if (body.action !== "approve" && body.action !== "deny") {
     throw new GoTrueError(400, "validation_failed", "action must be approve or deny");
   }
   const { record } = await boundRequest(ctx, store, user.id);
   const redirect = body.action === "approve"
-    ? await approve(ctx, store, record, user.id)
+    ? await approve(ctx, store, record, caller)
     : await deny(ctx, store, record, user.id);
   return ok({ redirect_url: redirect });
 }
@@ -563,12 +572,19 @@ async function codeGrant(
   const grant = await store.getOAuthConsent(record.userId!, client.id);
   const user = await ctx.adapter.getUser(record.userId!);
   if (!grant || grant.revokedAt !== undefined || !user) throw invalidGrant();
+  // An SSO user's client tokens rest on a consent its identity provider's session gave.
+  const oauth = {
+    clientId: client.id,
+    scope: record.scope,
+    ...(record.ssoConsent === true ? { sso: true as const } : {}),
+  };
+  if (!snapshotAllowed(user, { oauth })) throw invalidGrant();
   const session = await startSession(
     ctx.session,
     user,
     { method: "oauth_provider/authorization_code", timestamp: nowSeconds() },
     undefined,
-    { clientId: client.id, scope: record.scope },
+    oauth,
   );
   const sessionId = session.refresh_token.split(".")[0];
   await store.linkOAuthSession({

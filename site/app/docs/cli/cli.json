@@ -146,8 +146,33 @@
     {
       "name": "build",
       "summary": "Build for production",
-      "usage": "denext build [dir]",
-      "flags": [],
+      "usage": "denext build [dir] [options]",
+      "description": "--compile builds, then embeds the build, public/, the server modules, jobs/, services/ and the\nmigrations into one executable that serves the app as `denext start` does (`./app`,\n`./app job <name>`, `./app db migrate`). It bakes the Docker image's least-privilege\n--allow-* plus denext.config's compile.permissions, and embeds no .env file: the binary\nreads its environment at run time. Docs: https://denext.dev/docs/deployment-targets",
+      "flags": [
+        {
+          "name": "raw",
+          "type": "boolean",
+          "description": "Print diagnostics exactly as Deno reports them, without explanations (also DENEXT_RAW_DIAGNOSTICS=1)"
+        },
+        {
+          "name": "compile",
+          "type": "boolean",
+          "description": "Also compile the app's server into one executable (deno compile on the toolchain)"
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "valueName": "<triple>",
+          "description": "With --compile: the target (x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, x86_64-apple-darwin, aarch64-apple-darwin, x86_64-pc-windows-msvc; default: this machine)"
+        },
+        {
+          "name": "output",
+          "alias": "o",
+          "type": "string",
+          "valueName": "<path>",
+          "description": "With --compile: the executable's path (default: dist/<name>)"
+        }
+      ],
       "positionals": [
         {
           "name": "dir",
@@ -160,8 +185,15 @@
     {
       "name": "check",
       "summary": "Type-check the app (deno check)",
-      "usage": "denext check [paths] [-- <deno args>]",
-      "flags": [],
+      "usage": "denext check [paths] [options] [-- <deno args>]",
+      "description": "Forwards to `deno check`; each type error is explained in plain language with a suggested fix, the original kept under it (--raw for Deno's output unchanged).",
+      "flags": [
+        {
+          "name": "raw",
+          "type": "boolean",
+          "description": "Print diagnostics exactly as Deno reports them, without explanations (also DENEXT_RAW_DIAGNOSTICS=1)"
+        }
+      ],
       "positionals": [
         {
           "name": "paths",
@@ -292,6 +324,45 @@
           "required": true,
           "variadic": false,
           "description": "New app directory"
+        }
+      ]
+    },
+    {
+      "name": "dashboard",
+      "summary": "Serve the stack's database dashboard behind DASHBOARD_PASSWORD (loopback by default)",
+      "usage": "denext dashboard [dir] [options]",
+      "description": "  denext dashboard                  Serve it on 127.0.0.1:3100\n  denext dashboard --read-only      Browse without offering any write\n  denext dashboard --host 0.0.0.0 --origin https://dash.example.com\n                                    Behind a TLS reverse proxy at that origin\n\n  The password comes from DASHBOARD_PASSWORD (the environment, else the project's .env),\n  never from an argument. Sign-ins are rate limited; the session cookie is HttpOnly and\n  SameSite=Strict (__Host- and Secure over https); every change needs a same-origin\n  request and a CSRF token. A plain-http --origin off this machine is refused.",
+      "flags": [
+        {
+          "name": "port",
+          "type": "number",
+          "valueName": "<port>",
+          "description": "Port to listen on (default 3100)"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "valueName": "<address>",
+          "description": "Address to bind (default 127.0.0.1; the stack's container binds 0.0.0.0)"
+        },
+        {
+          "name": "origin",
+          "type": "string",
+          "valueName": "<url>",
+          "description": "A public origin it is also reached at, behind a reverse proxy (repeatable)"
+        },
+        {
+          "name": "read-only",
+          "type": "boolean",
+          "description": "Refuse every change"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
         }
       ]
     },
@@ -681,6 +752,11 @@
           "type": "string",
           "valueName": "<origin>",
           "description": "Also let this origin or host load the dev assets (repeatable, or comma-separated)"
+        },
+        {
+          "name": "raw",
+          "type": "boolean",
+          "description": "Print diagnostics exactly as Deno reports them, without explanations (also DENEXT_RAW_DIAGNOSTICS=1)"
         }
       ],
       "positionals": [
@@ -924,6 +1000,16 @@
           "description": "docker: leave the migrate service out"
         },
         {
+          "name": "dashboard",
+          "type": "boolean",
+          "description": "docker: The database dashboard (denext dashboard) on 127.0.0.1:3100, behind DASHBOARD_PASSWORD (on with Postgres)"
+        },
+        {
+          "name": "no-dashboard",
+          "type": "boolean",
+          "description": "docker: leave the dashboard service out"
+        },
+        {
           "name": "stack",
           "altNames": [
             "all"
@@ -940,6 +1026,11 @@
           "name": "dev",
           "type": "boolean",
           "description": "docker: also write compose.dev.yml (denext dev on a bind mount)"
+        },
+        {
+          "name": "dashboard-logs",
+          "type": "boolean",
+          "description": "docker: the dashboard's Logs page — a relay service that mounts the Docker socket"
         },
         {
           "name": "port",
@@ -1109,8 +1200,15 @@
     {
       "name": "lint",
       "summary": "Lint the app (deno lint)",
-      "usage": "denext lint [paths] [-- <deno args>]",
-      "flags": [],
+      "usage": "denext lint [paths] [options] [-- <deno args>]",
+      "description": "Forwards to `deno lint`; each denext rule report is explained with a fix (--raw for Deno's output unchanged).",
+      "flags": [
+        {
+          "name": "raw",
+          "type": "boolean",
+          "description": "Print diagnostics exactly as Deno reports them, without explanations (also DENEXT_RAW_DIAGNOSTICS=1)"
+        }
+      ],
       "positionals": [
         {
           "name": "paths",
@@ -1941,9 +2039,9 @@
     },
     {
       "name": "stack",
-      "summary": "Start, stop and inspect the local Docker stack (app, Postgres, MinIO), like supabase start",
-      "usage": "denext stack <action> [service] [options]",
-      "description": "Usage: denext stack <up|down|status|logs> [flags]\n\n  up      Write the stack if missing (denext generate docker --stack, or your flags), fill a\n          missing .env with generated secrets, docker compose up -d --wait, then status\n          (--dev: the dev overlay; --build: rebuild the app image)\n  down    Stop it (--volumes also drops the database and storage data)\n  status  The API, REST, database and S3 URLs and the publishable key (--json;\n          --show-secrets adds the secret key and the passwords)\n  logs    docker compose logs [service] (--follow)",
+      "summary": "Start, stop, inspect and operate the local Docker stack (app, Postgres, MinIO), like supabase start",
+      "usage": "denext stack <action> [target] [options]",
+      "description": "Usage: denext stack <action> [flags]\n\n  up       Write the stack if missing (denext generate docker --stack, or your flags), fill\n           a missing .env with generated secrets, docker compose up -d --wait, then status\n           (--dev: the dev overlay; --build: rebuild the app image)\n  down     Stop it (--volumes also drops the database and storage data)\n  status   The API, REST, database and S3 URLs and the publishable key (--json;\n           --show-secrets adds the secret key and the passwords)\n  logs     docker compose logs [service] (--follow). Filters: --service <s> (repeatable),\n           --level debug|info|warn|error (that level and above), --since / --until\n           (2026-10-14T09:00:00Z or 30m), --grep <text> or --grep '/regex/i'\n  health   Each service's health check and the app's /_denext/health checks, as a table\n           (--json; --watch [seconds], default 5). Exits 1 when anything is unhealthy\n  passwd   New passwords: --postgres (the superuser from stdin or --generate, the app\n           role a fresh one; ALTER ROLE runs in the database first) and / or --dashboard\n           (DASHBOARD_PASSWORD). One password per line on stdin; never as an argument\n  roll     New publishable and secret keys; --include-secret also new JWT signing keys /\n           DENEXT_JWT_SECRET, which ends every issued token (confirm, or --yes).\n           --keep-old starts a rotation: the previous keys stay valid next to the new\n           ones (the legacy DENEXT_JWT_SECRET is left as it is); --drop-old finishes it\n  backup   [file] The database (pg_dump custom format, default under .denext/backups/);\n           --full: one .tar.gz with roles, extensions, the dump, settings, storage and a\n           MANIFEST.txt of the restore order\n  restore  <file> A dump or a full backup (detected); a database with tables needs --yes\n\npasswd and roll edit .env in place, then --restart recreates the affected containers,\n--no-restart leaves them, and with neither a terminal is asked (else the command printed).\n--show-secrets prints the new secrets.",
       "flags": [
         {
           "name": "build",
@@ -1963,7 +2061,93 @@
         {
           "name": "show-secrets",
           "type": "boolean",
-          "description": "status: print the secret key and passwords"
+          "description": "status / passwd / roll: print the secret key and passwords"
+        },
+        {
+          "name": "service",
+          "type": "string",
+          "valueName": "<name>",
+          "description": "logs: only this service (repeatable)"
+        },
+        {
+          "name": "level",
+          "type": "string",
+          "valueName": "<level>",
+          "description": "logs: debug | info | warn | error and above"
+        },
+        {
+          "name": "since",
+          "type": "string",
+          "valueName": "<time>",
+          "description": "logs: from (timestamp or 30m)"
+        },
+        {
+          "name": "until",
+          "type": "string",
+          "valueName": "<time>",
+          "description": "logs: until (timestamp or 5m)"
+        },
+        {
+          "name": "grep",
+          "type": "string",
+          "valueName": "<text>",
+          "description": "logs: lines containing the text, or matching /regex/flags"
+        },
+        {
+          "name": "watch",
+          "type": "boolean",
+          "description": "health: repeat every [seconds] (default 5)"
+        },
+        {
+          "name": "dashboard",
+          "type": "boolean",
+          "description": "passwd: the dashboard password (DASHBOARD_PASSWORD); up: the dashboard service"
+        },
+        {
+          "name": "generate",
+          "type": "boolean",
+          "description": "passwd: generate strong passwords"
+        },
+        {
+          "name": "include-secret",
+          "type": "boolean",
+          "description": "roll: also the JWT signing keys / DENEXT_JWT_SECRET (ends every issued token)"
+        },
+        {
+          "name": "keep-old",
+          "type": "boolean",
+          "description": "roll: keep the previous keys valid next to the new ones (a rotation window)"
+        },
+        {
+          "name": "drop-old",
+          "type": "boolean",
+          "description": "roll: finish a rotation, keeping only the newest key of each kind"
+        },
+        {
+          "name": "restart",
+          "type": "boolean",
+          "description": "passwd / roll: restart the affected containers"
+        },
+        {
+          "name": "no-restart",
+          "type": "boolean",
+          "description": "passwd / roll: leave the containers running"
+        },
+        {
+          "name": "yes",
+          "type": "boolean",
+          "description": "roll --include-secret / restore: go ahead without asking"
+        },
+        {
+          "name": "full",
+          "type": "boolean",
+          "description": "backup: roles, settings, extensions and storage too"
+        },
+        {
+          "name": "storage-dir",
+          "type": "string",
+          "valueName": "<dir>",
+          "description": "backup / restore: the fs storage driver's dir in the app container"
         },
         {
           "name": "postgres",
@@ -2006,6 +2190,11 @@
           "description": "docker: leave the migrate service out"
         },
         {
+          "name": "no-dashboard",
+          "type": "boolean",
+          "description": "docker: leave the dashboard service out"
+        },
+        {
           "name": "stack",
           "altNames": [
             "all"
@@ -2022,6 +2211,11 @@
           "name": "dev",
           "type": "boolean",
           "description": "docker: also write compose.dev.yml (denext dev on a bind mount)"
+        },
+        {
+          "name": "dashboard-logs",
+          "type": "boolean",
+          "description": "docker: the dashboard's Logs page — a relay service that mounts the Docker socket"
         },
         {
           "name": "port",
@@ -2041,13 +2235,13 @@
           "name": "action",
           "required": true,
           "variadic": false,
-          "description": "up | down | status | logs"
+          "description": "up | down | status | logs | health | passwd | roll | backup | restore"
         },
         {
-          "name": "service",
+          "name": "target",
           "required": false,
           "variadic": false,
-          "description": "logs: one service"
+          "description": "logs: a service; backup / restore: the file; health --watch: the seconds"
         }
       ]
     },

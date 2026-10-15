@@ -216,7 +216,13 @@ Deno.test("denext_generate exposes every `generate docker` flag, described", () 
 });
 
 Deno.test("dockerRequestOf: the tool arguments become the same request the flags make", () => {
-  assertEquals(dockerRequestOf({}), { overrides: {}, all: false, exposeDb: false, dev: false });
+  assertEquals(dockerRequestOf({}), {
+    overrides: {},
+    all: false,
+    exposeDb: false,
+    dev: false,
+    dashboardLogs: false,
+  });
   assertEquals(
     dockerRequestOf({
       postgres: true,
@@ -225,6 +231,7 @@ Deno.test("dockerRequestOf: the tool arguments become the same request the flags
       stack: true,
       exposeDb: true,
       dev: true,
+      dashboardLogs: true,
       port: 8080,
       denoTag: "2.9.7",
     }),
@@ -235,6 +242,7 @@ Deno.test("dockerRequestOf: the tool arguments become the same request the flags
       denoTag: "2.9.7",
       exposeDb: true,
       dev: true,
+      dashboardLogs: true,
     },
   );
 });

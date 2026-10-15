@@ -76,6 +76,13 @@ export interface AdapterUser {
   lastSignInAt?: number;
   /** Banned until this time, epoch seconds: no sign-in or refresh before it. */
   bannedUntil?: number;
+  /**
+   * Sessions signed in before this time (epoch seconds) are ended: a cookie session — stateless
+   * or stored — whose sign-in (`authTime`, else its issue time) is earlier reads as signed out.
+   * Set by a ban, a password reset or change, an account deletion, `revokeAllSessions(userId)`
+   * and the pre-account-hijacking eviction.
+   */
+  sessionsValidAfter?: number;
 }
 
 /** A provider account linked to an {@linkcode AdapterUser}. */
@@ -155,6 +162,12 @@ export interface ApiTokenRecord {
   scopes?: string[];
   /** When the token was revoked, epoch seconds; a revoked token must never authenticate. */
   revokedAt?: number;
+  /**
+   * Set when the token was minted from a session the user's identity provider started (a SAML
+   * sign-in). An SSO user's token authenticates only with it; a token without it — minted
+   * without a session, from any other session, or before the field existed — is refused.
+   */
+  ssoSession?: true;
 }
 
 /** A user's TOTP factor plus their single-use backup codes. */
@@ -284,14 +297,15 @@ export interface NativeSessionRecord {
 }
 
 /**
- * A single-use native grant: an authorization **code** (handed to the app's redirect URI) or
- * a sign-in **nonce** (for a native id_token sign-in). Only the SHA-256 of the value is stored.
+ * A single-use native grant: an authorization **code** (handed to the app's redirect URI), a
+ * sign-in **nonce** (for a native id_token sign-in), or an **mfa** token (a native id_token
+ * sign-in that still owes its second factor). Only the SHA-256 of the value is stored.
  */
 export interface NativeGrantRecord {
   /** SHA-256 (hex) of the presented value. */
   hash: string;
   /** Which kind of grant this is. */
-  kind: "code" | "nonce";
+  kind: "code" | "nonce" | "mfa";
   /** Expiry, epoch seconds. */
   expiresAt: number;
   /** Opaque payload the flow wants back on redemption (JSON). */

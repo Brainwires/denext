@@ -61,23 +61,9 @@ export type {
   WaitOptions,
 } from "./render.ts";
 
-import {
-  createApp,
-  createMiddlewareRunner,
-  defaultLoader,
-  PageCache,
-  scanRoutes,
-} from "../server/mod.ts";
+import { defaultLoader } from "../server/mod.ts";
 import type { TestHandler } from "./client.ts";
-import { resolveProject } from "../build/paths.ts";
-import {
-  buildBoundaryManifest,
-  computeBoundaryRoutes,
-  importFunctionExports,
-  routeEntryFiles,
-} from "../build/module-graph.ts";
-import { tagServerModules } from "../runtime/server-action.ts";
-import { resolve, toFileUrl } from "@std/path";
+import { buildTestHandler } from "./conformance.ts";
 
 /**
  * Build an in-process request handler for a real project directory — **no build
@@ -96,44 +82,9 @@ import { resolve, toFileUrl } from "@std/path";
  * @returns A `(Request) => Promise<Response>` handler.
  */
 export async function createTestApp(projectDir: string): Promise<TestHandler> {
-  const paths = await resolveProject(resolve(projectDir));
-  const manifest = await scanRoutes(paths.appDir);
-  let getMiddleware: (() => ReturnType<typeof createMiddlewareRunner>) | undefined;
-  if (paths.middlewarePath) {
-    const mod = await import(toFileUrl(resolve(paths.middlewarePath)).href);
-    const runner = createMiddlewareRunner(mod);
-    getMiddleware = () => runner;
-  }
-
-  // Discover the "use client"/"use server" boundary by crawling the import graph
-  // (the same pass the production server runs) — with no build. This is what lets
-  // `<form action={serverActionFn}>` render a working endpoint URL and lets Server
-  // Actions dispatch. Every discovered "use server" module is registered up front
-  // so actions work on ALL routes, not only ones that also reach a client island.
-  // No client bundle is emitted, which is exactly the JavaScript-disabled surface
-  // this handler is meant to exercise.
-  const boundary = await buildBoundaryManifest(
-    paths.appDir,
-    [...new Set(manifest.pages.flatMap(routeEntryFiles))],
-    { exportsOf: importFunctionExports },
-  );
-  await tagServerModules(boundary.server);
-  const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
-
-  return createApp({
-    getManifest: () => manifest,
-    load: defaultLoader,
-    publicDir: paths.publicDir,
-    getMiddleware,
-    pageCache: new PageCache(),
-    i18n: paths.i18n ?? undefined,
-    appLinks: paths.config?.appLinks,
-    flight: flightRoutes.size > 0,
-    appDir: paths.appDir,
-    flightRoutes,
-    flightClients: boundary.client,
-    flightServers: boundary.server,
-  });
+  // The production server's boundary discovery, with no build and no client bundle — the
+  // JavaScript-disabled surface this handler exercises (`buildTestHandler`).
+  return (await buildTestHandler(projectDir, defaultLoader)).handler;
 }
 
 // React's `act()` — flush renders, effects and scheduled work around an interaction.

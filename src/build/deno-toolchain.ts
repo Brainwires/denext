@@ -627,9 +627,26 @@ async function queryMissingGrants(cacheRoot: string): Promise<string[]> {
   return missing;
 }
 
+/**
+ * The `DENEXT_DENO` value as denext interprets it: trimmed, then without ONE pair of matching
+ * surrounding quotes (`"…"` or `'…'`) — Windows cmd's `set DENEXT_DENO="C:\Program
+ * Files\deno\deno.exe"` keeps the quotes in the value. Mismatched quotes are left as they are.
+ *
+ * @param env The environment to read (defaults to the process).
+ * @returns The value, `""` when unset.
+ */
+export function toolchainEnvValue(env: EnvGet = processEnv): string {
+  const raw = (env(TOOLCHAIN_ENV) ?? "").trim();
+  const quote = raw[0];
+  if (raw.length >= 2 && (quote === '"' || quote === "'") && raw.endsWith(quote)) {
+    return raw.slice(1, -1).trim();
+  }
+  return raw;
+}
+
 /** The `DENEXT_DENO` mode: `pinned`, `stock`, or a path. */
 function toolchainMode(env: EnvGet): { mode: "pinned" | "stock" } | { mode: "path"; path: string } {
-  const raw = (env(TOOLCHAIN_ENV) ?? "").trim();
+  const raw = toolchainEnvValue(env);
   if (raw === "" || raw.toLowerCase() === "pinned") return { mode: "pinned" };
   if (raw.toLowerCase() === "stock") return { mode: "stock" };
   return { mode: "path", path: raw };

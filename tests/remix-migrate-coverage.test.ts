@@ -328,6 +328,10 @@ Deno.test("migrateProject(--denext-local-path): remix path maps denext/react/nex
     assert(imports["denext/remix"]?.startsWith("file://"), "denext/remix → file://");
     assert(imports["denext/remix/server"]?.startsWith("file://"), "denext/remix/server → file://");
     assert(imports["react"]?.startsWith("file://"), "react aliased to a local denext file");
+    // Every dropped Remix server package a library may import resolves to the server runtime.
+    for (const spec of ["@remix-run/deno", "@remix-run/css-bundle"]) {
+      assertEquals(imports[spec], imports["denext/remix/server"], spec);
+    }
     // The dev/build tasks invoke the local cli.ts (a file:// specifier), not the JSR package.
     assertStringIncludes(JSON.stringify(deno.tasks), "file://");
   } finally {

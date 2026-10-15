@@ -27,7 +27,8 @@ export default function GettingStarted() {
         {`curl -fsSL https://denext.dev/install.sh | sh   # ~/.denext/bin/denext (macOS, Linux)
 irm https://denext.dev/install.ps1 | iex         # Windows PowerShell: %USERPROFILE%\\.denext\\bin
 # or, with Deno already installed:
-deno install -A -g -n denext jsr:@denext/denext/cli`}
+deno install -A -g -n denext jsr:@denext/denext/cli
+denext toolchain install   # then: the toolchain, and every verb cached for offline use`}
       </Code>
       <p>
         After installing the binary, the installer runs <code>denext toolchain install</code>{" "}
@@ -47,6 +48,14 @@ deno install -A -g -n denext jsr:@denext/denext/cli`}
         <code>denext task</code> puts it first on the task's PATH as{" "}
         <code>deno</code>, so a task that calls <code>deno …</code>{" "}
         works on a machine with no Deno installed.
+      </p>
+      <p>
+        The CLI loads only the verb you run, so <code>denext --help</code> and{" "}
+        <code>--version</code>{" "}
+        answer at once. The compiled binary embeds every verb; a CLI installed from JSR with{" "}
+        <code>deno install</code>{" "}
+        caches each verb's modules on its first online run (in the background) or in{" "}
+        <code>denext toolchain install</code>, so run that once before working offline.
       </p>
       <p>
         The binary is a CLI, not a second copy of the framework: inside a project it runs the denext
@@ -117,7 +126,8 @@ denext task dev`}
   "tasks": {
     "dev": "deno run -A jsr:@denext/denext@^${RELEASE}/cli dev .",
     "build": "deno run -A jsr:@denext/denext@^${RELEASE}/cli build .",
-    "start": "deno run -A jsr:@denext/denext@^${RELEASE}/cli start ."
+    "start": "deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^${RELEASE}/cli start .",
+    "test": "deno run -A jsr:@denext/denext@^${RELEASE}/cli test"
   },
   "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "denext" },
   "imports": { "denext": "jsr:@denext/denext@^${RELEASE}" }
@@ -128,7 +138,9 @@ denext task dev`}
         binary defers to — and the tasks name the same version, so <code>denext task build</code>
         {" "}
         and <code>denext build</code> run the same framework. <code>denext create</code>{" "}
-        writes both.
+        writes both. <code>start</code>{" "}
+        only serves, so it runs least-privilege: network, read, env, and a write grant for{" "}
+        <code>.denext</code> alone, where the default cache lives.
       </p>
       <p>
         <code>denext upgrade</code> moves them together, with every first-party{" "}
@@ -275,8 +287,13 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();`}
         <code>denoland.vscode-deno</code>; install the extension when prompted and the editor uses
         the same resolution, types and lint plugin as the CLI. Any editor that speaks the Deno
         language server works the same way. Type-check from the terminal with{" "}
-        <code>deno check app/</code>, and lint with <code>deno lint</code> — the{" "}
-        <code>denext/*</code> rules (rules-of-hooks, directive placement) run there too.
+        <code>denext check</code>, and lint with <code>denext lint</code> — the{" "}
+        <code>denext/*</code>{" "}
+        rules (rules-of-hooks, directive placement) run there too. Both forward to Deno and print
+        each diagnostic they recognize as a plain-language explanation with a fix, the original kept
+        under it (<code>--raw</code>, or{" "}
+        <code>DENEXT_RAW_DIAGNOSTICS=1</code>, prints Deno's output unchanged; see{" "}
+        <a href="/docs/error-handling#explained-type-errors">Explained type errors</a>).
       </p>
 
       <h2 id="fallow">Code health gate (fallow)</h2>

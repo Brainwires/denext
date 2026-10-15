@@ -310,19 +310,37 @@ function withRequestTimeout(
   pipeline: Promise<Response>,
   ms: number,
   controller: AbortController,
-  ctx: { timeoutMs?: number; rearmTimeout?: () => void },
+  ctx: { timeoutMs?: number; rearmTimeout?: () => void; holdDeadline?: () => () => void },
 ): Promise<Response> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timedOut = false;
   const startedAt = Date.now();
+  // Time spent under `holdRequestDeadline` (dev's on-demand builds) is not the request's own.
+  let held = 0;
+  let heldSince = 0;
+  let excluded = 0;
   const timeout = new Promise<Response>((resolve) => {
     // A handler may replace the deadline (`setRequestTimeout`): arm for what is left of the
     // current one, or stop watching when it is `0`.
     const arm = () => {
       clearTimeout(timer);
       const limit = ctx.timeoutMs ?? ms;
-      if (limit === 0 || timedOut) return;
-      timer = setTimeout(fire, Math.max(0, limit - (Date.now() - startedAt)));
+      if (limit === 0 || timedOut || held > 0) return;
+      timer = setTimeout(fire, Math.max(0, limit + excluded - (Date.now() - startedAt)));
+    };
+    ctx.holdDeadline = () => {
+      if (held++ === 0) {
+        heldSince = Date.now();
+        clearTimeout(timer);
+      }
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        if (--held > 0) return;
+        excluded += Date.now() - heldSince;
+        arm();
+      };
     };
     const fire = () => {
       timedOut = true;
@@ -349,6 +367,7 @@ function withRequestTimeout(
   function done(): void {
     clearTimeout(timer);
     ctx.rearmTimeout = undefined;
+    ctx.holdDeadline = undefined;
   }
 
   function clear(res: Response): Response {

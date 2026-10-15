@@ -133,9 +133,10 @@ export default async function Blog() {
         <code>await renderContent(post)</code>) from{" "}
         <code>@denext/content-collections/runtime</code>. A <code>.md</code>{" "}
         entry goes through the package's own zero-dependency Markdown renderer at request time
-        (headings with ids, lists, fenced code, blockquotes and <code>&gt; [!NOTE]</code>{" "}
-        callouts, inline and reference-style links, emphasis; raw HTML is escaped and script-scheme
-        links dropped); a <code>.mdx</code>{" "}
+        (headings with ids, nested lists, fenced and indented code, code spans, blockquotes and{" "}
+        <code>&gt; [!NOTE]</code>{" "}
+        callouts, GFM tables, inline and reference-style links and images, footnotes, emphasis; raw
+        HTML is escaped and script-scheme links and image sources dropped); a <code>.mdx</code>{" "}
         entry is compiled to a component module at build, so nothing MDX-related runs per request.
         Pass <code>components</code> to map elements or MDX components to your own.
       </p>
@@ -164,7 +165,8 @@ denext content validate   # exit 1 on any schema failure — a CI gate`}
         Two v1 notes: the built store is read from{" "}
         <code>&lt;cwd&gt;/.denext/content-data.json</code>, so run the app from its project root (as
         {" "}
-        <code>denext task dev</code>/<code>start</code> do); and an <em>unquoted</em>{" "}
+        <code>denext task dev</code>/<code>start</code> do), or point it elsewhere with{" "}
+        <code>setContentStorePath(path)</code>; and an <em>unquoted</em>{" "}
         YAML frontmatter date parses as a JS <code>Date</code>{" "}
         — quote it (<code>date: "2026-01-01"</code>) or use a date schema.
       </Callout>

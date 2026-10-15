@@ -658,5 +658,6 @@ async function verifyProviderIdToken(
     audience: provider.clientId,
     nonce,
     strictAudience: provider.strictAudience,
+    ...(provider.tenantIssuer ? { tenantIssuer: provider.tenantIssuer } : {}),
   }) as Record<string, unknown>;
 }

@@ -5,34 +5,20 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> denext **4.0** is in release candidates (`4.0.0-rc.N`) from `development`, then ships 4.x patch
-> and minor releases from there; what each one added is in the changelog.
+> The current release is denext **4.1.0**; 4.x patch and minor releases are cut from
+> `development`, and what each one added is in the changelog.
 
-## 4.1.0: Additional Supabase features
+## 4.1.0: Limitations that can be lifted
 
-Operations commands for the self-hosted stack (`denext generate docker --stack` /
-`denext stack`). Each one edits `.env` in place, keeping its comments and layout, and offers to
-restart the affected containers (or does so at once with `--restart`).
+Entries in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) that aren't forced by an OS, a browser
+or an upstream. Each one's limitation entry is deleted when it ships.
 
-- **Change passwords:** a `denext stack passwd` changes `POSTGRES_PASSWORD` and/or the dashboard
-  password. `--generate` makes strong ones. It keeps the database's superuser and app role
-  (`POSTGRES_APP_USER`) in sync with `.env`.
-- **Roll the keys:** a `denext stack roll` regenerates the publishable and secret keys
-  (`DENEXT_PUBLISHABLE_KEY`, `DENEXT_SECRET_KEY`). `--include-secret` also regenerates the JWT
-  signing keys / `DENEXT_JWT_SECRET`, which invalidates every token already issued; say so
-  before doing it.
-- **Backup and restore:** a `denext stack backup` / `restore` for the database and storage. A
-  `--full` backup is one tar file with the roles, settings, extensions, the database dump, the
-  storage objects and a `MANIFEST.txt` that records the restore order; `restore` recognises a
-  full backup on its own.
-- **Health:** a `denext stack health` shows each service's health (the stack's health checks and
-  the app's `/_denext/health` checks), with a `--watch` mode and `--json` output.
-- **Logs with filtering:** `denext stack logs` gains filters (service, level, time window, text
-  match) on top of the per-service output it prints today.
-- **A dashboard:** a Supabase Studio-style web dashboard for the stack, behind the dashboard
-  password: tables and rows, RLS policies, auth users, storage buckets and objects, realtime,
-  functions, logs and health. Build it on the `denext ui` Database pages (schema-driven, works
-  with JavaScript off) so the local UI and the stack's dashboard are one implementation.
+- **Deno Desktop (runtime work):** CEF on macOS keeps cookies under a real Keychain key in a
+  signed app, not Chromium's mock keychain; a share sheet (macOS `NSSharingServicePicker`,
+  Windows `DataTransferManager`); Spotlight indexing and Handoff on macOS; icons and the
+  destructive style in native context menus; `deliveredNotifications()` reads the OS's list on
+  macOS and Windows; the CEF window on Windows bypasses proxy auto-detection for its loopback
+  relay.
 
 ## Deno toolchain
 
@@ -44,19 +30,15 @@ restart the affected containers (or does so at once with `--restart`).
 - **A Windows Hello passkey ceremony in the release checks:** the Windows test machine is a
   Windows Server VM with no TPM, so the live create + sign-in with Windows Hello was skipped for
   3.1.0. Add a vTPM Windows 11 VM (or a Windows 11 PC) and run the CONTRIBUTING manual check.
-
 - **Clerk on Windows and Linux against a production instance:** the redirect carries a per-flow
   `?denext_nonce=…`, which a development instance accepts against the allowed `myapp://app/`.
   Confirm with one real sign-in that a production instance's native redirect allowlist matches it
   too (an exact match would fail the sign-in closed).
-- **Navigation guard:** keep foreign origins out of the window; a navigation away from the app
-  origin opens in the system browser instead.
-- **Upstream the fork so stock Deno can be used.** Offer every runtime change to denoland/deno
-  and littledivy/laufey and maintain the pull requests (status per change in
-  [our Deno Desktop runtime](https://denext.dev/docs/desktop-runtime#what-it-adds-over-stock-deno-desktop)).
-  When stock Deno carries them, drop the runtime download, the Deno 2.9.7 pin and the cross-host
-  backend directory (2.9.7's CLI looks a prebuilt backend up under the host's executable name),
-  and archive the forks.
+- **Back to stock Deno once it carries the runtime changes.** Upstreaming them to denoland/deno
+  and littledivy/laufey is the maintainer's own work, not tracked here. When stock Deno carries
+  them, drop the runtime download, the Deno 2.9.7 pin and the cross-host backend directory
+  (2.9.7's CLI looks a prebuilt backend up under the host's executable name), and archive the
+  forks.
 - **A Windows arm64 runtime** (none is built today).
 - **A `deno desktop --inspect-renderer` spike** for `denext desktop dev`: CDP into the window,
   which `src/profile/browser.ts` already knows how to drive.
@@ -154,7 +136,6 @@ Each is documented as a manual recipe today (the
 - **Boot diagnosis, the last gaps:** follow import-map-resolved bare specifiers in the walk (so
   their link edges are checked too), and flag a name two `export *` sources both provide (an
   ambiguous export, a SyntaxError in browsers).
-
 - **Agent control of `denext ui`:** an MCP front end over the UI's operations (every panel
   already answers a JSON twin).
 - **Export the UI's form components** (`FormField`, `Control`, `Field`, `OpButton`, `Widget`)

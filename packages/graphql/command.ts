@@ -13,6 +13,7 @@
 import type { CommandContext, CommandSpec } from "@denext/denext/cli/command";
 import type { GraphQLSchema, IntrospectionQuery } from "graphql";
 import { buildClientSchema, lexicographicSortSchema, printSchema } from "graphql";
+import { resolve } from "@std/path";
 
 // The denext CLI types this entrypoint's public API references (doc completeness).
 export type {
@@ -111,6 +112,11 @@ export function createGraphqlCommand(
         valueName: "<file>",
       },
     ],
+    // `sdl` / `diff` load the app's schema module (a module-path `schema`) and so its imports:
+    // the CLI re-runs itself under the project's own config first, as `denext content` does.
+    // The positionals are the action and a file, not the project dir — derive it from --cwd.
+    loadsModules: true,
+    moduleDir: (ctx) => resolve(ctx.global.cwd ?? "."),
     run: (ctx) => runGraphql(ctx, getSdl, io),
   };
 }

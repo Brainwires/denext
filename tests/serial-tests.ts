@@ -19,7 +19,10 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/build.test.ts",
   "tests/cache-default-store.test.ts",
   "tests/cli-analyze-coverage.test.ts",
+  "tests/cli-dashboard.test.ts",
   "tests/clerk-example.test.ts",
+  // Sets DENEXT_STATE_DIR and clears the standalone variables around `runStandalone`.
+  "tests/compile-app.test.ts",
   "tests/cli-desktop-coverage.test.ts",
   "tests/cli-desktop-publish-update.test.ts",
   "tests/cli-env-tier.test.ts",
@@ -54,6 +57,10 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/mobile-sentry.test.ts",
   "tests/next-compat-build.test.ts",
   "tests/ota-manifest.test.ts",
+  // Both set and restore DENEXT_BOOT_DDL around each case (the boot-DDL opt-out every Postgres
+  // store reads when it starts): a parallel test starting a store would see the other value.
+  "tests/postgres-boot-integration.test.ts",
+  "tests/postgres-boot.test.ts",
   "tests/public-env.test.ts",
   "tests/react-native-uniwind-css.test.ts",
   "tests/security-remediation.test.ts",
@@ -86,6 +93,12 @@ export const SERIAL_SOURCES: Readonly<
 > = {
   "src/cli/commands/analyze.ts": { exports: ["analyzeCommand"], verbs: ["analyze"] },
   "src/cli/commands/desktop.ts": { exports: ["desktopCommand"], verbs: ["desktop"] },
+  // `applyRawFlag` sets DENEXT_RAW_DIAGNOSTICS=1 for the whole process when `--raw` is given
+  // (the verbs that call it are serve.ts's, listed below).
+  "src/cli/explain-output.ts": { exports: ["applyRawFlag"] },
+  // `markProduction` sets DENEXT_ENV / NODE_ENV when neither is set (`denext start` and a compiled
+  // app's start do; their verbs are listed with serve.ts, and compile-app's test is serial).
+  "src/cli/commands/start-options.ts": { exports: ["markProduction"] },
   "src/cli/commands/serve.ts": {
     exports: ["devCommand", "exportCommand", "startCommand"],
     verbs: ["dev", "export", "start"],
@@ -102,6 +115,10 @@ export const SERIAL_SOURCE_EXEMPT: Readonly<Record<string, string>> = {
   "src/build/desktop.ts":
     "runDesktop clears DENO_SERVE_ADDRESS (the desktop runtime's page transport) only for an app " +
     "that declares sidecars, after its own server took it; no test sets or reads that variable",
+  "src/cli/run-verb.ts":
+    "the `denext` entrypoint's run half: it sets DENO_BIN / PATH / DENEXT_TOOLCHAIN_ACTIVE only " +
+    "inside a compiled binary (the toolchain handed to its children); tests reach it only " +
+    "through CLI child processes",
   "src/desktop/sidecar-child.ts":
     "readSidecarChildLaunch removes DENEXT_SIDECAR_CHILD / _ARGC only when they are set, which " +
     "only a sidecar's child process (and the serial test of it) does",

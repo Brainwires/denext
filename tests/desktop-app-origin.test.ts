@@ -9,6 +9,7 @@ import {
   desktopAppIdentifierError,
   desktopSchemeError,
   normalizeDesktopBridgeOrigin,
+  normalizeDesktopNavigationOrigin,
   parseDesktopAppOrigin,
   RESERVED_DESKTOP_SCHEMES,
 } from "../src/desktop/app-origin.ts";
@@ -157,6 +158,7 @@ Deno.test("config: deepLinks, singleInstance, inspectable, preload and the windo
       deepLinks: ["t3code", "t3code-dev"],
       singleInstance: true,
       bridgeOrigins: ["https://idp.example", "dev://*", "*"],
+      allowedNavigationOrigins: ["https://idp.example", "http://127.0.0.1:9000/"],
     },
     inspectable: false,
     preload: "./preload.ts",
@@ -174,6 +176,19 @@ Deno.test("config: deepLinks, singleInstance, inspectable, preload and the windo
     [{ app: { bridgeOrigins: "https://idp.example" } }, "desktop.app.bridgeOrigins"],
     [{ app: { bridgeOrigins: ["https://idp.example/login"] } }, "desktop.app.bridgeOrigins[0]"],
     [{ app: { bridgeOrigins: ["*", 5] } }, "desktop.app.bridgeOrigins[1]"],
+    [
+      { app: { allowedNavigationOrigins: "https://idp.example" } },
+      "desktop.app.allowedNavigationOrigins",
+    ],
+    [{ app: { allowedNavigationOrigins: ["*"] } }, "desktop.app.allowedNavigationOrigins[0]"],
+    [
+      { app: { allowedNavigationOrigins: ["https://idp.example", "https://*"] } },
+      "desktop.app.allowedNavigationOrigins[1]",
+    ],
+    [
+      { app: { allowedNavigationOrigins: ["https://idp.example/login"] } },
+      "desktop.app.allowedNavigationOrigins[0]",
+    ],
     [{ app: [] }, "desktop.app"],
     [{ inspectable: 1 }, "desktop.inspectable"],
     [{ preload: "" }, "desktop.preload"],
@@ -224,6 +239,27 @@ Deno.test("normalizeDesktopBridgeOrigin: laufey's entry forms, as a browser seri
     ["1http://x", null],
   ];
   for (const [entry, want] of cases) assertEquals(normalizeDesktopBridgeOrigin(entry), want, entry);
+});
+
+Deno.test("normalizeDesktopNavigationOrigin: exact origins only, as a browser serializes them", () => {
+  const cases: Array<[string, string | null]> = [
+    ["https://IdP.Example/", "https://idp.example"],
+    ["https://idp.example:443", "https://idp.example"],
+    ["http://127.0.0.1:9000", "http://127.0.0.1:9000"],
+    ["myapp://Other", "myapp://other"],
+    ["http://[::1]:8080", "http://[::1]:8080"],
+    ["*", null],
+    ["https://*", null],
+    ["https://idp.example/login", null],
+    ["https://idp.example?x", null],
+    ["https://u@idp.example", null],
+    ["file:///etc", null],
+    ["idp.example", null],
+    ["", null],
+  ];
+  for (const [entry, want] of cases) {
+    assertEquals(normalizeDesktopNavigationOrigin(entry), want, entry);
+  }
 });
 
 Deno.test("trust: no published origin is the stock loopback world", () => {

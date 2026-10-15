@@ -6,7 +6,14 @@
 // `denext test --filter x path/to.test.ts` behaves exactly like the `deno` original.
 
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { commandCwd, denoGlobalArgs, spawnDenoAndExit } from "../shared.ts";
+import {
+  commandCwd,
+  denoGlobalArgs,
+  spawnDenoAndExit,
+  spawnDenoExplainedAndExit,
+} from "../shared.ts";
+import { RAW_FLAG } from "../explain-output.ts";
+import { rawDiagnostics } from "../../build/explain/mod.ts";
 
 /**
  * Forward to `deno <sub> [...leading] [...positionals] [...passthrough]` in the
@@ -25,6 +32,18 @@ function runDeno(
   // order (see CommandRegistry.parse), so forward `rest` alone — no reordering.
   const args = [sub, ...leading, ...denoGlobalArgs(ctx, { json }), ...ctx.rest];
   return spawnDenoAndExit(args, commandCwd(ctx));
+}
+
+/**
+ * Like {@linkcode runDeno}, but the diagnostics are printed explained (src/build/explain) —
+ * unless `--raw`, `DENEXT_RAW_DIAGNOSTICS=1`, or a machine-readable `--json` asks for Deno's
+ * own output. Never returns.
+ */
+function runDenoExplained(sub: string, ctx: CommandContext, json = false): Promise<never> {
+  const machine = (json && ctx.global.json) || ctx.rest.includes("--json");
+  if (ctx.flags.raw === true || rawDiagnostics() || machine) return runDeno(sub, ctx, [], json);
+  const args = [sub, ...denoGlobalArgs(ctx, { json }), ...ctx.rest];
+  return spawnDenoExplainedAndExit(args, commandCwd(ctx));
 }
 
 /**
@@ -67,11 +86,14 @@ export const lintCommand: CommandSpec = {
   name: "lint",
   summary: "Lint the app (deno lint)",
   passthrough: true,
+  usage: "Forwards to `deno lint`; each denext rule report is explained with a fix " +
+    "(--raw for Deno's output unchanged).",
+  flags: [RAW_FLAG],
   positionals: [{
     name: "paths",
     help: "Files/dirs to lint (default: project)",
   }],
-  run: (ctx) => runDeno("lint", ctx, [], true),
+  run: (ctx) => runDenoExplained("lint", ctx, true),
 };
 
 export const fmtCommand: CommandSpec = {
@@ -90,6 +112,9 @@ export const checkCommand: CommandSpec = {
   name: "check",
   summary: "Type-check the app (deno check)",
   passthrough: true,
+  usage: "Forwards to `deno check`; each type error is explained in plain language with a " +
+    "suggested fix, the original kept under it (--raw for Deno's output unchanged).",
+  flags: [RAW_FLAG],
   positionals: [{ name: "paths", help: "Entry files to check" }],
-  run: (ctx) => runDeno("check", ctx),
+  run: (ctx) => runDenoExplained("check", ctx),
 };
