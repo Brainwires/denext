@@ -748,7 +748,8 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - Codecs as first-party zero-npm JSR packages: **`@denext/photon`**
   (resize/WebP), **`@denext/avif`** (AVIF).
 - **`next/font`** (local + Google; Google self-hosted at build, with Next's metric-matched
-  fallback face — `adjustFontFallback` — from a bundled real-metrics table).
+  fallback face — `adjustFontFallback` — from a bundled real-metrics table; a local font gets
+  no fallback face yet).
 - **`next/og`** dynamic OG images via **`@denext/og`** (satori + resvg + yoga) —
   inline `style` + Tailwind (`tw`), **async components**, and an `offline: true`
   switch that renders with zero network egress (errors instead of fetching a

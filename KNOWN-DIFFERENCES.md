@@ -239,6 +239,11 @@ internal design choice with no observable difference lives in
   carries the engine's inline `height: 100%`: a `style` height, or a class with a max height, sizes it, where
   the real DOM build's element has no inline height. It applies to apps on npm React (the
   esbuild build path); a denext-native app uses `VirtualList` directly.
+- **`waitForInitialLayout` hides the whole list, not only its items.** Until the first items are
+  measured the list is invisible (`opacity: 0`, no pointer events), headers, footers and empty
+  state included, so it never paints at estimated positions.
+- **`itemsAreEqual` keeps an item's rendered element only while its index is unchanged.** An
+  item the callback calls equal but that moved to another index renders again.
 
 ## Supabase and `@denext/backend`
 
