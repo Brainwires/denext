@@ -340,13 +340,18 @@ place it behaves differently from Auth.js:
 - **`AUTH_URL` is required in production.** denext never derives the OAuth `redirect_uri` or its
   origin checks from the `Host` header, so `trustHost` / `AUTH_TRUST_HOST` don't stand in for
   it. Without `AUTH_URL` (or `NEXTAUTH_URL`) `NextAuth()` throws when serving in production.
+- **Over plain http the cookies lose their `__Host-` prefix.** A browser refuses a `__Host-`
+  cookie over http, even on `localhost`, so with an `http://` `AUTH_URL` — or no `AUTH_URL`
+  outside production (`denext dev`) — the session, OAuth-transaction and CSRF cookies are named
+  without it, as Auth.js drops its `__Secure-` prefix on http. An `https://` `AUTH_URL`, and
+  production, keep `__Host-`.
 - **`AUTH_SECRET` must be at least 32 characters in production** (`npx auth secret` makes 44).
 - **Redirects stay on the origin.** The `redirect` callback runs, but whatever it returns is
   kept to a same-origin path: a callback that allows another origin lands on `/` instead.
 - **Every OAuth flow uses `state` and PKCE** (and `nonce` for OIDC); a provider's `checks` are
   ignored.
-- **The session cookie is denext's** (`__Host-denext_auth`, signed, `SameSite=Lax`), not
-  `authjs.session-token`; `cookies` and `useSecureCookies` are ignored. A token is sealed with
+- **The session cookie is denext's** (`__Host-denext_auth`, signed, `SameSite=Lax`; unprefixed
+  `denext_auth` over plain http, see below), not `authjs.session-token`; `cookies` and `useSecureCookies` are ignored. A token is sealed with
   AES-256-GCM inside it, in denext's own format: `next-auth/jwt`'s `encode` / `decode` don't read
   an Auth.js JWE (and `jwt.encode` / `jwt.decode` overrides are ignored). The cookie is not
   chunked, so a token near 4 KB fails to set.
@@ -363,10 +368,7 @@ place it behaves differently from Auth.js:
   `email.verificationRequest`).
 - **Account linking follows denext's rules:** an OAuth account is linked to an existing user by
   email only when both addresses are verified, unless the provider sets
-  `allowDangerousEmailAccountLinking`. A provider `profile()` override sets the session's name
-  and image and the extra fields the callbacks see as `user`; the account id and the email stay
-  the provider's own (the preset's mapping), so an override can't change which account or which
-  address a sign-in links to.
+  `allowDangerousEmailAccountLinking`.
 - **The `session` endpoint and `auth()` also run `callbacks.jwt`** on every read, as Auth.js does;
   a changed token is written back only where the response is still open (the `session` endpoint,
   middleware, `auth(handler)` and `unstable_update()`), never from a plain `auth()` call.

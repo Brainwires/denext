@@ -154,7 +154,7 @@ export interface OAuthProvider {
   /** OAuth client secret. */
   clientSecret: string;
   /** Map the token/userinfo/claims result to a normalized {@link AuthUser}. */
-  profile: (input: ProfileInput) => AuthUser;
+  profile: (input: ProfileInput) => AuthUser | Promise<AuthUser>;
   /** Extra authorization-request query params (e.g. `{ access_type: "offline" }`). */
   authorizationParams?: Record<string, string>;
   /**

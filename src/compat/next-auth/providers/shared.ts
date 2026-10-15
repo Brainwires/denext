@@ -181,11 +181,27 @@ function accountOf(
 }
 
 /**
- * Record a provider round-trip for the Auth.js callbacks — the raw profile, the account with
- * its tokens, the user — and, when the app overrides `profile()`, a step that runs it later
- * (denext maps profiles synchronously; the override may be async): the sign-in's `signIn` hook
- * applies its name, image and extra fields. The account keeps the preset's id and verified
- * email, so an override can't change which account (or address) a sign-in links to.
+ * The user an app `profile()` override returned, as denext's: its id and email decide the
+ * account, as in Auth.js. The preset's "verified" verdict carries over only to the address the
+ * preset itself read, so an override can't turn an address into a verified one.
+ */
+function overrideUser(mine: ProfileUser, preset: AuthUser): AuthUser {
+  const user: AuthUser = { id: String(mine.id ?? preset.id ?? "") };
+  if (typeof mine.name === "string") user.name = mine.name;
+  if (typeof mine.image === "string") user.image = mine.image;
+  if (typeof mine.email === "string" && mine.email) {
+    user.email = mine.email;
+    if (mine.email === preset.email && preset.emailVerified !== undefined) {
+      user.emailVerified = preset.emailVerified;
+    }
+  }
+  return user;
+}
+
+/**
+ * Wrap a denext profile mapper so the app's `profile()` override (sync or async) decides the
+ * user, and the Auth.js callbacks see the round-trip: the raw profile, the account with its
+ * tokens, and the user exactly as the override returned it.
  */
 function recordingProfile<P>(
   preset: OAuthProvider["profile"],
@@ -193,17 +209,20 @@ function recordingProfile<P>(
   providerId: string,
   type: string,
 ): OAuthProvider["profile"] {
-  return (input: ProfileInput) => {
-    const base = preset(input);
+  return async (input: ProfileInput) => {
+    const base = await preset(input);
     const raw = { ...(input.userinfo ?? {}), ...(input.claims ?? {}) };
     const record = signInRecord();
     record.profile = raw;
+    let user = base;
     record.user = { ...base };
-    record.account = accountOf(providerId, type, input.tokens, base.id);
     if (custom) {
-      record.applyProfile = async () => await custom(raw as P, input.tokens);
+      const mine = await custom(raw as P, input.tokens);
+      user = overrideUser(mine, base);
+      record.user = { ...mine, id: user.id };
     }
-    return base;
+    record.account = accountOf(providerId, type, input.tokens, user.id);
+    return user;
   };
 }
 

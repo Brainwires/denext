@@ -20,6 +20,7 @@
  * @module
  */
 
+import { isProductionEnv } from "../../server/session.ts";
 import { fromAuthJsAdapter } from "./adapter.ts";
 import { decode } from "./jwt.ts";
 import {
@@ -40,7 +41,6 @@ import type {
   AuthLogger,
   AuthProvider,
   AuthSession,
-  AuthUser,
   SendVerificationRequest,
 } from "../../server/auth/types.ts";
 
@@ -139,39 +139,21 @@ function emailSender(
   return senders[0]?.send;
 }
 
-/** `user` with what the provider's `profile()` override returned (never its id or email). */
-async function withProfileOverride(user: AuthUser): Promise<AuthUser> {
-  const record = signInRecord();
-  if (!record.applyProfile) return user;
-  const mine = await record.applyProfile();
-  record.user = { ...mine, id: user.id };
-  const next: AuthUser = { ...user };
-  if (typeof mine.name === "string") next.name = mine.name;
-  if (typeof mine.image === "string") next.image = mine.image;
-  return next;
-}
-
-/**
- * denext's `callbacks.signIn`: apply a provider's `profile()` override, then the app's
- * `signIn`, which refuses on anything but `true` (a returned URL included).
- */
+/** denext's `callbacks.signIn`: the app's `signIn`, refusing on anything but `true` (a URL too). */
 function signInCallback(
   active: () => ActiveNextAuth,
 ): NonNullable<AuthConfig["callbacks"]>["signIn"] {
   return async (user, provider) => {
-    const current = await withProfileOverride(user);
     const callback = active().config.callbacks?.signIn;
-    if (callback) {
-      const record = signInRecord();
-      const verdict = await callback({
-        user: signInUser(current),
-        account: signInAccount(provider, current.id),
-        profile: record.profile,
-        credentials: record.credentials,
-      });
-      if (verdict !== true) return false;
-    }
-    return current;
+    if (!callback) return true;
+    const record = signInRecord();
+    const verdict = await callback({
+      user: signInUser(user),
+      account: signInAccount(provider, user.id),
+      profile: record.profile,
+      credentials: record.credentials,
+    });
+    return verdict === true;
   };
 }
 
@@ -247,11 +229,27 @@ export function translateConfig(config: NextAuthConfig, env: EnvReader = readEnv
     pages: pages(config, basePath),
   };
   if (url.origin) denext.canonicalOrigin = url.origin;
+  // `__Host-` cookies need https: a browser drops them over plain http, even on `localhost`.
+  // Like Auth.js (prefixed cookies only on https), an `http://` AUTH_URL — or, outside
+  // production, none — keeps the names unprefixed; production on https keeps `__Host-`.
+  const hostPrefix = url.origin ? url.origin.startsWith("https:") : isProductionEnv();
+  if (!hostPrefix) {
+    denext.cookies = { session: { hostPrefix: false }, transaction: { hostPrefix: false } };
+  }
   const adapter = bridgedAdapter(config, descriptors, warn);
   if (adapter) denext.adapter = adapter;
   const send = emailSender(built, warn);
   if (send) denext.sendVerificationRequest = send;
   const maxAge = session.maxAge!;
-  ref.current = { config, denext, basePath, strategy, secret, maxAge, providers: descriptors };
+  ref.current = {
+    config,
+    denext,
+    basePath,
+    strategy,
+    secret,
+    maxAge,
+    providers: descriptors,
+    hostPrefix,
+  };
   return ref.current;
 }

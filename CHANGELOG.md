@@ -127,6 +127,11 @@ and this project adheres to
   `rateLimitStoreContract` (`denext/testing`) are the suites every shipped store passes (in-memory,
   SQLite, Postgres, Redis, Deno KV), so a store of your own can prove itself.
 
+### Changed
+
+- **An OAuth provider's `profile` may be async.** `OAuthProvider.profile` returns `AuthUser` or
+  a promise of one; the callback awaits it. A sync mapper is unchanged.
+
 ### Fixed
 
 - **A root layout rendered by client code keeps its `<title>` / `<meta>` / `<link>` in the
@@ -136,6 +141,17 @@ and this project adheres to
   them to the head, and unmounting the layout takes them out. The rest of its `<head>` content
   (a `<style>`, a `<script>`) stays where the parser left it.
 
+- **`next-auth` resolves to denext's shim in the next-compat build without an import map.**
+  `next-auth/react` (the app's and a `node_modules` library's) bundles from the prebuilt runtime,
+  and `next-auth`, `next-auth/jwt` and the providers stay external to the shim, so an installed
+  `next-auth` package is never loaded.
+- **`next-auth` signs in over plain http.** Its session, OAuth-transaction and CSRF cookies are
+  `__Host-` prefixed, which a browser refuses over http (even on `localhost`), so `denext dev`
+  could not hold a session. With an `http://` `AUTH_URL`, or none outside production, the names
+  are now unprefixed, as Auth.js drops `__Secure-` on http; https and production keep `__Host-`.
+- **A `next-auth` provider's `profile()` override decides the account id and email**, as in
+  Auth.js (it used to set only the name and image). The provider's own "verified" verdict carries
+  over only to the address the provider itself returned.
 - **A hidden `<Activity>` holds class lifecycles and refs, as React does.** A class component
   that mounts inside a hidden one no longer runs `componentDidMount` (nor `componentDidUpdate`
   while it stays hidden); hiding a shown one runs its `componentWillUnmount`, and revealing runs

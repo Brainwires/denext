@@ -176,6 +176,8 @@ export const NEXT_ALIASES: Record<string, string> = {
   // .wasm into the browser prebuild and broke it.
   "next/headers": "next-headers.js",
   "next/image": "next-image.js",
+  // Auth.js v5's client (`useSession`, `signIn`), for the app and for libraries that import it.
+  "next-auth/react": "next-auth-react.js",
   "next/og": "next-og.js",
   "next/cache": "next-cache.js",
   "next/server": "next-server.js",
@@ -189,6 +191,32 @@ const LIBRARY_ONLY_NEXT: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The `next-auth` (Auth.js v5) specifiers whose compat module is server-only (`NextAuth()`,
+ * `next-auth/jwt`, the providers): a bundle keeps them EXTERNAL to the framework source, for
+ * the app and for libraries alike, so neither ever loads the real `next-auth` package. The
+ * client module, `next-auth/react`, is a {@link NEXT_ALIASES} entry.
+ */
+export const NEXT_AUTH_SERVER_SPECIFIERS: ReadonlySet<string> = new Set([
+  "next-auth",
+  "next-auth/jwt",
+  "next-auth/providers",
+  ...[
+    "apple",
+    "credentials",
+    "discord",
+    "email",
+    "github",
+    "google",
+    "microsoft-entra-id",
+    "nodemailer",
+    "resend",
+  ].map((p) => `next-auth/providers/${p}`),
+]);
+
+/** The `next/*` / `next-auth/*` specifiers the compat bundles alias (an esbuild filter). */
+const NEXTISH_FILTER = /^next$|^next\/|^next-auth$|^next-auth\//;
+
+/**
  * The `next/*` alias key for an import specifier as libraries actually write it. Packages
  * built for Node ESM import `next/navigation.js`, `next/link.js`, `next/image.js` (fumadocs,
  * nuqs) — the `.js` is Node's explicit-extension convention, not a different module — so the
@@ -196,7 +224,7 @@ const LIBRARY_ONLY_NEXT: ReadonlySet<string> = new Set([
  * left alone (they resolve to the real package; most are pure helpers). Exported for testing.
  */
 export function normalizeNextSpecifier(spec: string): string {
-  return spec.replace(/^(next(?:\/[^/]+)*)\.(?:m|c)?js$/, "$1");
+  return spec.replace(/^((?:next|next-auth)(?:\/[^/]+)*)\.(?:m|c)?js$/, "$1");
 }
 
 /**
@@ -741,12 +769,18 @@ async function denextExternalPlugin(): Promise<esbuild.Plugin> {
   // JSR URL). Export keys are "./" + spec. The deno loader resolves the external URL at bundle
   // time whether the framework is a local checkout or served from JSR.
   const specToUrl = new Map<string, string>();
-  for (const spec of [...Object.keys(REACT_ALIASES), ...Object.keys(NEXT_ALIASES)]) {
+  const specs = [
+    ...Object.keys(REACT_ALIASES),
+    ...Object.keys(NEXT_ALIASES),
+    ...NEXT_AUTH_SERVER_SPECIFIERS,
+  ];
+  for (const spec of specs) {
     const key = "./" + spec;
     const rel = exportsMap?.[key];
     if (rel) specToUrl.set(spec, frameworkFileUrl(rel));
   }
-  const filter = /^react$|^react\/|^react-dom$|^react-dom\/|^react-is$|^next$|^next\//;
+  const filter =
+    /^react$|^react\/|^react-dom$|^react-dom\/|^react-is$|^next$|^next\/|^next-auth$|^next-auth\//;
   return {
     name: "denext-external",
     setup(build) {
@@ -832,7 +866,6 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/next-intl": "next-intl.js",
   "denext/next-intl/navigation": "next-intl-navigation.js",
   "denext/next-intl/routing": "next-intl-routing.js",
-  "denext/next-auth/react": "next-auth-react.js",
   "denext/client-only": "empty.js",
   "denext/empty": "empty.js",
   "denext/jsx-directives": "empty.js",
@@ -986,15 +1019,19 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
       });
       // next/* → denext compat modules (font/link/navigation/… — see NEXT_ALIASES),
       // so app code resolves them to denext instead of the real `next` npm package.
-      build.onResolve({ filter: /^next$|^next\// }, (args) => {
+      const serverOnly = serverOnlyExternalResolver();
+      build.onResolve({ filter: NEXTISH_FILTER }, (args) => {
         const spec = normalizeNextSpecifier(args.path);
+        // `next-auth`'s server modules (the app's own or a library's): the shim, external.
+        if (NEXT_AUTH_SERVER_SPECIFIERS.has(spec)) {
+          return serverOnly({ ...args, path: `denext/${spec}` });
+        }
         // The Pages Router API stand-ins are for LIBRARIES only: a Pages Router app's own
         // `next/router` is the @denext/pages-router plugin's (its import map, resolved below).
         if (LIBRARY_ONLY_NEXT.has(spec) && !inNodeModules(args.importer)) return null;
         const file = NEXT_ALIASES[spec];
         return file ? runtimeFile(file) : null;
       });
-      const serverOnly = serverOnlyExternalResolver();
       build.onResolve({ filter: /^denext$|^denext\// }, (args) => {
         if (DENEXT_SERVER_SUBPATHS.has(args.path)) return serverOnly(args);
         const file = Object.hasOwn(DENEXT_RUNTIME_FILES, args.path)

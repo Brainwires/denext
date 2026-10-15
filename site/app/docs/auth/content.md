@@ -2131,6 +2131,10 @@ runs `callbacks.authorized`. `next-auth/react` gives the client `SessionProvider
 `signIn`, `signOut`, `getSession`, `getCsrfToken` and `getProviders`, and `next-auth/jwt` gives
 `getToken`, `encode` and `decode`.
 
+On a next-compat build the aliases need no import map: `next-auth/react` (in the app or in a
+library under `node_modules`) bundles from denext's runtime, and `next-auth`, `next-auth/jwt` and
+the providers resolve to the shim, so an installed `next-auth` package is never loaded.
+
 | Auth.js                                                                        | On denext                                                                                                                                                                                                 |
 | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GitHub`, `Google`, `Apple`, `Discord`, `MicrosoftEntraID`                     | denext's presets; `clientId` / `clientSecret` (and Entra's `issuer`) default to `AUTH_<ID>_ID` / `_SECRET` / `_ISSUER`; `authorization.params`, `profile()` and `allowDangerousEmailAccountLinking` apply |
@@ -2156,7 +2160,8 @@ denext keeps its own defaults where they are stricter, and nothing is relaxed fo
 - **Redirects.** A `callbackUrl` / `redirectTo` goes through the `redirect` callback, then is kept
   to a same-origin path. A callback that returns another origin lands on `/`.
 - **Cookies.** The session is `__Host-denext_auth` (`Secure`, `httpOnly`, `SameSite=Lax`), with
-  no `cookies` override. A session also ends 30 days after sign-in at the latest
+  no `cookies` override. Over plain http (an `http://` `AUTH_URL`, or `denext dev` without one) the
+  names drop the `__Host-` prefix, which a browser refuses there, as Auth.js drops `__Secure-`. A session also ends 30 days after sign-in at the latest
   (`session.maxLifetime`), however often it slides.
 - **Email links** open a confirmation page by default; `Resend({ confirm: false })` signs in on
   the GET, as Auth.js does.

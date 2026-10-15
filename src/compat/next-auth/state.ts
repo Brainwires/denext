@@ -29,6 +29,8 @@ export interface ActiveNextAuth {
   maxAge: number;
   /** The providers, as `next-auth/providers/*` described them. */
   providers: ProviderDescriptor[];
+  /** Whether the cookies carry the `__Host-` prefix (https), as Auth.js decides `__Secure-`. */
+  hostPrefix: boolean;
 }
 
 let active: ActiveNextAuth | null = null;
@@ -85,8 +87,6 @@ export interface SignInRecord {
   user?: Record<string, unknown>;
   /** Whether the adapter created the user during this sign-in. */
   isNewUser?: boolean;
-  /** Runs the provider's `profile()` override (applied by the `signIn` hook). */
-  applyProfile?: () => Promise<Record<string, unknown>>;
 }
 
 /** Records per request context; a sign-in never outlives its request. */

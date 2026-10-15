@@ -1,6 +1,6 @@
 /**
  * Auth.js's CSRF token on denext: a double-submit token whose cookie is denext's signed,
- * `__Host-`, `httpOnly`, `SameSite=Lax` session cookie (`__Host-authjs.csrf-token`). `GET
+ * `httpOnly`, `SameSite=Lax` session cookie (`__Host-authjs.csrf-token` on https). `GET
  * {basePath}/csrf` answers the token; every state-changing POST the shim fronts must send it
  * back as `csrfToken` — on top of denext's own same-origin check, never instead of it.
  *
@@ -20,7 +20,7 @@ function csrfCookie(active: ActiveNextAuth) {
   return getSession<{ t: string }>({
     secret: active.secret,
     cookieName: CSRF_COOKIE,
-    hostPrefix: true,
+    hostPrefix: active.hostPrefix,
     sameSite: "Lax",
     maxAge: active.maxAge,
   });
