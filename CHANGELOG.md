@@ -10,6 +10,16 @@ and this project adheres to
 
 ### Added
 
+- **Agent control of `denext ui`: a `denext_ui_*` MCP tool per panel.** `denext mcp` adds
+  `denext_ui_overview` and one tool per panel (`setup`, `config`, `plugins`, `generate`,
+  `docker`, `desktop`, `dev`, `tasks`, `services`, `database`, `commands`), each calling the
+  panel's JSON twin. The tools are a client of a real `denext ui` the MCP server starts as a child
+  (`--no-open --port 0 --json`): they present its launch token once, hold the session cookie and
+  send every change with a same-origin `Origin` and the derived CSRF token, so the loopback,
+  handshake, origin, CSRF and `--read-only` gates apply as they do to a browser. A change
+  (`POST` / `DELETE`) is sent only as a preview (`fields.op: "preview"`) or with `apply: true`.
+  `denext mcp --ui-read-only` / `--ui-offline` start the UI with `--read-only` / `--offline`;
+  `--disable ui` hides the tools.
 - **The MCP DevTools tools pull a fresh component tree.** `denext_component_tree`,
   `denext_why_render` and `denext_hook_state` used to answer "posted nothing yet" on a session's
   first call (the page started pushing only after a read). Now a read that finds no tree younger

@@ -21,6 +21,7 @@ import { collectRoutes, formatRouteListText } from "../build/route-list.ts";
 import type { DevEvent } from "../build/dev-events.ts";
 import { fetchDevState } from "./dev-client.ts";
 import { databaseTools } from "./database.ts";
+import { UI_TOOL_NAMES, uiTools } from "./ui.ts";
 import { devtoolsTools } from "./devtools.ts";
 import { renderComponent, renderRoute, routeMap } from "./inspect.ts";
 import { profileApp } from "../profile/core.ts";
@@ -685,6 +686,8 @@ export const TOOLS: readonly Tool[] = [
   ...devtoolsTools(projectDir),
   // The project's database: migrations and generated types (child processes).
   ...databaseTools(projectDir),
+  // `denext ui`'s panels, through a UI child's own security chain (./ui.ts).
+  ...uiTools(projectDir),
 ];
 
 /**
@@ -714,6 +717,8 @@ export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
   docs: ["denext_search_docs", "denext_read_docs"],
   /** The project's database: its migrations, and its generated TypeScript types. */
   database: ["denext_migrations", "denext_gen_types"],
+  /** `denext ui`'s panels: the overview and one tool per panel, through the UI's own server. */
+  ui: UI_TOOL_NAMES,
   /** Project-codebase search: index, query, find-definition, find-references. */
   rag: [
     "denext_index_codebase",

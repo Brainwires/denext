@@ -12,6 +12,7 @@
 import { resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { runStdioServer } from "../../mcp/server.ts";
+import { setUiBridgeOptions, stopUiBridges } from "../../mcp/ui.ts";
 import { activeTools, resolveToolNames, TOOL_GROUPS } from "../../mcp/tools.ts";
 import { VERSION } from "../../../mod.ts";
 import { DENEXT_TASK_CLI_SPEC, pinnedDenextCli } from "../self-exec.ts";
@@ -106,7 +107,9 @@ export const mcpCommand: CommandSpec = {
     "\n  Tools: denext_check_snippet, denext_import_map, denext_generate, denext_doctor,\n" +
     "  denext_codemod, denext_list_routes, denext_dev_logs, denext_render, denext_route_map,\n" +
     "  denext_search_docs, denext_index_codebase, denext_query_codebase, denext_find_definition,\n" +
-    "  denext_find_references. Resources: denext://guide, denext://import-map.\n" +
+    "  denext_find_references, and denext_ui_* (every denext ui panel, through the UI's own\n" +
+    "  loopback server: token handshake, CSRF, preview before apply; --ui-read-only refuses\n" +
+    "  every change). Resources: denext://guide, denext://import-map.\n" +
     `\n  --disable takes a comma-separated list of groups (${GROUP_NAMES}) and/or tool\n` +
     "  names (with or without the denext_ prefix), e.g. --disable rag,docs or --disable render.\n" +
     "\n  init  adds a `mcp` task to deno.json (the denext version the project pins, so the server\n" +
@@ -133,6 +136,16 @@ export const mcpCommand: CommandSpec = {
         DEFAULT_MCP_CLIENTS.join(",")
       })`,
     },
+    {
+      name: "ui-read-only",
+      type: "boolean",
+      help: "Start the denext_ui_* tools' UI with --read-only: every change is refused",
+    },
+    {
+      name: "ui-offline",
+      type: "boolean",
+      help: "Start the denext_ui_* tools' UI with --offline",
+    },
     { name: "dry-run", type: "boolean", help: "init: print what would change; write nothing" },
     { name: "force", type: "boolean", help: "init: rewrite an existing denext entry and task" },
   ],
@@ -158,6 +171,15 @@ export const mcpCommand: CommandSpec = {
         `denext mcp: ${tools.length} tool(s) enabled, ${names.size} disabled.`,
       );
     }
-    await runStdioServer({ tools });
+    setUiBridgeOptions({
+      readOnly: ctx.flags["ui-read-only"] === true,
+      offline: ctx.flags["ui-offline"] === true,
+    });
+    try {
+      await runStdioServer({ tools });
+    } finally {
+      // The denext_ui_* tools' UI children end with the server.
+      stopUiBridges();
+    }
   },
 };

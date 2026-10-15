@@ -1079,7 +1079,11 @@ denext ships tooling so agents get it right the first time:
   asks the open pages for a fresh tree over the dev server's reload stream and waits for it, so
   the first call has one too. String values arrive redacted as `string(n)`),
   `denext_migrations` / `denext_gen_types` (the project's migrations — list, up, down — and its
-  database types, run as CLI children), `denext_profile` (build
+  database types, run as CLI children), `denext_ui_overview` + one `denext_ui_<panel>` per
+  `denext ui` panel (config, plugins, generate, docker, dev, tasks, database, commands, …: its
+  JSON twin, through a `denext ui` child's own loopback / token / CSRF chain; a change goes out
+  only as a preview, `fields.op: "preview"`, or with `apply: true`; `denext mcp --ui-read-only`
+  refuses every change), `denext_profile` (build
   unminified, serve, and profile a route in headless Chromium — CPU self-time by
   function + heap growth + a leak check; pass `interact` to profile a re-render, `budget`
   to gate a regression), `denext_search_docs` (BM25

@@ -102,8 +102,6 @@ Each is documented as a manual recipe today (the
 - **Boot diagnosis, the last gaps:** follow import-map-resolved bare specifiers in the walk (so
   their link edges are checked too), and flag a name two `export *` sources both provide (an
   ambiguous export, a SyntaxError in browsers).
-- **Agent control of `denext ui`:** an MCP front end over the UI's operations (every panel
-  already answers a JSON twin).
 - **Per-element `__source`** for a true JSX owner stack (the panel shows the render-parent chain).
 - **Profiler export / compare** across commits, plus component filters.
 - **Server-held live views in DevTools:** list `defineLiveView` instances and their messages

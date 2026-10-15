@@ -1842,19 +1842,27 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
     "name": "mcp",
     "summary": "Run the denext MCP server (stdio) so agents/IDEs can call denext's tooling",
     "usage":
-      "  denext mcp                     # speak MCP over stdio (configure as an MCP server)\n  denext mcp --disable rag,docs # expose fewer tools to trim the client's context\n  denext mcp init [dir] [--clients claude,vscode,cursor] [--disable <groups>] [--dry-run] [--force]\n\n  Tools: denext_check_snippet, denext_import_map, denext_generate, denext_doctor,\n  denext_codemod, denext_list_routes, denext_dev_logs, denext_render, denext_route_map,\n  denext_search_docs, denext_index_codebase, denext_query_codebase, denext_find_definition,\n  denext_find_references. Resources: denext://guide, denext://import-map.\n\n  --disable takes a comma-separated list of groups (authoring, project, inspect, profile, dev, devtools, docs, database, rag) and/or tool\n  names (with or without the denext_ prefix), e.g. --disable rag,docs or --disable render.\n\n  init  adds a `mcp` task to deno.json (the denext version the project pins, so the server\n        matches the framework) and registers it as the `denext` server in each client's\n        project-level config, beside any servers already there. --clients picks (or `all`):\n    claude  .mcp.json  (default)\n    vscode  .vscode/mcp.json  (default)\n    cursor  .cursor/mcp.json  (default)\n    gemini  .gemini/settings.json\n    codex   .codex/config.toml\n        --disable is baked into the task; --force rewrites an existing denext entry/task.",
+      "  denext mcp                     # speak MCP over stdio (configure as an MCP server)\n  denext mcp --disable rag,docs # expose fewer tools to trim the client's context\n  denext mcp init [dir] [--clients claude,vscode,cursor] [--disable <groups>] [--dry-run] [--force]\n\n  Tools: denext_check_snippet, denext_import_map, denext_generate, denext_doctor,\n  denext_codemod, denext_list_routes, denext_dev_logs, denext_render, denext_route_map,\n  denext_search_docs, denext_index_codebase, denext_query_codebase, denext_find_definition,\n  denext_find_references, and denext_ui_* (every denext ui panel, through the UI's own\n  loopback server: token handshake, CSRF, preview before apply; --ui-read-only refuses\n  every change). Resources: denext://guide, denext://import-map.\n\n  --disable takes a comma-separated list of groups (authoring, project, inspect, profile, dev, devtools, docs, database, ui, rag) and/or tool\n  names (with or without the denext_ prefix), e.g. --disable rag,docs or --disable render.\n\n  init  adds a `mcp` task to deno.json (the denext version the project pins, so the server\n        matches the framework) and registers it as the `denext` server in each client's\n        project-level config, beside any servers already there. --clients picks (or `all`):\n    claude  .mcp.json  (default)\n    vscode  .vscode/mcp.json  (default)\n    cursor  .cursor/mcp.json  (default)\n    gemini  .gemini/settings.json\n    codex   .codex/config.toml\n        --disable is baked into the task; --force rewrites an existing denext entry/task.",
     "flags": [{
       "name": "disable",
       "type": "string",
       "valueName": "<groups|tools>",
       "help":
-        "Comma-separated groups (authoring, project, inspect, profile, dev, devtools, docs, database, rag) and/or tool names to hide",
+        "Comma-separated groups (authoring, project, inspect, profile, dev, devtools, docs, database, ui, rag) and/or tool names to hide",
     }, {
       "name": "clients",
       "type": "string",
       "valueName": "<list>",
       "help":
         "init: clients to configure (claude, vscode, cursor, gemini, codex, all; default: claude,vscode,cursor)",
+    }, {
+      "name": "ui-read-only",
+      "type": "boolean",
+      "help": "Start the denext_ui_* tools' UI with --read-only: every change is refused",
+    }, {
+      "name": "ui-offline",
+      "type": "boolean",
+      "help": "Start the denext_ui_* tools' UI with --offline",
     }, {
       "name": "dry-run",
       "type": "boolean",

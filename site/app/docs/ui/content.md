@@ -1241,9 +1241,33 @@ too, but a session cookie set on `localhost` would be sent to every other local 
 name, so the UI is opened on the address only it uses. The cookie is not the token — keep the
 jar the handshake filled rather than sending `denext_ui_token=$TOKEN`, which is refused.
 
-Those envelopes are deliberate: they are the shape an MCP tool would front. Driving the
-project UI from an agent is **not** in this release — the surface is only the HTTP API
-above.
+Those envelopes are what the MCP tools front: see [Agent control (MCP)](#agent-control-mcp).
+
+## Agent control (MCP)
+
+`denext mcp` drives the same panels: `denext_ui_overview` and one `denext_ui_<panel>` tool per
+panel (`setup`, `config`, `plugins`, `generate`, `docker`, `desktop`, `dev`, `tasks`,
+`services`, `database`, `commands`). A tool takes the page (`path`, the panel's root by default),
+the `method`, `query` parameters and the form `fields`, and answers with the panel's JSON twin
+(a streamed run's lines, for a task or a verb).
+
+The tools are a client of a real `denext ui`, not a second implementation. On first use the MCP
+server starts `denext ui --no-open --port 0 --json` as a child process, presents its launch token
+once (the handshake), and keeps the session cookie; every change is sent with a same-origin
+`Origin` and the CSRF token derived from that cookie. So the loopback bind, the token handshake,
+the origin and CSRF gates and `--read-only` apply exactly as they do to a browser, and project
+code still never runs in the UI's process (nor the UI in the MCP server's).
+
+On top of that, a change is sent in two steps:
+
+- a read (`GET`) is sent as asked;
+- a change (`POST`, `DELETE`) is sent only as a preview — `fields.op: "preview"`, which the panels
+  that write a file or a database answer with the diff or the statement, without making it — or
+  with `apply: true`. A change without either is refused before it reaches the UI, naming both.
+
+`denext mcp --ui-read-only` starts that UI with `--read-only`, so every change is refused (`403`),
+previews included; `--ui-offline` starts it with `--offline`. `--disable ui` hides the tools.
+The UI child ends with the MCP server.
 
 ## What it does not do yet
 
@@ -1253,7 +1277,6 @@ above.
 | YAML the editor can't follow | Several YAML documents in one file make the file opaque: read-only, with the reason and the regeneration diff                                                                                            |
 | Code-valued options          | A callback, a variable, a `{}` schema part or a function-wrapped list is shown read-only, never rewritten                                                                                                |
 | Capacitor / mobile signing   | `denext` scaffolds a Capacitor project and opens it in Xcode or Android Studio; everything past `cap open` — provisioning profiles, keystores — is yours. There is no mobile signing seam to surface yet |
-| Agent / MCP control          | Deferred; every panel already answers a JSON twin so it can be added without changing the wire                                                                                                           |
 | A denext app                 | The UI is server-rendered components built with `h()` — no bundler, no hydration — not an App Router app, which is what lets it start instantly with no build                                            |
 
 ## See also
