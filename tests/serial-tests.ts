@@ -21,6 +21,8 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/cli-analyze-coverage.test.ts",
   "tests/cli-dashboard.test.ts",
   "tests/clerk-example.test.ts",
+  // Sets DENEXT_STATE_DIR and clears the standalone variables around `runStandalone`.
+  "tests/compile-app.test.ts",
   "tests/cli-desktop-coverage.test.ts",
   "tests/cli-desktop-publish-update.test.ts",
   "tests/cli-env-tier.test.ts",
@@ -94,6 +96,9 @@ export const SERIAL_SOURCES: Readonly<
   // `applyRawFlag` sets DENEXT_RAW_DIAGNOSTICS=1 for the whole process when `--raw` is given
   // (the verbs that call it are serve.ts's, listed below).
   "src/cli/explain-output.ts": { exports: ["applyRawFlag"] },
+  // `markProduction` sets DENEXT_ENV / NODE_ENV when neither is set (`denext start` and a compiled
+  // app's start do; their verbs are listed with serve.ts, and compile-app's test is serial).
+  "src/cli/commands/start-options.ts": { exports: ["markProduction"] },
   "src/cli/commands/serve.ts": {
     exports: ["devCommand", "exportCommand", "startCommand"],
     verbs: ["dev", "export", "start"],
