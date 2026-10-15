@@ -2,6 +2,7 @@
 
 import { join, toFileUrl } from "@std/path";
 import { frameworkFileUrl } from "./bundle.ts";
+import { CONFIG_FILES } from "./config-files.ts";
 import type { I18nConfig } from "../server/i18n.ts";
 import { type DenextConfig, featureFlags } from "../server/config.ts";
 import {
@@ -195,16 +196,7 @@ async function importConfigFile(path: string, name: string): Promise<DenextConfi
 }
 
 /** The config file names probed, in order (Next.js also accepts `.mjs`/`.mts`). */
-/**
- * The denext config file names, in the order the loader resolves them — the one list the
- * loader, the UI's config editor and the plugin manager all probe.
- */
-export const CONFIG_FILES: readonly string[] = [
-  "denext.config.ts",
-  "denext.config.mts",
-  "denext.config.js",
-  "denext.config.mjs",
-];
+export { CONFIG_FILES };
 
 /** Load `denext.config.{ts,mts,js,mjs}` (named exports, a default object, or a factory). */
 async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null> {

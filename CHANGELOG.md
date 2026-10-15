@@ -233,6 +233,15 @@ and this project adheres to
 
 - **denext pins Deno toolchain and Deno Desktop runtime 2.9.7-denext.19** (both pins from the same
   release): denext.18 plus the fix below; the navigation guard below arrived in denext.18.
+- **The `denext` CLI starts in a fraction of the time: a verb's implementation loads only when it
+  runs.** Every invocation used to load every verb (about 1,050 modules: the dev server, the
+  bundler, the desktop and mobile tooling), so `denext --version` took as long as a build's
+  startup. The entrypoint now reads a generated table of the verbs' names and flags and imports
+  a verb when it runs; `--version` and `--help` load 85 modules and `denext commands` about 170,
+  and neither loads `denext/server` (on an idle Linux host, `--version` went from about 0.9 s to
+  0.13 s and `commands` from 1.1 s to 0.4 s). A compiled binary embeds the verbs through
+  `deno compile --include src/cli/lazy-modules.generated.ts` (`deno task compile`); a
+  `jsr:@denext/denext/cli` install fetches a verb's modules the first time it runs.
 - **denext pins Deno toolchain and Deno Desktop runtime 2.9.7-denext.18** (both pins from the same
   release): the navigation guard below; the toolchain is otherwise unchanged from denext.17.
 - **A first run on Postgres prints one line per store instead of the server's notices.** The
@@ -279,6 +288,16 @@ and this project adheres to
 - **An intermittent crash at exit (seen in `deno lint` with a plugin) in the bundled Deno
   toolchain.** The runtime now keeps op contexts alive until the isolate is disposed
   (2.9.7-denext.19; upstream denoland/deno#37026).
+- **The compiled `denext` binary lists and runs a plugin project's verbs.** `denext commands`,
+  `denext <project verb>` and shell completions imported `denext.config.ts` inside the binary,
+  which resolves imports through its own embedded import map rather than the project's
+  `deno.json`, so a config importing a plugin package failed (`Module not found:
+  …/deno-compile-denext/packages/backend/mod.ts`, then `unknown command`). They now run on the
+  denext the project pins, as the binary's build and serve verbs already did.
+- **Project-verb discovery imports the config from the project's directory.** `denext commands
+  --cwd <app>` (and a project verb dispatched with `--cwd`) run from another directory evaluated
+  the config there, so a relative path the app opens at import time (a sqlite `auth.db`) was
+  created in the caller's directory.
 - **`/auth/v1` `GET /admin/users` with empty paging values returns the default page.**
   supabase-js's `auth.admin.listUsers()` with no options sends `?page=&per_page=`, which was
   read as one user per page; an empty value now means GoTrue's defaults (page 1, 50 per page).

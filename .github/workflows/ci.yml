@@ -140,6 +140,10 @@ jobs:
           restore-keys: ${{ runner.os }}-deno-
 
       - name: Integration tests
+        env:
+          # tests/integration/cli-compiled-binary.test.ts: compile the CLI and run a plugin
+          # project's verbs through the binary (the pinned child fetches denext from JSR).
+          DENEXT_TEST_COMPILED_CLI: "1"
         run: deno task test:integration
 
   # Real-npm next-compat compatibility tests: SSR of Radix / recharts / react-hook-

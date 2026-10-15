@@ -652,7 +652,7 @@ jobs:
           $asset = 'denext-x86_64-pc-windows-msvc.zip'
           $art = Join-Path $env:RUNNER_TEMP 'art'
           New-Item -ItemType Directory -Force -Path $art | Out-Null
-          deno compile -A --output (Join-Path $env:RUNNER_TEMP 'denext.exe') cli.ts
+          deno compile -A --include src/cli/lazy-modules.generated.ts --output (Join-Path $env:RUNNER_TEMP 'denext.exe') cli.ts
           if ($LASTEXITCODE -ne 0) { throw 'deno compile failed' }
           Compress-Archive -Path (Join-Path $env:RUNNER_TEMP 'denext.exe') -DestinationPath (Join-Path $art $asset)
           $hash = (Get-FileHash -Algorithm SHA256 (Join-Path $art $asset)).Hash.ToLowerInvariant()
@@ -689,7 +689,7 @@ jobs:
           asset=denext-x86_64-unknown-linux-gnu.tar.gz
           art="$RUNNER_TEMP/art"
           mkdir -p "$art"
-          deno compile -A --output "$RUNNER_TEMP/denext" cli.ts
+          deno compile -A --include src/cli/lazy-modules.generated.ts --output "$RUNNER_TEMP/denext" cli.ts
           tar czf "$art/$asset" -C "$RUNNER_TEMP" denext
           (cd "$art" && sha256sum "$asset" > SHA256SUMS)
           out="$(DENEXT_ARTIFACTS="$art" DENEXT_INSTALL="$RUNNER_TEMP/denext-head" sh scripts/install.sh 2>&1)"

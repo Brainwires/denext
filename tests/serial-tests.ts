@@ -102,6 +102,10 @@ export const SERIAL_SOURCE_EXEMPT: Readonly<Record<string, string>> = {
   "src/build/desktop.ts":
     "runDesktop clears DENO_SERVE_ADDRESS (the desktop runtime's page transport) only for an app " +
     "that declares sidecars, after its own server took it; no test sets or reads that variable",
+  "src/cli/run-verb.ts":
+    "the `denext` entrypoint's run half: it sets DENO_BIN / PATH / DENEXT_TOOLCHAIN_ACTIVE only " +
+    "inside a compiled binary (the toolchain handed to its children); tests reach it only " +
+    "through CLI child processes",
   "src/desktop/sidecar-child.ts":
     "readSidecarChildLaunch removes DENEXT_SIDECAR_CHILD / _ARGC only when they are set, which " +
     "only a sidecar's child process (and the serial test of it) does",

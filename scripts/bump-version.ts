@@ -13,6 +13,7 @@
 // so an embedded number is never partially rewritten):
 //   - deno.json              root "version"
 //   - mod.ts                 export const VERSION
+//   - src/version.ts         the CLI's dependency-free copy of VERSION
 //   - packages/*/deno.json   the @denext/denext peer-dependency pins (all subpaths)
 //   - ROADMAP.md             the "development is <version>" status line
 //
@@ -60,6 +61,7 @@ async function targetFiles(): Promise<string[]> {
   const files = [
     join(ROOT, "deno.json"),
     join(ROOT, "mod.ts"),
+    join(ROOT, "src", "version.ts"),
     join(ROOT, "ROADMAP.md"),
   ];
   // Every packages/*/deno.json (the workspace members' peer pins).

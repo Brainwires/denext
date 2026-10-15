@@ -192,7 +192,9 @@ jobs:
         run: |
           out=denext
           case "${{ matrix.target }}" in *windows*) out=denext.exe ;; esac
-          deno compile -A --target ${{ matrix.target }} --output "$out" cli.ts
+          # The verbs load on demand through computed imports (src/cli/lazy-command.ts), which
+          # `deno compile` cannot see: this file imports each of them so the binary embeds them.
+          deno compile -A --target ${{ matrix.target }} --include src/cli/lazy-modules.generated.ts --output "$out" cli.ts
           ls -lh "$out"
 
       # The binary has to RUN, not merely link: `--version` proves it starts and knows it is a

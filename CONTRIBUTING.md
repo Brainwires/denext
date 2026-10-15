@@ -452,7 +452,11 @@ Some docs are **generated** and must never be hand-edited — regenerate them
 instead: `deno task docs:cli` (the CLI reference), `deno task docs:examples`
 (the examples index), `deno task docs:mcp` (the MCP reference),
 `deno task gen:config-schema` (`denext.config.schema.json` +
-`src/server/config-keys.generated.ts`) and `deno task gen:plugin-catalog`
+`src/server/config-keys.generated.ts`), `deno task gen:command-table`
+(`src/cli/command-table.generated.ts` + `src/cli/lazy-modules.generated.ts`: the
+verbs' names and flags the `denext` entrypoint dispatches from, so a verb's
+implementation loads only when it runs — rerun it after adding a verb to
+`src/cli/register.ts` or changing one's flags or help) and `deno task gen:plugin-catalog`
 (`src/plugin/catalog.json` — the first-party package catalog the plugins page,
 `denext migrate` and the `denext ui` plugins panel all read; a new `packages/*`
 needs a `"denext": { "catalog": { … } }` block in its `deno.json` to appear, and a

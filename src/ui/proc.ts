@@ -130,10 +130,10 @@ export function cliConfigArgs(module: string, dir: string | undefined): string[]
  * binary was shipped to, so the child loads a JSR specifier instead.
  *
  * WHICH version it loads follows the rule the binary's own verbs follow (`maybeReexecPinned` in
- * cli.ts): the project's pin wins. `ui` is deliberately not a `loadsModules` verb, so the UI
- * process never defers on its own — without this the UI would run a project's verbs under the
- * binary's framework rather than the one the project pins, which is the exact substitution that
- * rule exists to prevent. Only a directory pinning no denext falls back to the binary's version.
+ * src/cli/run-verb.ts): the project's pin wins. `ui` is deliberately not a `loadsModules` verb,
+ * so the UI process never defers on its own — without this the UI would run a project's verbs
+ * under the binary's framework rather than the one the project pins, which is the exact
+ * substitution that rule exists to prevent. Only a directory pinning no denext falls back to the binary's version.
  *
  * Under `--offline` a JSR specifier resolves only if it is already in the module cache: a binary
  * on a machine that never fetched that version fails loudly instead of reaching the network,
