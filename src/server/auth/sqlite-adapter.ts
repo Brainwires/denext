@@ -747,6 +747,11 @@ function apiTokenMethods(
   return {
     createApiToken(token) {
       put(state.db(), "auth_api_tokens", toRow(API_TOKEN_MAP, token));
+      // Tokens dead for NATIVE_SESSION_RETENTION (revoked, or expired) are reclaimed on every
+      // issue, as native families are on every sign-in: every read already refuses them.
+      const cutoff = state.now() - NATIVE_SESSION_RETENTION;
+      state.db().exec("DELETE FROM auth_api_tokens WHERE revoked_at <= ?", [cutoff]);
+      state.db().exec("DELETE FROM auth_api_tokens WHERE expires_at <= ?", [cutoff]);
     },
     getApiTokenByHash(tokenHash) {
       const row = one(

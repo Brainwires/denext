@@ -21,7 +21,7 @@
 import { hmacSign, hmacVerify } from "../../session.ts";
 import { authSecrets } from "../totp-seal.ts";
 import type { AdapterUser, NativeSessionRecord } from "../adapter.ts";
-import { isBanned } from "../ban.ts";
+import { banVerdict, isBanned } from "../ban.ts";
 import { type NativeAdapter, nativeAdapterOf } from "../native.ts";
 import { randomToken } from "../oauth.ts";
 import { resolveAuthOptions } from "../options.ts";
@@ -451,6 +451,20 @@ const notFound = () =>
  * @throws {GoTrueError} `refresh_token_not_found` (unknown, forged, revoked, expired, another
  *   client's, or an SSO user's session its identity provider did not start — revoked) or `refresh_token_already_used` (a replay — the session is revoked).
  */
+/**
+ * Refuse a banned user's refresh (`user_banned`) — and revoke the session when the ban outlasts
+ * it, since its refresh token could never be used again. Returns for a user who isn't banned.
+ */
+async function refuseBanned(
+  families: NativeAdapter,
+  user: AdapterUser,
+  family: NativeSessionRecord,
+): Promise<void> {
+  if (!isBanned(user)) return;
+  if (banVerdict(user, family.expiresAt) === "dead") await families.revokeNativeSession(family.id);
+  throw new GoTrueError(400, "user_banned", "User is banned");
+}
+
 export async function refreshSession(
   ctx: SessionContext,
   presented: string,
@@ -482,7 +496,7 @@ export async function refreshSession(
     await families.revokeNativeSession(family.id);
     throw notFound();
   }
-  if (isBanned(user)) throw new GoTrueError(400, "user_banned", "User is banned");
+  await refuseBanned(families, user, family);
   // An SSO user's session its identity provider did not start (one from before the account
   // became an SSO user, or before such sign-ins were refused) ends here.
   if (!snapshotAllowed(user, snapshot)) {

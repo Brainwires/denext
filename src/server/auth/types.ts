@@ -470,6 +470,8 @@ export type SignInFailedReason =
 /** Why an API token was revoked, as `apiTokenRevoked` reports it. */
 export type ApiTokenRevokedReason =
   | "revoked"
+  /** Refused for good at a use: its owner is gone, an SSO user, or banned past its expiry. */
+  | "owner_refused"
   | "password_reset"
   | "email_verified"
   | "phone_verified";

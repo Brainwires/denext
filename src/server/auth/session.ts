@@ -33,7 +33,7 @@
 import { getSession } from "../session.ts";
 import { currentContext } from "../request-context.ts";
 import type { AdapterUser, AuthAdapter } from "./adapter.ts";
-import { isBanned } from "./ban.ts";
+import { banVerdict, type CredentialVerdict, isBanned } from "./ban.ts";
 import { randomToken } from "./oauth.ts";
 import { cookieSessionOptions, resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { sessionExpired, type SessionStore } from "./session-store.ts";
@@ -187,13 +187,32 @@ export async function endUserSessions(
  * banned, has not ended the session (`sessionsValidAfter`), and — for an SSO user — its
  * identity provider started the session (denextAuth's own sign-ins never come from one, so no
  * cookie session of an SSO user lives). Without an adapter there is no user to read, and the
- * session stands as signed.
+ * session stands as signed. A refusal no later read could lift (a deleted user, an ended or SSO
+ * session, a ban that outlasts it) is `"dead"`; a ban that ends first only `"refused"`.
  */
-async function userMayUse(options: ResolvedAuthOptions, session: AuthSession): Promise<boolean> {
-  if (!options.adapter) return true;
+async function userVerdict(
+  options: ResolvedAuthOptions,
+  session: AuthSession,
+): Promise<CredentialVerdict> {
+  if (!options.adapter) return "ok";
   const user = await storedUser(options, session.user.id);
-  return !!user && !isBanned(user) && !endedByUser(user, session) &&
-    ssoSessionAllowed(user, session.amr ?? []);
+  if (!user || endedByUser(user, session) || !ssoSessionAllowed(user, session.amr ?? [])) {
+    return "dead";
+  }
+  return isBanned(user) ? banVerdict(user, session.expiresAt) : "ok";
+}
+
+/**
+ * Delete a dead session's server-side record, so the store doesn't keep what every read refuses.
+ * Best effort: a failure is logged, and the read's answer is the same.
+ */
+async function deleteDeadSession(options: ResolvedAuthOptions, session: AuthSession) {
+  if (!session.sessionId || !options.sessionStore) return;
+  try {
+    await options.sessionStore.delete(session.sessionId);
+  } catch (error) {
+    options.logger.error("denextAuth: deleting a refused session record failed", error);
+  }
 }
 
 /**
@@ -211,7 +230,10 @@ export async function readAuthSession(config: AuthConfig): Promise<AuthSession |
   const options = resolveAuthOptions(config);
   const session = await getSession<CookieData>(sessionOptions(config));
   const resolved = await resolveSession(session.data, options);
-  return resolved && await userMayUse(options, resolved) ? resolved : null;
+  if (!resolved) return null;
+  const verdict = await userVerdict(options, resolved);
+  if (verdict === "dead") await deleteDeadSession(options, resolved);
+  return verdict === "ok" ? resolved : null;
 }
 
 /** How {@link issueAuthSession} marks the session it mints. */

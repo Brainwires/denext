@@ -1691,9 +1691,18 @@ answered `?error=`, its protocol-shaped code (`access_denied`, `login_required`,
 
 `apiTokenIssued` and `apiTokenRevoked` never carry the token or its hash. `apiTokenRevoked`'s
 `reason` is `"revoked"` (`revokeApiToken`, `DELETE /tokens/:id`), `"password_reset"` (a reset
-revokes every token) or `"email_verified"` (the first proof of an unverified account's mailbox
-retires tokens set up without it — see pre-account hijacking). `userId` is absent only for a
-bare `revokeApiToken(config, id)`; pass `{ userId }` as its third argument to carry it.
+revokes every token), `"email_verified"` (the first proof of an unverified account's mailbox
+retires tokens set up without it — see pre-account hijacking) or `"owner_refused"` (a use met a
+token no later use could accept: its owner is gone or an SSO user, or banned until after it
+expires). `userId` is absent only for a bare `revokeApiToken(config, id)`; pass `{ userId }` as
+its third argument to carry it.
+
+A read that refuses a credential for good also removes it, and still answers the same refusal. A
+server-side session whose user is gone, which the user ended, or which is an SSO user's session
+its identity provider didn't start is deleted from the session store. Such a bearer token is
+revoked. A ban that outlasts a credential (it expires before the ban ends) ends it the same way,
+native and `/auth/v1` refresh families included. A shorter ban only refuses. The Postgres and
+SQLite adapters delete API tokens 30 days after they were revoked or expired.
 
 `verificationRequested` never carries the token or the link, and fires only for a delivery
 that succeeded. A sign-in that stops at a second factor fires `signIn` only when the

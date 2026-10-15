@@ -23,7 +23,7 @@
  */
 
 import type { ApiTokenRecord, AuthAdapter } from "./adapter.ts";
-import { isBanned } from "./ban.ts";
+import { banVerdict, type CredentialVerdict, isBanned } from "./ban.ts";
 import { emitAuthEvent } from "./events.ts";
 import { sha256Hex } from "./hash.ts";
 import { randomToken } from "./oauth.ts";
@@ -210,9 +210,34 @@ export async function verifyApiToken(
   if (record.expiresAt !== undefined && record.expiresAt <= Math.floor(Date.now() / 1000)) {
     return null;
   }
-  if (!(await ownerMayUse(config, record))) return null;
+  const verdict = await ownerVerdict(config, record);
+  if (verdict === "dead") await retireDeadToken(config, adapter, record);
+  if (verdict !== "ok") return null;
   await touch(config, adapter, record.id);
   return record;
+}
+
+/**
+ * Revoke a token no later use could accept (its owner is gone, an SSO user, or banned past its
+ * expiry), firing `apiTokenRevoked` (`reason: "owner_refused"`); the adapter reclaims revoked
+ * rows. Best effort: a failure is logged, and the answer is the same refusal.
+ */
+async function retireDeadToken(
+  config: AuthConfig,
+  adapter: ApiTokenAdapter,
+  record: ApiTokenRecord,
+): Promise<void> {
+  const options = resolveAuthOptions(config);
+  try {
+    if ((await adapter.revokeApiToken(record.id)) === false) return;
+    await emitAuthEvent(options, "apiTokenRevoked", {
+      tokenId: record.id,
+      userId: record.userId,
+      reason: "owner_refused",
+    });
+  } catch (error) {
+    options.logger.error("denextAuth: revoking a refused API token failed", error);
+  }
 }
 
 /**
@@ -221,11 +246,15 @@ export async function verifyApiToken(
  * of a deleted user included), and an SSO user's only those minted from a session its identity
  * provider started — checked at every use, not only by the revocation a ban performs.
  */
-async function ownerMayUse(config: AuthConfig, record: ApiTokenRecord): Promise<boolean> {
+async function ownerVerdict(
+  config: AuthConfig,
+  record: ApiTokenRecord,
+): Promise<CredentialVerdict> {
   const adapter = resolveAuthOptions(config).adapter;
-  if (!adapter) return true;
+  if (!adapter) return "ok";
   const user = await adapter.getUser(record.userId);
-  return !!user && !isBanned(user) && apiTokenAllowed(user, record);
+  if (!user || !apiTokenAllowed(user, record)) return "dead";
+  return isBanned(user) ? banVerdict(user, record.expiresAt) : "ok";
 }
 
 /**

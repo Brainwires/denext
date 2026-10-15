@@ -231,6 +231,15 @@ and this project adheres to
 
 ### Changed
 
+- **A credential refused for good is deleted when a read meets it.** The answer is unchanged.
+  A server-side cookie session whose user is gone, which the user ended (`sessionsValidAfter`),
+  or which is an SSO user's session its identity provider didn't start, is deleted from the
+  session store. A bearer API token whose owner is gone or an SSO user is revoked, with
+  `apiTokenRevoked` firing `reason: "owner_refused"`. A ban that outlasts a credential (a cookie
+  session, a bearer token, a native or `/auth/v1` refresh family) ends it the same way. A ban that
+  ends first still only refuses, and the credential works again after it. The Postgres and SQLite
+  adapters now delete API tokens 30 days after they were revoked or expired, as they already did
+  for native session families.
 - **denext pins Deno toolchain and Deno Desktop runtime 2.9.7-denext.19** (both pins from the same
   release): denext.18 plus the fix below; the navigation guard below arrived in denext.18.
 - **The `denext` CLI starts in a fraction of the time: a verb's implementation loads only when it

@@ -294,7 +294,14 @@ function credentialAndApiTokenMethods(
     setCredential: (userId, hash) =>
       db.upsert("auth_credentials", { user_id: userId, password_hash: hash }, ["user_id"]),
     deleteCredential: (userId) => db.run(`DELETE FROM ${credentials} WHERE user_id = $1`, [userId]),
-    createApiToken: (token) => db.upsert("auth_api_tokens", toRow(API_TOKEN_MAP, token), ["id"]),
+    async createApiToken(token) {
+      await db.upsert("auth_api_tokens", toRow(API_TOKEN_MAP, token), ["id"]);
+      // Tokens dead for NATIVE_SESSION_RETENTION (revoked, or expired) are reclaimed on every
+      // issue, as native families are on every sign-in: every read already refuses them.
+      await db.run(`DELETE FROM ${tokens} WHERE revoked_at <= $1 OR expires_at <= $1`, [
+        db.now() - NATIVE_SESSION_RETENTION,
+      ]);
+    },
     getApiTokenByHash: (tokenHash) =>
       db.record(API_TOKEN_MAP, `SELECT * FROM ${tokens} WHERE token_hash = $1 AND ${live}`, [
         tokenHash,

@@ -38,8 +38,8 @@
 
 import { hmacSign, hmacVerify } from "../session.ts";
 import { bearerTokenOf } from "./bearer-header.ts";
-import type { AuthAdapter, NativeSessionRecord } from "./adapter.ts";
-import { isBanned } from "./ban.ts";
+import type { AdapterUser, AuthAdapter, NativeSessionRecord } from "./adapter.ts";
+import { banVerdict, isBanned } from "./ban.ts";
 import { ssoSessionAllowed } from "./sso-user.ts";
 import { emitAuthEvent } from "./events.ts";
 import { constantTimeEqualHex, sha256Hex } from "./hash.ts";
@@ -566,6 +566,18 @@ function pastMaxAge(native: ResolvedNative, family: NativeSessionRecord, at: num
   return native.refreshMaxAge !== null && family.createdAt + native.refreshMaxAge <= at;
 }
 
+/** A banned user's refusal; a ban that outlasts the family also ends it (it could never refresh). */
+async function bannedRefusal(
+  native: ResolvedNative,
+  user: AdapterUser,
+  family: NativeSessionRecord,
+): Promise<RefreshRefusal> {
+  if (banVerdict(user, family.expiresAt) === "dead") {
+    await native.adapter.revokeNativeSession(family.id);
+  }
+  return { ok: false, reason: "banned" };
+}
+
 /**
  * The checks every successful refresh shares, on a genuine, unrevoked family: unexpired, within
  * its absolute lifetime (past it the family is revoked, and the refusal reads as an expiry),
@@ -592,7 +604,7 @@ async function liveSnapshot(
     await native.adapter.revokeNativeSession(family.id);
     return { ok: false, reason: "user_gone" };
   }
-  if (isBanned(user, at)) return { ok: false, reason: "banned" };
+  if (isBanned(user, at)) return await bannedRefusal(native, user, family);
   // denextAuth's own sign-ins never come from an identity provider: an SSO user's family ends.
   if (!ssoSessionAllowed(user, snapshot.amr ?? [])) {
     await native.adapter.revokeNativeSession(family.id);
