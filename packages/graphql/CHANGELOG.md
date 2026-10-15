@@ -48,6 +48,14 @@ Requires the denext release after 4.0.0 (`tapChannelAuthorized` in `@denext/dene
   the next request without a restart; subscriptions on the old schema complete, over SSE and
   WebSocket alike.
 
+### Fixed
+
+- **`denext graphql sdl` / `diff` load a module-path `schema` under the app's own config.** The
+  verb now declares that it loads project modules, as `denext content` and `denext openapi` do,
+  so the CLI re-runs under the project's `deno.json` first; it used to import the schema module
+  with whatever import map the CLI started with, and an npm package the schema imports (Pothos,
+  say) failed to resolve.
+
 ## 0.3.0 - 2026-10-13
 
 - Requires `@denext/denext` ^4.0.0-rc.1 (the jobs rename and the rest of denext 4.0's breaking
