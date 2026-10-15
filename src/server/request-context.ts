@@ -177,6 +177,11 @@ export interface RequestContext {
   /** Re-arms `createApp`'s timer for a new {@linkcode RequestContext.timeoutMs}. */
   rearmTimeout?: () => void;
   /**
+   * Stops `createApp`'s deadline clock until the returned release is called (see
+   * {@linkcode holdRequestDeadline}); unset when the request has no deadline.
+   */
+  holdDeadline?: () => () => void;
+  /**
    * Whether the app trusts `x-forwarded-for` for the client address — mirrors
    * {@linkcode AppConfig.trustForwardedHeaders}. Read by {@linkcode clientIp}; set by
    * `createApp` from the config. When unset (a direct handler call in a test), only the
@@ -676,6 +681,25 @@ export function setRequestTimeout(ms: number): void {
   if (!ctx || !Number.isFinite(ms) || ms < 0) return;
   ctx.timeoutMs = ms;
   ctx.rearmTimeout?.();
+}
+
+/**
+ * Run `work` with the current request's deadline clock stopped: the time it takes does not
+ * count against `requestTimeout`. For framework work done on the request's behalf that is not
+ * the app's own handler time — `denext dev` building a target's bundles on its first request.
+ * Holds nest and overlap; the clock runs again once the last one ends. A plain call outside a
+ * request or without a deadline.
+ *
+ * @param work The work to run.
+ * @returns Whatever `work` resolves to.
+ */
+export async function holdRequestDeadline<T>(work: () => Promise<T>): Promise<T> {
+  const release = currentContext()?.holdDeadline?.();
+  try {
+    return await work();
+  } finally {
+    release?.();
+  }
 }
 
 /**

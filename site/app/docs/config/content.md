@@ -231,7 +231,9 @@ itself (it reads neither the config keys nor the env vars for them).
   front.
 - **`requestTimeout`** — `number` ms (env `DENEXT_REQUEST_TIMEOUT_MS`; default
   `30000`, `0` disables). A request running past it is aborted and answered
-  `503`; the per-request `AbortSignal` fires so cooperative work cancels.
+  `503`; the per-request `AbortSignal` fires so cooperative work cancels. In
+  `denext dev`, time the dev server spends building on a request's behalf (route
+  scans, boundary crawls, next-compat builds) does not count against it.
 - **`maxConcurrency`** — `number` ≥ 1 (env `DENEXT_MAX_CONCURRENCY`; default: no
   limit). In-process concurrency ceiling: a request arriving at capacity is shed
   at once with `503` + `Retry-After`. A complement to the edge ceiling, not a

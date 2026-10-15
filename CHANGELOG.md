@@ -349,6 +349,12 @@ and this project adheres to
   own URL instead of the build machine's absolute path. `denext start` keeps using them after the
   project moves (it used to recompile them at startup), and a compiled binary serves them from
   its embedded file system.
+- **The next-compat build prebuilds the denext runtime once per process.** The runtime depends
+  only on the framework, `classComponents` and the project's denext patch, but every compat
+  build rebuilt it for its server and client bundles. In `denext dev` that was four identical
+  builds on a shell's first request and two more for each target after every edit. Each distinct
+  runtime is now built once and written where later builds need it. Editing a framework source
+  file or the denext patch builds it again.
 
 - **A credential refused for good is deleted when a read meets it.** The answer is unchanged.
   A server-side cookie session whose user is gone, which the user ended (`sessionsValidAfter`),
@@ -422,6 +428,12 @@ and this project adheres to
   `DENEXT_SHUTDOWN_DRAIN_MS` has passed since the signal, with a warning naming the cause. The
   new `onShutdown()` export of `instrumentation.ts` closes what the app opened (a pool's
   `sql.end()`), so the process exits as soon as it is done.
+- **`denext dev` no longer answers a request with the `requestTimeout` 503 because a build ran
+  inside it.** A next-compat app builds a shell's bundles on that shell's first request (web's
+  too, on the first request of a generation), and on a loaded machine that build alone could pass
+  the 30 s deadline. Time spent on the dev server's own work (route scans, boundary crawls and
+  next-compat builds) no longer counts against `requestTimeout`; the app's own handler time
+  still does. `denext start` is unchanged.
 - **A `next.config.*` evaluation never outlives the process that started it.** `denext migrate`
   and `denext ui` evaluate the config in a child that is killed at its deadline, but the deadline
   was a timer in the parent: a parent that died mid-evaluation left a config that never finishes

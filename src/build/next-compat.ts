@@ -30,6 +30,13 @@ import {
 import { denoLoaderPlugins } from "./deno-loader-plugins.ts";
 import { loadDenextPatchSet, patchPlugin } from "./patches.ts";
 import {
+  cachedRuntime,
+  type PrebuiltRuntime,
+  runtimeCacheKey,
+  stampInputs,
+  writeRuntime,
+} from "./runtime-prebuild-cache.ts";
+import {
   EXPO_RN_BRIDGE,
   expoRuntimeEntries,
   expoRuntimeFiles,
@@ -387,7 +394,31 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
   // their imports resolve in either mode — the deno loader fetches remote framework sources.
   const rootUrl = options.frameworkRoot ?? frameworkRootUrl();
   const outDir = resolve(options.outDir);
-  await Deno.mkdir(outDir, { recursive: true });
+  const imports = await frameworkImports();
+  const depAge = minDepAgeConfig(undefined);
+  const patch = options.projectDir ? await loadDenextPatchSet(options.projectDir) : null;
+  const classComponents = !!options.classComponents;
+  // The runtime depends on none of the app's files, its target or its generation: a process
+  // builds each distinct one once (see runtime-prebuild-cache.ts).
+  const key = runtimeCacheKey({ rootUrl, classComponents, imports, depAge, patch });
+  const runtime = await cachedRuntime(
+    key,
+    () => buildRuntime({ rootUrl, outDir, imports, depAge, patch, classComponents }),
+  );
+  await writeRuntime(outDir, runtime);
+  return outDir;
+}
+
+/** One uncached prebuild (see {@link prebuildDenextRuntime}): its outputs and its local inputs. */
+async function buildRuntime(options: {
+  rootUrl: string;
+  outDir: string;
+  imports: Record<string, string>;
+  depAge: Record<string, unknown>;
+  patch: Awaited<ReturnType<typeof loadDenextPatchSet>>;
+  classComponents: boolean;
+}): Promise<PrebuiltRuntime> {
+  const { rootUrl, outDir } = options;
   // The deno loader needs a LOCAL config file for jsr:/npm resolution. Materialize denext's
   // own imports (@std, @cf-wasm, npm codecs — the runtime sources' deps) to a temp deno.json,
   // fetched from JSR when denext runs remotely. (The framework's relative self-imports resolve
@@ -395,12 +426,17 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
   const tmpConfig = await Deno.makeTempFile({ suffix: ".deno.json" });
   await Deno.writeTextFile(
     tmpConfig,
-    JSON.stringify({ imports: await frameworkImports(), ...minDepAgeConfig(undefined) }),
+    JSON.stringify({ imports: options.imports, ...options.depAge }),
   );
+  const cwd = Deno.cwd();
   try {
-    await esbuild.build({
+    const result = await esbuild.build({
       entryPoints: runtimeEntryPoints(rootUrl),
       outdir: outDir,
+      // Kept in memory: the cache writes them, here and wherever a later prebuild wants them.
+      write: false,
+      metafile: true,
+      absWorkingDir: cwd,
       bundle: true,
       splitting: true,
       format: "esm",
@@ -414,14 +450,20 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
       define: classDefine(options.classComponents),
       plugins: [
         expoBridgeExternalPlugin(),
-        ...(await frameworkPatchPlugins(options.projectDir, rootUrl)),
+        ...(options.patch ? [patchPlugin(options.patch, rootUrl)] : []),
         ...denoLoaderPlugins({ configPath: tmpConfig }),
       ],
     });
+    return {
+      files: (result.outputFiles ?? []).map((f) => ({
+        path: relative(outDir, f.path),
+        contents: f.contents,
+      })),
+      stamps: await stampInputs(Object.keys(result.metafile?.inputs ?? {}), cwd),
+    };
   } finally {
     await Deno.remove(tmpConfig).catch(() => {});
   }
-  return outDir;
 }
 
 /**
