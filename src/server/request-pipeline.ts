@@ -23,7 +23,7 @@ import {
   withHeaders,
 } from "./middleware.ts";
 import { safeFetch } from "./safe-fetch.ts";
-import { type PeeledLocale, peelLocale } from "./i18n.ts";
+import { localeDomainHost, type PeeledLocale, peelLocale } from "./i18n.ts";
 import { fillDestination, matchPattern, safeRedirectLocation } from "./config.ts";
 import { handleAction, isActionRequest } from "./action-handler.ts";
 import { handleApiBatch, isApiBatchRequest } from "./api-batch-handler.ts";
@@ -303,14 +303,16 @@ async function serveMetadata(
 /**
  * i18n: peel an optional locale prefix off the path. Matching runs against the stripped
  * path; the locale is merged into route params. With `i18n.domains`, the locale for an
- * unprefixed path depends on the host — resolved from the request's *trusted* host
- * (never a raw Host header), and only paid for when domain routing is configured.
+ * unprefixed path depends on the host — the request's trusted host ({@link localeDomainHost}:
+ * `X-Forwarded-Host` only under `trustForwardedHeaders`), matched against the configured
+ * domains only, and only paid for when domain routing is configured.
  */
 function resolveLocale(state: RequestState): PeeledLocale | null {
   const { config } = state.app;
   if (!config.i18n) return null;
+  // Not `originOptions(config)`: `canonicalOrigin` must not mask domain routing.
   const localeHost = config.i18n.domains
-    ? new URL(requestOrigin(state.request, originOptions(config))).host
+    ? localeDomainHost(state.request, config.trustForwardedHeaders)
     : undefined;
   return peelLocale(state.pathname, config.i18n, localeHost);
 }

@@ -273,6 +273,33 @@ Deno.test("i18n domains: localeMiddleware matches the trusted host, as the rende
   assertEquals(spoofed.type, "response");
 });
 
+Deno.test("i18n domains: canonicalOrigin does not mask domain routing", async () => {
+  const app = createApp({
+    getManifest: manifest,
+    load: (fp) => Promise.resolve(modules[fp]),
+    i18n: DOMAINS,
+    canonicalOrigin: "https://example.com",
+  });
+  // A listed domain still selects its locale…
+  const fr = await app(new Request("http://example.fr/about"));
+  assertEquals(fr.status, 200);
+  assertStringIncludes(await fr.text(), "about:fr");
+  // …an unlisted host falls back to the default locale…
+  const other = await app(new Request("http://other.test/about"));
+  assertEquals(other.status, 200);
+  assertStringIncludes(await other.text(), "about:en");
+  // …and absolute URLs (the hreflang alternates) are still built from the configuration.
+  const html = await (await app(new Request("http://example.fr/about"))).text();
+  assertStringIncludes(html, `hreflang="en" href="https://example.com/about"`);
+
+  // localeMiddleware agrees: example.fr is French, so no redirect for a German visitor.
+  const runner = createMiddlewareRunner({ default: localeMiddleware(DOMAINS) });
+  const request = new Request("http://example.fr/about", { headers: { "accept-language": "de" } });
+  const ctx = createRequestContext(request);
+  ctx.originAllowlist = { canonicalOrigin: "https://example.com" };
+  assertEquals((await runWithContext(ctx, () => runner!(request))).type, "next");
+});
+
 // ---- localeMiddleware ------------------------------------------------------
 
 Deno.test("localeMiddleware redirects to a detected non-default locale", async () => {

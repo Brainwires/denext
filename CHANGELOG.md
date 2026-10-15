@@ -448,6 +448,13 @@ and this project adheres to
 
 ### Fixed
 
+- **`canonicalOrigin` no longer masks `i18n.domains`.** With both set, every request's locale host
+  came from `canonicalOrigin`, so no domain but the canonical one could select its locale. The
+  render path and `localeMiddleware` now match the request's host (`X-Forwarded-Host` only under
+  `trustForwardedHeaders`) against the configured domains, an exact allowlist that only picks a
+  locale; an unlisted host gets the default locale, and `canonicalOrigin` still governs absolute
+  URLs. `localeMiddleware` also used the raw `Host` header where the render path used the trusted
+  one, so behind a trusted proxy a domain's visitor could be redirected to a locale prefix.
 - **`nativeSession({ storage: secureStore })` type-checks.** `NativeSessionStorage.set` required
   `Promise<void>`, while `secureStore.set` resolves `{ stored }`, so the documented pairing failed
   `deno check`. `set` may now resolve anything; the result is ignored.

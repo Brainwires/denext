@@ -282,7 +282,7 @@
           "default": true
         },
         "domains": {
-          "description": "Serve a locale per **domain** without a URL prefix (Next's `i18n.domains`): `example.fr/about` renders French with no `/fr`. Each entry pins a host to a `defaultLocale` (served unprefixed on that host); a host's other `locales` (if listed) are still prefixed there. Locales not tied to any domain keep the normal prefix behavior on the primary host. Host resolution uses the request's trusted host (honoring `trustForwardedHeaders`), never a raw `Host` header on the render path.",
+          "description": "Serve a locale per **domain** without a URL prefix (Next's `i18n.domains`): `example.fr/about` renders French with no `/fr`. Each entry pins a host to a `defaultLocale` (served unprefixed on that host); a host's other `locales` (if listed) are still prefixed there. Locales not tied to any domain keep the normal prefix behavior on the primary host. The host is the request's (`X-Forwarded-Host` only under `trustForwardedHeaders`), compared against these domains only; `canonicalOrigin` does not override it (it governs absolute URLs).",
           "type": "array",
           "items": {
             "type": "object",
