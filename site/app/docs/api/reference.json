@@ -2289,9 +2289,9 @@
           "name": "renderToReadableStream",
           "slug": "renderToReadableStream",
           "kind": "function",
-          "signature": "renderToReadableStream(node: VNodeChildren, options?: StreamOptions): ReadableStream<Uint8Array>",
+          "signature": "renderToReadableStream(node: VNodeChildren, options?: StreamOptions): RenderStream",
           "doc": "Render a VNode tree to a streaming HTML ReadableStream<Uint8Array>, resolving Suspense boundaries progressively.",
-          "docFull": "Render a VNode tree to a streaming HTML `ReadableStream<Uint8Array>`,\nresolving Suspense boundaries progressively.",
+          "docFull": "Render a VNode tree to a streaming HTML `ReadableStream<Uint8Array>`,\nresolving Suspense boundaries progressively.\n\nThe stream is **pull-gated**: the shell is enqueued as the first chunk, and each later\nchunk (a batch of settled boundaries, then the tail) is produced only when the consumer\nasks for more (`desiredSize > 0`), so a slow consumer applies backpressure instead of the\nwhole document queueing in memory as encoded chunks. Boundary rendering is not gated —\nsee {@link RenderStream.allReady}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6896,6 +6896,117 @@
           "denextOnly": true
         },
         {
+          "name": "denoKvCacheStore",
+          "slug": "denoKvCacheStore",
+          "kind": "function",
+          "signature": "denoKvCacheStore(options?: DenoKvCacheStoreOptions): CacheStore & object",
+          "doc": "A CacheStore on Deno KV, shared by every isolate using the database.",
+          "docFull": "A {@link CacheStore} on Deno KV, shared by every isolate using the database.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "kv (an open Deno.Kv) or path (what to pass to Deno.openKv), a key prefix (default [\"denext\", \"cache\"]), the caps and the sweep interval."
+            }
+          ],
+          "returns": "A store for cache.store / setCacheStore; close() closes a database it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DenoKvCacheStoreOptions",
+          "slug": "DenoKvCacheStoreOptions",
+          "kind": "interface",
+          "signature": "interface DenoKvCacheStoreOptions",
+          "doc": "Options for denoKvCacheStore.",
+          "docFull": "Options for {@linkcode denoKvCacheStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DenoKvConnectionOptions",
+          "slug": "DenoKvConnectionOptions",
+          "kind": "interface",
+          "signature": "interface DenoKvConnectionOptions",
+          "doc": "Options shared by the Deno KV stores: a database of your own, or a path to open one.",
+          "docFull": "Options shared by the Deno KV stores: a database of your own, or a path to open one.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "denoKvRateLimitStore",
+          "slug": "denoKvRateLimitStore",
+          "kind": "function",
+          "signature": "denoKvRateLimitStore(options?: DenoKvRateLimitStoreOptions): RateLimitStore & object",
+          "doc": "A shared RateLimitStore on Deno KV.",
+          "docFull": "A shared {@linkcode RateLimitStore} on Deno KV.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "kv (an open Deno.Kv) or path (what to pass to Deno.openKv), and a key prefix (default [\"denext\", \"ratelimit\"])."
+            }
+          ],
+          "returns": "A store to pass as denextAuth({ rateLimit: { store } }); close() closes a database it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DenoKvRateLimitStoreOptions",
+          "slug": "DenoKvRateLimitStoreOptions",
+          "kind": "typeAlias",
+          "signature": "type DenoKvRateLimitStoreOptions = DenoKvConnectionOptions",
+          "doc": "Options for denoKvRateLimitStore.",
+          "docFull": "Options for {@linkcode denoKvRateLimitStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "denoKvSessionStore",
+          "slug": "denoKvSessionStore",
+          "kind": "function",
+          "signature": "denoKvSessionStore(options?: DenoKvSessionStoreOptions): SessionStore & object",
+          "doc": "A durable, shared SessionStore on Deno KV.",
+          "docFull": "A durable, shared {@linkcode SessionStore} on Deno KV.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "kv (an open Deno.Kv) or path (what to pass to Deno.openKv), and a key prefix (default [\"denext\", \"session\"])."
+            }
+          ],
+          "returns": "A store to pass as denextAuth({ sessionStore }); close() closes a database it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DenoKvSessionStoreOptions",
+          "slug": "DenoKvSessionStoreOptions",
+          "kind": "typeAlias",
+          "signature": "type DenoKvSessionStoreOptions = DenoKvConnectionOptions",
+          "doc": "Options for denoKvSessionStore.",
+          "docFull": "Options for {@linkcode denoKvSessionStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DenoKvUnsupportedError",
+          "slug": "DenoKvUnsupportedError",
+          "kind": "class",
+          "signature": "class DenoKvUnsupportedError",
+          "doc": "Thrown when this Deno has no Deno.openKv (outside Deno Deploy without --unstable-kv).",
+          "docFull": "Thrown when this Deno has no `Deno.openKv` (outside Deno Deploy without `--unstable-kv`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopAppIcons",
           "slug": "DesktopAppIcons",
           "kind": "interface",
@@ -9275,6 +9386,66 @@
           "denextOnly": true
         },
         {
+          "name": "KvAtomicLike",
+          "slug": "KvAtomicLike",
+          "kind": "interface",
+          "signature": "interface KvAtomicLike",
+          "doc": "The atomic-operation subset the stores use.",
+          "docFull": "The atomic-operation subset the stores use.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "KvEntryLike",
+          "slug": "KvEntryLike",
+          "kind": "interface",
+          "signature": "interface KvEntryLike",
+          "doc": "An entry as KV returns it (versionstamp is null when the key is absent).",
+          "docFull": "An entry as KV returns it (`versionstamp` is `null` when the key is absent).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "KvKey",
+          "slug": "KvKey",
+          "kind": "typeAlias",
+          "signature": "type KvKey = typeOperator",
+          "doc": "A KV key.",
+          "docFull": "A KV key.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "KvKeyPart",
+          "slug": "KvKeyPart",
+          "kind": "typeAlias",
+          "signature": "type KvKeyPart = string | number | bigint | boolean | Uint8Array",
+          "doc": "One part of a KV key.",
+          "docFull": "One part of a KV key.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "KvLike",
+          "slug": "KvLike",
+          "kind": "interface",
+          "signature": "interface KvLike",
+          "doc": "The Deno.Kv subset the stores use.",
+          "docFull": "The `Deno.Kv` subset the stores use.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "LayoutModule",
           "slug": "LayoutModule",
           "kind": "interface",
@@ -11560,6 +11731,194 @@
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "redisCacheStore",
+          "slug": "redisCacheStore",
+          "kind": "function",
+          "signature": "redisCacheStore(options?: RedisCacheStoreOptions): CacheStore & object",
+          "doc": "A CacheStore on Redis, shared by every replica. Size-bounded: the oldest-written entries past maxDataEntries / maxPageEntries are evicted, and hard-expired ones are swept on a throttle.",
+          "docFull": "A {@link CacheStore} on Redis, shared by every replica. Size-bounded: the oldest-written\nentries past `maxDataEntries` / `maxPageEntries` are evicted, and hard-expired ones are swept\non a throttle.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "client (a redisClient) or url, a key prefix, the caps and the sweep interval."
+            }
+          ],
+          "returns": "A store for cache.store / setCacheStore; its close() closes a client it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisCacheStoreOptions",
+          "slug": "RedisCacheStoreOptions",
+          "kind": "interface",
+          "signature": "interface RedisCacheStoreOptions",
+          "doc": "Options for redisCacheStore.",
+          "docFull": "Options for {@linkcode redisCacheStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "redisClient",
+          "slug": "redisClient-fn",
+          "kind": "function",
+          "signature": "redisClient(options?: string | RedisClientOptions): RedisClient",
+          "doc": "Open a Redis client (lazily: the first command connects).",
+          "docFull": "Open a Redis client (lazily: the first command connects).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "A redis:// / rediss:// URL, or RedisClientOptions. With neither, REDIS_URL or redis://127.0.0.1:6379."
+            }
+          ],
+          "returns": "The client; close() it when done (a server closes the stores' own clients on drain).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisClient",
+          "slug": "RedisClient-iface",
+          "kind": "interface",
+          "signature": "interface RedisClient",
+          "doc": "A Redis connection shared by its callers (see the module docs).",
+          "docFull": "A Redis connection shared by its callers (see the module docs).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisClientOptions",
+          "slug": "RedisClientOptions",
+          "kind": "interface",
+          "signature": "interface RedisClientOptions",
+          "doc": "Options for redisClient.",
+          "docFull": "Options for {@linkcode redisClient}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisCommand",
+          "slug": "RedisCommand",
+          "kind": "typeAlias",
+          "signature": "type RedisCommand = typeOperator",
+          "doc": "One command: its name and arguments (numbers are sent as their decimal text).",
+          "docFull": "One command: its name and arguments (numbers are sent as their decimal text).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisConnectionError",
+          "slug": "RedisConnectionError",
+          "kind": "class",
+          "signature": "class RedisConnectionError",
+          "doc": "The connection failed or dropped; the command's effect on the server is unknown.",
+          "docFull": "The connection failed or dropped; the command's effect on the server is unknown.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisConnectionOptions",
+          "slug": "RedisConnectionOptions",
+          "kind": "interface",
+          "signature": "interface RedisConnectionOptions",
+          "doc": "Options shared by the Redis stores: a client of your own, or a URL to open one.",
+          "docFull": "Options shared by the Redis stores: a client of your own, or a URL to open one.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisError",
+          "slug": "RedisError",
+          "kind": "class",
+          "signature": "class RedisError",
+          "doc": "An error reply from the server (-ERR …, -WRONGTYPE …, -NOAUTH …).",
+          "docFull": "An error reply from the server (`-ERR …`, `-WRONGTYPE …`, `-NOAUTH …`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "redisRateLimitStore",
+          "slug": "redisRateLimitStore",
+          "kind": "function",
+          "signature": "redisRateLimitStore(options?: RedisRateLimitStoreOptions): RateLimitStore & object",
+          "doc": "A shared RateLimitStore on Redis.",
+          "docFull": "A shared {@linkcode RateLimitStore} on Redis.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "client (a redisClient) or url, and a key prefix (default denext:ratelimit:)."
+            }
+          ],
+          "returns": "A store to pass as denextAuth({ rateLimit: { store } }); close() closes a client it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisRateLimitStoreOptions",
+          "slug": "RedisRateLimitStoreOptions",
+          "kind": "typeAlias",
+          "signature": "type RedisRateLimitStoreOptions = RedisConnectionOptions",
+          "doc": "Options for redisRateLimitStore.",
+          "docFull": "Options for {@linkcode redisRateLimitStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisReply",
+          "slug": "RedisReply",
+          "kind": "typeAlias",
+          "signature": "type RedisReply = string | number | null | RedisReply[]",
+          "doc": "A RESP2 reply: a simple or bulk string, an integer, a nil, or an array of replies.",
+          "docFull": "A RESP2 reply: a simple or bulk string, an integer, a nil, or an array of replies.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "redisSessionStore",
+          "slug": "redisSessionStore",
+          "kind": "function",
+          "signature": "redisSessionStore(options?: RedisSessionStoreOptions): SessionStore & object",
+          "doc": "A durable, shared SessionStore on Redis.",
+          "docFull": "A durable, shared {@linkcode SessionStore} on Redis.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "client (a redisClient) or url, and a key prefix (default denext:session:)."
+            }
+          ],
+          "returns": "A store to pass as denextAuth({ sessionStore }); its close() closes a client it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisSessionStoreOptions",
+          "slug": "RedisSessionStoreOptions",
+          "kind": "typeAlias",
+          "signature": "type RedisSessionStoreOptions = RedisConnectionOptions",
+          "doc": "Options for redisSessionStore.",
+          "docFull": "Options for {@linkcode redisSessionStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "refresh",
@@ -18342,6 +18701,27 @@
           "denextOnly": false
         },
         {
+          "name": "cacheStoreContract",
+          "slug": "cacheStoreContract",
+          "kind": "function",
+          "signature": "cacheStoreContract(t: ContractContext, make: StoreFactory<CacheStore>): Promise<void>",
+          "doc": "The CacheStore contract: data and page round-trips, hard expiry, overwrites, large values, deleteByPath, deleteByTag (and that a rewrite drops a tag), and expireByTag / sweepPages when the store implements them.",
+          "docFull": "The `CacheStore` contract: data and page round-trips, hard expiry, overwrites, large values,\n`deleteByPath`, `deleteByTag` (and that a rewrite drops a tag), and `expireByTag` /\n`sweepPages` when the store implements them.",
+          "params": [
+            {
+              "name": "t",
+              "doc": "Where the cases run (a Deno.TestContext)."
+            },
+            {
+              "name": "make",
+              "doc": "A fresh, empty store per case."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Component",
           "slug": "Component",
           "kind": "typeAlias",
@@ -18360,6 +18740,18 @@
           "signature": "interface ConformanceReport",
           "doc": "The full report from probeApp.",
           "docFull": "The full report from {@linkcode probeApp}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ContractContext",
+          "slug": "ContractContext",
+          "kind": "interface",
+          "signature": "interface ContractContext",
+          "doc": "Where the cases run: Deno.TestContext fits, or any { step } that runs a named case.",
+          "docFull": "Where the cases run: `Deno.TestContext` fits, or any `{ step }` that runs a named case.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -18562,6 +18954,27 @@
           "denextOnly": true
         },
         {
+          "name": "rateLimitStoreContract",
+          "slug": "rateLimitStoreContract",
+          "kind": "function",
+          "signature": "rateLimitStoreContract(t: ContractContext, make: StoreFactory<RateLimitStore>): Promise<void>",
+          "doc": "The RateLimitStore contract: a fixed window that opens on the first failure, counts every concurrent failure, closes on time, and reset / decrement (when implemented).",
+          "docFull": "The `RateLimitStore` contract: a fixed window that opens on the first failure, counts every\nconcurrent failure, closes on time, and `reset` / `decrement` (when implemented).",
+          "params": [
+            {
+              "name": "t",
+              "doc": "Where the cases run (a Deno.TestContext)."
+            },
+            {
+              "name": "make",
+              "doc": "A fresh, empty store per case."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "RedirectHop",
           "slug": "RedirectHop",
           "kind": "interface",
@@ -18621,6 +19034,51 @@
           "signature": "interface RouteProbe",
           "doc": "The result of probing one concrete route path.",
           "docFull": "The result of probing one concrete route path.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "sessionStoreContract",
+          "slug": "sessionStoreContract",
+          "kind": "function",
+          "signature": "sessionStoreContract(t: ContractContext, make: StoreFactory<SessionStore>): Promise<void>",
+          "doc": "The SessionStore contract: round-trips, expiry, overwrite, write-only-if-present update (a revoked or expired session is never resurrected), delete and deleteByUser.",
+          "docFull": "The `SessionStore` contract: round-trips, expiry, overwrite, write-only-if-present\n`update` (a revoked or expired session is never resurrected), `delete` and `deleteByUser`.",
+          "params": [
+            {
+              "name": "t",
+              "doc": "Where the cases run (a Deno.TestContext)."
+            },
+            {
+              "name": "make",
+              "doc": "A fresh, empty store per case."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "StoreContractError",
+          "slug": "StoreContractError",
+          "kind": "class",
+          "signature": "class StoreContractError",
+          "doc": "A contract case that failed; its message names what the store got wrong.",
+          "docFull": "A contract case that failed; its message names what the store got wrong.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "StoreFactory",
+          "slug": "StoreFactory",
+          "kind": "typeAlias",
+          "signature": "type StoreFactory<S> = () => S | Promise<S>",
+          "doc": "Makes a fresh, empty store for one case.",
+          "docFull": "Makes a fresh, empty store for one case.",
           "params": [],
           "returns": "",
           "examples": [],

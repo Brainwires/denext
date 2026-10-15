@@ -545,6 +545,27 @@ export type {
 } from "./postgres-migrate.ts";
 export { postgresCacheStore } from "./postgres-cache.ts";
 export type { PostgresCacheStoreOptions } from "./postgres-cache.ts";
+export { redisCacheStore } from "./redis-cache.ts";
+export type { RedisCacheStoreOptions } from "./redis-cache.ts";
+export { redisClient, RedisConnectionError, RedisError } from "./redis.ts";
+export type {
+  RedisClient,
+  RedisClientOptions,
+  RedisCommand,
+  RedisConnectionOptions,
+  RedisReply,
+} from "./redis.ts";
+export { denoKvCacheStore } from "./deno-kv-cache.ts";
+export type { DenoKvCacheStoreOptions } from "./deno-kv-cache.ts";
+export { DenoKvUnsupportedError } from "./deno-kv.ts";
+export type {
+  DenoKvConnectionOptions,
+  KvAtomicLike,
+  KvEntryLike,
+  KvKey,
+  KvKeyPart,
+  KvLike,
+} from "./deno-kv.ts";
 
 // Server Actions — runtime registration + secure same-origin dispatch.
 export { isServerAction, serverAction } from "../runtime/server-action.ts";

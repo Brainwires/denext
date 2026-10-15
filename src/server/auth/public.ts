@@ -186,6 +186,14 @@ export { postgresSessionStore } from "./postgres-session-store.ts";
 export type { PostgresSessionStoreOptions } from "./postgres-session-store.ts";
 export { postgresRateLimitStore } from "./postgres-rate-limit.ts";
 export type { PostgresRateLimitStoreOptions } from "./postgres-rate-limit.ts";
+// Redis (7+ / Valkey) and Deno KV: the same shared stores, zero-npm (denext's own RESP client;
+// Deno's built-in KV).
+export { redisSessionStore } from "./redis-session-store.ts";
+export type { RedisSessionStoreOptions } from "./redis-session-store.ts";
+export { redisRateLimitStore } from "./redis-rate-limit.ts";
+export type { RedisRateLimitStoreOptions } from "./redis-rate-limit.ts";
+export { denoKvRateLimitStore, denoKvSessionStore } from "./deno-kv-stores.ts";
+export type { DenoKvRateLimitStoreOptions, DenoKvSessionStoreOptions } from "./deno-kv-stores.ts";
 // SAML 2.0 Service Provider primitives (IdP metadata, AuthnRequest, Response verification).
 export {
   buildAuthnRequest,

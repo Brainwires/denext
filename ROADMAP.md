@@ -107,9 +107,6 @@ Each is documented as a manual recipe today (the
 [multi-instance](https://denext.dev/docs/multi-instance) and
 [route handler recipes](https://denext.dev/docs/route-handler-recipes) pages).
 
-- **Shipped shared stores:** first-party Redis and Deno KV `CacheStore`, `SessionStore` and
-  `RateLimitStore`, plus an exported adapter contract suite (`cacheStoreContract` from
-  `denext/testing`) so a community adapter can prove itself.
 - **Deploy adapter API and presets:** a typed build manifest and a pluggable adapter seam
   (static export, Deno Deploy, Node, Docker; a documented seam for Workers / Vercel), on the
   plugin `addBuildStep` seam.

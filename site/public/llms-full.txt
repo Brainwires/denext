@@ -736,7 +736,11 @@ Postgres (every replica sharing one database): `postgresClient(url)` from `denex
 tagged-template client on `Deno.SQL`, built into denext's managed Deno toolchain (on stock Deno:
 `fromPostgresJs(postgres(url))` with `npm:postgres`); `postgresAuthAdapter`, `postgresSessionStore`,
 `postgresRateLimitStore` and `postgresCacheStore` take `{ sql | url, schema? }` and create their
-tables by migration on first use (under the migration lock). Behind PgBouncer in transaction mode,
+tables by migration on first use (under the migration lock). The same cache / session / rate-limit
+stores ship on Redis 7+ (`redisCacheStore` / `redisSessionStore` / `redisRateLimitStore`, `{ client |
+url, prefix? }`, on denext's zero-npm RESP client `redisClient(url)`) and Deno KV (`denoKvCacheStore`
+/ `denoKvSessionStore` / `denoKvRateLimitStore`, `{ kv | path, prefix? }`); `cacheStoreContract` /
+`sessionStoreContract` / `rateLimitStoreContract` from `denext/testing` test your own. Behind PgBouncer in transaction mode,
 pass `directUrl` too (`backend({ postgres })` reads `DATABASE_DIRECT_URL`): LISTEN, reserved
 connections and migrations take the direct connection (`withDirectConnection(pooled, direct)`).
 `DENEXT_BOOT_DDL=off` makes startup change no schema and fail with `BootSchemaError` while a
@@ -1246,7 +1250,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RegisteredRoutes` — Typed-routes registry (augmentation seam). denext build/dev emit .denext/routes.ts, which augments this interface with routes: Routes; import that file anywhere in your app and Link / Router.push narrow to real paths. Empty by default ⇒ Href is string (no enforcement until you opt in).
 - `type RegisteredSchema = conditional` — The registered app schema when .denext/api.ts is imported, else the open ApiSchema.
 - `interface RenderOptions` — Options for renderToString.
-- `renderToReadableStream(node: VNodeChildren, options?: StreamOptions): ReadableStream<Uint8Array>` — Render a VNode tree to a streaming HTML ReadableStream<Uint8Array>, resolving Suspense boundaries progressively.
+- `renderToReadableStream(node: VNodeChildren, options?: StreamOptions): RenderStream` — Render a VNode tree to a streaming HTML ReadableStream<Uint8Array>, resolving Suspense boundaries progressively.
 - `renderToString(node: VNodeChildren, options?: RenderOptions): Promise<string>` — Render a VNode (or renderable child) to an HTML string. This is the primary SSR entry point.
 - `type RequestArgs<E> = conditional` — The trailing call args: the opts object is required only when it has a required key.
 - `type RequestOf<E> = parenthesized & parenthesized & parenthesized & object` — The options object for one endpoint: params/body/query are typed when the route declares them.
@@ -1588,6 +1592,14 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DenextCommand` — A project-local CLI verb declared in denext.config.ts under DenextConfig.commands — the zero-ceremony half of denext's CLI extension story: no plugin, no setup, just an object. It is structurally a CLI CommandSpec, so the same parser, --help renderer, and dispatcher run it, and a verb that outgrows the config can move into a plugin's addCommand unchanged.
 - `interface DenextConfig` — Project configuration exported from denext.config.{ts,js} (as default or named).
 - `interface DenextPlugin` — A denext plugin. Declared in denext.config.ts as plugins: [myPlugin()]; its setup runs once per process, before the first route scan.
+- `denoKvCacheStore(options?: DenoKvCacheStoreOptions): CacheStore & object` — A CacheStore on Deno KV, shared by every isolate using the database.
+- `interface DenoKvCacheStoreOptions` — Options for denoKvCacheStore.
+- `interface DenoKvConnectionOptions` — Options shared by the Deno KV stores: a database of your own, or a path to open one.
+- `denoKvRateLimitStore(options?: DenoKvRateLimitStoreOptions): RateLimitStore & object` — A shared RateLimitStore on Deno KV.
+- `type DenoKvRateLimitStoreOptions = DenoKvConnectionOptions` — Options for denoKvRateLimitStore.
+- `denoKvSessionStore(options?: DenoKvSessionStoreOptions): SessionStore & object` — A durable, shared SessionStore on Deno KV.
+- `type DenoKvSessionStoreOptions = DenoKvConnectionOptions` — Options for denoKvSessionStore.
+- `class DenoKvUnsupportedError` — Thrown when this Deno has no Deno.openKv (outside Deno Deploy without --unstable-kv).
 - `interface DesktopAppIcons` — DesktopConfig.app's icons: the app icon file per OS, relative to the project.
 - `interface DesktopCapabilitiesConfig` — desktop.capabilities: which native capabilities the page may reach, keyed by the name denext desktop add <name> writes. true enables a capability with its defaults; an object scopes it. Anything absent is denied. An unknown key is allowed (a newer desktop add) and the validator warns on it.
 - `interface DesktopConfig` — The desktop block of denext.config.ts: Deno Desktop native capabilities. The allowlist the desktop runtime's capability bridge serves (default deny), and the source the package scripts derive least-privilege --allow-* from. Written by denext desktop add <cap>. Distinct from SpaDesktopConfig (spa.desktop, packaging settings such as the icon); the two may be unified later. Docs: https://denext.dev/docs/desktop
@@ -1769,6 +1781,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type Key = string | number | bigint | null | undefined` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
 - `keycloak(options: KeycloakOptions): OAuthProvider` — Keycloak (OIDC). Endpoints follow the modern (Keycloak 17+) /realms/<realm> layout; a legacy instance served under /auth is configured with the generic oidc() provider.
 - `interface KeycloakOptions` — Options for keycloak.
+- `interface KvAtomicLike` — The atomic-operation subset the stores use.
+- `interface KvEntryLike` — An entry as KV returns it (versionstamp is null when the key is absent).
+- `type KvKey = typeOperator` — A KV key.
+- `type KvKeyPart = string | number | bigint | boolean | Uint8Array` — One part of a KV key.
+- `interface KvLike` — The Deno.Kv subset the stores use.
 - `interface LayoutModule` — Shape of a layout module.
 - `type LayoutProps<P, Slots> = object & mapped` — Props passed to a layout component. Slots names the layout's parallel-route slots (@sidebar → LayoutProps<RouteParams, "sidebar"> adds a sidebar prop).
 - `listApiTokens(config: AuthConfig, userId: string): Promise<ApiTokenRecord[]>` — A user's live API tokens (revoked and expired ones are already hidden by the adapter). The records carry tokenHash, never a usable token — redact it before sending a list to a client.
@@ -1939,6 +1956,20 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `redirectResponse(location: string, status?: number): Response` — Return a client redirect response.
 - `interface RedirectRule` — A URL-path redirect rule (source → destination).
 - `enum RedirectType` — next/navigation's RedirectType — how a client-side (soft) navigation applies the redirect: push a new history entry or replace the current one. Server responses ignore it (they always issue an HTTP redirect).
+- `redisCacheStore(options?: RedisCacheStoreOptions): CacheStore & object` — A CacheStore on Redis, shared by every replica. Size-bounded: the oldest-written entries past maxDataEntries / maxPageEntries are evicted, and hard-expired ones are swept on a throttle.
+- `interface RedisCacheStoreOptions` — Options for redisCacheStore.
+- `redisClient(options?: string | RedisClientOptions): RedisClient` — Open a Redis client (lazily: the first command connects).
+- `interface RedisClient` — A Redis connection shared by its callers (see the module docs).
+- `interface RedisClientOptions` — Options for redisClient.
+- `type RedisCommand = typeOperator` — One command: its name and arguments (numbers are sent as their decimal text).
+- `class RedisConnectionError` — The connection failed or dropped; the command's effect on the server is unknown.
+- `interface RedisConnectionOptions` — Options shared by the Redis stores: a client of your own, or a URL to open one.
+- `class RedisError` — An error reply from the server (-ERR …, -WRONGTYPE …, -NOAUTH …).
+- `redisRateLimitStore(options?: RedisRateLimitStoreOptions): RateLimitStore & object` — A shared RateLimitStore on Redis.
+- `type RedisRateLimitStoreOptions = RedisConnectionOptions` — Options for redisRateLimitStore.
+- `type RedisReply = string | number | null | RedisReply[]` — A RESP2 reply: a simple or bulk string, an integer, a nil, or an array of replies.
+- `redisSessionStore(options?: RedisSessionStoreOptions): SessionStore & object` — A durable, shared SessionStore on Redis.
+- `type RedisSessionStoreOptions = RedisConnectionOptions` — Options for redisSessionStore.
 - `refresh(): void` — Request a refresh of the **uncached** data on the current route from inside a Server Action (Next.js 16 refresh). It doesn't touch the cache — it flags the request so the action response tells the client router to re-fetch, keeping cached shells/static content fast while dynamic data (notification counts, live metrics) updates. A no-op outside a request context.
 - `type RefreshOutcome = refreshed | unchanged | failed | not_due | backoff` — How a refresh of one provider ended.
 - `refreshSsoMetadata(config?: AuthConfig, options?: RefreshSsoMetadataOptions): Promise<SsoMetadataRefreshSummary>` — Fetch the metadata of every stored SSO provider registered by metadata_url whose refresh is due (a day after the last fetch, or sooner by its cacheDuration / validUntil), one at a time — the same single-flight, backed-off fetch a sign-in uses, so a job and the sign-ins never fetch one URL twice in a window. Run it from a scheduled job: defineJob({ schedule: "0 * * * *", handler: () => refreshSsoMetadata() }).
@@ -2445,8 +2476,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/testing`
 
 - `act<T>(callback: () => T | Promise<T>): Promise<T>` — act(callback) — the React test helper. Runs callback, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work.
+- `cacheStoreContract(t: ContractContext, make: StoreFactory<CacheStore>): Promise<void>` — The CacheStore contract: data and page round-trips, hard expiry, overwrites, large values, deleteByPath, deleteByTag (and that a rewrite drops a tag), and expireByTag / sweepPages when the store implements them.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `interface ConformanceReport` — The full report from probeApp.
+- `interface ContractContext` — Where the cases run: Deno.TestContext fits, or any { step } that runs a named case.
 - `class CookieJar` — A cookie jar: stores cookies set by responses and replays them on later requests, honoring deletions (Max-Age=0 / a past Expires).
 - `createTestApp(projectDir: string): Promise<TestHandler>` — Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.
 - `createTestClient(handler: TestHandler, options?: TestClientOptions): TestClient` — Create a cookie-aware, no-JS test client over a request handler.
@@ -2461,11 +2494,15 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ProbeCheck` — One conformance check applied to a single rendered route.
 - `interface ProbeOptions` — Options for probeApp.
 - `interface Queries` — The query methods bound to a rendered container.
+- `rateLimitStoreContract(t: ContractContext, make: StoreFactory<RateLimitStore>): Promise<void>` — The RateLimitStore contract: a fixed window that opens on the first failure, counts every concurrent failure, closes on time, and reset / decrement (when implemented).
 - `interface RedirectHop` — One hop in a followed redirect chain.
 - `render(ui: VNode): Promise<RenderResult>` — Mount ui into a fresh in-memory DOM and return queries + interaction helpers. Effects run (wrapped in act), so await the call before asserting.
 - `interface RenderResult` — The handle returned by render.
 - `interface RoleOptions` — Options for Queries.getByRole.
 - `interface RouteProbe` — The result of probing one concrete route path.
+- `sessionStoreContract(t: ContractContext, make: StoreFactory<SessionStore>): Promise<void>` — The SessionStore contract: round-trips, expiry, overwrite, write-only-if-present update (a revoked or expired session is never resurrected), delete and deleteByUser.
+- `class StoreContractError` — A contract case that failed; its message names what the store got wrong.
+- `type StoreFactory<S> = () => S | Promise<S>` — Makes a fresh, empty store for one case.
 - `interface TestClient` — A cookie-aware, no-JS test driver over a request handler.
 - `interface TestClientOptions` — Options for createTestClient.
 - `interface TestElement` — The read-only shape of a rendered element that query helpers return.

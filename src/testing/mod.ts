@@ -30,6 +30,13 @@ export { fireEvent, render, userEvent, waitFor } from "./render.ts";
 export { formatReport, probeApp } from "./conformance.ts";
 export type { ConformanceReport, ProbeCheck, ProbeOptions, RouteProbe } from "./conformance.ts";
 
+export {
+  cacheStoreContract,
+  rateLimitStoreContract,
+  sessionStoreContract,
+  StoreContractError,
+} from "./store-contracts.ts";
+export type { ContractContext, StoreFactory } from "./store-contracts.ts";
 export { CookieJar, createTestClient } from "./client.ts";
 export type {
   FormBody,

@@ -437,6 +437,19 @@ Deno.test("the counter hydrates and increments", async () => {
         {" "}
         <code>launch({"{"} args: ["--no-sandbox"] {"}"})</code>.
       </p>
+      <h2>Store contracts</h2>
+      <p>
+        A <code>CacheStore</code>, <code>SessionStore</code> or <code>RateLimitStore</code>{" "}
+        of your own proves itself with the suites denext's in-memory, SQLite, Postgres, Redis and
+        Deno KV stores pass: <code>cacheStoreContract</code>, <code>sessionStoreContract</code> and
+        {" "}
+        <code>rateLimitStoreContract</code> from{" "}
+        <code>denext/testing</code>. Each case runs as a step on a fresh store from your factory;
+        see{" "}
+        <a href="/docs/multi-instance#your-own-store">
+          Multi-instance › Your own store
+        </a>.
+      </p>
     </DocsShell>
   );
 }

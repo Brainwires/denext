@@ -222,6 +222,16 @@ jobs:
           MINIO_ROOT_PASSWORD: dnxtest-secret
         ports:
           - 9100:9000
+      redis:
+        # denext's zero-npm Redis client and stores (tests/redis-integration.test.ts).
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     env:
       # The backend-integration job's service env (see there); `scripts/test-run.ts --coverage`
       # runs every pass on denext's Deno toolchain, which has the `Deno.SQL` these suites need.
@@ -233,6 +243,7 @@ jobs:
       DENEXT_TEST_S3_ENDPOINT: http://127.0.0.1:9100
       DENEXT_TEST_S3_ACCESS_KEY: dnxtest
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
+      DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -286,14 +297,14 @@ jobs:
         run: |
           # The files the backend-integration job runs: under coverage, none of their tests may be
           # ignored either (an ignored one means its service env is not wired into this job).
-          files='backend-rls-integration|backend-rest-integration|backend-rest-supabase-integration|backend-realtime-integration|backend-supabase-realtime-integration|backend-auth-integration|db-admin-integration|db-migrations-integration|postgres-integration|backend-s3-minio|backend-supabase-functions|backend-storage-supabase-integration|backend-storage-rls-integration|backend-supabase-auth|backend-supabase-auth-integration|backend-platform-integration|backend-auth-replicas-integration|backend-rest-reload-integration|doctor-backend'
+          files='backend-rls-integration|backend-rest-integration|backend-rest-supabase-integration|backend-realtime-integration|backend-supabase-realtime-integration|backend-auth-integration|db-admin-integration|db-migrations-integration|postgres-integration|backend-s3-minio|backend-supabase-functions|backend-storage-supabase-integration|backend-storage-rls-integration|backend-supabase-auth|backend-supabase-auth-integration|backend-platform-integration|backend-auth-replicas-integration|backend-rest-reload-integration|doctor-backend|redis-integration'
           awk -v files="^[.]/tests/($files)[.]test[.]ts$" '
             /^running [0-9]+ tests? from / { current = $NF; next }
             current ~ files && /\.\.\. ignored/ { print current ": " $0; bad = 1 }
             current ~ files && /\.\.\. ok/ { ran[current] = 1 }
             END {
               n = 0; for (f in ran) n++
-              if (n < 19) { print "only " n " of 19 backend-integration files ran"; bad = 1 }
+              if (n < 20) { print "only " n " of 20 backend-integration files ran"; bad = 1 }
               exit bad
             }
           ' "$RUNNER_TEMP/coverage.txt" || {
@@ -348,6 +359,16 @@ jobs:
           MINIO_ROOT_PASSWORD: dnxtest-secret
         ports:
           - 9100:9000
+      redis:
+        # denext's zero-npm Redis client and stores (tests/redis-integration.test.ts).
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     env:
       DENEXT_TEST_POSTGRES_URL: postgres://postgres:pw@127.0.0.1:5432/postgres
       DENEXT_TEST_POSTGIS_URL: postgres://postgres:pw@127.0.0.1:5433/postgres
@@ -357,6 +378,7 @@ jobs:
       DENEXT_TEST_S3_ENDPOINT: http://127.0.0.1:9100
       DENEXT_TEST_S3_ACCESS_KEY: dnxtest
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
+      DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
       # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
       DENEXT_DENO_RELEASE: denext-runtime-v2.9.7-denext.19
       DENEXT_DENO_ZIP: deno-cli-2.9.7-denext.19-x86_64-unknown-linux-gnu.zip
@@ -426,7 +448,8 @@ jobs:
             tests/backend-platform-integration.test.ts \
             tests/backend-auth-replicas-integration.test.ts \
             tests/backend-rest-reload-integration.test.ts \
-            tests/doctor-backend.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
+            tests/doctor-backend.test.ts \
+            tests/redis-integration.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
 
       - name: No test was ignored (each service was really reached)
         run: |

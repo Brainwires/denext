@@ -49,6 +49,18 @@ and this project adheres to
   predates it. denext's Deno toolchain has no Windows on Arm build yet, so there the binary runs
   its Deno verbs on the `deno` on your `Path`.
 
+- **Shared stores on Redis and Deno KV, and exported store contract suites.** `redisCacheStore`,
+  `redisSessionStore` and `redisRateLimitStore` (`denext/server`) share the data and ISR page
+  cache, revocable sessions and rate-limit counts across replicas through Redis 7+ or Valkey. They
+  run on `redisClient`, a new zero-npm RESP2 client over `Deno.connect` / `Deno.connectTls`
+  (`redis://` / `rediss://` URLs, `AUTH` with a password or an ACL user, `SELECT`, one pipelined
+  connection with `pipeline()` and `MULTI`/`EXEC` `transaction()`, reconnect on the next command).
+  `denoKvCacheStore`, `denoKvSessionStore` and `denoKvRateLimitStore` do the same on any `Deno.Kv`
+  (the project's database on Deno Deploy), with values over 64 KiB stored in chunks and every
+  read-modify-write a version-checked commit. `cacheStoreContract`, `sessionStoreContract` and
+  `rateLimitStoreContract` (`denext/testing`) are the suites every shipped store passes (in-memory,
+  SQLite, Postgres, Redis, Deno KV), so a store of your own can prove itself.
+
 ### Fixed
 
 - **A hidden `<Activity>` holds class lifecycles and refs, as React does.** A class component
@@ -81,7 +93,6 @@ and this project adheres to
   global-error document as the native build does. `denext export` bundles the same entry and
   pre-renders global-error to `out/500.html`, wired to hydrate, for a static host's error page;
   it renders with the `Internal Server Error` message a production server hands it.
-
 
 ## [4.1.0] - 2026-10-15
 

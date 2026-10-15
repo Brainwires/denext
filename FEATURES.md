@@ -163,8 +163,17 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   negotiated locale or a request a `middleware.ts` matched.
 - Pluggable **cache stores**: the durable **`node:sqlite`** (real SQLite built
   into Deno; the default — bounded + stale-while-revalidate) with an in-memory
-  LRU fallback; swap in any custom `CacheStore` via `setCacheStore` to share
-  across instances.
+  LRU fallback; swap in a shared one via `setCacheStore` / `cache.store` —
+  `postgresCacheStore`, `redisCacheStore`, `denoKvCacheStore` or your own.
+- **Shared stores on Redis and Deno KV** — `redisCacheStore`, `redisSessionStore`,
+  `redisRateLimitStore` on `redisClient`, a zero-npm RESP2 client over `Deno.connect` /
+  `Deno.connectTls` (AUTH incl. ACL users, SELECT, one pipelined connection, MULTI/EXEC,
+  reconnect); `denoKvCacheStore`, `denoKvSessionStore`, `denoKvRateLimitStore` on any
+  `Deno.Kv` (chunked large values, version-checked commits). The exported contract suites
+  `cacheStoreContract` / `sessionStoreContract` / `rateLimitStoreContract` (`denext/testing`)
+  run against every shipped store and prove a community one. — `src/server/redis.ts`,
+  `redis-cache.ts`, `deno-kv.ts`, `deno-kv-cache.ts`, `src/server/auth/redis-*.ts`,
+  `deno-kv-stores.ts`, `src/testing/store-contracts.ts`.
 
 ## Server features
 
