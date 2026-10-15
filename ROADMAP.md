@@ -116,8 +116,6 @@ Each is documented as a manual recipe today (the
   plugin `addBuildStep` seam.
 - **Generated clients in other languages** from the OpenAPI / GraphQL documents (TypeScript is
   served by `denext openapi types`).
-- **CLI distribution:** publish the Homebrew / Scoop / winget manifests each release generates
-  to a tap, a bucket and winget-pkgs; a Windows Arm64 `denext` binary.
 
 ## `denext ui` and DevTools
 

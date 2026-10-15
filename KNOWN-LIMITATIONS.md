@@ -35,7 +35,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 - **Built for five targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64).
   Elsewhere, and offline on first use, commands run on stock Deno, without `Deno.SQL` or
-  Vitest/Jest compatibility in `deno test`.
+  Vitest/Jest compatibility in `deno test`. That includes Windows on Arm: the `denext` binary
+  is built for it, but its Deno verbs run on the `deno` on your `Path` (the x64 binary, which
+  runs under emulation, gets the x64 toolchain).
 - **A CLI installed from JSR caches its verbs after the install, not during it.** `deno install
   -g jsr:@denext/denext/cli` caches the entrypoint; each verb's modules are cached by the CLI's
   first online run (in the background) or by `denext toolchain install`. A verb used offline

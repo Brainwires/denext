@@ -325,17 +325,54 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
 7. **Deploy the docs site** (`deno task docs:build` + the rsync in
    [the docs-site notes](./site/README.md)); it is not part of the script.
 
-8. **Package managers (stable releases, by hand).** The `release` job attaches
+8. **Package managers (automatic for a stable release).** The `release` job attaches
    generated manifests to the GitHub release (`scripts/gen-package-manifests.ts`,
    from its `SHA256SUMS`): `denext.rb` (Homebrew), `denext.json` (Scoop) and
-   `Brainwires.denext.yaml` + `.installer.yaml` + `.locale.en-US.yaml` (winget).
-   Publishing them is an outward step nothing automates: commit `denext.rb` to
-   the Homebrew tap repo (`Formula/denext.rb`), `denext.json` to the Scoop bucket
-   (`bucket/denext.json`), and open a PR to `microsoft/winget-pkgs` with the
-   three YAML files under `manifests/b/Brainwires/denext/<version>/` (validate
-   with `winget validate` first). Skip release candidates. `install.sh` and
-   `install.ps1` need nothing: they resolve the latest release themselves (the
-   served copies under `site/public/` go live with the docs deploy).
+   `Brainwires.denext.yaml` + `.installer.yaml` + `.locale.en-US.yaml` (winget),
+   each naming the Windows x64 and Arm64 archives where it applies. The
+   `package-managers` job of publish.yml then publishes them with
+   `scripts/publish-package-manifests.ts`: `denext.rb` → the tap's
+   `Formula/denext.rb`, `denext.json` → the bucket's `bucket/denext.json` (both
+   committed to the default branch through the GitHub contents API; an unchanged
+   file is not re-committed), and the three YAML files → a pull request to
+   `microsoft/winget-pkgs` adding `manifests/b/Brainwires/denext/<version>/`, from
+   a branch of the winget-pkgs fork (synced with upstream first; a version already
+   merged or with an open pull request is not resubmitted). A release candidate
+   (a `-` in the tag, the same rule as `prerelease:`) publishes none of them. A
+   manager whose token secret is not set is skipped with a notice and the job
+   stays green; a failed publish fails only that job, never the release, and
+   re-running it is safe. Preview a run with
+   `deno run -A scripts/publish-package-manifests.ts --version vX.Y.Z --dir <dir with the manifests> --dry-run`
+   (`gh release download vX.Y.Z -p denext.rb -p denext.json -p 'Brainwires.denext*.yaml' -D <dir>`
+   fetches them). `install.sh` and `install.ps1` need nothing: they resolve the
+   latest release themselves (the served copies under `site/public/` go live
+   with the docs deploy).
+
+   **One-time setup** (until it is done, the job only prints notices):
+   - **Homebrew tap:** create the public repo `Brainwires/homebrew-denext`,
+     initialized with a README (the `homebrew-` prefix is what makes
+     `brew install brainwires/denext/denext` find it). Create a fine-grained
+     personal access token (resource owner `Brainwires`, only that repository,
+     **Contents: Read and write**) and store it as the repository secret
+     `HOMEBREW_TAP_TOKEN` in `Brainwires/denext`.
+   - **Scoop bucket:** create the public repo `Brainwires/scoop-denext`,
+     initialized with a README, and a fine-grained token the same way (only
+     that repository, **Contents: Read and write**) as `SCOOP_BUCKET_TOKEN`.
+     Users add it with `scoop bucket add denext https://github.com/Brainwires/scoop-denext`.
+   - **winget:** fork `microsoft/winget-pkgs` (to `Brainwires/winget-pkgs` by
+     default). A fine-grained token cannot open a pull request on a repository
+     its owner doesn't own, so create a **classic** personal access token with
+     the `public_repo` scope, from an account that can push to the fork, as
+     `WINGET_TOKEN`. The first submission is a `New package:` pull request,
+     which winget-pkgs moderators review by hand (sign the Microsoft CLA when
+     their bot asks); later ones are `New version:`.
+   - **Other repository names:** set the repository _variables_
+     `HOMEBREW_TAP_REPO`, `SCOOP_BUCKET_REPO` or `WINGET_FORK_REPO` (`owner/name`)
+     in `Brainwires/denext`; unset means the defaults above.
+   - **Backfill:** a stable release cut before the setup was finished is
+     published by re-running its `package-managers` job (`gh run rerun <id>
+     --job <job id>`), or, for one older than the job, by running the script
+     locally with the tokens in the environment.
 
 If the script aborts (a failed gate), fix, **commit the fix**, and rerun — after
 `git checkout -- .` of the half-prepared bump/changelog, or the rerun double-rolls

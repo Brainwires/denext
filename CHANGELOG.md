@@ -30,6 +30,20 @@ and this project adheres to
   under `public/` for a `/…` path, else under the project root, `public/`, `app/`, `src/app/`
   and `src/`.
 
+- **The CLI on Homebrew, Scoop and winget.** A stable release now publishes the manifests it
+  generates: the formula to the `Brainwires/homebrew-denext` tap
+  (`brew install brainwires/denext/denext`), the manifest to the `Brainwires/scoop-denext` bucket
+  (`scoop bucket add denext https://github.com/Brainwires/scoop-denext`, then
+  `scoop install denext/denext`) and a pull request to `microsoft/winget-pkgs`
+  (`winget install Brainwires.denext` once it is merged). A release candidate publishes none of
+  them. `scripts/publish-package-manifests.ts` does it (`--dry-run` prints the plan); a manager
+  whose token secret is not set is skipped with a notice.
+- **A Windows on Arm `denext` binary** (`denext-aarch64-pc-windows-msvc.zip`), in the Scoop and
+  winget manifests as the arm64 entry. `install.ps1` installs it on an Arm64 machine (also from
+  an x64 PowerShell running under emulation), and falls back to the x64 binary for a release that
+  predates it. denext's Deno toolchain has no Windows on Arm build yet, so there the binary runs
+  its Deno verbs on the `deno` on your `Path`.
+
 ### Fixed
 
 - **A hidden `<Activity>` holds class lifecycles and refs, as React does.** A class component

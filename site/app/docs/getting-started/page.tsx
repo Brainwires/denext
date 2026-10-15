@@ -26,6 +26,11 @@ export default function GettingStarted() {
       <Code lang="sh">
         {`curl -fsSL https://denext.dev/install.sh | sh   # ~/.denext/bin/denext (macOS, Linux)
 irm https://denext.dev/install.ps1 | iex         # Windows PowerShell: %USERPROFILE%\\.denext\\bin
+# or through a package manager:
+brew install brainwires/denext/denext            # Homebrew (macOS, Linux)
+scoop bucket add denext https://github.com/Brainwires/scoop-denext
+scoop install denext/denext                      # Scoop (Windows)
+winget install Brainwires.denext                 # winget (Windows)
 # or, with Deno already installed:
 deno install -A -g -n denext jsr:@denext/denext/cli
 denext toolchain install   # then: the toolchain, and every verb cached for offline use`}
@@ -94,12 +99,22 @@ denext toolchain install   # then: the toolchain, and every verb cached for offl
         code-signed and notarized when the release was built with the Apple Developer ID secrets,
         and ships unsigned otherwise. On Windows, <code>install.ps1</code>{" "}
         does the same per-user with no administrator rights: it downloads{" "}
-        <code>denext-x86_64-pc-windows-msvc.zip</code>, verifies it the same way, installs{" "}
+        <code>denext-x86_64-pc-windows-msvc.zip</code> (on Windows on Arm the native{" "}
+        <code>denext-aarch64-pc-windows-msvc.zip</code>, or the x64 build, which runs under
+        emulation, for a release that predates it), verifies it the same way, installs{" "}
         <code>denext.exe</code> to <code>%USERPROFILE%\.denext\bin</code> and adds that to your user
         {" "}
         <code>Path</code> (<code>DENEXT_NO_PATH=1</code> leaves it alone). Uninstall with{" "}
         <code>&amp; ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -Uninstall</code>.
-        Each release also attaches a Homebrew formula, a Scoop manifest and a winget manifest set.
+        The Homebrew formula, the Scoop manifest and the winget manifests are generated from each
+        stable release&apos;s checksums and published to the <code>Brainwires/homebrew-denext</code>
+        {" "}
+        tap, the <code>Brainwires/scoop-denext</code> bucket and <code>microsoft/winget-pkgs</code>
+        {" "}
+        (where a new version appears once its pull request is merged); a release candidate is never
+        published there. Each release attaches them too. The binary runs on denext&apos;s Deno
+        toolchain where one is built for the machine; on Windows on Arm, which it is not built for
+        yet, the verbs that run Deno use the <code>deno</code> on your <code>Path</code>.
       </p>
 
       <h2>Create a project</h2>

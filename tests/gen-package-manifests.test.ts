@@ -19,7 +19,7 @@ const RELEASE = { tag: "v3.1.0", sums: parseSums(SUMS + "\n\ngarbage line\n") };
 const DL = "https://github.com/Brainwires/denext/releases/download/v3.1.0";
 
 Deno.test("manifests: SHA256SUMS lines parse (binary-mode * too); junk is ignored", () => {
-  assertEquals(RELEASE.sums.size, 5);
+  assertEquals(RELEASE.sums.size, 6);
   assertEquals(parseSums(`${"A".repeat(64)} *x.zip`).get("x.zip"), "a".repeat(64));
   assertEquals(archiveName("x86_64-pc-windows-msvc"), "denext-x86_64-pc-windows-msvc.zip");
 });
@@ -39,26 +39,37 @@ Deno.test("manifests: the Homebrew formula pins every unix archive by digest", (
   assertStringIncludes(rb, '"denext #{version} (binary)"');
 });
 
-Deno.test("manifests: Scoop and winget name the Windows zip and its digest", () => {
+Deno.test("manifests: Scoop and winget name the Windows zips (x64 + arm64) and digests", () => {
   const scoop = JSON.parse(scoopManifest(RELEASE));
   assertEquals(scoop.version, "3.1.0");
   assertEquals(scoop.architecture["64bit"], {
     url: `${DL}/denext-x86_64-pc-windows-msvc.zip`,
     hash: "5".repeat(64),
   });
+  assertEquals(scoop.architecture.arm64, {
+    url: `${DL}/denext-aarch64-pc-windows-msvc.zip`,
+    hash: "6".repeat(64),
+  });
+  assertEquals(
+    scoop.autoupdate.architecture.arm64.url,
+    "https://github.com/Brainwires/denext/releases/download/v$version/denext-aarch64-pc-windows-msvc.zip",
+  );
   assertEquals(scoop.bin, "denext.exe");
   const winget = wingetManifests(RELEASE);
   const installer = parseYaml(winget["Brainwires.denext.installer.yaml"]) as {
     PackageVersion: string;
     NestedInstallerType: string;
     NestedInstallerFiles: Array<{ PortableCommandAlias: string }>;
-    Installers: Array<{ InstallerSha256: string; InstallerUrl: string }>;
+    Installers: Array<{ Architecture: string; InstallerSha256: string; InstallerUrl: string }>;
   };
   assertEquals(installer.PackageVersion, "3.1.0");
   assertEquals(installer.NestedInstallerType, "portable");
   assertEquals(installer.NestedInstallerFiles[0].PortableCommandAlias, "denext");
   assertEquals(installer.Installers[0].InstallerSha256, "5".repeat(64));
   assertEquals(installer.Installers[0].InstallerUrl, `${DL}/denext-x86_64-pc-windows-msvc.zip`);
+  assertEquals(installer.Installers.map((i) => i.Architecture), ["x64", "arm64"]);
+  assertEquals(installer.Installers[1].InstallerSha256, "6".repeat(64));
+  assertEquals(installer.Installers[1].InstallerUrl, `${DL}/denext-aarch64-pc-windows-msvc.zip`);
   for (const yaml of Object.values(winget)) {
     const doc = parseYaml(yaml) as Record<string, string>;
     assertEquals([doc.PackageIdentifier, doc.ManifestVersion], ["Brainwires.denext", "1.6.0"]);
@@ -69,4 +80,6 @@ Deno.test("manifests: Scoop and winget name the Windows zip and its digest", () 
 Deno.test("manifests: a release missing an archive fails instead of shipping a bad manifest", () => {
   const partial = { tag: "v3.1.0", sums: parseSums(SUMS.split("\n").slice(0, 4).join("\n")) };
   assertThrows(() => scoopManifest(partial), Error, "denext-x86_64-pc-windows-msvc.zip");
+  const noArm = { tag: "v3.1.0", sums: parseSums(SUMS.split("\n").slice(0, 5).join("\n")) };
+  assertThrows(() => wingetManifests(noArm), Error, "denext-aarch64-pc-windows-msvc.zip");
 });

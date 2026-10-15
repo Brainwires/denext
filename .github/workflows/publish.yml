@@ -149,8 +149,8 @@ jobs:
   # of the framework for an app to build against.
   #
   # Each leg only builds, smoke-tests and UPLOADS its archive as a workflow artifact; the
-  # `release` job below creates the GitHub release once, with every asset, after all five legs
-  # have succeeded. Five legs each calling the release action raced to create the release, and a
+  # `release` job below creates the GitHub release once, with every asset, after all six legs
+  # have succeeded. Legs each calling the release action raced to create the release, and a
   # leg that failed left a release with some assets missing — the installer would then fetch
   # "latest" and find no archive for its platform.
   binaries:
@@ -177,6 +177,11 @@ jobs:
             os: ubuntu-latest
             smoke: false
           - target: x86_64-pc-windows-msvc
+            os: ubuntu-latest
+            smoke: false
+          # Windows on Arm: stock Deno's `denort` for this target, cross-compiled like the rest.
+          # The `windows-arm-check` job runs the released binary on an Arm64 Windows runner.
+          - target: aarch64-pc-windows-msvc
             os: ubuntu-latest
             smoke: false
     runs-on: ${{ matrix.os }}
@@ -296,7 +301,7 @@ jobs:
 
   # ONE release, created once every leg has its archive. `needs` on the matrix job means a
   # single failed leg (fail-fast is off, so the others still finish and upload) skips this job
-  # entirely — a release is all five platforms or nothing.
+  # entirely — a release is all six platforms or nothing.
   release:
     needs: binaries
     if: startsWith(github.ref_name, 'v')
@@ -334,9 +339,9 @@ jobs:
 
       # The package-manager manifests, from the SHA256SUMS just verified: a Homebrew formula
       # (denext.rb), a Scoop manifest (denext.json) and the winget set (Brainwires.denext*.yaml).
-      # They are release assets only — publishing them to a tap, a bucket or winget-pkgs is a
-      # maintainer step (CONTRIBUTING.md → "Package managers"). Generated after SHA256SUMS, so
-      # SHA256SUMS lists only the archives install.sh / install.ps1 download.
+      # The `package-managers` job publishes them once the release exists (CONTRIBUTING.md →
+      # "Package managers"). Generated after SHA256SUMS, so SHA256SUMS lists only the archives
+      # install.sh / install.ps1 download.
       - name: Generate the package-manager manifests
         run: deno run -A scripts/gen-package-manifests.ts --version "$GITHUB_REF_NAME" --sums dist/SHA256SUMS --out dist
 
@@ -350,6 +355,82 @@ jobs:
           make_latest: ${{ !contains(github.ref_name, '-') }}
           files: dist/*
           fail_on_unmatched_files: true
+
+  # The manifests the release carries, published to the Homebrew tap, the Scoop bucket and (as a
+  # pull request) microsoft/winget-pkgs by scripts/publish-package-manifests.ts. Stable releases
+  # only; the script skips them for a prerelease too. Each manager needs its own token secret, and
+  # one that is not set is skipped with a notice, so this job stays green until the maintainer
+  # creates the repos and tokens. A separate job, after the release: a failure here (a revoked
+  # token, a GitHub outage) never touches the release itself, and re-running it is idempotent.
+  package-managers:
+    needs: release
+    if: startsWith(github.ref_name, 'v') && !contains(github.ref_name, '-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6"
+
+      - name: Download the release's manifests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -D dist \
+            -p denext.rb -p denext.json -p 'Brainwires.denext*.yaml'
+          ls -l dist
+
+      - name: Publish to Homebrew, Scoop and winget
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          # Optional repository variables; unset means Brainwires/homebrew-denext,
+          # Brainwires/scoop-denext and Brainwires/winget-pkgs.
+          HOMEBREW_TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO }}
+          SCOOP_BUCKET_REPO: ${{ vars.SCOOP_BUCKET_REPO }}
+          WINGET_FORK_REPO: ${{ vars.WINGET_FORK_REPO }}
+        run: deno run -A scripts/publish-package-manifests.ts --version "$GITHUB_REF_NAME" --dir dist
+
+  # The Windows Arm64 binary is cross-compiled on Linux; this runs the RELEASED one on an Arm64
+  # Windows runner (it starts, knows its version, loads a verb). Off the critical path, like
+  # macos-check: a failure means the shipped Arm64 archive needs a follow-up release.
+  windows-arm-check:
+    needs: release
+    if: startsWith(github.ref_name, 'v')
+    runs-on: windows-11-arm
+    permissions:
+      contents: read
+    steps:
+      - name: Run the released Windows Arm64 binary
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $asset = 'denext-aarch64-pc-windows-msvc.zip'
+          gh release download $env:GITHUB_REF_NAME -R $env:GITHUB_REPOSITORY -p "$asset*"
+          $expected = (Get-Content "$asset.sha256").Split(' ')[0]
+          $actual = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "checksum mismatch: $actual != $expected" }
+          Expand-Archive $asset -DestinationPath arm64
+          # The PE header's Machine field: 0xAA64 is Arm64 (an x64 build would also run, emulated).
+          $bytes = [IO.File]::ReadAllBytes("$(Resolve-Path 'arm64\denext.exe')")
+          $machine = [BitConverter]::ToUInt16($bytes, [BitConverter]::ToInt32($bytes, 0x3c) + 4)
+          if ($machine -ne 0xAA64) { throw ('not an Arm64 PE file: machine 0x{0:X4}' -f $machine) }
+          $v = & .\arm64\denext.exe --version
+          if ($v -ne "denext $version (binary)") { throw "unexpected: $v" }
+          if (-not (& .\arm64\denext.exe --help | Select-String -SimpleMatch 'Usage')) {
+            throw '--help printed no usage'
+          }
+          if (-not (& .\arm64\denext.exe completions bash | Select-String -SimpleMatch '_denext_complete()')) {
+            throw 'completions did not load'
+          }
 
   # The Mac binaries are built and signed on Linux; this runs the RELEASED ones on a Mac (the
   # signature verifies, the arm64 one starts and knows its version). It is off the release's

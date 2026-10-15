@@ -1084,9 +1084,12 @@ cache uses Deno's built-in `node:sqlite`.)
   a pinned `npm:fallow` through Deno, a pre-commit hook and an `AGENTS.md`. —
   `src/cli/commands/fallow.ts`, `src/build/fallow-template.ts`.
 - **Installers for the CLI** — `install.sh` and, on Windows, `install.ps1`
-  (per-user, no admin) verify the release archive against `SHA256SUMS`; each
-  release also attaches a Homebrew formula, a Scoop manifest and a winget
-  manifest set. — `scripts/install.ps1`, `scripts/gen-package-manifests.ts`.
+  (per-user, no admin) verify the release archive against `SHA256SUMS`; binaries
+  for macOS and Linux (arm64, x64) and Windows (x64, Arm64). Each stable release
+  publishes its Homebrew formula to the `Brainwires/homebrew-denext` tap, its
+  Scoop manifest to the `Brainwires/scoop-denext` bucket and its winget manifests
+  as a pull request to `microsoft/winget-pkgs`. — `scripts/install.ps1`,
+  `scripts/gen-package-manifests.ts`, `scripts/publish-package-manifests.ts`.
 - **A generated first-party package catalog** (`src/plugin/catalog.json`): every
   `@denext/*` package's version, `jsr:` range, plugin-or-library kind, factory
   export, CLI verb, option keys and an options JSON Schema, emitted from the
