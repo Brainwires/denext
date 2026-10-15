@@ -13417,6 +13417,18 @@
           "denextOnly": true
         },
         {
+          "name": "SetSource",
+          "slug": "SetSource",
+          "kind": "typeAlias",
+          "signature": "type SetSource = FrameworkMigrationSet | parenthesized",
+          "doc": "A migration set, or a function that produces it when the CLI asks (undefined: none).",
+          "docFull": "A migration set, or a function that produces it when the CLI asks (`undefined`: none).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "sidecarService",
           "slug": "sidecarService",
           "kind": "function",

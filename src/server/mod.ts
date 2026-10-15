@@ -530,7 +530,7 @@ export {
   registerBootCheck,
   registerFrameworkMigrations,
 } from "./postgres-boot.ts";
-export type { BootMigrateOptions, FrameworkMigrationSet } from "./postgres-boot.ts";
+export type { BootMigrateOptions, FrameworkMigrationSet, SetSource } from "./postgres-boot.ts";
 export { migrateSqlite, sqliteMigrationStatus } from "./sqlite-migrate.ts";
 export type { SqliteMigrateOptions, SqliteMigrationDb } from "./sqlite-migrate.ts";
 export { vectorSearchSql } from "./vector-sql.ts";

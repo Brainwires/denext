@@ -124,7 +124,8 @@ export interface FrameworkMigrationSet {
 /** The process-global registry (a symbol: the CLI may load another copy of this module). */
 const FRAMEWORK_SETS = Symbol.for("denext.boot.migrationSets");
 
-type SetSource = FrameworkMigrationSet | (() => FrameworkMigrationSet | undefined);
+/** A migration set, or a function that produces it when the CLI asks (`undefined`: none). */
+export type SetSource = FrameworkMigrationSet | (() => FrameworkMigrationSet | undefined);
 
 function sources(): Map<string, SetSource> {
   const slot = globalThis as unknown as Record<symbol, Map<string, SetSource> | undefined>;

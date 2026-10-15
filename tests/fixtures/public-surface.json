@@ -917,6 +917,7 @@
     "Session:interface",
     "SessionOptions:interface",
     "SessionStore:interface",
+    "SetSource:typeAlias",
     "SignInFailedReason:typeAlias",
     "SignalSink:interface",
     "Sitemap:typeAlias",
