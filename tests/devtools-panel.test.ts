@@ -319,7 +319,7 @@ function findByName(
   return null;
 }
 
-// ---- Panel shell: the seven-tab IA, the keyboard map, highlight-updates, dev-api --------
+// ---- Panel shell: the eight-tab IA, the keyboard map, highlight-updates, dev-api --------
 
 /** The panel frame (the fixed, column-flex chrome the launcher opens). */
 function panelEl(body: FakeElement): FakeElement {
@@ -344,16 +344,16 @@ function Tiny(): VNode {
   return h("div", null, "tiny");
 }
 
-Deno.test("panel: the header is a seven-tab tablist with aria-selected tracking", () => {
+Deno.test("panel: the header is an eight-tab tablist with aria-selected tracking", () => {
   withPanel(Tiny, ({ body }) => {
     const tabs = tabButtons(body);
     assertEquals(
       tabs.map((t) => t.textContent),
-      ["Components", "Render modes", "Profiler", "Network", "Cache", "Routes", "Console"],
+      ["Components", "Render modes", "Profiler", "Network", "Cache", "Routes", "Console", "MVU"],
     );
     assertEquals(
       tabs.map((t) => t.getAttribute("aria-selected")),
-      ["true", "false", "false", "false", "false", "false", "false"],
+      ["true", "false", "false", "false", "false", "false", "false", "false"],
     );
     // The strip itself scrolls rather than squeezing the buttons on a narrow panel.
     const strip = queryAll(body, (e) => e.getAttribute("role") === "tablist")[0];

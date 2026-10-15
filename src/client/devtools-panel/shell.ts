@@ -12,7 +12,7 @@ export interface TabSpec {
   readonly label: string;
 }
 
-/** The panel's tabs, in `Alt+1…7` / `Ctrl+Shift+[`,`]` order. */
+/** The panel's tabs, in `Alt+1…8` / `Ctrl+Shift+[`,`]` order. */
 export const TABS: readonly TabSpec[] = [
   { id: "components", label: "Components" },
   { id: "render", label: "Render modes" },
@@ -21,6 +21,7 @@ export const TABS: readonly TabSpec[] = [
   { id: "cache", label: "Cache" },
   { id: "routes", label: "Routes" },
   { id: "console", label: "Console" },
+  { id: "mvu", label: "MVU" },
 ];
 
 /**

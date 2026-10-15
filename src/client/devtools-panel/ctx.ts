@@ -5,7 +5,7 @@ import type { DenextDevtoolsApi, InspectNode } from "../devtools-inspect.ts";
 import { devFetch, type DevFetchFailure } from "./dev-api.ts";
 import { el, type PanelStyles } from "./styles.ts";
 
-/** The panel's seven tabs (see `TABS` in `./shell.ts` for their order and labels). */
+/** The panel's eight tabs (see `TABS` in `./shell.ts` for their order and labels). */
 export type TabId =
   | "components"
   | "render"
@@ -13,7 +13,8 @@ export type TabId =
   | "network"
   | "cache"
   | "routes"
-  | "console";
+  | "console"
+  | "mvu";
 
 /** Which console levels the Console tab shows. */
 export type ConsoleLevelFilter = "all" | "error" | "warn" | "info" | "log";

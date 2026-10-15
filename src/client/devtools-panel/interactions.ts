@@ -87,7 +87,7 @@ function chordOf(e: KeyboardEvent): string {
 }
 
 /**
- * The chords that only work while the panel is open: `Alt+1…7` pick a tab, `Ctrl+Shift+[`
+ * The chords that only work while the panel is open: `Alt+1…8` pick a tab, `Ctrl+Shift+[`
  * / `]` step through them (both the bracket and the shifted brace the key produces on a
  * US layout), and `Escape` cancels the element picker before it closes the panel.
  */
