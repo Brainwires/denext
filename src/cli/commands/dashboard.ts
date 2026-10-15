@@ -20,6 +20,7 @@ import { DASH_MIN_PASSWORD } from "../../ui/dashboard.ts";
 import { relayToken } from "../../ui/logs/source.ts";
 import { DEFAULT_RELAY_PORT, startLogsRelay } from "../../ui/logs/relay.ts";
 import { socketGet } from "../../ui/logs/engine.ts";
+import { secretKey } from "../../ui/app-admin.ts";
 
 /** The port the dashboard listens on unless `--port` says otherwise. */
 const DEFAULT_DASHBOARD_PORT = 3100;
@@ -29,6 +30,9 @@ const PASSWORD_ENV = "DASHBOARD_PASSWORD";
 
 /** The variable naming the stack's log relay. */
 const LOGS_URL_ENV = "DASHBOARD_LOGS_URL";
+
+/** The variable naming the running app (realtime, functions and health read it). */
+const APP_URL_ENV = "DASHBOARD_APP_URL";
 
 /** An environment variable, or `undefined` (unset, empty, or no permission). */
 function env(name: string): string | undefined {
@@ -125,6 +129,7 @@ export const dashboardCommand: CommandSpec = {
       ? ctx.flags.origin.split(",").map((o) => o.trim()).filter(Boolean)
       : [];
     const logsUrl = env(LOGS_URL_ENV);
+    const appUrl = env(APP_URL_ENV);
     const server = await startUiServer({
       dir,
       port: portFlag(ctx, DEFAULT_DASHBOARD_PORT),
@@ -133,6 +138,7 @@ export const dashboardCommand: CommandSpec = {
       readOnly: ctx.flags["read-only"] === true,
       dashboard: { password, origins },
       ...(logsUrl && password ? { logs: { url: logsUrl, token: await relayToken(password) } } : {}),
+      ...(appUrl ? { app: { url: appUrl, key: await secretKey(dir) } } : {}),
       signal: controller.signal,
     });
     const locked = password === null || password.length < DASH_MIN_PASSWORD;

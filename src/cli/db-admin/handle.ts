@@ -36,6 +36,7 @@ import {
   type UserActionOptions,
 } from "./users.ts";
 import { runSql } from "./sql-editor.ts";
+import { realtimePublication, realtimeTables } from "./realtime.ts";
 
 /** What a request is answered with besides itself. */
 export interface HandleDeps {
@@ -187,6 +188,16 @@ const ADMIN_OPS: Partial<Record<DbRequest["op"], AdminOp>> = {
     ),
   createUser: (r, readOnly, sql) => createUser(sql, createUserInput(r), readOnly),
   sql: (r, readOnly, sql) => runSql(sql, str(r.text, "text"), sqlModeOf(r.mode), readOnly),
+  realtimeTables: (_r, _readOnly, sql) => realtimeTables(sql),
+  realtimePublication: (r, readOnly, sql) =>
+    realtimePublication(
+      sql,
+      str(r.schema, "schema"),
+      str(r.table, "table"),
+      r.action === "drop" ? "drop" : "add",
+      r.confirm === true,
+      readOnly,
+    ),
 };
 
 /** Run the request against an open connection. */

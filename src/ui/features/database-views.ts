@@ -41,7 +41,10 @@ const DATABASE_TABS = [
   { href: "/database/migrations", label: "Migrations" },
   { href: "/database/storage", label: "Storage" },
   { href: "/database/users", label: "Users" },
+  { href: "/database/realtime", label: "Realtime" },
+  { href: "/database/functions", label: "Functions" },
   { href: "/database/logs", label: "Logs" },
+  { href: "/database/health", label: "Health" },
 ];
 
 /** What every view is told about the request. */

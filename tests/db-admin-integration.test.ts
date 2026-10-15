@@ -532,6 +532,81 @@ Deno.test({
 });
 
 Deno.test({
+  name: `db-admin on a real Postgres: realtime's publication opt-in and trigger status${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  async fn() {
+    const env = await environment();
+    try {
+      const sql = env.app;
+      await sql.unsafe(`
+        create table rt_notes (id bigint primary key, body text);
+        create table rt_pair (a int, b int, primary key (a, b));
+        create function rt_noop() returns trigger language plpgsql as $$ begin return null; end $$;
+        create trigger denext_realtime after insert or delete on rt_notes
+          for each row execute function rt_noop();
+      `).simple!();
+      const before = await ask<"realtimeTables">(sql, { op: "realtimeTables" });
+      assertEquals([before.publication, before.publicationExists], ["supabase_realtime", false]);
+      const notes = before.tables.find((t) => t.name === "rt_notes")!;
+      assertEquals([notes.inPublication, notes.triggerEvents, notes.primaryKeyColumns], [
+        false,
+        ["insert", "delete"],
+        1,
+      ]);
+      assertEquals(before.tables.find((t) => t.name === "rt_pair")?.primaryKeyColumns, 2);
+      const add = (table: string, confirm: boolean) =>
+        ask<"realtimePublication">(sql, {
+          op: "realtimePublication",
+          schema: "public",
+          table,
+          action: "add",
+          confirm,
+        });
+      const preview = await add("rt_notes", false);
+      assertEquals(preview.statements.length, 2, "CREATE PUBLICATION, then ADD TABLE");
+      assertEquals(
+        (await ask<"realtimeTables">(sql, { op: "realtimeTables" })).publicationExists,
+        false,
+      );
+      await add("rt_notes", true);
+      const after = await ask<"realtimeTables">(sql, { op: "realtimeTables" });
+      assertEquals(after.publicationExists, true);
+      assertEquals(after.tables.find((t) => t.name === "rt_notes")?.inPublication, true);
+      const [{ n }] = await sql.unsafe<{ n: number }>(
+        "select count(*)::int as n from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'rt_notes'",
+      );
+      assertEquals(n, 1);
+      assertEquals(
+        (await fails(sql, {
+          op: "realtimePublication",
+          schema: "public",
+          table: "rt_pair",
+          action: "add",
+          confirm: true,
+        })).code,
+        "bad_request",
+      );
+      await ask<"realtimePublication">(sql, {
+        op: "realtimePublication",
+        schema: "public",
+        table: "rt_notes",
+        action: "drop",
+        confirm: true,
+      });
+      assertEquals(
+        (await ask<"realtimeTables">(sql, { op: "realtimeTables" })).tables.find((t) =>
+          t.name === "rt_notes"
+        )?.inPublication,
+        false,
+      );
+    } finally {
+      await env.drop();
+    }
+  },
+});
+
+Deno.test({
   name: `the real denext db-admin child: DATABASE_URL from .env, password masked${label}`,
   ignore: reason !== undefined,
   sanitizeResources: false,

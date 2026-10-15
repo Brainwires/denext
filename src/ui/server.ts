@@ -36,6 +36,7 @@ import {
 } from "./dashboard.ts";
 import { boundedRequest, UI_MAX_BODY_BYTES } from "./body.ts";
 import type { RelayConfig } from "./logs/source.ts";
+import type { AppTarget } from "./app-admin.ts";
 import { UI_CSS_PATH } from "./layout.ts";
 import { UI_CSS } from "./styles.ts";
 
@@ -81,6 +82,8 @@ export interface UiServerOptions {
   readonly hostname?: string;
   /** The stack's `dashboard-logs` relay, for the Logs page. */
   readonly logs?: RelayConfig;
+  /** The running app the dashboard reads (realtime, functions, health). */
+  readonly app?: AppTarget;
 }
 
 /** A running UI server. */
@@ -304,11 +307,12 @@ async function buildContext(
 async function surfaceOf(
   options: UiServerOptions,
   dashboard: boolean,
-): Promise<Pick<UiContext, "database" | "dashboard" | "logs">> {
+): Promise<Pick<UiContext, "database" | "dashboard" | "logs" | "app">> {
   return {
     database: dashboard || await projectUsesDatabase(options.dir),
     ...(dashboard ? { dashboard: true } : {}),
     ...(options.logs ? { logs: options.logs } : {}),
+    ...(options.app ? { app: options.app } : {}),
   };
 }
 

@@ -70,6 +70,11 @@ export interface LayoutOptions {
   readonly offline?: boolean;
   /** Served as the stack's dashboard: its own name, and a sign-out button. */
   readonly dashboard?: boolean;
+  /**
+   * Reload the page every this many seconds with scripting off (a `<noscript>` meta refresh, so
+   * `ui.js`, which swaps the panel in place instead, is never interrupted by it).
+   */
+  readonly refresh?: number;
 }
 
 /** Where the dashboard's sign-out posts (its server answers it; see `dashboard.ts`). */
@@ -98,6 +103,13 @@ export function layout(options: LayoutOptions): VNode {
         h("meta", { name: "viewport", content: "width=device-width, initial-scale=1" }),
         h("meta", { name: "denext-csrf", content: options.csrf }),
         h("title", null, options.title, UI_TITLE_SUFFIX),
+        options.refresh && options.refresh > 0
+          ? h(
+            "noscript",
+            null,
+            h("meta", { "http-equiv": "refresh", content: String(Math.trunc(options.refresh)) }),
+          )
+          : null,
         h("link", { rel: "stylesheet", href: UI_CSS_PATH }),
       ),
       h(

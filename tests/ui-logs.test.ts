@@ -63,10 +63,41 @@ function fakeEngine(): { get: EngineGet; paths: string[] } {
     }
     if (path.startsWith("/containers/json?")) {
       return Promise.resolve(Response.json([
-        { Id: "web-old", Created: 1, Labels: label("shop", "web") },
-        { Id: "web-new", Created: 2, Labels: label("shop", "web") },
-        { Id: "db-1", Created: 1, Labels: label("shop", "db") },
-        { Id: "other", Created: 3, Labels: label("elsewhere", "web") },
+        {
+          Id: "web-old",
+          Created: 1,
+          State: "exited",
+          Status: "Exited (1)",
+          Labels: label("shop", "web"),
+        },
+        {
+          Id: "web-new",
+          Created: 2,
+          State: "running",
+          Status: "Up 2 minutes (healthy)",
+          Labels: label("shop", "web"),
+        },
+        {
+          Id: "db-1",
+          Created: 1,
+          State: "running",
+          Status: "Up 1 minute (unhealthy)",
+          Labels: label("shop", "db"),
+        },
+        {
+          Id: "mig-1",
+          Created: 1,
+          State: "exited",
+          Status: "Exited (0) 1 minute ago",
+          Labels: label("shop", "migrate"),
+        },
+        {
+          Id: "other",
+          Created: 3,
+          State: "running",
+          Status: "Up",
+          Labels: label("elsewhere", "web"),
+        },
       ]));
     }
     const logs = /^\/containers\/([\w-]+)\/logs\?/.exec(path);
@@ -97,7 +128,7 @@ Deno.test("demux: Engine frames become text; a TTY's raw stream passes through",
 Deno.test("the Engine reader keeps to its own project and the newest container per service", async () => {
   const { get } = fakeEngine();
   const services = await projectServices(get, "shop");
-  assertEquals([...services.entries()], [["db", "db-1"], ["web", "web-new"]]);
+  assertEquals([...services.entries()], [["db", "db-1"], ["migrate", "mig-1"], ["web", "web-new"]]);
 });
 
 Deno.test("relay: the bearer token, nothing while locked, GET only, its own services only", async () => {
@@ -116,7 +147,15 @@ Deno.test("relay: the bearer token, nothing while locked, GET only, its own serv
   const auth = { authorization: `Bearer ${token}` };
   assertEquals((await call("/v1/services", { method: "POST", headers: auth })).status, 405);
   const services = await (await call("/v1/services", { headers: auth })).json();
-  assertEquals(services, { ok: true, services: ["db", "web"] });
+  assertEquals(services, { ok: true, services: ["db", "migrate", "web"] });
+  // /v1/health: each service's verdict, as `denext stack health` reads `docker compose ps`.
+  const health = await (await call("/v1/health", { headers: auth })).json();
+  assertEquals(health.services, [
+    { name: "db", state: "running", health: "unhealthy", ok: false },
+    { name: "migrate", state: "exited", health: "completed", ok: true },
+    { name: "web", state: "running", health: "healthy", ok: true },
+  ]);
+  assertEquals((await call("/v1/health")).status, 401);
   const stranger = await (await call("/v1/logs?service=other", { headers: auth })).json();
   assertEquals(stranger.ok, false);
   const logs = await (await call("/v1/logs?service=web&tail=50&since=600", { headers: auth }))
@@ -151,11 +190,16 @@ Deno.test("relay over HTTP, read by the dashboard's relay source", async () => {
   });
   try {
     const source = relaySource(`http://127.0.0.1:${relay.port}/`, token);
-    assertEquals(await source.services(), ["db", "web"]);
+    assertEquals(await source.services(), ["db", "migrate", "web"]);
+    assertEquals((await source.health()).map((s) => [s.name, s.ok]), [
+      ["db", false],
+      ["migrate", true],
+      ["web", true],
+    ]);
     const lines = await source.read({ service: "", tail: 3 });
     assertEquals(lines.map((l) => `${l.service}: ${l.text}`), [
-      "web: web-new started",
       "db: ERROR: db-1 broke",
+      "migrate: ERROR: mig-1 broke",
       "web: ERROR: web-new broke",
     ], "the newest three, oldest first");
     let refused = "";

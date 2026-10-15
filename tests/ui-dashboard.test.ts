@@ -612,3 +612,39 @@ Deno.test("dashboard: a body over the cap is a 413 before anything parses it", a
     await stop(d);
   }
 });
+
+Deno.test("dashboard: Realtime, Edge Functions and Health sit behind the same gate", async () => {
+  const d = await dashboard();
+  try {
+    for (
+      const path of [
+        "/database/realtime",
+        "/database/realtime/presence?topic=lobby",
+        "/database/functions",
+        "/database/health",
+      ]
+    ) {
+      const res = await fetch(`${d.base}${path}`, { redirect: "manual" });
+      await res.body?.cancel();
+      assertEquals([path, res.status, res.headers.get("location")], [path, 303, "/login"]);
+    }
+    const api = await fetch(`${d.base}/api/database/health`);
+    assertEquals(api.status, 401);
+    await api.body?.cancel();
+    const session = await signIn(d);
+    const page = await fetch(`${d.base}/database/health`, { headers: { cookie: session.cookie } });
+    assertEquals(page.status, 200);
+    assertStringIncludes(await page.text(), 'href="/database/health" aria-current="page"');
+    const forged = await post(d, "/database/realtime", {
+      op: "apply",
+      action: "add",
+      schema: "public",
+      table: "t",
+    }, { cookie: session.cookie });
+    assertEquals(forged.status, 403, "the opt-in needs the CSRF token");
+    await forged.body?.cancel();
+    assertEquals(d.sent.filter((e) => e.request.op === "realtimePublication"), []);
+  } finally {
+    await stop(d);
+  }
+});

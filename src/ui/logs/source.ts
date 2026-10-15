@@ -11,7 +11,8 @@
 // dashboard should show a key from.
 
 import { join } from "@std/path";
-import { lineLevel } from "../../cli/commands/stack-health.ts";
+import { lineLevel, type ServiceHealth, serviceHealth } from "../../cli/commands/stack-health.ts";
+import { parsePs } from "../../cli/commands/stack-io.ts";
 import { parseEnv } from "../../server/env.ts";
 import { findComposeFile } from "../../build/docker-template.ts";
 import { maskSecrets } from "../database/protocol.ts";
@@ -44,6 +45,8 @@ export interface LogSource {
   services(signal?: AbortSignal): Promise<string[]>;
   /** The lines `query` asks for, oldest first. */
   read(query: LogQuery, signal?: AbortSignal): Promise<LogLine[]>;
+  /** Each service's health check, as `denext stack health` reads it. */
+  health(signal?: AbortSignal): Promise<ServiceHealth[]>;
 }
 
 /** The longest a source may take, in ms. */
@@ -144,6 +147,10 @@ export function composeSource(dir: string, file: string): LogSource {
       }
       return newest(lines, query.tail);
     },
+    async health(signal) {
+      const text = await compose(dir, file, ["ps", "--all", "--format", "json"], signal);
+      return parsePs(text).map(serviceHealth).sort((a, b) => a.name.localeCompare(b.name));
+    },
   };
 }
 
@@ -222,6 +229,9 @@ export function relaySource(url: string, token: string): LogSource {
       if (query.sinceSeconds) params.set("since", String(query.sinceSeconds));
       const lines = (await get<{ lines: LogLine[] }>(`/v1/logs?${params}`, signal)).lines;
       return newest(lines, query.tail);
+    },
+    async health(signal) {
+      return (await get<{ services: ServiceHealth[] }>("/v1/health", signal)).services;
     },
   };
 }

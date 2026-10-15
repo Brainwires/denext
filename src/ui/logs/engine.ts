@@ -7,6 +7,8 @@
 // leaves this module.
 
 import type { LogLine } from "./source.ts";
+import { type ServiceHealth, serviceHealth } from "../../cli/commands/stack-health.ts";
+import type { PsRow } from "../../cli/commands/stack-io.ts";
 
 /** The compose labels Docker Compose stamps on every container it creates. */
 const PROJECT_LABEL = "com.docker.compose.project";
@@ -61,6 +63,46 @@ export async function projectOf(get: EngineGet, container: string): Promise<stri
   return project;
 }
 
+/** One container as the Engine's list describes it. */
+interface ListedContainer {
+  Id: string;
+  Created?: number;
+  State?: string;
+  Status?: string;
+  Labels?: Record<string, string>;
+}
+
+/** A container's compose service, when it belongs to `project`. */
+function serviceOf(c: ListedContainer, project: string): string | undefined {
+  return c.Labels?.[PROJECT_LABEL] === project ? c.Labels?.[SERVICE_LABEL] : undefined;
+}
+
+/** Whether `c` was created after `seen` (or there is no `seen`). */
+function isNewer(c: ListedContainer, seen: ListedContainer | undefined): boolean {
+  return !seen || (c.Created ?? 0) > (seen.Created ?? 0);
+}
+
+/**
+ * The project's newest container per compose service, in service-name order.
+ *
+ * @param get The Engine GET.
+ * @param project The compose project.
+ * @returns Service name → its newest container.
+ */
+async function newestContainers(
+  get: EngineGet,
+  project: string,
+): Promise<[string, ListedContainer][]> {
+  const filters = encodeURIComponent(JSON.stringify({ label: [`${PROJECT_LABEL}=${project}`] }));
+  const list = await json<ListedContainer[]>(get, `/containers/json?all=1&filters=${filters}`);
+  const newest = new Map<string, ListedContainer>();
+  for (const c of list) {
+    const service = serviceOf(c, project);
+    if (service && isNewer(c, newest.get(service))) newest.set(service, c);
+  }
+  return [...newest.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
 /**
  * The project's services, each with the id of its newest container.
  *
@@ -72,25 +114,7 @@ export async function projectServices(
   get: EngineGet,
   project: string,
 ): Promise<Map<string, string>> {
-  const filters = encodeURIComponent(JSON.stringify({ label: [`${PROJECT_LABEL}=${project}`] }));
-  const list = await json<{ Id: string; Created?: number; Labels?: Record<string, string> }[]>(
-    get,
-    `/containers/json?all=1&filters=${filters}`,
-  );
-  const newest = new Map<string, { id: string; created: number }>();
-  for (const c of list) {
-    const service = c.Labels?.[SERVICE_LABEL];
-    if (!service || c.Labels?.[PROJECT_LABEL] !== project) continue;
-    const seen = newest.get(service);
-    if (!seen || (c.Created ?? 0) > seen.created) {
-      newest.set(service, { id: c.Id, created: c.Created ?? 0 });
-    }
-  }
-  return new Map(
-    [...newest.entries()].sort(([a], [b]) => a.localeCompare(b)).map((
-      [name, c],
-    ) => [name, c.id]),
-  );
+  return new Map((await newestContainers(get, project)).map(([name, c]) => [name, c.Id]));
 }
 
 /**
@@ -156,4 +180,29 @@ export async function containerLogs(
   }
   const text = demux(new Uint8Array(await res.arrayBuffer()));
   return text.split("\n").filter((l) => l !== "").map((l) => timestamped(service, l));
+}
+
+/** A listed container as a `docker compose ps` row: its state, health verdict and exit code. */
+function psRowOf(service: string, c: ListedContainer): PsRow {
+  const status = c.Status ?? "";
+  const health = /\((healthy|unhealthy|health: starting)\)/.exec(status)?.[1];
+  const exit = /^Exited \((\d+)\)/.exec(status)?.[1];
+  return {
+    Service: service,
+    State: c.State ?? "unknown",
+    ...(health ? { Health: health === "health: starting" ? "starting" : health } : {}),
+    ...(exit !== undefined ? { ExitCode: Number(exit) } : {}),
+  };
+}
+
+/**
+ * The project's services as `docker compose ps` describes them, from the Engine's container list
+ * (the newest container of each): its state, its health check's verdict, its exit code.
+ *
+ * @param get The Engine GET.
+ * @param project The compose project.
+ * @returns Each service's verdict, in name order.
+ */
+export async function projectHealth(get: EngineGet, project: string): Promise<ServiceHealth[]> {
+  return (await newestContainers(get, project)).map(([name, c]) => serviceHealth(psRowOf(name, c)));
 }

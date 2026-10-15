@@ -1,8 +1,9 @@
 // `denext dashboard-logs`: the stack's log relay. It is the only container of the stack that
-// reaches the Docker socket, and it answers exactly two GETs, both for its own compose project:
+// reaches the Docker socket, and it answers exactly three GETs, all for its own compose project:
 //
 //   GET /v1/services                          → { ok, services: ["db", "web", …] }
 //   GET /v1/logs?service=web&tail=500&since=N → { ok, lines: [{ service, time, text }] }
+//   GET /v1/health                            → { ok, services: [{ name, state, health, ok }] }
 //
 // Every request needs `Authorization: Bearer <token>` (derived from the dashboard password; see
 // `relayToken`), compared in constant time. Nothing else of the Engine API is reachable through
@@ -15,6 +16,7 @@ import {
   containerLogs,
   ENGINE_MAX_TAIL,
   type EngineGet,
+  projectHealth,
   projectOf,
   projectServices,
 } from "./engine.ts";
@@ -91,6 +93,10 @@ export function relayHandler(
         return reply({ ok: true, services: [...(await services()).keys()] });
       }
       if (url.pathname === "/v1/logs") return reply(await logs(url, await services(), options));
+      if (url.pathname === "/v1/health") {
+        project ??= await projectOf(options.engine, options.self);
+        return reply({ ok: true, services: await projectHealth(options.engine, project) });
+      }
       return reply({ ok: false, reason: "not found" }, 404);
     } catch (error) {
       console.error("denext dashboard-logs:", error instanceof Error ? error.message : error);

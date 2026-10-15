@@ -154,6 +154,15 @@ export type DbRequest =
     /** Mark the email verified (an admin vouches for it). */
     readonly verified: boolean;
   }
+  | { readonly op: "realtimeTables" }
+  | {
+    readonly op: "realtimePublication";
+    readonly schema: string;
+    readonly table: string;
+    /** Opt the table in (`add`) or out (`drop`) of realtime's publication. */
+    readonly action: "add" | "drop";
+    readonly confirm: boolean;
+  }
   | {
     readonly op: "sql";
     /** The statement(s), run as the connecting role — the editor is admin-only by design. */
@@ -385,6 +394,43 @@ export interface DbReplies {
   createUser: { id: string; statements: DbStatement[] };
   /** `sql`. */
   sql: DbSqlResult;
+  /** `realtimeTables`. */
+  realtimeTables: DbRealtimeTables;
+  /** `realtimePublication`. */
+  realtimePublication: { statements: DbStatement[]; applied: boolean };
+}
+
+/** Realtime's view of the database: its publication and each table's opt-in and triggers. */
+export interface DbRealtimeTables {
+  /**
+   * Whether the project configures realtime (`backend({ realtime })`); without it the
+   * publication shown is Supabase's default name.
+   */
+  readonly configured: boolean;
+  /** The publication tables opt in through (`null`: `realtime({ publication: false })`). */
+  readonly publication: string | null;
+  /** Whether that publication exists yet. */
+  readonly publicationExists: boolean;
+  /** `notify` (triggers) or `logical` (the WAL), when configured. */
+  readonly source: string | null;
+  /** The tables. */
+  readonly tables: DbRealtimeTable[];
+}
+
+/** One table's realtime state. */
+export interface DbRealtimeTable {
+  readonly schema: string;
+  readonly name: string;
+  /** Listed in `realtime({ tables })` (code: not changed from here). */
+  readonly configured: boolean;
+  /** In the publication (the opt-in this page can change). */
+  readonly inPublication: boolean;
+  /** The events its `denext_realtime` triggers send (empty: no triggers). */
+  readonly triggerEvents: string[];
+  /** How many columns its primary key has (realtime needs exactly one). */
+  readonly primaryKeyColumns: number;
+  /** Row-level security is enabled. */
+  readonly rls: boolean;
 }
 
 /** What the SQL editor shows: the last statement's rows, as text. */

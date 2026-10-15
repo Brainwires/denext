@@ -14,6 +14,7 @@
 import type { VNode } from "../jsx/types.ts";
 import type { SseClients } from "../build/sse.ts";
 import type { RelayConfig } from "./logs/source.ts";
+import type { AppTarget } from "./app-admin.ts";
 import { layout, type NavItem, type NavSection, UI_TITLE_SUFFIX } from "./layout.ts";
 import { type RawHtml, renderView } from "./view.ts";
 
@@ -75,6 +76,8 @@ export interface UiContext {
   readonly dashboard?: boolean;
   /** The stack's `dashboard-logs` relay, when the dashboard reads logs through one. */
   readonly logs?: RelayConfig;
+  /** The running app the dashboard reads (`DASHBOARD_APP_URL` and the secret key). */
+  readonly app?: AppTarget;
 }
 
 /** A feature route handler. */
@@ -167,7 +170,10 @@ const DASHBOARD_NAV_SECTIONS: readonly NavSection[] = [{
     { href: "/database/migrations", label: "Migrations" },
     { href: "/database/storage", label: "Storage" },
     { href: "/database/users", label: "Users" },
+    { href: "/database/realtime", label: "Realtime" },
+    { href: "/database/functions", label: "Edge Functions" },
     { href: "/database/logs", label: "Logs" },
+    { href: "/database/health", label: "Health" },
   ],
 }];
 
@@ -266,8 +272,20 @@ export function htmlResponse(
 export function panelResponder(
   title: string,
   active: string,
-): (ctx: UiContext, body: RawHtml, status?: number, viewTitle?: string) => Response {
-  return (ctx: UiContext, body: RawHtml, status = 200, viewTitle?: string): Response => {
+): (
+  ctx: UiContext,
+  body: RawHtml,
+  status?: number,
+  viewTitle?: string,
+  refresh?: number,
+) => Response {
+  return (
+    ctx: UiContext,
+    body: RawHtml,
+    status = 200,
+    viewTitle?: string,
+    refresh?: number,
+  ): Response => {
     if (ctx.fragment) {
       // A fragment is the bare panel: it carries no <title>, and `ui.js` swaps it without a
       // navigation, so the tab would keep naming the panel the user just left. The title rides
@@ -288,6 +306,7 @@ export function panelResponder(
         readOnly: ctx.readOnly,
         offline: ctx.offline,
         ...(ctx.dashboard === true ? { dashboard: true } : {}),
+        ...(refresh ? { refresh } : {}),
       }),
       status,
     );

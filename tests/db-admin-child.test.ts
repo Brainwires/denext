@@ -1061,3 +1061,121 @@ Deno.test("storage: an upload goes through the plugin's own operation, size and 
     restore();
   }
 });
+
+/** One realtime table row as TABLES_SQL answers it. */
+function realtimeRow(name: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    schema: "public",
+    name,
+    in_pub: "false",
+    tgtype: null,
+    truncate: "false",
+    pk_cols: "1",
+    rls: "true",
+    ...extra,
+  };
+}
+
+Deno.test("realtime tables: the publication, opt-in, trigger events and key from the catalog", async () => {
+  const { sql } = fakeClient([
+    [/FROM pg_publication WHERE pubname = \$1/, () => []],
+    [
+      /FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace\nWHERE c.relkind IN \('r', 'p'\)/,
+      (p) => {
+        assertEquals(p, ["supabase_realtime"]);
+        return [
+          // tgtype 4 | 16 | 8 = INSERT, UPDATE, DELETE (row level, after)
+          realtimeRow("notes", { in_pub: "true", tgtype: 29, truncate: "true" }),
+          realtimeRow("events", { pk_cols: "2" }),
+        ];
+      },
+    ],
+  ]);
+  const reply = await ask<"realtimeTables">(sql, { op: "realtimeTables" });
+  assert(reply.ok);
+  assertEquals(
+    [reply.configured, reply.publication, reply.publicationExists],
+    [false, "supabase_realtime", false],
+  );
+  assertEquals(reply.tables[0], {
+    schema: "public",
+    name: "notes",
+    configured: false,
+    inPublication: true,
+    triggerEvents: ["insert", "update", "delete", "truncate"],
+    primaryKeyColumns: 1,
+    rls: true,
+  });
+  assertEquals(reply.tables[1].primaryKeyColumns, 2);
+});
+
+Deno.test("realtime publication: add previews CREATE + ALTER, runs them; drop; refusals", async () => {
+  const { sql, sent } = fakeClient([
+    [/FROM pg_publication WHERE pubname = \$1/, () => []],
+    [/WHERE c.relkind IN \('r', 'p'\) AND n.nspname NOT IN/, () => [
+      realtimeRow("notes"),
+      realtimeRow("multi", { pk_cols: "2" }),
+      realtimeRow("live", { in_pub: "true" }),
+    ]],
+  ]);
+  const preview = await ask<"realtimePublication">(sql, {
+    op: "realtimePublication",
+    schema: "public",
+    table: "notes",
+    action: "add",
+    confirm: false,
+  });
+  assert(preview.ok);
+  assertEquals(preview.statements.map((s) => s.text), [
+    'CREATE PUBLICATION "supabase_realtime"',
+    'ALTER PUBLICATION "supabase_realtime" ADD TABLE "public"."notes"',
+  ]);
+  assert(!work(sent).some((s) => /^(CREATE|ALTER)/.test(s.text)), "a preview runs nothing");
+  const applied = await ask<"realtimePublication">(sql, {
+    op: "realtimePublication",
+    schema: "public",
+    table: "notes",
+    action: "add",
+    confirm: true,
+  });
+  assert(applied.ok && applied.applied);
+  assertEquals(work(sent).filter((s) => /^(CREATE|ALTER)/.test(s.text)).length, 2);
+  const drop = await ask<"realtimePublication">(sql, {
+    op: "realtimePublication",
+    schema: "public",
+    table: "live",
+    action: "drop",
+    confirm: false,
+  });
+  assert(drop.ok);
+  assertEquals(drop.statements.map((s) => s.text), [
+    'ALTER PUBLICATION "supabase_realtime" DROP TABLE "public"."live"',
+  ]);
+  for (
+    const [table, action, code] of [
+      ["multi", "add", "bad_request"],
+      ["notes", "drop", "bad_request"],
+      ["live", "add", "bad_request"],
+      ["ghost", "add", "not_found"],
+    ] as const
+  ) {
+    const refused = await ask(sql, {
+      op: "realtimePublication",
+      schema: "public",
+      table,
+      action,
+      confirm: true,
+    });
+    assertEquals((refused as DbFailure).code, code, `${table} ${action}`);
+  }
+  sent.length = 0;
+  const readOnly = await ask(sql, {
+    op: "realtimePublication",
+    schema: "public",
+    table: "notes",
+    action: "add",
+    confirm: true,
+  }, true);
+  assertEquals((readOnly as DbFailure).code, "read_only");
+  assertEquals(sent, []);
+});

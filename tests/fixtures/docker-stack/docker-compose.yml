@@ -222,6 +222,7 @@ services:
       DENEXT_RATE_LIMIT_LOCAL_ADDRESSES: ${DENEXT_RATE_LIMIT_LOCAL_ADDRESSES:-1}
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+      DASHBOARD_APP_URL: http://web:3000
       DASHBOARD_LOGS_URL: http://dashboard-logs:3101
     healthcheck:
       test: ["CMD", "deno", "eval", "fetch('http://127.0.0.1:3100/login').then((r)=>Deno.exit(r.ok?0:1)).catch(()=>Deno.exit(1))"]

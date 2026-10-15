@@ -662,10 +662,13 @@ function cliCommand(options: StackOptions, args: readonly string[]): string {
  * environment (so its database and storage are the app's) and `DASHBOARD_PASSWORD`. Published
  * on this machine's loopback only.
  */
-function dashboardService(options: StackOptions): string {
+function dashboardService(options: StackOptions, port: number): string {
   const env = [
     ...appEnvLines(options),
     `DASHBOARD_PASSWORD: ${ref("DASHBOARD_PASSWORD:-")}`,
+    // The running app, for the realtime, functions and health pages (the admin endpoint takes
+    // DENEXT_SECRET_KEY, already among the app's variables above).
+    `DASHBOARD_APP_URL: http://web:${port}`,
     ...(hasDashboardLogs(options)
       ? [`DASHBOARD_LOGS_URL: http://dashboard-logs:${DASHBOARD_LOGS_PORT}`]
       : []),
@@ -755,7 +758,7 @@ export function renderStackCompose(options: StackOptions, port: number, static_:
     ...(options.migrate ? [migrateService(options)] : []),
     ...(options.postgres ? [dbService(options), dbInitService(options)] : []),
     ...(options.storage ? [storageServices(options)] : []),
-    ...(hasDashboard(options) ? [dashboardService(options)] : []),
+    ...(hasDashboard(options) ? [dashboardService(options, port)] : []),
     ...(hasDashboardLogs(options) ? [dashboardLogsService(options)] : []),
   ];
   return `${DOCKER_SENTINEL}.

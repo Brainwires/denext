@@ -183,6 +183,8 @@ Deno.test("the dashboard: the app's image and env, its password, loopback only, 
   assertEquals(dash.environment?.DATABASE_URL, doc.services.web.environment?.DATABASE_URL);
   assertEquals(dash.environment?.DASHBOARD_PASSWORD, "${DASHBOARD_PASSWORD:-}");
   assertEquals(dash.environment?.DASHBOARD_LOGS_URL, "http://dashboard-logs:3101");
+  // The running app, for the realtime, functions and health pages.
+  assertEquals(dash.environment?.DASHBOARD_APP_URL, "http://web:3000");
   assertEquals(dash.depends_on, { "db-init": { condition: "service_completed_successfully" } });
   assertEquals(dash.volumes, undefined, "the dashboard never mounts the Docker socket");
   assertEquals(dash.user, undefined);

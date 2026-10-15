@@ -76,7 +76,7 @@ async function readSnapshot(dir: string): Promise<ServicesSnapshot | null> {
 }
 
 /** Read everything the page shows. Nothing here evaluates project code. */
-async function readServicesState(dir: string): Promise<ServicesState> {
+export async function readServicesState(dir: string): Promise<ServicesState> {
   const [files, snapshot] = await Promise.all([serviceFiles(dir), readSnapshot(dir)]);
   return { dir, files, snapshot };
 }
@@ -128,7 +128,7 @@ function StatusRow({ node, depth }: { readonly node: ChildStatus; readonly depth
 }
 
 /** One top-level supervisor's table. */
-function SupervisorTable({ status }: { readonly status: SupervisorStatus }): VNode {
+export function SupervisorTable({ status }: { readonly status: SupervisorStatus }): VNode {
   const rows = flatten(status, 0, []).map(({ node, depth }) =>
     h(StatusRow, { key: node.path, node, depth })
   );

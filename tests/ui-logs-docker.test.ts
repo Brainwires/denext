@@ -65,6 +65,12 @@ Deno.test({
       const body = await res.json();
       assertEquals(body.ok, true);
       assertEquals(body.lines.length, 2);
+      const health = await (await handle(
+        new Request("http://relay/v1/health", {
+          headers: { authorization: `Bearer ${"t".repeat(43)}` },
+        }),
+      )).json();
+      assertEquals(health.services, [{ name: "echo", state: "running", health: "none", ok: true }]);
     } finally {
       await docker("rm", "-f", id).catch(() => "");
     }

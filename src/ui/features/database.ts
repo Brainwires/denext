@@ -18,37 +18,20 @@
 // catalog and quotes only names found there (`../database/sql.ts`). Values are `$n` parameters.
 
 import { join, relative } from "@std/path";
-import { decodeBase64 } from "@std/encoding/base64";
+import { decodeBase64, encodeBase64 } from "@std/encoding/base64";
 import { h } from "../../jsx/jsx-runtime.ts";
-import type { VNode, VNodeChildren } from "../../jsx/types.ts";
+import type { VNode } from "../../jsx/types.ts";
 import { migrationPlan } from "../../build/generate-ops.ts";
-import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
+import { jsonResponse, type UiContext, type UiHandler } from "../html.ts";
 import { FileDetails, Mono, Note, Out } from "../components.ts";
-import { renderView } from "../view.ts";
-import { cliInvocation, runDeno } from "../proc.ts";
-import { parseJsonDocument } from "../child-json.ts";
 import { OFFLINE_STATUS } from "../offline.ts";
-import { UI_CSRF_FIELD, uiSafeUnder } from "../security.ts";
-import { encodeBase64 } from "@std/encoding/base64";
-import {
-  DB_UPLOAD_MAX_BYTES,
-  type DbActor,
-  type DbEnvelope,
-  type DbErrorCode,
-  type DbFailure,
-  type DbReplies,
-  type DbReply,
-  type DbRequest,
-  type DbSuccess,
-  type DbUserAction,
-  maskSecrets,
-} from "../database/protocol.ts";
+import { uiSafeUnder } from "../security.ts";
+import { DB_UPLOAD_MAX_BYTES, type DbActor, type DbUserAction } from "../database/protocol.ts";
 import { enableRlsMigration } from "../database/sql.ts";
 import {
   type BrowseState,
   BucketsView,
   ConfirmView,
-  DbPanel,
   Failure,
   href,
   MigrationsView,
@@ -56,146 +39,36 @@ import {
   OverviewView,
   PendingSql,
   PoliciesView,
-  readOnlyNote,
   RowsView,
   RowView,
   StatementBlock,
   TableView,
   UsersView,
-  type ViewCtx,
 } from "./database-views.ts";
 import { CreateUserForm, SqlView, UploadForm, UserView } from "./database-admin-views.ts";
 import { logsPanel } from "./logs.ts";
+import { presencePage, realtimePage, realtimeWrite } from "./realtime.ts";
+import { functionsPage } from "./functions.ts";
+import { healthPanel } from "./health.ts";
+import {
+  answer,
+  applying,
+  ask,
+  carried,
+  failure,
+  FAILURE_STATUS,
+  field,
+  page,
+  prefixed,
+  seeOther,
+  viewCtx,
+} from "./database-kit.ts";
+
+export { type DbChildRunner, setDbChildRunner } from "./database-kit.ts";
 
 /** Why `--offline` refuses the section: a database is a network connection. */
 const OFFLINE_DATABASE = "The database is unavailable — the UI runs --offline, and " +
   "reaching a database (even one on this machine) is a network connection.";
-
-/** How long one child may take, in ms (its queries carry their own statement timeout). */
-const CHILD_DEADLINE_MS = 60_000;
-
-/** Runs one envelope in the project. */
-export type DbChildRunner = (
-  envelope: DbEnvelope,
-  dir: string,
-  signal: AbortSignal,
-) => Promise<DbReply>;
-
-/** The last non-empty line of a child's stderr, masked. */
-function lastLine(text: string): string {
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  return maskSecrets(lines[lines.length - 1] ?? "");
-}
-
-/** The real runner: `denext db-admin --json` with the envelope on stdin. */
-async function defaultRunner(
-  envelope: DbEnvelope,
-  dir: string,
-  signal: AbortSignal,
-): Promise<DbReply> {
-  try {
-    const result = await runDeno([...cliInvocation({ dir }), "db-admin", "--json", "--cwd", dir], {
-      cwd: dir,
-      stdin: JSON.stringify(envelope),
-      signal,
-    });
-    const reply = parseJsonDocument<DbReply>(result.stdout);
-    if (reply && typeof reply.ok === "boolean") return reply;
-    const why = lastLine(result.stderr);
-    return failure("query_failed", why || "the database child printed no answer");
-  } catch (error) {
-    return failure(
-      "query_failed",
-      maskSecrets(error instanceof Error ? error.message : String(error)),
-    );
-  }
-}
-
-let runner: DbChildRunner = defaultRunner;
-
-/**
- * Swap the child runner (tests answer in-process).
- *
- * @internal
- * @param next The runner.
- * @returns The runner installed before.
- */
-export function setDbChildRunner(next: DbChildRunner): DbChildRunner {
-  const previous = runner;
-  runner = next;
-  return previous;
-}
-
-/** A failure reply built on this side. */
-function failure(code: DbErrorCode, reason: string): DbFailure {
-  return { ok: false, code, reason };
-}
-
-/** Ask the child. */
-function ask<K extends keyof DbReplies>(ctx: UiContext, request: DbRequest): Promise<DbReply<K>> {
-  const signal = ctx.signal
-    ? AbortSignal.any([ctx.signal, AbortSignal.timeout(CHILD_DEADLINE_MS)])
-    : AbortSignal.timeout(CHILD_DEADLINE_MS);
-  return runner({ readOnly: ctx.readOnly, request }, ctx.dir, signal) as Promise<DbReply<K>>;
-}
-
-/** The HTTP status a failure answers the JSON twin with. */
-const FAILURE_STATUS: Record<DbErrorCode, number> = {
-  not_configured: 409,
-  // (an `unsupported` refusal is also how an older @denext/backend or auth schema answers)
-  unsupported: 501,
-  bad_request: 400,
-  read_only: 403,
-  not_found: 404,
-  query_failed: 502,
-};
-
-// ── responses ──────────────────────────────────────────────────────────────
-
-const panelResponse = panelResponder("Database", "/database");
-
-/** The view context. */
-function viewCtx(ctx: UiContext): ViewCtx {
-  return { csrf: ctx.csrf, readOnly: ctx.readOnly, dashboard: ctx.dashboard === true };
-}
-
-/** The panel around `children`, on `tab`. */
-function page(ctx: UiContext, tab: string, children: VNodeChildren, status = 200): Response {
-  const body = h(
-    DbPanel,
-    { tab, dashboard: ctx.dashboard === true },
-    readOnlyNote(viewCtx(ctx)),
-    children,
-  );
-  return panelResponse(ctx, renderView(body), status);
-}
-
-/**
- * Answer a reply: JSON for the `/api` twin, else the view (a failure as a note — with a 200 for
- * a GET, so `ui.js` swaps it in rather than falling back to a full navigation).
- */
-function answer<K extends keyof DbReplies>(
-  ctx: UiContext,
-  tab: string,
-  reply: DbReply<K>,
-  view: (ok: DbSuccess<K>) => VNode,
-): Response {
-  if (ctx.json) return jsonResponse(reply, reply.ok ? 200 : FAILURE_STATUS[reply.code] ?? 500);
-  if (!reply.ok) {
-    return page(
-      ctx,
-      tab,
-      h(Failure, { failure: reply }),
-      ctx.method === "GET" ? 200 : FAILURE_STATUS[reply.code],
-    );
-  }
-  return page(ctx, tab, view(reply));
-}
-
-/** POST/redirect/GET after a write. */
-function seeOther(location: string): Response {
-  return new Response(null, { status: 303, headers: { location } });
-}
 
 /** What a finished write reports on the page it lands on (`?done=`). */
 const DONE: Record<string, string> = {
@@ -218,55 +91,6 @@ const DONE: Record<string, string> = {
 function doneNote(ctx: UiContext): VNode | null {
   const text = DONE[ctx.url.searchParams.get("done") ?? ""];
   return text ? h(Note, { tone: "ok" }, text) : null;
-}
-
-// ── request fields ─────────────────────────────────────────────────────────
-
-/** One submitted field: the form body, the JSON twin's body, else the query. */
-function field(ctx: UiContext, name: string): string {
-  const posted = ctx.form?.get(name);
-  if (typeof posted === "string") return posted;
-  const body = ctx.body as Record<string, unknown> | null | undefined;
-  const value = body && typeof body === "object" ? body[name] : undefined;
-  if (typeof value === "string") return value;
-  return ctx.url.searchParams.get(name) ?? "";
-}
-
-/** Every submitted field whose name starts with `prefix`, the prefix stripped. */
-function prefixed(ctx: UiContext, prefix: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  const add = (name: string, value: unknown) => {
-    if (name.startsWith(prefix) && typeof value === "string") {
-      out[name.slice(prefix.length)] = value;
-    }
-  };
-  if (ctx.form) { for (const [name, value] of ctx.form) add(name, value); }
-  else if (ctx.body && typeof ctx.body === "object") {
-    for (const [name, value] of Object.entries(ctx.body as Record<string, unknown>)) {
-      add(name, value);
-    }
-  } else for (const [name, value] of ctx.url.searchParams) add(name, value);
-  return out;
-}
-
-/** The fields to carry from a preview into its apply form (everything but CSRF and `op`). */
-function carried(ctx: UiContext): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (ctx.form) {
-    for (const [name, value] of ctx.form) {
-      if (typeof value === "string" && name !== "op" && name !== UI_CSRF_FIELD) out[name] = value;
-    }
-  } else if (ctx.body && typeof ctx.body === "object") {
-    for (const [name, value] of Object.entries(ctx.body as Record<string, unknown>)) {
-      if (typeof value === "string" && name !== "op" && name !== UI_CSRF_FIELD) out[name] = value;
-    }
-  }
-  return out;
-}
-
-/** Whether this POST runs (`op=apply`) rather than previews. */
-function applying(ctx: UiContext): boolean {
-  return field(ctx, "op") === "apply";
 }
 
 // ── Tables ─────────────────────────────────────────────────────────────────
@@ -859,7 +683,14 @@ const PAGES: Record<string, DbRoute> = {
   "/database/user": { get: userPage },
   "/database/sql": { get: sqlPage, post: sqlRun },
   "/database/logs": { get: (ctx) => logsPanel(ctx) },
+  "/database/realtime": { get: realtimePage, post: realtimeWrite },
+  "/database/realtime/presence": { get: presencePage },
+  "/database/functions": { get: functionsPage },
+  "/database/health": { get: healthPanel },
 };
+
+/** Pages that reach neither a database nor the network (`--offline` keeps them). */
+const OFFLINE_PAGES = new Set(["/database/logs", "/database/functions", "/database/health"]);
 
 /** The section's paths and the methods each answers — what `routes.ts` registers. */
 export const DATABASE_PATHS: readonly { path: string; methods: readonly string[] }[] = Object
@@ -873,7 +704,7 @@ export const databasePanel: UiHandler = (_request: Request, ctx: UiContext): Pro
   const path = ctx.json ? ctx.url.pathname.slice("/api".length) : ctx.url.pathname;
   const route = PAGES[path];
   if (!route) return Promise.resolve(jsonResponse({ ok: false, reason: "not found" }, 404));
-  if (ctx.offline === true && path !== "/database/logs") {
+  if (ctx.offline === true && !OFFLINE_PAGES.has(path)) {
     if (ctx.json) {
       return Promise.resolve(jsonResponse({ ok: false, reason: OFFLINE_DATABASE }, OFFLINE_STATUS));
     }
