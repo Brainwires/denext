@@ -490,11 +490,21 @@ export interface AuthEvents {
     provider: string;
     /** True when this sign-in created the adapter user record. */
     isNewUser?: boolean;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /** A session was cleared through `/signout`. */
   signOut?: (payload: {
     /** The session that ended, or `null` when there was none. */
     session: AuthSession | null;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /** A sign-in attempt was refused (bad credentials, a denied callback, a bad state). */
   signInFailed?: (payload: {
@@ -515,7 +525,8 @@ export interface AuthEvents {
      * The client bucket the limiter keyed on — present on the rate-limited routes (the
      * credentials POST, the sign-in start, the email link / code redeem and the MFA
      * steps). IPv4 as seen; an IPv6 client appears as its /64 prefix, which is what the
-     * limiter actually counts.
+     * limiter actually counts. On every other refusal it is the client address, as on every
+     * other event.
      */
     ip?: string;
   }) => Promise<void> | void;
@@ -534,6 +545,11 @@ export interface AuthEvents {
     scopes?: string[];
     /** When it expires, epoch seconds; absent for a token that never does. */
     expiresAt?: number;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /**
    * A bearer API token was revoked: by `revokeApiToken` / `DELETE {basePath}/tokens/:id`
@@ -548,6 +564,11 @@ export interface AuthEvents {
     userId?: string;
     /** Why. */
     reason: ApiTokenRevokedReason;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /** A server-side session was revoked (one device, or everywhere). */
   sessionRevoked?: (payload: {
@@ -555,11 +576,21 @@ export interface AuthEvents {
     sessionId?: string;
     /** The user id, when every session of a user was revoked. */
     userId?: string;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /** An adapter user record was created. */
   createUser?: (payload: {
     /** The new record. */
     user: AdapterUser;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /** A provider account was linked to an existing user. */
   linkAccount?: (payload: {
@@ -573,6 +604,11 @@ export interface AuthEvents {
      * handler genuinely needs the tokens.
      */
     account: Pick<AdapterAccount, "userId" | "provider" | "providerAccountId" | "type">;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /**
    * A verification token was delivered through `sendVerificationRequest` / `hooks.sendEmail` (an
@@ -589,6 +625,11 @@ export interface AuthEvents {
     purpose: VerificationPurpose;
     /** When the token expires, epoch seconds. */
     expiresAt: number;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /**
    * A user proved control of their address: by redeeming an email-verification token, or
@@ -599,6 +640,11 @@ export interface AuthEvents {
   emailVerified?: (payload: {
     /** The user record, with `emailVerified` set. */
     user: AdapterUser;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /**
    * A user proved control of their phone number by a first `phoneOtp()` sign-in into an
@@ -609,6 +655,11 @@ export interface AuthEvents {
   phoneVerified?: (payload: {
     /** The user record, with `phoneVerified` set. */
     user: AdapterUser;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /**
    * An anonymous user became permanent: a complete anonymous session redeemed an email link /
@@ -620,6 +671,11 @@ export interface AuthEvents {
     user: AdapterUser;
     /** The provider whose proof converted it. */
     provider: string;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /**
    * A user set a new password by redeeming a password-reset token. Their server-side
@@ -628,6 +684,11 @@ export interface AuthEvents {
   passwordReset?: (payload: {
     /** The user whose password changed. */
     user: AdapterUser;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
 }
 

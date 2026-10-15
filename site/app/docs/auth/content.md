@@ -1687,6 +1687,11 @@ awaited, so an audit row is written before the response is built.
 | `apiTokenIssued`        | `{ userId, tokenId, name?, scopes?, expiresAt? }` | A bearer API token was minted (`issueApiToken`, `POST /tokens`)       |
 | `apiTokenRevoked`       | `{ tokenId, userId?, reason }`                    | A bearer API token was revoked — `reason` says how (below)            |
 
+Every payload also carries `ip`: the client address of the request that caused the event, read
+the way `clientIp()` reads it — the socket peer, or with `trustForwardedHeaders`
+(on `denextAuth`, else the app's) the proxy's last `x-forwarded-for` hop, never a hop the client
+wrote. An event raised outside a request (a job calling `revokeAllSessions`) has no `ip`.
+
 `signInFailed.reason` is the closed `SignInFailedReason` union, so a `switch` over it can be
 exhaustive: `"invalid_credentials"` (a wrong password, or a wrong, spent or expired email link or
 code), `"invalid_mfa_code"` (a wrong TOTP or backup code, or passkey, at the step-up),
@@ -1716,12 +1721,11 @@ SQLite adapters delete API tokens 30 days after they were revoked or expired.
 that succeeded. A sign-in that stops at a second factor fires `signIn` only when the
 step-up completes.
 
-Two payload fields the event has always declared are now actually populated. `ip` carries
-the client bucket the limiter counted the attempt against — present on the rate-limited
-routes (the credentials POST, the sign-in start, the email link and code redeem, and the
+On `signInFailed` from a rate-limited route, `ip` is instead the client bucket the limiter
+counted the attempt against — the rate-limited routes (the credentials POST, the sign-in start, the email link and code redeem, and the
 second-factor steps), IPv4 as seen and an IPv6 client as
 its **/64 prefix**, which is what the limiter itself counts — so "one address, many
-failures" is visible to an alerting pipeline. And `signIn` carries `isNewUser: true` when
+failures" is visible to an alerting pipeline. `signIn` carries `isNewUser: true` when
 that sign-in created the adapter's user record (always `false` without an adapter, which
 creates nothing).
 

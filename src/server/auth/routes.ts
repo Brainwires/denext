@@ -11,6 +11,7 @@
  * @module
  */
 
+import { withAuthEventRequest } from "./events.ts";
 import { resolveAuthOptions } from "./options.ts";
 import { matchAuthRoute } from "./route-table.ts";
 import type { AuthRouteContext } from "./routes-shared.ts";
@@ -42,5 +43,5 @@ export async function handleAuthRequest(
     method,
     params: match.params,
   };
-  return await match.route.handler(ctx);
+  return await withAuthEventRequest(request, async () => await match.route.handler(ctx));
 }

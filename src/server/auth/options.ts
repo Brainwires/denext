@@ -114,6 +114,11 @@ export interface ResolvedAuthOptions {
   email: Required<AuthEmailConfig>;
   /** Second-factor policy, every default applied and every count clamped. */
   mfa: Required<AuthMfaConfig>;
+  /**
+   * The config's own `trustForwardedHeaders`, when it sets one (else the app-level setting
+   * decides) — how the `ip` every auth event carries is read.
+   */
+  trustForwardedHeaders?: boolean;
 }
 
 /**
@@ -174,6 +179,7 @@ export function resolveAuthOptions(config: AuthConfig): ResolvedAuthOptions {
     adapter: config.adapter,
     email: resolveEmail(config.email ?? {}, basePath),
     mfa: resolveMfa(config.mfa ?? {}, config.canonicalOrigin),
+    trustForwardedHeaders: config.trustForwardedHeaders,
   };
   resolved.set(config, options);
   return options;

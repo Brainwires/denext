@@ -86,7 +86,6 @@ or an upstream. Each one's limitation entry is deleted when it ships.
 
 - **A `next-auth` compat shim,** so a drop-in Next app that imports `next-auth` runs.
 - **A standalone `denext/auth` subpath** (the surface lives in `denext/server` today).
-- **`ip` on every auth event** (only `signInFailed` carries it today).
 
 ## React, Remix and SPA surface
 

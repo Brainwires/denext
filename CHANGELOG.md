@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`ip` on every auth event.** Each `denextAuth` event payload (`signIn`, `signOut`,
+  `sessionRevoked`, `createUser`, `linkAccount`, `verificationRequested`, `emailVerified`,
+  `phoneVerified`, `userConverted`, `passwordReset`, `apiTokenIssued`, `apiTokenRevoked`, and
+  every `signInFailed`) now carries `ip`: the client address of the request that caused it, read
+  the way `clientIp()` reads it (the socket peer, or with `trustForwardedHeaders` the proxy's last
+  `x-forwarded-for` hop). A rate-limited route's `signInFailed` keeps the limiter's bucket (an
+  IPv6 client's /64) as before; an event raised outside a request (a job) has none.
+
 ### Fixed
 
 - **`global-error.tsx` hydrates on the next-compat build and in a static export.** Both paths
