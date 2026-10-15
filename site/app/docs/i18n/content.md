@@ -34,10 +34,11 @@ export default {
 `example.fr/about` renders French. Each entry pins a `domain` to a `defaultLocale`, served
 unprefixed on that host; its other `locales` (all of them when omitted) are still prefixed
 there, and `http: true` makes its generated URLs `http://` for local testing. Locales tied to
-no domain keep the prefix rules above on the primary host. The render path matches the
-request's trusted host (forwarded headers count only under `trustForwardedHeaders`).
-`localeMiddleware` never redirects on a matched domain, and the hreflang alternates for a
-domain's locales are absolute URLs on that domain.
+no domain keep the prefix rules above on the primary host. The render path and
+`localeMiddleware` match the request's trusted host: `canonicalOrigin` when set, else
+`X-Forwarded-Host` under `trustForwardedHeaders` only, else `Host`. `localeMiddleware` never
+redirects on a matched domain, and the hreflang alternates for a domain's locales are absolute
+URLs on that domain.
 
 ```ts
 export default {

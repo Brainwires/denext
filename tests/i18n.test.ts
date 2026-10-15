@@ -10,6 +10,7 @@ import {
   peelLocale,
 } from "../src/server/i18n.ts";
 import { createMiddlewareRunner } from "../src/server/middleware.ts";
+import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { PageProps } from "../src/server/types.ts";
@@ -246,6 +247,30 @@ Deno.test("i18n domains: localeMiddleware never redirects an unprefixed path on 
     new Request("http://example.fr/about", { headers: { "accept-language": "en" } }),
   );
   assertEquals(outcome.type, "next");
+});
+
+Deno.test("i18n domains: localeMiddleware matches the trusted host, as the render path does", async () => {
+  const runner = createMiddlewareRunner({ default: localeMiddleware(DOMAINS) });
+  const behindProxy = () =>
+    new Request("http://10.0.0.5:8000/about", {
+      headers: { "x-forwarded-host": "example.fr", "accept-language": "de" },
+    });
+  // Behind a trusted proxy the public host is the forwarded one: example.fr is French, so a
+  // German-preferring visitor is not redirected to /de (the render path serves it as fr).
+  const trusted = behindProxy();
+  const outcome = await runWithContext(
+    createRequestContext(trusted, undefined, { trustForwardedHeaders: true }),
+    () => runner!(trusted),
+  );
+  assertEquals(outcome.type, "next");
+  // Without trust, a client-sent X-Forwarded-Host is ignored: no domain matches, so the
+  // visitor is negotiated as usual.
+  const untrusted = behindProxy();
+  const spoofed = await runWithContext(
+    createRequestContext(untrusted),
+    () => runner!(untrusted),
+  );
+  assertEquals(spoofed.type, "response");
 });
 
 // ---- localeMiddleware ------------------------------------------------------

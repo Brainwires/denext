@@ -9,7 +9,8 @@
 
 import type { Middleware } from "./middleware.ts";
 import { next, redirectResponse } from "./middleware.ts";
-import { currentContext } from "./request-context.ts";
+import { requestOrigin } from "./absolute-url.ts";
+import { currentContext, trustsForwardedHeaders } from "./request-context.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 
 /** Internationalization configuration. */
@@ -205,6 +206,22 @@ export function detectLocale(request: Request, i18n: I18nConfig): string {
 }
 
 /**
+ * The host `i18n.domains` is matched against: the trusted one the render path's locale
+ * resolution uses (`canonicalOrigin`, then `X-Forwarded-Host` only under
+ * `trustForwardedHeaders`, then `Host`). A raw `Host` would disagree with the render behind a
+ * proxy (a domain visitor redirected to a prefix the page then renders in the domain's locale).
+ * `undefined` when no domains are configured.
+ */
+function trustedLocaleHost(request: Request, i18n: I18nConfig): string | undefined {
+  if (!i18n.domains) return undefined;
+  const origin = requestOrigin(request, {
+    canonicalOrigin: currentContext()?.originAllowlist?.canonicalOrigin,
+    trustForwardedHeaders: trustsForwardedHeaders(),
+  });
+  return new URL(origin).host;
+}
+
+/**
  * A middleware entry that redirects an unprefixed request to the visitor's
  * detected locale when it differs from the default. Compose it into the
  * middleware chain to get automatic locale routing:
@@ -222,7 +239,7 @@ export function detectLocale(request: Request, i18n: I18nConfig): string {
 export function localeMiddleware(i18n: I18nConfig): Middleware {
   return (request) => {
     const url = new URL(request.url);
-    const host = request.headers.get("host") ?? url.host;
+    const host = trustedLocaleHost(request, i18n);
     const { locale } = peelLocale(url.pathname, i18n, host);
     const first = url.pathname.split("/").filter(Boolean)[0];
 
