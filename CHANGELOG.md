@@ -102,6 +102,32 @@ and this project adheres to
   pre-renders global-error to `out/500.html`, wired to hydrate, for a static host's error page;
   it renders with the `Internal Server Error` message a production server hands it.
 
+- **`defineLiveView` in `denext/live`: a Model–View–Update program held on the server, per
+  connection.** Render the component it returns from a Server Component: the page gets
+  `view(init(props))` as plain HTML (the first paint works with JavaScript disabled), and in the
+  browser the view mounts over the existing Live socket. The server keeps the model for that
+  connection, runs `update` and its effects for each event bound with `send(…)`, re-renders
+  through `renderToFlight` and sends the Flight diff, which the reconciler applies as minimal DOM
+  changes. `send(msg)` puts only a handler index on the page, so a client can fire only messages
+  the server rendered for it; event payloads pass a built-in shape check and the view's `events`
+  Standard Schema. The props are signed (`DENEXT_LIVE_VIEW_SECRET` across instances, else a
+  per-process key); `authorize(props, ctx)` runs at render, mount, resume and again after
+  `channelAuthTtlSeconds`. The Live hub's handshake, connection caps and frame-size cap apply,
+  plus new `live.limits`: `maxViewsPerConnection` (16), `maxViewBytesPerConnection` (1 MiB of
+  model and rendered tree), `viewResumeSeconds` (30) and `maxParkedViews` (1000). A dropped
+  connection's views wait `viewResumeSeconds` for the client to reconnect and resume the model;
+  otherwise the next mount runs `init` again. The island ships only in apps that define a live
+  view. See [Live views](https://denext.dev/docs/live-views).
+- **`denext/mvu`: Model–View–Update in the browser, with effects as data.**
+  `useMvu(init, update, subscriptions?)` returns `[model, dispatch]`; `update(msg, model)` returns
+  `[model, effects]`, where the effects (`fx.fetch`, `fx.delay`, `fx.task`, `fx.dispatch`) and
+  the subscriptions (`subs.interval`, `subs.channel`) are plain data the runtime runs. `MvuView`
+  renders a whole `defineMvu` program, and the same program runs on the server with
+  `defineLiveView`. See [Model–View–Update](https://denext.dev/docs/mvu).
+- **DevTools: an MVU tab with time travel.** In `denext dev` it lists each `useMvu` / `MvuView`
+  program's last 200 messages with the model each produced; clicking one puts that model on
+  screen.
+
 ## [4.1.0] - 2026-10-15
 
 ### Breaking

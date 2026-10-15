@@ -1,7 +1,6 @@
 // Live views over a real Live socket (`installLiveHub` + `handleLiveUpgrade`): the view frames
 // ride the hub's own guards — the connection caps, the inbound frame-size cap — and a reconnect
-// resumes the server-held model. Installs the process-wide hub with its own limits, so it runs
-// in the serial pass (tests/serial-tests.ts).
+// resumes the server-held model.
 
 import { assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";

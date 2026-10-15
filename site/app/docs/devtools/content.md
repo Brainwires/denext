@@ -27,10 +27,10 @@ path, the Next.js drop-in and [SPA mode](/docs/spa). The three tabs that read th
 dev server (Network, Cache, Routes) are App-Router-only, and say so in place
 rather than showing an empty table.
 
-## The seven tabs
+## The eight tabs
 
 The header is a scrollable `role="tablist"`: **Components**, **Render modes**,
-**Profiler**, **Network**, **Cache**, **Routes**, **Console**. `Alt+1`…`Alt+7`
+**Profiler**, **Network**, **Cache**, **Routes**, **Console**, **MVU**. `Alt+1`…`Alt+8`
 jump straight to one. The panel is `min(620px, 94vw)` wide and half the viewport
 tall; the `⤢` button at the right of the header (beside `×`, both 44 px touch
 targets) switches it to the full viewport, inside the safe-area insets, and `⤡`
@@ -371,6 +371,16 @@ Entries are also forwarded, batched, to the dev server's event log
 (`/_denext/dev-log`), so [`denext_dev_logs`](#mcp-inspect-the-live-page) reads
 the page's console — App Router and SPA dev alike.
 
+### MVU
+
+Every [`denext/mvu`](/docs/mvu) program running on the page (`useMvu`, `MvuView`), named by
+`useMvu(…, { name })` or `MvuView`'s `name`: its recorded steps (the last 200 messages, each
+with the model it produced) and the model of the step on screen. Click a step to travel there:
+its model replaces the program's, and the component re-renders. A message dispatched after
+that continues from the step on screen and drops the steps after it. Effects and
+subscriptions keep running while you travel. Server-held [live views](/docs/live-views) are
+not listed: their model is on the server.
+
 ## Errors and the dev overlay
 
 Build, server-render and type errors are not a panel tab: they open denext's dev
@@ -404,7 +414,7 @@ resets as soon as it skips a commit, and an unmounted component is forgotten.
 | Chord                           | Does                                                                                             |
 | ------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `Ctrl+Shift+D`                  | Toggle the panel — the only chord that works while it is closed                                  |
-| `Alt+1` … `Alt+7`               | Jump to a tab, in strip order (Components … Routes, Console)                                     |
+| `Alt+1` … `Alt+8`               | Jump to a tab, in strip order (Components … Console, MVU)                                        |
 | `Ctrl+Shift+[` / `Ctrl+Shift+]` | Previous / next tab, wrapping at both ends (the shifted `{` / `}` a US layout produces work too) |
 | `Escape`                        | Cancel the element picker; with the picker off, close the panel                                  |
 

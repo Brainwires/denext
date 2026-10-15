@@ -120,8 +120,15 @@ Each is documented as a manual recipe today (the
   and retire the form renderer's remaining string API.
 - **Per-element `__source`** for a true JSX owner stack (the panel shows the render-parent chain).
 - **Profiler export / compare** across commits, plus component filters.
+- **Server-held live views in DevTools:** list `defineLiveView` instances and their messages
+  (the MVU tab covers browser programs only).
 - **A Live / channel and state inspector tab** (subscriptions, channel pushes, cache entries).
 - **On-demand snapshot pull** over the reload stream, so the MCP tools get a fresh tree.
+
+## Live views
+
+- **Keyed lists in live views and `<Live>` patches:** carry `key` through Flight so a reordered
+  list keeps its elements (today they reconcile by position).
 
 ## Router plugins
 

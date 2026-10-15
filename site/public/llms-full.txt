@@ -215,6 +215,35 @@ const { data } = useSubscription(orderStatus, { id }, { initial });
 const { data: event } = useChannel(orderEvents, `user:${userId}`);
 ```
 
+**Model–View–Update (Elm / Lustre style):** `denext/mvu` runs `update(msg, model) → [model,
+effects]` in a component, with effects and subscriptions as data the runtime executes; the same
+program held on the SERVER per Live connection is `defineLiveView` from `denext/live` (HTML first
+paint, events over the socket, DOM patches back).
+
+```tsx
+// app/counter.tsx — a server module; render <Counter start={1} /> from a Server Component
+import { defineLiveView } from "denext/live";
+import { fx, subs } from "denext/mvu";
+export const Counter = defineLiveView({
+  id: "counter", // stable, app-unique
+  init: (props: { start: number }) => [{ n: props.start, on: false }],
+  update: (msg: { type: "inc" } | { type: "toggle" }, m) =>
+    msg.type === "inc"
+      ? [{ ...m, n: m.n + 1 }, [fx.task(() => db.save(m.n + 1))]]
+      : [{ ...m, on: !m.on }],
+  subscriptions: (m) => [m.on && subs.interval(1000, { type: "inc" })],
+  view: (m, send) => <button type="button" onClick={send({ type: "inc" })}>{m.n}</button>,
+  authorize: async () => (await auth()) !== null, // render, mount, resume, then every TTL
+  // events: z.object({ value: z.string().max(200).optional() }) — validates send((p) => …) payloads
+});
+// In the browser instead: useMvu(() => [model], update, subscriptions) or <MvuView program={…} />.
+```
+
+`send(msg)` sends only a handler index (the message stays on the server); a reconnect within
+`live.limits.viewResumeSeconds` resumes the model, else `init` re-runs. Set
+`DENEXT_LIVE_VIEW_SECRET` on every instance. Docs: https://denext.dev/docs/live-views,
+https://denext.dev/docs/mvu
+
 **A typed Server Action (the mutation side, also type-checked):** `defineAction` validates
 `FormData` into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its `Out`
 flows into `useActionState`.

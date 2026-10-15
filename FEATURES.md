@@ -1801,6 +1801,22 @@ the reconciler. Both are opt-in and tree-shake out of apps that don't use them.
   Convex/Liveblocks/PartyKit-class layer with **zero npm and zero extra infra**;
   the socket is shared with `<Live>` and opens only when a live feature mounts.
   — `src/live.ts` exports.
+- **Live views — server-held Model–View–Update.** `defineLiveView({ id, init, update, view,
+  subscriptions?, authorize?, events? })` keeps a program's model on the server per Live
+  connection (Phoenix LiveView / Lustre server components): HTML first paint inside the
+  `denext#LiveView` island, events bound with `send(…)` over the same `/_denext/live` socket
+  (only a handler index travels; payloads shape-checked + the view's Standard Schema), `update`
+  and its effects run as the viewer, and the re-render goes back as a Flight diff the reconciler
+  applies in place. Signed props, `authorize` at render / mount / resume / TTL, per-connection
+  view and memory caps, a bounded per-view inbox, whole-tree catch-up after back-pressure, and
+  resume after a reconnect within `viewResumeSeconds`. — runtime `src/runtime/live-view.ts`;
+  hub half `src/server/live-views.ts`; diff `src/runtime/flight-patch.ts`; island
+  `src/client/live-view-island.ts`; client `src/client/live-view-client.ts`.
+- **Model–View–Update in the browser.** `useMvu(init, update, subscriptions?)` / `MvuView` from
+  `denext/mvu`: effects (`fx.fetch` / `delay` / `task` / `dispatch`) and subscriptions
+  (`subs.interval` / `channel`) are data the runtime executes; the DevTools MVU tab time-travels
+  over each program's steps. — engine `src/runtime/mvu.ts`; entrypoint `src/mvu.ts`; tab
+  `src/client/devtools-panel/mvu.ts`.
 - _Caveat:_ requires a Flight (RSC) route; the WebSocket transport is a new
   attack surface tracked in [the CVE-defense guide](https://denext.dev/docs/security).
 

@@ -273,6 +273,8 @@ practical alternative is **sticky sessions** at the balancer so a viewer's
 socket and the actions that publish to it land on the same node — which works
 for a single user's own updates and not for anything shared between users. See
 [Live › Delivery semantics & scaling](/docs/live#delivery-semantics--scaling).
+Server-held [live views](/docs/live-views#more-than-one-instance) also need a shared
+`DENEXT_LIVE_VIEW_SECRET`, and resume after a reconnect only on the same node.
 
 ## Scheduled jobs: one runner, not one per replica
 

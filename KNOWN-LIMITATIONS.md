@@ -67,6 +67,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 - **Live is single-instance without a `ChannelTransport`** (`broadcastChannelTransport()` or your
   own Redis/NATS one makes publishes and tag invalidations cross-instance).
+- **Live views keep their model in one process:** a reconnect that lands on another instance, or
+  after `live.limits.viewResumeSeconds`, re-runs `init` (sticky sessions keep it on one node).
+  Their lists reconcile by position (Flight carries no `key`), and with JavaScript disabled only
+  the first render works.
 - **Channels carry state, not a log:** no replay on reconnect, at-most-once, latest-wins, 16 ms
   coalescing, `seq` ordered per instance. Re-authorization is lazy (`authTtlSeconds`;
   `channel.revoke(key)` is immediate). The production handshake requires a browser `Origin`.
