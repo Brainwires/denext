@@ -9,6 +9,7 @@ import { uninstallLiveHub } from "../server/live.ts";
 import { envGet } from "../runtime/env-safe.ts";
 import { join } from "@std/path";
 import { applyPlugins, runPluginTeardown } from "../plugin/mod.ts";
+import { stopServices } from "../server/service-loader.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import { setImageRuntimeConfig } from "../runtime/image.ts";
 import type { ModuleLoader } from "../server/types.ts";
@@ -147,10 +148,13 @@ export async function startProdServer(options: ProdServerOptions): Promise<Deno.
     // Live WebSockets never close on their own, so a drain would always run to its deadline
     // (and force-exit) with a single viewer connected: close them the moment shutdown begins.
     options.signal?.addEventListener("abort", uninstallLiveHub, { once: true });
-    // Run plugin teardowns once the server has drained (signal aborted → closed).
-    server.finished.then(() => runPluginTeardown());
+    // Once the server has drained (signal aborted → closed): stop the supervised services in
+    // reverse start order (in-flight requests may have used them), then the plugin teardowns (a
+    // service may still use what a plugin holds open while it stops).
+    server.finished.then(() => stopServices()).then(() => runPluginTeardown());
     return server;
   } catch (err) {
+    await stopServices();
     await runPluginTeardown();
     throw err;
   }

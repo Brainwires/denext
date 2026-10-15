@@ -37,6 +37,13 @@ import {
 } from "./define-action.ts";
 import { decodeWire, prepareWire, WIRE_ENC } from "./wire-codec.ts";
 import { CHANNEL_BRAND, setChannelRegistrar } from "./channel-brand.ts";
+import {
+  LIVE_RESTART_DEFAULTS,
+  type ResolvedRestart,
+  resolveRestart,
+  restartLoop,
+  type RestartOptions,
+} from "./restart.ts";
 
 /** The subscriber's identity handed to `authorize` (the Live connection context). */
 export interface ChannelContext {
@@ -77,7 +84,36 @@ export interface ChannelConfig<T> {
    * revoked, or denied on re-authorization).
    */
   onIdle?: (key: string, reason: ChannelIdleReason) => void;
+  /**
+   * A supervised producer for each active key: started when `key` gets its first subscriber on
+   * THIS instance (in the root context), its `signal` aborted when the last one leaves. A throw
+   * restarts it with exponential backoff (see `publisherRestart`); subscribers stay connected
+   * throughout and simply receive nothing until it publishes again. Returning ends it for good
+   * (until the key goes idle and active again).
+   */
+  publisher?: ChannelPublisher<T>;
+  /**
+   * How a throwing `publisher` restarts (default: 5 restarts a minute, 250 ms doubling to 10 s,
+   * 20% jitter). Past `maxRestarts` within `period` it gives up for that key (logged); the
+   * subscribers stay connected, and the key's next activation starts it afresh.
+   */
+  publisherRestart?: RestartOptions;
 }
+
+/** What a {@linkcode ChannelConfig.publisher} receives. */
+export interface ChannelPublisherContext<T> {
+  /** The key it produces for. */
+  readonly key: string;
+  /** Aborted when the key's last local subscriber leaves (or the hub shuts down). */
+  readonly signal: AbortSignal;
+  /** Which run this is: `1` first, `2` after the first restart, … */
+  readonly attempt: number;
+  /** Publish to this key (`channel.publish(key, payload)`). */
+  publish(payload: T): Promise<void>;
+}
+
+/** A supervised per-key producer ({@linkcode ChannelConfig.publisher}). */
+export type ChannelPublisher<T> = (ctx: ChannelPublisherContext<T>) => unknown;
 
 /** Why a channel key lost its last local subscriber (see {@linkcode ChannelConfig.onIdle}). */
 export type ChannelIdleReason = "unsubscribe" | "disconnect";
@@ -212,9 +248,51 @@ export function createChannel<T>(config: ChannelConfig<T>): Channel<T> {
     publish: (key, payload) => publish(internals, config.schema, key, payload),
     revoke: (key, opts) => revoke(internals, key, opts?.peerId),
   };
+  if (config.publisher) superviseKeys(internals, channel, config);
   Object.defineProperty(channel, CHANNEL_BRAND, { value: internals });
   if (config.id) registerChannel(config.id, channel);
   return channel;
+}
+
+/**
+ * Run `config.publisher` for each active key under a restart loop: started on `onActive` (before
+ * the app's own hook, so a throwing hook cannot keep it from starting), stopped on `onIdle`.
+ */
+function superviseKeys<T>(
+  internals: ChannelInternals,
+  channel: Channel<T>,
+  config: ChannelConfig<T>,
+): void {
+  const publisher = config.publisher!;
+  if (typeof publisher !== "function") {
+    throw new TypeError("createChannel: `publisher` must be a function");
+  }
+  const policy: ResolvedRestart = resolveRestart(
+    config.publisherRestart ?? true,
+    LIVE_RESTART_DEFAULTS,
+    "createChannel: publisherRestart",
+  )!;
+  const running = new Map<string, AbortController>();
+  internals.onActive = (key) => {
+    running.get(key)?.abort();
+    const controller = new AbortController();
+    running.set(key, controller);
+    void restartLoop({
+      path: `channel:${internals.id}/${key}`,
+      signal: controller.signal,
+      policy,
+      run: (signal, attempt) =>
+        publisher({ key, signal, attempt, publish: (payload) => channel.publish(key, payload) }),
+    }).finally(() => {
+      if (running.get(key) === controller) running.delete(key);
+    });
+    config.onActive?.(key);
+  };
+  internals.onIdle = (key, reason) => {
+    running.get(key)?.abort();
+    running.delete(key);
+    config.onIdle?.(key, reason);
+  };
 }
 
 function browserStub<T>(id: string): Channel<T> {

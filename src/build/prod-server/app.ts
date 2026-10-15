@@ -28,6 +28,7 @@ import {
   setNextRuntimeEnv,
 } from "../../server/instrumentation.ts";
 import { bootScheduledJobs } from "../../server/job-loader.ts";
+import { bootServices } from "../../server/service-loader.ts";
 import { installLiveHub } from "../../server/live.ts";
 import { resolveLimitPolicy } from "../../server/remote-addr.ts";
 import { sameOriginUpgrade } from "../../server/origin-check.ts";
@@ -159,7 +160,7 @@ export async function createProdApp(
   setNextRuntimeEnv();
   const instrumentation = await loadInstrumentation(paths.instrumentationPath);
   await runRegister(instrumentation);
-  const rules = await bootProdServices(paths, info);
+  const rules = await bootProdServices(paths, info, instrumentation);
   const appConfig = prodAppConfig(
     paths,
     manifest,
@@ -177,13 +178,23 @@ export async function createProdApp(
 }
 
 /**
- * The process-lifetime services the server boots with: the scheduled jobs, the durable default
- * cache store and the stale-page sweep. Returns the denext.config redirect/rewrite/header rules.
+ * The process-lifetime services the server boots with: the scheduled jobs, the supervised
+ * `services/` tree, the durable default cache store and the stale-page sweep. Returns the
+ * denext.config redirect/rewrite/header rules.
  */
-async function bootProdServices(paths: ProjectPaths, info: BuildInfo): Promise<ResolvedRules> {
+async function bootProdServices(
+  paths: ProjectPaths,
+  info: BuildInfo,
+  instrumentation: Instrumentation,
+): Promise<ResolvedRules> {
   // Discover jobs/ and register cron schedules (Deno.cron on Deploy, else a userland tick). The
   // scheduler lives for the server process (created once here); the disposer is not retained.
   await bootScheduledJobs(paths.projectDir, paths.config ?? undefined, paths.outDir);
+  // Start the supervised services/ tree (a no-op without the directory). The drain stops it.
+  await bootServices(paths.projectDir, {
+    outDir: paths.outDir,
+    onServiceError: instrumentation.onServiceError,
+  });
   const rules = await resolveConfigRules(paths.config);
   await resolveDefaultCacheStore(
     paths.config?.cache?.path

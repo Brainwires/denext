@@ -119,6 +119,8 @@ export type {
   SubscriptionRef,
 } from "../runtime/define-subscription.ts";
 export type { SubscriptionDef, SubscriptionRunContext } from "../runtime/server-action.ts";
+// The restart policy a Live subscription (`restart`) and a channel publisher share.
+export type { ResolvedBackoff, ResolvedRestart, RestartOptions } from "../runtime/restart.ts";
 // Server-push channels: `createChannel` + `publish(key, payload)` → `useChannel` on the client.
 export {
   broadcastChannelTransport,
@@ -134,6 +136,8 @@ export type {
   ChannelContext,
   ChannelEvent,
   ChannelIdleReason,
+  ChannelPublisher,
+  ChannelPublisherContext,
   ChannelRef,
   ChannelTapHandlers,
   ChannelTransport,
@@ -380,6 +384,37 @@ export type { RenderScope } from "../runtime/render-scope.ts";
 export { defineJob, getJob, isJob, jobNames, registerJob, runJob } from "./jobs.ts";
 export type { Job, JobBackoff, JobContext, JobDefinition, JobRetry, JobRunRecord } from "./jobs.ts";
 export { sqliteJobHistoryStore } from "./job-history.ts";
+
+// Supervision for long-lived server work (restart semantics, not process isolation): services in
+// `services/<name>.ts` (or any `supervise(...)` tree), restarted with backoff per strategy,
+// escalated past their intensity, stopped in reverse order on the server drain.
+export {
+  defineService,
+  isService,
+  isSupervisor,
+  jobService,
+  sidecarService,
+  supervise,
+  supervisionStatus,
+  SupervisorError,
+} from "./supervise.ts";
+export type {
+  BackoffOptions,
+  ChildStatus,
+  RestartPolicy,
+  Service,
+  ServiceAdapterOptions,
+  ServiceContext,
+  ServiceDefinition,
+  SupervisableSidecar,
+  SuperviseOptions,
+  SupervisionEvent,
+  SupervisionLog,
+  SupervisionState,
+  SupervisionStrategy,
+  Supervisor,
+  SupervisorStatus,
+} from "./supervise.ts";
 export type {
   JobHistory,
   JobHistoryCleared,
@@ -406,8 +441,10 @@ export { type Instrumentation, type OnRequest } from "./instrumentation.ts";
 export type {
   InstrumentationRequest,
   OnRequestError,
+  OnServiceError,
   RegisterFn,
   RequestErrorContext,
+  ServiceErrorContext,
 } from "./instrumentation.ts";
 
 // Environment: .env loading + the client/server public-env isolation boundary.

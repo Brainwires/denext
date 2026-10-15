@@ -771,6 +771,20 @@ export default defineJob({
 // anywhere on the server: import { runJob } from "denext/server"; await runJob("cleanup");
 ```
 
+**Long-lived server work (supervised services):** `services/<name>.ts` default-exports
+`defineService({ start(ctx) })` from `denext/server` — `start`'s promise is the service's life (a
+throw is a crash; hold a resource with `await ctx.stopped`; `ctx.signal` aborts on stop). The
+server runs them under a root supervisor that restarts a crash with exponential backoff + jitter,
+gives up past `intensity` restarts within `period` (ms) — failing to its parent, or at the top to
+`instrumentation.ts`'s `onServiceError` and the `/_denext/health` `services` check — and stops them
+in reverse order after the drain. `supervise({ children, strategy: "one_for_one" | "one_for_all" |
+"rest_for_one", intensity, period, backoff })` nests trees; `jobService(name)` /
+`sidecarService(handle)` adapt a job loop or a Deno Desktop sidecar; `supervisionStatus()` and
+`denext ui`'s Services page show state, restart counts and the last error. Opt-in restarts for
+Live: `defineSubscription({ restart: true })` and `createChannel({ publisher })`. Restart
+semantics, NOT process isolation: no preemption, a shared heap, and a blocking loop still blocks
+everything. Docs: https://denext.dev/docs/services
+
 **A content collection (typed MD/MDX/YAML/JSON — the `@denext/content-collections` plugin):** add
 `plugins: [contentCollections()]` to `denext.config.ts`, declare collections in `content.config.ts`
 with a Standard Schema + a loader, then query them typed from a Server Component. The plugin

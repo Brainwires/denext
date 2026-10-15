@@ -261,6 +261,13 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   otherwise. Zero cost when the app defines none. `retry: { attempts, backoff }` retries a
   failed run (fixed or exponential backoff), each attempt recorded in the run history and the
   overlap guard holding while a run retries.
+- **Supervised services** (`services/<name>.ts` → `defineService({ start })`, or any
+  `supervise({ children, strategy, intensity, period })` tree): `one_for_one` / `one_for_all` /
+  `rest_for_one` restarts with exponential backoff + jitter, intensity escalation to the parent or
+  to `onServiceError` + the `services` health check, reverse-order stop after the server drain,
+  `jobService` / `sidecarService` adapters, `supervisionStatus()` and a `denext ui` Services page;
+  opt-in Live restarts (`defineSubscription({ restart })`, `createChannel({ publisher })`).
+  Restart semantics, not isolation (see [the docs](https://denext.dev/docs/services)).
 - **`denext patch`** — patch-package for denext: record an edit to an npm package (or to
   denext's own sources, installed from JSR) as `patches/<name>+<version>.patch` and re-apply
   it at every `dev`/`build`/`start`; a denext patch overrides single framework files through

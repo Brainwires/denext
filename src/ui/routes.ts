@@ -42,6 +42,7 @@ import { dockerPanel } from "./features/docker.ts";
 import { desktopPanel } from "./features/desktop.ts";
 import { devPanel } from "./features/dev.ts";
 import { tasksPanel } from "./features/tasks.ts";
+import { servicesPanel } from "./features/services.ts";
 import { setupPanel } from "./features/setup.ts";
 import { commandsPanel } from "./features/commands.ts";
 import { DATABASE_PATHS, databasePanel } from "./features/database.ts";
@@ -75,6 +76,7 @@ const FEATURES: readonly FeatureRoute[] = [
   { path: "/desktop", methods: ["GET"], handle: desktopPanel },
   { path: "/dev", methods: ["GET", "POST"], handle: devPanel },
   { path: "/tasks", methods: ["GET"], handle: tasksPanel },
+  { path: "/services", methods: ["GET"], handle: servicesPanel },
   { path: "/setup", methods: ["GET", "POST"], handle: setupPanel },
   { path: "/commands", methods: ["GET", "POST"], handle: commandsPanel },
   // The Database section: one handler for its pages (tables, rows, policies, migrations,
@@ -131,6 +133,7 @@ const CARD_LEAD: Record<string, string> = {
   "/desktop": "Set up code signing for a packaged desktop build.",
   "/dev": "Start and stop the project's dev server, and watch its output.",
   "/tasks": "Run the scripts your deno.json declares, streaming their output.",
+  "/services": "The supervised services/ tree: running, restarting or failed, with restart counts.",
   "/setup": "Check what this project needs to run, and write the missing pieces.",
   "/commands": "Run this project's own denext verbs.",
   "/database": "Browse and edit the Postgres tables, policies, migrations, storage and auth users.",

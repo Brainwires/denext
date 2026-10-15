@@ -57,6 +57,7 @@ import {
   setClientAddr,
 } from "./remote-addr.ts";
 import { inRootContext } from "./root-context.ts";
+import { defaultSupervisionLog, nextRestart, RestartWindow } from "../runtime/restart.ts";
 import {
   LIVE_REF_ID,
   type LiveBoundarySub,
@@ -82,6 +83,13 @@ interface DataSub {
    */
   busy?: boolean;
   dirty?: boolean;
+  /**
+   * A `defineSubscription({ restart })` whose resolver threw: the pending restart, and the
+   * restarts within the policy's period (cleared by a success).
+   */
+  restartTimer?: ReturnType<typeof setTimeout>;
+  restartWindow?: RestartWindow;
+  restarts?: number;
 }
 
 /** How long to coalesce a burst of tag invalidations before re-rendering (ms). */
@@ -320,6 +328,7 @@ export function uninstallLiveHub(): void {
       clearTimeout(conn.recoverTimer);
       conn.recoverTimer = null;
     }
+    clearDataSubRestarts(conn);
     try {
       conn.socket.close();
     } catch { /* already closing */ }
@@ -635,6 +644,7 @@ function dropConnection(conn: Conn): void {
     clearTimeout(conn.recoverTimer);
     conn.recoverTimer = null;
   }
+  clearDataSubRestarts(conn);
   for (const room of conn.presenceRooms.keys()) {
     const members = rooms.get(room);
     if (!members) continue;
@@ -692,7 +702,7 @@ function handleClientMessage(conn: Conn, raw: string): void {
       guarded(handleDataSubscribe(conn, msg));
       return;
     case "data-unsubscribe":
-      if (typeof msg.subId === "string") conn.dataSubs.delete(msg.subId);
+      if (typeof msg.subId === "string") removeDataSub(conn, msg.subId);
       return;
     case "tags-subscribe":
       guarded(handleTagsSubscribe(conn, msg));
@@ -806,6 +816,7 @@ async function handleDataSubscribe(
     sendError(conn, "limit", "too many subscriptions", { subId });
     return;
   }
+  removeDataSub(conn, subId); // a re-subscribe under the same id replaces it (and its restart)
   conn.dataSubs.set(subId, sub);
   void recomputeData(conn, subId, sub); // push the initial value
 }
@@ -1068,11 +1079,11 @@ async function authorizeSub(conn: Conn, sub: DataSub): Promise<AuthDecision> {
 function subFailure(conn: Conn, subId: string, err: unknown): void {
   if (isForbidden(err) || isUnauthorized(err)) {
     sendError(conn, "denied", "subscription not permitted", { subId });
-    conn.dataSubs.delete(subId);
+    removeDataSub(conn, subId);
     return;
   }
   if (isRedirect(err)) {
-    conn.dataSubs.delete(subId);
+    removeDataSub(conn, subId);
     return;
   }
   if (isNotFound(err)) return sendError(conn, "failed", "not found", { subId });
@@ -1081,6 +1092,66 @@ function subFailure(conn: Conn, subId: string, err: unknown): void {
     subId,
     ...(client.digest ? { digest: client.digest } : {}),
   });
+}
+
+/** Cancel a data subscription's pending restart. */
+function clearRestart(sub: DataSub): void {
+  if (sub.restartTimer !== undefined) clearTimeout(sub.restartTimer);
+  sub.restartTimer = undefined;
+}
+
+/** Remove a data subscription, cancelling its pending restart. */
+function removeDataSub(conn: Conn, subId: string): void {
+  const sub = conn.dataSubs.get(subId);
+  if (sub) clearRestart(sub);
+  conn.dataSubs.delete(subId);
+}
+
+/** Cancel every pending restart of a connection's data subscriptions (it is going away). */
+function clearDataSubRestarts(conn: Conn): void {
+  for (const sub of conn.dataSubs.values()) clearRestart(sub);
+}
+
+/**
+ * A recompute whose resolver threw, on a `defineSubscription({ restart })`: schedule the
+ * recompute again after the backoff and say so (`true`). `false` — no restart policy, a denial /
+ * redirect / not-found (each has its own meaning), or more than `maxRestarts` within the period
+ * (the streak is forgotten, so the next invalidation gets a fresh one) — leaves it to
+ * `subFailure`. The socket is never touched either way.
+ */
+function scheduleRestart(conn: Conn, subId: string, sub: DataSub, err: unknown): boolean {
+  const policy = sub.def?.restart;
+  if (!policy || !restartable(err)) return false;
+  sub.restartWindow ??= new RestartWindow(policy.period);
+  const restarts = sub.restarts ?? 0;
+  const path = `live:${sub.actionId}/${subId}`;
+  const delayMs = nextRestart(
+    { path, restarts, error: err },
+    sub.restartWindow,
+    policy,
+    defaultSupervisionLog,
+  );
+  if (delayMs === null) {
+    sub.restartWindow.reset();
+    return false;
+  }
+  sub.restarts = restarts + 1;
+  clearRestart(sub);
+  // The restart serves the subscription, not whatever context the failed recompute ran in.
+  sub.restartTimer = inRootContext(() =>
+    setTimeout(() => {
+      sub.restartTimer = undefined;
+      if (connections.has(conn) && conn.dataSubs.get(subId) === sub) {
+        void recomputeData(conn, subId, sub);
+      }
+    }, delayMs)
+  );
+  return true;
+}
+
+/** Whether a resolver error is a crash to restart (a denial, redirect or not-found is an answer). */
+function restartable(err: unknown): boolean {
+  return !(isForbidden(err) || isUnauthorized(err) || isRedirect(err) || isNotFound(err));
 }
 
 /** The subscription's `args` — wire-codec decoded when flagged `enc`; `null` when malformed. */
@@ -1119,18 +1190,20 @@ async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<v
       const decision = await authorizeSub(conn, sub);
       if (decision !== "allow") {
         sendError(conn, "denied", "subscription not permitted", { subId });
-        conn.dataSubs.delete(subId); // drop it; the client may re-subscribe if re-granted
+        removeDataSub(conn, subId); // drop it; the client may re-subscribe if re-granted
         break;
       }
       try {
         const value = await withRenderSlot(() =>
           withDeadline(renderDeadlineMs(), (s) => runFetcher(conn, sub, s))
         );
+        sub.restartWindow?.reset(); // a success ends a crash streak: the next backoff starts small
         send(conn, dataFrame(subId, value));
       } catch (err) {
         // A thrown deadline (or a real fetcher error) lands here; the slot was already
-        // released by `withDeadline`, so the fleet keeps moving.
-        subFailure(conn, subId, err);
+        // released by `withDeadline`, so the fleet keeps moving. A `restart` subscription is
+        // restarted with backoff instead (the socket stays up, the client keeps its last value).
+        if (!scheduleRestart(conn, subId, sub, err)) subFailure(conn, subId, err);
       }
       // Re-run only while still subscribed (unsubscribe deletes the sub mid-flight).
     } while (sub.dirty && conn.dataSubs.get(subId) === sub);
@@ -1141,7 +1214,7 @@ async function recomputeData(conn: Conn, subId: string, sub: DataSub): Promise<v
     // revoked session) would crash the whole process, dropping every connection — not
     // just this socket. Degrade like a denied recompute: notify + drop the sub.
     sendError(conn, "failed", "recompute failed", { subId });
-    conn.dataSubs.delete(subId);
+    removeDataSub(conn, subId);
   } finally {
     sub.busy = false;
   }

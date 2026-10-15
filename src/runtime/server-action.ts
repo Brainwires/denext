@@ -3,6 +3,7 @@ import { djb2 } from "./djb2.ts";
 import { detachedFromRequest } from "./root-context-bridge.ts";
 import { isChannel, registerChannelIfLoaded } from "./channel-brand.ts";
 import { decodeWire, prepareWire, WIRE_ENC } from "./wire-codec.ts";
+import type { ResolvedRestart } from "./restart.ts";
 //
 // denext has no bundler transform of `"use server"`, so actions are registered
 // at runtime by id: `serverAction("id", handler)`. On the server the returned
@@ -265,6 +266,8 @@ export interface SubscriptionDef {
   authorize?: (parsed: unknown, ctx: SubscriptionRunContext) => Promise<boolean>;
   /** Compute the value. */
   run(parsed: unknown, ctx: SubscriptionRunContext): Promise<unknown>;
+  /** Restart a recompute whose `run` threw (the `restart` option), when set. */
+  restart?: ResolvedRestart;
 }
 
 /** The symbol under which a `defineSubscription` ref carries its {@link SubscriptionDef}. */

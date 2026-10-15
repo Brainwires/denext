@@ -126,6 +126,7 @@ export const UI_NAV_SECTIONS: readonly NavSection[] = [
       { href: "/desktop", label: "Desktop" },
       { href: "/dev", label: "Dev" },
       { href: "/tasks", label: "Tasks" },
+      { href: "/services", label: "Services" },
       { href: DATABASE_NAV_HREF, label: "Database" },
       { href: "/commands", label: "Commands" },
     ],

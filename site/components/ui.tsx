@@ -43,6 +43,7 @@ export const NAV: {
       { slug: "backend", label: "Backend" },
       { slug: "error-handling", label: "Error handling" },
       { slug: "jobs", label: "Scheduled jobs" },
+      { slug: "services", label: "Supervised services" },
       { slug: "live", label: "Live components" },
       { slug: "islands", label: "Islands & hydration" },
       { slug: "resumability", label: "Resumability" },

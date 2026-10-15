@@ -26,6 +26,7 @@ import {
   setNextRuntimeEnv,
 } from "../../server/instrumentation.ts";
 import { bootScheduledJobs } from "../../server/job-loader.ts";
+import { bootServices } from "../../server/service-loader.ts";
 import { clientEntryFor, getMiddleware, styleHrefsFor } from "./bundles.ts";
 import { devOriginAllowed } from "./dev-endpoints.ts";
 import { devActionScope, devBoundaryFor, getManifest } from "./manifest.ts";
@@ -66,6 +67,12 @@ function startInstrumentation(st: DevState, onLoaded: () => void): void {
     // `startInstrumentation` runs once per process (no in-process reboot), so the disposer is
     // intentionally not retained.
     await bootScheduledJobs(st.paths.projectDir, st.paths.config ?? undefined, st.paths.outDir);
+    // The supervised services/ tree (a no-op without the directory); stopped on the drain. Like
+    // the jobs, discovered once per process: an edit to a service file needs a dev restart.
+    await bootServices(st.paths.projectDir, {
+      outDir: st.paths.outDir,
+      onServiceError: st.instrumentation.onServiceError,
+    });
     // Plugin prepare steps (codegen the app imports — e.g. content-collections types + store):
     // set plugins up once (idempotent; the first getManifest is a no-op then) and run them so the
     // generated inputs exist before the first request. A no-op when no plugin registered one.

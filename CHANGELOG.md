@@ -56,6 +56,32 @@ and this project adheres to
   the explanation with the original in a collapsed section. `--raw` (or
   `DENEXT_RAW_DIAGNOSTICS=1`) prints Deno's output unchanged. The new `denext_explain_error` MCP
   tool explains pasted tool output or a structured diagnostic.
+- **Supervised services: `supervise()` and `defineService()` (`denext/server`), and the
+  `services/` directory.** Long-lived server work (a queue consumer, a feed tail, a connection to
+  an upstream) runs under a supervisor that starts its children in order, restarts a crashed one
+  with exponential backoff and jitter, and applies a strategy (`one_for_one`, `one_for_all`,
+  `rest_for_one`). More than `intensity` restarts within `period` stops the children and fails
+  the supervisor: a nested one counts as a crashed child of its parent, and a top-level one
+  reports a `SupervisorError` to `onError`, to a new `instrumentation.ts` hook `onServiceError`,
+  to the log and to a `services` check on `/_denext/health`. Each `services/<name>.ts` default
+  export runs under one root supervisor in `denext dev` and `denext start`. On shutdown the
+  services stop in reverse start order after in-flight requests have drained and before plugin
+  teardowns. `jobService(name)` supervises a long-running job loop and `sidecarService(handle)`
+  a Deno Desktop sidecar. `supervisionStatus()` returns every tree's state, restart counts and
+  last error, and `denext ui` has a Services page that reads the `.denext/services.json` snapshot
+  the server writes. Crashes, restarts and give-ups are logged, as JSON with `DENEXT_LOG=json`.
+  This provides restart semantics, not process isolation: there is no preemption and no
+  separate heap, and a blocking loop still blocks the whole process
+  (https://denext.dev/docs/services).
+- **Opt-in restarts for Live work.** `defineSubscription({ restart })` restarts a recompute whose
+  resolver threw, with backoff, instead of leaving the subscription on a `failed` frame until its
+  next invalidation. The socket stays open and the client sees no `failed` frame until the
+  restarts run out. `createChannel({ publisher, publisherRestart })` runs a producer for each
+  active key, restarts it with backoff when it throws, and stops it when the key goes idle.
+- **One restart backoff helper.** Sidecar restarts, job retries, supervisors and Live restarts
+  now compute their delays with the same helper. Sidecar and job delays are unchanged, except
+  that a sidecar's `maxBackoffMs` above 2^31-1 ms is now capped at the timer limit. Before, a
+  timer given that delay fired immediately.
 - **`smtpMailer({ host, port, secure, user, pass, from })` (`denext/server`): an SMTP client with
   no npm dependency, usable as `sendVerificationRequest`.** It runs on `Deno.connect` /
   `Deno.connectTls` / `Deno.startTls`. TLS is required: port 465 (or `secure`) is implicit TLS,

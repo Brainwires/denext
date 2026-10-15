@@ -4,8 +4,7 @@
 // discovery — like route discovery, denext imports job modules from source at server boot, so no
 // build manifest is needed.
 
-import { walk } from "@std/fs";
-import { join, toFileUrl } from "@std/path";
+import { join } from "@std/path";
 import {
   abortJobRuns,
   collectSchedules,
@@ -18,6 +17,7 @@ import { JOB_HISTORY_DB, type JobHistoryStore, sqliteJobHistoryStore } from "./j
 import type { JobHistoryConfig } from "./config.ts";
 import { inRootContext } from "./root-context.ts";
 import { guardLegacyMigrateJob } from "./legacy-migrate-job.ts";
+import { importModules } from "./module-walk.ts";
 
 /**
  * Discover `jobs/**` under `jobsDir`, import each module, and register the job it
@@ -26,29 +26,8 @@ import { guardLegacyMigrateJob } from "./legacy-migrate-job.ts";
  * and skipped — a bad job file never takes the server down.
  */
 export async function discoverJobs(jobsDir: string): Promise<string[]> {
-  try {
-    if (!(await Deno.stat(jobsDir)).isDirectory) return [];
-  } catch {
-    return []; // no jobs/ directory
-  }
   const found: string[] = [];
-  for await (
-    const entry of walk(jobsDir, {
-      exts: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
-      includeDirs: false,
-      skip: [/[/\\]\.[^/\\]+/, /[/\\]_/], // dotfiles/dirs and `_private` files
-    })
-  ) {
-    const rel = entry.path.slice(jobsDir.length).replace(/^[/\\]/, "");
-    const name = rel.replace(/\.(tsx?|jsx?|mjs)$/, "").replace(/[/\\]/g, "/");
-    let mod: Record<string, unknown>;
-    try {
-      // A job module belongs to no request, even when the first run is triggered by one.
-      mod = await inRootContext(() => import(toFileUrl(entry.path).href));
-    } catch (err) {
-      console.error(`denext: failed to load job "${name}":`, err);
-      continue;
-    }
+  for await (const { rel, name, path, mod } of importModules(jobsDir, "job")) {
     const job = mod.default ?? mod.job;
     if (isJob(job)) {
       registerJob(
@@ -56,7 +35,7 @@ export async function discoverJobs(jobsDir: string): Promise<string[]> {
         name === "migrate"
           ? guardLegacyMigrateJob(
             job,
-            await Deno.readTextFile(entry.path),
+            await Deno.readTextFile(path),
             join(jobsDir, "..", "migrations"),
           )
           : job,

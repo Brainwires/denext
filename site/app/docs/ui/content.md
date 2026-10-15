@@ -1,7 +1,7 @@
 ---
 title: Project UI
 slug: ui
-lead: denext ui serves a loopback GUI for the project in front of you — a schema-driven denext.config.ts editor that preserves your comments, a Cron page for schedules and run history, plugin management with per-plugin option forms and JSR search, a GUI over generate, Docker regeneration plus an in-place compose editor, a Desktop signing panel, a Setup page that readies a fresh clone, a Dev page for the dev server, a Tasks page for your deno.json scripts, and your project's own CLI verbs.
+lead: denext ui serves a loopback GUI for the project in front of you — a schema-driven denext.config.ts editor that preserves your comments, a Cron page for schedules and run history, plugin management with per-plugin option forms and JSR search, a GUI over generate, Docker regeneration plus an in-place compose editor, a Desktop signing panel, a Setup page that readies a fresh clone, a Dev page for the dev server, a Tasks page for your deno.json scripts, a Services page for the supervised services/ tree, and your project's own CLI verbs.
 ---
 
 `denext ui` is a browser GUI for the project you are standing in — the `vue ui` idea,
@@ -677,6 +677,15 @@ with that `deno` first on the task's `PATH`.
 Not to be confused with the Cron page's scheduled jobs: those are `jobs/<name>.ts` modules
 registered with `defineJob`; these are `deno.json` scripts.
 
+## Services
+
+`/services` shows the [supervised services](/docs/services): the files under `services/`, and
+for each supervisor the state of every child (`running`, `restarting`, `failed`, …), its restart
+count and its last error. The UI never runs project code, so it reads the snapshot a running
+`denext dev` or `denext start` keeps in `.denext/services.json`, and says when that was written;
+with no server running it is the last one. Read-only. The JSON twin answers
+`{ ok, dir, files, snapshot }`.
+
 **The dev server, and stopping it.** Starting `denext dev` answers _in place_ rather than
 redirecting, and the step keeps a `<pre class="out">` that the server's output streams into over
 SSE. Those lines are also retained in the UI's memory, so a reload, a second tab, or a panel swap
@@ -1045,6 +1054,7 @@ the browser and a machine client exercise identical code:
 | `/setup`           | `GET` `POST`            | `/api/setup`           |
 | `/dev`             | `GET` `POST`            | `/api/dev`             |
 | `/tasks`           | `GET`                   | `/api/tasks`           |
+| `/services`        | `GET`                   | `/api/services`        |
 | `/commands`        | `GET` `POST`            | `/api/commands`        |
 | `/database/…`      | `GET` (`POST` to write) | `/api/database/…`      |
 | `/tasks/run`       | `POST`                  | `/api/tasks/run` (SSE) |
@@ -1065,6 +1075,7 @@ describes what its panel does, it does not flatten every panel into one shape:
 | `/api/setup`           | `{ ok, dir, kind, steps }` — one entry per step                                       | `{ ok, … }` the step outcome                                                                     |
 | `/api/dev`             | `{ ok, dir, running, origin, pid }`                                                   | `{ ok, … }` the start/stop outcome                                                               |
 | `/api/tasks`           | `{ ok, dir, tasks }` — the declared names                                             | — (runs go to `/api/tasks/run`)                                                                  |
+| `/api/services`        | `{ ok, dir, files, snapshot }` — the last status snapshot, or `null`                  | — (read-only)                                                                                    |
 | `/api/database/…`      | the child's reply: `{ ok, tables }`, `{ ok, rows, next?, statement }`, …              | `{ ok, statement, applied, affected? }` — `applied: false` for the preview                       |
 
 So `{ ok, applied, diff }` — the diff-then-confirm envelope — is what the writers that
