@@ -44,6 +44,17 @@ and this project adheres to
   the provider presets, the adapters and stores, bearer tokens, email verification and password
   reset, MFA, passkeys and SAML. `denext/server` still re-exports every name. `denext create` and
   `denext migrate` map it in the import map they write.
+- **`<ViewTransition>` callbacks: `onEnter`, `onExit`, `onUpdate` and `onShare`, as in React.**
+  Each runs once the transition is ready (its `::view-transition-*` pseudo-elements exist) with
+  the boundary's `ViewTransitionInstance` (`name`, and `group` / `imagePair` / `old` / `new`
+  with `animate()`, `getAnimations()` and `getComputedStyle()`) and the transition types; a
+  function it returns runs when the transition finishes. `onShare` runs on the side that leaves,
+  and a paired boundary runs no `onEnter` / `onExit`. They run for same-page Transitions and for
+  soft navigations (`onEnter` / `onExit` / `onShare` there). Callbacks need a client-rendered
+  `<ViewTransition>`: a function can't cross from a Server Component.
+- **An `<Activity>` going hidden in a Transition animates its boundaries as exits,** and a
+  boundary entirely outside the viewport is not animated (an enter or exit there, or an update
+  outside it before and after, is skipped and runs no callback), as React does.
 - **`ip` on every auth event.** Each `denextAuth` event payload (`signIn`, `signOut`,
   `sessionRevoked`, `createUser`, `linkAccount`, `verificationRequested`, `emailVerified`,
   `phoneVerified`, `userConverted`, `passwordReset`, `apiTokenIssued`, `apiTokenRevoked`, and

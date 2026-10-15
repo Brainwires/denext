@@ -20,7 +20,9 @@ import type { Fiber } from "./fiber.ts";
 export interface ActiveViewTransition {
   /** Stamp the now-current (incoming) hosts, inside the transition callback after the commit. */
   markIncoming(): void;
-  /** Remove every stamp THIS transition applied (called when the transition finishes). */
+  /** Run the boundaries' `on*` callbacks (the transition is `ready`: its pseudo-elements exist). */
+  ready(): void;
+  /** Remove every stamp THIS transition applied and run the callbacks' cleanups (it finished). */
   clear(): void;
 }
 

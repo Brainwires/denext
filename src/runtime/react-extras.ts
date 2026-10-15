@@ -27,6 +27,14 @@ export const ACTIVITY: symbol = Symbol.for("denext.activity");
 export const DNX_VT_ATTR = "data-dnx-vt";
 
 /**
+ * Prop key (a symbol, so neither the DOM, the server renderer nor Flight sees it) under which a
+ * client-rendered `<ViewTransition>` hands its `onEnter` / `onExit` / `onUpdate` / `onShare`
+ * callbacks to the hosts it marks; the client marking runtime reads them off the fibers. One
+ * object per `<ViewTransition>` render, shared by all of its hosts.
+ */
+export const DNX_VT_EVENTS: unique symbol = /* @__PURE__ */ Symbol.for("denext.vtEvents") as never;
+
+/**
  * The current request context (an opaque per-request object), used to make
  * {@linkcode cache} request-scoped during SSR. Read via a global installed by
  * denext's server runtime rather than a static import, so this client-safe shim
@@ -41,6 +49,43 @@ function currentRequestContext(): object | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * A `<ViewTransition>` `onEnter` / `onExit` / `onUpdate` / `onShare` callback (React's): called with
+ * the boundary's {@link ViewTransitionInstance} and the transition's types; a returned function
+ * runs when the transition finishes.
+ */
+export type ViewTransitionCallback = (
+  instance: ViewTransitionInstance,
+  types: string[],
+) => void | (() => void);
+
+/** One `::view-transition-*` pseudo-element of a boundary (React's `ViewTransitionPseudoElement`). */
+export interface ViewTransitionPseudoElement {
+  /** `Element.animate()` on this pseudo-element (a number is the duration). */
+  animate(
+    keyframes: Keyframe[] | PropertyIndexedKeyframes | null,
+    options?: number | KeyframeAnimationOptions,
+  ): Animation;
+  /** The animations running on this pseudo-element. */
+  getAnimations(): Animation[];
+  /** Its computed style. */
+  getComputedStyle(): CSSStyleDeclaration;
+}
+
+/** What a `<ViewTransition>` callback receives (React's `ViewTransitionInstance`). */
+export interface ViewTransitionInstance {
+  /** The boundary's `view-transition-name`. */
+  name: string;
+  /** `::view-transition-group(name)`. */
+  group: ViewTransitionPseudoElement;
+  /** `::view-transition-image-pair(name)`. */
+  imagePair: ViewTransitionPseudoElement;
+  /** `::view-transition-old(name)`. */
+  old: ViewTransitionPseudoElement;
+  /** `::view-transition-new(name)`. */
+  new: ViewTransitionPseudoElement;
 }
 
 /** A `<ViewTransition>`'s honored config, JSON-encoded into {@link DNX_VT_ATTR} on its host child. */
@@ -69,6 +114,8 @@ export interface ViewTransitionMarker {
 interface VTScope {
   /** The boundary's config (its `name` is the base name). */
   m: ViewTransitionMarker;
+  /** The boundary's event callbacks (`DNX_VT_EVENTS`), when it has any. */
+  ev: object | undefined;
   /** The component levels above this one (empty at the `<ViewTransition>` itself). */
   path: number[];
   /** The next position at this level (Fragments and arrays are flat; a component opens a level). */
@@ -94,10 +141,11 @@ function markerAt(scope: VTScope, i: number): string {
 function markLevel(
   children: VNodeChildren,
   m: ViewTransitionMarker,
+  ev: object | undefined,
   path: number[],
   n: number,
 ): VNodeChildren {
-  const scope: VTScope = { m, path, n, tail: null };
+  const scope: VTScope = { m, ev, path, n, tail: null };
   const out = markHosts(children, scope);
   // The last position is a component: it continues this level's count.
   if (scope.tail) {
@@ -146,8 +194,8 @@ function expanderFor(type: object): (props: Record<PropertyKey, unknown>) => unk
         const { ref, ...noRef } = rest;
         out = call(noRef, ref);
       } else out = call(rest);
-      const { m, path, n } = scope as VTScope;
-      const mark = (o: unknown) => markLevel(o as VNodeChildren, m, path, n);
+      const { m, ev, path, n } = scope as VTScope;
+      const mark = (o: unknown) => markLevel(o as VNodeChildren, m, ev, path, n);
       return out instanceof Promise ? out.then(mark) : mark(out);
     };
     const named = type as { displayName?: string; name?: string };
@@ -156,6 +204,16 @@ function expanderFor(type: object): (props: Record<PropertyKey, unknown>) => unk
     expanders.set(type, x);
   }
   return x;
+}
+
+/** Stamp one host (or carrying component) with the boundary's config and its callbacks. */
+function markHost(el: VNode, props: Record<PropertyKey, unknown>, scope: VTScope): VNode {
+  const next: Record<PropertyKey, unknown> = {
+    ...props,
+    [DNX_VT_ATTR]: markerAt(scope, scope.n++),
+  };
+  if (scope.ev) next[DNX_VT_EVENTS] = scope.ev;
+  return withProps(el, next);
 }
 
 /**
@@ -173,11 +231,17 @@ function markHosts(children: VNodeChildren, scope: VTScope): VNodeChildren {
   const props = (el.props ?? {}) as Record<PropertyKey, unknown>;
   if (typeof type === "string" || (isComponentType(type) && !expandable(type))) {
     scope.tail = null;
-    return withProps(el, { ...props, [DNX_VT_ATTR]: markerAt(scope, scope.n++) });
+    return markHost(el, props, scope);
   }
   if (type === ViewTransition) return el;
   if (expandable(type)) {
-    const inner: VTScope = { m: scope.m, path: scope.path.concat(scope.n++), n: 0, tail: null };
+    const inner: VTScope = {
+      m: scope.m,
+      ev: scope.ev,
+      path: scope.path.concat(scope.n++),
+      n: 0,
+      tail: null,
+    };
     scope.tail = inner;
     return {
       ...el,
@@ -213,6 +277,16 @@ function markHosts(children: VNodeChildren, scope: VTScope): VNodeChildren {
  *   in `src/client/navigation.ts`), so a `name` shared across routes morphs one element into the
  *   other; the route-level cross-fade applies regardless.
  *
+ * A hidden `<Activity>` going hidden in a Transition animates its boundaries as exits, and a
+ * boundary entirely outside the viewport (before and after) is not animated, as in React.
+ *
+ * `onEnter` / `onExit` / `onUpdate` / `onShare` run once the transition's pseudo-elements exist
+ * (`ready`), with the boundary's `ViewTransitionInstance` (`name`, and `group` / `imagePair` /
+ * `old` / `new` handles with `animate()` / `getAnimations()` / `getComputedStyle()` on its
+ * `::view-transition-*` pseudo-elements) and the transition types; a returned function runs
+ * when the transition finishes. `onShare` runs on the side that leaves. Callbacks need a
+ * client-rendered `<ViewTransition>` (a function can't cross from a Server Component).
+ *
  * Where the browser lacks the View Transitions API the commit simply applies.
  */
 export function ViewTransition(
@@ -223,6 +297,10 @@ export function ViewTransition(
     exit?: string | Record<string, string>;
     update?: string | Record<string, string>;
     share?: string | Record<string, string>;
+    onEnter?: ViewTransitionCallback;
+    onExit?: ViewTransitionCallback;
+    onUpdate?: ViewTransitionCallback;
+    onShare?: ViewTransitionCallback;
     children?: VNodeChildren;
   },
 ): VNode {
@@ -230,9 +308,13 @@ export function ViewTransition(
   for (const k of ["name", "default", "enter", "exit", "update", "share"] as const) {
     if (props?.[k] != null) (marker as Record<string, unknown>)[k] = props[k];
   }
+  let ev: Record<string, ViewTransitionCallback> | undefined;
+  for (const k of ["onEnter", "onExit", "onUpdate", "onShare"] as const) {
+    if (typeof props?.[k] === "function") (ev ??= {})[k] = props[k]!;
+  }
   // A wrapper with no config still marks its hosts: like React's, it participates under an
   // automatic name. Clones keep each element's brand (`$$typeof`) and key.
-  const out = markLevel(props?.children ?? null, marker, [], 0);
+  const out = markLevel(props?.children ?? null, marker, ev, [], 0);
   return out != null && typeof out === "object" && !Array.isArray(out)
     ? out as VNode
     : h(Fragment, null, out);

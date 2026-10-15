@@ -63,6 +63,8 @@ function beginHidden(wip: Fiber): Fiber | null {
     if (hidden && old!.vnode.props !== c.vnode.props) scheduleUpdateLane(c, TransitionLane);
   }
   fiberExt(wip).primaryCount = count;
+  // Going hidden marks the commit's flagged paths, as a reveal does (a view transition exits it).
+  if (!hasBit(wip.alternate, OffscreenBit)) wip.flags |= Update;
   wip.bits |= OffscreenBit;
   noteOffscreen(); // so the commit pass hides the primary DOM + parks/disconnects effects
   return wip.child;

@@ -444,7 +444,9 @@ export function withViewTransition(commit: () => void): void {
   } catch {
     transition = doc.startViewTransition(update);
   }
-  transition?.ready?.catch(() => {}); // a skipped/aborted transition is not an error
+  // A skipped/aborted transition is not an error; the `<ViewTransition>` callbacks run either way.
+  const ready = () => tx?.ready();
+  transition?.ready?.then(ready, ready);
   // `updateCallbackDone` rejects ONLY when `commit` itself threw (distinct from an abort, which
   // rejects `ready`/`finished`) — surface that real DOM-swap failure instead of swallowing it.
   transition?.updateCallbackDone?.catch(reportNavFailure);

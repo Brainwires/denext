@@ -130,8 +130,12 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   `name` morphs an element between routes, `enter`/`exit`/`update`/`share` +
   `addTransitionType` select the animation, on every soft-nav path; and, as in
   React 19.2, on the same page: a commit made only of Transition work animates the
-  boundaries that enter, exit, are shared or update (urgent updates never do);
-  import-gated.
+  boundaries that enter, exit, are shared or update (urgent updates never do), an
+  `<Activity>` going hidden animates as an exit, and a boundary outside the viewport
+  is skipped; `onEnter` / `onExit` / `onUpdate` / `onShare` get React's
+  `ViewTransitionInstance` (`animate()` on its `::view-transition-*` pseudo-elements)
+  and the transition types once it is ready, and a returned cleanup runs when it
+  finishes; import-gated.
 - **Auto-memo compiler** (React-Compiler-style automatic memoization) ⚑.
 - **First-party `AsyncContext`** (TC39-shaped `Variable` + `Snapshot`) — the
   primitive no browser has shipped, implemented in userland. Synchronous scoping

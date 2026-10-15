@@ -77,9 +77,9 @@ or an upstream. Each one's limitation entry is deleted when it ships.
 
 ## React, Remix and SPA surface
 
-- **`<ViewTransition>` callbacks and the rest of its surface:** `onEnter` / `onExit` /
-  `onUpdate` / `onShare`, an `<Activity>` going hidden animated as an exit, and an update
-  skipped when the boundary is off-screen.
+- **A `ref` on `<ViewTransition>`** (React hands it the boundary's `ViewTransitionInstance`).
+  denext's `<ViewTransition>` stays hook-free so it renders inside Server Components, and it has
+  no fiber of its own to attach a ref to; the callbacks already receive the instance.
 - **A soft navigation streams `defer()` data per boundary,** as a document load does; today a
   client navigation's Flight payload waits for every deferred value.
 - **A root layout rendered by client code hoists its `<head>` tags:** its
