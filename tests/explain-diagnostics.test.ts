@@ -66,6 +66,7 @@ Deno.test("explain snapshots: every common case is captured and explained", () =
       "lint-directive",
       "lint-hooks-async",
       "lint-rules-of-hooks",
+      "lint-exhaustive-switch", // the opt-in rule, with the union declared in the file
     ]
   ) {
     assert(all.includes(required), `missing fixture ${required}`);
@@ -119,6 +120,20 @@ Deno.test("parseDiagnostics: TS blocks, related locations, lint blocks, Deno and
     "TS2304",
   );
   assertEquals(parseDiagnostics("all good\n"), []);
+});
+
+Deno.test("explain: the opt-in exhaustive-switch (no local type) and no-throw rules", () => {
+  const unknownType = explainDiagnostic(fromStructured({
+    code: "denext/exhaustive-switch",
+    message: "This switch over `shape.kind` has only literal cases and no `default`.",
+  }))!;
+  assertEquals(unknownType.title, "This switch over `shape.kind` may not handle every case");
+  assertStringIncludes(unknownType.fix, "assertNever(shape.kind)");
+  const thrown = explainDiagnostic(fromStructured({
+    code: "denext/no-throw",
+    message: "`throw` in a no-throw directory.",
+  }))!;
+  assertStringIncludes(thrown.fix, "err(");
 });
 
 Deno.test("fromStructured: a TypeScript message chain and a lint rule id", () => {

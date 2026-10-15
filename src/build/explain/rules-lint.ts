@@ -1,6 +1,7 @@
 // denext's own lint rules (src/lint/denext-plugin.ts), explained: the client/server boundary
 // mistakes behind `directive-placement`, `rules-of-hooks`, `hooks-in-component`,
-// `no-hooks-in-async` and `no-handlers-in-async`.
+// `no-hooks-in-async` and `no-handlers-in-async`, plus the opt-in `exhaustive-switch` and
+// `no-throw` that `denextLintPlugin(options)` adds.
 
 import type { RuleInput, RuleResult } from "./types.ts";
 
@@ -103,12 +104,48 @@ function noHandlersInAsync(message: string): RuleResult {
   };
 }
 
+function exhaustiveSwitch(message: string): RuleResult {
+  const subject = quoted(message) || "value";
+  const missing = /does not handle (.+?)\. Add/.exec(message)?.[1];
+  const guard =
+    `default:\n  return assertNever(${subject}); // import { assertNever } from "denext/result"`;
+  if (missing) {
+    return {
+      title: `This switch over \`${subject}\` misses ${missing}`,
+      why: `\`${subject}\` is a union this file declares, and no \`case\` handles ${missing}. ` +
+        `Without a \`default\`, those values fall through the switch silently.`,
+      fix: `Add a \`case\` for ${missing}. To have the compiler catch the next missing case, ` +
+        `end the switch with\n${guard}`,
+    };
+  }
+  return {
+    title: `This switch over \`${subject}\` may not handle every case`,
+    why: `Every \`case\` is a literal and there is no \`default\`. Lint rules can't see the ` +
+      `type of \`${subject}\` (it is imported or inferred), so they can't tell whether every ` +
+      `member is handled.`,
+    fix: `If \`${subject}\` is a union, end the switch with\n${guard}\nso a missing case becomes ` +
+      `a compile error. Otherwise add a \`default\` that handles the other values.`,
+  };
+}
+
+function noThrow(_message: string): RuleResult {
+  return {
+    title: "`throw` in a directory where failures are values",
+    why: "This directory is listed in the `no-throw` option of `denextLintPlugin`, so its " +
+      "functions report expected failures in their return type instead of throwing.",
+    fix: 'Return `err("code")` from denext/result (with `Result<T, E>` as the return type), ' +
+      "or wrap a throwing dependency in `tryAsync(() => call(), mapError)`.",
+  };
+}
+
 const LINT_RULES: Readonly<Record<string, (message: string) => RuleResult>> = {
   "denext/directive-placement": directivePlacement,
   "denext/rules-of-hooks": rulesOfHooks,
   "denext/hooks-in-component": hooksInComponent,
   "denext/no-hooks-in-async": noHooksInAsync,
   "denext/no-handlers-in-async": noHandlersInAsync,
+  "denext/exhaustive-switch": exhaustiveSwitch,
+  "denext/no-throw": noThrow,
 };
 
 /** A denext lint rule's report, explained. */

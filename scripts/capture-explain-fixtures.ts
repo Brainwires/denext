@@ -91,11 +91,27 @@ async function writeApp(dir: string): Promise<void> {
   }
 }
 
+/**
+ * A lint config for the `lint-` cases: denext's plugin with its opt-in rules enabled, so the
+ * `exhaustive-switch` / `no-throw` reports are captured too (the default rules are unchanged).
+ */
+async function writeLintConfig(dir: string): Promise<string> {
+  const plugin = join(dir, "_lint-plugin.ts");
+  await Deno.writeTextFile(
+    plugin,
+    `import { denextLintPlugin } from ${JSON.stringify(`${ROOT}src/lint/denext-plugin.ts`)};\n` +
+      `export default denextLintPlugin({ exhaustiveSwitch: true });\n`,
+  );
+  const config = join(dir, "_lint.json");
+  await Deno.writeTextFile(config, JSON.stringify({ lint: { plugins: ["./_lint-plugin.ts"] } }));
+  return config;
+}
+
 /** Run `deno check` / `deno lint` on one case; its combined output, uncoloured. */
 async function capture(dir: string, name: string): Promise<string> {
   const lint = name.startsWith("lint-");
   const args = lint
-    ? ["lint", "--config", REPO_CONFIG, join(dir, name)]
+    ? ["lint", "--config", await writeLintConfig(dir), join(dir, name)]
     : ["check", "--config", REPO_CONFIG, join(dir, name)];
   const { stdout, stderr } = await new Deno.Command(Deno.execPath(), {
     args,
