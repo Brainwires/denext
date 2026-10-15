@@ -186,10 +186,29 @@ function captureSnapshot(inst: ReconcilerInstance): void {
     : undefined;
 }
 
-/** Run `componentWillUnmount` for a class instance (on unmount). */
+/**
+ * Run `componentWillUnmount` for a class instance (on unmount, or when a hidden `<Activity>` /
+ * re-suspended Suspense boundary hides it — React's `disappearLayoutEffects`). Only a mounted
+ * instance runs it: one already hidden (or mounted hidden) has none to undo.
+ */
 function unmountClassInstance(inst: ReconcilerInstance): void {
   const c = inst.ext?.classInstance as Any;
-  if (c && typeof c.componentWillUnmount === "function") c.componentWillUnmount();
+  if (!c || !internals(c).mounted) return;
+  internals(c).mounted = false;
+  if (typeof c.componentWillUnmount === "function") c.componentWillUnmount();
+}
+
+/**
+ * A hidden boundary hides (`visible: false`, `componentWillUnmount`) or shows again
+ * (`componentDidMount`, plus the setState callbacks held while hidden) a class instance — React's
+ * disappear / reappear layout effects. The reveal re-rendered it, but React runs
+ * `componentDidMount` alone then, never the `componentDidUpdate` that render queued.
+ */
+function setClassVisible(inst: ReconcilerInstance, visible: boolean): void {
+  const c = inst.ext?.classInstance as Any;
+  if (!visible) return unmountClassInstance(inst);
+  inst.pendingEffects = undefined;
+  if (!internals(c).mounted) mountEffect(c, internals(c))();
 }
 
 /**
@@ -248,5 +267,6 @@ export function installClassSupport(): void {
     hasErrorLifecycle,
     captureSnapshot,
     unmountClassInstance,
+    setClassVisible,
   });
 }

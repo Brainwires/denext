@@ -121,10 +121,11 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   `createContext`, `forwardRef`, `createPortal`, `lazy`, `Profiler`,
   `StrictMode`.
 - **`Activity`** — real offscreen scheduling: `mode="hidden"` keeps a subtree
-  mounted-but-hidden (state preserved, effects torn down), `mode="visible"`
-  restores the same instances; content that mounts hidden is pre-rendered and runs
-  no effects until it is revealed (React 19.2); import-gated, so apps that don't
-  use it pay nothing.
+  mounted-but-hidden (state preserved, effects torn down, a class's
+  `componentWillUnmount` run and refs detached), `mode="visible"` restores the same
+  instances (effects, `componentDidMount` and refs again); content that mounts hidden
+  is pre-rendered and runs no effects, class lifecycles or refs until it is revealed
+  (React 19.2); import-gated, so apps that don't use it pay nothing.
 - **`ViewTransition`** — per-element view transitions across navigations: a shared
   `name` morphs an element between routes, `enter`/`exit`/`update`/`share` +
   `addTransitionType` select the animation, on every soft-nav path; and, as in

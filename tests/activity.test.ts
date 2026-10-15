@@ -8,9 +8,11 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import "./helpers/activity-runtime.ts";
+import "./helpers/class-runtime.ts";
+import { Component } from "../src/compat/react.ts";
 import { Fragment, h } from "../src/jsx/jsx-runtime.ts";
 import { Activity } from "../src/runtime/react-extras.ts";
-import { useEffect, useLayoutEffect, useState } from "../src/runtime/hooks.ts";
+import { useEffect, useLayoutEffect, useRef, useState } from "../src/runtime/hooks.ts";
 import { render } from "../src/testing/mod.ts";
 import { renderToStringSync } from "../src/jsx/render-to-string.ts";
 import {
@@ -284,4 +286,99 @@ Deno.test("a hidden Activity forgets the elements removed while it stays hidden"
   assertEquals(activity.ext.hiddenEls.length, 1, "only the element still in the subtree");
   assertEquals((container as Any).childNodes.length, 1);
   assert(hidden((container as Any).childNodes[0]), "and it is hidden");
+});
+
+Deno.test("a class inside a hidden Activity: no componentDidMount until shown, componentWillUnmount on hide", async () => {
+  // React's disappear/reappearLayoutEffects: a class mounted hidden runs no componentDidMount;
+  // hiding a shown one runs componentWillUnmount, revealing runs componentDidMount again, and
+  // deleting a hidden one runs nothing (it already disappeared). The instance is kept throughout.
+  const log: string[] = [];
+  let instances = 0;
+  class Leaf extends Component<{ id: string }> {
+    constructor(props: { id: string }) {
+      super(props);
+      instances++;
+    }
+    componentDidMount() {
+      log.push(`mount:${this.props.id}`);
+    }
+    componentDidUpdate() {
+      log.push(`update:${this.props.id}`);
+    }
+    componentWillUnmount() {
+      log.push(`unmount:${this.props.id}`);
+    }
+    override render() {
+      return h("i", { "data-testid": this.props.id }, this.props.id);
+    }
+  }
+  let setMode: (m: "visible" | "hidden") => void = () => {};
+  let setShown: (b: boolean) => void = () => {};
+  let setTick: (n: number) => void = () => {};
+  function App() {
+    const [mode, setM] = useState<"visible" | "hidden">("hidden");
+    const [shown, setS] = useState(true);
+    const [tick, setT] = useState(0);
+    setMode = setM;
+    setShown = setS;
+    setTick = setT;
+    return shown ? h(Activity, { mode, children: h(Leaf as Any, { id: `a${tick}` }) }) : null;
+  }
+  const screen = await render(h(App as Any, {}));
+  await screen.act(() => {});
+  assert(screen.queryByTestId("a0") !== null, "the hidden class is pre-rendered");
+  assertEquals(log, [], "a class mounted hidden runs no componentDidMount");
+
+  await screen.act(() => setMode("visible"));
+  assertEquals(log, ["mount:a0"], "revealing runs componentDidMount");
+
+  await screen.act(() => setMode("hidden"));
+  assertEquals(log, ["mount:a0", "unmount:a0"], "hiding runs componentWillUnmount");
+
+  await screen.act(() => setTick(1));
+  await screen.act(() => {});
+  assertEquals(log.length, 2, "an update while hidden runs no componentDidUpdate");
+
+  await screen.act(() => setMode("visible"));
+  assertEquals(log.slice(2), ["mount:a1"], "revealing again runs componentDidMount");
+  assertEquals(instances, 1, "the same instance throughout");
+
+  await screen.act(() => setMode("hidden"));
+  await screen.act(() => setShown(false));
+  assertEquals(log.slice(3), ["unmount:a1"], "deleting a hidden class runs no second unmount");
+});
+
+Deno.test("a hidden Activity's refs: none attach while hidden, they detach on hide and re-attach on reveal", async () => {
+  const seen: Array<string | null> = [];
+  let objRef: { current: Element | null } = { current: null };
+  let setMode: (m: "visible" | "hidden") => void = () => {};
+  function Inner() {
+    objRef = useRef<Element | null>(null);
+    return h(
+      "div",
+      null,
+      h("span", { ref: (el: Element | null) => seen.push(el ? "attach" : null) }, "cb"),
+      h("b", { ref: objRef }, "obj"),
+    );
+  }
+  function App() {
+    const [mode, setM] = useState<"visible" | "hidden">("hidden");
+    setMode = setM;
+    return h(Activity, { mode, children: h(Inner, {}) });
+  }
+  const screen = await render(h(App, {}));
+  await screen.act(() => {});
+  assertEquals(seen, [], "a callback ref under a hidden mount is not attached");
+  assertEquals(objRef.current, null, "an object ref under a hidden mount stays null");
+
+  await screen.act(() => setMode("visible"));
+  assertEquals(seen, ["attach"], "revealing attaches the callback ref");
+  assertEquals((objRef.current as Any)?.textContent, "obj", "and the object ref");
+
+  await screen.act(() => setMode("hidden"));
+  assertEquals(seen, ["attach", null], "hiding detaches the callback ref");
+  assertEquals(objRef.current, null, "and clears the object ref");
+
+  await screen.act(() => setMode("visible"));
+  assertEquals(seen, ["attach", null, "attach"], "revealing re-attaches it once");
 });

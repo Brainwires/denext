@@ -92,9 +92,6 @@ or an upstream. Each one's limitation entry is deleted when it ships.
 - **`<ViewTransition>` callbacks and the rest of its surface:** `onEnter` / `onExit` /
   `onUpdate` / `onShare`, an `<Activity>` going hidden animated as an exit, and an update
   skipped when the boundary is off-screen.
-- **A hidden `<Activity>` holds class lifecycles and refs too:** a class component inside one
-  still runs `componentDidMount`, and a hidden subtree's refs stay attached (function
-  components' effects already wait until it is shown).
 - **A soft navigation streams `defer()` data per boundary,** as a document load does; today a
   client navigation's Flight payload waits for every deferred value.
 - **A root layout rendered by client code hoists its `<head>` tags:** its

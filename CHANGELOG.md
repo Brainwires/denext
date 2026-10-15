@@ -32,6 +32,14 @@ and this project adheres to
 
 ### Fixed
 
+- **A hidden `<Activity>` holds class lifecycles and refs, as React does.** A class component
+  that mounts inside a hidden one no longer runs `componentDidMount` (nor `componentDidUpdate`
+  while it stays hidden); hiding a shown one runs its `componentWillUnmount`, and revealing runs
+  `componentDidMount` again on the same instance. A hidden subtree's refs are detached (a
+  callback ref gets `null` or its cleanup, an object ref is cleared), none attach while it
+  mounts hidden, and revealing attaches them. A Suspense boundary that re-suspends behind its
+  fallback hides its content the same way.
+
 - **`react-dom/server` streams honour the consumer's backpressure.** `renderToPipeableStream`'s
   `pipe()` stops writing when the destination's `write()` returns `false` and resumes on
   `'drain'` (calling a destination's `flush()` after each chunk, as React does); a destination
@@ -54,6 +62,7 @@ and this project adheres to
   global-error document as the native build does. `denext export` bundles the same entry and
   pre-renders global-error to `out/500.html`, wired to hydrate, for a static host's error page;
   it renders with the `Internal Server Error` message a production server hands it.
+
 
 ## [4.1.0] - 2026-10-15
 

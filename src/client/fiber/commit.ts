@@ -161,15 +161,14 @@ function clearCommittedFlags(wipRoot: Fiber): void {
  * clone (flags zeroed by createWorkInProgress) or a current fiber an earlier commit already
  * cleared. So a re-render of a long list of bailed rows no longer walks every row's subtree.
  */
-function clearFiberFlags(f: Fiber): void {
+function clearFiberFlags(f: Fiber, hidden = false): void {
   const descend = f.subtreeFlags !== NoFlags;
   // A fresh mount's deferred ref attaches HERE — after commitPlacement put the node in the
   // DOM, before layout effects run — never in `completeWork` (render). Firing a ref callback
   // during render breaks libraries that guard against it (Base UI's "Cannot call an event
-  // handler while rendering"). An update's ref rode its commit-phase `applyProps`.
-  if ((f.flags & RefAttach) !== 0) {
-    updateRef(f, undefined, f.vnode.props?.ref, f.stateNode as Element);
-  }
+  // handler while rendering"). An update's ref rode its commit-phase `applyProps`. Under a
+  // hidden `<Activity>` no ref attaches (React skips its layout phase): the reveal does it.
+  if ((f.flags & RefAttach) !== 0) attachMountRef(f, hidden);
   f.flags = NoFlags;
   f.subtreeFlags = NoFlags;
   f.deletions = null;
@@ -188,7 +187,18 @@ function clearFiberFlags(f: Fiber): void {
     f.bits &= ~DidRenderBit;
   }
   if (!descend) return;
-  for (let c = f.child; c !== null; c = c.sibling) clearFiberFlags(c);
+  const hideKids = hidden || isHiddenActivity(f);
+  for (let c = f.child; c !== null; c = c.sibling) clearFiberFlags(c, hideKids);
+}
+
+/** Attach a fresh mount's ref — unless it mounted under a hidden `<Activity>`. */
+function attachMountRef(f: Fiber, hidden: boolean): void {
+  if (!hidden) updateRef(f, undefined, f.vnode.props?.ref, f.stateNode as Element);
+}
+
+/** An `<Activity>` that is hidden (its subtree is offscreen). */
+function isHiddenActivity(f: Fiber): boolean {
+  return f.tag === "activity" && hasBit(f, OffscreenBit);
 }
 
 /**
@@ -321,7 +331,7 @@ function hideOffscreenPrimary(f: Fiber): void {
   let c = f.child;
   for (let i = 0; c !== null && i < x.primaryCount!; c = c.sibling, i++) {
     collectDom(c, dom);
-    if (first) disconnectEffects(c);
+    if (first) setSubtreeVisible(c, false);
   }
   const els = stillHidden(x.hiddenEls, dom);
   for (const n of dom) {
@@ -341,7 +351,7 @@ function revealOffscreenPrimary(f: Fiber): void {
   const x = f.ext!;
   for (const el of x.hiddenEls!) restoreElement(el);
   x.hiddenEls = undefined;
-  for (let c = f.child; c !== null; c = c.sibling) reconnectEffects(c);
+  for (let c = f.child; c !== null; c = c.sibling) setSubtreeVisible(c, true);
 }
 
 function applyOffscreenVisibility(f: Fiber): void {
@@ -356,19 +366,18 @@ function applyOffscreenVisibility(f: Fiber): void {
 }
 
 /**
- * Visit every hook cell of every component fiber in an Offscreen subtree, children
- * before parents (unmount order). A nested boundary that is itself offscreen owns its
- * own effect state — it (and its subtree) is left alone so an outer hide/reveal doesn't
- * fight its lifecycle.
+ * Hide or show again every fiber of an Offscreen subtree ({@linkcode setFiberVisible}), children
+ * before parents (unmount order), leaving state cells intact: each effect cell keeps a
+ * `reconnect` thunk to rebuild it on reveal. A nested boundary that is itself offscreen owns its
+ * own effect state — it (and its subtree) is left alone so an outer hide/reveal doesn't fight
+ * its lifecycle.
  */
-function forEachOffscreenCell(fiber: Fiber, visit: (fiber: Fiber, cell: HookCell) => void): void {
+function setSubtreeVisible(fiber: Fiber, reveal: boolean): void {
   if ((fiber.tag === "suspense" || fiber.tag === "activity") && fiber.ext?.hiddenEls != null) {
     return;
   }
-  for (let c = fiber.child; c !== null; c = c.sibling) forEachOffscreenCell(c, visit);
-  const hooks = fiber.hooks;
-  if (fiber.tag !== "component" || !hooks) return;
-  for (let i = 0; i < hooks.length; i++) visit(fiber, hooks[i]);
+  for (let c = fiber.child; c !== null; c = c.sibling) setSubtreeVisible(c, reveal);
+  setFiberVisible(fiber, reveal);
 }
 
 /** Run an effect cell's cleanup and mark it disconnected; a throwing cleanup is routed to a boundary. */
@@ -397,17 +406,38 @@ function reconnectCell(fiber: Fiber, cell: HookCell): void {
 }
 
 /**
- * Tear down every passive/layout effect in an Offscreen subtree (children before
- * parents, unmount order), leaving state cells intact. Each effect cell keeps a
- * `reconnect` thunk so {@linkcode reconnectEffects} can rebuild it on reveal.
+ * Hide (React's `disappearLayoutEffects`) or show again (`reappearLayoutEffects`) one fiber's
+ * layout presence: its effects, a class's `componentWillUnmount` / `componentDidMount`, and a
+ * host's ref.
  */
-function disconnectEffects(fiber: Fiber): void {
-  forEachOffscreenCell(fiber, disconnectCell);
+function setFiberVisible(fiber: Fiber, reveal: boolean): void {
+  const hooks = fiber.hooks;
+  if (fiber.tag === "component" && hooks) {
+    const each = reveal ? reconnectCell : disconnectCell;
+    for (let i = 0; i < hooks.length; i++) each(fiber, hooks[i]);
+  }
+  if (__DENEXT_CLASS_COMPONENTS__ && fiber.ext?.classInstance != null) {
+    setClassVisible(fiber, reveal);
+  }
+  if (fiber.tag === "host") setRefVisible(fiber, reveal);
 }
 
-/** Re-run the setup of every effect a prior {@linkcode disconnectEffects} tore down. */
-function reconnectEffects(fiber: Fiber): void {
-  forEachOffscreenCell(fiber, reconnectCell);
+/** A class's `componentWillUnmount` (hide) / `componentDidMount` (reveal); a throw is routed. */
+function setClassVisible(fiber: Fiber, reveal: boolean): void {
+  try {
+    getClassSupport()!.setClassVisible(fiber as never, reveal);
+  } catch (err) {
+    scheduleEffectError(fiber, err);
+  }
+}
+
+/** Detach a host's ref on hide; attach it on reveal (a host that mounted hidden: its first). */
+function setRefVisible(fiber: Fiber, reveal: boolean): void {
+  if (!reveal) return detachRef(fiber);
+  const ref = fiber.vnode.props?.ref;
+  if (ref != null && fiber.attachedRef == null) {
+    updateRef(fiber, undefined, ref, fiber.stateNode as Element);
+  }
 }
 
 /**
