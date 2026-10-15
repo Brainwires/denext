@@ -17,10 +17,11 @@ import {
   formatDesktopAddReport,
   formatDesktopCapabilityTable,
 } from "../src/build/desktop-capabilities.ts";
+import { makeTempDirUntilExit } from "./helpers/temp.ts";
 
-async function project(config?: string): Promise<string> {
-  const dir = await Deno.makeTempDir({ prefix: "denext-desktop-add-" });
-  if (config !== undefined) await Deno.writeTextFile(join(dir, "denext.config.ts"), config);
+function project(config?: string): string {
+  const dir = makeTempDirUntilExit("denext-desktop-add-");
+  if (config !== undefined) Deno.writeTextFileSync(join(dir, "denext.config.ts"), config);
   return dir;
 }
 
@@ -51,7 +52,7 @@ Deno.test("desktop add --list: every capability has a key, an API and a trust le
 });
 
 Deno.test("desktop add: writes desktop.capabilities into an existing config, keeping comments", async () => {
-  const dir = await project(
+  const dir = project(
     '// my config\nexport default {\n  // keep me\n  basePath: "/app",\n};\n',
   );
   const report = await addDesktopCapabilities({ capabilities: ["secure-store", "fs"], dir });
@@ -71,7 +72,7 @@ Deno.test("desktop add: writes desktop.capabilities into an existing config, kee
 });
 
 Deno.test("desktop add: a key the user customised is kept", async () => {
-  const dir = await project(
+  const dir = project(
     'export default {\n  desktop: { capabilities: { shell: { openExternal: ["https:"] } } },\n};\n',
   );
   const report = await addDesktopCapabilities({ capabilities: ["shell", "clipboard"], dir });
@@ -83,7 +84,7 @@ Deno.test("desktop add: a key the user customised is kept", async () => {
 });
 
 Deno.test("desktop add: drops the scaffold's commented capabilities hint once a real block exists", async () => {
-  const dir = await project(
+  const dir = project(
     "export default {\n  desktop: {\n" +
       '    app: { identifier: "com.example.denext" },\n' +
       "    // capabilities: { fs: true, secureStore: true, shell: true },  // denext desktop add <cap>\n" +
@@ -98,7 +99,7 @@ Deno.test("desktop add: drops the scaffold's commented capabilities hint once a 
 });
 
 Deno.test("desktop add: creates denext.config.ts when the project has none", async () => {
-  const dir = await project();
+  const dir = project();
   const report = await addDesktopCapabilities({ capabilities: ["context-menu"], dir });
   assertEquals(report.created, true);
   const text = await Deno.readTextFile(join(dir, "denext.config.ts"));
@@ -106,7 +107,7 @@ Deno.test("desktop add: creates denext.config.ts when the project has none", asy
 });
 
 Deno.test("desktop add --dry-run: plans without writing", async () => {
-  const dir = await project("export default {};\n");
+  const dir = project("export default {};\n");
   const report = await addDesktopCapabilities({ capabilities: ["dialogs"], dir, dryRun: true });
   assertEquals(report.added, ["dialogs"]);
   assertStringIncludes(report.diff, "+");
@@ -118,7 +119,7 @@ Deno.test("desktop add --dry-run: plans without writing", async () => {
 });
 
 Deno.test("desktop add: unknown or missing capabilities are refused", async () => {
-  const dir = await project("export default {};\n");
+  const dir = project("export default {};\n");
   await assertRejects(
     () => addDesktopCapabilities({ capabilities: ["tray-icon"], dir }),
     Error,
@@ -132,7 +133,7 @@ Deno.test("desktop add: unknown or missing capabilities are refused", async () =
 });
 
 Deno.test("desktop add: a config whose desktop value is code is refused with the snippet", async () => {
-  const dir = await project("const d = { capabilities: {} };\nexport default { desktop: d };\n");
+  const dir = project("const d = { capabilities: {} };\nexport default { desktop: d };\n");
   await assertRejects(
     () => addDesktopCapabilities({ capabilities: ["clipboard"], dir }),
     Error,

@@ -34,6 +34,7 @@ import {
   sealTotpSecret,
 } from "../src/server/auth/totp-seal.ts";
 import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+import { makeTempDirUntilExit } from "./helpers/temp.ts";
 
 const KEY_A = "first-auth-secret-at-least-32-characters";
 const KEY_B = "second-auth-secret-at-least-32-characters";
@@ -41,7 +42,7 @@ const EMAIL = "ada@x.test";
 
 /** A fresh database file of our own. */
 function tempDbPath(): string {
-  return `${Deno.makeTempDirSync({ prefix: "denext-totp-seal-" })}/auth.db`;
+  return `${makeTempDirUntilExit("denext-totp-seal-")}/auth.db`;
 }
 
 /** The raw TOTP factor row, read with a connection of our own (not the adapter's). */

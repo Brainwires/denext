@@ -18,6 +18,7 @@ import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
 import { generateTotpSecret } from "../src/server/auth/totp.ts";
 import { openTotpSecret, sealTotpSecret } from "../src/server/auth/totp-seal.ts";
 import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+import { makeTempDirUntilExit } from "./helpers/temp.ts";
 
 const KEY_A = "first-auth-secret-at-least-32-characters";
 const KEY_B = "second-auth-secret-at-least-32-characters";
@@ -242,7 +243,7 @@ Deno.test("paging: users beyond one page are covered", async () => {
 });
 
 Deno.test("sqliteAuthAdapter: the re-sealed row is written through updateMfaFactor", async () => {
-  const path = `${Deno.makeTempDirSync({ prefix: "denext-reseal-" })}/auth.db`;
+  const path = `${makeTempDirUntilExit("denext-reseal-")}/auth.db`;
   const adapter = sqliteAuthAdapter({ path });
   try {
     const user = await adapter.createUser({ email: "sql@x.test" });

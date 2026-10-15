@@ -16,6 +16,7 @@ import { sqliteSessionStore } from "../src/server/auth/sqlite-session-store.ts";
 import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
 import type { PluginContext } from "../src/plugin/mod.ts";
 import type { SqliteDb } from "../src/server/sqlite-cache.ts";
+import { makeTempDirUntilExit } from "./helpers/temp.ts";
 
 const ORIGIN = "https://app.test";
 const inAnHour = () => Math.floor(Date.now() / 1000) + 3600;
@@ -81,7 +82,7 @@ Deno.test("inMemorySessionStore: LRU cap (expired first) + sweep of expired sess
 });
 
 function tempSqlitePath(): string {
-  return `${Deno.makeTempDirSync({ prefix: "denext-auth-sessions-" })}/sessions.db`;
+  return `${makeTempDirUntilExit("denext-auth-sessions-")}/sessions.db`;
 }
 
 Deno.test("sqliteSessionStore (real node:sqlite) meets the store contract", async (t) => {

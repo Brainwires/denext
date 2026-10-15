@@ -5,15 +5,16 @@ import { assertEquals, assertThrows } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
 import { sqliteCacheStore } from "../src/server/sqlite-cache.ts";
 import type { CachedPage, DataEntry } from "../src/server/cache.ts";
+import { makeTempDirUntilExit, removeTempDirSync } from "./helpers/temp.ts";
 
 function freshStore() {
-  const dir = Deno.makeTempDirSync({ prefix: "denext-sqlite-cache-" });
+  const dir = makeTempDirUntilExit("denext-sqlite-cache-");
   return sqliteCacheStore({ path: `${dir}/cache.db` });
 }
 
 // A store with tight caps and an eager sweep, for the eviction/sweep tests.
 function cappedStore(maxDataEntries: number, maxPageEntries: number) {
-  const dir = Deno.makeTempDirSync({ prefix: "denext-sqlite-cache-evict-" });
+  const dir = makeTempDirUntilExit("denext-sqlite-cache-evict-");
   return sqliteCacheStore({
     path: `${dir}/cache.db`,
     maxDataEntries,
@@ -110,23 +111,27 @@ Deno.test("expireByTag soft-expires (SWR) data + pages in place, not delete", ()
 
 Deno.test("migration: a pre-SWR data table (no stale_at) is upgraded in place", () => {
   const dir = Deno.makeTempDirSync({ prefix: "denext-sqlite-migrate-" });
-  const path = `${dir}/cache.db`;
-  // Seed an OLD-schema data table (the columns before stale_at existed).
-  const raw = new DatabaseSync(path);
-  raw.exec(
-    "CREATE TABLE data (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at REAL, tags TEXT NOT NULL)",
-  );
-  raw.prepare("INSERT INTO data (key, value, expires_at, tags) VALUES (?, ?, ?, ?)")
-    .run("old", '"v"', null, "[]");
-  raw.close();
+  try {
+    const path = `${dir}/cache.db`;
+    // Seed an OLD-schema data table (the columns before stale_at existed).
+    const raw = new DatabaseSync(path);
+    raw.exec(
+      "CREATE TABLE data (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at REAL, tags TEXT NOT NULL)",
+    );
+    raw.prepare("INSERT INTO data (key, value, expires_at, tags) VALUES (?, ?, ?, ?)")
+      .run("old", '"v"', null, "[]");
+    raw.close();
 
-  // Opening the store runs `ALTER TABLE data ADD COLUMN stale_at` — the old row still
-  // reads (never stale), and a new entry can persist its staleAt.
-  const store = sqliteCacheStore({ path });
-  assertEquals((store.getData("old") as DataEntry).value, "v");
-  const staleAt = Date.now() + 30_000;
-  store.setData("new", { value: "n", expiresAt: Infinity, staleAt, tags: [] });
-  assertEquals((store.getData("new") as DataEntry).staleAt, staleAt);
+    // Opening the store runs `ALTER TABLE data ADD COLUMN stale_at` — the old row still
+    // reads (never stale), and a new entry can persist its staleAt.
+    const store = sqliteCacheStore({ path });
+    assertEquals((store.getData("old") as DataEntry).value, "v");
+    const staleAt = Date.now() + 30_000;
+    store.setData("new", { value: "n", expiresAt: Infinity, staleAt, tags: [] });
+    assertEquals((store.getData("new") as DataEntry).staleAt, staleAt);
+  } finally {
+    removeTempDirSync(dir);
+  }
 });
 
 Deno.test("pages: set/get and deleteByPath removes only the matching path", () => {
@@ -143,28 +148,32 @@ Deno.test("pages: set/get and deleteByPath removes only the matching path", () =
 
 Deno.test("deleteByPath also deletes the page's tag rows (no orphan growth)", () => {
   const dir = Deno.makeTempDirSync({ prefix: "denext-sqlite-cache-tags-" });
-  const path = `${dir}/cache.db`;
-  const store = sqliteCacheStore({ path });
-  store.setPage("a", page("<a>", "/a", ["shared", "a-only"]));
-  store.setPage("b", page("<b>", "/b", ["shared"]));
+  try {
+    const path = `${dir}/cache.db`;
+    const store = sqliteCacheStore({ path });
+    store.setPage("a", page("<a>", "/a", ["shared", "a-only"]));
+    store.setPage("b", page("<b>", "/b", ["shared"]));
 
-  const tagCount = (): number => {
-    const raw = new DatabaseSync(path);
-    try {
-      return (raw.prepare("SELECT COUNT(*) AS n FROM tags WHERE ns = 'page'").get() as {
-        n: number;
-      })
-        .n;
-    } finally {
-      raw.close();
-    }
-  };
-  assertEquals(tagCount(), 3); // a→[shared,a-only], b→[shared]
+    const tagCount = (): number => {
+      const raw = new DatabaseSync(path);
+      try {
+        return (raw.prepare("SELECT COUNT(*) AS n FROM tags WHERE ns = 'page'").get() as {
+          n: number;
+        })
+          .n;
+      } finally {
+        raw.close();
+      }
+    };
+    assertEquals(tagCount(), 3); // a→[shared,a-only], b→[shared]
 
-  store.deleteByPath("/a");
-  // a's two tag rows are gone; b's one survives — no orphaned rows left behind.
-  assertEquals(tagCount(), 1);
-  assertEquals((store.getPage("b") as CachedPage).body, "<b>");
+    store.deleteByPath("/a");
+    // a's two tag rows are gone; b's one survives — no orphaned rows left behind.
+    assertEquals(tagCount(), 1);
+    assertEquals((store.getPage("b") as CachedPage).body, "<b>");
+  } finally {
+    removeTempDirSync(dir);
+  }
 });
 
 Deno.test("pages: a PPR shell round-trips its hole/flight extras", () => {
