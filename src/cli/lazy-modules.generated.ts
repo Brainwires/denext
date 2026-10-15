@@ -9,6 +9,7 @@ import "./commands/audit.ts";
 import "./commands/commands.ts";
 import "./commands/completions.ts";
 import "./commands/create.ts";
+import "./commands/dashboard.ts";
 import "./commands/db-admin.ts";
 import "./commands/db.ts";
 import "./commands/deno-toolchain.ts";

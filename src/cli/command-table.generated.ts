@@ -630,6 +630,17 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
       },
       { "name": "no-migrate", "type": "boolean", "help": "docker: leave the migrate service out" },
       {
+        "name": "dashboard",
+        "type": "boolean",
+        "help":
+          "docker: The database dashboard (denext dashboard) on 127.0.0.1:3100, behind DASHBOARD_PASSWORD (on with Postgres)",
+      },
+      {
+        "name": "no-dashboard",
+        "type": "boolean",
+        "help": "docker: leave the dashboard service out",
+      },
+      {
         "name": "stack",
         "altNames": ["all"],
         "type": "boolean",
@@ -644,6 +655,11 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
         "name": "dev",
         "type": "boolean",
         "help": "docker: also write compose.dev.yml (denext dev on a bind mount)",
+      },
+      {
+        "name": "dashboard-logs",
+        "type": "boolean",
+        "help": "docker: the dashboard's Logs page — a relay service that mounts the Docker socket",
       },
       {
         "name": "port",
@@ -978,7 +994,7 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
       {
         "name": "dashboard",
         "type": "boolean",
-        "help": "passwd: the dashboard password (DASHBOARD_PASSWORD)",
+        "help": "passwd: the dashboard password (DASHBOARD_PASSWORD); up: the dashboard service",
       },
       { "name": "generate", "type": "boolean", "help": "passwd: generate strong passwords" },
       {
@@ -1059,6 +1075,11 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
       },
       { "name": "no-migrate", "type": "boolean", "help": "docker: leave the migrate service out" },
       {
+        "name": "no-dashboard",
+        "type": "boolean",
+        "help": "docker: leave the dashboard service out",
+      },
+      {
         "name": "stack",
         "altNames": ["all"],
         "type": "boolean",
@@ -1073,6 +1094,11 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
         "name": "dev",
         "type": "boolean",
         "help": "docker: also write compose.dev.yml (denext dev on a bind mount)",
+      },
+      {
+        "name": "dashboard-logs",
+        "type": "boolean",
+        "help": "docker: the dashboard's Logs page — a relay service that mounts the Docker socket",
       },
       {
         "name": "port",
@@ -1748,6 +1774,52 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
     "loadsModules": true,
     "hidden": true,
   }, () => importCliModule("./commands/db-admin.ts").then((m) => m.dbAdminCommand as CommandSpec)],
+  [
+    {
+      "name": "dashboard",
+      "summary":
+        "Serve the stack's database dashboard behind DASHBOARD_PASSWORD (loopback by default)",
+      "usage":
+        "  denext dashboard                  Serve it on 127.0.0.1:3100\n  denext dashboard --read-only      Browse without offering any write\n  denext dashboard --host 0.0.0.0 --origin https://dash.example.com\n                                    Behind a TLS reverse proxy at that origin\n\n  The password comes from DASHBOARD_PASSWORD (the environment, else the project's .env),\n  never from an argument. Sign-ins are rate limited; the session cookie is HttpOnly,\n  Secure and SameSite=Strict; every change needs a same-origin request and a CSRF token.",
+      "flags": [{
+        "name": "port",
+        "type": "number",
+        "valueName": "<port>",
+        "help": "Port to listen on (default 3100)",
+      }, {
+        "name": "host",
+        "type": "string",
+        "valueName": "<address>",
+        "help": "Address to bind (default 127.0.0.1; the stack's container binds 0.0.0.0)",
+      }, {
+        "name": "origin",
+        "type": "string",
+        "valueName": "<url>",
+        "repeatable": true,
+        "help": "A public origin it is also reached at, behind a reverse proxy (repeatable)",
+      }, { "name": "read-only", "type": "boolean", "help": "Refuse every change" }],
+      "positionals": [{ "name": "dir", "help": "Project directory (default: .)" }],
+      "loadsModules": false,
+    },
+    () => importCliModule("./commands/dashboard.ts").then((m) => m.dashboardCommand as CommandSpec),
+  ],
+  [
+    {
+      "name": "dashboard-logs",
+      "summary": "The stack's log relay for the dashboard (reads the Docker socket)",
+      "usage":
+        "denext dashboard-logs [--host 0.0.0.0] [--port 3101] [--socket /var/run/docker.sock]",
+      "flags": [
+        { "name": "port", "type": "number", "valueName": "<port>", "help": "Port to listen on" },
+        { "name": "host", "type": "string", "valueName": "<address>", "help": "Address to bind" },
+        { "name": "socket", "type": "string", "valueName": "<path>", "help": "The Docker socket" },
+      ],
+      "loadsModules": false,
+      "hidden": true,
+    },
+    () =>
+      importCliModule("./commands/dashboard.ts").then((m) => m.dashboardLogsCommand as CommandSpec),
+  ],
   [{
     "name": "mcp",
     "summary": "Run the denext MCP server (stdio) so agents/IDEs can call denext's tooling",
