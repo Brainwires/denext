@@ -33,6 +33,7 @@ import {
 } from "./state.ts";
 import { parseSnapshot } from "./devtools-snapshot.ts";
 import type { InspectSnapshot } from "../../client/devtools-inspect-sink.ts";
+import { sseSend } from "../sse.ts";
 
 /** Both payloads are live snapshots — never let a proxy or the browser keep one. */
 const NO_STORE = { "cache-control": "no-store" };
@@ -164,7 +165,10 @@ export async function devInspectSink(st: DevState, request: Request): Promise<Re
     return new Response("snapshot too large", { status: 413, headers: NO_STORE });
   }
   const snapshot = parseSnapshot(body);
-  if (snapshot) storeSnapshot(st, snapshot);
+  if (snapshot) {
+    storeSnapshot(st, snapshot);
+    for (const wake of [...st.devInspectWaiters]) wake();
+  }
   return new Response(null, { status: 204, headers: NO_STORE });
 }
 
@@ -218,6 +222,53 @@ function readScope(url: URL, request?: Request): string | null {
   }
 }
 
+/** The reload-stream frame that asks every open page to post its tree now. */
+const INSPECT_PULL_FRAME = "inspect";
+
+/** A snapshot younger than this is fresh enough: a pull does not ask for another. */
+const PULL_FRESH_MS = 1000;
+
+/** How long a pull waits for a page to answer before reading what the server has. */
+const PULL_WAIT_MS = 3000;
+
+/**
+ * The on-demand pull behind `?pull=1`: when the selected snapshot is missing or older than
+ * {@link PULL_FRESH_MS} and a page is connected to the reload stream, send every page the
+ * {@link INSPECT_PULL_FRAME} frame (the page posts its tree at once, arming itself if it was
+ * not) and wait up to {@link PULL_WAIT_MS} for a post to arrive. With no page connected there
+ * is nobody to ask, and the read answers at once.
+ *
+ * @param st The dev-server state.
+ * @param scope The read's selection ({@link readScope}).
+ * @param waitMs How long to wait for a page to answer.
+ */
+async function pullSnapshot(
+  st: DevState,
+  scope: string | null,
+  waitMs = PULL_WAIT_MS,
+): Promise<void> {
+  const current = pickEntry(st, scope);
+  if (current && Date.now() - current.receivedAt < PULL_FRESH_MS) return;
+  if (st.reloadClients.size === 0) return;
+  const asked = Date.now();
+  const arrived = new Promise<void>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+    const done = () => {
+      clearTimeout(timer);
+      st.devInspectWaiters.delete(wake);
+      resolve();
+    };
+    const wake = () => {
+      const entry = pickEntry(st, scope);
+      if (entry && entry.receivedAt >= asked) done();
+    };
+    timer = setTimeout(done, waitMs);
+    st.devInspectWaiters.add(wake);
+  });
+  sseSend(st.reloadClients, INSPECT_PULL_FRAME);
+  await arrived;
+}
+
 /**
  * `GET /_denext/dev-inspect` — read back the latest snapshot the page posted, for the MCP
  * component/why-render/hook tools.
@@ -225,6 +276,8 @@ function readScope(url: URL, request?: Request): string | null {
  * `?probe=1` is the page's lazy-arming probe: it answers `{ armed }` and reads nothing.
  * Any OTHER GET is a real read, and arms the sink for the dev server's lifetime — that is
  * what tells pages to start walking their fiber trees at all (see `installInspectSink`).
+ * `?pull=1` (the MCP tools) first asks the open pages for a fresh tree over the reload stream
+ * and waits briefly for it ({@link pullSnapshot}), so the first read gets a tree too.
  *
  * Selection is {@link readScope}'s; `ageMs` is measured on the SERVER clock, so a skewed
  * page clock cannot make a stale tree look fresh, and a snapshot older than
@@ -233,16 +286,26 @@ function readScope(url: URL, request?: Request): string | null {
  * @param st The dev-server state.
  * @param url The request URL (its `url` / `probe` parameters).
  * @param request The request, when the caller has one (read for `Referer` scoping).
- * @returns `{ snapshot, ageMs }`, `{ armed }` for a probe, or a 404 `{ reason: "no_snapshot" }`.
+ * @returns `{ snapshot, ageMs }`, `{ armed }` for a probe, or a 404 `{ reason: "no_snapshot" }`
+ *   (with `pages`: how many pages are connected to the reload stream).
  */
-export function devInspectRead(st: DevState, url: URL, request?: Request): Response {
+export async function devInspectRead(
+  st: DevState,
+  url: URL,
+  request?: Request,
+): Promise<Response> {
   if (url.searchParams.has("probe")) {
     return Response.json({ armed: st.devInspectArmed }, { headers: NO_STORE });
   }
   st.devInspectArmed = true; // a reader exists: pages may start snapshotting
-  const entry = pickEntry(st, readScope(url, request));
+  const scope = readScope(url, request);
+  if (url.searchParams.has("pull")) await pullSnapshot(st, scope);
+  const entry = pickEntry(st, scope);
   if (!entry) {
-    return Response.json({ reason: "no_snapshot" }, { status: 404, headers: NO_STORE });
+    return Response.json(
+      { reason: "no_snapshot", pages: st.reloadClients.size },
+      { status: 404, headers: NO_STORE },
+    );
   }
   return Response.json({
     snapshot: entry.snapshot,

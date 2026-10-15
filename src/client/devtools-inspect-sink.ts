@@ -410,11 +410,14 @@ async function probeArmed(): Promise<boolean> {
  * **Lazy arming.** Nothing is walked until someone is reading. At install (and then on a
  * commit, at most every 10 s) the page asks the dev server `?probe=1`; while the answer is
  * `false` a commit costs nothing. The dev server answers `true` from the first MCP read
- * onwards — so the FIRST `denext_component_tree` on a page may legitimately answer "the
- * DevTools sink has posted nothing yet", and the next call (after the page's next commit)
- * has the tree. Export `DENEXT_DEV_INSPECT=1` before `deno task dev` to arm it from the
- * start. Once armed, commits are posted with a trailing 1.5 s throttle (a burst posts
+ * onwards (the read's on-demand pull, below, arms the page at once); `DENEXT_DEV_INSPECT=1`
+ * before `deno task dev` arms it from the start. Once armed, commits are posted with a trailing 1.5 s throttle (a burst posts
  * once) plus a final flush on `pagehide`.
+ *
+ * **On-demand pull.** An MCP read (`?pull=1`) that finds no fresh tree sends every open page an
+ * `inspect` frame over the reload stream, which calls `globalThis.__denextInspectPull`: the
+ * sink arms (if it was not) and posts at once, and the read, which waits for it, answers with
+ * the tree it just asked for.
  *
  * Render-reason tracking is switched on here, not by the panel, so `denext_why_render`
  * answers even when the panel was never opened — as ONE hold on the refcounted
@@ -459,8 +462,20 @@ export function installInspectSink(api: DenextDevtoolsApi): () => void {
   };
   const target = globalThis as { addEventListener?: typeof addEventListener };
   target.addEventListener?.("pagehide", onHide);
+  // The on-demand pull: the dev server's `inspect` reload frame (an MCP read waiting for a tree)
+  // calls this, and the tree is posted now rather than at the next commit.
+  const pull = (): void => {
+    if (disposed) return;
+    if (!armed) return arm(true);
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    post(api);
+  };
+  const hooks = globalThis as { __denextInspectPull?: () => void };
+  hooks.__denextInspectPull = pull;
   return () => {
     disposed = true;
+    if (hooks.__denextInspectPull === pull) delete hooks.__denextInspectPull;
     unsubscribe();
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;

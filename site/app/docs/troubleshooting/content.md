@@ -279,14 +279,14 @@ instead of guessing.
 **Fix.** Move the hook above the condition, which is also what the
 `denext/rules-of-hooks` lint rule asks for.
 
-## An MCP DevTools tool says the page "posted nothing yet"
+## An MCP DevTools tool says no page has posted a component tree
 
-**Cause.** An open page starts pushing its component tree to the dev server only
-after the first `denext_component_tree`, `denext_why_render` or
-`denext_hook_state` call.
+**Cause.** The tree comes from a page loaded in a browser. Each `denext_component_tree`,
+`denext_why_render` or `denext_hook_state` call asks every page connected to the dev server's
+reload stream for its tree and waits up to 3 s for it; none was open (or none answered: a
+production build has no DevTools sink).
 
-**Fix.** Call the tool again after the page's next render, or start
-`denext task dev` with `DENEXT_DEV_INSPECT=1` so pages push from the start.
+**Fix.** Open the app in a browser against `denext task dev`, then call the tool again.
 
 ## `denext: hydration mismatch — …`
 

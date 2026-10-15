@@ -425,9 +425,9 @@ Deno.test("the three failure strings are distinct and each names its own fix", (
   assertStringIncludes(noServer, "no dev server running (`denext task dev`)");
   assertStringIncludes(
     noSnapshot,
-    "open the app in a browser, then CALL THIS AGAIN — the DevTools sink has posted nothing yet",
+    "open the app in a browser, then call this again — no page has posted a component tree",
   );
-  assertStringIncludes(noSnapshot, "it arms on the first call");
+  assertStringIncludes(noSnapshot, "asked every open page for its tree");
   assert(noServer !== noSnapshot);
 
   const inspect = { snapshot: treeFixture(), ageMs: 100 };
@@ -1006,4 +1006,98 @@ Deno.test("the MCP formatters never throw on a snapshot of the wrong shape", () 
   assertStringIncludes(hookStateText(inspect, "Real", 9), "no hook at index 9 (it has 2)");
   // The nameless forged node is still listed (as ""), and nothing threw getting here.
   assertStringIncludes(componentTreeText(inspect, { filter: "nope" }), "Components present:");
+});
+
+// ---- the on-demand pull: a read asks the open pages for a fresh tree --------------------
+
+/** A reload-stream subscriber that records each frame (an open page's EventSource). */
+function fakePage(st: DevState, onFrame: (data: string) => void): () => void {
+  const decoder = new TextDecoder();
+  const page = {
+    enqueue(chunk: Uint8Array) {
+      const text = decoder.decode(chunk);
+      for (const m of text.matchAll(/^data: (.*)$/gm)) onFrame(m[1]);
+    },
+    close() {},
+    error() {},
+    desiredSize: 1,
+  } as unknown as ReadableStreamDefaultController<Uint8Array>;
+  st.reloadClients.add(page);
+  return () => {
+    st.reloadClients.delete(page);
+  };
+}
+
+Deno.test({
+  name:
+    "dev-inspect pull: a read sends the open pages `inspect` and answers with the tree they post",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const dir = await tempApp();
+  try {
+    const { handle, st } = await devHandler(dir);
+    const frames: string[] = [];
+    const leave = fakePage(st, (data) => {
+      frames.push(data);
+      // The page answers the pull by posting its tree (as `__denextInspectPull` does).
+      if (data === "inspect") void postSnapshot(handle, fixtureSnapshot("/pulled"));
+    });
+    try {
+      const res = await readSnapshot(handle, "?pull=1");
+      assertEquals(res.status, 200, "the first read already has the tree");
+      assertEquals((await res.json()).snapshot.url, "/pulled");
+      assertEquals(frames, ["inspect"]);
+      assertEquals(st.devInspectWaiters.size, 0, "the waiter is gone");
+      // A tree under a second old is fresh: the next read does not ask again.
+      await (await readSnapshot(handle, "?pull=1")).body?.cancel();
+      assertEquals(frames, ["inspect"]);
+    } finally {
+      leave();
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "dev-inspect pull: with no page open the read answers at once, saying so",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const dir = await tempApp();
+  try {
+    const { handle } = await devHandler(dir);
+    const started = Date.now();
+    const res = await readSnapshot(handle, "?pull=1");
+    assertEquals(res.status, 404);
+    assertEquals(await res.json(), { reason: "no_snapshot", pages: 0 });
+    assert(Date.now() - started < 1000, "nobody to ask: no wait");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("dev-inspect pull: the page side — the reload script calls the sink's pull hook", async () => {
+  const { DEV_RELOAD_SCRIPT: script } = await import("../src/build/dev-server/reload-script.ts");
+  assertStringIncludes(script, 'e.data === "inspect"');
+  assertStringIncludes(script, "__denextInspectPull");
+
+  const fetches = stubFetch(false); // the server is not armed yet: no commit posts
+  const { api } = fakeApi(inspectTree());
+  const hooks = globalThis as { __denextInspectPull?: () => void };
+  const dispose = installInspectSink(api);
+  try {
+    await new Promise((r) => setTimeout(r, 0));
+    assertEquals(fetches.posts.length, 0);
+    assert(typeof hooks.__denextInspectPull === "function", "the sink registers its pull hook");
+    hooks.__denextInspectPull!();
+    assertEquals(fetches.posts.length, 1, "a pull arms the sink and posts at once");
+    hooks.__denextInspectPull!();
+    assertEquals(fetches.posts.length, 2, "an armed sink posts on every pull");
+  } finally {
+    dispose();
+    fetches.restore();
+  }
+  assertEquals(hooks.__denextInspectPull, undefined, "the disposer removes the hook");
 });

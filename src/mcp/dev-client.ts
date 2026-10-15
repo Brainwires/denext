@@ -223,8 +223,10 @@ export type DevInspectResult =
 export async function fetchDevInspect(dir: string, url?: string): Promise<DevInspectResult> {
   const info = await readDevInfo(dir);
   if (!info) return { ok: false, reason: "no-dev-server" };
-  const qs = url ? `?url=${encodeURIComponent(url)}` : "";
-  const answer = await devFetch(info, `${DEV_INSPECT_PATH}${qs}`);
+  // `pull`: the dev server asks the open pages for a fresh tree over the reload stream and waits
+  // for it (up to 3 s), so even the first read has one when a page is open.
+  const qs = `?pull=1${url ? `&url=${encodeURIComponent(url)}` : ""}`;
+  const answer = await devFetch(info, `${DEV_INSPECT_PATH}${qs}`, 8000);
   if (!answer) return { ok: false, reason: "no-dev-server" };
   const res = answer.response;
   try {

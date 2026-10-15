@@ -1069,10 +1069,9 @@ denext ships tooling so agents get it right the first time:
   tree at a path: layouts, boundaries, server/client split), `denext_component_tree` /
   `denext_why_render` / `denext_hook_state` (the LIVE component tree from a running dev
   page — props, named hooks, why a component re-rendered; these need `denext task dev`
-  AND the app open in a browser, and each answer states how stale its snapshot is. The
-  page starts pushing only once one of them has been called, so the FIRST call may say
-  "posted nothing yet" — call it again after the page's next commit, or start dev with
-  `DENEXT_DEV_INSPECT=1`. String values arrive redacted as `string(n)`),
+  AND the app open in a browser, and each answer states how stale its snapshot is. Each call
+  asks the open pages for a fresh tree over the dev server's reload stream and waits for it, so
+  the first call has one too. String values arrive redacted as `string(n)`),
   `denext_migrations` / `denext_gen_types` (the project's migrations — list, up, down — and its
   database types, run as CLI children), `denext_profile` (build
   unminified, serve, and profile a route in headless Chromium — CPU self-time by

@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Added
 
+- **The MCP DevTools tools pull a fresh component tree.** `denext_component_tree`,
+  `denext_why_render` and `denext_hook_state` used to answer "posted nothing yet" on a session's
+  first call (the page started pushing only after a read). Now a read that finds no tree younger
+  than a second sends every page on the dev server's reload stream an `inspect` frame; the page's
+  DevTools sink arms and posts its tree at once, and the read waits up to 3 s for it. With no page
+  open the tool says so at once.
 - **`denext/ui-kit`: the `denext ui` form components, for plugin authors.** `widgetFor` (a JSON
   Schema node to a widget), `FormField` / `FormFields` (widgets behind the form's one CSRF
   field), `Widget`, and the primitives `Control`, `Field` and `OpButton`, with `encode` /

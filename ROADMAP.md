@@ -109,7 +109,6 @@ Each is documented as a manual recipe today (the
 - **Server-held live views in DevTools:** list `defineLiveView` instances and their messages
   (the MVU tab covers browser programs only).
 - **A Live / channel and state inspector tab** (subscriptions, channel pushes, cache entries).
-- **On-demand snapshot pull** over the reload stream, so the MCP tools get a fresh tree.
 
 ## Live views
 

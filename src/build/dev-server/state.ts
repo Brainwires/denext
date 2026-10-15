@@ -309,6 +309,11 @@ export interface DevState {
    * first read to land.
    */
   devInspectArmed: boolean;
+  /**
+   * Readers waiting for the next snapshot a page posts: an MCP read with `?pull=1` asks the
+   * open pages for a fresh tree over the reload stream, then waits here (briefly) for it.
+   */
+  readonly devInspectWaiters: Set<() => void>;
 
   /** Monotonic token so a stale `deno check` run is dropped when a newer edit lands. */
   typeCheckToken: number;
@@ -373,6 +378,7 @@ export function createDevState(options: DevServerOptions): DevState {
     devEvents: new DevEventLog(),
     devInspect: new Map(),
     devInspectArmed: Deno.env.get("DENEXT_DEV_INSPECT") === "1",
+    devInspectWaiters: new Set(),
     typeCheckToken: 0,
     load: () => Promise.reject(new Error("denext: dev loader used before startDevServer wired it")),
     tagLoad: () =>

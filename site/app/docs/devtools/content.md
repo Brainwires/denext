@@ -537,23 +537,23 @@ capped when it posted it says so, and so does one the tool's own `depth` /
 Three things can be missing, and each gets its own answer rather than one vague
 error:
 
-| Situation                      | What the tool says                                                                     |
-| ------------------------------ | -------------------------------------------------------------------------------------- |
-| No dev server                  | `no dev server running (denext task dev) for <dir>` — it looked for `.denext/dev.json` |
-| Dev server, but nothing pushed | `open the app in a browser — the DevTools sink has posted nothing yet`                 |
-| A tree, but no such component  | `no component named "X" in this snapshot. Components present: …`                       |
+| Situation                     | What the tool says                                                                      |
+| ----------------------------- | --------------------------------------------------------------------------------------- |
+| No dev server                 | `no dev server running (denext task dev) for <dir>` — it looked for `.denext/dev.json`  |
+| Dev server, but no page open  | `open the app in a browser, then call this again — no page has posted a component tree` |
+| A tree, but no such component | `no component named "X" in this snapshot. Components present: …`                        |
 
 So both preconditions hold at once: the tools need **`denext task dev` running AND
 the app open in a browser**. You do not have to open the panel — an agent
 inspecting a page the developer never opened the panel on is the normal case.
 
-**The sink arms lazily.** A page that nobody is inspecting walks no fibers and
-posts nothing; the first `denext_component_tree` / `denext_why_render` /
-`denext_hook_state` call arms the dev server, and the page picks that up on its
-next settled commit. So the **first** call on a fresh session may answer
-`the DevTools sink has posted nothing yet` — call it again after the page's next
-commit, or start the server with `DENEXT_DEV_INSPECT=1` to arm it from the very
-beginning. Arming is sticky for the dev server's lifetime.
+**A read asks the page for a fresh tree.** A page that nobody is inspecting walks no fibers and
+posts nothing. When `denext_component_tree` / `denext_why_render` / `denext_hook_state` finds no
+tree younger than a second, the dev server sends every page connected to its reload stream an
+`inspect` frame; the page's DevTools sink arms (if it was not) and posts its tree at once, and the
+tool, which waits up to 3 s for it, answers with that tree. So the first call on a fresh session
+has a tree too, as long as a page is open. With no page connected the tool answers at once.
+`DENEXT_DEV_INSPECT=1` still arms the pages from the start, so they post on every commit.
 
 What gets pushed is deliberately bounded and inert:
 
