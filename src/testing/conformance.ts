@@ -44,7 +44,7 @@ import {
 import { routeNeedsHydration } from "../build/hydration.ts";
 import { tagServerModules } from "../runtime/server-action.ts";
 import { createMiddlewareRunner } from "../server/mod.ts";
-import { resolve, toFileUrl } from "@std/path";
+import { relative, resolve, toFileUrl } from "@std/path";
 import { createTestClient, type TestHandler } from "./client.ts";
 import { errorDigest } from "../runtime/error-boundary.ts";
 import type { RequestErrorContext } from "../server/instrumentation.ts";
@@ -163,7 +163,7 @@ export async function buildTestHandler(
   let getMiddleware: (() => ReturnType<typeof createMiddlewareRunner>) | undefined;
   if (paths.middlewarePath) {
     const mod = await import(toFileUrl(resolve(paths.middlewarePath)).href);
-    const runner = createMiddlewareRunner(mod);
+    const runner = createMiddlewareRunner(mod, relative(paths.projectDir, paths.middlewarePath));
     getMiddleware = () => runner;
   }
   const boundary = await buildBoundaryManifest(

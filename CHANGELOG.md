@@ -511,6 +511,19 @@ and this project adheres to
 
 ### Security
 
+- **A root middleware or proxy file can no longer be skipped silently.** Two ways an app's
+  `middleware.ts` / `proxy.ts` (an auth gate, say) never ran, with every request served
+  unchecked:
+  - **A file exporting no handler started anyway.** One with no `proxy`, `middleware` or default
+    function (a `config` alone, a function left under another name after renaming middleware to
+    proxy, an object or empty array) built no runner. denext now refuses to start, in dev, `start`,
+    `createTestApp` and `denext doctor`, naming the file and the exports it reads, as Next fails
+    the build.
+  - **Only `.ts` and `.js` were found.** A `middleware.tsx`, `proxy.jsx` or `middleware.mjs` was
+    ignored. Every extension Next accepts (`tsx`, `ts`, `jsx`, `js`) and `mts` / `mjs` are found
+    now, at the root and in `src/`. Two such files (`middleware.ts` beside `proxy.tsx`, or
+    `middleware.ts` beside `middleware.js`) fail at startup naming both, instead of one being
+    picked.
 - **A desktop window stays on the app's origin** (Deno Desktop runtime 2.9.7-denext.18). A
   top-level navigation to any other origin (a link, `location = …`, a form, a server redirect,
   `window.open()`, `target="_blank"`) no longer loads in the window, on every backend (WKWebView,

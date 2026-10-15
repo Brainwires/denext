@@ -1,0 +1,74 @@
+// The root middleware file fails closed: a `proxy.tsx` / `middleware.jsx` (any extension Next
+// accepts) gates the app instead of being skipped, and a middleware file that exports no handler
+// stops the app from starting rather than letting every request through unchecked.
+
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { join } from "@std/path";
+import { createTestApp, createTestClient, probeApp } from "../src/testing/mod.ts";
+
+const JSX = new URL("../src/jsx/jsx-runtime.ts", import.meta.url).href;
+
+const GATE = `export function proxy(request) {
+  const url = new URL(request.url);
+  if (url.pathname.startsWith("/admin")) return new Response("blocked", { status: 401 });
+}
+export const config = { matcher: ["/admin/:path*"] };
+`;
+
+/** A temp app with a home and an /admin page, plus `extra` files at its root. */
+async function withApp<T>(
+  extra: Record<string, string>,
+  fn: (dir: string) => Promise<T>,
+): Promise<T> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_mw_file_" });
+  const files: Record<string, string> = {
+    "app/layout.ts": `import { h } from "${JSX}";
+export const metadata = { title: "Gate" };
+export default function Root({ children }) { return h("main", null, children); }`,
+    "app/page.ts": `import { h } from "${JSX}";
+export default function Home() { return h("p", null, "home"); }`,
+    "app/admin/page.ts": `import { h } from "${JSX}";
+export default function Admin() { return h("p", null, "admin secrets"); }`,
+    ...extra,
+  };
+  try {
+    for (const [rel, src] of Object.entries(files)) {
+      const path = join(dir, rel);
+      await Deno.mkdir(join(path, ".."), { recursive: true });
+      await Deno.writeTextFile(path, src);
+    }
+    return await fn(dir);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+for (const file of ["proxy.tsx", "proxy.jsx", "middleware.tsx", "middleware.mjs"]) {
+  Deno.test(`a root ${file} gates its matcher`, async () => {
+    await withApp({ [file]: GATE }, async (dir) => {
+      const client = createTestClient(await createTestApp(dir));
+      const admin = await client.get("/admin");
+      assertEquals(admin.status, 401);
+      assertEquals(admin.text, "blocked");
+      assertEquals((await client.get("/")).status, 200);
+    });
+  });
+}
+
+Deno.test("a middleware file that exports no handler stops the app from starting", async () => {
+  for (
+    const [file, src] of [
+      ["proxy.ts", `export const config = { matcher: ["/admin/:path*"] };\n`],
+      // Next 16's rename done halfway: the function kept a name denext doesn't read.
+      ["proxy.ts", `export function guard() { return new Response("no", { status: 401 }); }\n`],
+      ["middleware.ts", `export default { matcher: ["/admin/:path*"] };\n`],
+    ]
+  ) {
+    await withApp({ [file]: src }, async (dir) => {
+      const err = await assertRejects(() => createTestApp(dir), Error);
+      assertStringIncludes(err.message, `${file} must export a function`);
+      // denext doctor (probeApp) refuses it too.
+      await assertRejects(() => probeApp(dir), Error, "must export a function");
+    });
+  }
+});

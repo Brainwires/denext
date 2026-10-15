@@ -1,6 +1,6 @@
 // Resolve the conventional paths and config for a denext project directory.
 
-import { join, relative, toFileUrl } from "@std/path";
+import { basename, join, relative, toFileUrl } from "@std/path";
 import { frameworkFileUrl } from "./bundle.ts";
 import { CONFIG_FILES } from "./config-files.ts";
 import type { I18nConfig } from "../server/i18n.ts";
@@ -61,22 +61,36 @@ async function firstOf(dir: string, names: string[]): Promise<string | null> {
 }
 
 /**
- * The root middleware module: `middleware.ts` / `.js`, or Next 16's name for the same hook,
- * `proxy.ts` / `.js` — beside `app/` (in `src/` with the `src/app` layout). Both a middleware
- * and a proxy file is the error Next.js raises, since only one of them can run.
+ * Extensions a root middleware / proxy file may have: Next.js's default `pageExtensions`
+ * (`tsx`, `ts`, `jsx`, `js`) plus the ES-module spellings Deno loads (`mts`, `mjs`).
+ */
+const MIDDLEWARE_EXTENSIONS = ["ts", "tsx", "mts", "js", "jsx", "mjs"];
+
+/**
+ * The root middleware module: `middleware.*`, or Next 16's name for the same hook, `proxy.*` —
+ * beside `app/` (in `src/` with the `src/app` layout), with any of
+ * {@linkcode MIDDLEWARE_EXTENSIONS}. More than one such file is an error rather than a silent
+ * pick: only one can run, and the one left out may be the app's auth gate. (Next raises the same
+ * error for a middleware file beside a proxy file.)
  */
 async function resolveMiddlewarePath(projectDir: string, srcBase: string): Promise<string | null> {
-  const middleware = await firstOf(srcBase, ["middleware.ts", "middleware.js"]);
-  const proxy = await firstOf(srcBase, ["proxy.ts", "proxy.js"]);
-  if (middleware && proxy) {
-    const rel = (p: string) => "./" + relative(projectDir, p).replaceAll("\\", "/");
+  const found: string[] = [];
+  for (const name of ["middleware", "proxy"]) {
+    for (const ext of MIDDLEWARE_EXTENSIONS) {
+      const p = join(srcBase, `${name}.${ext}`);
+      if (await exists(p)) found.push(p);
+    }
+  }
+  if (found.length > 1) {
+    const rel = (p: string) => `"./${relative(projectDir, p).replaceAll("\\", "/")}"`;
+    const proxy = found.find((p) => basename(p).startsWith("proxy."));
+    const keep = proxy ? `keep ${rel(proxy)} (Next.js 16's name for middleware)` : "keep one";
     throw new Error(
-      `denext: both a middleware file "${rel(middleware)}" and a proxy file "${rel(proxy)}" ` +
-        `were found. They are the same hook (Next.js 16 renamed middleware to proxy), so only ` +
-        `one can run: keep "${rel(proxy)}" and delete the other.`,
+      `denext: found ${found.map(rel).join(" and ")}. These are the same hook, and only one can ` +
+        `run: ${keep} and delete the other${found.length > 2 ? "s" : ""}.`,
     );
   }
-  return middleware ?? proxy;
+  return found[0] ?? null;
 }
 
 export async function resolveProject(projectDir: string): Promise<ProjectPaths> {

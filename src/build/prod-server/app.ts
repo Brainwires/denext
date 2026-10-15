@@ -1,7 +1,7 @@
 // Production server, stage 3: the module loader, middleware, instrumentation, config
 // rules, cache store, the `createApp` handler and the Live hub.
 
-import { join } from "@std/path";
+import { join, relative } from "@std/path";
 import { timed } from "../../runtime/timing.ts";
 import { EMITTED_DIR, getPluginRequestHandler } from "../../plugin/mod.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
@@ -90,7 +90,7 @@ export async function prodLoader(paths: ProjectPaths, info: BuildInfo): Promise<
 async function loadMiddleware(paths: ProjectPaths, load: ModuleLoader): Promise<MiddlewareRunner> {
   if (!paths.middlewarePath) return null;
   const mod = await load(paths.middlewarePath);
-  return createMiddlewareRunner(mod as never);
+  return createMiddlewareRunner(mod as never, relative(paths.projectDir, paths.middlewarePath));
 }
 
 /**

@@ -22,9 +22,19 @@ export default function Middleware() {
         {" "}
         (Next 16) or <code>middleware</code>{" "}
         are both read, from either file. It runs before routing and can short-circuit with a
-        response, redirect, rewrite the URL used for matching, or continue. An app with both a
-        middleware and a proxy file fails at startup, as in Next.js: keep one.
+        response, redirect, rewrite the URL used for matching, or continue. Any of Next's extensions
+        works (<code>.ts</code>, <code>.tsx</code>, <code>.js</code>, <code>.jsx</code>), and{" "}
+        <code>.mts</code> / <code>.mjs</code> too.
       </p>
+      <Callout kind="warn">
+        Middleware fails closed. An app with more than one such file (<code>middleware.ts</code> and
+        {" "}
+        <code>proxy.ts</code>, or <code>middleware.ts</code> and{" "}
+        <code>middleware.js</code>) does not start, and neither does one whose file exports no
+        function as <code>proxy</code>, <code>middleware</code> or the default (a{" "}
+        <code>config</code>{" "}
+        alone, say). Both name the file, so a gate is never skipped without notice.
+      </Callout>
       <Code lang="tsx">
         {`// middleware.ts
 import { NextResponse } from "denext/next/server";

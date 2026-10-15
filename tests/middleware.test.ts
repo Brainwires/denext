@@ -687,5 +687,28 @@ Deno.test("createMiddlewareRunner reads proxy, middleware and default exports", 
   assertEquals(createMiddlewareRunner({ proxy: handler }) !== null, true);
   assertEquals(createMiddlewareRunner({ middleware: handler }) !== null, true);
   assertEquals(createMiddlewareRunner({ default: handler }) !== null, true);
-  assertEquals(createMiddlewareRunner({}), null);
+});
+
+Deno.test("createMiddlewareRunner fails closed when no handler is exported", () => {
+  // A module that exports no runnable handler must not start with its gate skipped.
+  const handler = () => next();
+  for (
+    const mod of [
+      {},
+      { config: { matcher: "/secret" } },
+      { default: { matcher: "/secret" } },
+      { proxy: "not a function" },
+      { middleware: [] },
+      { default: [handler, { config: {} }] },
+    ]
+  ) {
+    const err = assertThrows(() => createMiddlewareRunner(mod as never, "proxy.ts"), Error);
+    assertStringIncludes(err.message, "proxy.ts must export a function");
+  }
+  // An array of handlers / entries is still fine.
+  assertEquals(
+    createMiddlewareRunner({ default: [handler, { handler, config: { matcher: "/x" } }] }) !==
+      null,
+    true,
+  );
 });

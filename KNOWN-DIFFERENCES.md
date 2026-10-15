@@ -144,7 +144,11 @@ internal design choice with no observable difference lives in
   default) export in `proxy.ts` and a `middleware` (or default) export in `middleware.ts`, and
   warns that `middleware.ts` is deprecated. denext reads `proxy`, `middleware` or the default
   export from whichever file the app has, and does not warn. Both files at once is an error in
-  both.
+  both. denext finds the file with Next's default extensions (`tsx`, `ts`, `jsx`, `js`) plus
+  `mts` / `mjs`; it has no `pageExtensions` option. Two files of the same name
+  (`middleware.ts` and `middleware.js`) are an error too, where Next takes one by extension
+  order. A file that exports no handler stops the app at startup (dev, `start`, `doctor`); Next
+  fails its build, and `denext build` does not import the file.
 - **`nodeResolve` is on by default** for the compat (npm React) build — every bare
   npm specifier resolves from the installed `node_modules` through denext's tolerant
   resolver, which is what lets an unmodified pnpm/npm/yarn app build with no

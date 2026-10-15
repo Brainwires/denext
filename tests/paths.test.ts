@@ -108,12 +108,19 @@ Deno.test("resolveProject uses src/app when present (public/config stay at root)
   }
 });
 
-Deno.test("resolveProject finds Next.js 16's proxy.ts / proxy.js, at the root and in src/", async () => {
+Deno.test("resolveProject finds middleware.* / proxy.* with every accepted extension, at the root and in src/", async () => {
   for (
     const [layout, file] of [
       ["root", "proxy.ts"],
       ["root", "proxy.js"],
       ["src", "proxy.ts"],
+      // Next's default pageExtensions (tsx, ts, jsx, js) and the ES-module spellings.
+      ["root", "proxy.tsx"],
+      ["src", "proxy.jsx"],
+      ["root", "middleware.tsx"],
+      ["root", "middleware.jsx"],
+      ["src", "middleware.mjs"],
+      ["root", "proxy.mts"],
     ] as const
   ) {
     const dir = await scaffold(layout, [file]);
@@ -136,6 +143,26 @@ Deno.test("resolveProject refuses both a middleware and a proxy file, as Next.js
       assertStringIncludes(err.message, `"${pre}middleware.ts"`);
       assertStringIncludes(err.message, `"${pre}proxy.ts"`);
       assertStringIncludes(err.message, "only one can run");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  }
+});
+
+Deno.test("resolveProject refuses two middleware files whatever their extensions", async () => {
+  for (
+    const files of [
+      ["middleware.tsx", "proxy.ts"],
+      ["middleware.ts", "proxy.jsx"],
+      ["middleware.ts", "middleware.js"],
+      ["proxy.ts", "proxy.mjs"],
+    ]
+  ) {
+    const dir = await scaffold("root", files);
+    try {
+      const err = await assertRejects(() => resolveProject(dir), Error);
+      for (const f of files) assertStringIncludes(err.message, `"./${f}"`);
+      assertStringIncludes(err.message, "only one can");
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
