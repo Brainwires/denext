@@ -26,6 +26,18 @@ and this project adheres to
 
 ### Added
 
+- **The dashboard's Realtime, Edge Functions and Health pages, in `denext ui` too.** Realtime
+  shows the publication tables opt in through, each table's triggers, key and RLS. Adding a
+  table to the publication, or dropping it, is previewed and run like every other write. It also
+  shows the running app's live channels with their subscriber counts and every `postgres_changes`
+  binding's table, filter and events. Presence shows keys only; a key's payloads appear only when
+  that key is expanded. Edge Functions lists the deployed functions (`verifyJwt`, last change)
+  and their recent invocations: status, duration and time, never a request's body or headers.
+  Health shows each service's health check (from `docker compose ps`, or the stack's relay), the
+  app's `/_denext/health` checks and the `services/` supervision tree, with error messages
+  redacted. It refreshes itself through a `<noscript>` meta refresh with scripting off, and in
+  place with it on. The stack's dashboard reads the running app at `DASHBOARD_APP_URL`, which
+  `denext generate docker --stack` sets.
 - **`denext build --compile [--target <triple>] [--output <path>]`: the app's server as one
   executable.** After the build, `deno compile` (on denext's Deno toolchain) embeds the server
   modules, `.denext/`, `public/`, `jobs/`, `services/`, `functions/`, the migrations and `compile.include`

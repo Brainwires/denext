@@ -1443,6 +1443,20 @@ A function's worker acknowledges each abort. One that does not within a second (
 code, such as a `while (true) {}`) is terminated and replaced: the requests it was still serving
 get `504`, and the next call starts on a fresh worker.
 
+## The admin endpoint
+
+`/_denext/backend/admin/*` is how [`denext ui`](/docs/ui#realtime) and the stack's dashboard read
+what only the running app knows: realtime's live channels (with their subscriber counts) and
+`postgres_changes` bindings, a channel's presence keys (a key's payloads only when asked for by
+key), Edge Functions with the last 200 invocations (function, status, duration and time; never a
+request's body or headers), and the `services/` supervision tree. It answers only the secret key
+(`apikey: sb_secret_…`, or as a bearer), and only `GET`; with no keys installed
+(`backend({ supabase })` off) it refuses everything.
+
+```sh
+curl -H "apikey: $DENEXT_SECRET_KEY" http://127.0.0.1:3000/_denext/backend/admin/status
+```
+
 ## Vault
 
 `backend({ postgres: {}, vault: {} })` keeps secrets encrypted in your database, in Supabase

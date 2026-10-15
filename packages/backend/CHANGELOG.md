@@ -24,6 +24,12 @@
   after 30 (`webhooks.retention`, or `false`). The background deliverer cleans up hourly;
   `webhookCleanupJob()` and `purgeWebhookEvents()` (`@denext/backend/server`) for
   `delivery: "manual"`. New migration `backend_webhooks_0002` (an index).
+- **An admin endpoint, `/_denext/backend/admin/*`, for `denext ui` and the stack's dashboard.** It
+  answers only the secret key, and only `GET`. It reports realtime's live channels (subscriber
+  counts) and `postgres_changes` bindings, a channel's presence keys (a key's payloads only when
+  asked for by key), Edge Functions with their recent invocations, and the `services/`
+  supervision tree. The functions runtime keeps the last 200 invocations in a bounded ring:
+  function, status, duration and time only.
 - **An `upload` operation for `denext ui` and the stack's dashboard.** The storage runtime's admin
   operations can now store an object as the service, through the same path as any upload: the
   bucket's size cap and type list apply, and the metadata row is written with the bytes.

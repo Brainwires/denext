@@ -257,8 +257,11 @@ With Postgres the stack has a `dashboard` service: [`denext dashboard`](/docs/ui
 a Studio-style view of the stack's database. Tables and rows (browse, filter, sort, page, insert,
 edit, delete), a SQL editor, row-level security policies, migrations, storage buckets and objects
 (upload, download, delete), denext auth's users (search, create, ban, set a password, revoke,
-delete) and the logs. It runs the app's own image with the app's environment, so its database
-and storage are the app's, and publishes on this machine's loopback only:
+delete), realtime (the publication opt-in, live channels, presence keys, `postgres_changes`
+subscribers), Edge Functions with their recent invocations, the logs, and health. It runs the
+app's own image with the app's environment, so its database and storage are the app's, reads the
+running app at `DASHBOARD_APP_URL` (`http://web:<port>`; the backend's admin endpoint answers it the
+secret key the app's environment already holds), and publishes on this machine's loopback only:
 
 ```sh
 denext stack status      # Dashboard URL  http://127.0.0.1:3100
@@ -272,7 +275,8 @@ one. `DASHBOARD_PORT` moves the port; `--no-dashboard` on `denext generate docke
 front and add `"--origin", "https://<its host>"` to its command: over that https origin the session
 cookie is `__Host-` and `Secure` (a plain-http origin off this machine is refused), sign-ins are rate limited, and every change needs a same-origin request and a CSRF token.
 
-**Logs.** The dashboard's container has no Docker, so its Logs page reads through a relay:
+**Logs and service health.** The dashboard's container has no Docker, so its Logs page and the
+services on its Health page read through a relay:
 `--dashboard-logs` (opt-in) adds a `dashboard-logs` service, the only one that mounts the Docker
 socket (`DOCKER_SOCKET` in `.env` points it at another, for rootless Docker or Podman). It runs as
 root to read the socket, is on a network of its own with the dashboard (`internal: true`, no

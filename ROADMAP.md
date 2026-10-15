@@ -8,15 +8,6 @@
 > denext **4.0** is in release candidates (`4.0.0-rc.N`) from `development`, then ships 4.x patch
 > and minor releases from there; what each one added is in the changelog.
 
-## 4.1.0: Additional Supabase features
-
-- **The dashboard's remaining pages:** `denext dashboard` (the stack's `dashboard` service) has
-  tables and rows, the SQL editor, RLS policies, storage, auth users and logs. Still to add, on
-  the same Database section so `denext ui` gets them too: realtime (channels, presence,
-  `postgres_changes` subscribers), Edge Functions (the deployed functions, recent invocations)
-  and health (each service's health check and the app's `/_denext/health` checks, as
-  `denext stack health` prints them).
-
 ## 4.1.0: Limitations that can be lifted
 
 Entries in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) that aren't forced by an OS, a browser

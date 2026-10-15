@@ -714,16 +714,19 @@ has no such signal, it is a hard kill and says so.
 `postgres://` URL (in the environment, `.env` or `.env.local`), or the config declares
 `postgres:` — `backend({ postgres })` from [`@denext/backend`](/docs/backend). Its tabs:
 
-| Tab        | What it shows                                                                                                                                      | Writes                                                                                                         |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Tables     | Every table, view and materialized view: the planner's row estimate, row-level security, the primary key; a table's columns, indexes, foreign keys | —                                                                                                              |
-| Rows       | A table's rows, 50 a page — sort by any column, filter `column = value` (or `IS NULL`), open one row                                               | Edit a value, insert a row, delete a row                                                                       |
-| SQL        | The [SQL editor](#the-sql-editor): a statement or a script, and the last statement's rows                                                          | Whatever a read-write run does                                                                                 |
-| Policies   | Each table's row-level security (enabled, forced) and every policy in `pg_policies`                                                                | "Enable RLS" writes a migration — it does not alter the table                                                  |
-| Migrations | `migrations/*.sql` — applied, pending, or applied and since edited — and what applying would run                                                   | Apply the pending ones                                                                                         |
-| Storage    | The buckets `backend({ storage })` declares and their objects (paged, size, type); download one (up to 10 MB)                                      | Upload an object (up to 10 MB); delete an object                                                               |
-| Users      | denext auth's users from its Postgres tables: live sessions, a confirmed second factor, passkeys, a ban in force; one user's page                  | Create a user; ban, unban, set a password; revoke a user's sessions; delete a user and every row keyed by them |
-| Logs       | The stack's [logs](#logs): one service or every one, a time window, a level, a text search                                                         | —                                                                                                              |
+| Tab        | What it shows                                                                                                                                                                     | Writes                                                                                                         |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Tables     | Every table, view and materialized view: the planner's row estimate, row-level security, the primary key; a table's columns, indexes, foreign keys                                | —                                                                                                              |
+| Rows       | A table's rows, 50 a page — sort by any column, filter `column = value` (or `IS NULL`), open one row                                                                              | Edit a value, insert a row, delete a row                                                                       |
+| SQL        | The [SQL editor](#the-sql-editor): a statement or a script, and the last statement's rows                                                                                         | Whatever a read-write run does                                                                                 |
+| Policies   | Each table's row-level security (enabled, forced) and every policy in `pg_policies`                                                                                               | "Enable RLS" writes a migration — it does not alter the table                                                  |
+| Migrations | `migrations/*.sql` — applied, pending, or applied and since edited — and what applying would run                                                                                  | Apply the pending ones                                                                                         |
+| Storage    | The buckets `backend({ storage })` declares and their objects (paged, size, type); download one (up to 10 MB)                                                                     | Upload an object (up to 10 MB); delete an object                                                               |
+| Users      | denext auth's users from its Postgres tables: live sessions, a confirmed second factor, passkeys, a ban in force; one user's page                                                 | Create a user; ban, unban, set a password; revoke a user's sessions; delete a user and every row keyed by them |
+| Realtime   | The publication tables opt in through, each table's triggers; the running app's live channels, subscribers, presence keys and `postgres_changes` bindings ([Realtime](#realtime)) | Add a table to the publication, or drop it                                                                     |
+| Functions  | The Edge Functions under `functions/`, their `verifyJwt` and their recent invocations ([Edge Functions](#edge-functions))                                                         | —                                                                                                              |
+| Logs       | The stack's [logs](#logs): one service or every one, a time window, a level, a text search                                                                                        | —                                                                                                              |
+| Health     | Each service's health check, the app's `/_denext/health` checks and the `services/` supervision tree, refreshing itself ([Health](#health))                                       | —                                                                                                              |
 
 **Where the work happens.** The UI process never opens the database: it would need the
 project's config, and the UI never runs project code. Each page writes one JSON request to a
@@ -787,7 +790,7 @@ CSRF token, like every other form. The connection is shown with its password mas
 (`postgres://app:•••@db:5432/app`), and so is any URL an error message mentions. A downloaded
 object is always served as an `application/octet-stream` attachment with `nosniff`, whatever
 type it was stored with, so a stored HTML or SVG file can never run on the UI's origin.
-`--offline` refuses the section (`503`), Logs excepted.
+`--offline` refuses the section (`503`), Logs, Functions and Health excepted.
 
 ### The SQL editor
 
@@ -823,6 +826,51 @@ Every line is redacted before it is shown or searched: a `postgres://` password,
 every secret-looking variable (`*PASSWORD*`, `*SECRET*`, `*TOKEN*`, `*_KEY`, …) in the process's
 environment and the project's `.env`. A search runs on the redacted text, so it cannot find a
 secret either.
+
+### Realtime
+
+`/database/realtime` shows realtime from both sides. From the database (the `db-admin` child):
+the publication tables opt in through (`realtime({ publication })`, Supabase's
+`supabase_realtime` by default), each table's place in it, the events its `denext_realtime`
+triggers send, its primary key and row-level security. The one write here is that opt-in: "Add
+to publication…" / "Remove from publication…" previews the `ALTER PUBLICATION` (and a `CREATE
+PUBLICATION` when there is none yet) and runs it on the second post, like every other write; the
+running app re-reads the publication and creates or drops the table's triggers itself. A table
+needs a one-column primary key to opt in. Tables listed in `realtime({ tables })` are code and are
+marked, not changed.
+
+From the running app: its live channels with their subscriber counts, and every
+`postgres_changes` binding's channel, table, filter (redacted like the Logs page) and events.
+"Presence keys" lists a channel's presence keys and how many presences each has, never what they
+tracked; a key's payloads are shown only when you expand that key.
+
+**Reaching the running app.** Channels, presence, invocations and the supervision tree live in
+the app's process, so the page asks it: `@denext/backend` serves `/_denext/backend/admin/*`,
+which answers only the secret key (`DENEXT_SECRET_KEY`, sent as the `apikey` header and never
+shown). `denext ui` asks the dev server `.denext/dev.json` names (a loopback address), with the
+key from the environment or the project's `.env`; the stack's dashboard asks `DASHBOARD_APP_URL`.
+Without a running app, or without the key, those parts say so and the rest of the page renders.
+
+### Edge Functions
+
+`/database/functions` lists the functions the running app serves: each one's name, whether it
+requires a caller (`verifyJwt`) and when its entry file last changed, with how many of its recent
+calls failed. Below, the recent invocations, newest first, for one function or all of them (a
+fixed list): status, duration and time. The functions runtime keeps the last 200 in a ring in the
+app's process; it records only those four facts, never a request's body, headers, query or
+caller, so none can be shown. Without a running app the page lists the files under `functions/`,
+`verifyJwt` unknown.
+
+### Health
+
+`/database/health` is what `denext stack health` prints: each service's compose health check (a
+one-shot that exited 0 counts as done) from `docker compose ps`, or in the stack's dashboard from
+the `dashboard-logs` relay; the app's own `/_denext/health` verdict and each readiness check (the
+`services` supervision check among them); and the `services/` supervision tree, from the running
+app, else the last snapshot a server wrote (`.denext/services.json`). Error messages are
+redacted. The page refreshes itself every 15 seconds by default (a fixed list, `No refresh`
+included): with scripting off through a `<noscript>` meta refresh, with it on by swapping the panel
+in place.
 
 ### The stack dashboard
 
