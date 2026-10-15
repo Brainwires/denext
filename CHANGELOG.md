@@ -233,6 +233,10 @@ and this project adheres to
 
 ### Fixed
 
+- **A quoted `DENEXT_DENO` value is read without its quotes.** Windows cmd's
+  `set DENEXT_DENO="C:\Program Files\deno\deno.exe"` keeps the quotes in the value, so the path
+  was not a file and the command ran on stock Deno. One pair of matching surrounding quotes
+  (`"…"` or `'…'`) is now stripped before the value is read as a path or as `stock` / `pinned`.
 - **`/auth/v1` `GET /admin/users` with empty paging values returns the default page.**
   supabase-js's `auth.admin.listUsers()` with no options sends `?page=&per_page=`, which was
   read as one user per page; an empty value now means GoTrue's defaults (page 1, 50 per page).

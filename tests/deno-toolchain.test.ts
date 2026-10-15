@@ -26,6 +26,7 @@ import {
   resolveDenoToolchain,
   staleToolchainLink,
   TOOLCHAIN_STAMP,
+  toolchainEnvValue,
   unlinkDenoToolchain,
 } from "../src/build/deno-toolchain.ts";
 import { denoToolchainCheck } from "../src/cli/commands/doctor.ts";
@@ -427,6 +428,42 @@ Deno.test("resolveDenoToolchain: DENEXT_DENO=<path> runs that binary unverified,
     const missing = await resolveDenoToolchain({ env: envOf({ DENEXT_DENO: join(dir, "nope") }) });
     assert(missing.kind === "stock" && missing.warning);
     assertStringIncludes(missing.warning, "is not a file");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("DENEXT_DENO: one pair of matching surrounding quotes is stripped (Windows cmd keeps them)", async () => {
+  // `set DENEXT_DENO="C:\Program Files\deno\deno.exe"` stores the quotes in the value.
+  const value = (raw: string) => toolchainEnvValue(envOf({ DENEXT_DENO: raw }));
+  assertEquals(value('"C:\\Program Files\\deno\\deno.exe"'), "C:\\Program Files\\deno\\deno.exe");
+  assertEquals(value("  'stock'  "), "stock");
+  assertEquals(value('""'), "");
+  assertEquals(value('""stock""'), '"stock"', "only ONE pair is stripped");
+  for (const mismatched of [`"stock'`, `'stock"`, `"stock`, `stock"`, `"`]) {
+    assertEquals(value(mismatched), mismatched, `${mismatched} is left as is`);
+  }
+  assertEquals(toolchainEnvValue(envOf({})), "");
+
+  const dir = await Deno.makeTempDir({ prefix: "denext path with space " });
+  try {
+    const bin = join(dir, "deno");
+    await Deno.writeTextFile(bin, BINARY);
+    for (const quoted of [`"${bin}"`, `'${bin}'`]) {
+      const choice = await resolveDenoToolchain({ env: envOf({ DENEXT_DENO: quoted }) });
+      assert(choice.kind === "toolchain", `${quoted} names the binary`);
+      assertEquals([choice.deno, choice.version], [bin, "path"]);
+    }
+    for (const stock of [`"stock"`, `'STOCK'`]) {
+      assertEquals(await resolveDenoToolchain({ env: envOf({ DENEXT_DENO: stock }) }), {
+        kind: "stock",
+        reason: "DENEXT_DENO=stock",
+      });
+    }
+    // Mismatched quotes stay part of the value: a path that is not a file.
+    const mismatched = await resolveDenoToolchain({ env: envOf({ DENEXT_DENO: `"${bin}'` }) });
+    assert(mismatched.kind === "stock" && mismatched.warning);
+    assertStringIncludes(mismatched.warning, "is not a file");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

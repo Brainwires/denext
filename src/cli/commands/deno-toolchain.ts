@@ -15,6 +15,7 @@ import {
   staleToolchainLink,
   TOOLCHAIN_ACTIVE_ENV,
   TOOLCHAIN_ENV,
+  toolchainEnvValue,
   unlinkDenoToolchain,
 } from "../../build/deno-toolchain.ts";
 import { esbuildBinaryStatus } from "../../build/esbuild/binary.ts";
@@ -34,7 +35,7 @@ async function requireToolchain(): Promise<{ deno: string; version: string; cach
 
 /** The binary `toolchain path` / `link` name: the pinned one (installed), or a refusal. */
 async function toolchainBinary(): Promise<{ deno: string; marker: string }> {
-  const raw = (Deno.env.get(TOOLCHAIN_ENV) ?? "").trim();
+  const raw = toolchainEnvValue();
   if (raw.toLowerCase() === "stock") {
     console.error(`denext: ${TOOLCHAIN_ENV}=stock — running stock Deno.`);
     return { deno: denoExecutable(), marker: "" };
@@ -67,7 +68,7 @@ export async function runDenoPassthrough(
   cwd = Deno.cwd(),
   forwarded = false,
 ): Promise<never> {
-  const raw = (Deno.env.get(TOOLCHAIN_ENV) ?? "").trim().toLowerCase();
+  const raw = toolchainEnvValue().toLowerCase();
   if (!forwarded && raw === "stock") {
     console.error(`denext: ${TOOLCHAIN_ENV}=stock — running stock Deno.`);
   }
