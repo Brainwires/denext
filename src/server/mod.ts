@@ -506,8 +506,11 @@ export {
   POSTGRES_UNSUPPORTED,
   postgresClient,
   PostgresUnsupportedError,
+  sessionClient,
+  withDirectConnection,
 } from "./postgres.ts";
 export type {
+  DirectPairedClient,
   PostgresConnectionOptions,
   PostgresJsLike,
   SqlClient,

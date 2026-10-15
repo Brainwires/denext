@@ -133,10 +133,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   that tracked the key — at most `maxTrackedKeys` (default 10 000) per subscription. Subscriptions
   are capped per identity and per instance; behind a reverse proxy without
   `trustForwardedHeaders`, signed-out visitors are counted per Live connection, not per address.
-- **One Postgres client for every service:** behind PgBouncer in transaction mode, realtime's
-  notify source, `revalidate.owner: "one"` and the logical source don't work (they need a
-  session; webhooks then deliver on the poll interval only), and `backend({ postgres })` takes no second, direct
-  connection for them. Connect directly or through a session-mode pool.
 - **Storage's SQL policies need `storage: { rls: true }`** (otherwise a bucket's `authorize` in
   TypeScript decides, with no `storage` schema to join against). An S3 upload
   whose client skips the completion call was checked by nobody: record the keys completion

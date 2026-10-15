@@ -609,6 +609,7 @@
     "DesktopUiUpdateConfig:interface",
     "DesktopUpdateConfig:interface",
     "DesktopWindowConfig:interface",
+    "DirectPairedClient:typeAlias",
     "Directive:typeAlias",
     "DocumentOptions:interface",
     "DraftMode:interface",
@@ -1215,6 +1216,7 @@
     "serveStatic:function",
     "serveWithPortFallback:function",
     "serverAction:function",
+    "sessionClient:function",
     "sessionFromClaims:function",
     "setCacheStore:function",
     "setChannelTransport:function",
@@ -1257,6 +1259,7 @@
     "verifySecondFactor:function",
     "verifySupabaseJwt:function",
     "verifyTotp:function",
+    "withDirectConnection:function",
     "withHeaders:function",
     "withMigrationLock:function"
   ],

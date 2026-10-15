@@ -193,9 +193,20 @@ work through a transaction-mode pooler:
 - Prepared statements: PgBouncer before 1.21 (or with `max_prepared_statements = 0`) refuses
   them. Set `prepare: false` (`Deno.SQL` and postgres.js both take it).
 
-`backend({ postgres })` has one client for all of its services, so an app that uses those features
-connects directly or through a session-mode pool. The migration lock (transaction-scoped) and the
-stores' single statements work in either mode.
+Give those a direct connection to the server with **`directUrl`**, as Prisma's `directUrl` does.
+Queries (and `db()`) keep going through the pooler, while LISTEN, reserved connections, and every
+migration and its lock use the direct one:
+
+```ts
+// denext.config.ts: the pooler for queries, the server itself for sessions
+backend({ postgres: {} }); // reads DATABASE_URL, and DATABASE_DIRECT_URL next to it
+backend({ postgres: { url: poolerUrl, directUrl: serverUrl } }); // or say so
+postgresAuthAdapter({ url: poolerUrl, directUrl: serverUrl }); // every store takes it too
+```
+
+With your own clients, `withDirectConnection(pooled, direct)` from `denext/server` pairs them the
+same way, and `sql` takes the pair. Without a direct URL, an app that uses those features connects
+directly or through a session-mode pool.
 
 Other drivers work as they always have — `jsr:@db/postgres`, `npm:mysql2` and the rest are
 standard Deno code. Keep the pool a module singleton.

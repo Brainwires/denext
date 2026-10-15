@@ -9,6 +9,8 @@
   `metadataPath`, the storage metadata goes to `storage.db` in the binary's state directory
   (`./.denext`).
 
+- **`postgres.directUrl` (default `DATABASE_DIRECT_URL`)** for a pooler in transaction mode:
+  LISTEN, reserved connections and migrations go to the direct connection, queries to the pooler.
 - **Rate limits for the auto-REST routes.** Each client has a request budget (`rest.rateLimit`,
   default 1200 a minute): a signed-in user by user id, anyone else by client address
   (`clientIpForLimits()`), the secret key never. A request with a refused credential counts

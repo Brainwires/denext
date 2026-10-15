@@ -49,6 +49,14 @@ and this project adheres to
   the app's migrations. So a deployment with `DENEXT_BOOT_DDL=off` applies its whole schema with
   one command. `db reset`, `db diff` and `lint` include them. New in `denext/server`:
   `registerFrameworkMigrations`, `frameworkMigrationSets`.
+- **`directUrl`: Postgres behind PgBouncer in transaction mode.** `backend({ postgres })` (default
+  `DATABASE_DIRECT_URL`) and every denext Postgres store take a direct URL to the server beside
+  the pooled one, as Prisma's `directUrl` does. Queries, `db()` included, go through the pooler.
+  What needs a session of its own uses the direct connection: realtime's LISTEN, its reserved
+  connections (`revalidate.owner: "one"`, the logical source), webhook delivery's wake-up, the
+  REST schema-reload listener, and every migration and its lock. Through a transaction-mode pooler
+  alone, LISTEN silently heard nothing. New in `denext/server`: `withDirectConnection(pooled,
+  direct)` pairs two clients, and `sessionClient(sql)` returns the one session work uses.
 - **`@denext/backend` 0.5.0: webhook events are deleted after a retention.** Delivered events are
   kept 7 days and failed ones 30 (`webhooks.retention: { deliveredMs, failedMs }`, counted from the
   change; `false` keeps them all). Before, every event stayed in

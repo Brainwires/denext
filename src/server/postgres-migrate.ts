@@ -19,7 +19,7 @@
  */
 
 import { readMigrationFiles } from "./migration-files.ts";
-import { runScript, schemaPrefix, type SqlClient, sqlState } from "./postgres.ts";
+import { runScript, schemaPrefix, sessionClient, type SqlClient, sqlState } from "./postgres.ts";
 
 /** One migration: a unique, ordered name and its SQL (one or more statements). */
 export interface Migration {
@@ -165,6 +165,7 @@ export async function postgresMigrationStatus(
   sql: SqlClient,
   options: PostgresMigrateOptions = {},
 ): Promise<MigrationStatus> {
+  sql = sessionClient(sql); // a pooler's direct connection, when paired
   const known = await collect(options);
   const done = await recorded(sql, trackingTable(options));
   const migrations: MigrationState[] = [];
@@ -256,7 +257,7 @@ export async function withMigrationLock<T>(
   fn: (tx: SqlClient) => Promise<T>,
 ): Promise<T> {
   const lock = trackingTable(options);
-  return await sql.begin(async (tx) => {
+  return await sessionClient(sql).begin(async (tx) => {
     await takeMigrationLock(tx, lock, options.quiet);
     return await fn(tx);
   });
@@ -413,6 +414,8 @@ export async function migratePostgres(
   sql: SqlClient,
   options: PostgresMigrateOptions = {},
 ): Promise<MigrateResult> {
+  // Migrations and their lock run on a pooler's direct connection, when paired.
+  sql = sessionClient(sql);
   const known = await collect(options);
   for (const migration of known) assertNoOwnTransaction(migration.name, migration.sql);
   const table = trackingTable(options);
