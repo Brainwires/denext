@@ -158,6 +158,77 @@ Deno.test("a hanging config times out and the child is killed", async () => {
   });
 });
 
+Deno.test({
+  name: "an evaluator whose caller dies mid-evaluation is killed, not left spinning",
+  // Unix only: the liveness probe is a signal (the reaper itself works on Windows too).
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    await withConfig("next.config.mjs", HANGING, async (dir) => {
+      // A caller that starts evaluating a config that never finishes, with a deadline far
+      // beyond this test, names the evaluator's pid, and is then killed outright.
+      const caller = `
+import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from ${
+        JSON.stringify(new URL("../src/build/next-config-eval.ts", import.meta.url).href)
+      };
+const Original = Deno.Command;
+let spawned = 0;
+(Deno as { Command: typeof Deno.Command }).Command = class extends Original {
+  override spawn() {
+    const child = super.spawn();
+    // The first spawn is the evaluator. Named once the synchronous code after its spawn has
+    // run — where the evaluator is tied to this process, if it is.
+    if (spawned++ === 0) queueMicrotask(() => console.log("evaluator=" + child.pid));
+    return child;
+  }
+};
+await evalNextConfigProgram({
+  dir: ${JSON.stringify(dir)},
+  file: "next.config.mjs",
+  program: LOAD_NEXT_CONFIG,
+  marker: "__M__",
+  timeoutMs: 600_000,
+});
+`;
+      const parent = new Deno.Command(Deno.execPath(), {
+        args: ["run", "-A", "-"],
+        stdin: "piped",
+        stdout: "piped",
+        stderr: "inherit",
+      }).spawn();
+      const writer = parent.stdin.getWriter();
+      await writer.write(new TextEncoder().encode(caller));
+      await writer.close();
+      const lines = parent.stdout.pipeThrough(new TextDecoderStream()).getReader();
+      let buffered = "";
+      let evaluator = 0;
+      while (!evaluator) {
+        const { value, done } = await lines.read();
+        if (done) throw new Error(`the caller exited before spawning the evaluator: ${buffered}`);
+        buffered += value;
+        evaluator = Number(/evaluator=(\d+)\n/.exec(buffered)?.[1] ?? 0);
+      }
+      parent.kill("SIGKILL");
+      await parent.status;
+      await lines.cancel();
+      const alive = (pid: number) => {
+        try {
+          Deno.kill(pid, "SIGCONT");
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      // Bounded wait on another process's exit (no event for an unrelated pid): generous, and
+      // far inside the 600 s deadline, so only the caller's death can have ended it.
+      const until = Date.now() + 30_000;
+      while (alive(evaluator) && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+      const stillAlive = alive(evaluator);
+      if (stillAlive) Deno.kill(evaluator, "SIGKILL");
+      assertFalse(stillAlive, `evaluator ${evaluator} outlived its dead caller`);
+    });
+  },
+});
+
 Deno.test("the child can read its project but not write, reach the network, or read outside", async () => {
   const probe = `
 const outcome = async (f) => { try { await f(); return "allowed"; } catch (e) { return e.name; } };

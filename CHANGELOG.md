@@ -422,6 +422,12 @@ and this project adheres to
   `DENEXT_SHUTDOWN_DRAIN_MS` has passed since the signal, with a warning naming the cause. The
   new `onShutdown()` export of `instrumentation.ts` closes what the app opened (a pool's
   `sql.end()`), so the process exits as soon as it is done.
+- **A `next.config.*` evaluation never outlives the process that started it.** `denext migrate`
+  and `denext ui` evaluate the config in a child that is killed at its deadline, but the deadline
+  was a timer in the parent: a parent that died mid-evaluation left a config that never finishes
+  (`while (true) {}`) running, and one ran for three days. A small reaper process now ties the
+  child to its parent: when the parent exits, or the deadline passes with no answer, the child is
+  killed.
 
 - **`@denext/backend` 0.5.0: `denext db diff`, `pull` and `lint` build their shadow database as
   `db push` does.** The shadow got the backend's migrations and the app's, but not realtime's
