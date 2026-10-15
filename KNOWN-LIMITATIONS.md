@@ -113,8 +113,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 - **Not hosted.** The stock supabase-js client works against the app (`/auth/v1`, `/rest/v1`,
   `/storage/v1`, `/realtime/v1`, `/functions/v1`, each once its option is on), but there is no
-  Supabase project behind it: backups, pooling and upgrades are the Postgres provider's job, and
-  `denext ui`'s Database section is a local, loopback tool (no shared console, logs or metrics).
+  Supabase project behind it: pooling and upgrades are the Postgres provider's job (`denext stack
+  backup` / `restore` cover the self-hosted stack), and the Database section of `denext ui` and
+  `denext dashboard` (its password-protected copy for the stack) is a single-project tool with
+  one shared password, not a multi-user console, and keeps no metrics.
   Moving from a Supabase project, TOTP secrets, WebAuthn credentials and OAuth-server client
   secrets don't carry over (users enroll again, clients are re-registered).
 - **The built-in Postgres client is `Deno.SQL`, part of denext's Deno runtime.** On stock Deno pass

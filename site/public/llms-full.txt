@@ -306,8 +306,12 @@ enrolled user's sign-in comes back pending; your `pages.mfa` page renders when
 `/auth/mfa/enroll` → `/auth/mfa/confirm` (from a complete session it needs a recent sign-in,
 `session.authTime`); `totpQrSvg(uri)` renders the enrollment QR code as SVG. TOTP secrets are
 sealed at rest under `secret`; with `secret: [current, previous]` a factor sealed under the
-retired one opens and is re-sealed on its next passing check, so keep a retired secret listed until
-then. A session ends `session.maxLifetime` after its sign-in (default 30 days) however often it
+retired one opens and is re-sealed on its next passing check, or at once with `denext auth reseal`
+(`resealTotpFactors(config)` in a job); remove the retired secret once it reports zero remaining.
+SSO: `saml()` signs in through a SAML 2.0 identity provider on `/auth/*`, and
+`microsoftEntra({ tenant: "common" | "organizations" | "consumers", allowedTenants })` takes a
+multi-tenant app (keyed on `tid` + `oid`). `passkeys: { attestation: { mds: {} } }` checks new
+passkeys against the FIDO Metadata Service. A session ends `session.maxLifetime` after its sign-in (default 30 days) however often it
 slides. `events.apiTokenIssued` / `apiTokenRevoked` report every bearer token minted or retired
 (id and owner, never the token). Full guide: https://denext.dev/docs/auth
 
@@ -366,7 +370,9 @@ Docker files (with the self-hosted stack's toggles) plus in-place `docker-compos
 editing, a Desktop panel that composes the
 signing setup from the identities the keychain holds, a Setup page that readies a fresh
 clone, a Dev page that starts and stops the dev server, a Tasks page for the scripts
-`deno.json` declares, and the project's own verbs. It works with JavaScript disabled, and
+`deno.json` declares, a Services page (the `services/` tree), a Database section (tables, a SQL
+editor, RLS, migrations, storage, users, logs, realtime, Edge Functions, health) and the project's
+own verbs. It works with JavaScript disabled, and
 **project code never runs in the UI's process** — every project-touching operation,
 including verb discovery (`denext commands --json`), is a `deno` subprocess.
 `--read-only` prevents writes by the UI, not execution of your config inside that
@@ -551,7 +557,10 @@ the bundle.
 A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it requires
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
 packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS bridge to the app
-origin; `desktop.app.bridgeOrigins` adds others). It takes effect under denext's pinned Deno Desktop runtime, which
+origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origin: a top-level
+navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
+the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
+(exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
 `denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.19 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
@@ -726,7 +735,12 @@ Postgres (every replica sharing one database): `postgresClient(url)` from `denex
 tagged-template client on `Deno.SQL`, built into denext's managed Deno toolchain (on stock Deno:
 `fromPostgresJs(postgres(url))` with `npm:postgres`); `postgresAuthAdapter`, `postgresSessionStore`,
 `postgresRateLimitStore` and `postgresCacheStore` take `{ sql | url, schema? }` and create their
-tables by migration on first use. With `@denext/backend`, `backend({ postgres: {} })` (reads
+tables by migration on first use (under the migration lock). Behind PgBouncer in transaction mode,
+pass `directUrl` too (`backend({ postgres })` reads `DATABASE_DIRECT_URL`): LISTEN, reserved
+connections and migrations take the direct connection (`withDirectConnection(pooled, direct)`).
+`DENEXT_BOOT_DDL=off` makes startup change no schema and fail with `BootSchemaError` while a
+migration is missing; `denext db push` / `migration up` then apply denext's own schemas with the
+app's. With `@denext/backend`, `backend({ postgres: {} })` (reads
 `DATABASE_URL`) + `db()` from `@denext/backend/server` + `denextAuth({ adapter: backendAuthAdapter() })`.
 `db()` is scoped by Supabase-compatible row-level security: each query runs as `authenticated`
 (the request's user in `request.jwt.claims`, so policies use `auth.uid()` / `auth.jwt()`) or `anon`
@@ -994,7 +1008,7 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `deno task
   check:fix` auto-fixes formatting + fixable lint, then reports the
   rest. The `denext/*` lint rules (rules-of-hooks, hooks-in-component,
-  no-hooks-in-async, directive-placement) are **correctness** rules with **no
+  no-hooks-in-async, no-handlers-in-async, directive-placement) are **correctness** rules with **no
   auto-fix** — resolve them by hand;
   [the contributing guide](https://denext.dev/docs/contributing) says how.
 

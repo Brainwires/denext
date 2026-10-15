@@ -23,6 +23,18 @@ and this project adheres to
   links can't spend one and a link someone else requested signs nobody in without a click. A
   provider built by hand without `confirm` gets the page too. `magicLink({ confirm: false })`
   signs in on the GET as before. `/auth/v1/verify` keeps Supabase's GET behaviour.
+- **`native.refreshReuseInterval` defaults to 10 seconds**, as GoTrue's
+  `GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL` does. Two refreshes racing with one native refresh
+  token (a background task and the app) both get the same new pair and the family advances once,
+  instead of the loser revoking the family and signing the user out. `refreshReuseInterval: 0`
+  keeps the strict behaviour.
+- **One passkey ceremony per tab, not per browser; a client that calls the passkey endpoints
+  itself must send `ceremonyId`.** The passkey options answers carry a random
+  `ceremonyId` (only its SHA-256 is stored with the challenge) and `POST /passkey/register` /
+  `/passkey/authenticate` must send it back; `registerPasskey()` / `signInWithPasskey()` do. The
+  per-browser ceremony cookie is gone, so ceremonies in two tabs no longer cancel each other. A
+  missing, swapped or replayed id is refused, and the challenge is still single-use and expires
+  after `passkeys.timeout`.
 
 ### Added
 
@@ -38,6 +50,15 @@ and this project adheres to
   redacted. It refreshes itself through a `<noscript>` meta refresh with scripting off, and in
   place with it on. The stack's dashboard reads the running app at `DASHBOARD_APP_URL`, which
   `denext generate docker --stack` sets.
+- **`@denext/backend` 0.5.0: an admin endpoint for `denext ui` and the stack's dashboard.**
+  `GET /_denext/backend/admin/status` and `/_denext/backend/admin/presence` report what only the
+  running app knows: realtime's live channels with their subscriber counts and every
+  `postgres_changes` binding's table, filter and events; a channel's presence keys, and one key's
+  tracked payloads only when it is asked for by key; the Edge Functions with their `verifyJwt` and
+  last change, and the last 200 invocations (function, status, duration and time, never a
+  request's body, headers, query or caller); and the `services/` supervision tree. It answers only
+  the secret key (`apikey` or bearer) and only GET, and with no keys installed it refuses
+  everything.
 - **`denext build --compile [--target <triple>] [--output <path>]`: the app's server as one
   executable.** After the build, `deno compile` (on denext's Deno toolchain) embeds the server
   modules, `.denext/`, `public/`, `jobs/`, `services/`, `functions/`, the migrations and `compile.include`
@@ -51,7 +72,6 @@ and this project adheres to
   `--allow-all` only with `permissions: "all"`. It cross-compiles to every `deno compile` target.
   The runtime is Deno's stock `denort`, so it has no `Deno.SQL`: Postgres goes through
   `fromPostgresJs(postgres(url))`.
-
 - **`denext db push` / `migration up` apply denext's own Postgres schemas.** Each Postgres store
   the config builds now declares its migrations: the auth adapter, the session, rate-limit, cache
   and job-history stores (a `migrate: false` one too), and the auth tables `@denext/backend`'s
@@ -162,7 +182,6 @@ and this project adheres to
   `_ADMIN_EMAIL` and `_SENDER_NAME`, plus `GOTRUE_MAILER_SUBJECTS_*` and `GOTRUE_MAILER_TEMPLATES_*`
   (template URLs with GoTrue's placeholders, HTML-escaped). The `supabase.auth.smtp` option sets
   the same in code. `denext generate docker --stack` lists the variables in `.env.example`.
-
 - **A Studio-style dashboard for the self-hosted stack: `denext dashboard`.** It serves
   `denext ui`'s Database section, and nothing else, behind `DASHBOARD_PASSWORD`: tables and rows,
   the SQL editor, RLS policies, migrations, storage, auth users and logs. With Postgres,
@@ -196,7 +215,6 @@ and this project adheres to
   time window, a level and plain-text search, from `docker compose logs` or the relay, every
   line redacted (connection-string passwords and every secret-looking variable) before it is
   shown or searched.
-
 - **Operating the self-hosted stack: `denext stack health | passwd | roll | backup | restore`, and
   filtered `logs`.** `health` lists every service's compose health check and the app's
   `/_denext/health` checks as a table (`--json`, `--watch [seconds]`) and exits 1 when anything
@@ -215,7 +233,6 @@ and this project adheres to
   `--yes`, and rejects an archive entry with an absolute path, `..` or a link that leaves the
   backup. Every Postgres tool runs inside the stack's `db` container, so the machine needs no
   Postgres client.
-
 - **`tapChannelAuthorized(channel, key, { onPayload, onEnd, peerId })` (`denext/plugin-kit`,
   `denext/server`).** A server-side channel subscriber behind the channel's own `authorize`, with
   the Live socket's context, lazy re-authorization (the held payload is delivered only after the
@@ -367,7 +384,6 @@ and this project adheres to
   builds on a shell's first request and two more for each target after every edit. Each distinct
   runtime is now built once and written where later builds need it. Editing a framework source
   file or the denext patch builds it again.
-
 - **A credential refused for good is deleted when a read meets it.** The answer is unchanged.
   A server-side cookie session whose user is gone, which the user ended (`sessionsValidAfter`),
   or which is an SSO user's session its identity provider didn't start, is deleted from the
@@ -378,7 +394,9 @@ and this project adheres to
   adapters now delete API tokens 30 days after they were revoked or expired, as they already did
   for native session families.
 - **denext pins Deno toolchain and Deno Desktop runtime 2.9.7-denext.19** (both pins from the same
-  release): denext.18 plus the fix below; the navigation guard below arrived in denext.18.
+  release). denext.18 brought the desktop navigation guard (Security, below) and left the toolchain
+  otherwise unchanged from denext.17; denext.19 adds the fix for an intermittent crash at exit
+  (Fixed, below).
 - **The `denext` CLI starts in a fraction of the time: a verb's implementation loads only when it
   runs.** Every invocation used to load every verb (about 1,050 modules: the dev server, the
   bundler, the desktop and mobile tooling), so `denext --version` took as long as a build's
@@ -390,8 +408,6 @@ and this project adheres to
   from JSR caches every verb's modules once per version — in the background on its first run, or
   up front with `denext toolchain install` — so a verb first used offline (`--cached-only`) still
   loads.
-- **denext pins Deno toolchain and Deno Desktop runtime 2.9.7-denext.18** (both pins from the same
-  release): the navigation guard below; the toolchain is otherwise unchanged from denext.17.
 - **A first run on Postgres prints one line per store instead of the server's notices.** The
   migrations denext's stores and `@denext/backend` apply for themselves raise
   `client_min_messages` inside their transactions, so `relation … already exists, skipping` and
@@ -405,23 +421,11 @@ and this project adheres to
 - **`@denext/backend` 0.5.0: realtime from the logical source honours a table's `events`.** A
   change of a kind the table leaves out (a `TRUNCATE`, say) is dropped, as the notify source's
   triggers never fire for it; before, the WAL source delivered every kind.
-
 - **The self-hosted stack's MinIO is healthy only once its setup is over.** Bitnami's image runs
   a setup server, stops it and starts the real one; the health check passed during setup, so
   whatever waited for it (`minio-init`, the app, `docker compose up --wait`) could hit the restart
   gap with `connection refused`. The check now also requires that PID 1 is no longer the image's
   `entrypoint.sh`.
-- **One passkey ceremony per tab, not per browser.** The passkey options answers carry a random
-  `ceremonyId` (only its SHA-256 is stored with the challenge) and `POST /passkey/register` /
-  `/passkey/authenticate` must send it back; `registerPasskey()` / `signInWithPasskey()` do. The
-  per-browser ceremony cookie is gone, so ceremonies in two tabs no longer cancel each other. A
-  missing, swapped or replayed id is refused, and the challenge is still single-use and expires
-  after `passkeys.timeout`. A client that calls the endpoints itself must carry `ceremonyId`.
-- **`native.refreshReuseInterval` defaults to 10 seconds**, as GoTrue's
-  `GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL` does. Two refreshes racing with one native refresh
-  token (a background task and the app) both get the same new pair and the family advances once,
-  instead of the loser revoking the family and signing the user out. `refreshReuseInterval: 0`
-  keeps the strict behaviour.
 - **`.env.example` points at `denext stack passwd --postgres`** for changing `POSTGRES_PASSWORD`
   on an existing volume. Before, it said that changing the password locked the stack out.
 - **`Image`'s `fadeDuration` follows React Native:** the Android shell fades by 300 ms when it is
@@ -439,6 +443,8 @@ and this project adheres to
   doctor` alike. The `proxy` export is read now. An app with both a middleware file and a proxy
   file fails at startup naming both, as Next does, instead of silently running the middleware
   one.
+- **The dev overlay's codeframe caret sits under the error's column.** It was one column to the
+  left, because the prefix was counted as the gutter plus four columns where `> N |` is five.
 - **A library importing `react-dom/static`, `next/head`, `@remix-run/deno` or
   `@remix-run/css-bundle` resolves to denext like an app's own import.** `react-dom/static` used
   to fall back to the base `react-dom` runtime with a build warning and `next/head` loaded the
@@ -465,7 +471,6 @@ and this project adheres to
   (`while (true) {}`) running, and one ran for three days. A small reaper process now ties the
   child to its parent: when the parent exits, or the deadline passes with no answer, the child is
   killed.
-
 - **`@denext/backend` 0.5.0: `denext db diff`, `pull` and `lint` build their shadow database as
   `db push` does.** The shadow got the backend's migrations and the app's, but not realtime's
   per-table triggers, which a push applies after the app's migrations. A diff against a pushed
@@ -551,7 +556,6 @@ and this project adheres to
   is stored on the user by every adapter (memory, SQLite, and Postgres through migration
   `0008_auth_sessions_valid_after`). `revokeAllSessions` now works with an adapter and no
   `sessionStore`; it throws only when neither is configured.
-
 - **A cookie session ends at its user's next request after a ban, a deletion or an SSO
   conversion.** With an adapter, every read of a denextAuth cookie session (`auth()`,
   `requireAuth()`, `requireSession()`, the `/auth/*` endpoints) re-reads its user, once per
@@ -8491,7 +8495,7 @@ compiled into the app. Unedited templates from 2.7.0 … 2.8.3 are upgraded in p
   when it has no frontmatter and rewrites relative links to the rendering docs page or the GitHub
   blob/tree URL — `/docs/contributing` was showing its two tables as literal pipes, an empty `<h1>`,
   and five 404 links. Groundwork for rendering every root guide on denext.dev from one source.
-- **Docs site: eleven new pages.** A generated [CLI reference](https://denext.dev/docs/cli) (`scripts/gen-cli-reference.ts`, from the command registry, with a drift test) and a generated [examples index](https://denext.dev/docs/examples) (`scripts/gen-examples-index.ts`, from every example's README and config, with a drift test); a [tutorial](https://denext.dev/docs/tutorial) that narrates `examples/notes` end to end with every code block pinned to the example by a test; [Troubleshooting](https://denext.dev/docs/troubleshooting) (symptom → cause → fix, each linking its owner); [Upgrading](https://denext.dev/docs/upgrading) (breaking changes and renamed config keys per minor, linked to the changelog); and narrative pages for shipped features that had none — [Error handling](https://denext.dev/docs/error-handling), [Project layout](https://denext.dev/docs/project-layout), [Internationalization](https://denext.dev/docs/i18n), [Fonts](https://denext.dev/docs/fonts), [Pages Router](https://denext.dev/docs/pages-router) and [Doctor, audit & info](https://denext.dev/docs/doctor-audit). Both generators run in `deno task docs:build`.
+- **Docs site: eleven new pages.** A generated [CLI reference](https://denext.dev/docs/cli) (`scripts/gen-cli-reference.ts`, from the command registry, with a drift test) and a generated [examples index](https://denext.dev/docs/examples) (`scripts/gen-examples-index.ts`, from every example's README and config, with a drift test); a [tutorial](https://denext.dev/docs/tutorial) that narrates `examples/notes` end to end with every code block pinned to the example by a test; [Troubleshooting](https://denext.dev/docs/troubleshooting) (symptom → cause → fix, each linking its owner); Upgrading (breaking changes and renamed config keys per minor, linked to the changelog; since retired, as the changelog is the record); and narrative pages for shipped features that had none — [Error handling](https://denext.dev/docs/error-handling), [Project layout](https://denext.dev/docs/project-layout), [Internationalization](https://denext.dev/docs/i18n), [Fonts](https://denext.dev/docs/fonts), [Pages Router](https://denext.dev/docs/pages-router) and [Doctor, audit & info](https://denext.dev/docs/doctor-audit). Both generators run in `deno task docs:build`.
 
 ### Changed
 
@@ -8688,7 +8692,7 @@ compiled into the app. Unedited templates from 2.7.0 … 2.8.3 are upgraded in p
   deployment setup (registry, host, secrets, DNS), so it added nothing over
   invoking the underlying tool directly. Deploy with `deployctl` (Deno Deploy) or
   your host's own tooling — the Deno Deploy, Docker, and systemd recipes in
-  [DEPLOYMENT.md](./DEPLOYMENT.md) are unchanged. `denext generate docker` still
+  [the deployment guide](https://denext.dev/docs/deploy) are unchanged. `denext generate docker` still
   scaffolds a Dockerfile.
 
 ### Added

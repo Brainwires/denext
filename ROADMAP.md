@@ -5,8 +5,8 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> denext **4.0** is in release candidates (`4.0.0-rc.N`) from `development`, then ships 4.x patch
-> and minor releases from there; what each one added is in the changelog.
+> The current release is denext **4.0.0**; 4.x patch and minor releases are cut from
+> `development`, and what each one added is in the changelog.
 
 ## 4.1.0: Limitations that can be lifted
 
@@ -30,7 +30,6 @@ or an upstream. Each one's limitation entry is deleted when it ships.
 - **A Windows Hello passkey ceremony in the release checks:** the Windows test machine is a
   Windows Server VM with no TPM, so the live create + sign-in with Windows Hello was skipped for
   3.1.0. Add a vTPM Windows 11 VM (or a Windows 11 PC) and run the CONTRIBUTING manual check.
-
 - **Clerk on Windows and Linux against a production instance:** the redirect carries a per-flow
   `?denext_nonce=…`, which a development instance accepts against the allowed `myapp://app/`.
   Confirm with one real sign-in that a production instance's native redirect allowlist matches it
@@ -138,7 +137,6 @@ Each is documented as a manual recipe today (the
 - **Boot diagnosis, the last gaps:** follow import-map-resolved bare specifiers in the walk (so
   their link edges are checked too), and flag a name two `export *` sources both provide (an
   ambiguous export, a SyntaxError in browsers).
-
 - **Agent control of `denext ui`:** an MCP front end over the UI's operations (every panel
   already answers a JSON twin).
 - **Export the UI's form components** (`FormField`, `Control`, `Field`, `OpButton`, `Widget`)

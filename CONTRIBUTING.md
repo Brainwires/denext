@@ -11,7 +11,7 @@ deno task check      # deno fmt --check && deno lint && deno test  (the CI gate)
 Two helpers make it painless:
 
 ```sh
-deno task check:fix  # test-count badge + deno fmt + deno lint --fix, then a report-only deno lint
+deno task check:fix  # test-count badge + command table + deno fmt + deno lint --fix, then a report-only deno lint
 deno task hooks:install   # install the pre-commit hook (once per clone)
 deno task release-check   # check + doc-lint + deno publish --dry-run (run before tagging)
 ```
@@ -481,6 +481,8 @@ src/compat    the React / Next / next-intl / Remix compat surface
 src/desktop   the Deno Desktop runtime: bridge, capabilities, window, app, updaters, Clerk
 src/mobile    denext/mobile: the Capacitor shell runtime and its desktop branches
 src/react-native, src/expo, src/navigation   React Native mode, the expo-* shims, native-feel nav
+src/lists     the LegendList that `lists: "denext"` builds on VirtualList
+src/standalone  the entry a `denext build --compile` executable runs
 src/mcp       the `denext mcp` server and its docs corpus
 src/ui        the `denext ui` project GUI
 src/plugin, src/lint, src/testing            plugin kit, lint plugin, denext/testing
@@ -533,7 +535,7 @@ is on the local filesystem. In particular:
   `readFrameworkText(rel)` / `readFrameworkJson(rel)` (fetch when remote), and
   `frameworkImports()`. `frameworkRoot()` remains only for the narrow case of a
   `startsWith` prefix check (it returns the remote URL when not local).
-- The esbuild [`@luca/esbuild-deno-loader`] resolves `https://`/`jsr:`
+- The esbuild loader ([`@luca/esbuild-deno-loader`](https://jsr.io/@luca/esbuild-deno-loader)) resolves `https://`/`jsr:`
   specifiers, so pass framework module refs as URLs (not `file://` paths) and
   give it a **local** temp config when it needs one (see `prebuildDenextRuntime`
   writing `frameworkImports()` to a temp `deno.json`).

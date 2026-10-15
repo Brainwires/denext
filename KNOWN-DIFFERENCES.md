@@ -388,7 +388,8 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
   the proxy's client-address header with `rateLimitHeader`.
 - **Graceful shutdown drains up to a deadline** (default 10s;
   `DENEXT_SHUTDOWN_DRAIN_MS`), then force-exits so a stuck client can't pin the
-  process (plugin teardown is skipped on a forced exit).
+  process (the `services/` stop, plugin teardowns and `instrumentation.ts`'s `onShutdown()` are
+  skipped on a forced exit).
 - **Scaffolded `dev`/`build` tasks use `-A`** (they compile/spawn tooling); the
   generated `start` task runs least-privilege and spawns nothing (no `--allow-run`).
 - **`@denext/og` fetches a missing non-Latin font from `fonts.googleapis.com`**
