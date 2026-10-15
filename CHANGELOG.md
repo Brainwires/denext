@@ -18,6 +18,11 @@ and this project adheres to
   flags. The fold runs on the native and next-compat App Router, SPA and React Native mode, and
   `denext dev` (per request, for the target the page names); the server render of
   `denext export --platform` and of a shell's dev session reads the same value.
+- **Platform files through tsconfig `paths`.** An import through a tsconfig / jsconfig `paths`
+  alias (`@/components/Button`) now takes the target's variant (`Button.ios.tsx`) as an
+  import-map alias does, on the esbuild paths (SPA and React Native mode, the next-compat App
+  Router) and in `denext dev`. `paths` are read as TypeScript reads them: relative `extends`, a
+  monorepo root's config, `baseUrl`, JSONC; an import-map entry with the same key wins.
 - **`next-auth` (Auth.js v5) runs on denext.** A Next app's `auth.ts` (`NextAuth(config)` →
   `{ handlers, auth, signIn, signOut }`), its `app/api/auth/[...nextauth]` route, `auth()` in
   Server Components, route handlers and middleware (`export { auth as middleware }`,

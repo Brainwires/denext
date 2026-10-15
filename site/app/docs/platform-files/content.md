@@ -243,4 +243,9 @@ code through a third module instead.
 An import through the app's import map takes a variant like a relative one: the alias resolves
 first (`@/components/BigButton`, or an exact key like `#button`, from `deno.json` or the import
 map file it names), then the target's file for the module it names. The server render and the
-client bundle apply the same rule. A tsconfig `paths` alias is not followed: `denext migrate` converts `paths` to the import map.
+client bundle apply the same rule. A tsconfig / jsconfig `paths` alias (`"@/*": ["./src/*"]`,
+following `extends` and a monorepo root's config) takes a variant the same way wherever denext
+resolves it: the esbuild paths (SPA mode, React Native mode, the next-compat App Router) and
+`denext dev`. An import-map entry wins over a `paths` pattern with the same key. Deno itself does
+not read `paths`, so the native App Router path needs the alias in the import map:
+`denext migrate` converts `paths` to it.

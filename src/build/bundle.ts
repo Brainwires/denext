@@ -26,6 +26,7 @@ import {
   type ServerModuleLeak,
 } from "./server-module-guard.ts";
 import { carryLinks } from "./config-links.ts";
+import { readTsPathAliases } from "./tsconfig-paths.ts";
 import { appDenextRootFor, foldAppDenext, JSR_DENEXT_ROOT } from "./app-framework-root.ts";
 
 /**
@@ -1127,7 +1128,8 @@ export function entryCode(output: BundleOutput): string {
  */
 /**
  * A deno config's import-map entries that point at local files, for resolving alias imports
- * the way `denext migrate` emits them and the web stubs of native-only packages:
+ * the way `denext migrate` emits them and the web stubs of native-only packages (then the
+ * project's tsconfig `paths` for the keys the import map lacks):
  *
  * - `prefixes`: the PREFIX aliases (`"~/": "./src/"` → `["~/", absDir]`); a value may be an
  *   absolute `file://` URL or a `./` / `../` path (resolved against the config's directory);
@@ -1140,12 +1142,32 @@ export function entryCode(output: BundleOutput): string {
 export async function readLocalAliases(configPath: string): Promise<LocalAliases> {
   const out: LocalAliases = { prefixes: [], exact: new Map() };
   const baseDir = dirname(configPath);
+  const keys = new Set<string>();
   for (const [k, v] of Object.entries(await importMapOf(configPath))) {
     if (typeof v !== "string") continue;
+    keys.add(k);
     if (k.endsWith("/")) addPrefixAlias(out, k, v, baseDir);
     else if (isRelativePath(v)) out.exact.set(k, resolve(baseDir, v));
   }
+  await addTsPathAliases(out, configPath, keys);
   return out;
+}
+
+/**
+ * The project's tsconfig `paths`, for the keys its import map does not have. A config URL is the
+ * framework's own (an app with no deno.json): there is no project directory to read.
+ */
+async function addTsPathAliases(
+  out: LocalAliases,
+  configPath: string,
+  keys: ReadonlySet<string>,
+): Promise<void> {
+  if (/^[a-z][\w+.-]*:\/\//i.test(configPath)) return;
+  for (const [key, target] of await readTsPathAliases(dirname(configPath))) {
+    if (keys.has(key)) continue;
+    if (key.endsWith("/")) out.prefixes.push([key, target]);
+    else out.exact.set(key, target);
+  }
 }
 
 /** The local aliases of a deno config ({@linkcode readLocalAliases}). */
