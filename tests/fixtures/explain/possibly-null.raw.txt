@@ -1,0 +1,6 @@
+TS18047 [ERROR]: 'heading' is possibly 'null'.
+  return heading.textContent ?? "";
+         ~~~~~~~
+    at file:///app/possibly-null.ts:4:10
+
+error: Type checking failed.

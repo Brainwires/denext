@@ -1,0 +1,28 @@
+TS2322: Type mismatch at `author.email`
+  at define-api-response.ts:15:10
+
+    14 |   response: schema<Post>(),
+  > 15 | }, () => draft);
+                  ^^^^^
+    16 | 
+
+  This `defineApi` handler returns `author.email` as `number`, but the route's `response` schema says `string`. The handler's return value must match the schema it declares.
+
+  Fix: Return `author.email` as `string` — or, if `number` is right, change the `response` schema.
+
+  Original (deno check):
+  │ TS2322 [ERROR]: Type '{ id: number; title: string; author: { name: string; email: number; }; }' is not assignable to type 'Response | Post | Promise<Response | Post>'.
+  │   Type '{ id: number; title: string; author: { name: string; email: number; }; }' is not assignable to type 'Post'.
+  │     The types of 'author.email' are incompatible between these types.
+  │       Type 'number' is not assignable to type 'string'.
+  │ }, () => draft);
+  │          ~~~~~
+  │     at file:///app/define-api-response.ts:15:10
+
+  │     The expected type comes from the return type of this signature.
+  │       handler: (input: ApiHandlerInput<D, Record<never, never>>) => R | Promise<R>,
+  │                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  │         at file:///denext/src/server/define-api.ts:278:12
+
+error: Type checking failed.
+

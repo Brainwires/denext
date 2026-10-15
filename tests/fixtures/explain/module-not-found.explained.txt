@@ -1,0 +1,18 @@
+TS2307: Module "./utlis.ts" not found — did you mean "./utils.ts"?
+  at module-not-found.ts:2:28
+
+    1 | // A relative import with a typo in the file name.
+  > 2 | import { formatDate } from "./utlis.ts";
+                                   ^^^^^^^^^^^^
+    3 | 
+
+  Nothing named `utlis.ts` exists in this directory, but `utils.ts` does.
+
+  Fix: Change the import to "./utils.ts".
+
+  Original (deno check):
+  │ TS2307 [ERROR]: Cannot find module 'file:///app/utlis.ts'.
+  │     at file:///app/module-not-found.ts:2:28
+
+error: Type checking failed.
+

@@ -1,0 +1,22 @@
+TS2366: Switch is not exhaustive — unhandled: "triangle"
+  at missing-return-switch.ts:8:37
+
+    7 | 
+  > 8 | export function area(shape: Shape): number {
+                                            ^^^^^^
+    9 |   switch (shape.kind) {
+
+  `switch (shape.kind)` handles "circle", "square", but the union also has "triangle". For those the function runs past the switch and returns nothing.
+
+  Fix: Add a case for each missing member:
+    case "triangle":
+      // …
+
+  Original (deno check):
+  │ TS2366 [ERROR]: Function lacks ending return statement and return type does not include 'undefined'.
+  │ export function area(shape: Shape): number {
+  │                                     ~~~~~~
+  │     at file:///app/missing-return-switch.ts:8:37
+
+error: Type checking failed.
+

@@ -1,0 +1,10 @@
+// `find` can return undefined; the result is used without a check.
+interface User {
+  id: string;
+  name: string;
+}
+
+export function nameOf(users: User[], id: string): string {
+  const user = users.find((u) => u.id === id);
+  return user.name;
+}

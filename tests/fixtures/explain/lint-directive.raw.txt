@@ -1,0 +1,8 @@
+error[denext/directive-placement]: "use client" must be the module's leading statement to take effect. [denext/directive-placement]
+ --> /app/lint-directive.tsx:3:1
+  | 
+3 | "use client";
+  | ^^^^^^^^^^^^^
+
+Found 1 problem
+Checked 1 file

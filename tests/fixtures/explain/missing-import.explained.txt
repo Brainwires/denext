@@ -1,0 +1,21 @@
+TS2304: `useState` is used but not imported
+  at missing-import.tsx:5:21
+
+    4 | export function Counter() {
+  > 5 |   const [n, setN] = useState(0);
+                            ^^^^^^^^
+    6 |   return <button type="button" onClick={() => setN(n + 1)}>{n}</button>;
+
+  `useState` comes from "denext", but this file doesn't import it.
+
+  Fix: Add the import at the top of the file:
+  import { useState } from "denext";
+
+  Original (deno check):
+  │ TS2304 [ERROR]: Cannot find name 'useState'.
+  │   const [n, setN] = useState(0);
+  │                     ~~~~~~~~
+  │     at file:///app/missing-import.tsx:5:21
+
+error: Type checking failed.
+

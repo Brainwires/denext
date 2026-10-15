@@ -71,3 +71,18 @@ Deno.test("a second overlay replaces the first (no stacking)", () => {
   assertStringIncludes(body.innerHTML, "second");
   assert(!body.innerHTML.includes("first"), "prior overlay was removed");
 });
+
+Deno.test("dev overlay shows an explanation first and keeps the original diagnostic collapsed", () => {
+  const { body, win } = evalDevScript();
+  win.__denextOverlay("Type error", "TS18048 [ERROR]: 'user' is possibly 'undefined'.", "", {
+    codeframe: "> 9 |   return user.name;",
+    explained: "TS18048: `user` may be `undefined`\n\n  Fix: Narrow it first",
+  });
+  const html = body.innerHTML;
+  assertStringIncludes(html, "`user` may be `undefined`");
+  assertStringIncludes(html, "<details");
+  assertStringIncludes(html, "Original diagnostic");
+  assertStringIncludes(html, "TS18048 [ERROR]: 'user' is possibly 'undefined'.");
+  // The explanation carries its own codeframe; the overlay's copy is not repeated.
+  assert(!html.includes("&gt; 9 |") && !html.includes("> 9 |"), html);
+});

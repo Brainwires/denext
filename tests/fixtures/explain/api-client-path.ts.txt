@@ -1,0 +1,6 @@
+// A typed client call to a route path that does not exist (a typo).
+import { createApiClient } from "denext";
+import "./.denext/api.ts";
+
+const api = createApiClient();
+await api("/api/post", "POST", { body: { title: "x" }, query: { page: 1 } });

@@ -39,8 +39,10 @@ export const DEV_RELOAD_SCRIPT = consoleCaptureScript(DEV_LOG_PATH) + `
       "&line=" + (frame.line || 1) + "&column=" + (frame.column || 1);
     try { fetch(${JSON.stringify(OPEN_IN_EDITOR_PATH)} + q).catch(function () {}); } catch (_) {}
   }
-  // extra (optional): { frame: {file, display, line, column}, codeframe } — enriches a
-  // server/build error with a clickable in-project frame + a source snippet.
+  // extra (optional): { frame: {file, display, line, column}, codeframe, explained } —
+  // enriches a server/build error with a clickable in-project frame + a source snippet, and
+  // (type/build errors) a plain-language explanation shown first, with the original
+  // diagnostic kept in a collapsed section.
   function showOverlay(title, message, stack, extra) {
     hideOverlay();
     overlay = el("div",
@@ -63,9 +65,20 @@ export const DEV_RELOAD_SCRIPT = consoleCaptureScript(DEV_LOG_PATH) + `
       loc.onclick = function () { openInEditor(f); };
       overlay.appendChild(loc);
     }
-    overlay.appendChild(el("div",
-      "color:#ffd7d7;white-space:pre-wrap;margin-bottom:14px;font-size:14px;", message || ""));
-    if (extra && extra.codeframe) {
+    if (extra && extra.explained) {
+      overlay.appendChild(el("pre",
+        "white-space:pre-wrap;color:#f2f2f2;background:rgba(0,0,0,.35);padding:12px 14px;" +
+        "border-radius:6px;margin:0 0 14px;font:inherit;", extra.explained));
+      var orig = el("details", "margin:0 0 14px;");
+      orig.appendChild(el("summary", "cursor:pointer;color:#b9b9b9;", "Original diagnostic"));
+      orig.appendChild(el("div",
+        "color:#ffd7d7;white-space:pre-wrap;margin-top:8px;", message || ""));
+      overlay.appendChild(orig);
+    } else {
+      overlay.appendChild(el("div",
+        "color:#ffd7d7;white-space:pre-wrap;margin-bottom:14px;font-size:14px;", message || ""));
+    }
+    if (extra && extra.codeframe && !(extra && extra.explained)) {
       overlay.appendChild(el("pre",
         "white-space:pre;overflow:auto;color:#e6e6e6;background:rgba(0,0,0,.35);" +
         "padding:12px 14px;border-radius:6px;margin:0 0 14px;", extra.codeframe));
@@ -172,7 +185,7 @@ export const DEV_RELOAD_SCRIPT = consoleCaptureScript(DEV_LOG_PATH) + `
         try {
           var p = JSON.parse(e.data.slice(6));
           showOverlay(p.title || "Build error", p.message, p.stack,
-            { frame: p.frame, codeframe: p.codeframe });
+            { frame: p.frame, codeframe: p.codeframe, explained: p.explained });
         } catch (_) {}
       }
     };

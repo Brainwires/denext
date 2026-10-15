@@ -1,0 +1,9 @@
+// New code that imports from `react` and `next/link` instead of denext.
+"use client";
+import { useState } from "react";
+import Link from "next/link";
+
+export function Counter() {
+  const [n, setN] = useState(0);
+  return <Link href="/" onClick={() => setN(n + 1)}>{n}</Link>;
+}

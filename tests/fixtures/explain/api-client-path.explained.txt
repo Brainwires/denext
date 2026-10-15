@@ -1,0 +1,20 @@
+TS2345: No API route "/api/post" — did you mean "/api/posts"?
+  at api-client-path.ts:6:11
+
+    5 | const api = createApiClient();
+  > 6 | await api("/api/post", "POST", { body: { title: "x" }, query: { page: 1 } });
+                  ^^^^^^^^^^^
+    7 | 
+
+  The typed API client only accepts paths of routes that exist under app/ (from the generated .denext/api.ts). "/api/post" is not one of them.
+
+  Fix: Use "/api/posts". Known routes: "/api/posts", "/api/user/[id]".
+
+  Original (deno check):
+  │ TS2345 [ERROR]: Argument of type '"/api/post"' is not assignable to parameter of type '"/api/posts" | "/api/user/[id]"'.
+  │ await api("/api/post", "POST", { body: { title: "x" }, query: { page: 1 } });
+  │           ~~~~~~~~~~~
+  │     at file:///app/api-client-path.ts:6:11
+
+error: Type checking failed.
+

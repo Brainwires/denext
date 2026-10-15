@@ -1,0 +1,8 @@
+// lint: a hook and an event handler inside an async Server Component.
+import { useState } from "denext";
+
+export default async function Page() {
+  const [open, setOpen] = useState(false);
+  const data = await Promise.resolve("hi");
+  return <button type="button" onClick={() => setOpen(!open)}>{data}</button>;
+}

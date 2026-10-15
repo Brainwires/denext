@@ -1,0 +1,25 @@
+TS2322: Type mismatch at `theme.mode`
+  at assignable-object.ts:8:12
+
+    7 | export const settings: Settings = {
+  > 8 |   theme: { mode: "blue", accent: "#0af" },
+                   ^^^^
+    9 |   pageSize: 20,
+
+  `theme.mode` is `"blue"` here, but its type expects `"light" | "dark"`.
+
+  Fix: Use one of "light", "dark".
+
+  Original (deno check):
+  │ TS2322 [ERROR]: Type '"blue"' is not assignable to type '"light" | "dark"'.
+  │   theme: { mode: "blue", accent: "#0af" },
+  │            ~~~~
+  │     at file:///app/assignable-object.ts:8:12
+
+  │     The expected type comes from property 'mode' which is declared here on type '{ mode: "light" | "dark"; accent: string; }'
+  │       theme: { mode: "light" | "dark"; accent: string };
+  │                ~~~~
+  │         at file:///app/assignable-object.ts:3:12
+
+error: Type checking failed.
+

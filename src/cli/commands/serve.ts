@@ -19,6 +19,7 @@ import { devOriginError } from "../../server/config-validate.ts";
 import { SOURCEMAPS_ENV } from "../../build/hidden-sourcemaps.ts";
 import { abortJobRuns } from "../../server/jobs.ts";
 import { markBuildPhase } from "../../server/phase.ts";
+import { applyRawFlag, RAW_FLAG } from "../explain-output.ts";
 
 /** `--port`/`--host` shared by the two serving verbs. */
 const SERVE_FLAGS = [
@@ -129,6 +130,7 @@ export const devCommand: CommandSpec = {
       valueName: "<origin>",
       help: "Also let this origin or host load the dev assets (repeatable, or comma-separated)",
     },
+    RAW_FLAG,
   ],
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   usage: "Without --port, an open port is auto-selected starting at 3000.\n" +
@@ -140,6 +142,7 @@ export const devCommand: CommandSpec = {
     "A non-loopback bind (--lan, --host) prints its URL with a session token\n" +
     "(?__denext_dev=…): other machines need it for every request; this one does not.",
   run: async (ctx) => {
+    applyRawFlag(ctx);
     const allowed = allowedDevOriginFlag(ctx.flags["allowed-dev-origin"]);
     if (!allowed.ok) fail(`denext dev: ${allowed.error}`);
     const bind = devBind(ctx);
@@ -176,7 +179,9 @@ export const buildCommand: CommandSpec = {
   // `.denext/` is both the build dir and the artifact dir: one exclusive lock.
   locks: (ctx) => ({ projectDir: projectDir(ctx), buildDir: "exclusive" }),
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
+  flags: [RAW_FLAG],
   run: async (ctx) => {
+    applyRawFlag(ctx);
     markBuildPhase();
     const { dir } = await appProject(ctx);
     console.log(`\n  denext build  ▸  ${dir}\n`);

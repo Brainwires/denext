@@ -1,0 +1,27 @@
+TS2532: `currentSession()` may be `undefined`
+  at object-possibly-undefined.ts:8:23
+
+    7 | 
+  > 8 | export const userId = currentSession().user.id;
+                              ^^^^^^^^^^^^^^^^
+    9 | 
+
+  `currentSession()` can be `undefined` here — `currentSession()`'s return type includes it. TypeScript won't let you read from it until the code rules that out.
+
+  Fix: Store it and check it once:
+  const value = currentSession();
+  if (value === undefined) {
+    throw new Error("value is missing"); // or return a fallback
+  }
+  export const userId = value.user.id;
+  Or, when a missing value may flow on as `undefined`:
+  export const userId = currentSession()?.user.id;
+
+  Original (deno check):
+  │ TS2532 [ERROR]: Object is possibly 'undefined'.
+  │ export const userId = currentSession().user.id;
+  │                       ~~~~~~~~~~~~~~~~
+  │     at file:///app/object-possibly-undefined.ts:8:23
+
+error: Type checking failed.
+

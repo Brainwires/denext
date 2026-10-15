@@ -1,0 +1,14 @@
+// lint: a hook called conditionally.
+"use client";
+import { useEffect, useState } from "denext";
+
+export function Clock({ live }: { live: boolean }) {
+  const [now, setNow] = useState(Date.now());
+  if (live) {
+    useEffect(() => {
+      const t = setInterval(() => setNow(Date.now()), 1000);
+      return () => clearInterval(t);
+    }, []);
+  }
+  return <time>{now}</time>;
+}

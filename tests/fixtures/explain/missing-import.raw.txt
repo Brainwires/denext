@@ -1,0 +1,6 @@
+TS2304 [ERROR]: Cannot find name 'useState'.
+  const [n, setN] = useState(0);
+                    ~~~~~~~~
+    at file:///app/missing-import.tsx:5:21
+
+error: Type checking failed.

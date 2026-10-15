@@ -41,6 +41,8 @@ export interface DevEvent {
   frame?: { file: string; display: string; line: number; column: number };
   /** A source snippet around the frame with a caret at the column (server errors). */
   codeframe?: string;
+  /** The diagnostics in `message`, explained in plain language with a fix (type/build errors). */
+  explained?: string;
 }
 
 /** Filter/limit options for {@link DevEventLog.snapshot}. */

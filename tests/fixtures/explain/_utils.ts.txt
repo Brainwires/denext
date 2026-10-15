@@ -1,0 +1,4 @@
+// A sibling module (the target of the module-not-found case's typo).
+export function formatDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}

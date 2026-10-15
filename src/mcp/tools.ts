@@ -26,6 +26,7 @@ import { renderComponent, renderRoute, routeMap } from "./inspect.ts";
 import { profileApp } from "../profile/core.ts";
 import type { Budget } from "../profile/budget.ts";
 import { checkSnippet, type Diagnostic } from "./check.ts";
+import { explainErrorTool } from "./explain.ts";
 import { IMPORT_RULES, lookupImport } from "./next-denext-map.ts";
 import { type DocsKind, formatHits, searchDocs } from "./rag/search.ts";
 import { readDocs } from "./rag/read.ts";
@@ -234,7 +235,8 @@ function formatEvent(e: DevEvent): string {
     ? ` (${e.url})`
     : "";
   const title = e.title ? `${e.title}: ` : "";
-  return `[${e.kind}/${e.source}] ${e.level}: ${title}${e.message}${dur}${where}`;
+  const explained = e.explained ? `\n  explained:\n${e.explained.replace(/^/gm, "    ")}` : "";
+  return `[${e.kind}/${e.source}] ${e.level}: ${title}${e.message}${dur}${where}${explained}`;
 }
 
 /** Read the running dev server's recent events (server errors + browser console). */
@@ -271,6 +273,38 @@ export const TOOLS: readonly Tool[] = [
       const hasError = diags.some((d) => d.severity === "error");
       return Promise.resolve({ text: formatDiagnostics(diags), isError: hasError });
     },
+  },
+  {
+    name: "denext_explain_error",
+    description:
+      "Explain a TypeScript / Deno / denext-lint diagnostic in plain language with a concrete " +
+      "fix and a codeframe: collapses long generic assignability chains (defineApi, useApi, " +
+      "createApiClient) to the one mismatching property path, says why a value may be " +
+      "null/undefined, lists a switch's missing union members, maps react / next/* imports to " +
+      "denext, and suggests the nearest route, param or module for a typo. Pass `output` (what " +
+      "`deno check`, `deno lint`, `denext build` or the dev overlay printed) or one " +
+      "`diagnostic`. The original diagnostic is always included.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        output: {
+          type: "string",
+          description: "Tool output holding one or more diagnostics (deno check / deno lint / " +
+            "a build error).",
+        },
+        diagnostic: {
+          type: "object",
+          description: 'One structured diagnostic: { code (2322 or "denext/rules-of-hooks"), ' +
+            "message (a string, or TypeScript's { messageText, next } chain), file, line, " +
+            "column, length }.",
+        },
+        dir: {
+          type: "string",
+          description: "Project directory the paths are relative to (default: .)",
+        },
+      },
+    },
+    run: (args) => Promise.resolve(explainErrorTool(args, projectDir(args.dir))),
   },
   {
     name: "denext_import_map",
@@ -653,8 +687,13 @@ export const TOOLS: readonly Tool[] = [
  * to exactly one group; a `--disable` token may also name a single tool directly.
  */
 export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
-  /** Write-denext-correctly helpers: snippet lint, import map, scaffolding. */
-  authoring: ["denext_check_snippet", "denext_import_map", "denext_generate"],
+  /** Write-denext-correctly helpers: snippet lint, error explanations, import map, scaffolding. */
+  authoring: [
+    "denext_check_snippet",
+    "denext_explain_error",
+    "denext_import_map",
+    "denext_generate",
+  ],
   /** Project operations: health check, codemod dry-run, route listing. */
   project: ["denext_doctor", "denext_codemod", "denext_list_routes"],
   /** Browser-free render/inspection of what a route or component produces. */

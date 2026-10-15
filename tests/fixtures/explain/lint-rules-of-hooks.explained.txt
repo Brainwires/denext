@@ -1,0 +1,30 @@
+denext/rules-of-hooks: `useEffect` is called conditionally
+  at lint-rules-of-hooks.tsx:8:5
+
+    7 |   if (live) {
+  > 8 |     useEffect(() => {
+            ^^^^^^^^^^^^^^^^^
+    9 |       const t = setInterval(() => setNow(Date.now()), 1000);
+
+  denext matches each hook to its state by call order: the third hook call on every render reads the third slot. A hook inside an `if`, a loop or a callback runs on some renders and not others, which shifts every later hook onto the wrong state.
+
+  Fix: Call `useEffect` unconditionally at the top level and put the condition inside it, e.g.
+  useEffect(() => {
+    if (!condition) return;
+    // …
+  }, [condition]);
+
+  Original (deno lint):
+  │ error[denext/rules-of-hooks]: `useEffect` is called conditionally. Hooks must run in the same order on every render — call it at the top level. [denext/rules-of-hooks]
+  │     --> /app/lint-rules-of-hooks.tsx:8:5
+  │      | 
+  │ >  8 |     useEffect(() => {
+  │      |     ^^^^^^^^^^^^^^^^^
+  │ >  9 |       const t = setInterval(() => setNow(Date.now()), 1000);
+  │ > 10 |       return () => clearInterval(t);
+  │ > 11 |     }, []);
+  │      |     ^^^^^^
+
+Found 1 problem
+Checked 1 file
+

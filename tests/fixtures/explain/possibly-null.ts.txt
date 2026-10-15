@@ -1,0 +1,5 @@
+// `querySelector` can return null; the result is used without a check.
+export function title(): string {
+  const heading = document.querySelector("h1");
+  return heading.textContent ?? "";
+}
