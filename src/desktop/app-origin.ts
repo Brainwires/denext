@@ -218,6 +218,20 @@ const OPAQUE_SCHEMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * One `desktop.app.allowedNavigationOrigins` entry, serialized as a browser serializes an origin
+ * (lowercase, a scheme's default port left out): an exact origin `"<scheme>://<host>[:<port>]"`
+ * with nothing after it but an optional `/`. `null` for anything else (a wildcard, a path, a query,
+ * credentials, an opaque-origin scheme), which the runtime would refuse.
+ *
+ * @param entry The configured entry.
+ * @returns The normalized origin, or `null` when it is not one.
+ */
+export function normalizeDesktopNavigationOrigin(entry: string): string | null {
+  const origin = normalizeDesktopBridgeOrigin(entry);
+  return origin === null || origin === "*" || origin.endsWith("://*") ? null : origin;
+}
+
+/**
  * One `desktop.app.bridgeOrigins` entry in the form the webview backend keeps
  * (`laufey-launch.json` `"bridgeOrigins"`): `"*"` (every document), `"<scheme>://*"` (every origin
  * of a scheme), or an origin `"<scheme>://<host>[:<port>]"` (nothing after the host and port but an

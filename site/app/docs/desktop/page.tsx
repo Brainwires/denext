@@ -2974,6 +2974,21 @@ export default {
           <code>dev</code> write the same <code>app.json</code>.
         </li>
         <li>
+          <strong>The window stays on the app origin</strong>{" "}
+          (runtime 2.9.7-denext.18). A top-level navigation to any other origin (a link,{" "}
+          <code>location = …</code>, a form, a server redirect, <code>window.open()</code>,{" "}
+          <code>target="_blank"</code>) never loads in the window: an <code>http(s)</code>{" "}
+          destination opens in the user&apos;s browser instead, and anything else (<code>
+            file:
+          </code>, a custom scheme) is dropped. Iframes are not affected; the CSP&apos;s{" "}
+          <code>frameSrc</code>{" "}
+          decides what the page may frame. To let the window itself navigate to another origin, such
+          as an identity provider that signs in inside the window, list it in{" "}
+          <code>desktop.app.allowedNavigationOrigins</code> (exact origins, written to{" "}
+          <code>app.json</code>). On Linux (WebKitGTK) the refused request has already been sent
+          when the window stops it; nothing it returns is shown or run.
+        </li>
+        <li>
           In the window, the app's server code reads the origin from{" "}
           <code>DENO_DESKTOP_APP_ORIGIN</code>. WebSockets cannot use the custom scheme, so the page
           dials the loopback relay at <code>DENO_DESKTOP_WS_URL</code>{" "}

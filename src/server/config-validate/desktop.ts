@@ -6,6 +6,7 @@ import {
   desktopAppIdentifierError,
   desktopSchemeError,
   normalizeDesktopBridgeOrigin,
+  normalizeDesktopNavigationOrigin,
   originWithoutIdentifierMessage,
   parseDesktopAppOrigin,
 } from "../../desktop/app-origin.ts";
@@ -91,6 +92,22 @@ function validateBridgeOrigins(origins: unknown, fail: Fail): void {
   });
 }
 
+/** `desktop.app.allowedNavigationOrigins`: exact origins (no wildcards). */
+function validateNavigationOrigins(origins: unknown, fail: Fail): void {
+  if (origins === undefined) return;
+  if (!Array.isArray(origins)) {
+    fail("desktop.app.allowedNavigationOrigins", "must be an array of origins");
+  }
+  (origins as unknown[]).forEach((entry, i) => {
+    if (typeof entry !== "string" || normalizeDesktopNavigationOrigin(entry) === null) {
+      fail(
+        `desktop.app.allowedNavigationOrigins[${i}]`,
+        'must be an exact origin ("https://idp.example"): no path, wildcard or credentials',
+      );
+    }
+  });
+}
+
 /** `desktop.app`: origin + identifier, deep-link schemes, singleInstance, bridge origins. */
 function validateDesktopApp(app: unknown, fail: Fail): void {
   if (app === undefined) return;
@@ -99,6 +116,7 @@ function validateDesktopApp(app: unknown, fail: Fail): void {
   validateDesktopOrigin(a, fail);
   validateDeepLinks(a.deepLinks, fail);
   validateBridgeOrigins(a.bridgeOrigins, fail);
+  validateNavigationOrigins(a.allowedNavigationOrigins, fail);
   if (a.singleInstance !== undefined && typeof a.singleInstance !== "boolean") {
     fail("desktop.app.singleInstance", "must be a boolean");
   }

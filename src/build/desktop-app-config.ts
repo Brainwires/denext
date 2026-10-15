@@ -1,7 +1,8 @@
 // The per-app files the desktop packager writes so the denext-pinned Deno Desktop runtime serves
 // the app at its configured origin with per-app storage:
 //
-//   .deno-desktop/app.json   `{ "origin", "identifier", "deepLinks", "singleInstance" }` from
+//   .deno-desktop/app.json   `{ "origin", "identifier", "deepLinks", "singleInstance",
+//                            "allowedNavigationOrigins" }` from
 //                            `desktop.app` in denext.config.ts, and `"update": { "publicKey" }`
 //                            (full-app self-update's baked key) from `desktop.update`,
 //                            embedded into the binary through deno.json `compile.include` (the path
@@ -27,6 +28,7 @@ import {
   desktopAppIdentifierError,
   normalizeDesktopBridgeOrigin,
   normalizeDesktopDeepLinks,
+  normalizeDesktopNavigationOrigin,
   originWithoutIdentifierMessage,
   parseDesktopAppOrigin,
 } from "../desktop/app-origin.ts";
@@ -182,6 +184,32 @@ export function desktopBridgeOrigins(config: unknown): string[] {
       throw new Error(`invalid desktop.app.bridgeOrigins entry ${JSON.stringify(entry)}`);
     }
     if (normalized === "*") return ["*"];
+    if (!out.includes(normalized)) out.push(normalized);
+  }
+  return out;
+}
+
+/**
+ * The origins besides the app's own that the window's top-level frame may load
+ * (`desktop.app.allowedNavigationOrigins`, the runtime's navigation guard), normalized and
+ * de-duplicated, for `.deno-desktop/app.json` `"allowedNavigationOrigins"`. Throws on an entry that
+ * is not an exact origin (config validation reports it first).
+ *
+ * @param config The project config.
+ * @returns The origins (empty when none are configured).
+ */
+export function desktopNavigationOrigins(config: unknown): string[] {
+  const raw = appBlock(config)?.allowedNavigationOrigins;
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) throw new Error("desktop.app.allowedNavigationOrigins must be an array");
+  const out: string[] = [];
+  for (const entry of raw as unknown[]) {
+    const normalized = typeof entry === "string" ? normalizeDesktopNavigationOrigin(entry) : null;
+    if (normalized === null) {
+      throw new Error(
+        `invalid desktop.app.allowedNavigationOrigins entry ${JSON.stringify(entry)}`,
+      );
+    }
     if (!out.includes(normalized)) out.push(normalized);
   }
   return out;
@@ -373,9 +401,11 @@ async function writeJsonEdit(
 /**
  * The body of `.deno-desktop/app.json`, or `null` when there is nothing for the runtime to read:
  * the origin + identifier (when an origin is set), the deep-link schemes (the runtime's list for
- * launch arguments, `openurl` and scheme registration) and `singleInstance` (the intent; the lock
- * itself is `laufey-launch.json`'s). The identifier rides along whenever it is valid, since the
- * runtime needs it to register schemes on Linux and next to `singleInstance`.
+ * launch arguments, `openurl` and scheme registration), `singleInstance` (the intent; the lock
+ * itself is `laufey-launch.json`'s) and `allowedNavigationOrigins` (the navigation guard's extra
+ * origins, only when configured: a runtime before 2.9.7-denext.18 refuses the key). The
+ * identifier rides along whenever it is valid, since the runtime needs it to register schemes on
+ * Linux and next to `singleInstance`.
  */
 function appJsonBody(
   config: unknown,
@@ -383,20 +413,39 @@ function appJsonBody(
 ): Record<string, unknown> | null {
   const identity = desktopAppIdentity(config);
   const app = appBlock(config);
-  const deepLinks = normalizeDesktopDeepLinks(app?.deepLinks);
-  const single = typeof app?.singleInstance === "boolean" ? app.singleInstance : undefined;
-  if (!identity && deepLinks.length === 0 && single === undefined && !updatePublicKey) return null;
-  const id = identity?.identifier ?? app?.identifier;
-  const identifier = typeof id === "string" && desktopAppIdentifierError(id) === null
-    ? id
-    : undefined;
-  return {
-    ...(identity ? { origin: identity.origin } : {}),
-    ...(identifier ? { identifier } : {}),
-    ...(deepLinks.length > 0 ? { deepLinks } : {}),
-    ...(single !== undefined && identifier ? { singleInstance: single } : {}),
-    ...(updatePublicKey ? { update: { publicKey: updatePublicKey } } : {}),
-  };
+  const wanted = definedEntries({
+    origin: identity?.origin,
+    deepLinks: nonEmpty(normalizeDesktopDeepLinks(app?.deepLinks)),
+    singleInstance: typeof app?.singleInstance === "boolean" ? app.singleInstance : undefined,
+    update: updatePublicKey ? { publicKey: updatePublicKey } : undefined,
+    allowedNavigationOrigins: nonEmpty(desktopNavigationOrigins(config)),
+  });
+  if (Object.keys(wanted).length === 0) return null;
+  const identifier = validAppIdentifier(identity?.identifier ?? app?.identifier);
+  // `singleInstance` only with an identifier: the runtime keys the lock on it.
+  return definedEntries({
+    origin: wanted.origin,
+    identifier,
+    deepLinks: wanted.deepLinks,
+    singleInstance: identifier ? wanted.singleInstance : undefined,
+    update: wanted.update,
+    allowedNavigationOrigins: wanted.allowedNavigationOrigins,
+  });
+}
+
+/** `list`, or `undefined` when it is empty. */
+function nonEmpty<T>(list: T[]): T[] | undefined {
+  return list.length > 0 ? list : undefined;
+}
+
+/** `id` when it is a valid reverse-DNS app identifier, else `undefined`. */
+function validAppIdentifier(id: unknown): string | undefined {
+  return typeof id === "string" && desktopAppIdentifierError(id) === null ? id : undefined;
+}
+
+/** `entries` without the keys whose value is `undefined`, in order. */
+function definedEntries(entries: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(entries).filter(([, v]) => v !== undefined));
 }
 
 /**

@@ -201,6 +201,8 @@ and this project adheres to
 
 ### Changed
 
+- **denext pins Deno toolchain and Deno Desktop runtime 2.9.7-denext.18** (both pins from the same
+  release): the navigation guard below; the toolchain is otherwise unchanged from denext.17.
 - **`@denext/backend` 0.5.0: realtime from the logical source honours a table's `events`.** A
   change of a kind the table leaves out (a `TRUNCATE`, say) is dropped, as the notify source's
   triggers never fire for it; before, the WAL source delivered every kind.
@@ -237,6 +239,15 @@ and this project adheres to
 
 ### Security
 
+- **A desktop window stays on the app's origin** (Deno Desktop runtime 2.9.7-denext.18). A
+  top-level navigation to any other origin (a link, `location = …`, a form, a server redirect,
+  `window.open()`, `target="_blank"`) no longer loads in the window, on every backend (WKWebView,
+  WebView2, WebKitGTK, CEF): an `http(s)` destination opens in the user's browser instead, and any
+  other URL is dropped. Before, only a user's click on a link was redirected, so a script
+  navigation or a redirect could replace the app's page with a remote one. Iframes are unaffected
+  (the CSP decides). `desktop.app.allowedNavigationOrigins` lists exact origins the window itself
+  may load, such as an identity provider that signs in inside the window; packaging writes them to
+  `.deno-desktop/app.json`.
 - **`/auth/v1` `logout?scope=global` and `scope=others` end the user's denextAuth cookie
   sessions.** They ended only `/auth/v1` and native token sessions, so a cookie session (a stolen
   one included) outlived "sign out everywhere". Both now clear the session store's records and

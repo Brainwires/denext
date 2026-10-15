@@ -1040,6 +1040,18 @@ export interface DesktopConfig {
      * runtime.
      */
     bridgeOrigins?: string[];
+    /**
+     * Origins besides the app's own that the window itself may navigate to (exact origins, e.g.
+     * `["https://idp.example"]` for an identity provider that signs in inside the window). Every
+     * other top-level navigation in the window (a link, `location = …`, a form, a server redirect,
+     * `window.open()`, `target="_blank"`) never loads there: an `http(s)` destination opens in the
+     * user's browser instead. Subframes are not affected (the CSP's `frameSrc` decides). Default:
+     * none — only the app origin (`desktop.app.origin`, `app://localhost` when unset; the loopback
+     * origin under the stock runtime) loads in the window. Written to `.deno-desktop/app.json`;
+     * the guard needs denext's pinned runtime (2.9.7-denext.18 or later), which refuses an
+     * `app.json` with this key before then.
+     */
+    allowedNavigationOrigins?: string[];
   };
   /** The capability allowlist (default deny). */
   capabilities?: DesktopCapabilitiesConfig;

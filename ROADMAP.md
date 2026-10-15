@@ -43,8 +43,6 @@ or an upstream. Each one's limitation entry is deleted when it ships.
   `?denext_nonce=…`, which a development instance accepts against the allowed `myapp://app/`.
   Confirm with one real sign-in that a production instance's native redirect allowlist matches it
   too (an exact match would fail the sign-in closed).
-- **Navigation guard:** keep foreign origins out of the window; a navigation away from the app
-  origin opens in the system browser instead.
 - **Upstream the fork so stock Deno can be used.** Offer every runtime change to denoland/deno
   and littledivy/laufey and maintain the pull requests (status per change in
   [our Deno Desktop runtime](https://denext.dev/docs/desktop-runtime#what-it-adds-over-stock-deno-desktop)).

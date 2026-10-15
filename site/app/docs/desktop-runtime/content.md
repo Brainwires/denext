@@ -100,6 +100,7 @@ ours is open yet.
 | Change                                                                                       | Layer                | Upstream                                                                     |
 | -------------------------------------------------------------------------------------------- | -------------------- | ---------------------------------------------------------------------------- |
 | [A stable app origin](#a-stable-app-origin)                                                  | Deno runtime, denext | builds on deno#35675; ours planned                                           |
+| [The navigation guard](#the-navigation-guard)                                                | laufey, Deno, denext | planned                                                                      |
 | [Custom schemes as secure origins](#custom-schemes-as-secure-origins)                        | laufey               | [laufey#84](https://github.com/littledivy/laufey/pull/84)                    |
 | [Request and response bodies on Linux](#request-and-response-bodies-on-linux)                | laufey               | [laufey#86](https://github.com/littledivy/laufey/pull/86); rest planned      |
 | [Per-app persistent storage](#per-app-persistent-storage)                                    | laufey, Deno runtime | [laufey#88](https://github.com/littledivy/laufey/pull/88); Deno side planned |
@@ -158,6 +159,26 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 - **Upstream:** the memory transport is ported from
   [denoland/deno#35675](https://github.com/denoland/deno/pull/35675); the configured origin is
   planned.
+
+### The navigation guard
+
+- **What:** a top-level navigation in an app window to an origin other than the app's (a link,
+  `location = …`, a form, a server redirect, `window.open()`, `target="_blank"`) never loads in the
+  window (runtime 2.9.7-denext.18, laufey API 48). An `http(s)` destination opens in the system
+  browser through laufey's checked open-external path; anything else (`file:`, a custom scheme,
+  `data:`) is dropped. The window may load the origin the runtime navigated it to, the app origin,
+  a development run's dev server and `desktop.app.allowedNavigationOrigins` (exact origins, carried
+  in `.deno-desktop/app.json`). Subframes are left to the page's CSP.
+- **Why:** the page-side interceptor caught only user-initiated link clicks, so a script
+  navigation, a redirect or a form could replace the app's page with a remote one in a window that
+  holds the app's capabilities and storage.
+- **Layer:** laufey decides natively on every backend: CEF `OnBeforeBrowse` (main frame),
+  WKWebView `decidePolicyForNavigationAction` (main frame), WebView2 `NavigationStarting` (main
+  frame only), each asked again per redirect. WebKitGTK's navigation policy names no frame, so its
+  backend refuses the main frame's response instead (after any redirect): the request has been
+  sent, but nothing from the response is shown or run. The Deno runtime passes the allowed origins
+  at startup; denext writes `allowedNavigationOrigins` into `app.json`.
+- **Upstream:** planned.
 
 ### Custom schemes as secure origins
 
@@ -757,6 +778,7 @@ Each release is a tag on the Deno fork; denext pins one (`src/build/desktop-runt
 | `2.9.7-denext.15` | The fork's own `deno` CLI ships with the release (`deno-cli-*`, one zip per platform: the binary [denext's Deno toolchain](/docs/toolchain) pins), with Vitest / Jest compatibility in `deno test` and `Deno.SQL` / `Deno.sql` (a built-in Postgres and SQLite client, in the runtime too). `deno --version` and `Deno.version.deno` name the release (`2.9.7-denext.15`). laufey `09ad1b6` (API 47).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `2.9.7-denext.16` | Vitest compatibility needs no permission of its own: the layer's own reads (its config, `__mocks__`, automock) need no `--allow-read` inside the project, and it needs no `--allow-env`. `deno coverage` maps a module the Vitest transform changed. `vi.mock` works under a path with `~` or a space. Upstream Deno picks: `deno compile` checks read permission for a dynamic import, Node-API fixes, coverage runs skip V8's code cache, the `fetch` connection pool, `rand` 0.9.3. laufey `09ad1b6` (API 47).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `2.9.7-denext.17` | CLI only: each `deno-cli-*` zip carries esbuild 0.25.5 beside `deno` (its version and SHA-256 in the manifest), which `deno bundle` and denext's builds use instead of downloading one. The CLI keeps its own type-check, code and analysis caches in `DENO_DIR` (a `_denext` suffix), so alternating it with stock Deno keeps both sets warm. `vitest`, `vite-plus/test` and `@jest/globals` are typed when the package isn't installed (`deno check` and the editor too), and a Vitest / Jest config project's test files are type-checked. `deno coverage` merges a module's profiles from a plain run and a Vitest run, line for line. laufey `09ad1b6` (API 47).                                                                                                                                                                                                                                                                                                                                                                                              |
+| `2.9.7-denext.18` | The navigation guard: a top-level navigation in an app window to another origin never loads in the window; an `http(s)` destination opens in the system browser, on every backend. `desktop.app.allowedNavigationOrigins` (in `app.json`) lists exact origins the window may load. laufey `63c05e2` (API 48).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 denext needs `2.9.7-denext.14`. Under an older runtime a child the app starts from its own
 executable (a sidecar's `spawnSelf`) begins its stdout with the runtime loader's launch messages
