@@ -13,7 +13,7 @@ The store + types regenerate **live in `denext dev`** and at `denext build`.
 import { contentCollections } from "@denext/content-collections";
 
 export default {
-  plugins: [contentCollections()],
+  plugins: [contentCollections()], // { watch: [...] } if your content lives outside content/**
 };
 ```
 
@@ -64,6 +64,7 @@ typed to each collection's schema. Call them from Server Components, route handl
 ## Render
 
 ```tsx
+import { notFound } from "denext";
 import { Content, getEntry } from "@denext/content-collections/runtime";
 
 export default async function Post({ params }: { params: { slug: string } }) {

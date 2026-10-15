@@ -41,7 +41,7 @@ export default {
 denext plugin add @denext/backend
 ```
 
-Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.4.0"` to `deno.json`'s `imports` and
+Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.5.0"` to `deno.json`'s `imports` and
 the plugin to `denext.config.ts` as above. Set `DENEXT_STORAGE_SECRET` (at least 32 characters):
 it signs the plugin's URLs and upload tokens.
 
@@ -93,7 +93,10 @@ const posts = await db()`SELECT id, title FROM posts WHERE author = ${userId}`; 
 
 The client is `Deno.SQL`, built into denext's Deno runtime. On stock Deno pass your own:
 `backend({ postgres: { sql: fromPostgresJs(postgres(url)) } })` with the npm `postgres` package
-(`fromPostgresJs` is in `denext/server`). Guide: [Backend › Postgres](https://denext.dev/docs/backend#postgres).
+(`fromPostgresJs` is in `denext/server`). Behind a transaction-mode pooler, set
+`postgres.directUrl` (default `DATABASE_DIRECT_URL`): LISTEN, reserved connections and migrations
+use the direct connection, queries the pooler. Guide:
+[Backend › Postgres](https://denext.dev/docs/backend#postgres).
 
 **Row-level security, Supabase-compatible.** `db()` runs each query as the request's user: a
 transaction that sets the role (`authenticated`, or `anon` when signed out or outside a request)
@@ -122,7 +125,8 @@ broadcast and presence, private channels authorized by `realtime.messages` polic
 under `/rest/v1`: embedded resources, `or` / `and` trees, every operator, aliases, casts and JSON
 paths, upserts, `/rpc/<function>`, CSV, counts and PostgREST's OpenAPI document — every statement
 run through `db()`, so row-level security applies, and `supabase.from()` / `rpc()` work
-unchanged. `from("notes").select("id,body").eq("id", 1)`
+unchanged. Each client has a request budget (`rest.rateLimit`, default 1200 a minute; `false` turns
+it off): past it, `429` `over_request_rate_limit` with `Retry-After`. `from("notes").select("id,body").eq("id", 1)`
 from `@denext/backend/client` builds the requests, typed by the generated `.denext/rest.ts`. Guide:
 [Backend › Auto-REST](https://denext.dev/docs/backend#auto-rest).
 
@@ -134,12 +138,16 @@ from `@denext/backend/client` builds the requests, typed by the generated `.dene
 the stock `@supabase/supabase-js` client works against the app for auth, REST, storage, realtime
 and functions. Each service is its own option:
 
-- **Edge Functions** (`functions: {}`): `functions/<name>.ts` at `/functions/v1/<name>`, each in a
-  Deno Worker of its own, for `supabase.functions.invoke`.
+- **Edge Functions** (`functions: {}`): `functions/<name>.ts` (or `functions/<name>/index.ts`) at
+  `/functions/v1/<name>`, each in a Deno Worker of its own, for `supabase.functions.invoke`.
 - **Vault** (`vault: {}`): AES-256-GCM secrets in `vault.secrets` under `DENEXT_VAULT_KEY`.
 - **Queues** (`queues: {}`): pgmq's SQL API without the extension.
 - **Vector search**: `vectorSearchSql()` / `matchDocuments()` over pgvector.
-- **Database webhooks** (`webhooks`): signed, retried deliveries of table changes.
+- **Database webhooks** (`webhooks`): signed, retried deliveries of table changes; settled events
+  are deleted after `webhooks.retention` (delivered: 7 days, failed: 30).
+- **An admin endpoint** (`/_denext/backend/admin/*`, `GET` with the secret key only) that
+  `denext ui` and the stack's dashboard read: realtime channels and presence, Edge Function
+  invocations, the `services/` supervision tree.
 
 `denext db` (migrations, `diff`, `dump`, `pull`, `lint`, `inspect`, `test`, `types`), `denext
 storage`, `denext functions` and `denext backend keys | token` cover the Supabase CLI's ground.

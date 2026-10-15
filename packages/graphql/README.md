@@ -103,7 +103,7 @@ the key is revoked, when `signal` aborts, or when the client disconnects; past t
 
 A publisher burst within 16 ms delivers only the last value per key (the hub coalesces
 publishes, independent of back-pressure) — a channel carries state, not a log; keep a
-list in a Server Action for chat-style history. The same `publish` also reaches every
+list in a Server Action when you need the history. The same `publish` also reaches every
 `useChannel` subscriber on the Live socket, and a `ChannelTransport`
 (`broadcastChannelTransport`, Redis/NATS) carries it across instances — the GraphQL side
 follows automatically.
@@ -183,6 +183,10 @@ object or factory imported into `denext.config.ts` still needs a restart.
 | `path`                | `/graphql`             | Mount point (prefixed with `basePath`)                                             |
 | `graphiql`            | dev only               | Serve GraphiQL on a browser `GET`                                                  |
 | `context`             | `{}`                   | `({ request, signal }) => object` — your resolvers' context                        |
+| `introspection`       | dev only               | Answer introspection queries                                                       |
+| `maxBodyBytes`        | 1 MiB                  | Request body cap; over it `413` (a WebSocket message over it closes the socket)    |
+| `requireSameOrigin`   | `true`                 | Same-origin proof on non-`GET` requests and the WebSocket handshake                |
+| `allowedOrigins`      | —                      | Extra origins allowed past `requireSameOrigin`                                     |
 | `maxDepth`            | `12`                   | Reject a query nested deeper than this; `false` disables it                        |
 | `maxCost`             | `false` (off)          | Reject a query over this estimated cost (the multiplicative-fan-out guard); opt-in |
 | `costOptions`         | —                      | Tune `maxCost`: `fieldCost`, `listMultiplierArgs`, `defaultMultiplier`             |

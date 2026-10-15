@@ -63,6 +63,7 @@ package version:
 | `@denext/og` | vendored from                                                          |
 | ------------ | ---------------------------------------------------------------------- |
 | 0.1.0        | `@cf-wasm/og@0.5.0` (satori@0.29.0 · resvg-wasm@2.4.1 · Noto Sans v27) |
+| 0.1.1        | `@cf-wasm/og@0.5.0` (satori@0.29.0 · resvg-wasm@2.4.1 · Noto Sans v27) |
 
 ## Vendoring / updating the bundle
 

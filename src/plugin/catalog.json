@@ -724,8 +724,8 @@
     },
     {
       "name": "@denext/content-collections",
-      "version": "0.5.0",
-      "spec": "jsr:@denext/content-collections@^0.5.0",
+      "version": "0.6.0",
+      "spec": "jsr:@denext/content-collections@^0.6.0",
       "exports": [
         ".",
         "./command",

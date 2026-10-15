@@ -20,6 +20,6 @@ curl -s localhost:3000/graphql -H 'content-type: application/json' \
   -d '{"query":"mutation { post(room: \"lobby\", text: \"hello\") { text } }"}'
 ```
 
-`deno run -A ../../cli.ts graphql sdl .` prints the schema (`denext graphql sdl` with the CLI installed); `denext task build` writes `.denext/schema.graphql`.
+`deno run -A --config deno.json ../../cli.ts graphql sdl` prints the schema (`denext graphql sdl` in an app); `denext task build` writes `.denext/schema.graphql`.
 Yoga, `graphql` and Pothos are npm packages the example opts into (`deno.json` imports) —
 denext's own runtime stays zero-npm.

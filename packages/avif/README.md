@@ -50,12 +50,12 @@ required.
 upstream version is recorded here and in the CHANGELOG, not encoded in the
 package version:
 
-| `@denext/avif` | libavif encoder vendored from |
-| -------------- | ----------------------------- |
-| 0.1.0          | `@jsquash/avif@2.1.1`         |
-| 0.1.1          | `@jsquash/avif@2.1.1`         |
-| 0.1.2          | `@jsquash/avif@2.1.1`         |
-| 0.2.0          | `@jsquash/avif@2.1.1`         |
+| `@denext/avif` | libavif codec vendored from |
+| -------------- | --------------------------- |
+| 0.1.0          | `@jsquash/avif@2.1.1`       |
+| 0.1.1          | `@jsquash/avif@2.1.1`       |
+| 0.1.2          | `@jsquash/avif@2.1.1`       |
+| 0.2.0          | `@jsquash/avif@2.1.1`       |
 
 ## Updating the codec
 
@@ -79,8 +79,8 @@ version, record the new upstream in the table above, and re-publish.
 ## License
 
 Apache-2.0, inherited from `@jsquash/avif` / Squoosh (see `LICENSE`). The
-encoder itself compiles in **libavif** (BSD-2-Clause) and **libaom** 3.7.0
+encoder and decoder compile in **libavif** (BSD-2-Clause) and **libaom** 3.7.0
 (BSD-2-Clause + the Alliance for Open Media Patent License 1.0), and
-`lib/avif_enc.js` carries the emscripten (MIT) runtime — see
+`lib/avif_enc.js` / `lib/avif_dec.js` carry the emscripten (MIT) runtime — see
 `THIRD-PARTY-LICENSES.md` for the inventory and full texts. Refresh it when the
 vendored codec changes.

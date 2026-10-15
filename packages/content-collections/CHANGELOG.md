@@ -1,6 +1,6 @@
 # @denext/content-collections
 
-## [Unreleased]
+## [0.6.0]
 
 ### Added
 

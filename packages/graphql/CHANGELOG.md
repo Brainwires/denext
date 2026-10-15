@@ -8,12 +8,14 @@ Requires the denext release after 4.0.0 (`tapChannelAuthorized` in `@denext/dene
 
 - **`fromChannel(channel, key)` runs the channel's `authorize`.** It used to subscribe any caller
   to any key — a server-side tap that skipped the channel's policy — so a key built from a
-  client-supplied argument (`fromChannel(inbox, \`user:${args.user}\`)`) let a viewer read
+  client-supplied argument (``fromChannel(inbox, `user:${args.user}`)``) let a viewer read
   another user's channel unless the resolver checked it. Now it applies the Live socket's gate:
-  an unknown channel, a malformed key, or an`authorize(ctx, key)`that says no (or throws) refuses
-  the subscription with a GraphQL error (`extensions.code: "FORBIDDEN"`, kept through error
-  masking).`ctx`is`{ origin, url, cookie, peerId }`from the subscribing request, as on the
-  Live socket. An active subscription is re-checked lazily after the channel's`authTtlSeconds`(default`live.limits.channelAuthTtlSeconds`) and ends when that check fails; a`channel.revoke(key)`, or one naming the subscription's peer, ends it at once.
+  an unknown channel, a malformed key, or an `authorize(ctx, key)` that says no (or throws)
+  refuses the subscription with a GraphQL error (`extensions.code: "FORBIDDEN"`, kept through
+  error masking). `ctx` is `{ origin, url, cookie, peerId }` from the subscribing request, as on
+  the Live socket. An active subscription is re-checked lazily after the channel's
+  `authTtlSeconds` (default `live.limits.channelAuthTtlSeconds`) and ends when that check fails;
+  a `channel.revoke(key)`, or one naming the subscription's peer, ends it at once.
 - **`fromChannel` returns a promise** (`Promise<AsyncIterableIterator<T>>`). A `subscribe`
   resolver may return it as is (`subscribe: (_r, args, ctx) => fromChannel(...)`); code that
   called `.next()` on the result directly awaits it first.
