@@ -319,7 +319,8 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   (`src/runtime/channel.ts`) + `publish(key, payload)` from anywhere on the server pushes
   to every authorized `useChannel(ref, key)` subscriber — required `authorize`, lazy TTL
   re-auth + `revoke`, latest-wins under back-pressure, a `ChannelTransport` for
-  multi-instance delivery (`src/server/live-channels.ts`) — which also carries
+  multi-instance delivery (`src/server/live-channels.ts`; `redisChannelTransport()` over Redis
+  pub/sub with reconnect + resubscribe, `src/server/redis-pubsub.ts`) — which also carries
   `revalidateTag`/`updateTag` invalidations cross-instance, so a tag invalidated on one
   instance re-pushes `<Live>` / `useLive` / `useSubscription` / `useApi({ tags })` watchers
   on every instance.
@@ -335,7 +336,8 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   args, { tags })` subscribes to a server function's result
   and re-runs it under the viewer's session on tag invalidation;
   `usePresence(room)` gives who's-online / cursors
-  (`{ self, others, peers, setState }`); `useLiveOptimistic` pairs an optimistic
+  (`{ self, others, peers, setState }`, across instances through the app's `ChannelTransport`:
+  per-instance snapshots plus a heartbeat — `src/server/live-presence.ts`); `useLiveOptimistic` pairs an optimistic
   overlay with the live value. A Convex/Liveblocks-class layer, zero npm. Postgres
   writes reach the same socket through `@denext/backend`'s realtime (`useTableChanges`, or
   `revalidateTag("table:<name>")` per burst; see [Backend](#backend-opt-in-plugin-denextbackend)).

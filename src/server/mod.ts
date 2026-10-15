@@ -550,6 +550,8 @@ export type { PostgresCacheStoreOptions } from "./postgres-cache.ts";
 export { redisCacheStore } from "./redis-cache.ts";
 export type { RedisCacheStoreOptions } from "./redis-cache.ts";
 export { redisClient, RedisConnectionError, RedisError } from "./redis.ts";
+export { redisChannelTransport } from "./redis-pubsub.ts";
+export type { RedisChannelTransport, RedisChannelTransportOptions } from "./redis-pubsub.ts";
 export type {
   RedisClient,
   RedisClientOptions,

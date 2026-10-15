@@ -17,6 +17,7 @@ import { type RedisClient, redisClient, RedisError } from "../src/server/redis.t
 import { redisCacheStore } from "../src/server/redis-cache.ts";
 import { redisSessionStore } from "../src/server/auth/redis-session-store.ts";
 import { redisRateLimitStore } from "../src/server/auth/redis-rate-limit.ts";
+import { liveAcrossTwoReplicas } from "./helpers/live-two-instances.ts";
 import {
   cacheStoreContract,
   rateLimitStoreContract,
@@ -168,5 +169,13 @@ Deno.test({
       await admin.command("ACL", "DELUSER", user);
       await admin.close();
     }
+  },
+});
+
+Deno.test({
+  name: "redis (real server): two Live replicas share channels and presence through pub/sub",
+  ignore,
+  async fn() {
+    await liveAcrossTwoReplicas(URL_!);
   },
 });

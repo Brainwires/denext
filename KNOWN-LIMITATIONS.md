@@ -66,8 +66,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Typed API, Live and GraphQL
 
-- **Live is single-instance without a `ChannelTransport`** (`broadcastChannelTransport()` or your
-  own Redis/NATS one makes publishes and tag invalidations cross-instance).
+- **Live is single-instance without a `ChannelTransport`** (`redisChannelTransport()`,
+  `broadcastChannelTransport()` on Deno Deploy, or your own makes publishes, tag invalidations
+  and `usePresence` rooms cross-instance).
 - **Live views keep their model in one process:** a reconnect that lands on another instance, or
   after `live.limits.viewResumeSeconds`, re-runs `init` (sticky sessions keep it on one node).
   Their lists reconcile by position (Flight carries no `key`), and with JavaScript disabled only

@@ -59,6 +59,18 @@ and this project adheres to
   the `redirect` callback's answer stay on the origin, and production needs `AUTH_URL`.
   `denext migrate` maps `next-auth` and its subpaths when the app depends on it. Differences are
   listed in KNOWN-DIFFERENCES.md and KNOWN-LIMITATIONS.md.
+
+- **Live across replicas through Redis: `redisChannelTransport()`, and `usePresence` on every
+  instance.** `setChannelTransport(redisChannelTransport({ url }))` (`denext/server`) carries
+  `createChannel` publishes and revokes and `revalidateTag`'s Live re-pushes over Redis pub/sub,
+  on denext's own RESP client: one connection publishes, a dedicated one holds the `SUBSCRIBE`,
+  reconnecting with backoff and subscribing again after a drop (`onResync`). A publish never
+  rejects; a failed one still reaches this instance and is logged once. `usePresence` rooms now
+  span instances through any transport: each Live hub publishes its own peers in a room when they
+  change (and on a 10-second heartbeat once another instance is heard from), merges the others'
+  into the `presence-state` it sends, and drops a crashed instance's peers after 35 seconds.
+  `ChannelEvent.kind` gains `"presence"`.
+
 - **`denext/auth`: the auth surface as its own entry point.** `import { auth, denextAuth, github }
   from "denext/auth"` — `denextAuth()`, `auth()` and the guards (`requireAuth`, `requireSession`),
   the provider presets, the adapters and stores, bearer tokens, email verification and password
@@ -158,6 +170,13 @@ and this project adheres to
 - **A `next-auth` provider's `profile()` override decides the account id and email**, as in
   Auth.js (it used to set only the name and image). The provider's own "verified" verdict carries
   over only to the address the provider itself returned.
+
+- **A route at `/global-error` keeps its own client bundle.** The native build wrote the
+  `global-error.tsx` hydration bundle as `client/global-error.js`, the same file a
+  `/global-error` route's bundle is written as, so one overwrote the other. The global-error
+  bundle is now `client/__denext_global_error__.js` on every path (build, next-compat, export),
+  and a dynamic segment that would spell that name is refused at build time.
+
 - **A hidden `<Activity>` holds class lifecycles and refs, as React does.** A class component
   that mounts inside a hidden one no longer runs `componentDidMount` (nor `componentDidUpdate`
   while it stays hidden); hiding a shown one runs its `componentWillUnmount`, and revealing runs

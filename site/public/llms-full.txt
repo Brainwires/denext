@@ -771,7 +771,9 @@ tables by migration on first use (under the migration lock). The same cache / se
 stores ship on Redis 7+ (`redisCacheStore` / `redisSessionStore` / `redisRateLimitStore`, `{ client |
 url, prefix? }`, on denext's zero-npm RESP client `redisClient(url)`) and Deno KV (`denoKvCacheStore`
 / `denoKvSessionStore` / `denoKvRateLimitStore`, `{ kv | path, prefix? }`); `cacheStoreContract` /
-`sessionStoreContract` / `rateLimitStoreContract` from `denext/testing` test your own. Behind PgBouncer in transaction mode,
+`sessionStoreContract` / `rateLimitStoreContract` from `denext/testing` test your own. Live across
+replicas: `setChannelTransport(redisChannelTransport({ url }))` (channels, tag pushes and
+`usePresence` rooms over Redis pub/sub). Behind PgBouncer in transaction mode,
 pass `directUrl` too (`backend({ postgres })` reads `DATABASE_DIRECT_URL`): LISTEN, reserved
 connections and migrations take the direct connection (`withDirectConnection(pooled, direct)`).
 `DENEXT_BOOT_DDL=off` makes startup change no schema and fail with `BootSchemaError` while a
@@ -1281,6 +1283,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RegisteredRoutes` — Typed-routes registry (augmentation seam). denext build/dev emit .denext/routes.ts, which augments this interface with routes: Routes; import that file anywhere in your app and Link / Router.push narrow to real paths. Empty by default ⇒ Href is string (no enforcement until you opt in).
 - `type RegisteredSchema = conditional` — The registered app schema when .denext/api.ts is imported, else the open ApiSchema.
 - `interface RenderOptions` — Options for renderToString.
+- `interface RenderStream` — A streaming render: the HTML byte stream plus React's allReady signal.
 - `renderToReadableStream(node: VNodeChildren, options?: StreamOptions): RenderStream` — Render a VNode tree to a streaming HTML ReadableStream<Uint8Array>, resolving Suspense boundaries progressively.
 - `renderToString(node: VNodeChildren, options?: RenderOptions): Promise<string>` — Render a VNode (or renderable child) to an HTML string. This is the primary SSR entry point.
 - `type RequestArgs<E> = conditional` — The trailing call args: the opts object is required only when it has a required key.
@@ -1566,7 +1569,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `class ChannelAccessError` — Why tapChannelAuthorized refused a subscriber.
 - `interface ChannelConfig<T>` — The definition passed to createChannel.
 - `interface ChannelContext` — The subscriber's identity handed to authorize (the Live connection context).
-- `interface ChannelEvent` — One transport event: a channel publish/revoke, or a cross-instance cache-tag invalidate.
+- `interface ChannelEvent` — One transport event: a channel publish/revoke, a cross-instance cache-tag invalidate, or an instance's presence snapshot of one usePresence room.
 - `type ChannelIdleReason = unsubscribe | disconnect` — Why a channel key lost its last local subscriber (see ChannelConfig.onIdle).
 - `type ChannelPublisher<T> = (ctx: ChannelPublisherContext<T>) => unknown` — A supervised per-key producer (ChannelConfig.publisher).
 - `interface ChannelPublisherContext<T>` — What a ChannelConfig.publisher receives.
@@ -1989,6 +1992,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `enum RedirectType` — next/navigation's RedirectType — how a client-side (soft) navigation applies the redirect: push a new history entry or replace the current one. Server responses ignore it (they always issue an HTTP redirect).
 - `redisCacheStore(options?: RedisCacheStoreOptions): CacheStore & object` — A CacheStore on Redis, shared by every replica. Size-bounded: the oldest-written entries past maxDataEntries / maxPageEntries are evicted, and hard-expired ones are swept on a throttle.
 - `interface RedisCacheStoreOptions` — Options for redisCacheStore.
+- `redisChannelTransport(options?: RedisChannelTransportOptions): RedisChannelTransport` — Carry Live channel events between replicas through Redis pub/sub.
+- `interface RedisChannelTransport` — A ChannelTransport with its connections' lifecycle.
+- `interface RedisChannelTransportOptions` — Options for redisChannelTransport.
 - `redisClient(options?: string | RedisClientOptions): RedisClient` — Open a Redis client (lazily: the first command connects).
 - `interface RedisClient` — A Redis connection shared by its callers (see the module docs).
 - `interface RedisClientOptions` — Options for redisClient.
@@ -2042,6 +2048,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `resetCacheStats(): void` — Reset the cache-activity counters (tests / a fresh monitoring window).
 - `resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult>` — Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, every passkey of the user is removed, and every server-side session and bearer API token is revoked — a reset is how an owner takes an account back, so nothing a thief set up with a stolen session (a passkey registered from it included) survives it. Fires passwordReset (after sessionRevoked).
 - `type ResetPasswordResult = object | object` — What resetPassword reports.
+- `type ResolveAliasConfig = Readonly<Record<string, string | ResolveAliasRule>>` — DenextConfig.resolveAlias: import specifier → alias.
+- `interface ResolveAliasRule` — An alias in its object form (DenextConfig.resolveAlias).
 - `resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeProfile` — Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete CacheLifeProfile. An unknown name falls back to the default profile. Missing fields inherit from default.
 - `interface ResolvedBackoff` — A validated BackoffOptions: every field present.
 - `type ResolvedMetadata = Metadata` — The merged metadata of the segments ABOVE the current one (what parent resolves to).
@@ -2556,12 +2564,18 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 - `interface ChannelRef<T>` — A channel as the browser sees it: the id (and the phantom type).
 - `configureLive(opts: object): void` — Install the Flight parser and route-refresh used by the live transport, and wire <Live> boundary registration. Called once by the generated Flight client entry.
+- `defineLiveView<Model, Msg, Props>(config: LiveViewConfig<Model, Msg, Props>): LiveViewComponent<Props>` — Define a server-held live view: a Model–View–Update program whose model lives on the server, one instance per Live connection. Render the returned component from a Server Component; the first paint is plain HTML (no JavaScript needed), and in the browser the view mounts over the Live socket — events bound with send(…) run update on the server and come back as DOM patches.
 - `Live(props: LiveProps): VNode` — A real-time server-component boundary. See the module docs.
 - `interface LiveActionRef<A, R>` — A reference to a server function usable as a live query (a serverAction).
 - `interface LiveErrorInfo` — The structured part of a server error frame, handed to a data subscription's callback.
 - `interface LiveProps` — Props for Live.
 - `liveReadable<T>(action: T): T` — Mark a server action as readable over the Live data channel (useLive), and return it unchanged for chaining. Only actions marked here — or admitted by the Live hub's canSubscribe policy — may be run via a data-subscribe. Use it for read-only fetchers you intend to stream; never for mutations.
 - `interface LiveSubscriptionError` — Why a subscription is not (or no longer) delivering.
+- `interface LiveViewComponent<Props>` — The component defineLiveView returns.
+- `interface LiveViewConfig<Model, Msg, Props>` — What defineLiveView takes: a program, its id, and its gates.
+- `interface LiveViewContext` — The connection a live view runs for (null for the server render of the page).
+- `LiveViewIsland: (props: LiveViewIslandProps) => VNode` — The live-view island. Rendered by defineLiveView's component, registered by the generated Flight entry; not something to render by hand.
+- `interface LiveViewIslandProps` — The island's props (written by defineLiveView's server render).
 - `interface Presence<S>` — The presence of the current room, from usePresence.
 - `subscribeChannel(channelId: string, key: string, onValue: (value: unknown, seq: number) => void, onError: (info: LiveErrorInfo) => void, onReady?: () => void): () => void` — Receive a createChannel channel's pushes for key. Backs useChannel. Returns an unsubscribe. A refusal (denied / no-policy / …) arrives through onError and marks the subscription dead so a reconnect does not re-send it.
 - `subscribeLiveTags(tags: string[], onInvalidate: () => void, onError?: (info: LiveErrorInfo) => void): () => void` — Be told when any of tags is invalidated on the server (revalidateTag); backs useApi({ tags }). Returns an unsubscribe.
@@ -3366,9 +3380,45 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface VirtualMasonryHandle` — The imperative handle of a VirtualMasonry.
 - `interface VirtualMasonryProps<T>` — Props of VirtualMasonry.
 
+### `denext/mvu`
+
+- `interface ChannelLike` — A channel reference as createChannel exports it (server) or its browser stub.
+- `interface ChannelSubscription<Msg>` — Turn each payload a createChannel channel publishes for key into a message.
+- `defineMvu<Model, Msg, Props>(program: MvuProgram<Model, Msg, Props>): MvuProgram<Model, Msg, Props>` — Identity, for inference: write the program once and run it with useMvu / MvuView in the browser or defineLiveView on the server.
+- `interface DelayEffect<Msg>` — Dispatch msg after ms milliseconds (cancelled when the program stops).
+- `interface DispatchEffect<Msg>` — Dispatch msg right after the current update (a follow-up message).
+- `type Effect<Msg> = FetchEffect<Msg> | DelayEffect<Msg> | TaskEffect<Msg> | DispatchEffect<Msg>` — Work an update asks the runtime to do. Plain data: compare it in tests.
+- `interface EffectConstructors` — The effect constructors (fx). Each returns plain data the runtime runs after the update.
+- `type EventBinding = (event: Event) => void` — What send(…) returns: an event handler for any on* prop.
+- `eventPayload(event: unknown): EventPayload` — The EventPayload of a DOM event: a form control target's value / checked (an input, a select, a textarea), a keyboard event's key, and a submit's text fields. A submit is preventDefaulted (the program handles it).
+- `interface EventPayload` — The parts of a DOM event a message can be built from (and the server validates).
+- `interface FetchEffect<Msg>` — Fetch url and turn the response into a message.
+- `fx: EffectConstructors` — Effect constructors. Each returns plain data; the runtime runs it after the update.
+- `interface IntervalSubscription<Msg>` — Dispatch msg every ms milliseconds while the subscription is active.
+- `type MsgSource<Msg> = Msg | parenthesized` — A message, or a function building one from the event (null dispatches nothing).
+- `interface MvuProgram<Model, Msg, Props>` — A whole program: runs in the browser with useMvu / MvuView, or on the server as a live view.
+- `MvuView<Model, Msg, Props>(props: MvuViewProps<Model, Msg, Props>): VNode` — Render a whole program in the browser: useMvu over its init / update / subscriptions, and its view with a send that dispatches locally. The server twin is defineLiveView.
+- `interface MvuViewProps<Model, Msg, Props>` — Props for MvuView.
+- `type Next<Model, Msg> = typeOperator` — What an update (or init) returns: the next model, and the effects to run.
+- `type Send<Msg> = (msg: MsgSource<Msg>) => EventBinding` — Bind a message to an event: onClick={send({ type: "inc" })}, or with the event's payload onInput={send((e) => ({ type: "typed", text: e.value ?? "" }))}.
+- `subs: SubscriptionConstructors` — Subscription constructors.
+- `type Subscription<Msg> = IntervalSubscription<Msg> | ChannelSubscription<Msg>` — A source of messages the runtime keeps open while the model asks for it.
+- `interface SubscriptionConstructors` — The subscription constructors (subs).
+- `type Subscriptions<Model, Msg> = (model: Model) => ReadonlyArray<Subscription<Msg> | null | false | undefined>` — The model's active subscriptions; falsy entries are skipped (cond && subs.interval(…)).
+- `interface TaskEffect<Msg>` — Run an async function and turn its result into a message.
+- `type Update<Model, Msg> = (msg: Msg, model: Model) => Next<Model, Msg>` — The update function: a message and the current model in, the next model and effects out.
+- `useMvu<Model, Msg>(init: () => Next<Model, Msg>, update: Update<Model, Msg>, subscriptions?: Subscriptions<Model, Msg>, options?: UseMvuOptions): typeOperator` — Run a Model–View–Update program in a component. init runs once (on the server too, for the first HTML); its effects, every later update's effects and the subscriptions run in the browser only, and stop when the component unmounts.
+- `interface UseMvuOptions` — Options for useMvu.
+- `type View<Model, Msg> = (model: Model, send: Send<Msg>) => VNodeChildren` — Render the model; bind events with send.
+
 ### `denext/feature`
 
 - `feature(name: string): boolean` — Whether the feature flag name is enabled. A feature("KEY") call with a **string literal** argument is folded to a boolean literal at build time (for a KEY listed in features) so the branch is dead-code eliminated; otherwise it reads the build-seeded flag map at runtime, defaulting to false for any unset flag.
+
+### `denext/platform`
+
+- `platform: Platform` — The target this build is for. Folded to a string literal at build time in the app's own modules (and platform === "…" to a boolean), so other targets' branches are removed.
+- `type Platform = web | ios | android | macos | windows | linux` — A build target: the web, a phone OS, or a desktop OS.
 
 ### `denext/result`
 

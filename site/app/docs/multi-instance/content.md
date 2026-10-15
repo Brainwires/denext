@@ -6,16 +6,16 @@ lead: One denext process is self-contained by default — its cache, sessions, r
 
 ## The short version
 
-| Component                              | Default                                                               | Across two instances                                                               | Make it shared with                                                                 |
-| -------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Data + ISR page cache                  | `node:sqlite` file, `.denext/cache.db` (memory if unwritable)         | `revalidateTag` on A does **not** purge B; each node renders and caches on its own | `cache.store` → `redisCacheStore()` / `denoKvCacheStore()` / `postgresCacheStore()` |
-| Auth sessions (`strategy: "database"`) | none until you choose (`inMemorySessionStore` / `sqliteSessionStore`) | a session created on A is unknown to B; a revoke on A does not reach B             | `sessionStore` → `redisSessionStore()` / `denoKvSessionStore()` / `postgres…`       |
-| Rate-limit counters                    | `inMemoryRateLimitStore()` per process                                | every limit is multiplied by the replica count                                     | `store` → `redisRateLimitStore()` / `denoKvRateLimitStore()` / `postgres…`          |
-| Users, accounts, credentials           | `sqliteAuthAdapter` = one SQLite file                                 | single node (or a shared volume)                                                   | `adapter` → `postgresAuthAdapter()` / `backendAuthAdapter()` or your `AuthAdapter`  |
-| Live channels + tag pushes             | in-memory loopback transport                                          | a `publish` on A reaches A's sockets only                                          | `setChannelTransport(t)` → `broadcastChannelTransport()` or your `ChannelTransport` |
-| Scheduled jobs (userland)              | minute-tick scheduler in every process                                | **fires on every replica**                                                         | one designated instance, or `Deno.cron`                                             |
-| Job run history                        | `.denext/jobs.db` per process                                         | each node sees its own fragment                                                    | `jobs: { history: { store: postgresJobHistoryStore() } }` or your `JobHistoryStore` |
-| Connection and concurrency caps        | per process (`maxConcurrency`, `live.limits`, `@denext/graphql`)      | each cap is multiplied by the replica count                                        | (per process by design; size each to one instance, and cap the total at the edge)   |
+| Component                              | Default                                                               | Across two instances                                                               | Make it shared with                                                                  |
+| -------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Data + ISR page cache                  | `node:sqlite` file, `.denext/cache.db` (memory if unwritable)         | `revalidateTag` on A does **not** purge B; each node renders and caches on its own | `cache.store` → `redisCacheStore()` / `denoKvCacheStore()` / `postgresCacheStore()`  |
+| Auth sessions (`strategy: "database"`) | none until you choose (`inMemorySessionStore` / `sqliteSessionStore`) | a session created on A is unknown to B; a revoke on A does not reach B             | `sessionStore` → `redisSessionStore()` / `denoKvSessionStore()` / `postgres…`        |
+| Rate-limit counters                    | `inMemoryRateLimitStore()` per process                                | every limit is multiplied by the replica count                                     | `store` → `redisRateLimitStore()` / `denoKvRateLimitStore()` / `postgres…`           |
+| Users, accounts, credentials           | `sqliteAuthAdapter` = one SQLite file                                 | single node (or a shared volume)                                                   | `adapter` → `postgresAuthAdapter()` / `backendAuthAdapter()` or your `AuthAdapter`   |
+| Live channels + tag pushes             | in-memory loopback transport                                          | a `publish` on A reaches A's sockets only                                          | `setChannelTransport(t)` → `redisChannelTransport()` / `broadcastChannelTransport()` |
+| Scheduled jobs (userland)              | minute-tick scheduler in every process                                | **fires on every replica**                                                         | one designated instance, or `Deno.cron`                                              |
+| Job run history                        | `.denext/jobs.db` per process                                         | each node sees its own fragment                                                    | `jobs: { history: { store: postgresJobHistoryStore() } }` or your `JobHistoryStore`  |
+| Connection and concurrency caps        | per process (`maxConcurrency`, `live.limits`, `@denext/graphql`)      | each cap is multiplied by the replica count                                        | (per process by design; size each to one instance, and cap the total at the edge)    |
 
 Signed-cookie sessions (`getSession()` and auth's default `strategy: "cookie"`)
 are the one thing on the list that is already replica-safe: the whole payload is
@@ -27,8 +27,8 @@ schema?, directUrl? }` and creates its tables on first use) — see
 [Databases › Postgres](/docs/database#postgres). The cache, session and
 rate-limit stores also ship on **Redis** (`redisCacheStore`, `redisSessionStore`,
 `redisRateLimitStore`) and **Deno KV** (`denoKvCacheStore`, `denoKvSessionStore`,
-`denoKvRateLimitStore`), both zero-npm (below). No Live `ChannelTransport` ships
-beyond `BroadcastChannel`. Each interface is small, and `denext/testing` exports
+`denoKvRateLimitStore`), both zero-npm (below), and Live crosses instances
+through Redis pub/sub (`redisChannelTransport`, [below](#live-channeltransport)). Each interface is small, and `denext/testing` exports
 the contract suites denext's own stores pass, so a store of your own can prove
 itself ([Your own store](#your-own-store)).
 
@@ -262,12 +262,37 @@ interface ChannelTransport {
 }
 ```
 
-`broadcastChannelTransport()` (from `denext/server`) implements it over the Web
+`redisChannelTransport()` (from `denext/server`) implements it over Redis
+pub/sub — the shipped transport for a self-hosted fleet:
+
+```ts
+// instrumentation.ts (or any module the server loads at startup)
+import { redisChannelTransport, setChannelTransport } from "denext/server";
+setChannelTransport(redisChannelTransport({ url: Deno.env.get("REDIS_URL") }));
+```
+
+Every event is one `PUBLISH` on one Redis channel (`channel`, default
+`denext:channels`; give each app its own when apps share a server). The transport
+opens two connections of its own, one to publish and one held in `SUBSCRIBE`; the
+subscriber reconnects with backoff after a drop, subscribes again and calls
+`onResync`. `url` takes everything `redisClient` does, `rediss://` and
+`tls: { caCerts }` included. A publish never rejects: if Redis is down the event
+still reaches this instance's sockets and the failure is logged once.
+
+**Presence** (`usePresence`) rides the same transport: each hub publishes its own
+peers in a room when they change and every 10 seconds once another instance is
+heard from, and merges the other instances' snapshots into the `presence-state`
+its sockets see. A hub that stops publishes its rooms as empty; a crashed one's
+peers drop out after 35 seconds without a heartbeat. Room authorization stays
+with the instance that holds the socket.
+
+`broadcastChannelTransport()` implements the interface over the Web
 `BroadcastChannel` API, which on **Deno Deploy** spans the isolates of one
 deployment — that is its purpose; on a self-host it reaches only the workers of
-one process, so it does not make two containers talk. Install it, or your own
-two-method Redis pub/sub / NATS transport, with `setChannelTransport(t)`; the
-hub re-subscribes. An event carries an `instance` id and a per-instance `seq`,
+one process, so it does not make two containers talk. Install either, or your own
+two-method NATS transport, with `setChannelTransport(t)`; the hub re-subscribes.
+Delivery is at most once (an event published while a subscriber is reconnecting
+is not replayed). An event carries an `instance` id and a per-instance `seq`,
 so ordering holds per publisher, not globally. Without a transport, the
 practical alternative is **sticky sessions** at the balancer so a viewer's
 socket and the actions that publish to it land on the same node — which works

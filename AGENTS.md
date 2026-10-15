@@ -767,7 +767,9 @@ tables by migration on first use (under the migration lock). The same cache / se
 stores ship on Redis 7+ (`redisCacheStore` / `redisSessionStore` / `redisRateLimitStore`, `{ client |
 url, prefix? }`, on denext's zero-npm RESP client `redisClient(url)`) and Deno KV (`denoKvCacheStore`
 / `denoKvSessionStore` / `denoKvRateLimitStore`, `{ kv | path, prefix? }`); `cacheStoreContract` /
-`sessionStoreContract` / `rateLimitStoreContract` from `denext/testing` test your own. Behind PgBouncer in transaction mode,
+`sessionStoreContract` / `rateLimitStoreContract` from `denext/testing` test your own. Live across
+replicas: `setChannelTransport(redisChannelTransport({ url }))` (channels, tag pushes and
+`usePresence` rooms over Redis pub/sub). Behind PgBouncer in transaction mode,
 pass `directUrl` too (`backend({ postgres })` reads `DATABASE_DIRECT_URL`): LISTEN, reserved
 connections and migrations take the direct connection (`withDirectConnection(pooled, direct)`).
 `DENEXT_BOOT_DDL=off` makes startup change no schema and fail with `BootSchemaError` while a

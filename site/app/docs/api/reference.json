@@ -2286,6 +2286,18 @@
           "denextOnly": true
         },
         {
+          "name": "RenderStream",
+          "slug": "RenderStream",
+          "kind": "interface",
+          "signature": "interface RenderStream",
+          "doc": "A streaming render: the HTML byte stream plus React's allReady signal.",
+          "docFull": "A streaming render: the HTML byte stream plus React's `allReady` signal.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "renderToReadableStream",
           "slug": "renderToReadableStream",
           "kind": "function",
@@ -4250,7 +4262,7 @@
           "kind": "function",
           "signature": "ViewTransition(props: object): VNode",
           "doc": "React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the first keeps name, the others get React's name_<i> suffix), and the hosts a component child renders. Text directly inside is not animated (it can't be named). The import-gated marking runtime finds these elements and applies real view-transition-name (an automatic one when name is unset) and view-transition-class (enter/exit/update/share, else default; \"none\" opts out):",
-          "docFull": "`React.ViewTransition` (experimental) — the client-driven view-transition wrapper. It is\ntransparent (no DOM node of its own) and carries its config by stamping the {@link DNX_VT_ATTR}\nattribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the\nFlight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the\nfirst keeps `name`, the others get React's `name_<i>` suffix), and the hosts a component child\nrenders. Text directly inside is not animated (it can't be named). The import-gated marking\nruntime finds these elements and applies real `view-transition-name` (an automatic one when\n`name` is unset) and `view-transition-class` (`enter`/`exit`/`update`/`share`, else `default`;\n`\"none\"` opts out):\n\n- **Same-page updates** (React's triggers): a commit made only of Transition work — a\n  `startTransition` update, a `useDeferredValue` catch-up, a Suspense reveal — runs inside\n  `document.startViewTransition` when a wrapped element enters, exits, is shared (a `name` that\n  leaves one place and enters another) or updates (its content mutated or its layout moved).\n  An urgent update never animates, and neither does a `useSyncExternalStore` change (React\n  renders a store change synchronously even inside `startTransition`).\n- **Soft navigations** commit inside `document.startViewTransition` (see `withViewTransition`\n  in `src/client/navigation.ts`), so a `name` shared across routes morphs one element into the\n  other; the route-level cross-fade applies regardless.\n\nWhere the browser lacks the View Transitions API the commit simply applies.",
+          "docFull": "`React.ViewTransition` (experimental) — the client-driven view-transition wrapper. It is\ntransparent (no DOM node of its own) and carries its config by stamping the {@link DNX_VT_ATTR}\nattribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the\nFlight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the\nfirst keeps `name`, the others get React's `name_<i>` suffix), and the hosts a component child\nrenders. Text directly inside is not animated (it can't be named). The import-gated marking\nruntime finds these elements and applies real `view-transition-name` (an automatic one when\n`name` is unset) and `view-transition-class` (`enter`/`exit`/`update`/`share`, else `default`;\n`\"none\"` opts out):\n\n- **Same-page updates** (React's triggers): a commit made only of Transition work — a\n  `startTransition` update, a `useDeferredValue` catch-up, a Suspense reveal — runs inside\n  `document.startViewTransition` when a wrapped element enters, exits, is shared (a `name` that\n  leaves one place and enters another) or updates (its content mutated or its layout moved).\n  An urgent update never animates, and neither does a `useSyncExternalStore` change (React\n  renders a store change synchronously even inside `startTransition`).\n- **Soft navigations** commit inside `document.startViewTransition` (see `withViewTransition`\n  in `src/client/navigation.ts`), so a `name` shared across routes morphs one element into the\n  other; the route-level cross-fade applies regardless.\n\nA hidden `<Activity>` going hidden in a Transition animates its boundaries as exits, and a\nboundary entirely outside the viewport (before and after) is not animated, as in React.\n\n`onEnter` / `onExit` / `onUpdate` / `onShare` run once the transition's pseudo-elements exist\n(`ready`), with the boundary's `ViewTransitionInstance` (`name`, and `group` / `imagePair` /\n`old` / `new` handles with `animate()` / `getAnimations()` / `getComputedStyle()` on its\n`::view-transition-*` pseudo-elements) and the transition types; a returned function runs\nwhen the transition finishes. `onShare` runs on the side that leaves. Callbacks need a\nclient-rendered `<ViewTransition>` (a function can't cross from a Server Component).\n\nWhere the browser lacks the View Transitions API the commit simply applies.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6095,8 +6107,8 @@
           "slug": "ChannelEvent",
           "kind": "interface",
           "signature": "interface ChannelEvent",
-          "doc": "One transport event: a channel publish/revoke, or a cross-instance cache-tag invalidate.",
-          "docFull": "One transport event: a channel `publish`/`revoke`, or a cross-instance cache-tag `invalidate`.",
+          "doc": "One transport event: a channel publish/revoke, a cross-instance cache-tag invalidate, or an instance's presence snapshot of one usePresence room.",
+          "docFull": "One transport event: a channel `publish`/`revoke`, a cross-instance cache-tag `invalidate`, or\nan instance's `presence` snapshot of one `usePresence` room.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11762,6 +11774,47 @@
           "denextOnly": true
         },
         {
+          "name": "redisChannelTransport",
+          "slug": "redisChannelTransport-fn",
+          "kind": "function",
+          "signature": "redisChannelTransport(options?: RedisChannelTransportOptions): RedisChannelTransport",
+          "doc": "Carry Live channel events between replicas through Redis pub/sub.",
+          "docFull": "Carry Live channel events between replicas through Redis pub/sub.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The Redis URL, the shared channel name and a resync callback."
+            }
+          ],
+          "returns": "A transport for setChannelTransport; close() it on shutdown.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisChannelTransport",
+          "slug": "RedisChannelTransport-iface",
+          "kind": "interface",
+          "signature": "interface RedisChannelTransport",
+          "doc": "A ChannelTransport with its connections' lifecycle.",
+          "docFull": "A {@linkcode ChannelTransport} with its connections' lifecycle.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisChannelTransportOptions",
+          "slug": "RedisChannelTransportOptions",
+          "kind": "interface",
+          "signature": "interface RedisChannelTransportOptions",
+          "doc": "Options for redisChannelTransport.",
+          "docFull": "Options for {@linkcode redisChannelTransport}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "redisClient",
           "slug": "redisClient-fn",
           "kind": "function",
@@ -12539,6 +12592,30 @@
           "signature": "type ResetPasswordResult = object | object",
           "doc": "What resetPassword reports.",
           "docFull": "What {@linkcode resetPassword} reports.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ResolveAliasConfig",
+          "slug": "ResolveAliasConfig",
+          "kind": "typeAlias",
+          "signature": "type ResolveAliasConfig = Readonly<Record<string, string | ResolveAliasRule>>",
+          "doc": "DenextConfig.resolveAlias: import specifier → alias.",
+          "docFull": "{@link DenextConfig.resolveAlias}: import specifier → alias.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ResolveAliasRule",
+          "slug": "ResolveAliasRule",
+          "kind": "interface",
+          "signature": "interface ResolveAliasRule",
+          "doc": "An alias in its object form (DenextConfig.resolveAlias).",
+          "docFull": "An alias in its object form ({@link DenextConfig.resolveAlias}).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -19336,6 +19413,25 @@
           "denextOnly": true
         },
         {
+          "name": "defineLiveView",
+          "slug": "defineLiveView",
+          "kind": "function",
+          "signature": "defineLiveView<Model, Msg, Props>(config: LiveViewConfig<Model, Msg, Props>): LiveViewComponent<Props>",
+          "doc": "Define a server-held live view: a Model–View–Update program whose model lives on the server, one instance per Live connection. Render the returned component from a Server Component; the first paint is plain HTML (no JavaScript needed), and in the browser the view mounts over the Live socket — events bound with send(…) run update on the server and come back as DOM patches.",
+          "docFull": "Define a server-held live view: a Model–View–Update program whose model lives on the server,\none instance per Live connection. Render the returned component from a Server Component; the\nfirst paint is plain HTML (no JavaScript needed), and in the browser the view mounts over the\nLive socket — events bound with `send(…)` run `update` on the server and come back as DOM\npatches.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The program (init / update / view / subscriptions), its id, an optional authorize and an optional events payload schema."
+            }
+          ],
+          "returns": "A Server Component taking the props init receives.",
+          "examples": [
+            "```tsx\nexport const Counter = defineLiveView({\n  id: \"counter\",\n  init: (props: { start: number }) => [{ n: props.start }],\n  update: (_msg: { type: \"inc\" }, m) => [{ n: m.n + 1 }],\n  view: (m, send) => <button type=\"button\" onClick={send({ type: \"inc\" })}>{m.n}</button>,\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "Live",
           "slug": "Live",
           "kind": "function",
@@ -19414,6 +19510,66 @@
           "signature": "interface LiveSubscriptionError",
           "doc": "Why a subscription is not (or no longer) delivering.",
           "docFull": "Why a subscription is not (or no longer) delivering.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveViewComponent",
+          "slug": "LiveViewComponent",
+          "kind": "interface",
+          "signature": "interface LiveViewComponent<Props>",
+          "doc": "The component defineLiveView returns.",
+          "docFull": "The component {@link defineLiveView} returns.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveViewConfig",
+          "slug": "LiveViewConfig",
+          "kind": "interface",
+          "signature": "interface LiveViewConfig<Model, Msg, Props>",
+          "doc": "What defineLiveView takes: a program, its id, and its gates.",
+          "docFull": "What {@link defineLiveView} takes: a program, its id, and its gates.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveViewContext",
+          "slug": "LiveViewContext",
+          "kind": "interface",
+          "signature": "interface LiveViewContext",
+          "doc": "The connection a live view runs for (null for the server render of the page).",
+          "docFull": "The connection a live view runs for (`null` for the server render of the page).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveViewIsland",
+          "slug": "LiveViewIsland",
+          "kind": "variable",
+          "signature": "LiveViewIsland: (props: LiveViewIslandProps) => VNode",
+          "doc": "The live-view island. Rendered by defineLiveView's component, registered by the generated Flight entry; not something to render by hand.",
+          "docFull": "The live-view island. Rendered by `defineLiveView`'s component, registered by the generated\nFlight entry; not something to render by hand.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveViewIslandProps",
+          "slug": "LiveViewIslandProps",
+          "kind": "interface",
+          "signature": "interface LiveViewIslandProps",
+          "doc": "The island's props (written by defineLiveView's server render).",
+          "docFull": "The island's props (written by `defineLiveView`'s server render).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -30721,6 +30877,379 @@
       ]
     },
     {
+      "module": "denext/mvu",
+      "symbols": [
+        {
+          "name": "ChannelLike",
+          "slug": "ChannelLike",
+          "kind": "interface",
+          "signature": "interface ChannelLike",
+          "doc": "A channel reference as createChannel exports it (server) or its browser stub.",
+          "docFull": "A channel reference as `createChannel` exports it (server) or its browser stub.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelSubscription",
+          "slug": "ChannelSubscription",
+          "kind": "interface",
+          "signature": "interface ChannelSubscription<Msg>",
+          "doc": "Turn each payload a createChannel channel publishes for key into a message.",
+          "docFull": "Turn each payload a `createChannel` channel publishes for `key` into a message.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "defineMvu",
+          "slug": "defineMvu",
+          "kind": "function",
+          "signature": "defineMvu<Model, Msg, Props>(program: MvuProgram<Model, Msg, Props>): MvuProgram<Model, Msg, Props>",
+          "doc": "Identity, for inference: write the program once and run it with useMvu / MvuView in the browser or defineLiveView on the server.",
+          "docFull": "Identity, for inference: write the program once and run it with `useMvu` / `MvuView` in the\nbrowser or `defineLiveView` on the server.",
+          "params": [
+            {
+              "name": "program",
+              "doc": "The program."
+            }
+          ],
+          "returns": "The same program.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DelayEffect",
+          "slug": "DelayEffect",
+          "kind": "interface",
+          "signature": "interface DelayEffect<Msg>",
+          "doc": "Dispatch msg after ms milliseconds (cancelled when the program stops).",
+          "docFull": "Dispatch `msg` after `ms` milliseconds (cancelled when the program stops).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DispatchEffect",
+          "slug": "DispatchEffect",
+          "kind": "interface",
+          "signature": "interface DispatchEffect<Msg>",
+          "doc": "Dispatch msg right after the current update (a follow-up message).",
+          "docFull": "Dispatch `msg` right after the current update (a follow-up message).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Effect",
+          "slug": "Effect",
+          "kind": "typeAlias",
+          "signature": "type Effect<Msg> = FetchEffect<Msg> | DelayEffect<Msg> | TaskEffect<Msg> | DispatchEffect<Msg>",
+          "doc": "Work an update asks the runtime to do. Plain data: compare it in tests.",
+          "docFull": "Work an update asks the runtime to do. Plain data: compare it in tests.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EffectConstructors",
+          "slug": "EffectConstructors",
+          "kind": "interface",
+          "signature": "interface EffectConstructors",
+          "doc": "The effect constructors (fx). Each returns plain data the runtime runs after the update.",
+          "docFull": "The effect constructors ({@link fx}). Each returns plain data the runtime runs after the update.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EventBinding",
+          "slug": "EventBinding",
+          "kind": "typeAlias",
+          "signature": "type EventBinding = (event: Event) => void",
+          "doc": "What send(…) returns: an event handler for any on* prop.",
+          "docFull": "What `send(…)` returns: an event handler for any `on*` prop.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "eventPayload",
+          "slug": "eventPayload-fn",
+          "kind": "function",
+          "signature": "eventPayload(event: unknown): EventPayload",
+          "doc": "The EventPayload of a DOM event: a form control target's value / checked (an input, a select, a textarea), a keyboard event's key, and a submit's text fields. A submit is preventDefaulted (the program handles it).",
+          "docFull": "The {@link EventPayload} of a DOM event: a form control target's `value` / `checked` (an\ninput, a select, a textarea), a keyboard event's `key`, and a submit's text fields. A `submit` is `preventDefault`ed (the program handles it).",
+          "params": [
+            {
+              "name": "event",
+              "doc": "The DOM event (anything else yields {})."
+            }
+          ],
+          "returns": "The payload.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EventPayload",
+          "slug": "EventPayload-iface",
+          "kind": "interface",
+          "signature": "interface EventPayload",
+          "doc": "The parts of a DOM event a message can be built from (and the server validates).",
+          "docFull": "The parts of a DOM event a message can be built from (and the server validates).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FetchEffect",
+          "slug": "FetchEffect",
+          "kind": "interface",
+          "signature": "interface FetchEffect<Msg>",
+          "doc": "Fetch url and turn the response into a message.",
+          "docFull": "Fetch `url` and turn the response into a message.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "fx",
+          "slug": "fx",
+          "kind": "variable",
+          "signature": "fx: EffectConstructors",
+          "doc": "Effect constructors. Each returns plain data; the runtime runs it after the update.",
+          "docFull": "Effect constructors. Each returns plain data; the runtime runs it after the update.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "IntervalSubscription",
+          "slug": "IntervalSubscription",
+          "kind": "interface",
+          "signature": "interface IntervalSubscription<Msg>",
+          "doc": "Dispatch msg every ms milliseconds while the subscription is active.",
+          "docFull": "Dispatch `msg` every `ms` milliseconds while the subscription is active.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MsgSource",
+          "slug": "MsgSource",
+          "kind": "typeAlias",
+          "signature": "type MsgSource<Msg> = Msg | parenthesized",
+          "doc": "A message, or a function building one from the event (null dispatches nothing).",
+          "docFull": "A message, or a function building one from the event (`null` dispatches nothing).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MvuProgram",
+          "slug": "MvuProgram",
+          "kind": "interface",
+          "signature": "interface MvuProgram<Model, Msg, Props>",
+          "doc": "A whole program: runs in the browser with useMvu / MvuView, or on the server as a live view.",
+          "docFull": "A whole program: runs in the browser with `useMvu` / `MvuView`, or on the server as a live view.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MvuView",
+          "slug": "MvuView",
+          "kind": "function",
+          "signature": "MvuView<Model, Msg, Props>(props: MvuViewProps<Model, Msg, Props>): VNode",
+          "doc": "Render a whole program in the browser: useMvu over its init / update / subscriptions, and its view with a send that dispatches locally. The server twin is defineLiveView.",
+          "docFull": "Render a whole program in the browser: `useMvu` over its `init` / `update` / `subscriptions`,\nand its `view` with a `send` that dispatches locally. The server twin is `defineLiveView`.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The program and its init props."
+            }
+          ],
+          "returns": "The program's view.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MvuViewProps",
+          "slug": "MvuViewProps",
+          "kind": "interface",
+          "signature": "interface MvuViewProps<Model, Msg, Props>",
+          "doc": "Props for MvuView.",
+          "docFull": "Props for {@link MvuView}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Next",
+          "slug": "Next",
+          "kind": "typeAlias",
+          "signature": "type Next<Model, Msg> = typeOperator",
+          "doc": "What an update (or init) returns: the next model, and the effects to run.",
+          "docFull": "What an `update` (or `init`) returns: the next model, and the effects to run.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Send",
+          "slug": "Send",
+          "kind": "typeAlias",
+          "signature": "type Send<Msg> = (msg: MsgSource<Msg>) => EventBinding",
+          "doc": "Bind a message to an event: onClick={send({ type: \"inc\" })}, or with the event's payload onInput={send((e) => ({ type: \"typed\", text: e.value ?? \"\" }))}.",
+          "docFull": "Bind a message to an event: `onClick={send({ type: \"inc\" })}`, or with the event's payload\n`onInput={send((e) => ({ type: \"typed\", text: e.value ?? \"\" }))}`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "subs",
+          "slug": "subs",
+          "kind": "variable",
+          "signature": "subs: SubscriptionConstructors",
+          "doc": "Subscription constructors.",
+          "docFull": "Subscription constructors.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Subscription",
+          "slug": "Subscription",
+          "kind": "typeAlias",
+          "signature": "type Subscription<Msg> = IntervalSubscription<Msg> | ChannelSubscription<Msg>",
+          "doc": "A source of messages the runtime keeps open while the model asks for it.",
+          "docFull": "A source of messages the runtime keeps open while the model asks for it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SubscriptionConstructors",
+          "slug": "SubscriptionConstructors",
+          "kind": "interface",
+          "signature": "interface SubscriptionConstructors",
+          "doc": "The subscription constructors (subs).",
+          "docFull": "The subscription constructors ({@link subs}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Subscriptions",
+          "slug": "Subscriptions",
+          "kind": "typeAlias",
+          "signature": "type Subscriptions<Model, Msg> = (model: Model) => ReadonlyArray<Subscription<Msg> | null | false | undefined>",
+          "doc": "The model's active subscriptions; falsy entries are skipped (cond && subs.interval(…)).",
+          "docFull": "The model's active subscriptions; falsy entries are skipped (`cond && subs.interval(…)`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskEffect",
+          "slug": "TaskEffect",
+          "kind": "interface",
+          "signature": "interface TaskEffect<Msg>",
+          "doc": "Run an async function and turn its result into a message.",
+          "docFull": "Run an async function and turn its result into a message.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Update",
+          "slug": "Update",
+          "kind": "typeAlias",
+          "signature": "type Update<Model, Msg> = (msg: Msg, model: Model) => Next<Model, Msg>",
+          "doc": "The update function: a message and the current model in, the next model and effects out.",
+          "docFull": "The update function: a message and the current model in, the next model and effects out.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useMvu",
+          "slug": "useMvu",
+          "kind": "function",
+          "signature": "useMvu<Model, Msg>(init: () => Next<Model, Msg>, update: Update<Model, Msg>, subscriptions?: Subscriptions<Model, Msg>, options?: UseMvuOptions): typeOperator",
+          "doc": "Run a Model–View–Update program in a component. init runs once (on the server too, for the first HTML); its effects, every later update's effects and the subscriptions run in the browser only, and stop when the component unmounts.",
+          "docFull": "Run a Model–View–Update program in a component. `init` runs once (on the server too, for\nthe first HTML); its effects, every later update's effects and the subscriptions run in the\nbrowser only, and stop when the component unmounts.",
+          "params": [
+            {
+              "name": "init",
+              "doc": "The first model, and the effects to run once mounted: () => [model, effects?]."
+            },
+            {
+              "name": "update",
+              "doc": "(msg, model) => [model, effects?]. The latest one passed is used."
+            },
+            {
+              "name": "subscriptions",
+              "doc": "(model) => [...] — the subscriptions to keep open for this model."
+            },
+            {
+              "name": "options",
+              "doc": "A name for the DevTools MVU tab."
+            }
+          ],
+          "returns": "The current model and a stable dispatch.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseMvuOptions",
+          "slug": "UseMvuOptions",
+          "kind": "interface",
+          "signature": "interface UseMvuOptions",
+          "doc": "Options for useMvu.",
+          "docFull": "Options for {@link useMvu}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "View",
+          "slug": "View",
+          "kind": "typeAlias",
+          "signature": "type View<Model, Msg> = (model: Model, send: Send<Msg>) => VNodeChildren",
+          "doc": "Render the model; bind events with send.",
+          "docFull": "Render the model; bind events with `send`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        }
+      ]
+    },
+    {
       "module": "denext/feature",
       "symbols": [
         {
@@ -30736,6 +31265,35 @@
               "doc": "The flag name, matching a key in features in denext.config.ts."
             }
           ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        }
+      ]
+    },
+    {
+      "module": "denext/platform",
+      "symbols": [
+        {
+          "name": "platform",
+          "slug": "platform-var",
+          "kind": "variable",
+          "signature": "platform: Platform",
+          "doc": "The target this build is for. Folded to a string literal at build time in the app's own modules (and platform === \"…\" to a boolean), so other targets' branches are removed.",
+          "docFull": "The target this build is for. Folded to a string literal at build time in the app's own\nmodules (and `platform === \"…\"` to a boolean), so other targets' branches are removed.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Platform",
+          "slug": "Platform-type",
+          "kind": "typeAlias",
+          "signature": "type Platform = web | ios | android | macos | windows | linux",
+          "doc": "A build target: the web, a phone OS, or a desktop OS.",
+          "docFull": "A build target: the web, a phone OS, or a desktop OS.",
+          "params": [],
           "returns": "",
           "examples": [],
           "denextOnly": true

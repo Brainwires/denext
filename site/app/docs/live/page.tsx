@@ -355,12 +355,14 @@ const { data: event } = useChannel(orderEvents, \`user:\${userId}\`);`}
           <code>initial</code>); <code>seq</code> orders frames from one instance only.
         </li>
         <li>
-          <strong>Instances.</strong>{" "}
-          Tag-driven pushes reach the connections on the instance that invalidated. Channel events
-          cross instances through a <code>ChannelTransport</code>:{" "}
+          <strong>Instances.</strong> Channel events, tag-driven pushes and <code>usePresence</code>
+          {" "}
+          rooms cross instances through a <code>ChannelTransport</code>:{" "}
+          <code>redisChannelTransport()</code> (Redis pub/sub, any self-hosted fleet),{" "}
           <code>broadcastChannelTransport()</code>{" "}
-          (Deno Deploy isolates, workers) or your own two-method Redis/NATS transport via{" "}
-          <code>setChannelTransport</code>.
+          (Deno Deploy isolates, workers) or your own two-method transport via{" "}
+          <code>setChannelTransport</code>. Each instance publishes its peers in a room and
+          heartbeats them; a dead instance's peers drop out after about 35 seconds.
         </li>
         <li>
           <strong>Tag watches.</strong> <code>useApi({"{ tags }"})</code>{" "}

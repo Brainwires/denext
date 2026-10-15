@@ -65,6 +65,10 @@ interface Session {
   db: number;
   authed: boolean;
   queue: string[][] | undefined;
+  /** Pub/sub channels this connection is subscribed to. */
+  channels: Set<string>;
+  /** Write to this connection (in order, also from another connection's PUBLISH). */
+  write(text: string): Promise<void>;
 }
 
 /**
@@ -88,7 +92,22 @@ export function fakeRedis(options: FakeRedisOptions = {}): FakeRedis {
 
   const serve = async (conn: Deno.Conn) => {
     conns.add(conn);
-    const session: Session = { db: 0, authed: options.password === undefined, queue: undefined };
+    let chain = Promise.resolve();
+    const session: Session = {
+      db: 0,
+      authed: options.password === undefined,
+      queue: undefined,
+      channels: new Set(),
+      write(text) {
+        const bytes = encoder.encode(text);
+        chain = chain.then(async () => {
+          let at = 0;
+          while (at < bytes.length) at += await conn.write(bytes.subarray(at));
+        }).catch(() => {});
+        return chain;
+      },
+    };
+    sessions.add(session);
     const reader = new RespReader();
     const buffer = new Uint8Array(64 * 1024);
     try {
@@ -102,16 +121,13 @@ export function fakeRedis(options: FakeRedisOptions = {}): FakeRedis {
           log.push([command[0].toUpperCase(), ...command.slice(1)]);
           out += encode(dispatch(session, command));
         }
-        if (out) {
-          const bytes = encoder.encode(out);
-          let at = 0;
-          while (at < bytes.length) at += await conn.write(bytes.subarray(at));
-        }
+        if (out) await session.write(out);
       }
     } catch {
       // connection dropped
     } finally {
       conns.delete(conn);
+      sessions.delete(session);
       try {
         conn.close();
       } catch {
@@ -121,7 +137,21 @@ export function fakeRedis(options: FakeRedisOptions = {}): FakeRedis {
   };
 
   /** The transaction commands, which act on the connection rather than the data. */
-  const control: Record<string, (session: Session) => Reply> = {
+  const sessions = new Set<Session>();
+  const control: Record<string, (session: Session, args: string[]) => Reply> = {
+    SUBSCRIBE(session, [channel]) {
+      session.channels.add(channel);
+      return ["subscribe", channel, session.channels.size];
+    },
+    PUBLISH(_session, [channel, message]) {
+      let receivers = 0;
+      for (const other of sessions) {
+        if (!other.channels.has(channel)) continue;
+        receivers++;
+        void other.write(encode(["message", channel, message]));
+      }
+      return receivers;
+    },
     MULTI(session) {
       if (session.queue) return { error: "ERR MULTI calls can not be nested" };
       session.queue = [];
@@ -153,7 +183,7 @@ export function fakeRedis(options: FakeRedisOptions = {}): FakeRedis {
     const name = command[0].toUpperCase();
     if (name === "AUTH") return auth(session, command.slice(1));
     if (!session.authed) return { error: "NOAUTH Authentication required." };
-    if (control[name]) return control[name](session);
+    if (control[name]) return control[name](session, command.slice(1));
     return session.queue ? enqueue(session, command) : run(session, command);
   };
 

@@ -219,9 +219,9 @@ export async function cacheStoreContract(
 }
 
 /** Epoch seconds `offset` from now. */
-const at = (offset: number): number => Math.floor(Date.now() / 1000) + offset;
+const inSeconds = (offset: number): number => Math.trunc(Date.now() / 1000 + offset);
 
-const session = (userId: string, expiresAt = at(3600)): AuthSession => ({
+const session = (userId: string, expiresAt = inSeconds(3600)): AuthSession => ({
   user: { id: userId },
   provider: "credentials",
   expiresAt,
@@ -233,7 +233,7 @@ const SESSION_CASES: Record<string, (store: SessionStore) => Promise<void>> = {
     await store.create("a", alice);
     expectSame(await store.get("a"), alice, "get");
     expectSame(await store.get("nope"), undefined, "unknown id");
-    await store.create("old", session("carol", at(-1)));
+    await store.create("old", session("carol", inSeconds(-1)));
     expectSame(await store.get("old"), undefined, "an expired session is a miss");
   },
   "create overwrites the same id": async (store) => {
@@ -244,12 +244,12 @@ const SESSION_CASES: Record<string, (store: SessionStore) => Promise<void>> = {
   "update rewrites a live session only (when supported)": async (store) => {
     if (!store.update) return;
     await store.create("a", session("alice"));
-    const later = at(7200);
+    const later = inSeconds(7200);
     expectSame(await store.update("a", session("alice", later)), true, "update of a live one");
     expectSame((await store.get("a"))?.expiresAt, later, "the new expiry");
     expectSame(await store.update("nope", session("x")), false, "write-only-if-present");
     expectSame(await store.get("nope"), undefined, "update must not create");
-    await store.create("old", session("carol", at(-1)));
+    await store.create("old", session("carol", inSeconds(-1)));
     expectSame(await store.update("old", session("carol")), false, "an expired one stays dead");
     await store.delete("a");
     expectSame(await store.update("a", session("alice")), false, "a revoked one stays revoked");

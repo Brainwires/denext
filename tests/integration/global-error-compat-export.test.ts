@@ -3,7 +3,7 @@
 // entry; these two paths emitted none, so the global-error document stayed server-rendered only
 // and its `reset` was inert. Now:
 // - a next-compat `denext build` bundles the entry (react→denext rewritten, like its routes) into
-//   `client/global-error.js`, so `denext start` wires it into the global-error 500 document;
+//   `client/__denext_global_error__.js`, so `denext start` wires it into the global-error 500 document;
 // - `denext export` bundles the same entry and pre-renders the global-error document to
 //   `500.html`, wired for hydration (a static host's error page).
 
@@ -13,8 +13,9 @@ import { build } from "../../src/build/build.ts";
 import { staticExport } from "../../src/build/export.ts";
 import { stopNextCompat } from "../../src/build/next-compat.ts";
 import { serveEphemeral } from "../../src/build/prod-server.ts";
+import { GLOBAL_ERROR_BUNDLE_FILE } from "../../src/build/build-pipeline/context.ts";
 
-const GE_ENTRY = "/_denext/client/global-error.js";
+const GE_ENTRY = `/_denext/client/${GLOBAL_ERROR_BUNDLE_FILE}`;
 
 /** A next-compat app: a page, a page that always throws, and a react-importing global-error. */
 async function writeCompatFixture(dir: string): Promise<void> {
@@ -121,7 +122,7 @@ Deno.test({
   try {
     await writeCompatFixture(dir);
     await build(dir);
-    const entry = await Deno.readTextFile(join(dir, ".denext", "client", "global-error.js"));
+    const entry = await Deno.readTextFile(join(dir, ".denext", "client", GLOBAL_ERROR_BUNDLE_FILE));
     // The entry rebuilds the error from the server's data island and hydrates the document.
     assertStringIncludes(entry, "__denext_ge_data");
     const server = await serveEphemeral(dir);
@@ -158,7 +159,7 @@ Deno.test({
     assertHydratedGlobalError(html, "GE_COMPAT_UI:Internal Server Error");
     assertStringIncludes(html, "GE_RETRY:0");
     const entry = await Deno.readTextFile(
-      join(result.outDir, "_denext", "client", "global-error.js"),
+      join(result.outDir, "_denext", "client", GLOBAL_ERROR_BUNDLE_FILE),
     );
     assertStringIncludes(entry, "__denext_ge_data");
     // A regular page is unaffected (its own document, no global-error wiring).
@@ -183,7 +184,7 @@ Deno.test({
     const html = await Deno.readTextFile(join(result.outDir, "500.html"));
     assertHydratedGlobalError(html, "GE_NATIVE_UI:Internal Server Error");
     const entry = await Deno.readTextFile(
-      join(result.outDir, "_denext", "client", "global-error.js"),
+      join(result.outDir, "_denext", "client", GLOBAL_ERROR_BUNDLE_FILE),
     );
     assertStringIncludes(entry, "__denext_ge_data");
   } finally {
@@ -204,9 +205,51 @@ Deno.test({
     const exists = (p: string) => Deno.stat(p).then(() => true, () => false);
     assertEquals(await exists(join(result.outDir, "500.html")), false);
     assertEquals(
-      await exists(join(result.outDir, "_denext", "client", "global-error.js")),
+      await exists(join(result.outDir, "_denext", "client", GLOBAL_ERROR_BUNDLE_FILE)),
       false,
     );
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test({
+  name: "native build: a route at /global-error keeps its own bundle beside the global-error entry",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ge_route_collision_" });
+  try {
+    await writeNativeFixture(dir);
+    // A route whose id is `global-error` — the name the global-error entry used to be written as.
+    await Deno.mkdir(join(dir, "app", "global-error"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "app", "global-error", "page.tsx"),
+      // A page that calls a hook itself is a whole-route client bundle (`<routeId>.js`).
+      `import { useState } from "denext";
+export default function Page() {
+  const [n, setN] = useState(0);
+  return <button type="button" onClick={() => setN(n + 1)}>{"GE_ROUTE_PAGE:" + n}</button>;
+}
+`,
+    );
+    await build(dir);
+    const client = join(dir, ".denext", "client");
+    const route = await Deno.readTextFile(join(client, "global-error.js"));
+    assertStringIncludes(route, "GE_ROUTE_PAGE", "the route's bundle was overwritten");
+    assert(!route.includes("GE_NATIVE_UI"), "the route's file holds the global-error entry");
+    const entry = await Deno.readTextFile(join(client, GLOBAL_ERROR_BUNDLE_FILE));
+    assertStringIncludes(entry, "GE_NATIVE_UI");
+    const server = await serveEphemeral(dir);
+    try {
+      const html = await (await fetch(`${server.origin}/global-error`)).text();
+      assertStringIncludes(html, "GE_ROUTE_PAGE:0");
+      assertStringIncludes(html, "/_denext/client/global-error.js");
+      const js = await (await fetch(`${server.origin}/_denext/client/global-error.js`)).text();
+      assertStringIncludes(js, "GE_ROUTE_PAGE");
+    } finally {
+      await server.close();
+    }
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }

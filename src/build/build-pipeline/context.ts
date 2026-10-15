@@ -11,15 +11,16 @@ import type { ProjectPaths } from "../paths.ts";
 /** The file name of the app-wide Flight (RSC) client bundle. */
 export const FLIGHT_BUNDLE_FILE = "flight.js";
 
-/** The file name of the `global-error.tsx` hydration bundle (single root file). */
-export const GLOBAL_ERROR_BUNDLE_FILE = "global-error.js";
-
 /**
- * The bundle key the global-error entry is built under before it is renamed to
- * {@link GLOBAL_ERROR_BUNDLE_FILE}: namespaced so it can't collide with any routeId (a
- * `/global-error` route's id is `global-error`).
+ * The bundle key the global-error entry is built under, and its output's basename: namespaced so
+ * it can't collide with a route's bundle (a `/global-error` route's id is `global-error`, and a
+ * routeId only starts with `_` for a dynamic segment, never with this name; the build refuses
+ * the one segment that would spell it).
  */
 export const GLOBAL_ERROR_ENTRY_KEY = "__denext_global_error__";
+
+/** The file name of the `global-error.tsx` hydration bundle (single root file). */
+export const GLOBAL_ERROR_BUNDLE_FILE = `${GLOBAL_ERROR_ENTRY_KEY}.js`;
 
 export interface BuildResult {
   routes: Array<{ routePath: string; bundle: string }>;

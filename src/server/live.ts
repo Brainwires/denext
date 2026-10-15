@@ -37,8 +37,11 @@ import { type ChannelHub, type ChannelSub, createChannelHub } from "./live-chann
 import { createLiveViewHub, type ViewHub, type ViewInstance } from "./live-views.ts";
 import {
   broadcastInvalidation,
+  type ChannelEvent,
+  channelInstanceId,
   type ChannelTransport,
   isForeignEvent,
+  publishChannelEvent,
   setChannelAuthTtl,
   setChannelPayloadCap,
   watchChannelTransport,
@@ -58,6 +61,7 @@ import {
   setClientAddr,
 } from "./remote-addr.ts";
 import { inRootContext } from "./root-context.ts";
+import { PRESENCE_HEARTBEAT_MS, RemotePresence } from "./live-presence.ts";
 import { defaultSupervisionLog, nextRestart, RestartWindow } from "../runtime/restart.ts";
 import {
   LIVE_REF_ID,
@@ -322,6 +326,7 @@ export function sanitizeLimits(overrides?: LiveLimits): Required<LiveLimits> {
 
 /** Tear down the hub (tests / shutdown): clear the cache hook and drop connections. */
 export function uninstallLiveHub(): void {
+  stopPresence();
   setLiveInvalidateHook(null);
   unbindChannelTransport();
   channelHub.dispose();
@@ -664,6 +669,7 @@ function dropConnection(conn: Conn): void {
     members.delete(conn);
     if (members.size === 0) rooms.delete(room);
     else broadcastRoom(room);
+    announceRoom(room);
   }
   conn.presenceRooms.clear();
 }
@@ -796,6 +802,7 @@ function handlePresenceLeave(
   members.delete(conn);
   if (members.size === 0) rooms.delete(msg.room);
   else broadcastRoom(msg.room);
+  announceRoom(msg.room);
 }
 
 /** Authorize + register a `useLive` data subscription (subscribing runs the action). */
@@ -880,6 +887,7 @@ async function handlePresence(
   if (!members) rooms.set(room, members = new Set());
   members.add(conn);
   broadcastRoom(room);
+  announceRoom(room);
 }
 
 /** A NEW data-subscription id would push `conn` past its cap. */
@@ -911,6 +919,71 @@ function refuseRoomJoin(conn: Conn, room: string): boolean {
   return reason != null;
 }
 
+/** This instance's peers in a room. */
+function localPeers(room: string): LivePeer[] {
+  const peers: LivePeer[] = [];
+  for (const c of rooms.get(room) ?? []) {
+    peers.push({ id: c.peerId, state: c.presenceRooms.get(room) });
+  }
+  return peers;
+}
+
+/** The other instances' peers, per room (from their `presence` snapshots). */
+const remotePresence = new RemotePresence();
+let presenceSeq = 0;
+let presenceHeartbeat: ReturnType<typeof setInterval> | null = null;
+
+/** Publish this instance's peers in `room` to the other instances (`[]` once it has none). */
+function announceRoom(room: string): void {
+  publishChannelEvent({
+    kind: "presence",
+    channelId: "",
+    key: room,
+    encoded: JSON.stringify(localPeers(room)),
+    seq: ++presenceSeq,
+    instance: channelInstanceId(),
+  });
+}
+
+/** Another instance's snapshot of a room: merge it, and answer a newcomer with ours. */
+function onRemotePresence(ev: ChannelEvent): void {
+  const applied = remotePresence.apply(ev, limits.maxPeersPerRoom);
+  if (!applied) return;
+  startPresenceHeartbeat(); // there are other instances: keep them current, prune the dead
+  if (!rooms.has(applied.room)) return;
+  broadcastRoom(applied.room);
+  if (applied.newcomer) announceRoom(applied.room);
+}
+
+/** Republish our rooms and drop dead instances' peers — only once another instance exists. */
+function startPresenceHeartbeat(): void {
+  if (presenceHeartbeat !== null) return;
+  presenceHeartbeat = inRootContext(() =>
+    setInterval(() => {
+      for (const room of rooms.keys()) announceRoom(room);
+      for (const room of remotePresence.prune()) if (rooms.has(room)) broadcastRoom(room);
+    }, PRESENCE_HEARTBEAT_MS)
+  );
+  Deno.unrefTimer(presenceHeartbeat as unknown as number);
+}
+
+/** Leave every room on the other instances, stop the heartbeat, forget their peers. */
+function stopPresence(): void {
+  for (const room of rooms.keys()) {
+    publishChannelEvent({
+      kind: "presence",
+      channelId: "",
+      key: room,
+      encoded: "[]",
+      seq: ++presenceSeq,
+      instance: channelInstanceId(),
+    });
+  }
+  if (presenceHeartbeat !== null) clearInterval(presenceHeartbeat);
+  presenceHeartbeat = null;
+  remotePresence.clear();
+}
+
 /**
  * Broadcast a room's current membership to every peer in it. The peer list is serialized
  * ONCE and spliced into each member's frame (only `selfId` differs), so a room of N peers
@@ -919,8 +992,7 @@ function refuseRoomJoin(conn: Conn, room: string): boolean {
 function broadcastRoom(room: string): void {
   const members = rooms.get(room);
   if (!members) return;
-  const peers: LivePeer[] = [];
-  for (const c of members) peers.push({ id: c.peerId, state: c.presenceRooms.get(room) });
+  const peers = [...localPeers(room), ...remotePresence.peers(room)];
   const peersJson = JSON.stringify(peers);
   const roomJson = JSON.stringify(room);
   // Each recipient learns its own peer id so the client can split self vs. others.
@@ -1482,6 +1554,10 @@ function bindChannelTransport(): void {
       // LOCAL fan-out only, and only for FOREIGN events — our own loopback already fanned out.
       if (ev.kind === "invalidate") {
         if (isForeignEvent(ev)) onTagInvalidated(ev.tags ?? []);
+        return;
+      }
+      if (ev.kind === "presence") {
+        if (isForeignEvent(ev)) onRemotePresence(ev);
         return;
       }
       channelHub.deliver(ev);

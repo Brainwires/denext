@@ -239,7 +239,7 @@ export class RespReader {
 }
 
 /** Where to connect and how to authenticate, resolved from the options and the URL. */
-interface Target {
+export interface Target {
   hostname: string;
   port: number;
   tls: boolean;
@@ -325,7 +325,7 @@ interface Waiter {
 }
 
 /** Open the socket (TLS or not), giving up after the timeout. */
-async function dial(target: Target): Promise<Deno.Conn> {
+export async function dial(target: Target): Promise<Deno.Conn> {
   const opening = target.tls
     ? Deno.connectTls({
       hostname: target.hostname,
@@ -446,7 +446,7 @@ class Connection {
 }
 
 /** The handshake run before any caller's command: `AUTH` and `SELECT` when configured. */
-function handshake(target: Target): RedisCommand[] {
+export function handshake(target: Target): RedisCommand[] {
   const commands: RedisCommand[] = [];
   if (target.password !== undefined) {
     commands.push(
