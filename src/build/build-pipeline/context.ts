@@ -74,6 +74,8 @@ export interface BuildContext {
   serverModules: BoundaryManifest["server"];
   /** Whether the Flight entry bundles the Live transport. */
   usesLive: boolean;
+  /** Whether the app defines a live view (the Flight entry registers the live-view island). */
+  usesLiveView: boolean;
   /**
    * How the generated entries get the class-component runtime: `"eager"` when the build scan
    * saw a class (or `classComponents: true`), `"off"` for `classComponents: false`, else

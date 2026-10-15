@@ -204,7 +204,92 @@ export interface LiveChannel {
   enc?: 1;
 }
 
+// ---- Live views (`defineLiveView`) -------------------------------------------
+
+/**
+ * Client → server: start (or resume) a server-held live view. `props` and `token` are what the
+ * server rendered into the page: the props as JSON text, and the HMAC binding them to `view`.
+ */
+export interface LiveViewMount {
+  type: "view-mount";
+  /** Client-generated id for this view on this connection. */
+  vid: string;
+  /** The `defineLiveView` id. */
+  view: string;
+  /** The props, as the JSON text the server signed. */
+  props: string;
+  /** `1` when `props` carries wire-codec tags. */
+  enc?: 1;
+  /** The server's signature over `view` + `props`. */
+  token: string;
+  /** The instance id of a previous mount to resume (after a reconnect). */
+  resume?: string;
+}
+
+/** Client → server: an event bound with `send(…)` fired. */
+export interface LiveViewEvent {
+  type: "view-event";
+  /** The view. */
+  vid: string;
+  /** The render revision the handler came from. */
+  rev: number;
+  /** The handler's index in that render. */
+  h: number;
+  /** The event's payload (validated on the server). */
+  payload?: unknown;
+}
+
+/** Client → server: stop a view. */
+export interface LiveViewUnmount {
+  type: "view-unmount";
+  /** The view. */
+  vid: string;
+}
+
+/** Client → server: a patch did not apply to what the client holds; send the whole tree. */
+export interface LiveViewResync {
+  type: "view-resync";
+  /** The view. */
+  vid: string;
+}
+
+/** Server → client: a view's whole rendered tree. */
+export interface LiveViewRender {
+  type: "view-render";
+  /** The view. */
+  vid: string;
+  /** This render's revision (events name it). */
+  rev: number;
+  /** The view's children as Flight. */
+  flight: FlightNode[];
+  /** The instance id to resume with after a reconnect. */
+  iid: string;
+}
+
+/** One change to a view's Flight tree (see `flight-patch.ts`). */
+export type LiveViewOp =
+  | ["r", number[], FlightNode]
+  | ["p", number[], Record<string, unknown>, string[]]
+  | ["s", number[], number, number, FlightNode[]];
+
+/** Server → client: the changes from revision `base` to `rev`. */
+export interface LiveViewPatch {
+  type: "view-patch";
+  /** The view. */
+  vid: string;
+  /** The revision the ops apply to. */
+  base: number;
+  /** The revision they produce. */
+  rev: number;
+  /** The ops, applied in order. */
+  ops: LiveViewOp[];
+}
+
 export type LiveClientMessage =
+  | LiveViewMount
+  | LiveViewEvent
+  | LiveViewUnmount
+  | LiveViewResync
   | LiveSubscribe
   | LivePong
   | LiveDataSubscribe
@@ -247,16 +332,25 @@ export interface LiveError {
    * was used with NO `live` policy configured — a setup error, surfaced
    * loudly), `limit` (a cap/size was hit), `bad-message`, `invalid-input` (a
    * `defineSubscription` schema rejected the input — see `fieldErrors`), `failed` (a
-   * resolver threw — redacted in production, `digest` correlates with the server log).
+   * resolver threw — redacted in production, `digest` correlates with the server log), `gone`
+   * (a live view this server can't mount from what the client holds — the client re-renders the
+   * route to get a fresh one).
    */
-  code: "denied" | "no-policy" | "limit" | "bad-message" | "invalid-input" | "failed";
+  code:
+    | "denied"
+    | "no-policy"
+    | "limit"
+    | "bad-message"
+    | "invalid-input"
+    | "failed"
+    | "gone";
   /** A short, non-sensitive human explanation (dev-facing). */
   reason?: string;
   /** Per-field validation messages (`invalid-input`). */
   fieldErrors?: Record<string, string>;
   /** The redaction digest of a resolver failure (`failed`, production). */
   digest?: string;
-  /** The data subscription this error concerns, when applicable. */
+  /** The data subscription (or live view) this error concerns, when applicable. */
   subId?: string;
   /** The presence room this error concerns, when applicable. */
   room?: string;
@@ -264,6 +358,8 @@ export interface LiveError {
 
 /** Any message the server may send. */
 export type LiveServerMessage =
+  | LiveViewRender
+  | LiveViewPatch
   | LivePatch
   | LiveRefresh
   | LivePing

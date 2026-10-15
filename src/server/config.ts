@@ -2224,6 +2224,21 @@ export interface LiveLimits {
    * — there is no "disable" value (an invalid one falls back to 30s).
    */
   renderTimeoutSeconds?: number;
+  /** Max live views (`defineLiveView`) one connection may hold mounted (default 16). */
+  maxViewsPerConnection?: number;
+  /**
+   * Max bytes of server-held state per connection across its live views (default 1048576): each
+   * view's model (as JSON) plus its last rendered tree. An update or render past it ends that view
+   * with a `limit` error.
+   */
+  maxViewBytesPerConnection?: number;
+  /**
+   * Seconds a dropped connection's live views stay on the server for the client to resume after
+   * a reconnect (default 30). Past it, or on another instance, the next mount runs `init` again.
+   */
+  viewResumeSeconds?: number;
+  /** Max live views waiting to be resumed across the server (default 1000; the oldest go first). */
+  maxParkedViews?: number;
 }
 
 /**

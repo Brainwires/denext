@@ -34,6 +34,7 @@ import {
 import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import { getSubscriptionDef, type SubscriptionDef } from "../runtime/server-action.ts";
 import { type ChannelHub, type ChannelSub, createChannelHub } from "./live-channels.ts";
+import { createLiveViewHub, type ViewHub, type ViewInstance } from "./live-views.ts";
 import {
   broadcastInvalidation,
   type ChannelTransport,
@@ -133,6 +134,10 @@ interface Conn {
   recoverChannels?: Set<string>;
   /** Presence rooms this connection is in → this peer's state in each. */
   presenceRooms: Map<string, unknown>;
+  /** Server-held live views (`defineLiveView`), keyed by client view id. */
+  views: Map<string, ViewInstance>;
+  /** View ids whose frame was shed (the whole tree is re-sent by drain recovery). */
+  recoverViews?: Set<string>;
   /** A re-render is in flight; further invalidations set `dirty` to re-run once. */
   busy: boolean;
   dirty: Set<string> | null;
@@ -188,6 +193,10 @@ const DEFAULT_LIMITS: Required<LiveLimits> = {
   idleTimeoutSeconds: 120,
   maxConcurrentRenders: 40,
   renderTimeoutSeconds: 30,
+  maxViewsPerConnection: 16,
+  maxViewBytesPerConnection: 1024 * 1024,
+  viewResumeSeconds: 30,
+  maxParkedViews: 1000,
 };
 let limits: Required<LiveLimits> = DEFAULT_LIMITS;
 
@@ -316,6 +325,7 @@ export function uninstallLiveHub(): void {
   setLiveInvalidateHook(null);
   unbindChannelTransport();
   channelHub.dispose();
+  viewHub.dispose();
   appHandler = null;
   policy = {};
   trustForwardedHeaders = false;
@@ -329,6 +339,7 @@ export function uninstallLiveHub(): void {
       conn.recoverTimer = null;
     }
     clearDataSubRestarts(conn);
+    viewHub.discard(conn); // stopped, not parked: nothing outlives the hub
     try {
       conn.socket.close();
     } catch { /* already closing */ }
@@ -596,6 +607,7 @@ function attachConnection(
     tagSubs: new Map(),
     channelSubs: new Map(),
     presenceRooms: new Map(),
+    views: new Map(),
     busy: false,
     dirty: null,
     msgWindowStart: 0,
@@ -640,6 +652,7 @@ function dropConnection(conn: Conn): void {
     else connectionsPerIp.delete(bucket);
   }
   channelHub.drop(conn);
+  viewHub.drop(conn); // parked: a reconnect within viewResumeSeconds resumes the model
   if (conn.recoverTimer != null) {
     clearTimeout(conn.recoverTimer);
     conn.recoverTimer = null;
@@ -678,23 +691,31 @@ function admitMessage(conn: Conn): boolean {
 }
 
 /** Parse and apply a client message. Oversized or malformed input is ignored. */
-function handleClientMessage(conn: Conn, raw: string): void {
+/** A client frame within the size cap that parses to an object with a `type`; else `null`. */
+function parseClientFrame(conn: Conn, raw: string): LiveClientMessage | null {
   // Inbound size cap (DoS guard) — refuse before parsing / storing.
   // `length` is UTF-16 units — a cheap pre-check; the byte count (what the wire carried) is
   // what the cap is about, so measure it when the string could still fit.
   if (raw.length > limits.maxMessageBytes || utf8Bytes(raw) > limits.maxMessageBytes) {
     sendError(conn, "limit", "message too large");
-    return;
+    return null;
   }
   let msg: LiveClientMessage;
   try {
     msg = JSON.parse(raw) as LiveClientMessage;
   } catch {
-    return;
+    return null;
   }
   // `null` / a primitive / an array parse fine but are not frames — `msg.type` on `null`
   // would throw inside the socket handler.
-  if (!msg || typeof msg !== "object" || typeof msg.type !== "string") return;
+  return msg && typeof msg === "object" && typeof msg.type === "string" ? msg : null;
+}
+
+function handleClientMessage(conn: Conn, raw: string): void {
+  const msg = parseClientFrame(conn, raw);
+  if (!msg) return;
+  const viewFrame = VIEW_FRAMES[msg.type];
+  if (viewFrame) return viewFrame(conn, msg as unknown as Record<string, unknown>);
   switch (msg.type) {
     case "subscribe":
       return handleSubscribe(conn, msg);
@@ -725,6 +746,14 @@ function handleClientMessage(conn: Conn, raw: string): void {
       // "pong" needs no action; the client answering keeps the connection live.
   }
 }
+
+/** The live-view frames (`defineLiveView`), routed to the view hub. */
+const VIEW_FRAMES: Record<string, (conn: Conn, msg: Record<string, unknown>) => void> = {
+  "view-mount": (conn, msg) => guarded(viewHub.mount(conn, msg)),
+  "view-event": (conn, msg) => viewHub.event(conn, msg),
+  "view-unmount": (conn, msg) => viewHub.unmount(conn, msg.vid),
+  "view-resync": (conn, msg) => viewHub.resync(conn, msg.vid),
+};
 
 /**
  * Run an async message handler detached from the socket callback, but never unobserved: a
@@ -1318,7 +1347,8 @@ function sendFrame(conn: Conn, text: string, msg: LiveServerMessage): void {
   if (s.bufferedAmount > MAX_BUFFERED) {
     // Shed rather than unbounded-buffer — but a shed *stateful* frame would leave the
     // client stale forever, so remember it and replay it once the socket drains.
-    noteShed(conn, msg);
+    if (msg.type === "view-patch" || msg.type === "view-render") noteShedView(conn, msg.vid);
+    else noteShed(conn, msg);
     return;
   }
   try {
@@ -1348,6 +1378,14 @@ function noteShed(conn: Conn, msg: LiveServerMessage): void {
   }
 }
 
+/** A live view's frame was shed: its whole tree is re-sent once the socket drains. */
+function noteShedView(conn: Conn, vid: string): void {
+  (conn.recoverViews ??= new Set()).add(vid);
+  if (conn.recoverTimer == null) {
+    conn.recoverTimer = setTimeout(() => drainRecover(conn), RECOVER_POLL_MS);
+  }
+}
+
 /**
  * Replay shed stateful frames once the socket has drained. Polled, because Deno's
  * `WebSocket` has no drain event: while still back-pressured it reschedules; on a closed
@@ -1361,6 +1399,7 @@ function drainRecover(conn: Conn): void {
     conn.recoverBoundaries = false;
     conn.recoverSubs = undefined;
     conn.recoverTags = undefined;
+    conn.recoverViews = undefined;
     return;
   }
   if (s.bufferedAmount > MAX_BUFFERED) {
@@ -1388,6 +1427,7 @@ function drainRecover(conn: Conn): void {
     }
   }
   channelHub.replayPending(conn); // channel frames: the LAST held value per sub, no recompute
+  viewHub.replayPending(conn); // live views: the whole current tree, once
 }
 
 // ── Channels (`createChannel` → `useChannel`) ────────────────────────────────
@@ -1401,6 +1441,25 @@ const channelHub: ChannelHub<Conn> = createChannelHub<Conn>({
   connContext,
   isConnected: (conn) => connections.has(conn),
   withRenderSlot,
+  backPressured: (conn) => conn.socket.bufferedAmount > MAX_BUFFERED,
+  armRecover: (conn) => {
+    if (conn.recoverTimer == null) {
+      conn.recoverTimer = setTimeout(() => drainRecover(conn), RECOVER_POLL_MS);
+    }
+  },
+});
+
+// ── Live views (`defineLiveView`) ────────────────────────────────────────────
+
+const viewHub: ViewHub<Conn> = createLiveViewHub<Conn>({
+  limits: () => limits,
+  sendFrame,
+  sendError,
+  withConnContext,
+  connContext,
+  isConnected: (conn) => connections.has(conn),
+  render: (conn, fn) =>
+    withRenderSlot(() => withDeadline(renderDeadlineMs(), () => withConnContext(conn, fn))),
   backPressured: (conn) => conn.socket.bufferedAmount > MAX_BUFFERED,
   armRecover: (conn) => {
     if (conn.recoverTimer == null) {
@@ -1489,6 +1548,7 @@ export const __backpressureTestSeam = {
       tagSubs: new Map(),
       channelSubs: new Map(),
       presenceRooms: new Map(),
+      views: new Map(),
       busy: false,
       dirty: null,
       msgWindowStart: 0,

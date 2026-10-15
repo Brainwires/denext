@@ -470,6 +470,11 @@ export interface BuildNextCompatFlightOptions {
    */
   usesLive?: boolean;
   /**
+   * Whether the app defines a live view (build-time `defineLiveView` scan): the generated Flight
+   * entry registers the live-view island. Defaults to `true` when unset.
+   */
+  usesLiveView?: boolean;
+  /**
    * How the generated Flight entry gets the class-component runtime (see
    * {@link ClassRuntimeMode}). Defaults to `"lazy"` (loaded on demand when the document says a
    * class rendered). See {@link generateFlightEntry}.
@@ -554,6 +559,7 @@ export async function buildNextCompatFlightEntry(
       options.usesViewTransition ?? false,
       {},
       options.usesSingletons ?? true,
+      options.usesLiveView ?? true,
     ),
   );
   await bundleNextCompatModules({

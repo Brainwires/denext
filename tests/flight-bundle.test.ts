@@ -168,3 +168,77 @@ Deno.test("generateFlightEntry: an island from an npm CommonJS build registers i
   assertEquals(registry.get("c_esm#Esm"), Esm);
   assertEquals(registry.get("c_esm#default"), Def);
 });
+
+Deno.test("flight entry: the live-view island is registered only when the app defines a live view", () => {
+  const without = generateFlightEntry(
+    emptyBoundary(),
+    false,
+    false,
+    true,
+    null,
+    "lazy",
+    false,
+    false,
+    {},
+    true,
+    false,
+  );
+  assertStringIncludes(without, "denext#Live");
+  assert(!without.includes("LiveViewIsland"), "a <Live>-only app imports no live-view island");
+  assert(!without.includes("denext#LiveView"));
+  const withView = generateFlightEntry(emptyBoundary());
+  assertStringIncludes(
+    withView,
+    `import { Live, LiveViewIsland, configureLive } from "denext/live"`,
+  );
+  assertStringIncludes(withView, `registry.set("denext#LiveView", LiveViewIsland)`);
+});
+
+// Zero cost unless used: an app that imports `denext/live` for `<Live>` alone ships none of the
+// live-view client (its frames, its patch applier), and an app that defines a view does.
+Deno.test("flight bundle: the live-view client is tree-shaken out of a <Live>-only app", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_liveview_bundle_" });
+  try {
+    const root = new URL("../", import.meta.url).href;
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({
+        compilerOptions: { jsx: "react-jsx", jsxImportSource: "denext" },
+        imports: {
+          "denext": `${root}mod.ts`,
+          "denext/jsx-runtime": `${root}src/jsx/jsx-runtime.ts`,
+          "denext/client": `${root}src/client/mod.ts`,
+          "denext/client-runtime": `${root}src/client/client-runtime.ts`,
+          "denext/live": `${root}src/live.ts`,
+          "denext/lazy": `${root}src/lazy.ts`,
+        },
+      }),
+    );
+    const bundle = async (usesLiveView: boolean) => {
+      const src = generateFlightEntry(
+        emptyBoundary(),
+        false,
+        false,
+        true,
+        null,
+        "off",
+        false,
+        false,
+        {},
+        false,
+        usesLiveView,
+      );
+      const out = await bundleSourceFiles(src, { configPath: join(dir, "deno.json") });
+      return [...out.files.values()].join("\n");
+    };
+    const liveOnly = await bundle(false);
+    assertStringIncludes(liveOnly, "presence-join"); // the <Live> transport is there
+    assert(!liveOnly.includes("view-mount"), "no live-view client in a <Live>-only bundle");
+    assert(!liveOnly.includes("view-resync"));
+    const withViews = await bundle(true);
+    assertStringIncludes(withViews, "view-mount");
+    assertStringIncludes(withViews, "view-resync");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

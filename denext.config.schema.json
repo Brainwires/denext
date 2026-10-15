@@ -897,6 +897,22 @@
             "renderTimeoutSeconds": {
               "description": "Per-render deadline in seconds (default 30). A `<Live>` re-render or `useLive` fetcher run holds one of the `maxConcurrentRenders` slots for its whole duration; without a deadline a hung user fetcher pins its slot forever, and enough hung fetchers peg the concurrency gate and stall the whole live fleet. On timeout the run is aborted (a cooperative `AbortSignal` reaches the fetcher's `fetch`/cache reads) and its slot released; the client gets an error/refresh frame. On by default — there is no \"disable\" value (an invalid one falls back to 30s).",
               "type": "number"
+            },
+            "maxViewsPerConnection": {
+              "description": "Max live views (`defineLiveView`) one connection may hold mounted (default 16).",
+              "type": "number"
+            },
+            "maxViewBytesPerConnection": {
+              "description": "Max bytes of server-held state per connection across its live views (default 1048576): each view's model (as JSON) plus its last rendered tree. An update or render past it ends that view with a `limit` error.",
+              "type": "number"
+            },
+            "viewResumeSeconds": {
+              "description": "Seconds a dropped connection's live views stay on the server for the client to resume after a reconnect (default 30). Past it, or on another instance, the next mount runs `init` again.",
+              "type": "number"
+            },
+            "maxParkedViews": {
+              "description": "Max live views waiting to be resumed across the server (default 1000; the oldest go first).",
+              "type": "number"
             }
           }
         }

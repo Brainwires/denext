@@ -49,6 +49,8 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/integration/rate-limit-header-server.test.ts",
   "tests/job-discovery.test.ts",
   "tests/legacy-migrate-job.test.ts",
+  // Installs the process-wide Live hub with its own limits over a real socket.
+  "tests/live-views-socket.test.ts",
   "tests/mcp-dev-logs-spa.test.ts",
   "tests/mcp-devtools.test.ts",
   "tests/migrate-effect-fixture.test.ts",

@@ -7,6 +7,7 @@ import { prodMinify } from "../minify.ts";
 import { localModulesOutside } from "../module-graph.ts";
 import {
   appImportsLive,
+  appUsesLiveView,
   bundleFlightEntry,
   bundleRoutes,
   generateGlobalErrorEntry,
@@ -155,10 +156,9 @@ export async function computeBoundary(ctx: BuildContext): Promise<void> {
   ctx.crawledBoundary = boundary;
   if (!ctx.hasFlight) return;
   ctx.boundary = boundary;
-  ctx.usesLive = await appImportsLive(
-    ctx.projectDir,
-    await localModulesOutside(ctx.projectDir, ctx.manifest.pages),
-  );
+  const outside = await localModulesOutside(ctx.projectDir, ctx.manifest.pages);
+  ctx.usesLive = await appImportsLive(ctx.projectDir, outside);
+  ctx.usesLiveView = ctx.usesLive && await appUsesLiveView(ctx.projectDir, outside);
 }
 
 /**
@@ -175,6 +175,7 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
     minify: prodMinify(),
     ...clientResolution(ctx),
     usesLive: ctx.usesLive,
+    usesLiveView: ctx.usesLiveView,
     classRuntime: ctx.classRuntime,
     usesActivity: ctx.usesActivity,
     usesViewTransition: ctx.usesViewTransition,

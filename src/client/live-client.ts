@@ -99,10 +99,73 @@ let socket: WebSocket | null = null;
 let parse: ((flight: FlightNode) => VNodeChild | Promise<VNodeChild>) | null = null;
 let refresh: (() => void) | null = null;
 
+/**
+ * A feature riding the socket from its own module (live views), so its client code ships only
+ * with the apps that use it: it sees each server frame first, re-sends its subscriptions on every
+ * (re)connect, and keeps the socket open while it is active.
+ */
+export interface LiveExtension {
+  /** Handle a server frame; `true` when it was this extension's. */
+  handle(msg: LiveServerMessage): boolean;
+  /** Re-send this extension's subscriptions (the socket just opened). */
+  resend(): void;
+  /** Whether it holds anything that needs the socket. */
+  active(): boolean;
+  /** The socket closed (frames sent now are lost until the next `resend`). */
+  closed?(): void;
+}
+
+const extensions = new Set<LiveExtension>();
+
+/**
+ * Attach a {@link LiveExtension} to the transport.
+ *
+ * @param ext The extension.
+ * @returns A detach function.
+ */
+export function registerLiveExtension(ext: LiveExtension): () => void {
+  extensions.add(ext);
+  return () => extensions.delete(ext);
+}
+
+/** Open the socket if it is not (an extension gained a subscription). */
+export function openLiveSocket(): void {
+  ensureSocket();
+}
+
+/** Close the socket when nothing holds it any more (an extension dropped a subscription). */
+export function releaseLiveSocket(): void {
+  if (!hasSubscriptions()) closeSocket();
+}
+
+/** Send a client frame when the socket is open (a no-op otherwise; extensions re-send on open). */
+export function sendLiveFrame(msg: LiveClientMessage): void {
+  sendFrame(msg);
+}
+
+/**
+ * Parse a Flight payload through the app's registry (the parser `configureLive` installed);
+ * `null` before it is configured.
+ */
+export function parseLiveFlight(flight: FlightNode): VNodeChild | Promise<VNodeChild> | null {
+  return parse ? parse(flight) : null;
+}
+
+/** Re-render the current route (the router refresh `configureLive` installed). */
+export function refreshLiveRoute(): void {
+  refresh?.();
+}
+
 /** Any live subscription (boundary, data, or presence) that keeps the socket alive. */
 function hasSubscriptions(): boolean {
-  return boundaries.size > 0 || dataSubs.size > 0 || tagSubs.size > 0 || channelSubs.size > 0 ||
-    presenceRooms.size > 0;
+  if (
+    boundaries.size > 0 || dataSubs.size > 0 || tagSubs.size > 0 || channelSubs.size > 0 ||
+    presenceRooms.size > 0
+  ) {
+    return true;
+  }
+  for (const ext of extensions) if (ext.active()) return true;
+  return false;
 }
 
 /** Send one client frame if the socket is open (no-op otherwise; resent on reconnect). */
@@ -292,6 +355,7 @@ function ensureSocket(): void {
   };
   ws.onclose = () => {
     if (socket === ws) socket = null;
+    for (const ext of extensions) ext.closed?.();
     scheduleReconnect();
   };
   ws.onerror = () => {
@@ -317,6 +381,13 @@ function applyPatch(
   } else b.onPatch(tree);
 }
 
+/** Offer a frame to the extensions first (a malformed frame counts as handled: dropped). */
+function handledByExtension(msg: LiveServerMessage): boolean {
+  if (!msg || typeof msg !== "object") return true;
+  for (const ext of extensions) if (ext.handle(msg)) return true;
+  return false;
+}
+
 function handleServerMessage(raw: string): void {
   let msg: LiveServerMessage;
   try {
@@ -324,6 +395,7 @@ function handleServerMessage(raw: string): void {
   } catch {
     return;
   }
+  if (handledByExtension(msg)) return;
   switch (msg.type) {
     case "patch": {
       const b = boundaries.get(msg.boundaryId);
@@ -459,6 +531,7 @@ function sendAllSubscriptions(): void {
   for (const [room, r] of presenceRooms) {
     sendFrame({ type: "presence-join", room, state: r.state });
   }
+  for (const ext of extensions) ext.resend();
 }
 
 function scheduleReconnect(): void {
