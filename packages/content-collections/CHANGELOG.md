@@ -10,6 +10,9 @@
 
 ### Fixed
 
+- The Markdown renderer no longer loops forever (growing memory until the process dies) on a line
+  that starts with three backticks but opens no fence (four backticks and a language, or three
+  followed by prose): the line is rendered as paragraph text.
 - The Markdown renderer no longer turns `_x_` / `*x*` inside a link destination (inline or
   reference) into `<em>`, which corrupted the `href`; the destination is held out before emphasis
   runs and the link text still takes emphasis.

@@ -198,3 +198,10 @@ Deno.test("renderMarkdown leaves _ and * in link, image and reference destinatio
     `<p><a href="/p_q_">a <em>b</em> and <em>c</em> <strong>d</strong></a></p>`,
   );
 });
+
+Deno.test("renderMarkdown renders a backtick line that opens no fence as text, never looping", () => {
+  // Each of these starts a block (a paragraph stops before it) but parseFence refuses it: the
+  // paragraph must still consume it, or the renderer spins at that line until memory runs out.
+  assertEquals(renderMarkdown("````ts\nx\n``` Size it"), "<p>````ts x</p>\n<p>``` Size it</p>");
+  assertEquals(renderMarkdown("text\n``` prose after"), "<p>text</p>\n<p>``` prose after</p>");
+});

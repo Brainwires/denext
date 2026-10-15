@@ -534,8 +534,11 @@ function parseIndentedCode(lines: string[], i: number): Block {
 
 /** A paragraph (consecutive non-block lines) starting at `i`. */
 function parseParagraph(lines: string[], i: number, refs: LinkRefs): Block {
-  const para: string[] = [];
-  let j = i;
+  // The first line belongs to the paragraph whatever it looks like: no other block took it (a
+  // run of four backticks, or three followed by prose, opens no fence), and a paragraph that
+  // consumed nothing would leave the renderer at the same line forever.
+  const para: string[] = [lines[i].trim()];
+  let j = i + 1;
   while (j < lines.length && lines[j].trim() !== "" && !startsBlock(lines, j)) {
     para.push(lines[j].trim());
     j++;

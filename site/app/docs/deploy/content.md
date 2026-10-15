@@ -689,7 +689,7 @@ export async function onShutdown() {
 }
 ```
 
-Size the deadline above your longest
+Size it above your longest
 expected request and below your orchestrator's kill grace (e.g. k8s
 `terminationGracePeriodSeconds`, typically 30s; the generated compose file sets
 `stop_grace_period: 30s`). The signal must reach the server process itself: run
