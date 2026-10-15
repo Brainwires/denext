@@ -1209,6 +1209,36 @@
         }
       ]
     },
+    "resolveAlias": {
+      "description": "Module aliases for the esbuild bundles, optionally sensitive to the importing file, as Metro's `resolveRequest` and Vite's `resolve.alias` express them. A key is an import specifier, matched exactly; its value is where that import goes: a package or package subpath (`\"uniwind/components/web\"`), or a `./` file of the project. The object form's `except` lists packages whose OWN imports of the key keep the original module, the shape a library that wraps the module it replaces needs (uniwind's `react-native`).",
+      "type": "object",
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "to": {
+                "description": "Where the import goes: a package, a package subpath, or a `./` file of the project.",
+                "type": "string"
+              },
+              "except": {
+                "description": "Packages whose own files keep the original module when they import the key (a library that wraps the module it replaces).",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "to"
+            ]
+          }
+        ]
+      }
+    },
     "momentumSafeScroll": {
       "description": "Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset — default ON. In iOS WebKit (Safari, WKWebView, Capacitor) any programmatic scroll write during a touch fling (`scrollBy`, `scrollTo`, assigning `scrollTop`) stops the fling dead, and virtualized lists (LegendList, react-virtuoso, TanStack Virtual) issue exactly such writes to compensate for rows measured taller or shorter than estimated. The client runtime therefore defers those writes during a gesture (see `installMomentumSafeScroll` in `denext/mobile`) and applies them in one step once the scroller comes to rest.",
       "type": "boolean",

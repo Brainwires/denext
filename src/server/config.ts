@@ -602,6 +602,20 @@ export interface PlatformExtensionsConfig {
   osFiles?: boolean;
 }
 
+/** {@link DenextConfig.resolveAlias}: import specifier → alias. */
+export type ResolveAliasConfig = Readonly<Record<string, string | ResolveAliasRule>>;
+
+/** An alias in its object form ({@link DenextConfig.resolveAlias}). */
+export interface ResolveAliasRule {
+  /** Where the import goes: a package, a package subpath, or a `./` file of the project. */
+  to: string;
+  /**
+   * Packages whose own files keep the original module when they import the key (a library
+   * that wraps the module it replaces).
+   */
+  except?: readonly string[];
+}
+
 /** React Native / Expo web build options ({@link DenextConfig.reactNative}). */
 export interface ReactNativeConfig {
   /**
@@ -1963,6 +1977,28 @@ export interface DenextConfig {
    * package from the automatic mode too, and `"!*"` turns the automatic mode off.
    */
   optimizePackageImports?: string[] | false;
+  /**
+   * Module aliases for the esbuild bundles, optionally sensitive to the importing file, as
+   * Metro's `resolveRequest` and Vite's `resolve.alias` express them. A key is an import
+   * specifier, matched exactly; its value is where that import goes: a package or package
+   * subpath (`"uniwind/components/web"`), or a `./` file of the project. The object form's
+   * `except` lists packages whose OWN imports of the key keep the original module, the shape a
+   * library that wraps the module it replaces needs (uniwind's `react-native`).
+   *
+   * ```ts
+   * resolveAlias: {
+   *   "react-native": { to: "uniwind/components/web", except: ["uniwind"] },
+   *   "legacy-sdk": "./src/web/legacy-sdk.ts",
+   * }
+   * ```
+   *
+   * Applied ahead of every other resolver in SPA and React Native mode, the next-compat App
+   * Router's client and server bundles, and `denext dev`'s dependency bundles; the target is
+   * resolved through the same build, so its own resolution rules apply. The native App
+   * Router path (`deno bundle`) resolves through the import map instead: use `deno.json`
+   * `imports`, and `scopes` for an importer-sensitive entry.
+   */
+  resolveAlias?: ResolveAliasConfig;
   /**
    * Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset —
    * default ON. In iOS WebKit (Safari, WKWebView, Capacitor) any programmatic scroll write

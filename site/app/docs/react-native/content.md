@@ -986,7 +986,10 @@ lightningcss visitor, on every `denext dev` and `build` compile:
   light. The `prefers-color-scheme` fallback of `light:` and `dark:` (no theme class at all) is
   unchanged.
 
-`reactNative: { uniwind: false }` turns the aliases and the pass off.
+`reactNative: { uniwind: false }` turns the aliases and the pass off. Another library that wraps the
+module it replaces gets the same importer-sensitive alias from
+[`resolveAlias`](/docs/config#build--optimization):
+`resolveAlias: { "react-native": { to: "my-kit/web", except: ["my-kit"] } }`.
 
 ## Recipe: NativeWind v4
 

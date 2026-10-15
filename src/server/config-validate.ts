@@ -18,6 +18,7 @@ import {
   validateMomentumSafeScroll,
   validatePlatformExtensions,
   validateReactNative,
+  validateResolveAlias,
 } from "./config-validate/mobile.ts";
 import {
   validateCommands,
@@ -71,6 +72,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateMomentumSafeScroll(config.momentumSafeScroll, fail);
   validateLists(config.lists, fail);
   validatePlatformExtensions(config.platformExtensions, fail);
+  validateResolveAlias(config.resolveAlias, fail);
   validateMobile(config.mobile, fail);
   validateDesktop(config.desktop, config.spa?.proxy, fail);
   validateAllowedDevOrigins(config.allowedDevOrigins, fail);

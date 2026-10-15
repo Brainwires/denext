@@ -878,6 +878,8 @@
     "ResealOptions:interface",
     "ResealReport:interface",
     "ResetPasswordResult:typeAlias",
+    "ResolveAliasConfig:typeAlias",
+    "ResolveAliasRule:interface",
     "ResolvedBackoff:interface",
     "ResolvedMetadata:typeAlias",
     "ResolvedRestart:interface",

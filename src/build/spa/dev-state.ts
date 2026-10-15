@@ -277,6 +277,7 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
       compat,
       classComponents: paths.config?.classComponents ?? true,
       features: featureFlags(paths.config),
+      resolveAlias: paths.config?.resolveAlias,
       momentumSafeScroll: momentumSafeScrollEnabled(paths.config),
       instrumentationClient: paths.instrumentationClientPath,
       spaEntry: entryPath,

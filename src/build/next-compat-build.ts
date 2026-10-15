@@ -12,6 +12,7 @@
  */
 
 import type { Platform, PlatformResolution } from "./platform-extensions.ts";
+import type { ResolveAliasConfig } from "../server/config.ts";
 import { join } from "@std/path";
 import { keyedBundleRef } from "./next-compat-loader.ts";
 import type * as esbuild from "./esbuild/mod.ts";
@@ -159,6 +160,8 @@ export interface BuildNextCompatModulesOptions {
   appPlatform?: PlatformResolution | null;
   /** Forwarded to {@link BundleNextCompatModulesOptions.buildTarget}. */
   buildTarget?: Platform;
+  /** Forwarded to {@link BundleNextCompatModulesOptions.resolveAlias}. */
+  resolveAlias?: ResolveAliasConfig;
 }
 
 /**
@@ -233,6 +236,7 @@ export async function buildNextCompatModules(
     cssImportMap: options.cssImportMap,
     appPlatform: options.appPlatform,
     buildTarget: options.buildTarget,
+    resolveAlias: options.resolveAlias,
     assets: options.assets,
   });
 
@@ -354,6 +358,8 @@ export interface BuildNextCompatClientOptions {
   appPlatform?: PlatformResolution | null;
   /** Forwarded to {@link BundleNextCompatModulesOptions.buildTarget}. */
   buildTarget?: Platform;
+  /** Forwarded to {@link BundleNextCompatModulesOptions.resolveAlias}. */
+  resolveAlias?: ResolveAliasConfig;
 }
 
 /**
@@ -396,6 +402,7 @@ export async function buildNextCompatClientEntries(
     cssImportMap: options.cssImportMap,
     appPlatform: options.appPlatform,
     buildTarget: options.buildTarget,
+    resolveAlias: options.resolveAlias,
     // Actions first (stubbed, never instrumented), then the caller's plugins. Public type is
     // `unknown[]` (to not expose esbuild's types); the bundler expects real esbuild plugins,
     // which is what callers pass.
@@ -502,6 +509,8 @@ export interface BuildNextCompatFlightOptions {
   appPlatform?: PlatformResolution | null;
   /** Forwarded to {@link BundleNextCompatModulesOptions.buildTarget}. */
   buildTarget?: Platform;
+  /** Forwarded to {@link BundleNextCompatModulesOptions.resolveAlias}. */
+  resolveAlias?: ResolveAliasConfig;
 }
 
 /**
@@ -579,6 +588,7 @@ export async function buildNextCompatFlightEntry(
     cssImportMap: options.cssImportMap,
     appPlatform: options.appPlatform,
     buildTarget: options.buildTarget,
+    resolveAlias: options.resolveAlias,
     assets: options.assets,
     // Strip `"use server"` modules (reached transitively via islands) → stubs.
     extraPlugins: [serverStubPlugin(options.boundary.server, generateServerStub)],

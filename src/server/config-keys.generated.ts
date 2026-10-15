@@ -55,6 +55,7 @@ export const CONFIG_KEYS = [
   "asyncContext",
   "features",
   "optimizePackageImports",
+  "resolveAlias",
   "momentumSafeScroll",
   "lists",
   "platformExtensions",

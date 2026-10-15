@@ -197,6 +197,8 @@ export function compatBuildOptions(
     appPlatform: platformResolution(paths.config, platform),
     // `platform` (denext/platform) folded to the target in the app's modules, server and client.
     buildTarget: platform,
+    // `resolveAlias`: the app's (importer-sensitive) aliases, ahead of every resolver.
+    resolveAlias: paths.config?.resolveAlias,
     // Assets emit into the dir the CLIENT bundles are written to — the build pipeline's
     // staging dir, swapped into `client/` at finalize (emitting into `client/` directly
     // would be wiped by that swap).

@@ -63,6 +63,7 @@ function compatBuildOptions(
     appPlatform: platformResolution(st.paths.config, platform),
     // `platform` (denext/platform) folded to the request's target, server and client bundles.
     buildTarget: platform,
+    resolveAlias: st.paths.config?.resolveAlias,
     assets: compatAssets(st.paths.projectDir, join(outDir, "client")),
   };
 }

@@ -279,6 +279,8 @@ async function bundleCompatSpa(
     platformExtensions: rn?.platformExtensions,
     // The target's platform files (`BigButton.ios.tsx`) for the app's own modules.
     appPlatform: platformResolution(config, platform),
+    // `resolveAlias`: the app's (importer-sensitive) aliases, ahead of every resolver.
+    resolveAlias: config.resolveAlias,
     jsxInJs: rn?.jsxInJs,
   });
   // Tear the esbuild service down only for a one-shot build/export. In dev this runs on

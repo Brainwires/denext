@@ -42,6 +42,7 @@ export function getUnbundled(st: DevState): UnbundledDev {
     compat: st.unbundledCompat,
     classComponents: st.paths.config?.classComponents ?? true,
     features: featureFlags(st.paths.config),
+    resolveAlias: st.paths.config?.resolveAlias,
     momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
     instrumentationClient: st.paths.instrumentationClientPath,
     // `lists: "denext"`: `@legendapp/list/react` → denext's VirtualList-backed module.

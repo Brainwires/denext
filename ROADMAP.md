@@ -71,7 +71,6 @@ or an upstream. Each one's limitation entry is deleted when it ships.
   0.88 once that is final (`REACT_NATIVE_PIN` in `scripts/parity/native/spec.ts`, the lists'
   `PINS`, `REACT_NATIVE_VERSION` in `src/react-native/platform.ts`), then refresh the baselines.
   Against `0.88.0-rc.4` the core and lists diffs already report no gaps.
-- **Importer-sensitive aliases in config,** so uniwind works without the `denext patch` recipe.
 - **`denext profile --android`** over remote CDP; a Skia (CanvasKit) recipe; Tamagui / Unistyles
   verification.
 

@@ -558,6 +558,25 @@ every `--platform` target included.
     // or: optimizePackageImports: false — no barrel rewriting at all
   } satisfies DenextConfig;
   ```
+- **`resolveAlias`** — `Record<string, string | { to: string; except?: string[] }>`. Module
+  aliases for the esbuild bundles: an import of a key (matched exactly) resolves as its value, a
+  package, a package subpath or a `./` file of the project. The object form is
+  importer-sensitive: the packages in `except` keep the original module when THEIR files import
+  the key, which a library that wraps the module it replaces needs (Metro's `resolveRequest`,
+  Vite's `resolve.alias` with a custom resolver). Applied ahead of every other resolver in SPA
+  and React Native mode, the next-compat App Router's client and server bundles, and
+  `denext dev`'s dependency bundles; the target then resolves through the same build. The
+  native App Router path (`deno bundle`) resolves through the import map instead: use
+  `deno.json` `imports`, and its `scopes` for an importer-sensitive entry.
+
+  ```ts
+  export default {
+    resolveAlias: {
+      "react-native": { to: "uniwind/components/web", except: ["uniwind"] },
+      "legacy-sdk": "./src/web/legacy-sdk.ts",
+    },
+  } satisfies DenextConfig;
+  ```
 - **`nodeResolve`** — `boolean` (**default on** for the compat build). denext's
   tolerant `node_modules` resolver: a strict superset of Deno's `npm:` loader
   that resolves bare npm specifiers straight from the app's installed

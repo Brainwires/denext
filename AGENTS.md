@@ -969,7 +969,8 @@ adds brotli; `false`, or `export const compress = false` in a route), `cors`, `c
 (opt-in: ISR pages answer `Cache-Control: public, s-maxage=…` for a CDN, never for a request
 with a cookie or `Authorization`, a negotiated locale or a `middleware.ts` match, unless
 `{ evenWithMiddleware: true }`), `compatibilityMode`,
-`optimizePackageImports`, `momentumSafeScroll`, `desktop`, `mobile`, `appLinks`;
+`optimizePackageImports`, `resolveAlias` (module aliases; `{ to, except: ["pkg"] }` keeps a package's own
+imports, as Metro's `resolveRequest`), `momentumSafeScroll`, `desktop`, `mobile`, `appLinks`;
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 Every key: https://denext.dev/docs/config
 

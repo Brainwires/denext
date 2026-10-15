@@ -23,6 +23,13 @@ and this project adheres to
   import-map alias does, on the esbuild paths (SPA and React Native mode, the next-compat App
   Router) and in `denext dev`. `paths` are read as TypeScript reads them: relative `extends`, a
   monorepo root's config, `baseUrl`, JSONC; an import-map entry with the same key wins.
+- **`resolveAlias`: importer-sensitive module aliases in config.** `resolveAlias: { "react-native":
+  { to: "uniwind/components/web", except: ["uniwind"] }, "legacy-sdk": "./src/web/sdk.ts" }`
+  sends an import to another package, subpath or project file; the object form's `except` keeps
+  the original module for the listed packages' own imports, which a library that wraps the module
+  it replaces needs (what Metro's `resolveRequest` does for uniwind). Applied ahead of every
+  resolver in SPA and React Native mode, the next-compat App Router's bundles and `denext dev`'s
+  dependency bundles; the config is validated.
 - **`next-auth` (Auth.js v5) runs on denext.** A Next app's `auth.ts` (`NextAuth(config)` →
   `{ handlers, auth, signIn, signOut }`), its `app/api/auth/[...nextauth]` route, `auth()` in
   Server Components, route handlers and middleware (`export { auth as middleware }`,

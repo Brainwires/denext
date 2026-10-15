@@ -310,6 +310,8 @@ export {
   type ReactNativeConfig,
   type RedirectRule,
   type RemotePattern,
+  type ResolveAliasConfig,
+  type ResolveAliasRule,
   type ResolvedRules,
   type RewriteRule,
   safeRedirectLocation,

@@ -29,6 +29,8 @@ import {
   probePlatformSource,
 } from "./platform-extensions.ts";
 import { platformFoldPlugin } from "./platform-fold-plugin.ts";
+import { resolveAliasPlugins } from "./resolve-alias.ts";
+import type { ResolveAliasConfig } from "../server/config.ts";
 import { denoLoaderPlugins } from "./deno-loader-plugins.ts";
 import { loadDenextPatchSet, patchPlugin } from "./patches.ts";
 import {
@@ -1459,6 +1461,11 @@ export interface BundleNextCompatModulesOptions {
    */
   buildTarget?: Platform;
   /**
+   * `resolveAlias` (the app config): aliases applied ahead of every other resolver (see
+   * `resolve-alias.ts`), for the app's imports and the packages'.
+   */
+  resolveAlias?: ResolveAliasConfig;
+  /**
    * Parse every `.js` file with esbuild's `jsx` loader, for npm packages that ship JSX in
    * `.js` (common in React Native libraries, which Metro's Babel preset parses as JSX).
    */
@@ -2536,6 +2543,7 @@ async function compatPlugins(
 ): Promise<esbuild.Plugin[]> {
   const deno = options.platform === "deno";
   let plugins: esbuild.Plugin[] = [
+    ...resolveAliasPlugins(options.absWorkingDir, options.resolveAlias),
     ...leadingPlugins(options),
     ...(options.buildTarget && options.absWorkingDir
       ? [platformFoldPlugin(options.absWorkingDir, options.buildTarget)]

@@ -17,6 +17,7 @@ import {
   viteAssetPlugin,
 } from "../next-compat.ts";
 import { generateServerStub } from "../bundle.ts";
+import { resolveAliasPlugins } from "../resolve-alias.ts";
 import {
   buildReactNativeDeps,
   crawlReactNativeGraph,
@@ -352,6 +353,8 @@ async function npmBuild(
     inject: [await browserProcessShimPath(st.npmDir, "development")],
     logLevel: "silent",
     plugins: [
+      // `resolveAlias`, ahead of every resolver (as in a build's compat bundles).
+      ...resolveAliasPlugins(st.opts.projectDir, st.opts.resolveAlias),
       // An npm island's `"use server"` import (its package's action module) → a client stub.
       serverStubPlugin(st.npmServerRefs, generateServerStub),
       viteAssetPlugin({ publicPath: NPM_PREFIX }, workerBuild),

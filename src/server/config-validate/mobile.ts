@@ -34,6 +34,48 @@ export function validatePlatformExtensions(value: unknown, fail: Fail): void {
   }
 }
 
+/**
+ * `resolveAlias`: specifier → a target string, or `{ to: string, except?: string[] }`.
+ *
+ * @param value The configured value.
+ * @param fail Reports a problem.
+ */
+export function validateResolveAlias(value: unknown, fail: Fail): void {
+  if (value === undefined) return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    fail("resolveAlias", "must be an object of specifier → alias");
+    return;
+  }
+  for (const [spec, alias] of Object.entries(value)) {
+    validateAliasEntry(`resolveAlias[${JSON.stringify(spec)}]`, alias, fail);
+  }
+}
+
+/** One `resolveAlias` entry: a target string, or the object form. */
+function validateAliasEntry(field: string, alias: unknown, fail: Fail): void {
+  if (typeof alias === "string") {
+    if (alias === "") fail(field, "must name a module");
+    return;
+  }
+  if (typeof alias !== "object" || alias === null || Array.isArray(alias)) {
+    fail(field, "must be a string or `{ to: string, except?: string[] }`");
+    return;
+  }
+  const { to, except, ...rest } = alias as Record<string, unknown>;
+  for (const key of Object.keys(rest)) {
+    fail(`${field}.${key}`, "is not a known option (to, except)");
+  }
+  if (typeof to !== "string" || to === "") fail(`${field}.to`, "must name a module");
+  if (except !== undefined && !isPackageList(except)) {
+    fail(`${field}.except`, "must be an array of package names");
+  }
+}
+
+/** Whether `value` is an array of non-empty strings. */
+function isPackageList(value: unknown): boolean {
+  return Array.isArray(value) && value.every((e) => typeof e === "string" && e !== "");
+}
+
 /** The string fields of a `mobile.flavors` entry. */
 const FLAVOR_STRINGS = [
   "appId",
