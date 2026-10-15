@@ -80,6 +80,7 @@ Deno.test("buildServerCopies: an app without stylesheets records css: false", as
       redirects: {},
       copies: {},
       css: false,
+      relocatable: true,
     });
     assertEquals(await buildServerCopies(await resolveProject(dir), true, cssMap(dir)), null);
   } finally {
@@ -120,7 +121,39 @@ Deno.test("buildServesCss: only a CSS-aware native build made for this project s
     assertEquals(await buildServesCss(dir, outDir), false, "a next-compat build");
     await writeManifest(dir, { serverCopies: { ...copies({ css: true }), root: "file:///moved" } });
     assertEquals(await buildServesCss(dir, outDir), false, "a project moved since its build");
+    await writeManifest(dir, {
+      serverCopies: { ...copies({ css: true, relocatable: true }), root: "file:///moved" },
+    });
+    assertEquals(await buildServesCss(dir, outDir), true, "relocatable copies serve it anywhere");
   } finally {
     await removeTempDir(dir);
+  }
+});
+
+Deno.test("buildServerCopies: relocatable copies serve the project after it moves", async () => {
+  const dir = await project();
+  const moved = `${dir}-moved`;
+  try {
+    // The copy reads a file beside its original through import.meta, and reaches the stylesheet.
+    await Deno.writeTextFile(join(dir, "app", "motto.txt"), "beside the original");
+    await Deno.writeTextFile(
+      join(dir, "app", "layout.tsx"),
+      `import "./globals.css";\n` +
+        `export const LAYOUT = Deno.readTextFileSync(new URL("./motto.txt", import.meta.url));\n` +
+        `export const DIR = import.meta.dirname;\n`,
+    );
+    const recorded = await buildServerCopies(await resolveProject(dir), false, cssMap(dir));
+    assert(recorded?.relocatable);
+    const copy = await Deno.readTextFile(join(dir, ".denext", recorded.copies["app/layout.tsx"]));
+    assert(!copy.includes(toFileUrl(dir).href), `an absolute project path in the copy:\n${copy}`);
+    await Deno.rename(dir, moved);
+    const paths = await resolveProject(moved);
+    const load = precompiledServerLoader((p) => import(p), paths, recorded)!;
+    assert(load, "a moved project keeps its relocatable copies");
+    const mod = await load(join(moved, "app", "layout.tsx")) as { LAYOUT: string; DIR: string };
+    assertEquals(mod.LAYOUT, "beside the original");
+    assertEquals(mod.DIR, join(moved, "app"));
+  } finally {
+    await removeTempDir(moved).catch(() => removeTempDir(dir));
   }
 });

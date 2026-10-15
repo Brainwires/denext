@@ -2088,6 +2088,62 @@
         }
       }
     },
+    "compile": {
+      "description": "`denext build --compile`: the single-executable server build (`deno compile` on denext's Deno toolchain). What the binary embeds beyond what denext finds itself, and the `--allow-*` baked into it beyond the least-privilege baseline. See https://denext.dev/docs/deployment-targets.a-single-binary-with-denext-build---compile.",
+      "type": "object",
+      "properties": {
+        "include": {
+          "description": "More project paths (files or directories, relative to the project) to embed: data files the app reads at run time, or a module only a computed `import()` reaches. denext already embeds `app/`, `.denext/` (the build), `public/`, `jobs/`, `functions/`, `migrations/`, `supabase/migrations/` and the root config, middleware and instrumentation modules. `.env` files and SQLite databases are never embedded.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "permissions": {
+          "description": "`--allow-*` baked into the binary beyond the baseline (`--allow-net --allow-env --allow-read --allow-write=.denext`, the Docker image's), unioned per kind; `\"*\"` grants a kind unscoped. `\"all\"` bakes `--allow-all` instead — an explicit opt-in.",
+          "anyOf": [
+            {
+              "enum": [
+                "all"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "write": {
+                  "description": "`--allow-write` paths (relative ones resolve against the working directory at run time).",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "run": {
+                  "description": "`--allow-run` programs; `[\"*\"]` bakes an unscoped `--allow-run`.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "ffi": {
+                  "description": "`--allow-ffi` libraries; `[\"*\"]` bakes an unscoped `--allow-ffi` (a Node-API addon).",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "sys": {
+                  "description": "`--allow-sys` kinds (`hostname`, `osRelease`, …); `[\"*\"]` bakes an unscoped `--allow-sys`.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
     "reactNative": {
       "description": "Build a React Native / Expo app's source for the web through `react-native-web` — SPA mode only (`mode: \"spa\"`). `true` turns on the defaults; an object sets options.",
       "anyOf": [

@@ -31,6 +31,7 @@ import {
   literalSpecifiers,
   parseModule,
   pinImportMeta,
+  relativizeFileSpecifiers,
 } from "./swc-ast.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
 import {
@@ -64,6 +65,12 @@ export interface UseCacheLoaderOptions {
    * that imports one) loads as a copy named by its subtree's content, written once per process.
    */
   dev?: DevCopies;
+  /**
+   * Write relocatable copies (`denext build`): each copy imports the files it reaches by a path
+   * relative to itself and pins `import.meta` relative to its own URL, so the project and its
+   * `.denext` can move together — a `deno compile`d app embeds them under another root.
+   */
+  relocatable?: boolean;
 }
 
 /** A module file the compiler can copy (a stylesheet or JSON import is not one). */
@@ -402,8 +409,14 @@ class UseCacheCompiler {
     await (this.#dir ??= Deno.mkdir(this.opts.cacheDir, { recursive: true }));
     // The copy lives in the cache dir; its `import.meta` keeps naming the module it stands in for,
     // and a non-literal `import()` resolves a relative specifier against that module too.
-    const copy = fromFileUrl(this.#copyUrl(moduleUrl));
-    const text = await pinImportMeta(code, moduleUrl, { dynamicImports: true });
+    const copyUrl = this.#copyUrl(moduleUrl);
+    const copy = fromFileUrl(copyUrl);
+    const text = this.opts.relocatable
+      ? await pinImportMeta(await relativizeFileSpecifiers(code, copyUrl), moduleUrl, {
+        dynamicImports: true,
+        copyUrl,
+      })
+      : await pinImportMeta(code, moduleUrl, { dynamicImports: true });
     const dev = this.opts.dev;
     if (!dev) return await Deno.writeTextFile(copy, text);
     // Another generation may be loading the same copy: write it whole, then move it in place.

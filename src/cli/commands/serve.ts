@@ -5,12 +5,13 @@
 
 import { parsePlatform, type Platform, PLATFORM_ENV } from "../../build/platform-extensions.ts";
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { envGet } from "../../runtime/env-safe.ts";
+import { markProduction, portOf, SERVE_FLAGS } from "./start-options.ts";
 import { ensureAppDir, installShutdown, projectDir, runBuildStep } from "../shared.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
 import { startDevServer } from "../../build/dev-server.ts";
 import { startProdServer } from "../../build/prod-server.ts";
 import { build } from "../../build/build.ts";
+import { COMPILE_TARGETS, compileApp } from "../../build/compile-app.ts";
 import { staticExport } from "../../build/export.ts";
 import { applyPatchesAtBoot } from "./patch.ts";
 import { lanBanner, pickLanAddress } from "../../build/dev-server/lan.ts";
@@ -20,34 +21,6 @@ import { SOURCEMAPS_ENV } from "../../build/hidden-sourcemaps.ts";
 import { abortJobRuns } from "../../server/jobs.ts";
 import { markBuildPhase } from "../../server/phase.ts";
 import { applyRawFlag, RAW_FLAG } from "../explain-output.ts";
-
-/** `--port`/`--host` shared by the two serving verbs. */
-const SERVE_FLAGS = [
-  {
-    name: "port",
-    alias: "p",
-    type: "number",
-    valueName: "<port>",
-    help: "Port (default: 3000)",
-  },
-  {
-    name: "host",
-    altNames: ["hostname"],
-    type: "string",
-    valueName: "<host>",
-    help: "Hostname",
-  },
-] as const;
-
-/**
- * The port to listen on: `--port`, else the `$PORT` environment variable (what every PaaS —
- * Heroku, Cloud Run, Fly, Railway — injects), else undefined so the server auto-selects.
- */
-function portOf(ctx: CommandContext): number | undefined {
-  if (typeof ctx.flags.port === "number") return ctx.flags.port;
-  const env = Number(envGet("PORT"));
-  return Number.isInteger(env) && env > 0 && env < 65536 ? env : undefined;
-}
 
 /**
  * Resolve the project a command operates on. SPA mode has no `app/` directory — skip the
@@ -179,13 +152,52 @@ export const buildCommand: CommandSpec = {
   // `.denext/` is both the build dir and the artifact dir: one exclusive lock.
   locks: (ctx) => ({ projectDir: projectDir(ctx), buildDir: "exclusive" }),
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
-  flags: [RAW_FLAG],
+  flags: [
+    RAW_FLAG,
+    {
+      name: "compile",
+      type: "boolean",
+      help: "Also compile the app's server into one executable (deno compile on the toolchain)",
+    },
+    {
+      name: "target",
+      type: "string",
+      valueName: "<triple>",
+      help: `With --compile: the target (${COMPILE_TARGETS.join(", ")}; default: this machine)`,
+    },
+    {
+      name: "output",
+      alias: "o",
+      type: "string",
+      valueName: "<path>",
+      help: "With --compile: the executable's path (default: dist/<name>)",
+    },
+  ],
+  usage: "--compile builds, then embeds the build, public/, the server modules, jobs/ and the\n" +
+    "migrations into one executable that serves the app as `denext start` does (`./app`,\n" +
+    "`./app job <name>`, `./app db migrate`). It bakes the Docker image's least-privilege\n" +
+    "--allow-* plus denext.config's compile.permissions, and embeds no .env file: the binary\n" +
+    "reads its environment at run time. Docs: https://denext.dev/docs/deployment-targets",
   run: async (ctx) => {
     applyRawFlag(ctx);
+    const compile = ctx.flags.compile === true;
+    if (!compile && (ctx.flags.target !== undefined || ctx.flags.output !== undefined)) {
+      fail("denext build: --target and --output go with --compile.");
+    }
     markBuildPhase();
     const { dir } = await appProject(ctx);
-    console.log(`\n  denext build  ▸  ${dir}\n`);
+    console.log(`\n  denext build${compile ? " --compile" : ""}  ▸  ${dir}\n`);
     await runBuildStep(() => build(dir), "build");
+    if (!compile) return;
+    const result = await runBuildStep(
+      () =>
+        compileApp(dir, {
+          target: ctx.flags.target as string | undefined,
+          output: ctx.flags.output as string | undefined,
+        }),
+      "compile",
+    );
+    console.log(`\n  Compiled ${result.output}\n  Permissions: ${result.permissions.join(" ")}`);
   },
 };
 
@@ -255,30 +267,6 @@ function markDevelopment(): void {
     if (!Deno.env.get("NODE_ENV")) Deno.env.set("NODE_ENV", "development");
   } catch {
     // no env write permission
-  }
-}
-
-/**
- * `denext start` IS the production signal: when the deploy set neither `NODE_ENV` nor
- * `DENEXT_ENV`, set `DENEXT_ENV=production` so every "refuse in production" guard
- * (weak session secret, missing `canonicalOrigin`) actually fires under a plain
- * `deno task start`. A read-only env sandbox (`--allow-env=PORT`) leaves it unset.
- */
-function markProduction(): void {
-  try {
-    if (!Deno.env.get("NODE_ENV") && !Deno.env.get("DENEXT_ENV")) {
-      Deno.env.set("DENEXT_ENV", "production");
-    }
-    // npm code (and an app's own env validation — the Epic Stack's zod schema requires it)
-    // reads `process.env.NODE_ENV`; Remix's start script set it via cross-env, so do we.
-    if (!Deno.env.get("NODE_ENV")) {
-      Deno.env.set(
-        "NODE_ENV",
-        Deno.env.get("DENEXT_ENV") === "development" ? "development" : "production",
-      );
-    }
-  } catch {
-    // no env write permission — the deployer opted out of the signal
   }
 }
 

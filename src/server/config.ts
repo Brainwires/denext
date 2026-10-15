@@ -1430,6 +1430,36 @@ export interface DesktopWindowConfig {
   resizable?: boolean;
 }
 
+/** `denext build --compile` settings (see {@link DenextConfig.compile}). */
+export interface CompileConfig {
+  /**
+   * More project paths (files or directories, relative to the project) to embed: data files the
+   * app reads at run time, or a module only a computed `import()` reaches. denext already embeds
+   * `app/`, `.denext/` (the build), `public/`, `jobs/`, `functions/`, `migrations/`,
+   * `supabase/migrations/` and the root config, middleware and instrumentation modules. `.env`
+   * files and SQLite databases are never embedded.
+   */
+  include?: string[];
+  /**
+   * `--allow-*` baked into the binary beyond the baseline (`--allow-net --allow-env
+   * --allow-read --allow-write=.denext`, the Docker image's), unioned per kind; `"*"` grants a
+   * kind unscoped. `"all"` bakes `--allow-all` instead — an explicit opt-in.
+   */
+  permissions?: "all" | CompilePermissions;
+}
+
+/** Extra `--allow-*` for {@link CompileConfig.permissions}: permission kinds to Deno values. */
+export interface CompilePermissions {
+  /** `--allow-write` paths (relative ones resolve against the working directory at run time). */
+  write?: string[];
+  /** `--allow-run` programs; `["*"]` bakes an unscoped `--allow-run`. */
+  run?: string[];
+  /** `--allow-ffi` libraries; `["*"]` bakes an unscoped `--allow-ffi` (a Node-API addon). */
+  ffi?: string[];
+  /** `--allow-sys` kinds (`hostname`, `osRelease`, …); `["*"]` bakes an unscoped `--allow-sys`. */
+  sys?: string[];
+}
+
 /**
  * Extra `--allow-*` for the desktop packaging scripts (see {@link DesktopConfig.extraPermissions}).
  * Each field is a list of Deno permission values, unioned into the derived flags.
@@ -1989,6 +2019,13 @@ export interface DenextConfig {
    * https://denext.dev/docs/desktop
    */
   desktop?: DesktopConfig;
+  /**
+   * `denext build --compile`: the single-executable server build (`deno compile` on denext's
+   * Deno toolchain). What the binary embeds beyond what denext finds itself, and the `--allow-*`
+   * baked into it beyond the least-privilege baseline. See
+   * {@link https://denext.dev/docs/deployment-targets#a-single-binary-with-denext-build---compile}.
+   */
+  compile?: CompileConfig;
   /**
    * Build a React Native / Expo app's source for the web through `react-native-web` — SPA
    * mode only (`mode: "spa"`). `true` turns on the defaults; an object sets options.

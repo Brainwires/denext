@@ -21,6 +21,7 @@ import {
   supabaseHistory,
 } from "../../server/migration-history.ts";
 import { displayTarget } from "../db-admin/connection.ts";
+import { standaloneState } from "../../server/standalone.ts";
 
 /** The environment variable `denext db link` stores the remote database URL in. */
 export const LINKED_URL_ENV = "DENEXT_LINKED_DATABASE_URL";
@@ -81,9 +82,13 @@ export interface TargetOptions {
   postgresOnly?: string;
 }
 
-/** Open a SQLite target. */
+/**
+ * Open a SQLite target. A relative path is the project's, or in a compiled app (whose project is
+ * embedded and read-only) the working directory's, as the app's own `new DatabaseSync()` reads it.
+ */
 function openSqlite(projectDir: string, file: string, readOnly: boolean): DbTarget {
-  const path = isAbsolute(file) ? file : join(projectDir, file);
+  const base = standaloneState()?.dataDir ?? projectDir;
+  const path = isAbsolute(file) ? file : join(base, file);
   let exists = true;
   try {
     Deno.statSync(path);

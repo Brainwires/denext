@@ -31,6 +31,7 @@ import { bootScheduledJobs } from "../../server/job-loader.ts";
 import { bootServices } from "../../server/service-loader.ts";
 import { installLiveHub } from "../../server/live.ts";
 import { resolveLimitPolicy } from "../../server/remote-addr.ts";
+import { runtimeStateDir } from "../../server/standalone.ts";
 import { sameOriginUpgrade } from "../../server/origin-check.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../../server/middleware.ts";
 import { defaultLoader } from "../../server/mod.ts";
@@ -189,17 +190,19 @@ async function bootProdServices(
 ): Promise<ResolvedRules> {
   // Discover jobs/ and register cron schedules (Deno.cron on Deploy, else a userland tick). The
   // scheduler lives for the server process (created once here); the disposer is not retained.
-  await bootScheduledJobs(paths.projectDir, paths.config ?? undefined, paths.outDir);
+  // A compiled app's `.denext` is embedded and read-only: its state goes to the state dir.
+  const stateDir = runtimeStateDir(paths.outDir);
+  await bootScheduledJobs(paths.projectDir, paths.config ?? undefined, stateDir);
   // Start the supervised services/ tree (a no-op without the directory). The drain stops it.
   await bootServices(paths.projectDir, {
-    outDir: paths.outDir,
+    outDir: stateDir,
     onServiceError: instrumentation.onServiceError,
   });
   const rules = await resolveConfigRules(paths.config);
   await resolveDefaultCacheStore(
     paths.config?.cache?.path
       ? paths.config.cache
-      : { ...paths.config?.cache, path: join(paths.outDir, "cache.db") },
+      : { ...paths.config?.cache, path: join(stateDir, "cache.db") },
   );
   sweepStalePagesAfterStartup(paths, info);
   return rules;

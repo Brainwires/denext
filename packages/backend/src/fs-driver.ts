@@ -5,6 +5,7 @@
 // bucket directory — lexically, and again after symlinks are resolved.
 
 import { dirname, isAbsolute, join, resolve, SEPARATOR } from "@std/path";
+import { dataRoot } from "./data-root.ts";
 import { StorageError } from "./errors.ts";
 import type {
   ByteRange,
@@ -19,11 +20,16 @@ import { fromBase64Url, toBase64Url } from "./signing.ts";
 
 /** Options for {@link fs}. */
 export interface FsDriverOptions {
-  /** The storage directory; a relative path resolves against the project root. */
+  /**
+   * The storage directory; a relative path resolves against the project root (in a
+   * `denext build --compile` binary, against its working directory — grant it with
+   * `compile.permissions.write`).
+   */
   dir: string;
 }
 
 const META_DIR = ".denext-meta";
+
 const TMP_DIR = ".denext-tmp";
 /** Characters a key segment may not carry on disk (Windows-reserved, so keys stay portable). */
 const NON_PORTABLE = /[:*?"<>|]|[. ]$/;
@@ -55,7 +61,7 @@ export function fs(options: FsDriverOptions): StorageDriver {
   return {
     name: "fs",
     init({ projectRoot }) {
-      root = isAbsolute(options.dir) ? options.dir : resolve(projectRoot, options.dir);
+      root = isAbsolute(options.dir) ? options.dir : resolve(dataRoot(projectRoot), options.dir);
       realRoot = undefined;
     },
     put: (bucket, key, body, info) => putObject(root, paths, bucket, key, body, info),

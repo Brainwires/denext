@@ -130,3 +130,59 @@ export function validateNestedRequired(config: DenextConfig, fail: Fail): void {
   validateTailwind(config.tailwind, fail);
   validateI18n(config.i18n, fail);
 }
+
+/** The permission kinds `compile.permissions` takes. */
+const COMPILE_PERMISSION_KINDS = ["write", "run", "ffi", "sys"];
+
+/** Whether `p` is a project-relative path: not absolute, no `..` segment. */
+function insideProject(p: string): boolean {
+  return !/^([\\/]|[a-zA-Z]:)/.test(p) && !p.split(/[\\/]/).includes("..");
+}
+
+/** `compile.include`: a list of non-empty project-relative paths. */
+function validateCompileInclude(include: unknown, fail: Fail): void {
+  if (include === undefined) return;
+  const paths = Array.isArray(include) ? include : [include];
+  if (!Array.isArray(include) || !paths.every((p) => typeof p === "string" && p !== "")) {
+    return fail("compile.include", "must be an array of project-relative paths");
+  }
+  const outside = (paths as string[]).find((p) => !insideProject(p));
+  if (outside !== undefined) {
+    fail("compile.include", `must stay inside the project (got ${JSON.stringify(outside)})`);
+  }
+}
+
+/** Whether `v` is a list of `--allow-*` values (non-empty strings, no commas). */
+function isPermissionList(v: unknown): boolean {
+  return Array.isArray(v) && v.every((s) => typeof s === "string" && s !== "" && !s.includes(","));
+}
+
+/** `compile.permissions`: `"all"`, or an object of permission kinds to value lists. */
+function validateCompilePermissions(permissions: unknown, fail: Fail): void {
+  if (permissions === undefined || permissions === "all") return;
+  if (typeof permissions !== "object" || permissions === null || Array.isArray(permissions)) {
+    return fail("compile.permissions", 'must be "all" or an object of permission kinds');
+  }
+  for (const [k, v] of Object.entries(permissions as Record<string, unknown>)) {
+    if (!COMPILE_PERMISSION_KINDS.includes(k) || !isPermissionList(v)) {
+      fail(
+        `compile.permissions.${k}`,
+        `must be an array of strings (kinds: ${COMPILE_PERMISSION_KINDS.join(", ")})`,
+      );
+    }
+  }
+}
+
+/**
+ * `compile`: `include` a list of project-relative paths (no `..`, none absolute), `permissions`
+ * `"all"` or an object of permission kinds to string arrays.
+ */
+export function validateCompile(compile: unknown, fail: Fail): void {
+  if (compile === undefined) return;
+  if (typeof compile !== "object" || compile === null || Array.isArray(compile)) {
+    return fail("compile", "must be an object");
+  }
+  const { include, permissions } = compile as { include?: unknown; permissions?: unknown };
+  validateCompileInclude(include, fail);
+  validateCompilePermissions(permissions, fail);
+}

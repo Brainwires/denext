@@ -37,6 +37,13 @@ export interface ServerCopiesManifest {
    * server render still needs the CSS import map.
    */
   readonly css?: boolean;
+  /**
+   * Whether the copies are relocatable (each imports what it reaches by a relative path and pins
+   * `import.meta` relative to itself), so they serve the project wherever it now is — a
+   * `deno compile`d app embeds it under another root. Absent from an older build, whose copies
+   * import the project's modules by absolute path.
+   */
+  readonly relocatable?: boolean;
 }
 
 /** `url` (a file URL under `base`) as a `/`-separated relative path, or null. */
@@ -85,7 +92,13 @@ export async function buildServerCopies(
   const css = cssRedirects(cssImportMap);
   const hasCss = Object.keys(css).length > 0;
   const useCache = resolveCacheComponents(paths.config);
-  const manifest = { root: toFileUrl(projectDir).href, redirects: {}, copies: {}, css: hasCss };
+  const manifest = {
+    root: toFileUrl(projectDir).href,
+    redirects: {},
+    copies: {},
+    css: hasCss,
+    relocatable: true,
+  };
   if (!useCache && !hasCss && Object.keys(redirects).length === 0) return manifest;
   // Only the platform redirects are recorded: the server loads a module, never a stylesheet, as
   // an entry, so the CSS ones live in the copies alone.
@@ -95,7 +108,7 @@ export async function buildServerCopies(
     if (a !== null && b !== null) (manifest.redirects as Record<string, string>)[a] = b;
   }
   const copies = await compileServerCopies(
-    { projectDir, cacheDir, redirects: { ...css, ...redirects }, useCache },
+    { projectDir, cacheDir, redirects: { ...css, ...redirects }, useCache, relocatable: true },
     await scanner.files(),
   );
   for (const [from, to] of Object.entries(copies)) {
@@ -118,6 +131,7 @@ export function parseServerCopies(value: unknown): ServerCopiesManifest | null {
     redirects: v.redirects,
     copies: v.copies,
     ...(typeof v.css === "boolean" ? { css: v.css } : {}),
+    ...(v.relocatable === true ? { relocatable: true } : {}),
   };
 }
 
@@ -125,8 +139,9 @@ export function parseServerCopies(value: unknown): ServerCopiesManifest | null {
  * Whether `denext start` can serve the build in `outDir` without the CSS import map (and so
  * without the CLI's CSS re-exec, which spawns a second `deno` and needs `--allow-run`): a native
  * App Router build whose server copies point every stylesheet import at its shim, made for this
- * project where it now is. False for a next-compat build, a SPA, an older build, no build, or a
- * project moved since it was built (start then compiles copies without the stylesheets).
+ * project where it now is (or relocatable copies, wherever it is). False for a next-compat build, a
+ * SPA, an older build, no build, or a project moved since a build whose copies are not relocatable
+ * (start then compiles copies without the stylesheets).
  *
  * @param projectDir The project root.
  * @param outDir The build output dir (`.denext`).
@@ -142,13 +157,18 @@ export async function buildServesCss(projectDir: string, outDir: string): Promis
   const bm = doc as { nextCompat?: unknown; serverCopies?: unknown };
   if (bm.nextCompat === true) return false;
   const recorded = parseServerCopies(bm.serverCopies);
-  return recorded?.css !== undefined && recorded.root === toFileUrl(resolve(projectDir)).href;
+  return recorded?.css !== undefined && madeFor(recorded, projectDir);
+}
+
+/** Whether `recorded`'s copies serve the project at `projectDir`: relocatable, or made there. */
+function madeFor(recorded: ServerCopiesManifest, projectDir: string): boolean {
+  return recorded.relocatable === true || recorded.root === toFileUrl(resolve(projectDir)).href;
 }
 
 /**
  * The production server's loader over the build's copies, or null when the build recorded none
- * or the project moved since (the copies import its modules by absolute path): the caller then
- * compiles at startup, as for an older build.
+ * or the project moved since a build whose copies import its modules by absolute path: the caller
+ * then compiles at startup, as for an older build.
  *
  * @param base The underlying loader.
  * @param paths The project paths.
@@ -160,7 +180,7 @@ export function precompiledServerLoader(
   recorded: ServerCopiesManifest | null | undefined,
 ): ModuleLoader | null {
   const projectDir = resolve(paths.projectDir);
-  if (!recorded || recorded.root !== toFileUrl(projectDir).href) return null;
+  if (!recorded || !madeFor(recorded, projectDir)) return null;
   const outDir = resolve(paths.outDir);
   const redirects: Record<string, string> = {};
   for (const [from, to] of Object.entries(recorded.redirects)) {

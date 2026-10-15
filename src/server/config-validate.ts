@@ -19,7 +19,11 @@ import {
   validatePlatformExtensions,
   validateReactNative,
 } from "./config-validate/mobile.ts";
-import { validateCommands, validateNestedRequired } from "./config-validate/project.ts";
+import {
+  validateCommands,
+  validateCompile,
+  validateNestedRequired,
+} from "./config-validate/project.ts";
 import {
   validateCacheAndEnv,
   validateImageAllowlists,
@@ -78,5 +82,6 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateCacheAndEnv(config, fail);
   validateJobs(config.jobs, fail);
   validateCommands(config.commands, fail);
+  validateCompile(config.compile, fail);
   validateNestedRequired(config, fail);
 }

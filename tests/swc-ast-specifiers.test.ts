@@ -10,6 +10,8 @@ import {
   literalSpecifiers,
   parseModule,
   pinImportMeta,
+  relativeSpecifier,
+  relativizeFileSpecifiers,
 } from "../src/build/swc-ast.ts";
 
 const SOURCE = `import { a } from "./a.ts";
@@ -73,4 +75,42 @@ Deno.test("pinImportMeta: dynamicImports re-roots a non-literal import() on the 
   assertEquals(resolve("./y.ts"), "file:///proj/dir/y.ts");
   assertEquals(resolve("../z.ts"), "file:///proj/z.ts");
   assertEquals(resolve("npm:left-pad"), "npm:left-pad");
+});
+
+Deno.test("relativeSpecifier: the path between two file URLs, keeping their encoding", () => {
+  assertEquals(
+    relativeSpecifier("file:///p/.denext/c/m.ts", "file:///p/app/x.tsx"),
+    "../../app/x.tsx",
+  );
+  assertEquals(relativeSpecifier("file:///p/app/m.ts", "file:///p/app/x.ts"), "./x.ts");
+  assertEquals(
+    relativeSpecifier("file:///p/m.ts", "file:///p/app/%5Bid%5D/x.ts?v=1"),
+    "./app/%5Bid%5D/x.ts?v=1",
+  );
+  assertEquals(relativeSpecifier("file:///C:/p/m.ts", "file:///D:/q/x.ts"), null);
+  assertEquals(relativeSpecifier("file:///p/m.ts", "jsr:@std/path"), null);
+});
+
+Deno.test("relativizeFileSpecifiers: every literal file: specifier becomes relative to the copy", async () => {
+  const src = `import { a } from "file:///p/app/a.ts";\n` +
+    `export * from "jsr:@std/path";\n` +
+    `export const lazy = () => import("file:///p/lib/lazy.ts");\n`;
+  const out = await relativizeFileSpecifiers(src, "file:///p/.denext/server-copies/uc_1.ts");
+  assertStringIncludes(out, `from "../../app/a.ts"`);
+  assertStringIncludes(out, `import("../../lib/lazy.ts")`);
+  assertStringIncludes(out, `from "jsr:@std/path"`);
+  assertEquals(await relativizeFileSpecifiers("export {};\n", "file:///p/c.ts"), "export {};\n");
+});
+
+Deno.test("pinImportMeta: with copyUrl the pins are computed from the copy's own URL", async () => {
+  const src =
+    `"use server";\nexport const u = import.meta.url;\nexport const d = import.meta.dirname;\n`;
+  const pinned = await pinImportMeta(src, "file:///p/app/m.ts", {
+    copyUrl: "file:///p/.denext/server-copies/uc_1.ts",
+  });
+  assert(pinned.startsWith(`"use server";`), "the prologue stays first");
+  assertStringIncludes(pinned, `new URL("../../app/m.ts", import.meta.url).href`);
+  assertStringIncludes(pinned, "__dnxDirname(__dnxFileUrlToPath(");
+  assertStringIncludes(pinned, `from "node:url"`);
+  assert(!pinned.includes(`"file:///p/app/m.ts"`), pinned);
 });

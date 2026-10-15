@@ -77,7 +77,7 @@ import {
 import { sqliteMetaStore } from "./src/storage-meta-sqlite.ts";
 import type { BucketWrite, MetaStore } from "./src/storage-meta.ts";
 import { declaredBucketRows, storageAdmin } from "./src/storage-ops.ts";
-import { resolve as resolvePath } from "@std/path";
+import { join, resolve as resolvePath } from "@std/path";
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MULTIPART_THRESHOLD,
@@ -124,6 +124,7 @@ import {
 } from "./src/webhooks.ts";
 import { backendMigrationsOf, createDbHooks, installDbHooks } from "./src/db-command.ts";
 import { seedBuckets } from "./src/storage-seed.ts";
+import { compiledStateDir, dataRoot } from "./src/data-root.ts";
 import { createStorageCommand } from "./src/storage-command.ts";
 
 export { backendAuthAdapter } from "./src/postgres.ts";
@@ -289,6 +290,16 @@ function setupDeadlines(
 
 /** The default sqlite metadata file (no Postgres), relative to the project root. */
 const METADATA_FILE = ".denext-storage.db";
+
+/**
+ * The storage metadata file when `metadataPath` is not set: `.denext-storage.db` in the project,
+ * or in a `denext build --compile` binary `storage.db` in its state directory (`./.denext`, which
+ * the binary may write), since its embedded project is read-only.
+ */
+function defaultMetadataPath(projectRoot: string): string {
+  const state = compiledStateDir();
+  return state === undefined ? resolvePath(projectRoot, METADATA_FILE) : join(state, "storage.db");
+}
 
 /** Where the Storage API is served, or `null` when it is off. */
 function storageApiBase(api: StorageOptions["api"]): string | null {
@@ -616,7 +627,9 @@ async function setupStorage(
   await storageOptions.driver.init?.({ projectRoot: ctx.projectRoot });
   const meta = seededStore(
     postgres ? postgresMetaStore() : sqliteMetaStore(
-      resolvePath(ctx.projectRoot, storageOptions.metadataPath ?? METADATA_FILE),
+      storageOptions.metadataPath !== undefined
+        ? resolvePath(dataRoot(ctx.projectRoot), storageOptions.metadataPath)
+        : defaultMetadataPath(ctx.projectRoot),
     ),
     declaredBucketRows(buckets),
   );
