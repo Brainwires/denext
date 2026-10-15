@@ -37,7 +37,7 @@ export function dockerPortAndTag(port: unknown, tag: unknown): { port?: number; 
 }
 
 /** The stack services a flag (or a detection) switches on and off. */
-export const STACK_FEATURES = ["postgres", "pgvector", "storage", "migrate"] as const;
+export const STACK_FEATURES = ["postgres", "pgvector", "storage", "migrate", "dashboard"] as const;
 
 /** One of {@linkcode STACK_FEATURES}. */
 export type StackFeature = typeof STACK_FEATURES[number];
@@ -50,6 +50,8 @@ export const STACK_FEATURE_HELP: Readonly<Record<StackFeature, string>> = {
   migrate: "One-shot migrations service the app waits for: `denext migration up` with " +
     "@denext/backend, else `denext job migrate` (detected: migrations/ + jobs/migrate.ts or " +
     "@denext/backend)",
+  dashboard: "The database dashboard (denext dashboard) on 127.0.0.1:3100, behind " +
+    "DASHBOARD_PASSWORD (on with Postgres)",
 };
 
 /** What detection found, with the reason behind every service it switched on. */
@@ -279,6 +281,8 @@ export async function detectDockerStack(dir: string): Promise<StackDetection> {
     reasons.pgvector = "the vector extension in migrations/";
   }
 
+  if (reasons.postgres) reasons.dashboard = "a database to manage";
+
   const bucket = s3 ? S3_BUCKET.exec(config)?.[1] : undefined;
   return {
     features: {
@@ -286,6 +290,7 @@ export async function detectDockerStack(dir: string): Promise<StackDetection> {
       pgvector: reasons.pgvector !== undefined,
       storage: reasons.storage !== undefined,
       migrate: reasons.migrate !== undefined,
+      dashboard: reasons.dashboard !== undefined,
     },
     reasons,
     auth: /\bdenextAuth\s*\(/.test(config),
@@ -325,6 +330,8 @@ export function resolveStack(
     pgvector,
     storage: pick("storage"),
     migrate: pick("migrate"),
+    // On with Postgres (detected or asked for) unless switched off; never without it.
+    dashboard: postgres && (overrides.dashboard ?? true),
     auth: detection.auth,
     backend: detection.backend,
     backendStorage: detection.backendStorage,
@@ -353,6 +360,8 @@ export interface DockerRequest {
   readonly exposeDb?: boolean;
   /** Also write the development overlay. */
   readonly dev?: boolean;
+  /** The dashboard's log relay (it mounts the Docker socket). */
+  readonly dashboardLogs?: boolean;
 }
 
 /** The resolved options, and what detection found (for the report). */
@@ -363,6 +372,48 @@ export interface ResolvedDocker {
   readonly detection: StackDetection;
   /** Warnings to show (detection's, plus anything resolving dropped). */
   readonly warnings: readonly string[];
+}
+
+/**
+ * The stack a static (SPA) image gets: no server for a database or a store to serve, so the
+ * detected services are dropped with a warning — and asking for one explicitly is an error.
+ *
+ * @throws When a stack service (or `--stack`) was asked for explicitly.
+ */
+function withoutServerServices(
+  stack: StackOptions,
+  request: DockerRequest,
+  warnings: string[],
+): StackOptions {
+  const asked = STACK_FEATURES.filter((f) => request.overrides?.[f] === true);
+  if (asked.length || request.all) {
+    throw new Error(
+      `denext: the static (SPA) image has no server for ${
+        asked.length ? asked.map((f) => `--${f}`).join(", ") : "--stack"
+      } — use the server image (\`denext generate docker server\`).`,
+    );
+  }
+  warnings.push("static (SPA) image: the detected stack services were left out.");
+  return {
+    ...stack,
+    postgres: false,
+    pgvector: false,
+    storage: false,
+    migrate: false,
+    dashboard: false,
+  };
+}
+
+/** `--dashboard-logs`, when the dashboard it serves is there (else left out, with a warning). */
+function dashboardLogsOf(
+  request: DockerRequest,
+  stack: StackOptions,
+  warnings: string[],
+): { dashboardLogs?: true } {
+  if (!request.dashboardLogs) return {};
+  if (stack.dashboard) return { dashboardLogs: true };
+  warnings.push("--dashboard-logs needs the dashboard (and Postgres): the relay was left out.");
+  return {};
 }
 
 /**
@@ -384,18 +435,7 @@ export async function resolveDocker(
   const detection = await detectDockerStack(dir);
   const warnings = [...detection.warnings];
   let stack = resolveStack(detection, request.overrides, request.all === true);
-  if (mode === "static" && isStack(stack)) {
-    const asked = STACK_FEATURES.filter((f) => request.overrides?.[f] === true);
-    if (asked.length || request.all) {
-      throw new Error(
-        `denext: the static (SPA) image has no server for ${
-          asked.length ? asked.map((f) => `--${f}`).join(", ") : "--stack"
-        } — use the server image (\`denext generate docker server\`).`,
-      );
-    }
-    warnings.push("static (SPA) image: the detected stack services were left out.");
-    stack = { ...stack, postgres: false, pgvector: false, storage: false, migrate: false };
-  }
+  if (mode === "static" && isStack(stack)) stack = withoutServerServices(stack, request, warnings);
   const options: DockerOptions = {
     ...stack,
     mode,
@@ -403,6 +443,7 @@ export async function resolveDocker(
     ...(request.denoTag ? { denoTag: request.denoTag } : {}),
     ...(request.exposeDb ? { exposeDb: true } : {}),
     ...(request.dev ? { dev: true } : {}),
+    ...dashboardLogsOf(request, stack, warnings),
   };
   return { options, detection, warnings };
 }

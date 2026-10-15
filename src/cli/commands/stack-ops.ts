@@ -20,6 +20,7 @@
 // with neither, a terminal is asked, and anything else gets the command printed.
 
 import { join } from "@std/path";
+import { findComposeFile } from "../../build/docker-template.ts";
 import type { CommandContext } from "../command.ts";
 import { generateSupabaseKeys, SUPABASE_KEY_ENV } from "../../server/auth/gotrue/keys.ts";
 import { parseEnv } from "../../server/env.ts";
@@ -214,7 +215,28 @@ export async function passwdAction(ctx: CommandContext, dir: string, io: StackIo
   } else if (ctx.flags.generate === true) {
     io.log("  (the generated passwords are in .env; --show-secrets prints them)");
   }
-  await offerRestart(ctx, dir, io, ["web"]);
+  await offerRestart(ctx, dir, io, await passwdServices(dir, values));
+}
+
+/**
+ * The containers a `passwd` change has to recreate: the app (and the dashboard, which reads the
+ * same `DATABASE_URL`) for `--postgres`; the dashboard and its log relay for `--dashboard`. A
+ * service the compose file does not have (a stack generated before the dashboard) is left out.
+ */
+async function passwdServices(
+  dir: string,
+  values: { postgres?: unknown; dashboard?: unknown },
+): Promise<string[]> {
+  const file = await findComposeFile(dir);
+  const text = file === null ? "" : await Deno.readTextFile(join(dir, file)).catch(() => "");
+  const has = (name: string) => new RegExp(`^  ${name}:\\s*$`, "m").test(text);
+  const out: string[] = [];
+  if (values.postgres) out.push("web");
+  if (has("dashboard") && (values.postgres || values.dashboard !== undefined)) {
+    out.push("dashboard");
+  }
+  if (values.dashboard !== undefined && has("dashboard-logs")) out.push("dashboard-logs");
+  return out.length ? out : ["web"];
 }
 
 /** Ask before rolling the JWT keys: a terminal confirms, anything else needs `--yes`. */

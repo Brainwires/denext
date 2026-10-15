@@ -353,6 +353,37 @@ Deno.test("stack passwd: stdin passwords are checked; --dashboard is appended; -
   }
 });
 
+Deno.test("stack passwd: the dashboard's containers are recreated when the stack has them", async () => {
+  const root = await project();
+  try {
+    await Deno.writeTextFile(
+      join(root, "docker-compose.yml"),
+      "services:\n  web:\n    image: x\n  dashboard:\n    image: x\n  dashboard-logs:\n    image: x\n",
+    );
+    const dash = fakeIo();
+    assertEquals(
+      await runStack(
+        ctx(root, ["passwd"], { dashboard: true, generate: true, restart: true }),
+        dash.io,
+      ),
+      0,
+    );
+    assertEquals(dash.calls.at(-1)?.slice(-2), ["dashboard", "dashboard-logs"]);
+    // The dashboard reads DATABASE_URL too, so a Postgres password change recreates it as well.
+    const pg = fakeIo();
+    assertEquals(
+      await runStack(
+        ctx(root, ["passwd"], { postgres: true, generate: true, restart: true }),
+        pg.io,
+      ),
+      0,
+    );
+    assertEquals(pg.calls.at(-1)?.slice(-2), ["web", "dashboard"]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 // ---- roll -----------------------------------------------------------------------------------
 
 Deno.test("stack roll: new publishable + secret keys; the JWT keys only with --include-secret", async () => {

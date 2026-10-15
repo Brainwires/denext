@@ -1,7 +1,8 @@
 // The self-hosted stack half of `denext generate docker`: the compose file with Postgres, an
-// S3 store (MinIO) and its bucket bootstrap, a one-shot migrations service, the `.env.example`
-// that lists every secret those services and the app read, and the development overlay
-// (`compose.dev.yml`). `docker-template.ts` renders the Dockerfile and the plain compose file
+// S3 store (MinIO) and its bucket bootstrap, a one-shot migrations service, the database
+// dashboard (`denext dashboard`, behind `DASHBOARD_PASSWORD`) and, opt-in, its log relay, the
+// `.env.example` that lists every secret those services and the app read, and the development
+// overlay (`compose.dev.yml`). `docker-template.ts` renders the Dockerfile and the plain compose file
 // and hands the stack layout to this module; `docker-detect.ts` decides which services a
 // project needs.
 //
@@ -29,6 +30,16 @@ export interface StackOptions {
   readonly storage?: boolean;
   /** A one-shot migrations service (`denext job migrate`) the app waits for. */
   readonly migrate?: boolean;
+  /**
+   * The database dashboard (`denext dashboard`) as a service of its own, published on
+   * `127.0.0.1:3100` and gated by `DASHBOARD_PASSWORD`. Needs Postgres.
+   */
+  readonly dashboard?: boolean;
+  /**
+   * The dashboard's log relay (`denext dashboard-logs`): the one service that mounts the Docker
+   * socket, so the dashboard's Logs page can read the stack's logs. Opt-in; needs the dashboard.
+   */
+  readonly dashboardLogs?: boolean;
   /** Publish Postgres on `127.0.0.1:5432` (off by default: the app reaches it on the network). */
   readonly exposeDb?: boolean;
   /** Also write `compose.dev.yml`: `denext dev` on a bind mount, database and store published. */
@@ -304,6 +315,17 @@ export const STACK_ENV: readonly StackEnvVar[] = [
     required: false,
     app: true,
     when: (o) => o.auth === true || o.backend === true,
+  },
+  {
+    name: "DASHBOARD_PASSWORD",
+    about: "The database dashboard's password (12 characters or more): sign in at " +
+      "http://127.0.0.1:3100 (DASHBOARD_PORT moves it). Without one the dashboard stays locked. " +
+      "Change it with denext stack passwd --dashboard.",
+    generate: RAND_HEX,
+    example: "",
+    required: false,
+    app: false,
+    when: (o) => hasDashboard(o),
   },
   {
     name: "S3_PUBLIC_ENDPOINT",
@@ -593,13 +615,129 @@ function storageServices(options: StackOptions): string {
       - for i in $$(seq 1 30); do mc alias set stack http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" && break; sleep 2; done && mc mb --ignore-existing "stack/$$S3_BUCKET"`;
 }
 
-/** The named volumes the stack keeps its data in. */
+/** The named volumes the stack keeps its data in, and the log relay's private network. */
 function volumes(options: StackOptions): string {
   const names = [
     ...(options.postgres ? ["db-data:"] : []),
     ...(options.storage ? ["storage-data:"] : []),
   ];
-  return names.length ? `\nvolumes:\n${indent(names, 2)}\n` : "";
+  const vols = names.length ? `\nvolumes:\n${indent(names, 2)}\n` : "";
+  // The relay's network: only it and the dashboard are on it, and it has no way out.
+  const net = hasDashboardLogs(options)
+    ? `\nnetworks:\n  dashboard-logs:\n    internal: true\n`
+    : "";
+  return vols + net;
+}
+
+/** The port the dashboard listens on inside its container (and, by default, on loopback). */
+const DASHBOARD_PORT = 3100;
+
+/** The port the log relay listens on, on its own network. */
+const DASHBOARD_LOGS_PORT = 3101;
+
+/** Whether the dashboard is rendered (it needs Postgres). */
+function hasDashboard(options: StackOptions): boolean {
+  return options.dashboard === true && options.postgres === true;
+}
+
+/** Whether the log relay is rendered (it needs the dashboard). */
+function hasDashboardLogs(options: StackOptions): boolean {
+  return options.dashboardLogs === true && hasDashboard(options);
+}
+
+/** A `denext` CLI command for a service, as an exec-form array. */
+function cliCommand(options: StackOptions, args: readonly string[]): string {
+  return JSON.stringify([
+    "deno",
+    "run",
+    "-A",
+    ...(options.cli ?? ["jsr:@denext/denext/cli"]),
+    ...args,
+  ])
+    .replaceAll('","', '", "');
+}
+
+/**
+ * The database dashboard: the app's image running `denext dashboard`, with the app's own
+ * environment (so its database and storage are the app's) and `DASHBOARD_PASSWORD`. Published
+ * on this machine's loopback only.
+ */
+function dashboardService(options: StackOptions): string {
+  const env = [
+    ...appEnvLines(options),
+    `DASHBOARD_PASSWORD: ${ref("DASHBOARD_PASSWORD:-")}`,
+    ...(hasDashboardLogs(options)
+      ? [`DASHBOARD_LOGS_URL: http://dashboard-logs:${DASHBOARD_LOGS_PORT}`]
+      : []),
+  ];
+  // Not on the migrations: a dashboard is how a failed migration gets looked at.
+  const deps = ["db-init:", "  condition: service_completed_successfully"];
+  const probe = `fetch('http://127.0.0.1:${DASHBOARD_PORT}/login').then((r)=>Deno.exit(r.ok?0:1))` +
+    ".catch(()=>Deno.exit(1))";
+  return [
+    `  # The database dashboard (denext dashboard): tables and rows, the SQL editor, RLS policies,`,
+    `  # migrations, storage, auth users and logs, behind DASHBOARD_PASSWORD (set it with`,
+    `  # denext stack passwd --dashboard; without one it stays locked). Published on this machine's`,
+    `  # loopback only (DASHBOARD_PORT moves it). To reach it from elsewhere, put a TLS reverse`,
+    `  # proxy in front and add "--origin", "https://<its host>" to the command.`,
+    `  dashboard:`,
+    `    image: ${APP_IMAGE}`,
+    `    pull_policy: never`,
+    `    restart: unless-stopped`,
+    `    command: ${
+      cliCommand(options, ["dashboard", "--host", "0.0.0.0", "--port", String(DASHBOARD_PORT)])
+    }`,
+    `    ports:`,
+    `      - "127.0.0.1:${ref(`DASHBOARD_PORT:-${DASHBOARD_PORT}`)}:${DASHBOARD_PORT}"`,
+    `    environment:`,
+    indent(env, 6),
+    `    healthcheck:`,
+    `      test: ["CMD", "deno", "eval", "${probe}"]`,
+    `      interval: 30s`,
+    `      timeout: 5s`,
+    `      retries: 3`,
+    `      start_period: 20s`,
+    `    depends_on:`,
+    indent(deps, 6),
+    ...(hasDashboardLogs(options)
+      ? [`    networks:`, `      - default`, `      - dashboard-logs`]
+      : []),
+  ].join("\n");
+}
+
+/**
+ * The dashboard's log relay: the only service with the Docker socket. It answers the dashboard
+ * alone (a network of their own, no published port) and only two GETs, for this project's own
+ * services: their names and their logs (`src/ui/logs/relay.ts`). It runs as root to read the
+ * socket; `DOCKER_SOCKET` in `.env` points it at another one (rootless Docker, Podman).
+ */
+function dashboardLogsService(options: StackOptions): string {
+  return [
+    `  # Reads the stack's container logs for the dashboard's Logs page. The only service with the`,
+    `  # Docker socket: it answers the dashboard alone (their own network, no published port) and`,
+    `  # only two GETs: this project's services and their logs. It reads no other container's`,
+    `  # settings and never runs or changes anything.`,
+    `  dashboard-logs:`,
+    `    image: ${APP_IMAGE}`,
+    `    pull_policy: never`,
+    `    restart: unless-stopped`,
+    `    user: root`,
+    `    command: ${
+      cliCommand(options, [
+        "dashboard-logs",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        String(DASHBOARD_LOGS_PORT),
+      ])
+    }`,
+    `    environment:`,
+    `      DASHBOARD_PASSWORD: ${ref("DASHBOARD_PASSWORD:-")}`,
+    `    volumes:`,
+    `      - ${ref("DOCKER_SOCKET:-/var/run/docker.sock")}:/var/run/docker.sock:ro`,
+    `    networks:`,
+    `      - dashboard-logs`,
+  ].join("\n");
 }
 
 /**
@@ -617,6 +755,8 @@ export function renderStackCompose(options: StackOptions, port: number, static_:
     ...(options.migrate ? [migrateService(options)] : []),
     ...(options.postgres ? [dbService(options), dbInitService(options)] : []),
     ...(options.storage ? [storageServices(options)] : []),
+    ...(hasDashboard(options) ? [dashboardService(options)] : []),
+    ...(hasDashboardLogs(options) ? [dashboardLogsService(options)] : []),
   ];
   return `${DOCKER_SENTINEL}.
 # A self-hosted stack: copy .env.example to .env, fill in every secret, then

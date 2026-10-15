@@ -184,6 +184,79 @@ services:
     command:
       - for i in $$(seq 1 30); do mc alias set stack http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" && break; sleep 2; done && mc mb --ignore-existing "stack/$$S3_BUCKET"
 
+  # The database dashboard (denext dashboard): tables and rows, the SQL editor, RLS policies,
+  # migrations, storage, auth users and logs, behind DASHBOARD_PASSWORD (set it with
+  # denext stack passwd --dashboard; without one it stays locked). Published on this machine's
+  # loopback only (DASHBOARD_PORT moves it). To reach it from elsewhere, put a TLS reverse
+  # proxy in front and add "--origin", "https://<its host>" to the command.
+  dashboard:
+    image: ${APP_IMAGE:-denext-app}
+    pull_policy: never
+    restart: unless-stopped
+    command: ["deno", "run", "-A", "--config", "deno.json", "jsr:@denext/denext@^4.0.0/cli", "dashboard", "--host", "0.0.0.0", "--port", "3100"]
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-3100}:3100"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_APP_USER:-denext_app}:${POSTGRES_APP_PASSWORD:?set it in .env (see .env.example)}@db:5432/${POSTGRES_DB:-denext}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-denext}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set it in .env (see .env.example)}
+      AWS_REGION: us-east-1
+      AWS_ENDPOINT_URL: ${S3_ENDPOINT:-http://minio:9000}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_REGION: us-east-1
+      S3_BUCKET: ${S3_BUCKET:-media}
+      AUTH_SECRET: ${AUTH_SECRET:?set it in .env (see .env.example)}
+      DENEXT_PUBLISHABLE_KEY: ${DENEXT_PUBLISHABLE_KEY:-}
+      DENEXT_SECRET_KEY: ${DENEXT_SECRET_KEY:-}
+      DENEXT_JWT_SIGNING_KEYS: ${DENEXT_JWT_SIGNING_KEYS:-}
+      DENEXT_JWT_SECRET: ${DENEXT_JWT_SECRET:-}
+      GOTRUE_SMTP_HOST: ${GOTRUE_SMTP_HOST:-}
+      GOTRUE_SMTP_PORT: ${GOTRUE_SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${GOTRUE_SMTP_USER:-}
+      GOTRUE_SMTP_PASS: ${GOTRUE_SMTP_PASS:-}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${GOTRUE_SMTP_ADMIN_EMAIL:-}
+      GOTRUE_SMTP_SENDER_NAME: ${GOTRUE_SMTP_SENDER_NAME:-}
+      DENEXT_VAULT_KEY: ${DENEXT_VAULT_KEY:?set it in .env (see .env.example)}
+      DENEXT_WEBHOOK_SECRET: ${DENEXT_WEBHOOK_SECRET:-}
+      DENEXT_STORAGE_SECRET: ${DENEXT_STORAGE_SECRET:?set it in .env (see .env.example)}
+      DENEXT_RATE_LIMIT_LOCAL_ADDRESSES: ${DENEXT_RATE_LIMIT_LOCAL_ADDRESSES:-1}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+      DASHBOARD_LOGS_URL: http://dashboard-logs:3101
+    healthcheck:
+      test: ["CMD", "deno", "eval", "fetch('http://127.0.0.1:3100/login').then((r)=>Deno.exit(r.ok?0:1)).catch(()=>Deno.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - dashboard-logs
+
+  # Reads the stack's container logs for the dashboard's Logs page. The only service with the
+  # Docker socket: it answers the dashboard alone (their own network, no published port) and
+  # only two GETs: this project's services and their logs. It reads no other container's
+  # settings and never runs or changes anything.
+  dashboard-logs:
+    image: ${APP_IMAGE:-denext-app}
+    pull_policy: never
+    restart: unless-stopped
+    user: root
+    command: ["deno", "run", "-A", "--config", "deno.json", "jsr:@denext/denext@^4.0.0/cli", "dashboard-logs", "--host", "0.0.0.0", "--port", "3101"]
+    environment:
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+    volumes:
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
+    networks:
+      - dashboard-logs
+
 volumes:
   db-data:
   storage-data:
+
+networks:
+  dashboard-logs:
+    internal: true

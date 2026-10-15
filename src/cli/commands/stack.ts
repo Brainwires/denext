@@ -118,6 +118,8 @@ export interface StackStatus {
   restUrl?: string;
   databaseUrl?: string;
   s3Url?: string;
+  dashboardUrl?: string;
+  dashboardPassword?: string;
   publishableKey?: string;
   secretKey?: string;
 }
@@ -158,6 +160,12 @@ export function stackStatus(
   }
   const s3 = published(by("minio"), 9000);
   if (s3) status.s3Url = `http://localhost:${s3}`;
+  const dashboard = published(by("dashboard"), 3100);
+  if (dashboard) {
+    // 127.0.0.1, not localhost: the dashboard's session cookie stays on the address it is opened at.
+    status.dashboardUrl = `http://127.0.0.1:${dashboard}`;
+    if (showSecrets && env.DASHBOARD_PASSWORD) status.dashboardPassword = env.DASHBOARD_PASSWORD;
+  }
   if (env.DENEXT_PUBLISHABLE_KEY) status.publishableKey = env.DENEXT_PUBLISHABLE_KEY;
   if (showSecrets && env.DENEXT_SECRET_KEY) status.secretKey = env.DENEXT_SECRET_KEY;
   return status;
@@ -185,6 +193,8 @@ async function statusAction(ctx: CommandContext, dir: string, io: StackIo): Prom
     ["REST URL", status.restUrl],
     ["DB URL", status.databaseUrl],
     ["S3 URL", status.s3Url],
+    ["Dashboard URL", status.dashboardUrl],
+    ["Dashboard password", status.dashboardPassword],
     ["Publishable key", status.publishableKey],
     ["Secret key", status.secretKey],
   ];
@@ -383,7 +393,7 @@ export const stackCommand: CommandSpec = {
     {
       name: "dashboard",
       type: "boolean",
-      help: "passwd: the dashboard password (DASHBOARD_PASSWORD)",
+      help: "passwd: the dashboard password (DASHBOARD_PASSWORD); up: the dashboard service",
     },
     { name: "generate", type: "boolean", help: "passwd: generate strong passwords" },
     {
@@ -415,7 +425,8 @@ export const stackCommand: CommandSpec = {
       valueName: "<dir>",
       help: "backup / restore: the fs storage driver's dir in the app container",
     },
-    ...DOCKER_FLAGS,
+    // `--dashboard` is declared above (passwd's target, and up's docker switch alike).
+    ...DOCKER_FLAGS.filter((f) => f.name !== "dashboard"),
   ],
   run: async (ctx) => {
     const dir = resolve(ctx.global.cwd ?? ".");

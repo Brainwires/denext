@@ -101,6 +101,11 @@ const DOCKER_SCHEMA: Record<string, Record<string, unknown>> = {
     type: "boolean",
     description: "docker only (--dev): also write compose.dev.yml (denext dev on a bind mount).",
   },
+  dashboardLogs: {
+    type: "boolean",
+    description: "docker only (--dashboard-logs): the dashboard's log relay, a service that " +
+      "mounts the Docker socket so the dashboard's Logs page can read the stack's logs.",
+  },
   port: {
     type: "integer",
     minimum: 1,
@@ -134,6 +139,7 @@ export function dockerRequestOf(args: Record<string, unknown>): DockerRequest {
     ...(tag !== undefined ? { denoTag: tag } : {}),
     exposeDb: args.exposeDb === true,
     dev: args.dev === true,
+    dashboardLogs: args.dashboardLogs === true,
   };
 }
 
