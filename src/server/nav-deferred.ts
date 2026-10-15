@@ -63,13 +63,14 @@ export function navDeferredBody(
   const settled = values.settled();
   return new ReadableStream<Uint8Array>({
     start(controller) {
-      controller.enqueue(encoder.encode(payload));
+      // Each line ends with its newline, so the client reads it the moment it lands.
+      controller.enqueue(encoder.encode(payload + "\n"));
     },
     async pull(controller) {
       const next = signal?.aborted ? undefined : await settled.next();
       if (!next || next.done) return controller.close();
       const [v, x] = next.value;
-      controller.enqueue(encoder.encode("\n" + JSON.stringify({ v, x }).replace(/</g, "\\u003c")));
+      controller.enqueue(encoder.encode(JSON.stringify({ v, x }).replace(/</g, "\\u003c") + "\n"));
     },
     cancel() {
       void settled.return(undefined);

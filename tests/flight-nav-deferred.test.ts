@@ -23,8 +23,16 @@ import { makeDom } from "./helpers/dom.ts";
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-/** The client component the page hands deferred data to (it would `<Await>` it). */
-const Panel = (_p: { fast: unknown; slow: unknown }): VNode => h("p", null, "panel");
+/** The client component the page hands deferred data to: it suspends on each, as `<Await>` does. */
+const Show = ({ v }: { v: unknown }): VNode =>
+  h("b", null, String(v instanceof Promise ? use(v) : v));
+const Panel = (p: { fast: unknown; slow: unknown }): VNode =>
+  h(
+    "p",
+    null,
+    h(Suspense, { fallback: "…", children: h(Show, { v: p.fast }) }),
+    h(Suspense, { fallback: "…", children: h(Show, { v: p.slow }) }),
+  );
 const mod: Record<string, unknown> = { Panel };
 tagClientExports(mod, "c_panel");
 const registry = new Map<string, Component>([["c_panel#Panel", Panel as Component]]);
@@ -87,11 +95,11 @@ Deno.test("a browser soft navigation gets its payload first, then each deferred 
   assertEquals(payload.data.pathname, "/d");
 
   slow.resolve({ rows: [1, 2] }); // the slow one settles first here: lines follow settle order
-  assertEquals((await reader.read()).value, '\n{"v":"dnxv1","x":{"rows":[1,2]}}');
+  assertEquals((await reader.read()).value, '{"v":"dnxv1","x":{"rows":[1,2]}}\n');
   fast.reject(new Error("gone"));
   assertEquals(
     (await reader.read()).value,
-    '\n{"v":"dnxv0","x":{"__dnxAwaitError":true,"message":"gone"}}',
+    '{"v":"dnxv0","x":{"__dnxAwaitError":true,"message":"gone"}}\n',
     "a rejection arrives as <Await>'s error marker",
   );
   assert((await reader.read()).done);

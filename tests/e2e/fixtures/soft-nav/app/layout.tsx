@@ -19,6 +19,7 @@ export default function RootLayout({ children }: { children: unknown }) {
           <Link href="/other">other</Link>
           <Link href="/slow">slow</Link>
           <Link href="/islands">islands</Link>
+          <Link href="/deferred" prefetch={false}>deferred</Link>
         </nav>
         <main>{children as never}</main>
       </body>

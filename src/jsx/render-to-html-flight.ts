@@ -219,9 +219,7 @@ function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
   if (type === FRAGMENT) return renderFragmentDual(props, ctx);
   // Suspense: its own id scope (one slot in its parent; content rooted at its position),
   // resolved inline here, retrying on suspension.
-  if ((type as unknown) === SUSPENSE) {
-    return resolveInBoundaryScope(ctx.ids, () => renderChildrenDual(props.children, ctx));
-  }
+  if ((type as unknown) === SUSPENSE) return renderSuspenseDual(props, ctx);
   // Activity is id-transparent (like a Fragment). Visible → render children; hidden →
   // render nothing (the client pre-renders it offscreen after hydration — no mismatch).
   if ((type as unknown) === ACTIVITY) {
@@ -230,6 +228,17 @@ function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
   if ((type as unknown) === ERROR_BOUNDARY) return renderErrorBoundaryDual(props, ctx);
   if (isComponentType(type)) return renderComponentDual(node, type, props, ctx);
   return renderHostDual(hostOf(ctx), node, ctx.resumable, ctx.scopes, ctx.head);
+}
+
+/**
+ * Suspense: its own id scope (one slot in its parent; content rooted at its position), resolved
+ * inline here, retrying on suspension. A streamed soft navigation sends no HTML, so inside an
+ * island the boundary renders its fallback instead of waiting on a deferred value (the client
+ * suspends on the streamed promise).
+ */
+function renderSuspenseDual(props: Record<string, unknown>, ctx: Ctx): Promise<Dual> {
+  const shown = ctx.deferred && ctx.insideIsland ? props.fallback : props.children;
+  return resolveInBoundaryScope(ctx.ids, () => renderChildrenDual(shown as VNodeChildren, ctx));
 }
 
 /** The dual-render operations {@link renderHostDual} composes (a null `head` renders a hoisted `<title>`'s text). */

@@ -92,7 +92,9 @@ and this project adheres to
   its own line the moment it settles: the route renders at the payload, every `<Await>` (or
   `use()`) shows its Suspense fallback, and each reveals when its own value arrives. A rejection
   still drives `errorElement`. A prefetch, Live's re-render and a navigation sent as a POST still
-  get the complete payload; `streaming: false` turns it off.
+  get the complete payload; `streaming: false` turns it off. On such a navigation a client
+  component's own Suspense boundaries are not rendered to HTML on the server (the client renders
+  them), so a boundary waiting on a deferred value doesn't hold the payload back.
 - **SPA `client:interaction` replays the interaction that mounts it, as a Flight island does.**
   The events of the triggering gesture that land on the placeholder before the component commits
   (a `pointerdown`, the focus, the `click`) are dispatched again to the element at the same
