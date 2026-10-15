@@ -32,7 +32,7 @@
 
 ## Security policy
 
-denext's second mission pillar is _secure by default_ — a strict hash-based CSP, an
+_Secure by default_ is part of denext's second mission pillar — a strict hash-based CSP, an
 SSRF-safe image optimizer, same-origin CSRF-defended Server Actions, signed `httpOnly`
 cookies, and a least-privilege Deno sandbox ([MISSION.md](./MISSION.md),
 [the CVE-defense guide](https://denext.dev/docs/security)). If you find a way through any of that,

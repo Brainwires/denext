@@ -445,13 +445,6 @@ and this project adheres to
 - **The Android OTA plugin's `checkTrust` comment** said a binary with no public key accepts any
   https server; the code (unchanged) accepts an unsigned UI only from a pinned https origin or a
   loopback host. A comment-only template change: no new app binary is needed.
-- **A Next.js 16 `proxy.ts` runs.** denext found `proxy.ts` / `proxy.js` (at the root, or in
-  `src/` with the `src/app` layout) but read only a `middleware` or default export from it, so
-  Next 16's `export function proxy(request)` was ignored and every request went through
-  unchecked, in dev, `build` / `start`, a compiled app, the next-compat drop-in and `denext
-  doctor` alike. The `proxy` export is read now. An app with both a middleware file and a proxy
-  file fails at startup naming both, as Next does, instead of silently running the middleware
-  one.
 - **The dev overlay's codeframe caret sits under the error's column.** It was one column to the
   left, because the prefix was counted as the gutter plus four columns where `> N |` is five.
 - **A library importing `react-dom/static`, `next/head`, `@remix-run/deno` or
@@ -525,9 +518,13 @@ and this project adheres to
 
 ### Security
 
-- **A root middleware or proxy file can no longer be skipped silently.** Two ways an app's
+- **A root middleware or proxy file can no longer be skipped silently.** Three ways an app's
   `middleware.ts` / `proxy.ts` (an auth gate, say) never ran, with every request served
   unchecked:
+  - **Next.js 16's `proxy` export was ignored.** denext found `proxy.ts` / `proxy.js` (at the
+    root, or in `src/` with the `src/app` layout) but read only a `middleware` or default export
+    from it, so `export function proxy(request)` never ran, in dev, `build` / `start`, a compiled
+    app, the next-compat drop-in and `denext doctor` alike. The `proxy` export is read now.
   - **A file exporting no handler started anyway.** One with no `proxy`, `middleware` or default
     function (a `config` alone, a function left under another name after renaming middleware to
     proxy, an object or empty array) built no runner. denext now refuses to start, in dev, `start`,
@@ -536,8 +533,8 @@ and this project adheres to
   - **Only `.ts` and `.js` were found.** A `middleware.tsx`, `proxy.jsx` or `middleware.mjs` was
     ignored. Every extension Next accepts (`tsx`, `ts`, `jsx`, `js`) and `mts` / `mjs` are found
     now, at the root and in `src/`. Two such files (`middleware.ts` beside `proxy.tsx`, or
-    `middleware.ts` beside `middleware.js`) fail at startup naming both, instead of one being
-    picked.
+    `middleware.ts` beside `middleware.js`) fail at startup naming both, as Next does, instead
+    of one being picked.
 - **A desktop window stays on the app's origin** (Deno Desktop runtime 2.9.7-denext.18). A
   top-level navigation to any other origin (a link, `location = …`, a form, a server redirect,
   `window.open()`, `target="_blank"`) no longer loads in the window, on every backend (WKWebView,
