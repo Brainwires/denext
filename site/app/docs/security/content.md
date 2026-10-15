@@ -35,7 +35,9 @@ CVE.
 > should be re-verified against primary sources before being used to set
 > remediation SLAs. Protection verdicts come from a source-level audit, the live
 > `tests/nextjs-cve-parity.test.ts` suite, and the per-feature tests noted in
-> each row.
+> each row. **2026-10-15:** the surfaces added since 4.0.0 — `denext dashboard`,
+> the desktop navigation guard, `@denext/graphql`'s connection caps and magic-link
+> confirmation by default — are described below.
 
 ---
 
@@ -201,13 +203,13 @@ reimplement them — see [Known Gaps](#known-gaps--residual-risk).
 
 ## 10. Denial of Service (server crashes / ReDoS)
 
-| CVE / Advisory                        | Description                                                             | Protection Level                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **CVE-2021-43803**                    | Malformed URLs crash the server (`next start`/custom server). CVSS 7.5. | 🟢 **Protected (by design)** — request URLs are parsed by Deno's std HTTP stack; denext route matching is a hand-written linear scan, not a crash-prone parser. _(Add malformed-URL fuzz tests — backlog.)_                                                                                                                                                                                                                   |
-| **CVE-2022-21721**                    | DoS via a crafted `/${locale}/_next/` request in i18n apps. CVSS 7.5.   | ✅ **Protected (tested)** — denext's route matching is a hand-written linear scan over trusted patterns; a battery of locale-prefixed / deeply-nested internal-asset paths (`/fr/_next/`, `/en-US/_denext/…/../../etc`, 200-segment paths) is handled (routed or 404'd), never crashing or hanging the request loop. `tests/nextjs-cve-parity.test.ts`.                                                                       |
-| **CVE-2022-36046**                    | Unhandled promise rejection crashes the process (Node >15). CVSS 5.3.   | ✅ **Protected (tested)** — a page that throws synchronously **or** returns a rejecting promise is caught by the top-level request boundary (`app.ts`) → a plain `500`; `a(req)` resolves with a response rather than rejecting/tearing down the server, and the error text never leaks. `tests/nextjs-cve-parity.test.ts`.                                                                                                   |
-| **CVE-2024-39693**                    | Uncontrolled resource consumption crashes the server. CVSS 7.5.         | 🟡 **Mitigated** — request bodies are capped (413) with an idle timeout (408), every request has a 30 s default deadline that stays armed across streamed bodies, `maxConcurrency` sheds with a 503 + a slot backstop, Live connections/subscriptions/rooms/frames-per-second are capped, and the image optimizer and password hashing run behind bounded gates. A per-request CPU budget remains deployment-layer by design. |
-| **ReDoS in route matching** _(class)_ | Catastrophic backtracking in user-facing regexes.                       | 🟢 **Protected (by design)** — matchers compile to **linear** regexes (`.*` / `[^/]+` / escaped literals) with no nested quantifiers; patterns come from trusted config/route files, not request input.                                                                                                                                                                                                                       |
+| CVE / Advisory                        | Description                                                             | Protection Level                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **CVE-2021-43803**                    | Malformed URLs crash the server (`next start`/custom server). CVSS 7.5. | 🟢 **Protected (by design)** — request URLs are parsed by Deno's std HTTP stack; denext route matching is a hand-written linear scan, not a crash-prone parser. _(Add malformed-URL fuzz tests — backlog.)_                                                                                                                                                                                                                                                                                                                                                                                         |
+| **CVE-2022-21721**                    | DoS via a crafted `/${locale}/_next/` request in i18n apps. CVSS 7.5.   | ✅ **Protected (tested)** — denext's route matching is a hand-written linear scan over trusted patterns; a battery of locale-prefixed / deeply-nested internal-asset paths (`/fr/_next/`, `/en-US/_denext/…/../../etc`, 200-segment paths) is handled (routed or 404'd), never crashing or hanging the request loop. `tests/nextjs-cve-parity.test.ts`.                                                                                                                                                                                                                                             |
+| **CVE-2022-36046**                    | Unhandled promise rejection crashes the process (Node >15). CVSS 5.3.   | ✅ **Protected (tested)** — a page that throws synchronously **or** returns a rejecting promise is caught by the top-level request boundary (`app.ts`) → a plain `500`; `a(req)` resolves with a response rather than rejecting/tearing down the server, and the error text never leaks. `tests/nextjs-cve-parity.test.ts`.                                                                                                                                                                                                                                                                         |
+| **CVE-2024-39693**                    | Uncontrolled resource consumption crashes the server. CVSS 7.5.         | 🟡 **Mitigated** — request bodies are capped (413) with an idle timeout (408), every request has a 30 s default deadline that stays armed across streamed bodies, `maxConcurrency` sheds with a 503 + a slot backstop, Live connections/subscriptions/rooms/frames-per-second are capped, `@denext/graphql` caps its query depth (12 by default) and holds every subscription connection (WebSocket or SSE) to Live's `maxConnections` / `maxConnectionsPerIp`, and the image optimizer and password hashing run behind bounded gates. A per-request CPU budget remains deployment-layer by design. |
+| **ReDoS in route matching** _(class)_ | Catastrophic backtracking in user-facing regexes.                       | 🟢 **Protected (by design)** — matchers compile to **linear** regexes (`.*` / `[^/]+` / escaped literals) with no nested quantifiers; patterns come from trusted config/route files, not request input.                                                                                                                                                                                                                                                                                                                                                                                             |
 
 ## 11. Information disclosure / dev-server exposure
 
@@ -221,8 +223,8 @@ reimplement them — see [Known Gaps](#known-gaps--residual-risk).
 
 ### `denext ui` — a local write surface, fenced in six layers
 
-`denext ui` is the only denext command that serves a **state-writing** GUI, so
-it is treated as a security surface in its own right. It binds `127.0.0.1` only
+`denext ui` serves a **state-writing** GUI over the project, so it is treated as
+a security surface in its own right (so is `denext dashboard` — [below](#denext-dashboard--a-password-gated-database-gui)). It binds `127.0.0.1` only
 (there is no `--host`); every request passes the same DNS-rebinding /
 `Sec-Fetch-Site` host gate the dev server uses; the printed URL carries a
 per-launch 256-bit token that is exchanged **once** for an
@@ -251,6 +253,38 @@ every mutation **by the UI**, but it cannot stop your own config and plugin
 `setup()`s from executing inside that short-lived discovery child — which is
 exactly why the child, and not this process, is where they run. Every write is
 previewed as a diff before it is applied.
+
+### `denext dashboard` — a password-gated database GUI
+
+`denext dashboard` (the self-hosted stack's `dashboard` service) serves only the
+UI's Database section — tables and rows, SQL, users, storage, realtime, logs —
+and writes no project files. Because it may run on a server and be reached
+through a proxy, its gate is a password rather than a launch token:
+`DASHBOARD_PASSWORD` from the environment or `.env` (never an argument; under 12
+characters or unset, the dashboard stays locked), compared in constant time; 5
+failed sign-ins per client address and 30 overall per 15 minutes, after which
+even the right password waits; a fresh in-memory 256-bit session in an
+`HttpOnly; SameSite=Strict` cookie that is `__Host-` and `Secure` over https; a
+CSRF token plus a same-origin `Origin` on every write; the same Host /
+`Sec-Fetch-Site` DNS-rebinding gate. It binds `127.0.0.1` unless `--host` says
+otherwise, and an `--origin` that is plain http on another host is refused at
+startup, so the password never crosses the network in the clear. The stack
+publishes it on loopback only. Its optional log relay (`--dashboard-logs`) is
+the only service that mounts the Docker socket; it sits on an internal network
+shared with the dashboard alone and answers only GETs for the project's own
+services behind a bearer token. [Project UI › The stack dashboard](/docs/ui#the-stack-dashboard),
+[Deploy › The dashboard](/docs/deploy#the-dashboard).
+
+### Desktop windows — the navigation guard
+
+A Deno Desktop window holds the app's capabilities and storage, so under denext's
+pinned runtime (from `2.9.7-denext.18`) a top-level navigation to any other
+origin — a link, `location = …`, a form, a server redirect, `window.open()` —
+never loads in the window: an `http(s)` destination opens in the system browser
+and anything else is dropped. Only the app origin, the dev server in a
+development run and `desktop.app.allowedNavigationOrigins` (exact origins) may
+load there. The native JS bridge is limited to the app origin
+(`bridgeOrigins`). [Desktop runtime › The navigation guard](/docs/desktop-runtime#the-navigation-guard).
 
 ## 12. Security response headers / CSP / CORS
 
@@ -411,9 +445,11 @@ attack surface, so each ships with its own invariant:
   revoked between this request's read and its refresh stays revoked instead of
   coming back with a full fresh lifetime. A custom store that does not implement
   `update` never slides a session forward and says so once, which is the safe
-  direction. Sliding expiry has **no absolute ceiling** by design: an account
-  that keeps being used keeps being extended, so end a session with revocation
-  (or a shorter `maxAge`), not by waiting for a cap that does not exist.
+  direction. Sliding expiry has an **absolute ceiling**: a session ends
+  `session.maxLifetime` after its sign-in (default 30 days, or `maxAge` when
+  that is longer) however often it
+  slides, and a per-user `sessionsValidAfter` ends earlier stateless cookie
+  sessions on the next read; end one sooner with revocation.
 - **Provider tokens stay out of the event stream.** With an adapter configured,
   a provider's access / refresh / id tokens **are** persisted on the account row
   — that is what an adapter is for — but the `linkAccount` event payload carries
@@ -444,6 +480,10 @@ attack surface, so each ships with its own invariant:
   grace window (10 s by default) are pinned too. `tests/auth-native.test.ts`, `tests/auth-native-idtoken.test.ts`,
   `tests/auth-native-refresh-policy.test.ts`, `tests/auth-account-delete.test.ts`. See
   [App backend](/docs/app-backend#security).
+- **Magic links confirm by default.** `magicLink()` puts a click-to-confirm
+  page in front of the redeem unless `confirm: false`, so a mail scanner's
+  pre-fetch of the link cannot spend it (Supabase's `/auth/v1/verify` keeps its
+  GET redeem; see [the deliberate differences](/docs/differences)).
 - **Account linking refuses unverified matches.** An OAuth account only links to
   an existing user when both sides' emails are verified; anything else is
   `?error=account_not_linked` unless the provider explicitly sets

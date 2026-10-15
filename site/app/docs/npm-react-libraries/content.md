@@ -22,7 +22,8 @@ renders once and never updates.
 `deno bundle` (esbuild without its plugin surface) has no hook to rewrite that
 import. denext's **next-compat build** — the same pipeline that runs unmodified
 Next.js apps — bundles with esbuild ([its own binary](/docs/toolchain#esbuild), not an npm import) and resolver plugins that redirect
-`react`, `react-dom`, `react/jsx-runtime`, `react-is` and `next/*` for **every
+`react`, `react-dom` (`/client`, `/server`, `/static`, …), `react/jsx-runtime`,
+`react-is` and `next/*` (`next/head` and `next/router` included) for **every
 module in the graph**, node_modules included, to denext's single prebuilt
 runtime. That is the "one React" guarantee, and it is a build-time property: the
 shipped bundle contains denext's runtime plus the library's code, never npm
@@ -150,8 +151,8 @@ in Next.
 and `lucide-react`. Add those to `package.json`, and either leave the `react`
 imports to the alias map or rewrite them to `denext` (`denext codemod` does it
 in one pass). Radix's `asChild` resolves through denext's own `Slot`, so the
-`Button
-asChild` pattern works as written.
+`<Button asChild>`
+pattern works as written.
 
 ### A library's CSS
 
@@ -195,9 +196,11 @@ bundler, not a different framework.
 
 ## The cost, honestly
 
-- **A build-time npm dependency.** esbuild is downloaded into Deno's cache on
-  the first compat build. It never ships; the production image runs `deno` and
-  the `.denext/` output only.
+- **A build-time bundler.** The compat build runs esbuild — the binary
+  denext's Deno toolchain ships, or on stock Deno the official
+  `@esbuild/<platform>` binary fetched and integrity-checked on the first
+  compat build (see [esbuild](/docs/toolchain#esbuild)). It never ships; the
+  production image runs `deno` and the `.denext/` output only.
 - **Slower builds** than the native path — esbuild resolves through
   `node_modules` and prebuilds denext's runtime once per project. A large
   component library (the shadcn/ui site, ~2 700 islands) builds in minutes, not

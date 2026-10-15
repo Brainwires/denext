@@ -1,7 +1,7 @@
 ---
 title: Project UI
 slug: ui
-lead: denext ui serves a loopback GUI for the project in front of you — a schema-driven denext.config.ts editor that preserves your comments, a Cron page for schedules and run history, plugin management with per-plugin option forms and JSR search, a GUI over generate, Docker regeneration plus an in-place compose editor, a Desktop signing panel, a Setup page that readies a fresh clone, a Dev page for the dev server, a Tasks page for your deno.json scripts, a Services page for the supervised services/ tree, and your project's own CLI verbs.
+lead: denext ui serves a loopback GUI for the project in front of you — a schema-driven denext.config.ts editor that preserves your comments, a Cron page for schedules and run history, plugin management with per-plugin option forms and JSR search, a GUI over generate, Docker regeneration plus an in-place compose editor, a Desktop signing panel, a Setup page that readies a fresh clone, a Dev page for the dev server, a Tasks page for your deno.json scripts, a Services page for the supervised services/ tree, a Database section for a Postgres project (tables and rows, SQL, policies, migrations, storage, users, realtime, Edge Functions, logs and health, also served on its own as the password-gated denext dashboard), and your project's own CLI verbs.
 ---
 
 `denext ui` is a browser GUI for the project you are standing in — the `vue ui` idea,
@@ -663,28 +663,9 @@ steps were places rather than steps, and they are pages of their own now.
 ## The dev server
 
 `/dev` says whether a dev server is running, starts and stops it, and keeps the console its
-output streams into. The JSON twin answers `{ ok, dir, running, origin, pid }`.
-
-## Tasks
-
-`/tasks` lists the scripts your `deno.json` declares, each with the command it runs and a
-button. The buttons post to `/tasks/run`, the SSE runner that is the only route which spawns:
-it refuses any name the project does not declare, passes it as an argv element rather than
-through a shell, and ties the child to the stream so closing the page takes the task with it.
-A task runs exactly as `denext task <name>` would: on [denext's Deno toolchain](/docs/toolchain),
-with that `deno` first on the task's `PATH`.
-
-Not to be confused with the Cron page's scheduled jobs: those are `jobs/<name>.ts` modules
-registered with `defineJob`; these are `deno.json` scripts.
-
-## Services
-
-`/services` shows the [supervised services](/docs/services): the files under `services/`, and
-for each supervisor the state of every child (`running`, `restarting`, `failed`, …), its restart
-count and its last error. The UI never runs project code, so it reads the snapshot a running
-`denext dev` or `denext start` keeps in `.denext/services.json`, and says when that was written;
-with no server running it is the last one. Read-only. The JSON twin answers
-`{ ok, dir, files, snapshot }`.
+output streams into. The JSON twin answers `{ ok, dir, running, origin, pid }`. That output is
+what `denext dev` prints, so a type or build error arrives
+[explained](/docs/error-handling#explained-type-errors), with Deno's original text under it.
 
 **The dev server, and stopping it.** Starting `denext dev` answers _in place_ rather than
 redirecting, and the step keeps a `<pre class="out">` that the server's output streams into over
@@ -707,6 +688,27 @@ server (another project's dev server that took the port, say) is reported as a m
 signalled nor cleaned up. Stopping asks the server to drain first and kills the process tree only
 if it will not — and "gone" means the origin no longer answers as _that_ server; on Windows, which
 has no such signal, it is a hard kill and says so.
+
+## Tasks
+
+`/tasks` lists the scripts your `deno.json` declares, each with the command it runs and a
+button. The buttons post to `/tasks/run`, the SSE runner that is the only route which spawns:
+it refuses any name the project does not declare, passes it as an argv element rather than
+through a shell, and ties the child to the stream so closing the page takes the task with it.
+A task runs exactly as `denext task <name>` would: on [denext's Deno toolchain](/docs/toolchain),
+with that `deno` first on the task's `PATH`.
+
+Not to be confused with the Cron page's scheduled jobs: those are `jobs/<name>.ts` modules
+registered with `defineJob`; these are `deno.json` scripts.
+
+## Services
+
+`/services` shows the [supervised services](/docs/services): the files under `services/`, and
+for each supervisor the state of every child (`running`, `restarting`, `failed`, …), its restart
+count and its last error. The UI never runs project code, so it reads the snapshot a running
+`denext dev` or `denext start` keeps in `.denext/services.json`, and says when that was written;
+with no server running it is the last one. Read-only. The JSON twin answers
+`{ ok, dir, files, snapshot }`.
 
 ## Database
 

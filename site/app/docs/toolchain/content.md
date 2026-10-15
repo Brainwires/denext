@@ -31,10 +31,14 @@ no `deno` is on your PATH — `denext toolchain link`, so `deno` is the toolchai
 git hooks and `.mcp.json` too (`DENEXT_NO_DENO_LINK=1` skips the link, `DENEXT_NO_TOOLCHAIN=1`
 both steps). A `deno` you already have is never replaced.
 
-A CLI installed from JSR (`deno install -A -g -n denext jsr:@denext/denext/cli`) loads each
-verb's code the first time that verb runs. `denext toolchain install` also caches every verb, and
-the CLI's first online run does the same in the background, so a verb used offline afterwards
-(`--cached-only`, `denext ui --offline`) still loads. The binary embeds every verb already.
+The CLI's entrypoint is thin: it loads only the argument parser and a generated table of every
+verb's name, flags and help, and imports a verb's own code when that verb runs, so `denext
+--version` and `--help` never load the dev server, the bundler or `denext/server`. A CLI installed
+from JSR (`deno install -A -g -n denext jsr:@denext/denext/cli`) therefore fetches each verb's code
+the first time that verb runs. `denext toolchain install` also caches every verb, and the CLI's
+first online run does the same in the background (a failed attempt retries after 10 minutes), so a
+verb used offline afterwards (`--cached-only`, `denext ui --offline`) still loads. The binary
+embeds every verb already.
 
 When the toolchain can't be had (offline on first use, `DENEXT_DENO=stock`, a host with no build)
 the binary falls back to a stock `deno` — `DENO_BIN`, `~/.deno/bin/deno`, then `deno` on PATH —
@@ -70,7 +74,9 @@ pinned one.
 
 A compiled `denext` binary can't change its own runtime. It hands the toolchain to the processes it
 starts instead (through `DENO_BIN`, unless you set `DENO_BIN` yourself), and the project's pinned
-denext then runs on it.
+denext then runs on it. Finding a project's own verbs (`denext commands`, a project verb,
+completions) also re-runs on the project's pinned denext, so the config resolves through the
+project's import map rather than the binary's embedded one.
 
 ## Where it lives, and how it is verified
 
@@ -247,7 +253,9 @@ Vitest/Jest compatibility in `deno test` and the [Deno Desktop runtime](/docs/de
 published as `2.9.7-denext.N` with SHA-256 sums and build attestations. Between Deno releases we
 review what Deno's main branch has gained and take the fixes that matter: `2.9.7-denext.16` took the
 read-permission check for a compiled program's dynamic import, two Node-API fixes, coverage runs
-skipping V8's code cache, the HTTP connection-pool fix and the `rand` security update. Each new Deno
+skipping V8's code cache, the HTTP connection-pool fix and the `rand` security update, and
+`2.9.7-denext.19` (the build denext pins today) took deno_core's fix for an intermittent crash at
+exit. Each new Deno
 release is adopted by rebasing the patches onto it and cutting a new `-denext.N`. Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
 

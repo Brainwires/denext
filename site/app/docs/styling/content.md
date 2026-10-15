@@ -98,10 +98,10 @@ flash — on the streaming, Flight, and buffered SSR paths alike.
 
 ```tsx
 "use client";
-import { useServerInsertedHTML, useState } from "denext";
+import { type ReactNode, useServerInsertedHTML, useState } from "denext";
 import { ServerStyleSheet, StyleSheetManager } from "styled-components";
 
-export function StyleRegistry({ children }: { children: React.ReactNode }) {
+export function StyleRegistry({ children }: { children: ReactNode }) {
   const [sheet] = useState(() => new ServerStyleSheet());
   useServerInsertedHTML(() => sheet.getStyleElement());
   if (typeof window !== "undefined") return <>{children}</>;

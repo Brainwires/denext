@@ -157,6 +157,11 @@ aborts, its `stop()` runs, and the supervisor waits up to its `shutdownMs`. Plug
 after that, so a service can still use a database pool a plugin owns while it stops. A request
 that was in flight when shutdown began therefore still finds its services running.
 
+`instrumentation.ts`'s `onShutdown()` runs last. Once the drain is done, the process exits by the
+drain deadline (`DENEXT_SHUTDOWN_DRAIN_MS`, counted from the signal) even if a handle nothing
+closed keeps it alive — a service abandoned after its `shutdownMs`, an app-owned pool, a timer —
+and warns which held it. See [Graceful shutdown](/docs/deploy#10-graceful-shutdown).
+
 ## Supervising what denext already runs
 
 - **Jobs.** `jobService("consume")` runs a `jobs/consume.ts` job whose handler is a long-running
@@ -226,4 +231,7 @@ await tree.stop(); // reverse order, each within its shutdownMs
 
 Files under `services/` starting with `_` are skipped (helpers). Like `jobs/`, the directory is
 discovered once at boot: an edited service takes a dev-server restart. SPA mode has no server
-boot, so it runs no `services/`.
+boot, so it runs no `services/`. A
+[single binary from `denext build --compile`](/docs/deployment-targets#a-single-binary-with-denext-build---compile)
+embeds the `services/` tree and runs it the same way; its `services.json` status snapshot goes to
+the binary's state directory.

@@ -8,7 +8,8 @@ lead: The go-live list, one line per item, with the exact config key, flag or en
 
 A freshly built app served by `denext start` already **drains on
 `SIGTERM`/`SIGINT`** (stops accepting connections, finishes in-flight requests,
-bounded by a 10 s deadline), **times out** any request still running after 30 s
+bounded by a 10 s deadline, and exits by it even when an open handle such as a
+database pool outlives the shutdown), **times out** any request still running after 30 s
 with a `503` and aborts the render's cooperative `AbortSignal`, **sheds** load
 with a fast `503 + Retry-After` once the optional in-process concurrency ceiling
 is reached, **caps request bodies** at 1 MiB for route handlers and Server
@@ -107,9 +108,12 @@ Each line: what to set → where it is documented. Config keys go in
   `Retry-After: 1`, never queued. Size it to what one instance can render, not
   to your traffic. → [Production server config](/docs/config#production-server)
 - `DENEXT_SHUTDOWN_DRAIN_MS` (default `10000`; `0` waits forever) — the drain
-  deadline on shutdown. Above your longest request, below the orchestrator's
-  kill grace (k8s `terminationGracePeriodSeconds`, default 30 s). →
-  [Graceful shutdown](/docs/deploy#10-graceful-shutdown)
+  deadline on shutdown, and the deadline the process exits by even if a handle
+  nothing closed (an app-owned pool, a timer, a socket) keeps it alive. Above
+  your longest request, below the orchestrator's kill grace (k8s
+  `terminationGracePeriodSeconds`, default 30 s). Close app-owned resources in
+  `instrumentation.ts`'s `onShutdown()` so the process exits as soon as they are
+  closed. → [Graceful shutdown](/docs/deploy#10-graceful-shutdown)
 - `apiMaxBodyBytes` / `actionMaxBodyBytes` (default 1 MiB each) — the
   route-handler and Server Action body caps; a single route lifts its own with
   `export const maxBodyBytes = N | false`. Raise them only on the routes that
@@ -127,6 +131,23 @@ Each line: what to set → where it is documented. Config keys go in
   `key`; `rateLimitLocalAddresses: true` limits such peers by their own address
   (a LAN deployment). An IPv6 client counts as its `/64`. →
   [Typed API](/docs/typed-api), [Auth › Rate limiting](/docs/auth#rate-limiting)
+
+**Postgres**
+
+- `directUrl` (env `DATABASE_DIRECT_URL` for `backend({ postgres })`) — behind
+  PgBouncer or Supavisor in **transaction** mode, give denext a direct
+  connection too: `LISTEN` (realtime, webhook wake-up), reserved connections and
+  every migration and its lock need one, and through the pooler alone realtime
+  silently hears nothing. Every Postgres store takes `directUrl`;
+  `withDirectConnection(pooled, direct)` pairs your own clients. →
+  [Pool sizing, timeouts and PgBouncer](/docs/database#pool-sizing-timeouts-and-pgbouncer)
+- `DENEXT_BOOT_DDL=off` — when migrations are applied out of band (a release step
+  with a privileged role): no denext feature creates schema at boot, and
+  `denext start` refuses to start with `boot_schema_missing` naming each missing
+  migration. Apply them with `denext db push` (or `denext migration up`) in the
+  release step. → [Schema at startup](/docs/database#schema-at-startup)
+- Size the pool: keep `instances × (max + 1)` under the server's
+  `max_connections`. → [Pool sizing](/docs/database#pool-sizing-timeouts-and-pgbouncer)
 
 **Headers and policy**
 
@@ -189,8 +210,21 @@ Each line: what to set → where it is documented. Config keys go in
 - If you run more than one replica: a shared `cache.store`, a shared auth
   `sessionStore` / `adapter`, a shared `rateLimit.store`, a `ChannelTransport`
   for Live, and **one** designated instance (or `Deno.cron`) for scheduled
-  jobs. Every item is a per-node component by default. →
+  jobs. Every item is a per-node component by default, and so is every
+  connection cap (Live's and `@denext/graphql`'s `maxConnections` /
+  `maxConnectionsPerIp`, `maxConcurrency`): each is per process. →
   [Multi-instance](/docs/multi-instance)
+
+**Operating tools**
+
+- The stack's `dashboard` service (`denext dashboard`) publishes on
+  `127.0.0.1` only and sits behind `DASHBOARD_PASSWORD`. To reach it from
+  another machine, put a TLS reverse proxy in front and pass `--origin
+  https://…`; a plain-http origin off this machine is refused. Add
+  `--dashboard-logs` only if you want its Logs page: that relay is the one
+  service that mounts the Docker socket. → [The dashboard](/docs/deploy#the-dashboard)
+- `denext ui` is a development tool: it binds loopback only. Never expose it.
+  → [Project UI](/docs/ui)
 
 ## Copy-paste
 

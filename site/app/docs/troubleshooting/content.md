@@ -188,7 +188,7 @@ prisma:setup` once afterwards. See [Database](/docs/database) → Prisma.
 resolve to `::1` rather than `127.0.0.1` on your machine.
 
 **Fix.** Use the host printed in the startup banner, or pass an explicit
-hostname.
+hostname (`denext dev --host 127.0.0.1`).
 
 See [SPA mode](/docs/spa).
 
@@ -419,6 +419,67 @@ Only what the bundle actually emitted counts (a helper the route never used is
 tree-shaken and not a leak), and a `typeof Deno` guard marks a module isomorphic
 by intent. See [Islands & hydration](/docs/islands) and the boundary section of
 [Known limitations](/docs/limitations).
+
+## An error prints as an explanation, not Deno's own output
+
+**Cause.** `denext check`, `lint`, `build` and `dev` explain type, lint and build
+diagnostics: a one-line problem, a codeframe, why it happens and a fix, with
+Deno's original text kept underneath (collapsed in the dev overlay).
+
+**Fix.** For Deno's output exactly as it prints it — a script that parses it, or
+a bug report — pass `--raw` or set `DENEXT_RAW_DIAGNOSTICS=1`. An agent can ask
+the `denext_explain_error` MCP tool for the same explanation. See
+[Explained type errors](/docs/error-handling#explained-type-errors).
+
+## `503 Service Unavailable (request timeout)`
+
+**Cause.** The request was still running at `requestTimeout` (30 s by default),
+so denext aborted its signal and answered `503`. Only the app's own time counts:
+in `denext dev` the time the dev server spends compiling or bundling on the
+request's behalf (a first visit, a target's first build) is held off the
+deadline, so a slow first compile no longer times out. The handler, render or
+upstream `fetch` it awaits is what took too long.
+
+**Fix.** Find the slow await (the request log's `durationMs`, `denext_dev_logs`),
+or give a legitimately slow route more time with `setRequestTimeout(ms)` from
+`denext/server` inside it, or the app's `requestTimeout` (`0` turns it off).
+See [`requestTimeout` bounds awaiting](/docs/deploy#2-requesttimeout-bounds-awaiting-not-cpu).
+
+## `BootSchemaError` / `boot_schema_missing`: the server refuses to start
+
+**Cause.** `DENEXT_BOOT_DDL=off` is set (`0`, `false` and `no` count too), so
+no denext feature creates its Postgres schema at boot, and at least one
+migration a store or `@denext/backend` needs is not recorded in its tracking
+table. The message names each missing one (`<tracking table>:<name>`).
+
+**Fix.** Apply them out of band before starting: `denext db push` (or
+`denext migration up`) applies `@denext/backend`'s migrations, every Postgres
+store the config builds, the app's own and realtime's triggers. Or run once with
+`DENEXT_BOOT_DDL` unset as a role that may create them. See
+[Schema at startup](/docs/database#schema-at-startup).
+
+## Realtime or webhooks hear nothing behind PgBouncer
+
+**Cause.** A transaction-mode pooler (PgBouncer, Supavisor) hands the server
+connection a `LISTEN` ran on to the next transaction, so a `NOTIFY` never
+arrives, and there is no error. Reserved connections and session-level locks are
+unsound there too.
+
+**Fix.** Give denext a direct connection: `DATABASE_DIRECT_URL` (or
+`backend({ postgres: { directUrl } })`, `directUrl` on any store). Queries keep
+using the pooler; `LISTEN`, reserved connections and migrations use the direct
+one. See [Pool sizing, timeouts and PgBouncer](/docs/database#pool-sizing-timeouts-and-pgbouncer).
+
+## `denext: shut down and drained, but an open handle … still holds the process`
+
+**Cause.** After `SIGTERM` the drain finished, but something the app opened and
+never closed (a database pool, a timer, a socket) kept the event loop alive, so
+denext exited at the drain deadline (`DENEXT_SHUTDOWN_DRAIN_MS`, 10 s by default)
+rather than wait for the orchestrator's `SIGKILL`.
+
+**Fix.** Close app-owned resources in `instrumentation.ts`'s `onShutdown()`; the
+process then exits as soon as they are closed. See
+[Graceful shutdown](/docs/deploy#10-graceful-shutdown).
 
 ## Mobile (Capacitor)
 

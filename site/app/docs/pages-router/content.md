@@ -144,10 +144,12 @@ ignored: it never discloses drafts. It is one of denext's
 
 The two routers coexist in one app. Core routes always win, so the plugin never
 shadows an `app/` page — it claims the requests the App Router didn't match.
-`next/head` (`@denext/pages-router/head`) hoists per-page `<title>`/`<meta>`/
-`<link>` at SSR and diffs them into `document.head` across soft navigation, but
-its dedupe set is narrower than Next's — see
-[Known limitations](/docs/limitations).
+`next/head` (`@denext/pages-router/head`) hoists per-page `<title>`, `<meta>`,
+`<link>`, `<base>`, `<script>`, `<style>` and `<noscript>` at SSR and diffs them
+into `document.head` across soft navigation. A tag dedupes on its `key` when it
+has one, else on what identifies it: one `<title>` and one `<base>`, a `<meta>`
+by `name` / `property` / `http-equiv` / `charset`, a `<link>` by `rel` + `href`,
+and a script or style block by its `src` and content.
 
 [`examples/pages-router`](https://github.com/Brainwires/denext/tree/main/examples/pages-router)
 is the reference app for all of the above, including App Router coexistence; the

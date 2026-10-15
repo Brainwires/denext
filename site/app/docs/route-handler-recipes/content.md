@@ -11,8 +11,10 @@ does; `HEAD` is derived from `GET` when you export only `GET`. The request body
 is capped at 1 MiB unless the module says otherwise
 (`export const maxBodyBytes = N | false`) — an over-cap `Content-Length` is a
 `413` before the handler runs, and a chunked body past the cap errors the stream
-as you read it. A typed, validated handler is [`defineApi`](/docs/typed-api);
-the recipes here are the cases that are about the wire, not the schema.
+as you read it. A typed, validated handler is [`defineApi`](/docs/typed-api) (which can also
+`return err(code)` from [`denext/result`](/docs/errors-as-values#returning-err-from-defineapi)
+instead of throwing); the recipes here are the cases that are about the wire,
+not the schema.
 
 ## Webhook with signature verification
 
@@ -224,15 +226,14 @@ a routable method when no policy covers the route.
 Reach for a raw stream or socket when the _client_ is not a denext page: a CLI,
 a mobile app, a third party, a browser `EventSource` you do not control. When
 the consumer is your own `"use client"` component,
-[`createChannel`](/docs/typed-api#server-push--createchannel)
-
-- `useChannel` gives you what the recipes above leave to you — a required
-  `authorize` that re-runs on a TTL, per-connection caps, latest-wins
-  back-pressure, one socket per page shared by every subscription, and
-  cross-instance fan-out through a `ChannelTransport` — and
-  [`defineSubscription`](/docs/typed-api#typed-live-queries--usesubscription)
-  re-pushes a validated query when its tags are invalidated. See
-  [Live components](/docs/live).
+[`createChannel`](/docs/typed-api#server-push--createchannel) +
+`useChannel` gives you what the recipes above leave to you — a required
+`authorize` that re-runs on a TTL, per-connection caps, latest-wins
+back-pressure, one socket per page shared by every subscription, and
+cross-instance fan-out through a `ChannelTransport` — and
+[`defineSubscription`](/docs/typed-api#typed-live-queries--usesubscription)
+re-pushes a validated query when its tags are invalidated. See
+[Live components](/docs/live).
 
 See also: [Typed API](/docs/typed-api) for validated handlers and the typed
 client, [File uploads](/docs/uploads) for multipart bodies and the caps, and the
