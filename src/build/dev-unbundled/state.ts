@@ -45,6 +45,8 @@ export const DEP_ENTRYPOINTS: Record<string, string> = {
   "denext_mobile": "src/mobile/mod.ts",
   // VirtualMasonry — a client-only subpath of its own (VirtualList users bundle none of it).
   "denext_virtual-masonry": "src/virtual-masonry.ts",
+  // `denext/mvu` — useMvu / MvuView; shares the one hooks instance.
+  "denext_mvu": "src/mvu.ts",
   // SPA mode's `client:*` deferred mounts: the island rewrite's import (spa-islands.ts).
   "denext_spa-island": "src/spa-island.ts",
 };
@@ -64,6 +66,7 @@ export const DENEXT_RUNTIME_FILE: Record<string, string> = {
   "denext/result": "result.js",
   "denext/mobile": "mobile.js",
   "denext/virtual-masonry": "virtual-masonry.js",
+  "denext/mvu": "mvu.js",
   "denext/spa-island": "spa-island.js",
 };
 

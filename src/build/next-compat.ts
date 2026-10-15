@@ -280,6 +280,8 @@ function platformRuntimeEntries(u: EntryUrl): Record<string, string> {
     "navigation": u("src/navigation/mod.ts"),
     // `denext/virtual-masonry` — VirtualMasonry; shares the one hooks instance.
     "virtual-masonry": u("src/virtual-masonry.ts"),
+    // `denext/mvu` — useMvu / MvuView; shares the one hooks instance.
+    "mvu": u("src/mvu.ts"),
     // `denext/desktop/{client,window,app}` — the Deno Desktop page APIs (no hooks; prebuilt so
     // the unbundled dev loop can serve them like the other `denext/*` client modules).
     "desktop-client": u("src/desktop/client.ts"),
@@ -814,6 +816,7 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/mobile/clerk": "mobile-clerk.js",
   "denext/navigation": "navigation.js",
   "denext/virtual-masonry": "virtual-masonry.js",
+  "denext/mvu": "mvu.js",
   // The Deno Desktop page APIs (deep-link scheme ownership, the window, the app menu / tray).
   "denext/desktop/client": "desktop-client.js",
   "denext/desktop/window": "desktop-window.js",
