@@ -15,9 +15,10 @@ export default function Middleware() {
     >
       <h2>middleware.ts</h2>
       <p>
-        Export a default function from <code>middleware.ts</code> (or <code>proxy.ts</code>){" "}
-        at the project root. It runs before routing and can short-circuit with a response, redirect,
-        rewrite the URL used for matching, or continue.
+        Export a function from <code>middleware.ts</code> (or <code>proxy.ts</code>){" "}
+        at the project root, as the default export or a named <code>middleware</code>{" "}
+        export. It runs before routing and can short-circuit with a response, redirect, rewrite the
+        URL used for matching, or continue.
       </p>
       <Code lang="tsx">
         {`// middleware.ts
@@ -62,14 +63,29 @@ export const config = { matcher: ["/dashboard/:path*"] };`}
         (one or more), <code>:param?</code> (optional), a custom pattern{" "}
         <code>:id(\\d+)</code>, a regex group like Next's{" "}
         <code>/((?!api|_next/static|favicon.ico).*)</code>, and{" "}
-        <code>*</code>. A trailing slash is always optional. Object entries (<code>
-          {"{ source, has, missing }"}
-        </code>) are accepted; only <code>source</code>{" "}
-        is evaluated. Omit it to run on every request.
+        <code>*</code>. A trailing slash is always optional. Omit it to run on every request.
       </p>
       <Code lang="ts">
         {`export const config = {
   matcher: ["/dashboard/:path*", "/api/:path*", "/account"],
+};`}
+      </Code>
+      <p>
+        An object entry (<code>{"{ source, has, missing }"}</code>) also gates on the request, as in
+        Next.js: every <code>has</code> condition must hold and no <code>missing</code>{" "}
+        condition may. A condition names a <code>header</code>, <code>cookie</code>,{" "}
+        <code>query</code> parameter (each with a <code>key</code>) or the{" "}
+        <code>host</code>; without <code>value</code> it tests presence, and a <code>value</code>
+        {" "}
+        is an exact match, or a full-match regular expression when it contains regex syntax.
+      </p>
+      <Code lang="ts">
+        {`export const config = {
+  matcher: [{
+    source: "/api/:path*",
+    has: [{ type: "header", key: "authorization" }],
+    missing: [{ type: "cookie", key: "preview", value: "1|true" }],
+  }],
 };`}
       </Code>
 
@@ -93,7 +109,38 @@ export const config = { matcher: ["/dashboard/:path*"] };`}
       <p>
         You can also export an array of handlers; they run in order, a returned{" "}
         <code>Response</code>{" "}
-        short-circuits the chain, and a rewrite threads its URL into later entries.
+        short-circuits the chain, and a rewrite threads its URL into later entries. An entry may be
+        {" "}
+        <code>{"{ handler, config }"}</code>{" "}
+        to give that handler its own matcher, inside the module's <code>config</code>.
+      </p>
+
+      <h2>Without the Next.js wrappers</h2>
+      <p>
+        <code>NextRequest</code> / <code>NextResponse</code>{" "}
+        come from the compat layer. denext's own form takes a plain <code>Request</code>{" "}
+        and a context, and returns a <code>Response</code> or one of the commands from{" "}
+        <code>denext/server</code>: <code>next({"{ headers }"})</code> to continue,{" "}
+        <code>rewrite(url)</code>, or <code>redirectResponse(location, status)</code>{" "}
+        (307 by default). A thrown <code>redirect()</code> / <code>permanentRedirect()</code>{" "}
+        becomes that 307 / 308 response. <code>ctx.waitUntil(promise)</code>{" "}
+        keeps work running after the response, like <code>after()</code>.
+      </p>
+      <Code lang="ts">
+        {`// middleware.ts
+import { type MiddlewareContext, next, redirectResponse } from "denext/server";
+
+export default function middleware(_request: Request, ctx: MiddlewareContext) {
+  if (ctx.url.pathname === "/old") return redirectResponse("/new", 308);
+  return next({ headers: { "x-served-by": "denext" } });
+}`}
+      </Code>
+      <p>
+        With the <code>denextAuth()</code> plugin, <code>requireAuth(request, {"{ role }"})</code>
+        {" "}
+        from <code>denext/server</code> returns the redirect for a visitor without that session, or
+        {" "}
+        <code>null</code> to continue — see <a href="/docs/auth">Auth</a>.
       </p>
 
       <Callout kind="warn">

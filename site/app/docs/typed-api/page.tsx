@@ -76,6 +76,33 @@ export const PATCH = authed.define({
         that correlates with the server log), exactly like a <code>defineAction</code> error.
       </p>
 
+      <h3>Returning the failure — err()</h3>
+      <p>
+        A handler may also <em>return</em> <code>err(code, init?)</code> from{" "}
+        <code>denext/result</code> instead of calling{" "}
+        <code>fail()</code>. The response is the same envelope with the declared status, and{" "}
+        <code>init</code> is the <code>{"{ message?, data?, fieldErrors?, headers? }"}</code> that
+        {" "}
+        <code>fail()</code> takes. The code is checked against the endpoint's <code>errors</code>
+        {" "}
+        (<code>err("typo")</code> is a compile error, with or without a <code>response</code>{" "}
+        schema; the type of a valid return is <code>ApiErr&lt;typeof def&gt;</code> from{" "}
+        <code>denext/server</code>), and the <code>Err</code>{" "}
+        is dropped from the response type the typed client sees. Only a value <code>err()</code>
+        {" "}
+        made counts: a plain <code>{"{ ok: false }"}</code> object is still a 200 body. See{" "}
+        <a href="/docs/errors-as-values">Errors as values</a>.
+      </p>
+      <Code lang="ts">
+        {`import { err } from "denext/result";
+
+export const GET = defineApi({
+  params: z.object({ id: z.string() }),
+  response: z.object({ id: z.string(), title: z.string() }),
+  errors: { not_found: 404 },
+}, async ({ params }) => (await db.posts.get(params.id)) ?? err("not_found"));`}
+      </Code>
+
       <h2>CORS and CSRF — cors() and csrf()</h2>
       <Code lang="ts">
         {`// app/api/cart/route.ts

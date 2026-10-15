@@ -51,7 +51,7 @@ denext patch apply                      # what dev/build/start do at boot`}
         {`denext patch edit denext src/server/document.ts
 #   → edit patches/.work/denext/src/server/document.ts
 denext patch create denext
-#   → patches/denext+2.0.6.patch
+#   → patches/denext+4.0.0.patch
 #     materialized into patches/denext/, mapped in deno.json — takes effect on the next start`}
       </Code>
       <p>
@@ -60,7 +60,7 @@ denext patch create denext
         with its relative imports rewritten to absolute framework URLs (the copy lives elsewhere
         now), and the app's <code>deno.json</code>{" "}
         import map gains an entry mapping that file's full URL (
-        <code>https://jsr.io/@denext/denext/2.0.6/src/server/document.ts</code>) to the copy. Deno
+        <code>https://jsr.io/@denext/denext/4.0.0/src/server/document.ts</code>) to the copy. Deno
         applies import maps to the resolved URL of every import, the framework's own relative
         imports included, so one file of the published package is overridden without vendoring the
         rest. Compat builds (the React drop-in) prebuild the framework runtime with esbuild and read

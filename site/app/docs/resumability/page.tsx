@@ -50,9 +50,15 @@ export default function Resumability() {
       </p>
       <Code lang="tsx">
         {`// app/dashboard/page.tsx
+import { Counter } from "./counter.tsx";
+
 export const resumable = true;
 
-// A perfectly ordinary client component — no special API.
+export default function Dashboard() {
+  return <Counter />;
+}
+
+// app/dashboard/counter.tsx — a perfectly ordinary client component, no special API
 "use client";
 import { useState } from "denext";
 
@@ -166,9 +172,11 @@ export function Cart() {
         <strong>no changes to your code</strong> (where extraction is provably safe):
       </p>
       <Code lang="tsx">
-        {`export const resumable = true;
+        {`// a "use client" component rendered by a route that sets \`resumable = true\`
+"use client";
+import { useSignal } from "denext";
 
-function Counter() {
+export function Counter() {
   const count = useSignal(0);
   // Written plainly — the build moves this handler's code off the initial
   // bundle and passes \`count\` to it; it loads and runs on first click.
