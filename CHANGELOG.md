@@ -373,6 +373,10 @@ and this project adheres to
 
 ### Fixed
 
+- **`@denext/backend` 0.5.0: `denext db diff`, `pull` and `lint` build their shadow database as
+  `db push` does.** The shadow got the backend's migrations and the app's, but not realtime's
+  per-table triggers, which a push applies after the app's migrations. A diff against a pushed
+  database then showed those triggers as drift.
 - **A quoted `DENEXT_DENO` value is read without its quotes.** Windows cmd's
   `set DENEXT_DENO="C:\Program Files\deno\deno.exe"` keeps the quotes in the value, so the path
   was not a file and the command ran on stock Deno. One pair of matching surrounding quotes

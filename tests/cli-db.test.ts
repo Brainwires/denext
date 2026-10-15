@@ -344,7 +344,10 @@ Deno.test("db <postgres action>: needs @denext/backend, then runs its hook", asy
       },
       seedBuckets: () => Promise.resolve(["bucket avatars"]),
     };
-    assertEquals(await act(DB_ACTIONS, root, ["lint"]), ["applied backend_0001"]);
+    // The shadow database gets what a push applies, in its order: the after-sets included.
+    assertEquals(await act(DB_ACTIONS, root, ["lint"]), [
+      "applied backend_0001,backend_realtime_t_notes",
+    ]);
     assertEquals(seen, ["lint"]);
     // Push applies the backend's migrations first and its after-sets last; seed seeds the
     // buckets; reset drops its schemas.

@@ -715,9 +715,11 @@ export async function backendAction(run: MigrationRun, action: string): Promise<
           display: "shadow",
           close: async () => {},
         };
+        // What a push applies, in its order, so a diff or a lint sees the database a push makes.
         const own = await applyBackend(shadow, hooks, false);
         const history = await historyFor(shadow, local.dir, local.exists);
-        return [...own, ...await migrateUp(history, local.files, { includeAll: true })];
+        const app = await migrateUp(history, local.files, { includeAll: true });
+        return [...own, ...app, ...await applyBackendAfterApp(shadow, hooks, false)];
       },
       recordApplied: async (name) => {
         const fresh = await localMigrations(run.projectDir);
