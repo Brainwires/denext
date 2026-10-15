@@ -23,6 +23,7 @@ import {
   nowSeconds,
   obj,
   ok,
+  pageParams,
   readJson,
   redirectTarget,
   requireServiceRole,
@@ -86,11 +87,7 @@ export async function adminListUsers(ctx: GoTrueContext): Promise<Response> {
   if (!ctx.adapter.listUsers) {
     throw new GoTrueError(500, "unexpected_failure", "the adapter cannot list users");
   }
-  const page = Math.max(1, Number(ctx.url.searchParams.get("page") ?? "1") | 0);
-  const perPage = Math.min(
-    1000,
-    Math.max(1, Number(ctx.url.searchParams.get("per_page") ?? "50") | 0),
-  );
+  const { page, perPage } = pageParams(ctx.url);
   const { users, total } = await ctx.adapter.listUsers({ page, perPage });
   const last = Math.max(1, Math.ceil(total / perPage));
   const base = new URL(ctx.url.href);

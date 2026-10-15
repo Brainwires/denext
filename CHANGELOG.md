@@ -233,6 +233,9 @@ and this project adheres to
 
 ### Fixed
 
+- **`/auth/v1` `GET /admin/users` with empty paging values returns the default page.**
+  supabase-js's `auth.admin.listUsers()` with no options sends `?page=&per_page=`, which was
+  read as one user per page; an empty value now means GoTrue's defaults (page 1, 50 per page).
 - **`@denext/content-collections` Markdown: `_x_` / `*x*` in a link destination** (inline or
   reference, e.g. `[x](https://a.test/_x_/y)`) is no longer turned into `<em>`, which corrupted
   the `href`. The destination is held out before emphasis runs; the link text still takes it.

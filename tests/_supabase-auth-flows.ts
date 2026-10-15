@@ -12,6 +12,7 @@ import {
 import type { AuthAdapter } from "../src/server/auth/adapter.ts";
 import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
 import type { AuthConfig } from "../src/server/auth/types.ts";
+import { CLIENT_FLOWS } from "./_supabase-auth-flows-client.ts";
 import { OAUTH_FLOWS } from "./_supabase-auth-flows-oauth.ts";
 import {
   memoryStorage,
@@ -717,7 +718,7 @@ export async function runFlows(
   adapter: () => AuthAdapter | Promise<AuthAdapter>,
   cleanup?: () => Promise<void>,
 ): Promise<void> {
-  for (const [name, step, auth, authConfig] of [...FLOWS, ...OAUTH_FLOWS]) {
+  for (const [name, step, auth, authConfig] of [...FLOWS, ...CLIENT_FLOWS, ...OAUTH_FLOWS]) {
     await t.step(name, async () => {
       const app = await supabaseAuthApp({ adapter: await adapter(), auth, authConfig });
       try {

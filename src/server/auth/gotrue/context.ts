@@ -409,6 +409,20 @@ export function normalizeEmail(input: string | undefined): string | undefined {
   return email.slice(0, at) + "@" + email.slice(at + 1).toLowerCase();
 }
 
+/**
+ * The `page` / `per_page` query of an admin list route. An absent or empty value is GoTrue's
+ * default (page 1, 50 per page) — supabase-js's `listUsers()` with no options sends
+ * `?page=&per_page=` — and `per_page` is capped at 1000.
+ *
+ * @param url The request URL.
+ * @returns The page (from 1) and the page size.
+ */
+export function pageParams(url: URL): { page: number; perPage: number } {
+  const page = Math.max(1, Number(url.searchParams.get("page") || "1") | 0);
+  const perPage = Math.min(1000, Math.max(1, Number(url.searchParams.get("per_page") || "50") | 0));
+  return { page, perPage };
+}
+
 /** Epoch seconds. */
 export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
