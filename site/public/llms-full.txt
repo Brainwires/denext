@@ -686,7 +686,10 @@ operates it: `health [--json] [--watch]`, `logs --level/--since/--until/--grep`,
 --postgres|--dashboard [--generate]` (ALTER ROLE first; a password only from stdin), `roll
 [--include-secret] [--keep-old | --drop-old]` (`--keep-old` keeps the previous keys valid until
 `--drop-old`), `backup [--full]` / `restore <file> [--yes]` (`--restart` / `--no-restart`
-after a `.env` change).
+after a `.env` change). Its `dashboard` service is `denext dashboard`: `denext ui`'s Database
+section (tables and rows, a SQL editor, RLS policies, storage, auth users, logs) on
+`127.0.0.1:3100` behind `DASHBOARD_PASSWORD` (rate-limited sign-in, `Secure` session cookie,
+CSRF on every change); `--dashboard-logs` adds the relay its Logs page reads the stack through.
 
 **A database (zero-npm, server-only module):**
 

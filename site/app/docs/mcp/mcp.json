@@ -107,6 +107,12 @@
           "required": false
         },
         {
+          "name": "dashboard",
+          "type": "boolean",
+          "description": "docker only (--dashboard / --no-dashboard): The database dashboard (denext dashboard) on 127.0.0.1:3100, behind DASHBOARD_PASSWORD (on with Postgres). true adds it, false leaves it out, omitted follows the detection.",
+          "required": false
+        },
+        {
           "name": "stack",
           "type": "boolean",
           "description": "docker only (--stack): every service the project needs, and Postgres regardless.",
@@ -122,6 +128,12 @@
           "name": "dev",
           "type": "boolean",
           "description": "docker only (--dev): also write compose.dev.yml (denext dev on a bind mount).",
+          "required": false
+        },
+        {
+          "name": "dashboardLogs",
+          "type": "boolean",
+          "description": "docker only (--dashboard-logs): the dashboard's log relay, a service that mounts the Docker socket so the dashboard's Logs page can read the stack's logs.",
           "required": false
         },
         {

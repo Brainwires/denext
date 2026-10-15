@@ -10,11 +10,12 @@
 
 ## 4.1.0: Additional Supabase features
 
-- **A dashboard:** a Supabase Studio-style web dashboard for the stack, behind the dashboard
-  password (`DASHBOARD_PASSWORD`, set with `denext stack passwd --dashboard`): tables and rows,
-  RLS policies, auth users, storage buckets and objects, realtime, functions, logs and health.
-  Build it on the `denext ui` Database pages (schema-driven, works with JavaScript off) so the
-  local UI and the stack's dashboard are one implementation.
+- **The dashboard's remaining pages:** `denext dashboard` (the stack's `dashboard` service) has
+  tables and rows, the SQL editor, RLS policies, storage, auth users and logs. Still to add, on
+  the same Database section so `denext ui` gets them too: realtime (channels, presence,
+  `postgres_changes` subscribers), Edge Functions (the deployed functions, recent invocations)
+  and health (each service's health check and the app's `/_denext/health` checks, as
+  `denext stack health` prints them).
 
 ## 4.1.0: Limitations that can be lifted
 

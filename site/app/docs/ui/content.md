@@ -167,7 +167,7 @@ flag can sandbox is refused:
 | `deno task` (the Tasks page)                     | Refused with a `503` — a task is arbitrary shell, and no flag can keep it off the network                                                            |
 | The Dev page's "Start denext dev"                | Refused with a `503` — a dev server needs net permission to listen                                                                                   |
 | Plugin add and remove                            | Refused with a `503`, preview included — `deno add` needs the registry, and `deno remove` can re-resolve the remaining dependencies over the network |
-| The Database section                             | Refused with a `503` — reaching a database, even one on this machine, is a network connection                                                        |
+| The Database section                             | Refused with a `503` — reaching a database, even one on this machine, is a network connection (Logs excepted: `docker compose logs` stays local)     |
 
 `--cached-only` is there because the net permission does not govern Deno's module loader: a
 child denied net would still download an uncached import. A refused control renders disabled
@@ -714,14 +714,16 @@ has no such signal, it is a hard kill and says so.
 `postgres://` URL (in the environment, `.env` or `.env.local`), or the config declares
 `postgres:` — `backend({ postgres })` from [`@denext/backend`](/docs/backend). Its tabs:
 
-| Tab        | What it shows                                                                                                                                      | Writes                                                              |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Tables     | Every table, view and materialized view: the planner's row estimate, row-level security, the primary key; a table's columns, indexes, foreign keys | —                                                                   |
-| Rows       | A table's rows, 50 a page — sort by any column, filter `column = value` (or `IS NULL`), open one row                                               | Edit a value, insert a row, delete a row                            |
-| Policies   | Each table's row-level security (enabled, forced) and every policy in `pg_policies`                                                                | "Enable RLS" writes a migration — it does not alter the table       |
-| Migrations | `migrations/*.sql` — applied, pending, or applied and since edited — and what applying would run                                                   | Apply the pending ones                                              |
-| Storage    | The buckets `backend({ storage })` declares and their objects (paged, size, type); download one (up to 10 MB)                                      | Delete an object                                                    |
-| Users      | denext auth's users from its Postgres tables: live sessions, a confirmed second factor, passkeys                                                   | Revoke a user's sessions; delete a user and every row keyed by them |
+| Tab        | What it shows                                                                                                                                      | Writes                                                                                                         |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Tables     | Every table, view and materialized view: the planner's row estimate, row-level security, the primary key; a table's columns, indexes, foreign keys | —                                                                                                              |
+| Rows       | A table's rows, 50 a page — sort by any column, filter `column = value` (or `IS NULL`), open one row                                               | Edit a value, insert a row, delete a row                                                                       |
+| SQL        | The [SQL editor](#the-sql-editor): a statement or a script, and the last statement's rows                                                          | Whatever a read-write run does                                                                                 |
+| Policies   | Each table's row-level security (enabled, forced) and every policy in `pg_policies`                                                                | "Enable RLS" writes a migration — it does not alter the table                                                  |
+| Migrations | `migrations/*.sql` — applied, pending, or applied and since edited — and what applying would run                                                   | Apply the pending ones                                                                                         |
+| Storage    | The buckets `backend({ storage })` declares and their objects (paged, size, type); download one (up to 10 MB)                                      | Upload an object (up to 10 MB); delete an object                                                               |
+| Users      | denext auth's users from its Postgres tables: live sessions, a confirmed second factor, passkeys, a ban in force; one user's page                  | Create a user; ban, unban, set a password; revoke a user's sessions; delete a user and every row keyed by them |
+| Logs       | The stack's [logs](#logs): one service or every one, a time window, a level, a text search                                                         | —                                                                                                              |
 
 **Where the work happens.** The UI process never opens the database: it would need the
 project's config, and the UI never runs project code. Each page writes one JSON request to a
@@ -759,9 +761,25 @@ project has none): an `ALTER TABLE … ENABLE ROW LEVEL SECURITY` and a commente
 Add the policies the table needs — with RLS on and none, only its owner sees its rows — then
 apply it from Migrations.
 
-**Revoking sessions** deletes the user's rows in the session store (`auth_sessions`) and marks
-their native-app sessions revoked. A stateless cookie session is not stored anywhere, so it can
-be neither counted nor revoked here; it ends when it expires.
+**Revoking sessions** deletes the user's rows in the session store (`auth_sessions`), marks
+their native-app sessions revoked, and moves the user's "sessions valid after" mark to now, so a
+stateless cookie session signed in before it ends too (it is not stored, so it is not counted).
+
+**Users.** "Create a user" writes the `auth_users` row the adapter's `createUser` would, with a
+`hashPassword` credential when a password is given (8 to 1024 characters; without one the user
+signs in another way, a link or a provider), and can mark the address verified; an address
+already taken is refused. A user's page bans them for a listed length (an hour up to "until
+unbanned") by setting `banned_until`, the column the `/auth/v1` admin API's `ban_duration`
+writes and every sign-in and token check reads, and ends every session; "Unban" clears it. "Set
+password" stores a new hash and ends every session. A ban previews first, like every other
+write. Creating a user and setting a password run on submit instead: a preview would have to
+carry the password back into the page, and no password or hash is ever rendered (a statement's
+hash parameter shows as `•••`).
+
+**Uploading** goes through the storage plugin's own operation, as the service: the bucket's
+size cap and type list apply, and the object's metadata row is written with its bytes. The key
+is the one typed, or the listed prefix plus the file's name; an object already there is refused
+unless "Replace" is ticked. It needs a `@denext/backend` from 0.5.0 on.
 
 **Safety.** `--read-only` refuses every write in the server before any child runs — the
 preview included — and the child refuses writes on its own as well. Every post carries the
@@ -769,7 +787,70 @@ CSRF token, like every other form. The connection is shown with its password mas
 (`postgres://app:•••@db:5432/app`), and so is any URL an error message mentions. A downloaded
 object is always served as an `application/octet-stream` attachment with `nosniff`, whatever
 type it was stored with, so a stored HTML or SVG file can never run on the UI's origin.
-`--offline` refuses the section (`503`).
+`--offline` refuses the section (`503`), Logs excepted.
+
+### The SQL editor
+
+`/database/sql` runs what you type as the connecting role, which is admin by design: in
+`denext ui` you own the project, and the [dashboard](#the-stack-dashboard) is behind its password.
+Row-level security does not apply to that role. Pick the transaction:
+
+- **Read-only** runs ONE statement in a `READ ONLY` transaction, over the extended protocol, which
+  refuses a second statement, so a `COMMIT;` cannot end the read-only transaction and run what
+  follows outside it.
+- **Read-write** runs a script (several statements, the simple protocol) in a transaction that
+  commits when the last statement succeeds and rolls back otherwise.
+
+Both carry a 30-second statement timeout. The page shows the last statement's rows as text (up to
+500; JSON as JSON, `bytea` as `\x…`), keeps the text in the editor, and shows a failure the same
+way. `--read-only` refuses every run. Everything else in the section builds its SQL from the
+catalog and binds every value as a parameter; the editor is the one place that runs SQL it did not
+build.
+
+### Logs
+
+`/database/logs` reads the stack's logs: one service or every one, the last 100 to 5000 lines,
+within a window (5 minutes to 7 days), at a level and above (from a JSON or logfmt `level` field
+or a level word, as `denext stack logs --level` reads it), containing some text. Every choice is a
+fixed list; the search is plain text, never a pattern. Two sources:
+
+- **`docker compose logs`** for the project's compose file, when Docker is on this machine
+  (`denext ui`, or `denext dashboard` run next to the stack). Argv only, never a shell.
+- **The stack's `dashboard-logs` relay**, inside the stack, where the dashboard's container has
+  no Docker (see [the stack dashboard](#the-stack-dashboard)).
+
+Every line is redacted before it is shown or searched: a `postgres://` password, and the value of
+every secret-looking variable (`*PASSWORD*`, `*SECRET*`, `*TOKEN*`, `*_KEY`, …) in the process's
+environment and the project's `.env`. A search runs on the redacted text, so it cannot find a
+secret either.
+
+### The stack dashboard
+
+`denext dashboard` serves this same Database section — and nothing else: no configuration,
+plugins, tasks, dev server or commands — behind a password instead of a launch token. The
+self-hosted stack runs it as its `dashboard` service ([Deploy](/docs/deploy#the-dashboard)); it
+runs next to the stack on the host as well:
+
+```sh
+denext dashboard                 # http://127.0.0.1:3100, password from DASHBOARD_PASSWORD
+denext dashboard --read-only     # browse without offering any write
+denext dashboard --host 0.0.0.0 --origin https://dash.example.com   # behind a TLS proxy
+```
+
+| Guard         | What it does                                                                                                                                                                                                                  |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Binding       | `127.0.0.1` unless `--host` says otherwise                                                                                                                                                                                    |
+| Host          | A loopback name, or the host of an `--origin` (a DNS-rebinding defence); a browser's `Sec-Fetch-Site` must be same-origin                                                                                                     |
+| Password      | `DASHBOARD_PASSWORD` from the environment, else the project's `.env`; never an argument. Under 12 characters, or unset, the dashboard is locked                                                                               |
+| Sign-in       | A same-origin form carrying the login form's own token (double-submitted through a short-lived cookie); the password compared in constant time, as two HMAC-SHA256 digests                                                    |
+| Rate limit    | 5 failed sign-ins per client address and 30 overall per 15 minutes, then `429` with `Retry-After`; while limited even the right password waits, so the limit is no oracle                                                     |
+| Session       | A fresh 256-bit id per sign-in in an `HttpOnly; Secure; SameSite=Strict` cookie, held in memory; it ends after 30 idle minutes, 12 hours, a restart, or "Sign out" (a POST)                                                   |
+| Mutations     | Every write needs the session's CSRF token and a same-origin `Origin` — the dashboard's public `--origin` behind a proxy                                                                                                      |
+| What it shows | Connection strings masked, passwords never rendered, log lines redacted; a body over 16 MB is a `413` before anything parses it. Nothing writes project files: "Enable RLS" is not offered (add the migration in the project) |
+
+Behind a reverse proxy, pass the Host through (nginx: `proxy_set_header Host $host;`) and
+terminate TLS there; the cookie is `Secure`, which a browser keeps on `https` and on a loopback
+address.
 
 ## Cron
 

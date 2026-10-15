@@ -98,6 +98,38 @@ and this project adheres to
   (template URLs with GoTrue's placeholders, HTML-escaped). The `supabase.auth.smtp` option sets
   the same in code. `denext generate docker --stack` lists the variables in `.env.example`.
 
+- **A Studio-style dashboard for the self-hosted stack: `denext dashboard`.** It serves
+  `denext ui`'s Database section, and nothing else, behind `DASHBOARD_PASSWORD`: tables and rows,
+  the SQL editor, RLS policies, migrations, storage, auth users and logs. With Postgres,
+  `denext generate docker --stack` adds a `dashboard` service published on `127.0.0.1:3100`
+  (`DASHBOARD_PORT`; `--no-dashboard` leaves it out), and `denext stack up` generates the password
+  into a new `.env`. Without one it stays locked and says how to set one. It binds `127.0.0.1`
+  unless `--host` says otherwise and accepts only a loopback `Host` or that of an `--origin`
+  (a public origin behind a TLS proxy). A sign-in is a same-origin form carrying its own token,
+  the password is compared in constant time (as two HMAC digests), and failures are rate limited
+  per client address and overall. The session is an in-memory 256-bit id in an
+  `HttpOnly; Secure; SameSite=Strict` cookie that ends after 30 idle minutes or 12 hours. Every
+  change needs the session's CSRF token and a same-origin `Origin`, and a body over 16 MB is a
+  `413`. `denext stack status` prints the dashboard's URL, and `denext stack passwd` recreates
+  the dashboard's containers when a password changes.
+- **The dashboard's logs, through a relay: `denext generate docker --dashboard-logs`.** The
+  dashboard's container has no Docker, so this opt-in `dashboard-logs` service is the only one
+  that mounts the Docker socket. It sits on an internal network with the dashboard alone and
+  answers two GETs for its own compose project, the services and their logs, behind a bearer
+  token derived from the dashboard password. It reads no other container's settings and never
+  runs or changes anything.
+- **`denext ui` → Database: a SQL editor, user administration, uploads and logs.** The SQL editor
+  runs as the connecting role: read-only runs one statement in a `READ ONLY` transaction (the
+  extended protocol, so a `COMMIT;` can't end it early), and read-write runs a script that
+  commits. Users can be created (with a `hashPassword` credential and, optionally, a verified
+  address), banned for a listed length through `banned_until` (which every sign-in and token
+  check reads) or unbanned, and given a new password, each ending the user's sessions. A form
+  carrying a password runs on submit, and no password or hash is ever rendered. Storage uploads
+  go through the plugin's own operation, up to 10 MB. Logs show one service or every one, a
+  time window, a level and plain-text search, from `docker compose logs` or the relay, every
+  line redacted (connection-string passwords and every secret-looking variable) before it is
+  shown or searched.
+
 - **Operating the self-hosted stack: `denext stack health | passwd | roll | backup | restore`, and
   filtered `logs`.** `health` lists every service's compose health check and the app's
   `/_denext/health` checks as a table (`--json`, `--watch [seconds]`) and exits 1 when anything
@@ -286,6 +318,9 @@ and this project adheres to
   object). A run that applies migrations prints one line, such as `[denext] postgresAuthAdapter:
   applied 8 migrations to auth_migrations (0001_auth_tables … 0008_auth_sessions_valid_after)`.
   `migratePostgres` takes `quiet: true` for the same.
+- **Revoking a user's sessions in `denext ui` also ends their stateless cookie sessions.** It sets
+  the user's "sessions valid after" mark as well as deleting the stored sessions, so a cookie
+  signed in before the revoke stops working instead of living until it expires.
 - **`@denext/backend` 0.5.0: realtime from the logical source honours a table's `events`.** A
   change of a kind the table leaves out (a `TRUNCATE`, say) is dropped, as the notify source's
   triggers never fire for it; before, the WAL source delivered every kind.

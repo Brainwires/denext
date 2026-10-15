@@ -17,6 +17,9 @@
   after 30 (`webhooks.retention`, or `false`). The background deliverer cleans up hourly;
   `webhookCleanupJob()` and `purgeWebhookEvents()` (`@denext/backend/server`) for
   `delivery: "manual"`. New migration `backend_webhooks_0002` (an index).
+- **An `upload` operation for `denext ui` and the stack's dashboard.** The storage runtime's admin
+  operations can now store an object as the service, through the same path as any upload: the
+  bucket's size cap and type list apply, and the metadata row is written with the bytes.
 - **Image transforms take AVIF sources** (`render/image`, signed transform URLs), decoded by
   `@denext/avif` once the declared size passed the decompression-bomb checks (needs denext with
   AVIF decoding in `transformImageBytes`; an older one answers `400`).

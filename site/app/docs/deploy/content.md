@@ -251,6 +251,35 @@ backup is extracted and checked before anything is touched: an entry with an abs
 the steps it knows, from the files the manifest names. The roles' passwords are not in a backup,
 so the restoring stack keeps the ones in its own `.env`.
 
+### The dashboard
+
+With Postgres the stack has a `dashboard` service: [`denext dashboard`](/docs/ui#the-stack-dashboard),
+a Studio-style view of the stack's database. Tables and rows (browse, filter, sort, page, insert,
+edit, delete), a SQL editor, row-level security policies, migrations, storage buckets and objects
+(upload, download, delete), denext auth's users (search, create, ban, set a password, revoke,
+delete) and the logs. It runs the app's own image with the app's environment, so its database
+and storage are the app's, and publishes on this machine's loopback only:
+
+```sh
+denext stack status      # Dashboard URL  http://127.0.0.1:3100
+```
+
+It is behind `DASHBOARD_PASSWORD`, which `denext stack up` generates into a new `.env`
+(`denext stack status --show-secrets` prints it) and `denext stack passwd --dashboard` changes.
+Without one (a stack whose `.env` predates the dashboard) it stays locked and says how to set
+one. `DASHBOARD_PORT` moves the port; `--no-dashboard` on `denext generate docker` (or
+`denext stack up`) leaves it out. To reach it from another machine, put a TLS reverse proxy in
+front and add `"--origin", "https://<its host>"` to its command: the session cookie is `Secure`,
+sign-ins are rate limited, and every change needs a same-origin request and a CSRF token.
+
+**Logs.** The dashboard's container has no Docker, so its Logs page reads through a relay:
+`--dashboard-logs` (opt-in) adds a `dashboard-logs` service, the only one that mounts the Docker
+socket (`DOCKER_SOCKET` in `.env` points it at another, for rootless Docker or Podman). It runs as
+root to read the socket, is on a network of its own with the dashboard (`internal: true`, no
+published port), answers only GETs for this project's own services and their logs behind a bearer
+token derived from `DASHBOARD_PASSWORD`, and never reads another container's settings or runs
+anything. Without it the Logs page says so; `denext stack logs` works either way.
+
 ### Deno Deploy
 
 Push the repo and point the entrypoint at `jsr:@denext/denext@^4.0.0/cli` with args
