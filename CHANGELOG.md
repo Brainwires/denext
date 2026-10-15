@@ -201,8 +201,8 @@ and this project adheres to
 
 ### Changed
 
-- **denext pins Deno toolchain and Deno Desktop runtime 2.9.7-denext.18** (both pins from the same
-  release): the navigation guard below; the toolchain is otherwise unchanged from denext.17.
+- **denext pins Deno toolchain and Deno Desktop runtime 2.9.7-denext.19** (both pins from the same
+  release): denext.18 plus the fix below; the navigation guard below arrived in denext.18.
 - **`@denext/backend` 0.5.0: realtime from the logical source honours a table's `events`.** A
   change of a kind the table leaves out (a `TRUNCATE`, say) is dropped, as the notify source's
   triggers never fire for it; before, the WAL source delivered every kind.
@@ -237,6 +237,9 @@ and this project adheres to
   `set DENEXT_DENO="C:\Program Files\deno\deno.exe"` keeps the quotes in the value, so the path
   was not a file and the command ran on stock Deno. One pair of matching surrounding quotes
   (`"…"` or `'…'`) is now stripped before the value is read as a path or as `stock` / `pinned`.
+- **An intermittent crash at exit (seen in `deno lint` with a plugin) in the bundled Deno
+  toolchain.** The runtime now keeps op contexts alive until the isolate is disposed
+  (2.9.7-denext.19; upstream denoland/deno#37026).
 - **`/auth/v1` `GET /admin/users` with empty paging values returns the default page.**
   supabase-js's `auth.admin.listUsers()` with no options sends `?page=&per_page=`, which was
   read as one user per page; an empty value now means GoTrue's defaults (page 1, 50 per page).
