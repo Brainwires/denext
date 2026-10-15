@@ -11,7 +11,12 @@ import {
 } from "../next-compat-build.ts";
 import { stopNextCompat } from "../next-compat.ts";
 import { routeId } from "../paths.ts";
-import { compatBuildOptions, compatModuleList } from "../pipeline-shared.ts";
+import {
+  compatBuildOptions,
+  compatGlobalErrorEntry,
+  compatModuleList,
+  finishCompatGlobalErrorEntry,
+} from "../pipeline-shared.ts";
 import { writeFlightBoot } from "../flight-boot.ts";
 import { type BuildContext, FLIGHT_BUNDLE_FILE, log } from "./context.ts";
 
@@ -35,6 +40,7 @@ async function compatServerBundles(ctx: BuildContext): Promise<void> {
     ctx.boundary,
     ctx.manifest.api,
     paths.middlewarePath,
+    ctx.manifest.rootGlobalError,
   );
   log(`next-compat: bundling ${modules.length} server module(s) -> server/`);
   const moduleMap = await buildNextCompatModules({ ...compatOptions(ctx), modules });
@@ -66,27 +72,40 @@ async function compatFlight(ctx: BuildContext): Promise<void> {
   await writeFlightBoot(ctx.clientDir, ctx.paths.instrumentationClientPath);
 }
 
-/** Compat client bundles for the interactive (hydrated) routes. */
+/**
+ * Compat client bundles for the interactive (hydrated) routes, plus the `global-error.tsx`
+ * hydration entry in the SAME pass (so it shares the runtime chunk), as the native build does.
+ */
 async function compatClientEntries(ctx: BuildContext): Promise<void> {
   const { clientRoutes } = ctx;
-  if (clientRoutes.length === 0) return;
-  log(`next-compat: bundling ${clientRoutes.length} client route(s) -> client/`);
+  const globalError = ctx.manifest.rootGlobalError;
+  if (clientRoutes.length === 0 && !globalError) return;
+  log(
+    `next-compat: bundling ${clientRoutes.length} client route(s)${
+      globalError ? " + global-error" : ""
+    } -> client/`,
+  );
+  const entries = clientRoutes.map((route) => ({
+    id: routeId(route.routePath),
+    source: generateRouteEntry(route, {
+      instrumentationClient: ctx.paths.instrumentationClientPath,
+      classRuntime: ctx.classRuntime,
+      usesActivity: ctx.usesActivity,
+      usesViewTransition: ctx.usesViewTransition,
+      usesSingletons: ctx.usesSingletons,
+    }),
+  }));
+  if (globalError) {
+    entries.push(compatGlobalErrorEntry(globalError, ctx.paths.instrumentationClientPath));
+  }
   await buildNextCompatClientEntries({
     ...compatOptions(ctx),
     clientDir: ctx.clientDir,
     // A hydrated route's own imports of an action get its stub, as the Flight bundle's do.
     server: ctx.serverModules,
-    entries: clientRoutes.map((route) => ({
-      id: routeId(route.routePath),
-      source: generateRouteEntry(route, {
-        instrumentationClient: ctx.paths.instrumentationClientPath,
-        classRuntime: ctx.classRuntime,
-        usesActivity: ctx.usesActivity,
-        usesViewTransition: ctx.usesViewTransition,
-        usesSingletons: ctx.usesSingletons,
-      }),
-    })),
+    entries,
   });
+  if (globalError) await finishCompatGlobalErrorEntry(ctx.clientDir);
   for (const route of clientRoutes) {
     ctx.routes.push({ routePath: route.routePath, bundle: `${routeId(route.routePath)}.js` });
   }

@@ -6,7 +6,7 @@ import { dirname, join } from "@std/path";
 import type { PageRoute } from "../../router/manifest.ts";
 import { fillPattern, type RouteParams } from "../../router/segments.ts";
 import { enumerateStaticParams } from "../../server/static-params.ts";
-import { isNotFound } from "../../runtime/error-boundary.ts";
+import { EXPOSE_ERROR, isNotFound } from "../../runtime/error-boundary.ts";
 import { publicEnv } from "../../runtime/public-env.ts";
 import { augmentMetadataConventions } from "../../server/augment-metadata.ts";
 import { renderDocument } from "../../server/document.ts";
@@ -14,7 +14,7 @@ import { setBasePath } from "../../client/navigation.ts";
 import { FLIGHT_BOOT_FILE, hasFlightBoot } from "../flight-boot.ts";
 import { CLIENT_PREFIX } from "../prod-server/assets.ts";
 import { peelLocale } from "../../server/i18n.ts";
-import { renderPage } from "../../server/render-page.ts";
+import { renderGlobalError, renderPage } from "../../server/render-page.ts";
 import { createRequestContext, runWithContext } from "../../server/request-context.ts";
 import { readSegmentConfig } from "../../server/segment-config.ts";
 import type { PageModule } from "../../server/types.ts";
@@ -171,6 +171,35 @@ async function renderRoutes(ctx: ExportContext): Promise<void> {
     }
     for (const params of paramSets) await renderParamSet(ctx, route, params, flightBoot);
   }
+}
+
+/**
+ * Pre-render `global-error.tsx` to `500.html`, the error document a static host serves when a
+ * request fails (no server renders it at request time). The document is wired to the
+ * global-error hydration bundle, so `reset` and any author interactivity work there as on a
+ * served app. The component gets the error a production server hands it: the generic
+ * `Internal Server Error` (no request failed at export, so there is nothing to redact or
+ * correlate by digest).
+ */
+export async function writeGlobalErrorPage(ctx: ExportContext): Promise<void> {
+  if (!ctx.manifest.rootGlobalError) return;
+  const request = new Request("http://localhost/500");
+  const error = Object.assign(new Error("Internal Server Error"), { [EXPOSE_ERROR]: true });
+  // A `<Link>` in it prefixes the basePath, as on the pages.
+  setBasePath(ctx.basePath);
+  const rendered = await runWithContext(
+    createRequestContext(request),
+    () => renderGlobalError(ctx.manifest, ctx.load, error, ctx.globalErrorEntry),
+  ).finally(() => setBasePath(""));
+  if (!rendered) return;
+  // A global-error that renders no `<html>` gets the standard document around it (as the
+  // served path does), without hydration.
+  const html = rendered.ownsDocument
+    ? rendered.html
+    : renderDocument({ bodyHtml: rendered.html, metadata: rendered.metadata });
+  const file = join(ctx.outDir, "500.html");
+  await Deno.writeTextFile(file, html);
+  console.log(`  global-error -> 500.html`);
 }
 
 /** Copy the public directory's contents into the output directory. */

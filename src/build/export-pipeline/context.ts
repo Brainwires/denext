@@ -84,6 +84,11 @@ export interface ExportContext {
   readonly usesActivity: boolean;
   /** Whether the app renders `<ViewTransition>` (the build's source scan): likewise. */
   readonly usesViewTransition: boolean;
+  /**
+   * The `global-error.tsx` hydration bundle URL, once `bundleExportGlobalError` wrote it (unset
+   * when the app has no global-error.tsx).
+   */
+  globalErrorEntry?: string;
   /** Pages written so far. */
   pages: number;
   /** Route paths / pathnames skipped. */

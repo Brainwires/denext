@@ -27,6 +27,10 @@ host it anywhere — this very docs site is built that way:
 denext export .   # writes out/ — pure HTML, 0 KB JS on static pages
 ```
 
+An app with an `app/global-error.tsx` also gets `out/500.html`, its global-error page
+pre-rendered and hydrating (its `reset` re-fetches the page). Point your host's error page at it
+where the host supports one.
+
 ### Docker
 
 ```dockerfile

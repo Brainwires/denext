@@ -8,6 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`global-error.tsx` hydrates on the next-compat build and in a static export.** Both paths
+  emitted no global-error entry, so the global-error document was dead HTML: its `reset` did
+  nothing and no author handler ran. A next-compat `denext build` now bundles the entry
+  (react→denext rewritten, in the same pass as its routes, so it shares their runtime chunk) and
+  bundles `global-error.tsx` into its server bundle too, so `denext start` serves a hydrating
+  global-error document as the native build does. `denext export` bundles the same entry and
+  pre-renders global-error to `out/500.html`, wired to hydrate, for a static host's error page;
+  it renders with the `Internal Server Error` message a production server hands it.
+
 ## [4.1.0] - 2026-10-15
 
 ### Breaking

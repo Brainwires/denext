@@ -16,7 +16,8 @@ import {
 } from "../server/config.ts";
 import { defaultLoader } from "../server/mod.ts";
 import type { ModuleLoader } from "../server/types.ts";
-import { routeServerModules } from "./bundle.ts";
+import { generateGlobalErrorEntry, routeServerModules } from "./bundle.ts";
+import { GLOBAL_ERROR_BUNDLE_FILE, GLOBAL_ERROR_ENTRY_KEY } from "./build-pipeline/context.ts";
 import {
   type BoundaryManifest,
   buildBoundaryManifest,
@@ -104,12 +105,15 @@ export function appBoundaryManifest(
  * `middlewarePath` (the app's `middleware.ts`) is bundled too: Next bundles middleware, and an
  * npm package it imports (`@clerk/nextjs/server`) may be built for bundlers (extensionless
  * relative imports, `next/*` peers) and so cannot load under Deno's own npm resolution.
+ * `globalError` (the root `global-error.tsx`) is bundled for the same reason: it imports `react`
+ * like any Next module, and its server render must resolve that the way its hydration does.
  */
 export function compatModuleList(
   pages: PageRoute[],
   boundary: BoundaryManifest | null,
   api: ApiRoute[] = [],
   middlewarePath: string | null = null,
+  globalError: string | null = null,
 ): string[] {
   const refs = boundary ? [...boundary.client.values(), ...boundary.server.values()] : [];
   // Route handlers (`route.ts`) go through the same bundle: a migrated Remix action route
@@ -120,8 +124,43 @@ export function compatModuleList(
       ...api.map((r) => r.filePath),
       ...refs.map((r) => fromFileUrl(r.url)),
       ...(middlewarePath ? [middlewarePath] : []),
+      ...(globalError ? [globalError] : []),
     ]),
   ];
+}
+
+/**
+ * next-compat: the client entry that hydrates `global-error.tsx`, to bundle alongside (or
+ * apart from) the route entries with `buildNextCompatClientEntries`. It is keyed by
+ * {@link GLOBAL_ERROR_ENTRY_KEY} (no routeId can take it); {@link finishCompatGlobalErrorEntry}
+ * then renames the output to {@link GLOBAL_ERROR_BUNDLE_FILE}.
+ *
+ * @param globalErrorFile The app's `global-error.tsx`.
+ * @param instrumentationClient The project's `instrumentation-client` module, if any.
+ * @returns The entry (id + generated source).
+ */
+export function compatGlobalErrorEntry(
+  globalErrorFile: string,
+  instrumentationClient: string | null,
+): { id: string; source: string } {
+  return {
+    id: GLOBAL_ERROR_ENTRY_KEY,
+    source: generateGlobalErrorEntry(globalErrorFile, instrumentationClient),
+  };
+}
+
+/**
+ * Rename the bundled {@link compatGlobalErrorEntry} (and its external source map, when one was
+ * written) to {@link GLOBAL_ERROR_BUNDLE_FILE}, the URL the global-error document loads. Its
+ * chunk imports are relative basenames, so the rename leaves them resolving.
+ *
+ * @param clientDir The directory the compat client entries were written to.
+ */
+export async function finishCompatGlobalErrorEntry(clientDir: string): Promise<void> {
+  const from = join(clientDir, `${GLOBAL_ERROR_ENTRY_KEY}.js`);
+  const to = join(clientDir, GLOBAL_ERROR_BUNDLE_FILE);
+  await Deno.rename(from, to);
+  await Deno.rename(`${from}.map`, `${to}.map`).catch(() => {});
 }
 
 /** The options every next-compat bundling call shares. */

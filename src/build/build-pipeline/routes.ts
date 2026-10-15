@@ -19,11 +19,14 @@ import { routeNeedsHydration } from "../hydration.ts";
 import { routeId } from "../paths.ts";
 import { appBoundaryManifest } from "../pipeline-shared.ts";
 import { writeFlightBoot } from "../flight-boot.ts";
-import { type BuildContext, FLIGHT_BUNDLE_FILE, GLOBAL_ERROR_BUNDLE_FILE, log } from "./context.ts";
+import {
+  type BuildContext,
+  FLIGHT_BUNDLE_FILE,
+  GLOBAL_ERROR_BUNDLE_FILE,
+  GLOBAL_ERROR_ENTRY_KEY,
+  log,
+} from "./context.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
-
-/** Bundle key for the global-error entry — namespaced so it can't collide with any routeId. */
-const GLOBAL_ERROR_KEY = "__denext_global_error__";
 
 /** Extract, write, and record every route's stylesheet (flight or not). */
 export async function emitRouteCss(ctx: BuildContext): Promise<void> {
@@ -85,7 +88,7 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
   }));
   if (globalError) {
     entries.push({
-      key: GLOBAL_ERROR_KEY,
+      key: GLOBAL_ERROR_ENTRY_KEY,
       source: generateGlobalErrorEntry(globalError, paths.instrumentationClientPath),
     });
   }
@@ -112,7 +115,7 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
   if (globalError) {
     await Deno.writeTextFile(
       join(clientDir, GLOBAL_ERROR_BUNDLE_FILE),
-      out.files.get(out.entries.get(GLOBAL_ERROR_KEY)!)!,
+      out.files.get(out.entries.get(GLOBAL_ERROR_ENTRY_KEY)!)!,
     );
   }
 }
