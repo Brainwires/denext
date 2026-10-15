@@ -36,6 +36,30 @@ export default function Data() {
         <code>cache: "force-cache"</code>. Requests are deduped within a render.
       </p>
 
+      <h2 id="expected-failures">Expected failures as values</h2>
+      <p>
+        A data call that can fail in a way the page should handle — not found, an upstream service
+        down — can return a <code>Result</code> instead of throwing. The opt-in{" "}
+        <code>denext/result</code> module has <code>ok</code>, <code>err</code>,{" "}
+        <code>tryAsync</code> and an exhaustive <code>match</code>; <code>tryAsync</code>{" "}
+        re-throws Suspense and <code>notFound()</code> /{" "}
+        <code>redirect()</code>, so React's own throws keep working. A <code>defineApi</code>{" "}
+        handler may <code>return err("code")</code> instead of calling <code>fail()</code>, and a
+        {" "}
+        <code>defineAction</code> handler <code>return err("message", {"{ fieldErrors }"})</code>
+        {" "}
+        — see <a href="/docs/errors-as-values">Errors as values</a>.
+      </p>
+      <Code lang="tsx">
+        {`import { tryAsync } from "denext/result";
+
+export default async function Page() {
+  const products = await tryAsync(() => getProducts(), () => "unavailable" as const);
+  if (!products.ok) return <p>The catalog is unavailable right now.</p>;
+  return <List products={products.value} />;
+}`}
+      </Code>
+
       <h2>Invalidation</h2>
       <Code lang="ts">
         {`import { revalidatePath, revalidateTag, unstable_cache } from "denext/server";

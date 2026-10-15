@@ -239,6 +239,16 @@ denext graphql diff schema.graphql        # exit 1 when the schema changed`}
           or a Yoga plugin.
         </li>
         <li>
+          Query shape is bounded: <code>maxDepth</code> (default 12; <code>false</code>{" "}
+          turns it off) refuses a deeply nested query, and <code>maxCost</code>{" "}
+          (off by default; a budget of about 1000 suits most apps) refuses one whose estimated cost
+          — each field 1, multiplied by a <code>first</code> / <code>last</code> /{" "}
+          <code>limit</code>{" "}
+          argument, counted at a variable's actual value — is over budget (<code>costOptions</code>
+          {" "}
+          tunes the weights). With Yoga <code>batching</code> on, the budget is per operation.
+        </li>
+        <li>
           GraphiQL is off in production; gate it yourself if you turn it on.
         </li>
         <li>

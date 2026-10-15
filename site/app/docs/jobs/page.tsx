@@ -296,6 +296,29 @@ denext job --history                 # recent runs, through the configured histo
         <a href="/docs/cli#deno-verbs">the CLI reference</a>).
       </Callout>
 
+      <h2 id="long-running">Long-running jobs</h2>
+      <p>
+        A job is a run that ends. Work that should run for the life of the server — a queue
+        consumer, a change-feed tail — is a{" "}
+        <a href="/docs/services">service</a>: a supervisor restarts it with backoff when it crashes
+        and stops it in order on shutdown. <code>jobService("consume")</code> (from{" "}
+        <code>denext/server</code>) runs an existing <code>jobs/consume.ts</code>{" "}
+        whose handler is such a loop as a service: its <code>signal</code>{" "}
+        aborts on stop, and a throw (after the job's own <code>retry</code>) is a crash.
+      </p>
+      <p>
+        Plugins ship jobs too. With <code>@denext/backend</code> database webhooks on{" "}
+        <code>delivery: "manual"</code>, <code>webhookCleanupJob({"{ schedule }"})</code> from{" "}
+        <code>@denext/backend/server</code>{" "}
+        is the job that deletes settled webhook events past their retention (see{" "}
+        <a href="/docs/backend#database-webhooks">Database webhooks</a>):
+      </p>
+      <Code lang="ts">
+        {`// jobs/webhook-cleanup.ts
+import { webhookCleanupJob } from "@denext/backend/server";
+export default webhookCleanupJob({ schedule: "17 * * * *" });`}
+      </Code>
+
       <h2>Registering a job programmatically</h2>
       <p>
         The <code>jobs/</code>{" "}

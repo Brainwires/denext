@@ -8,7 +8,7 @@ import { MarkdownDoc } from "../../../components/markdown.tsx";
 export const metadata = {
   title: "Deliberate differences",
   description:
-    "Where denext behaves differently from React and Next.js on purpose — documented behavior, not gaps.",
+    "Where denext behaves differently from React, Next.js, React Native and Supabase on purpose — documented behavior, not gaps.",
 };
 
 export default async function Differences() {

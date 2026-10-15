@@ -129,13 +129,16 @@ export default function Cli() {
         for the same information in your terminal.
       </p>
       <p>
-        Plugin-contributed verbs — <code>openapi</code>, <code>graphql</code>, <code>content</code>
+        Plugin-contributed verbs — <code>openapi</code>, <code>graphql</code>, <code>content</code>,
         {" "}
-        and <code>htmx</code>{" "}
+        <code>htmx</code>, and <code>backend</code> / <code>storage</code> / <code>functions</code>
+        {" "}
         — are discovered lazily from a project's config, so they are not listed here; see{" "}
         <a href="/docs/openapi">OpenAPI</a>, <a href="/docs/graphql">GraphQL</a>,{" "}
-        <a href="/docs/content-collections">content collections</a> and{" "}
-        <a href="/docs/htmx">htmx</a>. For how to get a <code>denext</code>{" "}
+        <a href="/docs/content-collections">content collections</a>, <a href="/docs/htmx">htmx</a>
+        {" "}
+        and <a href="/docs/backend">the backend plugin</a>. For how to get a <code>denext</code>
+        {" "}
         binary (run it straight from JSR, install it globally, or compile it), see{" "}
         <a href="https://github.com/Brainwires/denext#the-denext-command">the README</a>.
       </p>

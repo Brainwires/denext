@@ -61,10 +61,9 @@ export default function Layout({ children }) {
 }`}
       </Code>
       <Callout kind="note">
-        The runtime is <strong>vendored</strong>{" "}
-        (the package version tracks the htmx version it wraps) and served from your own origin at
-        {" "}
-        <code>/_denext/htmx/htmx.min.js</code>{" "}
+        The runtime is <strong>vendored</strong> (the <code>HTMX_VERSION</code>{" "}
+        export names the htmx release it wraps; <code>denext htmx info</code>{" "}
+        prints it) and served from your own origin at <code>/_denext/htmx/htmx.min.js</code>{" "}
         — no npm dependency and no CDN. It loads as a classic deferred script, which is what htmx
         expects.
       </Callout>
@@ -150,9 +149,11 @@ export function GET(req: Request) {
       </Code>
       <p>
         And <code>htmlResponse</code>'s second argument sets the response side —{" "}
-        <code>retarget</code>, <code>reswap</code>, <code>reselect</code>, <code>redirect</code>,
+        <code>retarget</code>, <code>reswap</code>, <code>reselect</code>, <code>location</code>,
         {" "}
-        <code>pushUrl</code>, <code>refresh</code>, and <code>trigger</code>{" "}
+        <code>redirect</code>, <code>pushUrl</code>, <code>replaceUrl</code>,{" "}
+        <code>refresh</code>, and <code>trigger</code> / <code>triggerAfterSettle</code> /{" "}
+        <code>triggerAfterSwap</code>{" "}
         (a name, or an object serialized to JSON) — each written as the matching <code>HX-*</code>
         {" "}
         header.

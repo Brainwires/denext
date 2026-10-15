@@ -165,7 +165,8 @@ denext content validate   # exit 1 on any schema failure — a CI gate`}
         Two v1 notes: the built store is read from{" "}
         <code>&lt;cwd&gt;/.denext/content-data.json</code>, so run the app from its project root (as
         {" "}
-        <code>denext task dev</code>/<code>start</code> do); and an <em>unquoted</em>{" "}
+        <code>denext task dev</code>/<code>start</code> do), or point it elsewhere with{" "}
+        <code>setContentStorePath(path)</code>; and an <em>unquoted</em>{" "}
         YAML frontmatter date parses as a JS <code>Date</code>{" "}
         — quote it (<code>date: "2026-01-01"</code>) or use a date schema.
       </Callout>

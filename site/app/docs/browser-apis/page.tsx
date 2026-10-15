@@ -129,6 +129,18 @@ await withWebLock("auth:refresh", async () => {
   await fetch("/api/refresh", { method: "POST" });
 });`}
       </Code>
+
+      <h2>More browser hooks</h2>
+      <p>
+        denext also exports SSR-safe hooks over other browser APIs — <code>useMediaQuery</code>,
+        {" "}
+        <code>useLocalStorage</code> / <code>useSessionStorage</code>,{" "}
+        <code>useIntersectionObserver</code>, <code>useNetworkState</code>,{" "}
+        <code>useCopyToClipboard</code>{" "}
+        and more — and live reads of the Origin Private File System (<code>useDirectory</code>,{" "}
+        <code>useFile</code>, <code>useOPFSRoot</code>). See{" "}
+        <a href="/docs/client-components#ssr-safe-utility-hooks">SSR-safe utility hooks</a>.
+      </p>
     </DocsShell>
   );
 }

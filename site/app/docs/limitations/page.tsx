@@ -8,7 +8,7 @@ import { MarkdownDoc } from "../../../components/markdown.tsx";
 export const metadata = {
   title: "Known limitations",
   description:
-    "The genuine React/Next surface gaps and the bounded scope of denext's own capabilities — what is missing or wrong today.",
+    "What denext can't do (an OS, platform, browser or upstream forbids it), what it won't do (a scope boundary), and the per-OS differences it must keep.",
 };
 
 export default async function Limitations() {

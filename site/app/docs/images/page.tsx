@@ -36,6 +36,11 @@ export default function Avatar() {
       </p>
       <ul>
         <li>
+          Sources may be PNG, JPEG, GIF, WebP or an AVIF still image. An AVIF source is sized from
+          the dimensions its header declares before anything is decoded, like every other format,
+          and one that declares none is refused.
+        </li>
+        <li>
           Width is validated against an allowlist — arbitrary sizes are rejected.
         </li>
         <li>

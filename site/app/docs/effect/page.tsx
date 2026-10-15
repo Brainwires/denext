@@ -209,7 +209,10 @@ export const subscribe = effectAction((email: string) =>
         {" "}
         and route handlers — where its typed error channel and <code>Layer</code>{" "}
         DI replace thrown exceptions and prop-drilled dependencies. Reach for it when you want
-        composable, type-safe effects across a request; skip it for a page that just renders.
+        composable, type-safe effects across a request; skip it for a page that just renders. For
+        typed failures without a library, denext's own <code>denext/result</code> has{" "}
+        <code>Result</code>, <code>tryAsync</code> and an exhaustive <code>match</code> — see{" "}
+        <a href="/docs/errors-as-values">Errors as values</a>.
       </p>
     </DocsShell>
   );
