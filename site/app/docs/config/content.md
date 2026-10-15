@@ -42,10 +42,13 @@ Router from `app/` (or `src/app/`) with sensible defaults.
 - **`headers`** — `() => HeaderRule[]`. Response headers per path —
   `{ source, headers: [{ key, value }] }`.
 - **`i18n`** — `I18nConfig`. Internationalized routing:
-  `{ locales: string[], defaultLocale: string, localePrefix?, messages? }`.
+  `{ locales: string[], defaultLocale: string, localePrefix?, messages?, hreflang?, domains? }`.
   `localePrefix` is `"as-needed"` (default — the default locale is served
   unprefixed) or `"always"` (every locale is prefixed, including the default).
   Locale prefixes are parsed off the path and exposed to your routes.
+  `hreflang` (default `true`) emits the `<link rel="alternate" hreflang>` set and a
+  per-locale canonical on every page; `domains` serves a locale per host with no
+  prefix. See [Internationalization](/docs/i18n).
 - **`src/` directory** — not a config key, a layout denext detects. If a
   `src/app` directory exists, denext looks for `app/`, `middleware` and
   `instrumentation` under `src/` (Next.js parity); `public/`, the config files
@@ -71,7 +74,9 @@ export default {
   with a history-API fallback, and can `export` / package it as a static desktop
   app. Use it to host an existing Vite-style SPA on denext's toolchain.
 - **`spa`** — `SpaConfig` (required when `mode: "spa"`). Fields: `entry` (the
-  client entry file, required), `rootId`, `title`, `head`, `loading`, `lang`, `env`,
+  client entry file, required), `rootId`, `title`, `head`, `loading`, `shell` (a
+  prerendered static shell that takes typing before the bundle runs; see
+  [SPA › Prerendered shell](/docs/spa#shell)), `lang`, `env`,
   `proxy` (dev proxy to a backend), `csp` (a `CspSetting` for the shell),
   `precompress`, `ota`, `viteManifest` (write a Vite-shaped `.vite/manifest.json`
   of the export's content-hashed files), `assetsDir` (Vite's `build.assetsDir`: serve
@@ -89,7 +94,10 @@ export default {
   (`{ protocol?, hostname, pathname? }`, `hostname` allows a leading `*.`
   wildcard), `localPatterns`, `deviceSizes`, `imageSizes`, `qualities` (allowed
   `q=` values), `formats` (negotiated `Accept` order — include `"image/avif"` to
-  offer AVIF), `dangerouslyAllowLocalIP` (opt out of the private-address SSRF
+  offer AVIF), `minimumCacheTTL` (seconds, default `14400`), `maximumRedirects`
+  (hops followed for a remote source, default `3`), `unoptimized` (render every
+  `<Image>` as a plain `<img>`; forced on in a static export),
+  `dangerouslyAllowLocalIP` (opt out of the private-address SSRF
   guard — trusted networks only), and the legacy `domains`.
 
 ```ts
@@ -395,9 +403,10 @@ See [Writing a plugin](/docs/plugins).
 - **`desktop`** — `DesktopConfig`. `desktop.capabilities` is the Deno Desktop
   capability allowlist (default deny): `secureStore`, `fs`
   (`true` or `{ read, write }` folder tokens), `sqlite`, `contextMenu`, `shell`
-  (`true` or per-action options), `dialogs`, `notifications`, `keepAwake`,
-  `clipboard`, `device`, `updates`, and `extensions` (module paths of your
-  `defineDesktopExtension` modules). The desktop runtime serves only what is
+  (`true` or per-action options), `authSession`, `dialogs`, `notifications`,
+  `globalShortcuts`, `launchAtLogin`, `keepAwake`, `clipboard`, `device`, `passkeys`,
+  `updates`, and `extensions` (module paths of your `defineDesktopExtension` modules).
+  The desktop runtime serves only what is
   listed, and the scaffolded packaging scripts derive the binary's `--allow-*`
   flags from it. Written by `denext desktop add <capability>`. Distinct from
   `spa.desktop` (packaging settings such as the icon). See
@@ -409,9 +418,19 @@ See [Writing a plugin](/docs/plugins).
   full app, and `ui` (`{ feedUrl, publicKey }`) for the signed UI overlay the runtime
   serves; the `updates` capability lets the page install both
   ([Updates everywhere](/docs/updates)).
+  `desktop.app` names the bundle (`name`, `identifier`, `icons`) and sets its
+  [stable origin](/docs/desktop#desktop-app-origin) (`origin`, `bridgeOrigins`),
+  `deepLinks`, `singleInstance`, and `allowedNavigationOrigins` (the exact origins
+  besides the app's own the window may navigate to; any other `http(s)` navigation
+  opens in the user's browser; needs the pinned runtime). The rest of `desktop`:
+  `sidecars` ([backends next to the window](/docs/desktop#desktop-sidecars)),
+  `preload`, `inspectable`, the first window (`window`, `titleBar`, `backdrop`,
+  `minSize`, `maxSize`), `installers`, `linux`, `extraPermissions` and `denoFlags`.
 - **`mobile`** — `MobileConfig`. Capacitor shell settings for
   `denext mobile build` and `denext mobile assets`, such as build `flavors`
-  (per-flavor app id, name, server URL, icon and splash). See
+  (per-flavor app id, name, server URL, icon and splash) and the source `icon`
+  (with `backgroundColor`, `adaptiveIcon`, `splashIcon`, `splashBackgroundColor`
+  and `darkBackgroundColor`) every icon and splash is generated from. See
   [Mobile builds › Flavors](/docs/mobile-build#flavors).
 - **`appLinks`** — `AppLinksConfig`. The domain-association files for
   universal links (iOS) and App Links (Android): `denext start` and
@@ -585,6 +604,15 @@ every `--platform` target included.
   `desktopPackage: "react-native-macos" | "react-native-windows"` builds the
   app's own `react-native` imports as that desktop package. See
   [React Native / Expo apps](/docs/react-native#options).
+
+- **`compile`** — `{ include?, permissions? }`. For `denext build --compile` (the
+  single-executable server build): `include` lists more project paths to embed
+  beyond what denext embeds itself (`app/`, `.denext/`, `public/`, `jobs/`,
+  `services/`, `functions/`, `migrations/`, `supabase/migrations/` and the root
+  config, middleware and instrumentation modules; never `.env` files or SQLite
+  databases), and `permissions` adds `--allow-*` beyond the least-privilege
+  baseline (`"all"` bakes `--allow-all`). See
+  [Deployment targets](/docs/deployment-targets#a-single-binary-with-denext-build---compile).
 
 > **`experimental` is superseded.** Every key denext shipped under it is a
 > top-level field now. Next.js's own spellings stay readable as obsolete

@@ -35,9 +35,10 @@ The database side carries over as SQL: your tables, functions and row-level secu
 
 **What is deliberately different:**
 
-- **Your app is the server.** There is no hosted project, dashboard, logs explorer or usage
-  metering; [`denext ui`](/docs/ui#database) is a local, loopback console. Backups, pooling and
-  upgrades are your Postgres provider's job.
+- **Your app is the server.** There is no hosted project or usage metering. The console is
+  [`denext ui`](/docs/ui#database) on your machine, or, for a deployed stack,
+  [`denext dashboard`](/docs/ui#the-stack-dashboard): the same pages behind `DASHBOARD_PASSWORD`,
+  logs included. Backups, pooling and upgrades are your Postgres provider's job.
 - **One user store, two ways in.** `/auth/v1` serves the users `denextAuth()` keeps, so a cookie
   session from denext's own sign-in and a supabase-js token session are the same user; server
   code reads either with `auth()`. Mail goes out through `GOTRUE_SMTP_*` (or `smtpMailer()` /
@@ -188,12 +189,15 @@ browser, and `db()` reads it on the server. Providers and the adapter are config
 `denextAuth({ … })`; auth mail goes through your `sendVerificationRequest` — `smtpMailer({ host,
 user, pass, from })` is one. See [Auth](/docs/auth).
 
-Or keep your client code: with `backend({ supabase })` the stock supabase-js `supabase.auth.*`
-calls above work unchanged against `/auth/v1` — password, OTP / magic link, phone, anonymous,
-OAuth with your `denextAuth()` providers or stored `custom:` providers, Web3 (`signInWithWeb3`),
-MFA, SAML SSO (with Single Logout, encrypted assertions and the `admin/sso/providers` API), the
-OAuth 2.1 server (`supabase.auth.oauth.*`, `admin.oauth.*`) and the admin API — over the same
-users the cookie sign-in uses. See [Supabase clients](/docs/auth#supabase-clients-authv1).
+Or keep your client code: with `backend({ supabase })` the stock supabase-js `supabase.auth.*` calls
+above work unchanged against `/auth/v1` — password, OTP / magic link, phone, anonymous, OAuth with
+your `denextAuth()` providers or stored `custom:` providers, Web3 (`signInWithWeb3`), MFA, SAML SSO
+(with Single Logout, encrypted assertions and the `admin/sso/providers` API), the OAuth 2.1 server
+(`supabase.auth.oauth.*`, `admin.oauth.*`) and the admin API — over the same users the cookie
+sign-in uses. The client's own session machinery works too: `getClaims()` (verified against the
+app's JWKS), `onAuthStateChange`, `refreshSession()` / `setSession()`, the PKCE flow
+(`flowType: "pkce"`) and `admin.listUsers()` paging. See
+[Supabase clients](/docs/auth#supabase-clients-authv1).
 
 ### Storage: upload and signed URLs
 
@@ -222,11 +226,11 @@ const url = await storage.bucket("invoices").createSignedUrl(path, { expiresIn: 
 
 Your policies on `storage.objects` keep working with `storage: { rls: true }`: denext keeps
 Supabase's `storage` schema (`storage.foldername()` included) and runs each operation as the
-request's role. Or write a bucket's rules as a function in `denext.config.ts`. Outside a request
-(a job, a script) there is no session to pass it, so code there uses
+request's role. Or write a bucket's rules as a function in `denext.config.ts`. Outside a request (a
+job, a script) there is no session to pass it, so code there uses
 `storage.bucket("invoices", { service: true })` — the counterpart of Supabase's service-role key
-(over HTTP, the secret key from `backend({ supabase })`). The Supabase pattern of one folder per user, in
-TypeScript:
+(over HTTP, the secret key from `backend({ supabase })`). The Supabase pattern of one folder per
+user, in TypeScript:
 
 ```ts
 buckets: {
@@ -355,13 +359,15 @@ claims are set.
    exist, step 5).
 4. **Restore** `schema.sql` then `data.sql` with `psql`. From here on, new schema changes are
    `denext generate migration <name>` + `denext job migrate`.
-5. **Apply denext's own migrations.** They run on first use: auth's `auth_*` tables when
-   `backendAuthAdapter()` first runs (recorded in `auth_migrations`), the RLS setup and realtime
-   triggers and the `realtime` schema when the backend first needs them (recorded in
-   `backend_migrations`). Pass `migrate: false` to either and apply them from a deploy step if the
-   app's user should not run DDL. Policies you wrote on `realtime.messages` (private channels) are
-   in the `realtime` schema you left out: re-create them once the realtime migration has made the
-   table.
+5. **Apply denext's own migrations.** `denext db push` (or `denext migration up`) applies them out
+   of band: the backend's (the RLS setup, the storage, realtime, vault, queues and webhooks schemas,
+   recorded in `backend_migrations`) and denext's own stores' (auth's `auth_*` tables, recorded in
+   `auth_migrations`), then yours, then realtime's per-table triggers. Otherwise they run on first
+   use, under the migration lock. If the app's user should not run DDL, apply them from a deploy
+   step and set [`DENEXT_BOOT_DDL=off`](/docs/database#schema-at-startup): the server then creates
+   nothing and refuses to start until every migration it needs is recorded. Policies you wrote on
+   `realtime.messages` (private channels) are in the `realtime` schema you left out: re-create them
+   once the realtime migration has made the table.
 6. **Move the users** — see [Moving users](#moving-users).
 7. **Copy the storage objects** — see [Moving files](#moving-files).
 8. **Swap the environment.** Supabase's `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are
@@ -431,10 +437,10 @@ hash and writes `await hashPassword(password)` with `setCredential` on success.
 What does not move:
 
 - **Sessions and refresh tokens.** Everyone signs in once more.
-- **TOTP factors.** Supabase documents no supported way to export TOTP secrets, so plan for these users to
-  enroll again (through `/mfa/enroll` or `supabase.auth.mfa.enroll()` — one store, either path). Until they
-  do, they sign in without a second factor, so a policy that requires `aal2` should give them a
-  way to enroll first.
+- **TOTP factors.** Supabase documents no supported way to export TOTP secrets, so plan for these
+  users to enroll again (through `/mfa/enroll` or `supabase.auth.mfa.enroll()` — one store, either
+  path). Until they do, they sign in without a second factor, so a policy that requires `aal2`
+  should give them a way to enroll first.
 - **WebAuthn factors and passkeys.** A credential is bound to the relying-party domain it was
   made for, and Supabase's public keys are not portable to another relying party: users
   register again.
@@ -443,10 +449,10 @@ What does not move:
   As in Supabase, an SSO sign-in never takes over an existing account by email, so carry the SSO
   identities over: in the import below, write each `sso:<old provider id>` identity as
   `sso:<new provider id>` and those users sign in to their own accounts.
-- **OAuth 2.1 server clients.** Supabase's OAuth server schema stores a hash of each client secret (`client_secret_hash`), so
-  the secrets cannot be carried over; register the
-  clients again (`supabase.auth.admin.oauth.createClient()`, or `POST
-  /auth/v1/admin/oauth/clients`) and hand them their new credentials; their users approve again.
+- **OAuth 2.1 server clients.** Supabase's OAuth server schema stores a hash of each client secret
+  (`client_secret_hash`), so the secrets cannot be carried over; register the clients again
+  (`supabase.auth.admin.oauth.createClient()`, or `POST /auth/v1/admin/oauth/clients`) and hand them
+  their new credentials; their users approve again.
 - **Denext's own (cookie) sign-in has no SAML.** SAML users sign in through `/auth/v1`
   (`supabase.auth.signInWithSSO`); the session is the same user `auth()` reads.
 
@@ -516,11 +522,11 @@ the store's CORS rules to allow your origin to `GET` and `PUT` and to expose `ET
 
 Supabase self-hosts as a `docker compose` stack; so does a denext app.
 `denext generate docker --stack` reads your config and writes the compose file for what it uses —
-the app, Postgres 17 (or `--pgvector`'s `pgvector/pgvector:pg17`), MinIO with its bucket created
-by a one-shot `mc` service, and a one-shot `denext migration up` (the backend's own roles and
-schemas, then your migrations) before the app starts — with
-health checks and `depends_on` conditions throughout, named volumes, and a `.env.example` listing
-every secret (the role of Supabase's `.env` with its JWT secret and keys).
+the app, Postgres 17 (or `--pgvector`'s `pgvector/pgvector:pg17`), MinIO with its bucket created by
+a one-shot `mc` service, a one-shot `denext migration up` (the backend's own roles and schemas, then
+your migrations) before the app starts, and a `dashboard` service — with health checks and
+`depends_on` conditions throughout, named volumes, and a `.env.example` listing every secret (the
+role of Supabase's `.env` with its JWT secret and keys).
 
 ```sh
 denext generate docker --stack
@@ -528,10 +534,12 @@ cp .env.example .env    # generate each secret as the file says
 docker compose up -d --build
 ```
 
-There is no Kong gateway, Studio or analytics container: the app itself serves the APIs, and
-[`denext ui`](/docs/ui#database) is the dashboard, on your machine.
-[Deployment › Self-hosted stack](/docs/deploy#self-hosted-stack-postgres-storage-migrations) has
-the flags and the services.
+There is no Kong gateway or analytics container: the app itself serves the APIs. Studio's place is
+taken by the stack's `dashboard` service ([`denext dashboard`](/docs/deploy#the-dashboard)),
+published on `127.0.0.1:3100` behind `DASHBOARD_PASSWORD`; `--dashboard-logs` adds the relay its
+Logs page reads. On your machine, [`denext ui`](/docs/ui#database) has the same pages.
+[Deployment › Self-hosted stack](/docs/deploy#self-hosted-stack-postgres-storage-migrations) has the
+flags and the services.
 
 ## Supabase CLI → denext
 
@@ -544,7 +552,7 @@ the flags and the services.
 | `supabase migration repair --status applied\|reverted <v>` | `denext migration repair --status applied\|reverted <v…>`                                                                                                                      |
 | `supabase migration squash`                                | `denext migration squash [--version v]` (`--linked` / `--db-url` also rewrite that database's history)                                                                         |
 | `supabase migration fetch`                                 | `denext migration fetch`                                                                                                                                                       |
-| `supabase db push [--include-seed] [--dry-run]`            | `denext db push`                                                                                                                                                               |
+| `supabase db push [--include-seed] [--dry-run]`            | `denext db push [--include-seed] [--dry-run]` (denext's own schemas first, then yours)                                                                                         |
 | `supabase db pull`                                         | `denext db pull [name]`                                                                                                                                                        |
 | `supabase db reset`                                        | `denext db reset --yes`                                                                                                                                                        |
 | `supabase db diff`                                         | `denext db diff [--file name]`                                                                                                                                                 |
@@ -561,7 +569,7 @@ the flags and the services.
 | `supabase storage ls` / `cp` / `mv` / `rm`                 | `denext storage ls` / `cp` / `mv` / `rm` (`ss:///bucket/key` paths, `-r`)                                                                                                      |
 | `supabase link`                                            | `denext db link --url <postgres-url>`, then `--linked` on any verb                                                                                                             |
 | `supabase secrets set / list / unset`                      | `.env` (or your host's environment), or the [vault](/docs/backend#vault)                                                                                                       |
-| `supabase start` / `stop` / `status`                       | `denext stack up` / `down` / `status` (and `logs`, `health`) over the stack `denext generate docker` writes                                                                    |
+| `supabase start` / `stop` / `status`                       | `denext stack up` / `down` / `status` (and `logs`, `health`, `passwd`, `roll`) over the stack `denext generate docker` writes                                                  |
 | Backing up a self-hosted stack (database + storage)        | `denext stack backup [--full]` / `denext stack restore` ([Operating the stack](/docs/deploy#operating-the-stack))                                                              |
 
 Every database verb works on the project's own database by default. `--db-url <url>` or `--linked`
@@ -582,8 +590,9 @@ denext covers the app-backend half of Supabase; some of the platform is not ther
   Supabase, where `safeupdate` refuses one without); `count: "exact"` is for signed-in users unless
   `rest.exactCount` allows it; and aggregates (`rest.aggregates`) and execution plans
   (`rest.explain`) are off until you turn them on, as PostgREST ships them.
-- **No hosted dashboard.** `denext ui` runs on your machine, on loopback; there is no shared web
-  console, no logs explorer and no usage metrics.
+- **No hosted dashboard.** `denext ui` runs on your machine, on loopback; a deployed stack's
+  `dashboard` service is yours to run and to put behind a TLS proxy. Its Logs page searches the
+  stack's container logs; there is no logs explorer across deployments and no usage metrics.
 - **Not hosted at all.** Backups, point-in-time recovery, connection pooling and database upgrades
   are your Postgres provider's job.
 - **No built-in SMS sender, and no hosted mail service.** `/auth/v1` mails through the `sendEmail`
@@ -595,8 +604,8 @@ denext covers the app-backend half of Supabase; some of the platform is not ther
   no one, and `new` is the row as it is after the burst. The default notify source serializes
   committing writers (`source: "logical"` does not, and needs `wal_level = logical`); under it a
   full old row is carried only when it fits a notification (about 7.5 KB of JSON).
-- **Types for the REST client.** `.denext/rest.ts` is `supabase gen types`-shaped (tables,
-  views, functions, enums and relationships of the exposed schemas) and types `createClient<Database>()`
+- **Types for the REST client.** `.denext/rest.ts` is `supabase gen types`-shaped (tables, views,
+  functions, enums and relationships of the exposed schemas) and types `createClient<Database>()`
   and denext's `from()`; `db()`'s tagged SQL is untyped, so for server queries use an ORM such as
   [Drizzle](/docs/database#orms) or write the row types.
 - **Vault's SQL needs the app.** `vault.create_secret()` and `vault.decrypted_secrets` work

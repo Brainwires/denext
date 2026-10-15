@@ -89,7 +89,8 @@ const brand = localFont({ src: "/fonts/brand.woff2", variable: "--font-brand" })
 > live in its file, which denext does not parse, so
 > `localFont({ adjustFontFallback: "Arial" })` type-checks and keeps a stable
 > class name but emits no fallback face — the stack falls straight through to
-> your `fallback` list. See [Known limitations](/docs/limitations).
+> your `fallback` list. Parsing the file's metrics is on the
+> [roadmap](https://github.com/Brainwires/denext/blob/main/ROADMAP.md).
 
 ## Fonts in a migrated app
 

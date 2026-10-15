@@ -315,7 +315,19 @@ WantedBy=multi-user.target
 Run `denext task build` (or `deno task build`) in your deploy step, then
 `systemctl restart my-app`. The least-privilege `start` spawns no child process, so it runs
 on whichever `deno` the unit names; it needs no `--allow-run` and no toolchain download.
+An app whose Postgres client is `Deno.SQL` (`postgresClient()`, `@denext/backend`'s default)
+needs that `deno` to be [denext's toolchain](/docs/toolchain): point `ExecStart` at the path
+`denext toolchain path` prints, or give the app a postgres.js client
+([Databases › Postgres](/docs/database#postgres)).
 Front it with nginx/Caddy for TLS + the concurrency limit (§1).
+
+### Single binary
+
+`denext build --compile` turns the app's server into one executable that does what
+`denext start` does (and runs `job` and `db` too), with the least-privilege flags baked in and
+no `.env` or database embedded. Copy it to the host and run it from the directory that should hold
+its `.env` and `./.denext` state. Targets, permissions and what it embeds:
+[Deployment targets › A single binary](/docs/deployment-targets#a-single-binary-with-denext-build---compile).
 
 ## 1. Put a concurrency ceiling in front of denext (required)
 
@@ -376,6 +388,9 @@ work is cooperative — i.e. it awaits I/O and threads the per-request
 JavaScript is single-threaded, so a synchronous hot loop blocks the event loop
 until it returns. Keep render/handler code free of unbounded synchronous work,
 and rely on the edge concurrency ceiling (§1) to contain the blast radius.
+Under `denext dev`, time the dev server spends building on a request's behalf (route scans,
+boundary crawls, a next-compat build on a target's first request) does not count against the
+deadline; the app's own handler time does. `denext start` never pauses it.
 
 A surface with a time budget of its own replaces the deadline for its requests with
 `setRequestTimeout(ms)` from `denext/server` (from the request's start; `0` removes it; it may
@@ -656,7 +671,8 @@ instead of (or alongside) the env var, see the `onRequest` callback in §14.
 ## 10. Graceful shutdown
 
 On `SIGTERM`/`SIGINT` the server stops accepting new connections and drains
-in-flight requests. Then it stops the `services/` tree, runs the plugin
+in-flight requests. Then it stops the
+[`services/` tree](/docs/services#shutdown-and-the-server-drain), runs the plugin
 teardowns, and finally runs `instrumentation.ts`'s `onShutdown()`. Draining is
 bounded by a deadline (default **10s**): set `DENEXT_SHUTDOWN_DRAIN_MS` to tune
 it, or `0` to drain indefinitely. If the deadline elapses with requests still in
@@ -665,13 +681,15 @@ deadline passes after the drain, the process exits even if a handle nothing
 closed keeps it alive, such as an app-owned database pool, a timer or a socket.
 To exit sooner, close such resources in `onShutdown`:
 
-````ts
+```ts
 // instrumentation.ts
 import { sql } from "./lib/db.ts"; // e.g. postgres(url)
 export async function onShutdown() {
   await sql.end({ timeout: 5 });
 }
-``` Size it above your longest
+```
+
+Size the deadline above your longest
 expected request and below your orchestrator's kill grace (e.g. k8s
 `terminationGracePeriodSeconds`, typically 30s; the generated compose file sets
 `stop_grace_period: 30s`). The signal must reach the server process itself: run
@@ -724,7 +742,7 @@ Two mitigations, use either or both:
 // denext.config.ts
 export default { cacheKeyParams: ["page", "sort"] } satisfies DenextConfig;
 // ?page=2&utm_source=x and ?page=2&utm_source=y now share one cached entry.
-````
+```
 
 ## 13. Health & readiness
 

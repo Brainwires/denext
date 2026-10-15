@@ -232,7 +232,10 @@ export default denextLintPlugin({
 { "lint": { "plugins": ["./lint/denext.ts"] } }
 ```
 
-The default rules (`rules-of-hooks` and the rest) are still included.
+The default rules (`rules-of-hooks` and the rest) are still included. `denext lint` explains
+a report from either rule in plain language with the fix (the `assertNever` default, `err()`
+or `tryAsync`), as it does the default rules; `--raw` prints Deno's report unchanged. See
+[Explained type errors](/docs/error-handling#explained-type-errors).
 
 ### `denext/exhaustive-switch`
 

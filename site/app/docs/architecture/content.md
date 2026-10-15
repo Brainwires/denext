@@ -31,7 +31,8 @@ smaller bundles and first-class streaming.
   does); a component that genuinely awaits throws a guided error. The **Node-stream** APIs
   (`renderToPipeableStream`/`renderToStaticNodeStream`) are a thin adapter over the Web
   renderer and buffer rather than apply `Writable` backpressure — denext targets the Web
-  stream. Tracked in [KNOWN-LIMITATIONS.md](/docs/limitations).
+  stream. Backpressure is on the
+  [roadmap](https://github.com/Brainwires/denext/blob/main/ROADMAP.md).
 
 ## Concurrency: fiber-based, time-sliced, and interruptible
 

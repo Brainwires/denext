@@ -946,8 +946,12 @@ build adds over the React Native one:
   `onKeyDown`) land on the scroll element.
 - `getScrollableNode()`, `getNativeScrollRef()`, `getAnimatableRef()`, `getScrollResponder()`
   and `refScrollView` give the scroll element itself.
+
+Both builds (this one and React Native mode's) also honour these LegendList props:
+
 - `contentInsetEndAdjustment` and the end of `contentInset` add room after the last item; the
-  start of `contentInset` (`top`, or `left` when horizontal) adds room before the content.
+  start of `contentInset` (`top`, or `left` when horizontal) adds room before the content
+  (`VirtualList`'s `startInset`).
 - `waitForInitialLayout` keeps the list invisible until its first items are measured, so it
   never paints at estimated positions.
 - `itemsAreEqual` (with a `keyExtractor`) keeps an item's rendered element when the item equals
@@ -972,12 +976,12 @@ visible range and each item's position and size. Its `listen` calls back with `t
 `otherAxisSize`, `readyToRender` and `activeStickyIndex` when they change, and
 `listenToPosition` with an item's position; the other listener types never call back.
 
-The differences from the real DOM build: the engine's own (estimates are confirmed by
-measuring, `waitForInitialLayout` hides the whole list rather than only its items, and
-`itemsAreEqual` re-renders an equal item that moved to another index), and the scroll element carries
-the engine's inline `height: 100%` (a `style` height, or a class with a max height, still sizes
-it). The switch applies to apps on npm React (the esbuild build path); a denext-native app uses
-`VirtualList` directly.
+The differences from the real DOM build: the engine's own (estimates are confirmed by measuring,
+`waitForInitialLayout` hides the whole list rather than only its items, and `itemsAreEqual`
+re-renders an equal item that moved to another index), and the scroll element carries the engine's
+inline `height: 100%` (a `style` height, or a class with a max height, still sizes it). The switch
+applies to apps on npm React (the esbuild build path); a denext-native app uses `VirtualList`
+directly.
 
 ## Limitations
 

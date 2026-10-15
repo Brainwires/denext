@@ -47,10 +47,10 @@ current route and swaps the document in place (no browser reload), falling back
 to a hard reload only if the re-fetch fails.
 
 > [!WARNING]
-> "`global-error.tsx` hydration is not wired on the next-compat /
-> static-export paths." Those two paths emit no entry, so there global-error
-> stays server-rendered only and its `reset` is inert. See
-> [Known limitations](/docs/limitations).
+> `global-error.tsx` hydration is not wired on the next-compat and
+> static-export paths. Those two paths emit no entry, so there global-error
+> stays server-rendered only and its `reset` is inert. Wiring it is on the
+> [roadmap](https://github.com/Brainwires/denext/blob/main/ROADMAP.md).
 
 ## `notFound()`, `forbidden()`, `unauthorized()`
 
@@ -148,7 +148,7 @@ runbook step.
 ## In development
 
 Nothing is redacted in dev: the real error is passed to the boundary, and the
-in-browser overlay shows a **codeframe** (the source snippet with a caret at
+in-browser overlay shows a **codeframe** (the source snippet with a caret under
 the failing column) plus a **clickable frame that opens the file in your
 editor**, honoring `DENEXT_EDITOR` / `VISUAL` / `EDITOR` (VS Code, JetBrains,
 Sublime, and terminal editors; default `code`). Build, server-render and type
@@ -157,8 +157,9 @@ errors surface in the same overlay.
 ### Explained type errors
 
 `denext check`, `denext lint`, `denext build` and `denext dev` print each TypeScript, Deno and
-denext-lint diagnostic they recognize as a short explanation: the problem in one line, a codeframe,
-why it happens, and a concrete fix. The original diagnostic is printed under it, unchanged:
+denext-lint diagnostic they recognize as a short explanation: the problem in one line, a codeframe
+(underlining the whole span the diagnostic covers), why it happens, and a concrete fix. The
+original diagnostic is printed under it, unchanged:
 
 ```text
 TS2322: Type mismatch at `author.email`
@@ -190,7 +191,9 @@ It covers:
   gets a did-you-mean from its directory.
 - **The typed API client**: an unknown route path or param gets the nearest real one.
 - **denext's lint rules**: `directive-placement`, `rules-of-hooks`, `hooks-in-component`,
-  `no-hooks-in-async` and `no-handlers-in-async`.
+  `no-hooks-in-async` and `no-handlers-in-async`, and the opt-in `exhaustive-switch` and
+  `no-throw` from [Errors as values](/docs/errors-as-values#lint-rules), whose fixes point at
+  `assertNever`, `err()` and `tryAsync`.
 
 In the browser the overlay shows the explanation first, with the original diagnostic in a
 collapsed **Original diagnostic** section. Pass `--raw` to `denext check`, `lint`, `build` or `dev`,

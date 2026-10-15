@@ -7,8 +7,8 @@ lead: Locale routing with a default-locale prefix, locale negotiation, automatic
 ## Configure locales
 
 Internationalized routing is one config field —
-`i18n: { locales, defaultLocale, localePrefix?, messages? }`. `localePrefix` is
-`"as-needed"` (the default — the default locale is served unprefixed at
+`i18n: { locales, defaultLocale, localePrefix?, messages?, hreflang?, domains? }`.
+`localePrefix` is `"as-needed"` (the default — the default locale is served unprefixed at
 `/about`, every other locale is prefixed at `/fr/about`) or `"always"` (every
 locale is prefixed, including the default; an unprefixed path redirects to the
 detected locale's prefix). `messages` holds optional catalogs keyed by locale —
@@ -24,6 +24,27 @@ export default {
     defaultLocale: "en",
     localePrefix: "as-needed",
     messages: { en: { greeting: "Hello" }, fr: { greeting: "Bonjour" } },
+  },
+} satisfies DenextConfig;
+```
+
+## A locale per domain
+
+`domains` serves a locale on its own host with no prefix, as Next's `i18n.domains` does:
+`example.fr/about` renders French. Each entry pins a `domain` to a `defaultLocale`, served
+unprefixed on that host; its other `locales` (all of them when omitted) are still prefixed
+there, and `http: true` makes its generated URLs `http://` for local testing. Locales tied to
+no domain keep the prefix rules above on the primary host. The render path matches the
+request's trusted host (forwarded headers count only under `trustForwardedHeaders`).
+`localeMiddleware` never redirects on a matched domain, and the hreflang alternates for a
+domain's locales are absolute URLs on that domain.
+
+```ts
+export default {
+  i18n: {
+    locales: ["en", "fr", "de"],
+    defaultLocale: "en",
+    domains: [{ domain: "example.fr", defaultLocale: "fr" }],
   },
 } satisfies DenextConfig;
 ```

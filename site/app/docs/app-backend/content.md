@@ -51,7 +51,7 @@ endpoints. The rules:
   suffixes, and `"null"` can't be configured at all.
 - **Never `*` with credentials.** `origins: ["*"]` answers `Access-Control-Allow-Origin: *`
   and is refused at boot next to `credentials: true` (and next to any other origin).
-- **`Vary: Origin`** is on every answer the policy touches, allowed or not.
+- **`Vary: Origin`** is on every answer a policy other than `["*"]` touches, allowed or not.
 - **Preflights are answered before middleware.** An `OPTIONS` with `Origin` and
   `Access-Control-Request-Method` for an API route is answered `204` under the route's
   policy, so an auth guard in `middleware.ts` never refuses a preflight (which carries no
@@ -71,6 +71,10 @@ export const cors = false;
 // app/api/public/route.ts — a different audience
 export const cors = { origins: ["https://partner.example.com"] };
 ```
+
+One method of a `defineApi` route can do the same with the `cors()` middleware from `denext/server`:
+`createApi().use(cors({ origins: [...] })).define(…)`. It wins over both the route's export and the
+app policy for the method it guards, and its preflight is answered before `middleware.ts` too.
 
 The native auth endpoints (`/auth/native/*`, `/auth/account/delete`) answer their own
 preflights under the app `cors` policy; they run after `middleware.ts`, so a middleware
@@ -333,11 +337,12 @@ delete them in the app. `POST /auth/account/delete` does it for the signed-in us
 - It needs a **recent sign-in**: `authTime` within `mfa.freshness` (at least five minutes),
   the rule that enrolling a second factor uses. Otherwise it answers
   `403 { "error": "reauth_required" }`; sign in again and retry.
-- It revokes the user's Sign in with Apple tokens at `https://appleid.apple.com/auth/revoke`
-  (the stored refresh token, else the access token), ends their native session families and
-  server-side sessions, then calls the adapter's `deleteUser`, which removes the user, linked
-  accounts, the password hash, bearer API tokens, the TOTP factor, native sessions and the
-  verification tokens sent to their address (one transaction in SQLite).
+- It revokes the user's Sign in with Apple tokens at `https://appleid.apple.com/auth/revoke` (the
+  stored refresh token, else the access token), ends their native session families, server-side
+  sessions and stateless cookie sessions (through the user's
+  [`sessionsValidAfter`](/docs/auth#revocation)), then calls the adapter's `deleteUser`, which
+  removes the user, linked accounts, the password hash, bearer API tokens, the TOTP factor, native
+  sessions and the verification tokens sent to their address (one transaction in SQLite).
 - Then `onAccountDeleted({ user, appleRevoked })` runs: delete the app's own rows for the
   user there. `appleRevoked` is `true` when every Apple token was revoked, `false` when one
   could not be (no secret, or Apple refused — deletion still happens, and the logger says
@@ -400,10 +405,9 @@ The checks, in one place:
 
 ## Limitations
 
-- **Sessions on other devices using stateless cookies outlive account deletion** until they
-  expire; run a `sessionStore` (`session.strategy: "database"`).
-- **A user with a second factor can't use a native id_token sign-in**; the browser flow
-  handles the step-up.
+- **Enrolling a second factor needs the browser flow.** A native `id_token` sign-in can finish an
+  enrolled factor, but under `mfa.required: "always"` a user with no factor yet gets
+  `403 mfa_required` and enrolls through `signIn`.
 - **Apple revocation needs the client secret JWT** (`native.apple.clientSecret`, or an
   `apple()` provider's) — minting it from your `.p8` key is yours to do.
 - **CORS does not cover pages, Server Actions, the API batch endpoint or Live.**

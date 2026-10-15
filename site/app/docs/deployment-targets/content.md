@@ -64,6 +64,9 @@ Point the entrypoint at `jsr:@denext/denext@^4.0.0/cli` with `start .` (or run
   ([Environment › Deno Deploy](/docs/environment#deno-deploy-and-other-platforms)).
 - TLS and autoscaling are the platform's; still set `maxConcurrency` per
   isolate.
+- The platform runs stock Deno, which has no `Deno.SQL`: give `@denext/backend`
+  and your own code a postgres.js client
+  (`fromPostgresJs(postgres(url))`, [Databases › Postgres](/docs/database#postgres)).
 
 Recipe: [Deployment › Deno Deploy](/docs/deploy#deno-deploy).
 
@@ -76,7 +79,10 @@ with `Restart=always`, `Environment=PORT=3000` and the secrets;
 `denext task build` (or `deno task build`) in the deploy step, then `systemctl restart my-app`. Front it
 with nginx or Caddy for TLS and the connection ceiling. For a zero-downtime
 restart run two units on two ports and switch the upstream, or accept the drain
-window (below). Recipe:
+window (below). A `Deno.SQL` Postgres client needs the unit's `deno` to be denext's
+toolchain (`denext toolchain path`). Long-lived work in `services/` runs inside this one
+process under [a supervisor](/docs/services), so the unit's restart policy only has to cover
+the server. Recipe:
 [Deployment › Self-host](/docs/deploy#self-host-systemd).
 
 ## Fly.io
@@ -142,9 +148,11 @@ terminationGracePeriodSeconds: 30
 ```
 
 - **Probes.** `/_denext/health` answers `200` even when the cache backend is
-  degraded (reads fall back to live renders), so it is a liveness probe. For
-  readiness with app-level logic, expose `cacheStoreHealthy()` and your own
-  database ping on a route
+  degraded (reads fall back to live renders). A check registered with
+  `registerHealthCheck()` (`@denext/backend` registers `database`) turns it into
+  a `503` while that dependency is down, which is what a readiness probe wants;
+  a liveness probe on the same path would then restart pods during a database
+  outage, so point liveness at a route of your own if you register checks
   ([Health & readiness](/docs/deploy#13-health--readiness)).
 - **Drain.** On `SIGTERM` denext stops accepting and drains in-flight requests
   up to `DENEXT_SHUTDOWN_DRAIN_MS`, then force-exits. Keep it **below**

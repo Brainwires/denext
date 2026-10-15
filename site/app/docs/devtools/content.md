@@ -66,9 +66,10 @@ on every streamed-hole reveal.
   refcounted between the panel and the MCP sink, so closing and reopening the
   panel no longer wipes the history `denext_why_render` is reading.
 - **Owner stack** — the component ancestors above the selection, nearest first,
-  joined with `←`. The same chain is what `captureOwnerStack()` (from the `react`
-  alias) returns while a component renders in development, formatted as React 19's
-  `\n    at Name (file:line:column)` lines.
+  joined with `←`. The same chain is what `captureOwnerStack()` (from `denext/react`,
+  the `react` alias) returns while a component renders in development, formatted as
+  React 19's `\n    at Name (file:line:column)` lines; it returns `null` in production,
+  outside a client render (an event handler, an effect) and during a server render.
 - **Effect annotations** — an effect/memo/callback/deferred cell shows its `deps`
   (`[] (once)` when empty) and a `cleanup ƒ` row when it currently holds one.
 
@@ -369,6 +370,18 @@ leaving a page that never settles.
 Entries are also forwarded, batched, to the dev server's event log
 (`/_denext/dev-log`), so [`denext_dev_logs`](#mcp-inspect-the-live-page) reads
 the page's console — App Router and SPA dev alike.
+
+## Errors and the dev overlay
+
+Build, server-render and type errors are not a panel tab: they open denext's dev
+overlay over the page, with a codeframe whose caret sits under the failing column
+and a frame that opens the file in your editor through the same endpoint the
+Source row uses. A type, lint or build diagnostic denext recognizes is shown
+explained first (the problem in one line, why it happens and a fix), with Deno's
+original output in a collapsed section; `denext dev --raw` or `DENEXT_RAW_DIAGNOSTICS=1`
+turns the explanations off. The same explanations reach `denext_dev_logs` and the
+`denext_explain_error` [MCP](/docs/mcp) tool. See
+[Explained type errors](/docs/error-handling#explained-type-errors).
 
 ## Highlight updates
 

@@ -12,13 +12,14 @@ isn't tested.
 
 ## TL;DR
 
-| Option               | Setup                          | npm?        | Tested with denext                 | Best for                          |
-| -------------------- | ------------------------------ | ----------- | ---------------------------------- | --------------------------------- |
-| **`node:sqlite`**    | built into Deno                | **none**    | ✅ (via the better-sqlite3 compat) | single-instance apps, the default |
-| **Deno KV**          | built into Deno                | **none**    | ⚠️ not in denext CI                | edge/serverless, simple KV data   |
-| **Postgres / MySQL** | a Deno or `npm:` driver        | driver only | ⚠️ not in denext CI                | multi-instance / large apps       |
-| **Drizzle ORM**      | `better-sqlite3` shim → compat | ORM only    | ✅ full app + e2e                  | typed SQL over SQLite             |
-| **Prisma**           | driver adapter + `links` shim  | ORM only    | ✅ verified recipe (Rust-free)     | typed models + migrations         |
+| Option            | Setup                           | npm?        | Tested with denext                 | Best for                          |
+| ----------------- | ------------------------------- | ----------- | ---------------------------------- | --------------------------------- |
+| **`node:sqlite`** | built into Deno                 | **none**    | ✅ (via the better-sqlite3 compat) | single-instance apps, the default |
+| **Deno KV**       | built into Deno                 | **none**    | ⚠️ not in denext CI                | edge/serverless, simple KV data   |
+| **Postgres**      | `postgresClient()` (`Deno.SQL`) | **none**    | ✅ CI against Postgres 17          | multi-instance / large apps       |
+| **MySQL, others** | a Deno or `npm:` driver         | driver only | ⚠️ not in denext CI                | an existing database              |
+| **Drizzle ORM**   | `better-sqlite3` shim → compat  | ORM only    | ✅ full app + e2e                  | typed SQL over SQLite             |
+| **Prisma**        | driver adapter + `links` shim   | ORM only    | ✅ verified recipe (Rust-free)     | typed models + migrations         |
 
 ## SQLite via `node:sqlite` (recommended default, zero-npm)
 
@@ -101,19 +102,20 @@ Either way the result is a `SqlClient` (a tagged-template query, `unsafe(text, p
 `begin(fn)` and `close()`), which every denext Postgres feature takes as `sql`. Pass `url`
 instead and denext opens the client on `Deno.SQL` itself, and closes it on drain.
 
-| What                       | API                                                     | Tables                                    |
-| -------------------------- | ------------------------------------------------------- | ----------------------------------------- |
-| Auth users, accounts, MFA… | `denextAuth({ adapter: postgresAuthAdapter({ sql }) })` | `auth_*` ([details](/docs/auth#postgres)) |
-| Revocable sessions         | `sessionStore: postgresSessionStore({ sql })`           | `auth_sessions`                           |
-| Auth rate limits           | `rateLimit: { store: postgresRateLimitStore({ sql }) }` | `auth_rate_limits`                        |
-| Data and ISR page cache    | `setCacheStore(postgresCacheStore({ sql }))`            | `cache_data`, `cache_pages`, `cache_tags` |
-| Your own migrations        | `migratePostgres(sql, { dir })`                         | `_migrations`                             |
+| What                       | API                                                              | Tables                                    |
+| -------------------------- | ---------------------------------------------------------------- | ----------------------------------------- |
+| Auth users, accounts, MFA… | `denextAuth({ adapter: postgresAuthAdapter({ sql }) })`          | `auth_*` ([details](/docs/auth#postgres)) |
+| Revocable sessions         | `sessionStore: postgresSessionStore({ sql })`                    | `auth_sessions`                           |
+| Auth rate limits           | `rateLimit: { store: postgresRateLimitStore({ sql }) }`          | `auth_rate_limits`                        |
+| Data and ISR page cache    | `setCacheStore(postgresCacheStore({ sql }))`                     | `cache_data`, `cache_pages`, `cache_tags` |
+| Job run history            | `jobs: { history: { store: postgresJobHistoryStore({ sql }) } }` | `job_runs`                                |
+| Your own migrations        | `migratePostgres(sql, { dir })`                                  | `_migrations`                             |
 
 Each store creates its tables through `migratePostgres` on first use (recorded in
-`auth_migrations` / `cache_migrations`; pass `migrate: false` when a deploy step applies them
-with a more privileged role), and takes `schema` to keep them out of `public`. With
-[`@denext/backend`](/docs/backend#postgres), `backend({ postgres })` opens one client for the
-whole app and `backendAuthAdapter()` puts auth on it.
+`auth_migrations` / `cache_migrations` / `job_history_migrations`; pass `migrate: false` when a
+deploy step applies them with a more privileged role), and takes `schema` to keep them out of
+`public`. With [`@denext/backend`](/docs/backend#postgres), `backend({ postgres })` opens one
+client for the whole app and `backendAuthAdapter()` puts auth on it.
 
 ### Schema at startup
 
@@ -344,12 +346,11 @@ CI. Prisma's `postgres` adapter works as plain networked-driver usage.
 
 ## Migrations & seeding
 
-denext ships no migration tool and does not need one: a migration is server code
-that runs before the app takes traffic, and the framework already has a place
-for server code you run on demand — a [job](/docs/jobs) — and a place for a
-project-local CLI verb — `commands` in `denext.config.ts`. The three recipes
-below are ordered by how much machinery they bring; the first one is verified
-here and is enough for most SQLite apps.
+A migration is server code that runs before the app takes traffic, and the framework already
+has a place for server code you run on demand — a [job](/docs/jobs). denext's own runners
+(`migrateSqlite`, `migratePostgres`) apply plain SQL files from one, and the
+[`denext migration`](#denext-migration-up-down-list-repair) verbs apply the same files from the
+CLI. An ORM keeps its own tool (Drizzle and Prisma below).
 
 ### Plain SQL files on `node:sqlite` (verified)
 
@@ -366,58 +367,32 @@ never collide between branches the way `NNN` does) and, the first time,
 `jobs/seed.ts`, an idempotent `INSERT OR IGNORE` seed for `denext job seed`
 (a `PrismaClient` upsert in a Prisma project). In a Prisma or Drizzle project
 `generate migration` points at `prisma migrate dev` / `drizzle-kit generate`
-instead, since those own the migration history. The runner by hand:
+instead, since those own the migration history. Its SQLite half, by hand:
 
 ```ts
-// jobs/migrate.ts — apply migrations/NNN_name.sql in order, once each, on node:sqlite.
+// jobs/migrate.ts — apply migrations/*.sql in order, once each, on node:sqlite.
 import { DatabaseSync } from "node:sqlite";
-import { defineJob } from "denext/server";
+import { defineJob, migrateSqlite } from "denext/server";
 
-const DB_PATH = Deno.env.get("DB_PATH") ?? "app.db";
 const DIR = new URL("../migrations/", import.meta.url);
 
 export default defineJob({
-  description: "apply pending migrations/*.sql",
-  handler: () => {
-    const db = new DatabaseSync(DB_PATH);
+  description: "Apply pending SQL migrations",
+  handler: async () => {
+    const db = new DatabaseSync(Deno.env.get("DB_PATH") ?? "app.db");
     try {
-      db.exec(`CREATE TABLE IF NOT EXISTS _migrations (
-        name TEXT PRIMARY KEY,
-        applied_at INTEGER NOT NULL
-      )`);
-      const applied = new Set(
-        (db.prepare("SELECT name FROM _migrations").all() as { name: string }[])
-          .map((r) => r.name),
-      );
-      const files = [...Deno.readDirSync(DIR)]
-        .filter((e) => e.isFile && /^\d+_.*\.sql$/.test(e.name))
-        .map((e) => e.name)
-        .sort(); // zero-padded NNN_ prefixes sort lexically
-      const pending = files.filter((f) => !applied.has(f));
-      const record = db.prepare(
-        "INSERT INTO _migrations (name, applied_at) VALUES (?, ?)",
-      );
-      for (const file of pending) {
-        const sql = Deno.readTextFileSync(new URL(file, DIR));
-        db.exec("BEGIN");
-        try {
-          db.exec(sql);
-          record.run(file, Date.now());
-          db.exec("COMMIT");
-        } catch (err) {
-          db.exec("ROLLBACK");
-          throw new Error(
-            `migration ${file} failed: ${err instanceof Error ? err.message : err}`,
-          );
-        }
-      }
-      return `applied ${pending.length} migration(s): ${pending.join(", ") || "none"}`;
+      const { applied } = await migrateSqlite(db, { dir: DIR });
+      return applied.length ? `applied ${applied.join(", ")}` : "up to date";
     } finally {
       db.close();
     }
   },
 });
 ```
+
+Each file runs inside its own transaction (a file with its own `BEGIN;` … `COMMIT;` runs as
+written), only its `-- migrate:up` section when it has one, and is recorded once in
+`_migrations`.
 
 ```sql
 -- migrations/001_notes.sql
@@ -429,9 +404,9 @@ CREATE TABLE notes (
 ```
 
 ```sh
-denext job migrate          # applied 2 migration(s): 001_notes.sql, 002_notes_body.sql
-denext job migrate          # applied 0 migration(s): none
-denext job --list           # migrate  —  apply pending migrations/*.sql
+denext job migrate          # applied 001_notes.sql, 002_notes_body.sql
+denext job migrate          # up to date
+denext job --list           # migrate  —  Apply pending SQL migrations
 ```
 
 Verified against this runner: a second run is a no-op, a file with a syntax
@@ -443,8 +418,8 @@ Kubernetes init container or a `preStart` hook — and keep the schema step out 
 the app's boot so a bad migration fails the deploy, not the first request. The
 runner needs `--allow-read` on `migrations/` and `--allow-write` on the
 database's directory, which the scaffold's `-A` tasks already grant. The generated
-runner calls `migrateSqlite(db, { dir })` / `sqliteMigrationStatus(db, { dir })` from
-`denext/server`, the SQLite twins of `migratePostgres` below.
+runner adds `dryRun` / `status` payloads (`sqliteMigrationStatus(db, { dir })`) and the
+Postgres branch; `migrateSqlite` is the SQLite twin of `migratePostgres` below.
 
 ### `denext migration`: up, down, list, repair
 
