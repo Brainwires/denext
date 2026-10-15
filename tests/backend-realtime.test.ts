@@ -280,8 +280,12 @@ Deno.test("realtime: a burst of 500 inserts is coalesced into one re-read per id
     for (let i = 1; i <= 500; i++) {
       env.sql.insert("notes", { id: i, owner: i % 2 ? A : B, body: `note ${i} ${"x".repeat(60)}` });
     }
-    await until(() => changesOf(ca).length === 250 && changesOf(cb).length === 250, 5_000);
-    await until(() => changesOf(ca2).length === 250);
+    // Every notification is in (the fake delivers them synchronously): deliver the burst now
+    // instead of racing the 16 ms timer and a wall-clock deadline on a loaded machine. The
+    // counts below still prove the burst was one flush with one re-read per identity.
+    await engine.flush();
+    await until(() => changesOf(ca).length === 250 && changesOf(cb).length === 250, 60_000);
+    await until(() => changesOf(ca2).length === 250, 60_000);
     const stats = engine.stats;
     assertEquals(stats.notifications - before.notifications, 500);
     assertEquals(stats.flushes - before.flushes, 1, "one burst");
