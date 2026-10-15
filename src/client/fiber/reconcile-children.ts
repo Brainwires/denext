@@ -5,6 +5,7 @@ import { createFiberFromVNode, devHydrationActive } from "./fiber-utils.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import {
   childScopes,
+  childSlots,
   familyMatchActive,
   normalizeChildrenScoped,
   sameType,
@@ -49,6 +50,8 @@ function takeUnkeyedFamilyMatch(
 interface OldChildIndex {
   /** Keyed old children, by key (a direct child) or by {@linkcode scopedKey}. */
   keyed: Map<unknown, number>;
+  /** Unkeyed old children, by their slot ({@linkcode slotOf}). */
+  slots: Map<string | number | undefined, number>;
   /**
    * Unkeyed old children bucketed by element type, each queue kept in document order — one
    * bucket map per key scope (`undefined` is the direct children).
@@ -74,39 +77,76 @@ function scopedKey(key: unknown, scope: string | undefined): unknown {
  */
 function indexOldChildren(old: readonly Fiber[]): OldChildIndex {
   const keyed = new Map<unknown, number>();
+  const slots = new Map<string | number | undefined, number>();
   const unkeyed = new Map<string | undefined, Map<unknown, number[]>>();
   for (let i = 0; i < old.length; i++) {
     const c = old[i];
     if (c.vnode.key != null) {
-      keyed.set(scopedKey(c.vnode.key, c.keyScope), i);
+      keyed.set(scopedKey(c.vnode.key, c.keyScope as string | undefined), i);
     } else {
-      let byType = unkeyed.get(c.keyScope);
-      if (byType === undefined) unkeyed.set(c.keyScope, byType = new Map());
+      slots.set(c.keyScope, i);
+      const scope = scopeOfSlot(c.keyScope);
+      let byType = unkeyed.get(scope);
+      if (byType === undefined) unkeyed.set(scope, byType = new Map());
       let q = byType.get(c.vnode.type);
       if (q === undefined) byType.set(c.vnode.type, q = []);
       q.push(i);
     }
   }
-  return { keyed, unkeyed };
+  return { keyed, slots, unkeyed };
 }
 
 /**
- * The old child a new vnode may reuse (its position, or -1): by key, else the first unused
- * unkeyed old child of the exact same type (in order). Dev Fast Refresh only: an edited
- * component's type identity changed within its family, so it won't sit in the new type's
- * bucket — scan the remaining unkeyed queues for a family match (never runs in production).
+ * An unkeyed child's slot — React's implicit key: its position in its own array (holes
+ * counted), prefixed by that array's key scope when it is a nested one. Stored as the fiber's
+ * `keyScope` (an unkeyed child needs no key scope of its own).
  */
-function matchOldChild(
+function slotOf(scope: string | undefined, position: number): string | number {
+  return scope === undefined ? position : `${scope}/${position}`;
+}
+
+/** The key scope a slot ({@linkcode slotOf}) belongs to. */
+function scopeOfSlot(slot: string | number | undefined): string | undefined {
+  return typeof slot === "string" ? slot.slice(0, slot.lastIndexOf("/")) : undefined;
+}
+
+/**
+ * The old child a new vnode reuses outright (its position, or -1): by key, else the unkeyed old
+ * child in the same slot when it is of the same type (React's implicit-index match).
+ */
+function exactOldChild(
   nv: VNode,
   scope: string | undefined,
+  slot: string | number,
   index: OldChildIndex,
   old: readonly Fiber[],
 ): number {
   if (nv.key != null) return index.keyed.get(scopedKey(nv.key, scope)) ?? -1;
+  const i = index.slots.get(slot);
+  return i !== undefined && sameType(old[i].vnode, nv) ? i : -1;
+}
+
+/**
+ * An unkeyed new vnode no old child in its slot fits: the first unused unkeyed old child of the
+ * exact same type (in order), so inserting or removing a child of another type around them
+ * doesn't remount the rest. Dev Fast Refresh only: an edited component's type identity changed
+ * within its family, so it won't sit in the new type's bucket — scan the remaining unkeyed
+ * queues for a family match (never runs in production).
+ */
+function looseOldChild(
+  nv: VNode,
+  scope: string | undefined,
+  index: OldChildIndex,
+  old: readonly Fiber[],
+  used: Uint8Array,
+): number {
   const byType = index.unkeyed.get(scope);
   if (byType === undefined) return -1;
   const q = byType.get(nv.type);
-  if (q !== undefined && q.length > 0) return q.shift()!;
+  while (q !== undefined && q.length > 0) {
+    const i = q.shift()!;
+    if (used[i] === 0) return i;
+  }
   return familyMatchActive() ? takeUnkeyedFamilyMatch(byType, old, nv) : -1;
 }
 
@@ -163,7 +203,7 @@ function linkChildFiber(
   boundary: Fiber | null,
   inherited: ContextMap,
   prev: Fiber | null,
-  scope: string | undefined,
+  scope: string | number | undefined,
 ): Fiber {
   fiber.return = returnFiber;
   fiber.keyScope = scope;
@@ -207,11 +247,20 @@ function collectDeletions(returnFiber: Fiber, old: readonly Fiber[], used: Uint8
  * what the indexed matcher would pick (every earlier old child is already used, so this one
  * is the first unused of its type). Both must sit in the same key scope.
  */
-function sameSlot(old: Fiber, nv: VNode, scope: string | undefined): boolean {
+function sameSlot(old: Fiber, nv: VNode, scope: string | number | undefined): boolean {
   if (old.keyScope !== scope) return false;
   const ok = old.vnode.key;
   if (nv.key != null ? ok !== nv.key : ok != null) return false;
   return sameType(old.vnode, nv);
+}
+
+/** What a child's `keyScope` holds: its key scope when keyed, else its slot. */
+function scopeFor(
+  nv: VNode,
+  scope: string | undefined,
+  position: number,
+): string | number | undefined {
+  return nv.key != null ? scope : slotOf(scope, position);
 }
 
 /**
@@ -227,6 +276,7 @@ function reconcileRemaining(
   inherited: ContextMap,
   newVNodes: readonly VNode[],
   scopes: (string | undefined)[] | null,
+  slots: number[] | null,
   start: number,
   oldFiber: Fiber | null,
   prev: Fiber | null,
@@ -235,30 +285,77 @@ function reconcileRemaining(
   for (let c = oldFiber; c !== null; c = c.sibling) old.push(c);
   const used = new Uint8Array(old.length);
   const index = indexOldChildren(old);
+  const matched = matchAll(newVNodes, scopes, slots, start, index, old, used);
   let changed = false;
   let lastMatchedOldIndex = -1;
   for (let j = start; j < newVNodes.length; j++) {
     const nv = newVNodes[j];
-    const scope = scopes?.[j];
-    const i = matchOldChild(nv, scope, index, old);
-    let fiber: Fiber;
-    // Reuse an unused old child of the same type.
-    if (i >= 0 && used[i] === 0 && sameType(old[i].vnode, nv)) {
-      used[i] = 1;
-      fiber = createWorkInProgress(old[i], nv);
-      // A reuse that lands before the previous one moved (an out-of-order match).
-      changed ||= i < lastMatchedOldIndex;
-      lastMatchedOldIndex = Math.max(lastMatchedOldIndex, i);
-    } else {
-      fiber = createFiberFromVNode(nv);
-      fiber.flags |= Placement;
-      changed = true;
-    }
-    prev = linkChildFiber(fiber, returnFiber, host, boundary, inherited, prev, scope);
+    const i = matched[j - start];
+    // A reuse that lands before the previous one moved (an out-of-order match); a mount changed.
+    changed ||= i < 0 || i < lastMatchedOldIndex;
+    lastMatchedOldIndex = Math.max(lastMatchedOldIndex, i);
+    const fiber = i >= 0 ? createWorkInProgress(old[i], nv) : placed(nv);
+    const kept = scopeFor(nv, scopeAt(scopes, j), slotAt(slots, j));
+    prev = linkChildFiber(fiber, returnFiber, host, boundary, inherited, prev, kept);
   }
   if (collectDeletions(returnFiber, old, used) || changed) {
     returnFiber.flags |= ChildrenChanged;
   }
+}
+
+/** Child `j`'s key scope (`undefined`: a direct child). */
+function scopeAt(scopes: (string | undefined)[] | null, j: number): string | undefined {
+  return scopes === null ? undefined : scopes[j];
+}
+
+/** Child `j`'s position in its own array ({@linkcode childSlots}). */
+function slotAt(slots: number[] | null, j: number): number {
+  return slots === null ? j : slots[j];
+}
+
+/** A fresh fiber for `nv`, flagged for placement. */
+function placed(nv: VNode): Fiber {
+  const fiber = createFiberFromVNode(nv);
+  fiber.flags |= Placement;
+  return fiber;
+}
+
+/**
+ * The old child each new vnode from `start` reuses (-1: mount fresh). Exact matches first — by
+ * key, or the same-type child in the same slot — so a child keeps its fiber even when a new
+ * sibling of its type lands before it; then each unkeyed vnode left takes the first unused old
+ * child of its type ({@linkcode looseOldChild}).
+ */
+function matchAll(
+  newVNodes: readonly VNode[],
+  scopes: (string | undefined)[] | null,
+  slots: number[] | null,
+  start: number,
+  index: OldChildIndex,
+  old: readonly Fiber[],
+  used: Uint8Array,
+): Int32Array {
+  const matched = new Int32Array(newVNodes.length - start).fill(-1);
+  for (let j = start; j < newVNodes.length; j++) {
+    const scope = scopeAt(scopes, j);
+    const slot = slotOf(scope, slotAt(slots, j));
+    const i = exactOldChild(newVNodes[j], scope, slot, index, old);
+    take(matched, j - start, i, used, i >= 0 && sameType(old[i].vnode, newVNodes[j]));
+  }
+  for (let j = start; j < newVNodes.length; j++) {
+    const nv = newVNodes[j];
+    if (matched[j - start] >= 0 || nv.key != null) continue;
+    const i = looseOldChild(nv, scopeAt(scopes, j), index, old, used);
+    take(matched, j - start, i, used, i >= 0 && sameType(old[i].vnode, nv));
+  }
+  return matched;
+}
+
+/** Claim old child `i` for new child `k` when it `fits` (same type) and is still unused. */
+function take(matched: Int32Array, k: number, i: number, used: Uint8Array, fits: boolean): void {
+  if (!fits || used[i] !== 0) return;
+  used[i] = 1;
+  matched[k] = i;
 }
 
 export function reconcileChildren(
@@ -270,6 +367,7 @@ export function reconcileChildren(
 ): void {
   const newVNodes = normalizeChildrenScoped(childrenRaw);
   const scopes = childScopes;
+  const slots = childSlots;
   checkKeys?.(newVNodes, scopes);
   let oldFiber = returnFiber.child;
   returnFiber.child = null; // re-linked below, child by child
@@ -280,7 +378,8 @@ export function reconcileChildren(
   // unchanged list and an append in O(n) with small constants.
   for (
     ;
-    j < newVNodes.length && oldFiber !== null && sameSlot(oldFiber, newVNodes[j], scopes?.[j]);
+    j < newVNodes.length && oldFiber !== null &&
+    sameSlot(oldFiber, newVNodes[j], scopeFor(newVNodes[j], scopeAt(scopes, j), slotAt(slots, j)));
     j++
   ) {
     const next: Fiber | null = oldFiber.sibling;
@@ -292,7 +391,7 @@ export function reconcileChildren(
       childBoundary,
       childInherited,
       prev,
-      scopes?.[j],
+      oldFiber.keyScope,
     );
     oldFiber = next;
   }
@@ -304,6 +403,7 @@ export function reconcileChildren(
       childInherited,
       newVNodes,
       scopes,
+      slots,
       j,
       oldFiber,
       prev,

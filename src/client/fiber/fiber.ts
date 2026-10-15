@@ -426,7 +426,9 @@ export interface Fiber {
   // The key scope this fiber occupies among its siblings: which nested child array it came
   // from (`"1"`, `"1.0"`, …; `undefined` for a direct child). React scopes keys per array,
   // so a key only matches an old fiber of the same scope. Set by the parent's reconcile.
-  keyScope?: string;
+  // An unkeyed child keeps its slot here instead: its position in its array, holes counted
+  // (`2`, or `"1/2"` in a nested one) — React's implicit index.
+  keyScope?: string | number;
 
   /** Rarely used state, allocated on first write — see {@link FiberExt} / {@link fiberExt}. */
   ext: FiberExt | undefined;

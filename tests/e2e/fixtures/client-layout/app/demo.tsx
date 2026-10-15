@@ -10,7 +10,13 @@ import {
   ViewTransition,
 } from "denext";
 
-const w = globalThis as unknown as { __panelEffects?: number; __panelCleanups?: number };
+const w = globalThis as unknown as {
+  __panelEffects?: number;
+  __panelCleanups?: number;
+  __cb?: string[];
+};
+/** Record a `<ViewTransition>` callback (the e2e test reads `window.__cb`). */
+const log = (s: string) => (w.__cb ??= []).push(s);
 
 function Panel() {
   useEffect(() => {
@@ -99,6 +105,63 @@ export function Demo() {
       <Activity mode={shown ? "visible" : "hidden"}>
         <Panel />
       </Activity>
+      <Callbacks />
     </div>
+  );
+}
+
+/** `<ViewTransition>` callbacks: an entering / exiting card, an updating line, an Activity. */
+function Callbacks() {
+  const [card, setCard] = useState(false);
+  const [bump, setBump] = useState(0);
+  const [act, setAct] = useState(true);
+  return (
+    <>
+      <button
+        type="button"
+        data-testid="cb-card"
+        onClick={() => startTransition(() => setCard(!card))}
+      >
+        card
+      </button>
+      <button
+        type="button"
+        data-testid="cb-bump"
+        onClick={() => startTransition(() => setBump(bump + 1))}
+      >
+        bump
+      </button>
+      <button
+        type="button"
+        data-testid="cb-act"
+        onClick={() => startTransition(() => setAct(!act))}
+      >
+        activity
+      </button>
+      {card && (
+        <ViewTransition
+          name="card"
+          enter="card-in"
+          exit="card-out"
+          onEnter={(inst, types) => {
+            log(`enter:${inst.name}:${types.join(",")}`);
+            const a = inst.new.animate({ opacity: [0, 1] }, 80);
+            log(`animating:${inst.new.getAnimations().includes(a)}`);
+            return () => log("enter-cleanup");
+          }}
+          onExit={(inst) => log(`exit:${inst.name}`)}
+        >
+          <p data-testid="card">card</p>
+        </ViewTransition>
+      )}
+      <ViewTransition update="bumped" onUpdate={(inst) => log(`update:${inst.name}`)}>
+        <p data-testid="bumped">bump {bump}</p>
+      </ViewTransition>
+      <Activity mode={act ? "visible" : "hidden"}>
+        <ViewTransition name="act" exit="act-out" onExit={(inst) => log(`exit:${inst.name}`)}>
+          <p data-testid="act">in an activity</p>
+        </ViewTransition>
+      </Activity>
+    </>
   );
 }

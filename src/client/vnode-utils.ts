@@ -40,6 +40,14 @@ export function normalizeChildren(children: VNodeChildren): VNode[] {
  */
 export let childScopes: (string | undefined)[] | null = null;
 
+/**
+ * The position of each child of the last {@linkcode normalizeChildrenScoped} call within its own
+ * array, counting the holes (`null`, `false`, `true`) a conditional child leaves — React's
+ * implicit index, which keeps `{open && <A />}<B />` from handing `B`'s state to `A`. `null` when
+ * every child's position is its index in the result (no hole, no nested array).
+ */
+export let childSlots: number[] | null = null;
+
 /** The normalized form of no children (shared; never written). */
 const NO_CHILDREN: VNode[] = [];
 
@@ -56,6 +64,7 @@ const NO_CHILDREN: VNode[] = [];
  */
 export function normalizeChildrenScoped(children: VNodeChildren): readonly VNode[] {
   childScopes = null;
+  childSlots = null;
   if (!Array.isArray(children)) {
     if (children == null || children === false || children === true) return NO_CHILDREN;
     return [asVNode(children as VNodeChild)];
@@ -82,6 +91,15 @@ function asVNode(c: VNodeChild): VNode {
   return c as VNode;
 }
 
+/** Record that the child at `position` in the result sits at `slot` in its own array. */
+function recordSlot(slot: number, position: number): void {
+  if (childSlots !== null) childSlots.push(slot);
+  else if (slot !== position) {
+    childSlots = Array.from({ length: position }, (_, k) => k);
+    childSlots.push(slot);
+  }
+}
+
 /** Flatten `list` (key scope `scope`) into `nodes`, recording scopes in {@linkcode childScopes}. */
 function collectScoped(list: readonly unknown[], scope: string | undefined, nodes: VNode[]): void {
   for (let i = 0; i < list.length; i++) {
@@ -92,6 +110,7 @@ function collectScoped(list: readonly unknown[], scope: string | undefined, node
     }
     if (c == null || c === false || c === true) continue;
     nodes.push(asVNode(c as VNodeChild));
+    recordSlot(i, nodes.length - 1);
     if (childScopes !== null) childScopes.push(scope);
     else if (scope !== undefined) {
       childScopes = new Array<string | undefined>(nodes.length - 1).fill(undefined);

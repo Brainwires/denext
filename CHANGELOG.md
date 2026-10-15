@@ -162,6 +162,14 @@ and this project adheres to
 
 ### Fixed
 
+- **A conditional child no longer takes its sibling's state.** In
+  `{open && <Counter />}<Counter />`, showing the first one handed it the second one's fiber (its
+  state, effects and DOM) because unkeyed children were matched by type alone. Each unkeyed child
+  now keeps the old child of its type in its own position, the holes a conditional child leaves
+  counted (React's implicit index); one left without a match still reuses a leftover child of its
+  type instead of remounting. Found by the `<ViewTransition>` callback e2e test, whose `onEnter`
+  landed on the wrong boundary.
+
 - **A root layout rendered by client code keeps its `<title>` / `<meta>` / `<link>` in the
   head.** The server hoists them into the document's head, as React 19 does; hydration now adopts
   them there (matched by tag and identifying attributes, among the document's own tags) instead
