@@ -151,6 +151,41 @@ Deno.test("install.ps1: a good checksum installs the binary; -Uninstall removes 
   }
 });
 
+Deno.test("install.ps1: -Uninstall waits out a transient lock on denext.exe", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  // Uninstall runs denext.exe (`toolchain unlink`) and deletes it a moment later; Windows can
+  // still hold the file then (a GitHub runner did: "being used by another process"). Here the
+  // hold is the stand-in itself, still running when the uninstall starts.
+  const dir = await Deno.makeTempDir();
+  const release = serveRelease("v9.9.9");
+  let held: Promise<Deno.CommandStatus> | undefined;
+  try {
+    // A 4.x stand-in that answers `toolchain` at once, and `hold <ms>` by running that long.
+    const zip = await stubZip(
+      dir,
+      `if (Deno.args[0] === "--version") console.log("denext 9.9.9 (binary)");
+else if (Deno.args[0] === "hold") await new Promise((r) => setTimeout(r, Number(Deno.args[1])));
+`,
+    );
+    release.files.set(ASSET, zip);
+    release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
+    const root = join(dir, "home");
+    assertEquals((await install(release, root, { DENEXT_NO_TOOLCHAIN: "1" })).code, 0);
+    // While it runs, Windows refuses to delete its image - as it can for a moment after a run.
+    held = new Deno.Command(join(root, "bin", "denext.exe"), { args: ["hold", "3000"] })
+      .spawn().status;
+    const removed = await install(release, root, {}, ["-Uninstall"]);
+    assertEquals(removed.code, 0, removed.out);
+    assert(!(await exists(root)), "nothing left behind once the lock is released");
+    assert((await held).success, "the stand-in ran (holding its image) and exited");
+  } finally {
+    await held; // the temp dir can only go once the stand-in has exited
+    await release.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("install.ps1: a wrong checksum installs nothing", { ignore: NOT_WINDOWS }, async () => {
   const dir = await Deno.makeTempDir();
   const release = serveRelease("v9.9.9");
@@ -311,26 +346,12 @@ Deno.test("install.ps1: DENEXT_ARTIFACTS installs a local build, still checksum-
   }
 });
 
-/**
- * A zip holding a compiled `denext.exe` stand-in that answers `--version` as `denext <version>
- * (binary)` and, like a release before 4.0, refuses every other verb as `unknown command` after
- * logging it to $STUB_LOG.
- */
-async function preToolchainZip(dir: string, version: string): Promise<Uint8Array> {
+/** A zip holding `denext.exe` compiled from the Deno `source` (a stand-in with chosen answers). */
+async function stubZip(dir: string, source: string): Promise<Uint8Array> {
   const stage = join(dir, "stage");
   await Deno.mkdir(stage, { recursive: true });
   const src = join(dir, "stub.ts");
-  await Deno.writeTextFile(
-    src,
-    `if (Deno.args[0] === "--version") console.log("denext ${version} (binary)");
-else {
-  const log = Deno.env.get("STUB_LOG");
-  if (log) Deno.writeTextFileSync(log, Deno.args.join(" ") + "\\n", { append: true });
-  console.error(\`denext: unknown command "\${Deno.args[0]}"\`);
-  Deno.exit(1);
-}
-`,
-  );
+  await Deno.writeTextFile(src, source);
   const compiled = await new Deno.Command(Deno.execPath(), {
     args: [
       "compile",
@@ -345,6 +366,25 @@ else {
   }).output();
   assert(compiled.success, new TextDecoder().decode(compiled.stderr));
   return await zipStage(dir, stage);
+}
+
+/**
+ * A zip holding a compiled `denext.exe` stand-in that answers `--version` as `denext <version>
+ * (binary)` and, like a release before 4.0, refuses every other verb as `unknown command` after
+ * logging it to $STUB_LOG.
+ */
+async function preToolchainZip(dir: string, version: string): Promise<Uint8Array> {
+  return await stubZip(
+    dir,
+    `if (Deno.args[0] === "--version") console.log("denext ${version} (binary)");
+else {
+  const log = Deno.env.get("STUB_LOG");
+  if (log) Deno.writeTextFileSync(log, Deno.args.join(" ") + "\\n", { append: true });
+  console.error(\`denext: unknown command "\${Deno.args[0]}"\`);
+  Deno.exit(1);
+}
+`,
+  );
 }
 
 Deno.test(

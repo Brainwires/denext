@@ -293,13 +293,31 @@ function Uninstall-DenextFiles([string]$root) {
     Select-Object -Unique
   foreach ($rel in $files) {
     $path = Join-Path $root $rel
-    if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
+    if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-SettlingFile $path }
   }
   if (Test-Path -LiteralPath $manifest -PathType Leaf) { Remove-Item -LiteralPath $manifest -Force }
   foreach ($dir in @((Join-Path $root 'bin'), $root)) {
     if ((Test-Path -LiteralPath $dir -PathType Container) -and
       -not (Get-ChildItem -LiteralPath $dir -Force | Select-Object -First 1)) {
       Remove-Item -LiteralPath $dir -Force
+    }
+  }
+}
+
+# Delete $path, retrying for up to five seconds while Windows holds it. Uninstall runs denext.exe
+# (`toolchain unlink`) just before it deletes it, and the file can stay held for a moment after that
+# process has exited - an antivirus scan of the freshly run binary ("being used by another
+# process"), the image of a process still tearing down ("Access ... is denied"). A hold that
+# outlasts the retries (denext still running, a real permission problem) still fails the uninstall.
+function Remove-SettlingFile([string]$path) {
+  for ($attempt = 1; ; $attempt++) {
+    try {
+      Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+      return
+    } catch {
+      $held = $_.Exception -is [IO.IOException] -or $_.Exception -is [UnauthorizedAccessException]
+      if ($attempt -ge 20 -or -not $held) { throw }
+      Start-Sleep -Milliseconds 250
     }
   }
 }
