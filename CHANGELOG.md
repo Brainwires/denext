@@ -44,6 +44,11 @@ and this project adheres to
   the provider presets, the adapters and stores, bearer tokens, email verification and password
   reset, MFA, passkeys and SAML. `denext/server` still re-exports every name. `denext create` and
   `denext migrate` map it in the import map they write.
+- **SPA `client:interaction` replays the interaction that mounts it, as a Flight island does.**
+  The events of the triggering gesture that land on the placeholder before the component commits
+  (a `pointerdown`, the focus, the `click`) are dispatched again to the element at the same
+  position in the component's DOM (its first element when the placeholder has no element
+  there), and a focus moves there; before, the first interaction only mounted the component.
 - **`<ViewTransition>` callbacks: `onEnter`, `onExit`, `onUpdate` and `onShare`, as in React.**
   Each runs once the transition is ready (its `::view-transition-*` pseudo-elements exist) with
   the boundary's `ViewTransitionInstance` (`name`, and `group` / `imagePair` / `old` / `new`

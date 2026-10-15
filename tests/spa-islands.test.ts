@@ -244,6 +244,76 @@ Deno.test("SpaIsland client:interaction: the placeholder until the first interac
   });
 });
 
+Deno.test("SpaIsland client:interaction: the gesture that mounts it is replayed on the mounted component", async () => {
+  const log: string[] = [];
+  /** A deferred panel whose second button counts its clicks. */
+  function Panel(): VNode {
+    return h(
+      "div",
+      { "data-panel": "" },
+      h("button", { onClick: () => log.push("first") }, "a"),
+      h("button", {
+        onPointerDown: () => log.push("pointerdown"),
+        onClick: () => log.push("click"),
+      }, "b"),
+    );
+  }
+  const proto = DomEl.prototype as unknown as {
+    dispatchEvent?: (e: Event) => boolean;
+    focus?: () => void;
+  };
+  // The test DOM has neither: dispatch through its own propagation, record focus.
+  proto.dispatchEvent = function (this: DomEl, e: Event) {
+    fireEventOn(this, e.type);
+    return true;
+  };
+  proto.focus = function (this: DomEl) {
+    log.push(`focus:${this.textContent}`);
+  };
+  try {
+    await withScheduler(async () => {
+      let resolve: (c: unknown) => void = () => {};
+      const loader = () => new Promise((r) => (resolve = r));
+      const screen = await render(h(
+        "section",
+        null,
+        h("h2", null, "title"),
+        h(SpaIsland as never, {
+          __dnxLoad: loader,
+          "client:interaction": true,
+          // The placeholder mirrors the panel's shape: its second button is the one pressed.
+          "client:placeholder": h(
+            "div",
+            null,
+            h("button", null, "a"),
+            h("button", { "data-ph": "" }, "b"),
+          ),
+        }),
+      ));
+      await settle();
+      const ph = all(screen as never).find((e) => e.getAttribute("data-ph") !== null)!;
+      // A real gesture: pointerdown starts the import, focus and click land before it resolves.
+      const asEvent = { constructor: Event };
+      await act(() => fireEventOn(ph, "pointerdown", asEvent));
+      await act(() => fireEventOn(ph, "focusin", asEvent));
+      await act(() => fireEventOn(ph, "click", asEvent));
+      assertEquals(log, [], "nothing ran on the placeholder");
+      await act(() => resolve(Panel));
+      await settle();
+      assert(all(screen as never).some((e) => e.getAttribute("data-panel") !== null));
+      assertEquals(
+        log,
+        ["pointerdown", "focus:b", "click"],
+        "the gesture is replayed, in order, on the element in the placeholder's position",
+      );
+      await screen.unmount();
+    });
+  } finally {
+    delete proto.dispatchEvent;
+    delete proto.focus;
+  }
+});
+
 Deno.test("SpaIsland client:interaction: the trigger listeners are passive (touchstart never holds a scroll)", async () => {
   const calls: Array<[unknown, string, unknown]> = [];
   const proto = DomEl.prototype as unknown as { addEventListener: (...a: unknown[]) => void };

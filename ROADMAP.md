@@ -86,8 +86,6 @@ or an upstream. Each one's limitation entry is deleted when it ships.
   `<title>` / `<meta>` / `<link>` are created again in the page container on hydration (the
   server hoisted them into the document head, and dev warns of the mismatch). Until then, put
   them in `metadata` or a Server Component layout.
-- **SPA `client:interaction` replays the triggering event** on the mounted component, as a
-  Flight island does; today the first interaction only mounts it.
 
 ## Server, ops and API surface
 

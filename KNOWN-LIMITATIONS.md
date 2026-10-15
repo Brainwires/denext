@@ -55,7 +55,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   component's mount and split its code instead (no server HTML to keep inert): only for a
   component imported by name, not a member tag or a module-level `hydrate` default; a component
   also used without a directive stays in the main bundle; `client:interaction` needs a
-  `client:placeholder` to interact with.
+  `client:placeholder` to interact with, and replays the triggering gesture on the element at the
+  same position in the component's DOM (its first element when the placeholder's shape differs).
 - **`use cache` can't read request data** (`cookies()`/`headers()`/`connection()`): read it
   outside and pass the value in.
 - **A streamed hole can't emit inline `<style>`/`<script>`** (the head and its CSP hashes have

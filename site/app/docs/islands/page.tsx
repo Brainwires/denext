@@ -272,8 +272,10 @@ export function Review({ diagram, diff }) {
               <td>
                 The first pointer, key, focus or touch event inside the placeholder (give it a{" "}
                 <code>client:placeholder</code>{" "}
-                to interact with). The triggering event is not replayed: the placeholder is not the
-                component's DOM.
+                to interact with). The gesture that triggered it is replayed on the mounted
+                component, as on a Flight island: its events (a press, the focus, the click) go to
+                the element at the same position in the component's DOM, so a placeholder shaped
+                like the component lets the first click land on the real button.
               </td>
             </tr>
           </tbody>
