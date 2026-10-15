@@ -1,6 +1,6 @@
 // Resolve the conventional paths and config for a denext project directory.
 
-import { join, toFileUrl } from "@std/path";
+import { join, relative, toFileUrl } from "@std/path";
 import { frameworkFileUrl } from "./bundle.ts";
 import { CONFIG_FILES } from "./config-files.ts";
 import type { I18nConfig } from "../server/i18n.ts";
@@ -60,6 +60,25 @@ async function firstOf(dir: string, names: string[]): Promise<string | null> {
   return null;
 }
 
+/**
+ * The root middleware module: `middleware.ts` / `.js`, or Next 16's name for the same hook,
+ * `proxy.ts` / `.js` — beside `app/` (in `src/` with the `src/app` layout). Both a middleware
+ * and a proxy file is the error Next.js raises, since only one of them can run.
+ */
+async function resolveMiddlewarePath(projectDir: string, srcBase: string): Promise<string | null> {
+  const middleware = await firstOf(srcBase, ["middleware.ts", "middleware.js"]);
+  const proxy = await firstOf(srcBase, ["proxy.ts", "proxy.js"]);
+  if (middleware && proxy) {
+    const rel = (p: string) => "./" + relative(projectDir, p).replaceAll("\\", "/");
+    throw new Error(
+      `denext: both a middleware file "${rel(middleware)}" and a proxy file "${rel(proxy)}" ` +
+        `were found. They are the same hook (Next.js 16 renamed middleware to proxy), so only ` +
+        `one can run: keep "${rel(proxy)}" and delete the other.`,
+    );
+  }
+  return middleware ?? proxy;
+}
+
 export async function resolveProject(projectDir: string): Promise<ProjectPaths> {
   // Optional `src/` layout (Next.js parity): when `src/app` exists, the app,
   // middleware, and instrumentation live under `src/` — while `public/`,
@@ -78,16 +97,7 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
   // corrupt a URL.
   const configPath = (await exists(projectConfig)) ? projectConfig : frameworkFileUrl("deno.json");
 
-  // middleware.ts is the canonical name; proxy.ts is an accepted alias.
-  const candidates = ["middleware.ts", "middleware.js", "proxy.ts", "proxy.js"];
-  let middlewarePath: string | null = null;
-  for (const name of candidates) {
-    const p = join(srcBase, name);
-    if (await exists(p)) {
-      middlewarePath = p;
-      break;
-    }
-  }
+  const middlewarePath = await resolveMiddlewarePath(projectDir, srcBase);
 
   const instrumentationPath = await firstOf(srcBase, ["instrumentation.ts", "instrumentation.js"]);
   const instrumentationClientPath = await firstOf(srcBase, [

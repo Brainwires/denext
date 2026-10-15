@@ -1,6 +1,6 @@
 // Project-path resolution, including the optional `src/` directory layout.
 
-import { assertEquals, assertThrows } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import { resolveProject, validateDenextConfig } from "../src/build/paths.ts";
 
@@ -105,5 +105,39 @@ Deno.test("resolveProject uses src/app when present (public/config stay at root)
     assertEquals(paths.outDir, join(dir, ".denext"));
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("resolveProject finds Next.js 16's proxy.ts / proxy.js, at the root and in src/", async () => {
+  for (
+    const [layout, file] of [
+      ["root", "proxy.ts"],
+      ["root", "proxy.js"],
+      ["src", "proxy.ts"],
+    ] as const
+  ) {
+    const dir = await scaffold(layout, [file]);
+    try {
+      const paths = await resolveProject(dir);
+      const base = layout === "src" ? join(dir, "src") : dir;
+      assertEquals(paths.middlewarePath, join(base, file));
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  }
+});
+
+Deno.test("resolveProject refuses both a middleware and a proxy file, as Next.js does", async () => {
+  for (const layout of ["root", "src"] as const) {
+    const dir = await scaffold(layout, ["middleware.ts", "proxy.ts"]);
+    try {
+      const err = await assertRejects(() => resolveProject(dir), Error);
+      const pre = layout === "src" ? "./src/" : "./";
+      assertStringIncludes(err.message, `"${pre}middleware.ts"`);
+      assertStringIncludes(err.message, `"${pre}proxy.ts"`);
+      assertStringIncludes(err.message, "only one can run");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
   }
 });

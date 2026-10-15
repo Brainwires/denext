@@ -173,6 +173,8 @@ export interface MiddlewareModule {
   default?: MiddlewareExport;
   /** The middleware export when exported as `middleware`. */
   middleware?: MiddlewareExport;
+  /** The middleware export when exported as `proxy` (Next.js 16's name, in `proxy.ts`). */
+  proxy?: MiddlewareExport;
   /** Optional matcher configuration gating the whole chain. */
   config?: MiddlewareConfig;
 }
@@ -643,11 +645,12 @@ export function composeMiddleware(
 
 /**
  * Build a runner from a loaded middleware module. The module may export a single
- * handler or an ordered array of handlers/entries (composed into one chain).
+ * handler or an ordered array of handlers/entries (composed into one chain), named `proxy`
+ * (Next.js 16's `proxy.ts`), `middleware`, or as the default export.
  * Returns null if the module exports no handler.
  */
 export function createMiddlewareRunner(mod: MiddlewareModule): MiddlewareRunner {
-  const exp = mod.middleware ?? mod.default;
+  const exp = mod.proxy ?? mod.middleware ?? mod.default;
   if (exp === undefined) return null;
   return composeMiddleware(toEntries(exp), mod.config);
 }

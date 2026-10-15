@@ -671,3 +671,21 @@ Deno.test("setRequestAdapter: one registration serves every copy of the middlewa
     setRequestAdapter((r) => r);
   }
 });
+
+Deno.test("a proxy.ts module's named `proxy` export runs (Next.js 16)", async () => {
+  const app = appWith({
+    proxy: (req: Request) =>
+      new URL(req.url).pathname === "/secret" ? new Response("blocked", { status: 401 }) : next(),
+    config: { matcher: "/secret" },
+  });
+  assertEquals((await app(new Request("http://localhost/secret"))).status, 401);
+  assertEquals((await app(new Request("http://localhost/home"))).status, 200);
+});
+
+Deno.test("createMiddlewareRunner reads proxy, middleware and default exports", () => {
+  const handler = () => next();
+  assertEquals(createMiddlewareRunner({ proxy: handler }) !== null, true);
+  assertEquals(createMiddlewareRunner({ middleware: handler }) !== null, true);
+  assertEquals(createMiddlewareRunner({ default: handler }) !== null, true);
+  assertEquals(createMiddlewareRunner({}), null);
+});

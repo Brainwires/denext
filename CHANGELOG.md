@@ -432,6 +432,13 @@ and this project adheres to
 
 ### Fixed
 
+- **A Next.js 16 `proxy.ts` runs.** denext found `proxy.ts` / `proxy.js` (at the root, or in
+  `src/` with the `src/app` layout) but read only a `middleware` or default export from it, so
+  Next 16's `export function proxy(request)` was ignored and every request went through
+  unchecked, in dev, `build` / `start`, a compiled app, the next-compat drop-in and `denext
+  doctor` alike. The `proxy` export is read now. An app with both a middleware file and a proxy
+  file fails at startup naming both, as Next does, instead of silently running the middleware
+  one.
 - **A library importing `react-dom/static`, `next/head`, `@remix-run/deno` or
   `@remix-run/css-bundle` resolves to denext like an app's own import.** `react-dom/static` used
   to fall back to the base `react-dom` runtime with a build warning and `next/head` loaded the

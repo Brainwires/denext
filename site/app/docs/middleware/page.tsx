@@ -15,10 +15,15 @@ export default function Middleware() {
     >
       <h2>middleware.ts</h2>
       <p>
-        Export a function from <code>middleware.ts</code> (or <code>proxy.ts</code>){" "}
-        at the project root, as the default export or a named <code>middleware</code>{" "}
-        export. It runs before routing and can short-circuit with a response, redirect, rewrite the
-        URL used for matching, or continue.
+        Export a function from <code>middleware.ts</code>, or from <code>proxy.ts</code>{" "}
+        (Next.js 16's name for the same file), at the project root — in <code>src/</code> with the
+        {" "}
+        <code>src/app</code> layout. Export it as the default export or by name: <code>proxy</code>
+        {" "}
+        (Next 16) or <code>middleware</code>{" "}
+        are both read, from either file. It runs before routing and can short-circuit with a
+        response, redirect, rewrite the URL used for matching, or continue. An app with both a
+        middleware and a proxy file fails at startup, as in Next.js: keep one.
       </p>
       <Code lang="tsx">
         {`// middleware.ts

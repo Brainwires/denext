@@ -140,6 +140,11 @@ internal design choice with no observable difference lives in
   `afterFiles` / `fallback` rewrites; denext runs its single `rewrites` list after
   middleware and before the filesystem (Next's `beforeFiles` position). Middleware
   matchers therefore always see the URL the client asked for.
+- **`proxy.ts` and `middleware.ts` take either export name.** Next 16 requires a `proxy` (or
+  default) export in `proxy.ts` and a `middleware` (or default) export in `middleware.ts`, and
+  warns that `middleware.ts` is deprecated. denext reads `proxy`, `middleware` or the default
+  export from whichever file the app has, and does not warn. Both files at once is an error in
+  both.
 - **`nodeResolve` is on by default** for the compat (npm React) build — every bare
   npm specifier resolves from the installed `node_modules` through denext's tolerant
   resolver, which is what lets an unmodified pnpm/npm/yarn app build with no
