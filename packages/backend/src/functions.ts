@@ -18,6 +18,12 @@
 // recipe). A cookie-authenticated write follows denext's Server Actions rule (`csrf()`), so a
 // cross-site page cannot invoke a function with a visitor's cookies.
 
+import {
+  type DeployedFunction,
+  installFunctionsAdmin,
+  InvocationRing,
+  recorded,
+} from "./functions-admin.ts";
 import { join, resolve, toFileUrl } from "@std/path";
 import {
   clientIp,
@@ -784,6 +790,7 @@ function functionsHandler(
   registry: FunctionRegistry,
   serverUrl: () => string | undefined,
   readEnv: (name: string) => string | undefined = readProcessEnv,
+  ring: InvocationRing = new InvocationRing(),
 ): (request: Request) => Promise<Response | null> {
   const prefix = `${config.basePath}/`;
   return async (request) => {
@@ -796,18 +803,19 @@ function functionsHandler(
     if (refused) return refused;
     const body = await bufferedBody(request, config.maxBodyBytes);
     if (body instanceof Response) return body;
-    return await host.call(
-      {
-        url: `${url.origin}/${route.name}${route.rest}${url.search}`,
-        method: request.method,
-        headers: [...request.headers],
-        body,
-        remote: remoteAddress(),
-        signal: request.signal,
-      },
-      workerEnv(config, route.name, serverUrl, readEnv),
-      timeoutMs,
-    );
+    return await recorded(ring, route.name, () =>
+      host.call(
+        {
+          url: `${url.origin}/${route.name}${route.rest}${url.search}`,
+          method: request.method,
+          headers: [...request.headers],
+          body,
+          remote: remoteAddress(),
+          signal: request.signal,
+        },
+        workerEnv(config, route.name, serverUrl, readEnv),
+        timeoutMs,
+      ));
   };
 }
 
@@ -926,9 +934,40 @@ export async function setupFunctions(ctx: PluginContext, config: ResolvedFunctio
   const canonical = originOf(ctx.config.canonicalOrigin) ??
     originOf(readProcessEnv("DENEXT_CANONICAL_ORIGIN"));
   const serverUrl = defaultFunctionsUrl(canonical, appBasePath, localServerOrigin);
-  ctx.addRequestHandler(functionsHandler(config, registry, serverUrl));
-  ctx.addTeardown(() => registry.reset());
+  const ring = new InvocationRing();
+  ctx.addRequestHandler(functionsHandler(config, registry, serverUrl, readProcessEnv, ring));
+  installFunctionsAdmin({
+    functions: () => deployedFunctions(dir, config),
+    invocations: () => ring.list(),
+  });
+  ctx.addTeardown(() => {
+    registry.reset();
+    installFunctionsAdmin(undefined);
+  });
   if (dev) watchFunctions(ctx, dir, () => registry.reset(false));
+}
+
+/**
+ * The functions the directory holds now, with their effective `verifyJwt` and their entry
+ * file's last change.
+ *
+ * @param dir The functions directory.
+ * @param config The resolved options.
+ * @returns The functions, sorted by name.
+ */
+async function deployedFunctions(
+  dir: string,
+  config: ResolvedFunctions,
+): Promise<DeployedFunction[]> {
+  const out: DeployedFunction[] = [];
+  for (const [name, path] of await discoverFunctions(dir)) {
+    let modified: number | null = null;
+    try {
+      modified = (await Deno.stat(path)).mtime?.getTime() ?? null;
+    } catch { /* removed since: listed without a time */ }
+    out.push({ name, verifyJwt: config.functions[name]?.verifyJwt ?? config.verifyJwt, modified });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Options for {@linkcode serveFunctions}. */

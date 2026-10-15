@@ -55,6 +55,7 @@
  * @module
  */
 
+import { handleAdminRequest } from "./src/admin.ts";
 import type { DenextPlugin, PluginContext } from "@denext/denext/server";
 import {
   bootMigrate,
@@ -599,6 +600,8 @@ export function backend(options: BackendOptions = {}): DenextPlugin {
         storageApiBase: apiBase,
       });
       if (options.supabase) await setupSupabase(ctx, options.supabase);
+      // The admin endpoint denext ui and the stack's dashboard read (the secret key only).
+      ctx.addRequestHandler(handleAdminRequest);
       if (options.postgres) setupPostgres(ctx, options, rest, webhooks);
       if (options.postgres || options.storage) installDbHooksFor(ctx, options, webhooks);
       if (functions) await setupFunctionsService(ctx, functions);

@@ -825,3 +825,42 @@ Deno.test({
     assertEquals(defaultFunctionsUrl(undefined, "", () => undefined)(), undefined);
   },
 });
+
+Deno.test({
+  name:
+    "functions: the admin view lists the functions and records each call's status and time only",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const { functionsAdmin } = await import("../packages/backend/src/functions-admin.ts");
+    const app = await functionsApp(
+      {
+        "functions/open.ts":
+          `export default (req: Request) => new Response("open", { status: 202 });`,
+        "functions/closed/index.ts": `export default () => new Response("closed");`,
+      },
+      { functions: { functions: { open: { verifyJwt: false } } } },
+      "prod",
+      { canonicalOrigin: ORIGIN },
+    );
+    try {
+      const res = await app.call("/functions/v1/open?token=SECRET-QUERY", {
+        method: "POST",
+        headers: { "x-api-key": "SECRET-HEADER" },
+        body: "SECRET-BODY",
+      });
+      assertEquals(res.status, 202);
+      await res.body?.cancel();
+      const admin = functionsAdmin()!;
+      const listed = await admin.functions();
+      assertEquals(listed.map((f) => [f.name, f.verifyJwt]), [["closed", true], ["open", false]]);
+      assert(listed.every((f) => typeof f.modified === "number"));
+      const [call] = admin.invocations();
+      assertEquals([call.name, call.status], ["open", 202]);
+      assertEquals(Object.keys(call).sort(), ["at", "ms", "name", "status"]);
+      assert(!JSON.stringify(admin.invocations()).includes("SECRET"), "nothing a request carried");
+    } finally {
+      await app.close();
+    }
+  },
+});
