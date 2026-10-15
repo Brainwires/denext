@@ -3175,9 +3175,7 @@ const ota = createOtaHandler({ channels: "ota-channels.json", basePath: "/mobile
 await checkForUiUpdate({
   baseUrl: "https://api.example.com/mobile-ui",
   channel: "beta",
-  onNativeUpdateRequired: async () => {
-    await promptStoreUpdate({ appStoreId: "123456789" });
-  },
+  onNativeUpdateRequired: () => promptStoreUpdate({ appStoreId: "123456789" }),
 });`}
       </Code>
       <ul>

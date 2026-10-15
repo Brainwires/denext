@@ -3007,13 +3007,15 @@ final class DenextOtaStore {
     }
 
     /**
-     * The download policy, checked before any file is fetched. With a public key embedded, the
-     * manifest must carry a valid signature over {@code payload} (code signature), whatever the
-     * transport; a key that is present but does not parse refuses every manifest. Without one,
-     * only https, or plain http to a loopback host, is allowed (code insecure); the emulator's
-     * {@code 10.0.2.2} counts as loopback only in a debuggable build. A signature protects
-     * integrity only: over plain http the request headers (bearer tokens) cross the network in
-     * the clear.
+     * The download policy, checked before any file is fetched. With origins pinned
+     * ({@code dev.denext.ota.ORIGINS}), the base URL must be on one of them or on a loopback host
+     * (code insecure). With a public key embedded, the manifest must carry a valid signature over
+     * {@code payload} (code signature), whatever the transport; a key that is present but does
+     * not parse refuses every manifest. Without one, only a pinned https origin or a loopback host
+     * is allowed (code insecure): a script in the page can call the plugin, so an unsigned UI from
+     * any https server it names would install itself for good. The emulator's {@code 10.0.2.2}
+     * counts as loopback only in a debuggable build. A signature protects integrity only: over
+     * plain http the request headers (bearer tokens) cross the network in the clear.
      */
     void checkTrust(Uri base, byte[] payload, @Nullable String signature) throws OtaException {
         String host = base.getHost() == null ? "" : base.getHost().toLowerCase(Locale.ROOT);

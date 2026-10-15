@@ -23,8 +23,8 @@
 export interface NativeSessionStorage {
   /** The value under `key`, or `null`. */
   get(key: string): Promise<string | null>;
-  /** Store `value` under `key`. */
-  set(key: string, value: string): Promise<void>;
+  /** Store `value` under `key`; what it resolves (`secureStore`'s `{ stored }`) is ignored. */
+  set(key: string, value: string): Promise<unknown>;
   /** Remove `key`. */
   delete(key: string): Promise<void>;
 }

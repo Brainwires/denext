@@ -436,6 +436,15 @@ and this project adheres to
 
 ### Fixed
 
+- **`nativeSession({ storage: secureStore })` type-checks.** `NativeSessionStorage.set` required
+  `Promise<void>`, while `secureStore.set` resolves `{ stored }`, so the documented pairing failed
+  `deno check`. `set` may now resolve anything; the result is ignored.
+- **`onNativeUpdateRequired` takes `() => promptStoreUpdate(…)`.** The OTA check's callback was
+  typed to return `void | Promise<void>`, which refused the promise `promptStoreUpdate` resolves.
+  It may now return anything (still fired, not awaited into the result).
+- **The Android OTA plugin's `checkTrust` comment** said a binary with no public key accepts any
+  https server; the code (unchanged) accepts an unsigned UI only from a pinned https origin or a
+  loopback host. A comment-only template change: no new app binary is needed.
 - **A Next.js 16 `proxy.ts` runs.** denext found `proxy.ts` / `proxy.js` (at the root, or in
   `src/` with the `src/app` layout) but read only a `middleware` or default export from it, so
   Next 16's `export function proxy(request)` was ignored and every request went through
