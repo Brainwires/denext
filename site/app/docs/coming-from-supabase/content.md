@@ -357,8 +357,10 @@ claims are set.
    `create role service_role nologin` first or delete those `grant` lines; drop or rewrite any
    foreign key that references `auth.users` (point it at `auth_users(id)` once auth's tables
    exist, step 5).
-4. **Restore** `schema.sql` then `data.sql` with `psql`. From here on, new schema changes are
-   `denext generate migration <name>` + `denext job migrate`.
+4. **Restore** `schema.sql` then `data.sql` with `psql`. From here on, write each schema change
+   with `denext generate migration <name>` and apply it with `denext migration up` (which also
+   applies the backend's and denext's own schemas); `denext job migrate` runs the same files from
+   the generated job.
 5. **Apply denext's own migrations.** `denext db push` (or `denext migration up`) applies them out
    of band: the backend's (the RLS setup, the storage, realtime, vault, queues and webhooks schemas,
    recorded in `backend_migrations`) and denext's own stores' (auth's `auth_*` tables, recorded in

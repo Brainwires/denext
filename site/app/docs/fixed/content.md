@@ -523,7 +523,7 @@ More: [/docs/auth](/docs/auth).
 **Evidence.**
 
 - [`tests/react-native-lists.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/react-native-lists.test.ts): "FlatList inverted: a logical reversal — item 0 at the bottom, no scaleY, header at the bottom"
-- [`tests/react-native-lists.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/react-native-lists.test.ts): "FlatList inverted: chat semantics — onEndReached is the visual top; scrollToIndex / scrollToOffset mirror"
+- [`tests/react-native-lists.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/react-native-lists.test.ts): "FlatList inverted: message-list semantics — onEndReached is the visual top; scrollToIndex / scrollToOffset mirror"
 
 More: [/docs/react-native](/docs/react-native).
 

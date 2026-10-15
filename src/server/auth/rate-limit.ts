@@ -107,7 +107,7 @@ export interface RateLimitOptions {
    * never apply here; `store` is shared by both (their keys are namespaced apart).
    */
   signin?: {
-    /** Sign-in starts allowed per client IP per window before a `429`. Default 20. */
+    /** Sign-in starts allowed per client IP per window before a `429`. Default 100. */
     max?: number;
     /** Window length in ms. Default 15 minutes. */
     windowMs?: number;

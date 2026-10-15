@@ -1,9 +1,9 @@
 // React Native mode's list adapters, behaviour (denext/testing's in-memory DOM, no browser):
-// FlatList / SectionList / VirtualizedList on denext's VirtualList — inverted chat semantics,
-// getItemLayout exactness, numColumns, sections with sticky headers and scrollToLocation,
-// viewability tokens (with `section`), the refreshControl default, ListEmptyComponent,
-// onEndReached and the ref methods; FlashList v2 and LegendList compat. The build wiring is in
-// react-native-lists-build.test.ts.
+// FlatList / SectionList / VirtualizedList on denext's VirtualList — inverted message-list
+// semantics, getItemLayout exactness, numColumns, sections with sticky headers and
+// scrollToLocation, viewability tokens (with `section`), the refreshControl default,
+// ListEmptyComponent, onEndReached and the ref methods; FlashList v2 and LegendList compat. The
+// build wiring is in react-native-lists-build.test.ts.
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { act, render } from "../src/testing/mod.ts";
@@ -186,7 +186,7 @@ Deno.test("SectionList: headers, items and footers flatten in order; the ref car
 const scrollTop = (screen: { container: unknown }): number =>
   Number((scrollerOf(screen as never) as unknown as { scrollTop: number }).scrollTop) || 0;
 
-Deno.test("FlatList inverted: chat semantics — onEndReached is the visual top; scrollToIndex / scrollToOffset mirror", async () => {
+Deno.test("FlatList inverted: message-list semantics — onEndReached is the visual top; scrollToIndex / scrollToOffset mirror", async () => {
   let ref: FlatListRef<Item> | null = null;
   const ends: number[] = [];
   const starts: number[] = [];

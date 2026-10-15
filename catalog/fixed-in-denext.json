@@ -126,7 +126,7 @@
         },
         {
           "test": "tests/react-native-lists.test.ts",
-          "name": "FlatList inverted: chat semantics — onEndReached is the visual top; scrollToIndex / scrollToOffset mirror"
+          "name": "FlatList inverted: message-list semantics — onEndReached is the visual top; scrollToIndex / scrollToOffset mirror"
         }
       ],
       "docs": "/docs/react-native"
