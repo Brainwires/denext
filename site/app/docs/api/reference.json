@@ -4165,8 +4165,8 @@
           "slug": "ValueResult",
           "kind": "typeAlias",
           "signature": "type ValueResult<R> = conditional",
-          "doc": "A defineApi handler's returned VALUE type (a returned Response carries no body type).",
-          "docFull": "A `defineApi` handler's returned VALUE type (a returned `Response` carries no body type).",
+          "doc": "A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.",
+          "docFull": "A `defineApi` handler's returned VALUE type: a returned `Response` carries no body type, and\na returned `err(...)` is an error envelope, not a body.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -4597,6 +4597,54 @@
           "denextOnly": true
         },
         {
+          "name": "ActionData",
+          "slug": "ActionData",
+          "kind": "typeAlias",
+          "signature": "type ActionData<Out> = Exclude<Out, Err<unknown, unknown>>",
+          "doc": "A handler's success type: its return type without the returned err(...) values.",
+          "docFull": "A handler's success type: its return type without the returned `err(...)` values.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ActionErr",
+          "slug": "ActionErr",
+          "kind": "typeAlias",
+          "signature": "type ActionErr = Err<string, ActionErrDetails | undefined>",
+          "doc": "A failure an action handler may RETURN: err(message, { fieldErrors? }) from denext/result.",
+          "docFull": "A failure an action handler may RETURN: `err(message, { fieldErrors? })` from `denext/result`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ActionErrDetails",
+          "slug": "ActionErrDetails",
+          "kind": "interface",
+          "signature": "interface ActionErrDetails",
+          "doc": "What a returned err(message, details?) may carry: per-field messages.",
+          "docFull": "What a returned `err(message, details?)` may carry: per-field messages.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ActionErrGuard",
+          "slug": "ActionErrGuard",
+          "kind": "typeAlias",
+          "signature": "type ActionErrGuard<Out> = conditional",
+          "doc": "unknown when every err(...) a handler returns is an ActionErr (a string message, optional fieldErrors); otherwise a type the handler can't satisfy, so the mistake is a compile error.",
+          "docFull": "`unknown` when every `err(...)` a handler returns is an {@link ActionErr} (a string message,\noptional `fieldErrors`); otherwise a type the handler can't satisfy, so the mistake is a\ncompile error.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ActionHandlerOptions",
           "slug": "ActionHandlerOptions",
           "kind": "interface",
@@ -4808,6 +4856,30 @@
           "denextOnly": true
         },
         {
+          "name": "ApiErr",
+          "slug": "ApiErr",
+          "kind": "typeAlias",
+          "signature": "type ApiErr<D> = Err<ApiErrorCodes<D>, ApiErrorInit | undefined>",
+          "doc": "A failure a handler may RETURN instead of calling fail(): err(code, init?) from denext/result, with code one of the endpoint's declared errors.",
+          "docFull": "A failure a handler may RETURN instead of calling `fail()`: `err(code, init?)` from\n`denext/result`, with `code` one of the endpoint's declared `errors`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ApiErrGuard",
+          "slug": "ApiErrGuard",
+          "kind": "typeAlias",
+          "signature": "type ApiErrGuard<D, R> = conditional",
+          "doc": "unknown when every err(...) a handler returns uses a declared code; otherwise a type the handler can't satisfy, whose one key names the offending code — so return err(\"typo\") is a compile error even on an endpoint without a response schema.",
+          "docFull": "`unknown` when every `err(...)` a handler returns uses a declared code; otherwise a type the\nhandler can't satisfy, whose one key names the offending code — so `return err(\"typo\")` is a\ncompile error even on an endpoint without a `response` schema.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ApiError",
           "slug": "ApiError",
           "kind": "class",
@@ -4909,8 +4981,8 @@
           "slug": "ApiHandlerResult",
           "kind": "typeAlias",
           "signature": "type ApiHandlerResult<D> = conditional",
-          "doc": "What a handler may return: a value matching def.response (or anything), or a Response.",
-          "docFull": "What a handler may return: a value matching `def.response` (or anything), or a `Response`.",
+          "doc": "What a handler may return: a value matching def.response (or anything), a Response, or an ApiErr.",
+          "docFull": "What a handler may return: a value matching `def.response` (or anything), a `Response`, or\nan {@link ApiErr}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6619,13 +6691,13 @@
           "name": "defineAction",
           "slug": "defineAction",
           "kind": "function",
-          "signature": "defineAction<Out, In>(config: object): TypedAction<Out>",
+          "signature": "defineAction<Out, In>(config: object): TypedAction<ActionData<Out>>",
           "doc": "Define a typed Server Action. Put it in a \"use server\" module and pass it to useActionState; denext dispatches the form submission to the server, where this runs.",
           "docFull": "Define a typed Server Action. Put it in a `\"use server\"` module and pass it to\n`useActionState`; denext dispatches the form submission to the server, where this runs.",
           "params": [
             {
               "name": "config",
-              "doc": "input (optional) validates FormData into the typed input — a function over the form fields, or a Standard Schema (Zod/Valibot/…); omit it to receive the raw fields object. handler receives the validated input and returns the typed Out."
+              "doc": "input (optional) validates FormData into the typed input — a function over the form fields, or a Standard Schema (Zod/Valibot/…); omit it to receive the raw fields object. handler receives the validated input and returns the typed Out — or returns err(message, { fieldErrors }) (from denext/result) to fail."
             }
           ],
           "returns": "An action (prevState, formData) => Promise<ActionResult<Out>> for useActionState.",
@@ -6636,7 +6708,7 @@
           "name": "defineApi",
           "slug": "defineApi",
           "kind": "function",
-          "signature": "defineApi<D, R>(def: D, handler: (input: ApiHandlerInput<D, Record<never, never>>) => R | Promise<R>): ApiRouteHandler<D, R>",
+          "signature": "defineApi<D, R>(def: D, handler: parenthesized & ApiErrGuard<D, R>): ApiRouteHandler<D, R>",
           "doc": "Define a schema-validated route handler with no middleware (createApi().define(def, handler)). Export it as the method: export const POST = defineApi(…).",
           "docFull": "Define a schema-validated route handler with no middleware\n(`createApi().define(def, handler)`). Export it as the method: `export const POST = defineApi(…)`.",
           "params": [
@@ -17484,8 +17556,8 @@
           "slug": "ValueResult",
           "kind": "typeAlias",
           "signature": "type ValueResult<R> = conditional",
-          "doc": "A defineApi handler's returned VALUE type (a returned Response carries no body type).",
-          "docFull": "A `defineApi` handler's returned VALUE type (a returned `Response` carries no body type).",
+          "doc": "A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.",
+          "docFull": "A `defineApi` handler's returned VALUE type: a returned `Response` carries no body type, and\na returned `err(...)` is an error envelope, not a body.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -30051,6 +30123,322 @@
             }
           ],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        }
+      ]
+    },
+    {
+      "module": "denext/result",
+      "symbols": [
+        {
+          "name": "andThen",
+          "slug": "andThen",
+          "kind": "function",
+          "signature": "andThen<T, E, U, F>(result: Result<T, E>, fn: (value: T) => Result<U, F>): Result<U, E | F>",
+          "doc": "Chain a step that can itself fail: run fn on the success value; a failure short-circuits.",
+          "docFull": "Chain a step that can itself fail: run `fn` on the success value; a failure short-circuits.",
+          "params": [
+            {
+              "name": "result",
+              "doc": "The result."
+            },
+            {
+              "name": "fn",
+              "doc": "The next step."
+            }
+          ],
+          "returns": "fn(value), or the same Err.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "assertNever",
+          "slug": "assertNever",
+          "kind": "function",
+          "signature": "assertNever(value: never, message?: string): never",
+          "doc": "Fail at compile time when a value that should be impossible is still possible: put it in the default of a switch over a union (default: return assertNever(shape)), and a missing case becomes a type error. Reached at runtime (data that broke the types), it throws a TypeError.",
+          "docFull": "Fail at compile time when a value that should be impossible is still possible: put it in\nthe `default` of a `switch` over a union (`default: return assertNever(shape)`), and a\nmissing `case` becomes a type error. Reached at runtime (data that broke the types), it\nthrows a `TypeError`.",
+          "params": [
+            {
+              "name": "value",
+              "doc": "The value the type system says cannot exist."
+            },
+            {
+              "name": "message",
+              "doc": "Optional message for the thrown error."
+            }
+          ],
+          "returns": "Never returns.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "err",
+          "slug": "err-fn",
+          "kind": "function",
+          "signature": "err<E>(error: E): Err<E, undefined>",
+          "doc": "A failure carrying error (a string literal stays a literal type: err(\"not_found\") is Err<\"not_found\">).",
+          "docFull": "A failure carrying `error` (a string literal stays a literal type: `err(\"not_found\")` is\n`Err<\"not_found\">`).",
+          "params": [
+            {
+              "name": "error",
+              "doc": "What went wrong."
+            }
+          ],
+          "returns": "{ ok: false, error }.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Err",
+          "slug": "Err-iface",
+          "kind": "interface",
+          "signature": "interface Err<E, D>",
+          "doc": "A failure: ok is false, error says what went wrong, details optionally adds more.",
+          "docFull": "A failure: `ok` is `false`, `error` says what went wrong, `details` optionally adds more.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "isErr",
+          "slug": "isErr",
+          "kind": "function",
+          "signature": "isErr<T, E>(result: Result<T, E>): result is Err",
+          "doc": "Is result a failure? Reads .ok (see isOk).",
+          "docFull": "Is `result` a failure? Reads `.ok` (see {@link isOk}).",
+          "params": [
+            {
+              "name": "result",
+              "doc": "The result to test."
+            }
+          ],
+          "returns": "true for an Err.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "isOk",
+          "slug": "isOk",
+          "kind": "function",
+          "signature": "isOk<T, E>(result: Result<T, E>): result is Ok",
+          "doc": "Is result a success? Reads .ok, so it also works on a Result that crossed a serialization boundary (a Server Component prop, a Server Action's return).",
+          "docFull": "Is `result` a success? Reads `.ok`, so it also works on a `Result` that crossed a\nserialization boundary (a Server Component prop, a Server Action's return).",
+          "params": [
+            {
+              "name": "result",
+              "doc": "The result to test."
+            }
+          ],
+          "returns": "true for an Ok.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "map",
+          "slug": "map",
+          "kind": "function",
+          "signature": "map<T, E, U>(result: Result<T, E>, fn: (value: T) => U): Result<U, E>",
+          "doc": "Transform the success value; a failure passes through unchanged.",
+          "docFull": "Transform the success value; a failure passes through unchanged.",
+          "params": [
+            {
+              "name": "result",
+              "doc": "The result."
+            },
+            {
+              "name": "fn",
+              "doc": "Maps the success value."
+            }
+          ],
+          "returns": "ok(fn(value)), or the same Err.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "mapErr",
+          "slug": "mapErr",
+          "kind": "function",
+          "signature": "mapErr<T, E, F>(result: Result<T, E>, fn: (error: E) => F): Result<T, F>",
+          "doc": "Transform the error; a success passes through unchanged. The failure's details are kept.",
+          "docFull": "Transform the error; a success passes through unchanged. The failure's `details` are kept.",
+          "params": [
+            {
+              "name": "result",
+              "doc": "The result."
+            },
+            {
+              "name": "fn",
+              "doc": "Maps the error."
+            }
+          ],
+          "returns": "err(fn(error)), or the same Ok.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "match",
+          "slug": "match-fn",
+          "kind": "function",
+          "signature": "match<T>(value: T): Match<T, never>",
+          "doc": "Start an exhaustive match over a literal union or a discriminated union:",
+          "docFull": "Start an exhaustive match over a literal union or a discriminated union:\n\n```ts\ntype Shape = { kind: \"circle\"; r: number } | { kind: \"square\"; side: number };\nconst area = match(shape)\n  .with({ kind: \"circle\" }, (s) => Math.PI * s.r ** 2)\n  .with({ kind: \"square\" }, (s) => s.side ** 2)\n  .exhaustive(); // drop a case and this line stops compiling\n```\n\nUse `.otherwise(fn)` instead of `.exhaustive()` for a deliberate catch-all.",
+          "params": [
+            {
+              "name": "value",
+              "doc": "The value to match."
+            }
+          ],
+          "returns": "The match builder.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Match",
+          "slug": "Match-iface",
+          "kind": "interface",
+          "signature": "interface Match<Remaining, Out>",
+          "doc": "A pattern match in progress (see match). Remaining is what no .with() has handled yet; Out is the union of the handlers' results.",
+          "docFull": "A pattern match in progress (see {@link match}). `Remaining` is what no `.with()` has\nhandled yet; `Out` is the union of the handlers' results.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Narrowed",
+          "slug": "Narrowed",
+          "kind": "typeAlias",
+          "signature": "type Narrowed<T, P> = conditional",
+          "doc": "The members of T that pattern P can match, narrowed by it.",
+          "docFull": "The members of `T` that pattern `P` can match, narrowed by it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "NonExhaustiveMatch",
+          "slug": "NonExhaustiveMatch",
+          "kind": "interface",
+          "signature": "interface NonExhaustiveMatch<Remaining>",
+          "doc": "The type of .exhaustive when cases remain: not callable, and its one property names what is still unhandled, so the compile error says which case is missing.",
+          "docFull": "The type of `.exhaustive` when cases remain: not callable, and its one property names\nwhat is still unhandled, so the compile error says which case is missing.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ok",
+          "slug": "ok-fn",
+          "kind": "function",
+          "signature": "ok(): Ok<undefined>",
+          "doc": "A success with no value (Ok<undefined>).",
+          "docFull": "A success with no value (`Ok<undefined>`).",
+          "params": [],
+          "returns": "{ ok: true, value: undefined }.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Ok",
+          "slug": "Ok-iface",
+          "kind": "interface",
+          "signature": "interface Ok<T>",
+          "doc": "A success: ok is true and value is the result.",
+          "docFull": "A success: `ok` is `true` and `value` is the result.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Pattern",
+          "slug": "Pattern",
+          "kind": "typeAlias",
+          "signature": "type Pattern<T> = conditional",
+          "doc": "What .with() accepts for a value of type T: a literal (for a literal union), or an object whose listed keys must equal the given literals (for a discriminated union — { type: \"circle\" }). Matching is shallow and uses === (with NaN equal to itself).",
+          "docFull": "What `.with()` accepts for a value of type `T`: a literal (for a literal union), or an\nobject whose listed keys must equal the given literals (for a discriminated union —\n`{ type: \"circle\" }`). Matching is shallow and uses `===` (with `NaN` equal to itself).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Result",
+          "slug": "Result",
+          "kind": "typeAlias",
+          "signature": "type Result<T, E> = Ok<T> | Err<E>",
+          "doc": "Either a success (Ok) or a failure (Err). Narrow on .ok.",
+          "docFull": "Either a success ({@link Ok}) or a failure ({@link Err}). Narrow on `.ok`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "tryAsync",
+          "slug": "tryAsync",
+          "kind": "function",
+          "signature": "tryAsync<T, E>(fn: () => T | PromiseLike<T>, mapError?: (thrown: unknown) => E): Promise<Result<Awaited<T>, E>>",
+          "doc": "Run a throwing (or rejecting) async call and capture the outcome as a Result.",
+          "docFull": "Run a throwing (or rejecting) async call and capture the outcome as a {@link Result}.\n\nSuspense's thrown promises and denext's control-flow signals (`notFound()`, `redirect()`,\n…) are re-thrown, never captured.",
+          "params": [
+            {
+              "name": "fn",
+              "doc": "The call."
+            },
+            {
+              "name": "mapError",
+              "doc": "Maps whatever was thrown to the error type (default: the thrown value)."
+            }
+          ],
+          "returns": "A promise of ok(await fn()), or err(mapError(thrown)).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "trySync",
+          "slug": "trySync",
+          "kind": "function",
+          "signature": "trySync<T, E>(fn: () => T, mapError?: (thrown: unknown) => E): Result<T, E>",
+          "doc": "Run a throwing synchronous call and capture the outcome as a Result.",
+          "docFull": "Run a throwing synchronous call and capture the outcome as a {@link Result}.\n\nSuspense's thrown promises and denext's control-flow signals (`notFound()`, `redirect()`,\n…) are re-thrown, never captured.",
+          "params": [
+            {
+              "name": "fn",
+              "doc": "The call."
+            },
+            {
+              "name": "mapError",
+              "doc": "Maps whatever was thrown to the error type (default: the thrown value)."
+            }
+          ],
+          "returns": "ok(fn()), or err(mapError(thrown)).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "unwrapOr",
+          "slug": "unwrapOr",
+          "kind": "function",
+          "signature": "unwrapOr<T, E, U>(result: Result<T, E>, fallback: U): T | U",
+          "doc": "The success value, or fallback for a failure.",
+          "docFull": "The success value, or `fallback` for a failure.",
+          "params": [
+            {
+              "name": "result",
+              "doc": "The result."
+            },
+            {
+              "name": "fallback",
+              "doc": "The value to use when result is an Err."
+            }
+          ],
+          "returns": "The value or the fallback.",
           "examples": [],
           "denextOnly": true
         }

@@ -245,6 +245,15 @@ export function NewPost() {
 }
 ```
 
+**Errors as values (opt-in):** `denext/result` has `Result` / `ok` / `err` / `tryAsync` and an
+exhaustive `match(x).with(pattern, fn)….exhaustive()` (a missing case is a compile error;
+`assertNever(x)` does the same in a `switch` `default`). A `defineApi` handler may
+`return err("code", init?)` instead of `fail()` (the code must be declared in `errors`), and a
+`defineAction` handler `return err("message", { fieldErrors })`. React's throws stay: Suspense,
+`notFound()` / `redirect()` and error boundaries (`tryAsync` re-throws them). Opt-in lint rules
+`denext/exhaustive-switch` and `denext/no-throw` come from `denextLintPlugin(options)`. Docs:
+https://denext.dev/docs/errors-as-values
+
 **Reading cookies / a session (auth):**
 
 ```ts

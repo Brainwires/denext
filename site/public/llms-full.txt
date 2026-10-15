@@ -249,6 +249,15 @@ export function NewPost() {
 }
 ```
 
+**Errors as values (opt-in):** `denext/result` has `Result` / `ok` / `err` / `tryAsync` and an
+exhaustive `match(x).with(pattern, fn)….exhaustive()` (a missing case is a compile error;
+`assertNever(x)` does the same in a `switch` `default`). A `defineApi` handler may
+`return err("code", init?)` instead of `fail()` (the code must be declared in `errors`), and a
+`defineAction` handler `return err("message", { fieldErrors })`. React's throws stay: Suspense,
+`notFound()` / `redirect()` and error boundaries (`tryAsync` re-throws them). Opt-in lint rules
+`denext/exhaustive-switch` and `denext/no-throw` come from `denextLintPlugin(options)`. Docs:
+https://denext.dev/docs/errors-as-values
+
 **Reading cookies / a session (auth):**
 
 ```ts
@@ -1340,7 +1349,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWakeLock(options?: UseWakeLockOptions): WakeLockControls` — Keep the screen awake via the Screen Wake Lock API, as a hook. Call WakeLockControls.request request to add this instance's claim and WakeLockControls.release release to drop it; the claim is also dropped automatically on unmount. Because the screen is device-global, the lock is refcounted: it stays on while any instance has a claim, and WakeLockControls.count count/WakeLockControls.active active report the shared state to every instance. WakeLockControls.releaseAll releaseAll drops every claim at once.
 - `interface UseWakeLockOptions` — Options for useWakeLock.
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
-- `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
+- `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
 - `VERSION: 4.0.0` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
@@ -1376,6 +1385,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 - `absoluteUrl(request: Request, path: string, opts?: OriginOptions): string` — Resolve path against the request's public requestOrigin. An already-absolute URL is returned unchanged; a root-relative path is made absolute against the origin.
 - `interface AccountDeletedPayload` — What AuthConfig.onAccountDeleted is told.
+- `type ActionData<Out> = Exclude<Out, Err<unknown, unknown>>` — A handler's success type: its return type without the returned err(...) values.
+- `type ActionErr = Err<string, ActionErrDetails | undefined>` — A failure an action handler may RETURN: err(message, { fieldErrors? }) from denext/result.
+- `interface ActionErrDetails` — What a returned err(message, details?) may carry: per-field messages.
+- `type ActionErrGuard<Out> = conditional` — unknown when every err(...) a handler returns is an ActionErr (a string message, optional fieldErrors); otherwise a type the handler can't satisfy, so the mistake is a compile error.
 - `interface ActionHandlerOptions` — Options for handleAction.
 - `type ActionResult<Out> = object | object` — The result an action returns: ok carries the typed handler output, else an error.
 - `class ActionValidationError` — Throw this from an input parser (or a handler) to return per-field form errors.
@@ -1392,6 +1405,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ApiDefinition` — What an endpoint declares: its schemas, error codes, and per-method body cap.
 - `apiDefinitionOf(handler: unknown): ApiRouteMeta | undefined` — The definition + middleware attached to a defineApi handler, or undefined for a plain function. The seam handleApi reads (body cap, error redaction) and the accessor an OpenAPI/docs plugin uses to describe an app's endpoints.
 - `interface ApiDispatchOptions` — Per-dispatch options the pipeline passes to handleApi.
+- `type ApiErr<D> = Err<ApiErrorCodes<D>, ApiErrorInit | undefined>` — A failure a handler may RETURN instead of calling fail(): err(code, init?) from denext/result, with code one of the endpoint's declared errors.
+- `type ApiErrGuard<D, R> = conditional` — unknown when every err(...) a handler returns uses a declared code; otherwise a type the handler can't satisfy, whose one key names the offending code — so return err("typo") is a compile error even on an endpoint without a response schema.
 - `class ApiError` — A typed API failure: an HTTP status, a machine-readable code, and optional data / fieldErrors / headers. Throw it from a route handler (plain or defineApi) or from defineApi middleware; the dispatch seam turns it into the JSON error envelope and the client rebuilds it as an ApiClientError with the same fields.
 - `interface ApiErrorBody` — The JSON body of a failed API response.
 - `type ApiErrorCodes<D> = conditional` — The error codes an endpoint declares (keyof def.errors).
@@ -1399,7 +1414,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `apiErrorResponse(err: ApiError, requestId?: string, digest?: string): Response` — Build the JSON error Response for an ApiError: the envelope body, the error's status and extra headers, x-request-id when known, and digest on a redacted internal error.
 - `type ApiHandler = (request: Request, context: ApiContext) => Response | Promise<Response>` — A single-method API route handler.
 - `interface ApiHandlerInput<D, Ctx>` — What a defineApi handler receives: parsed input, the request, the middleware context.
-- `type ApiHandlerResult<D> = conditional` — What a handler may return: a value matching def.response (or anything), or a Response.
+- `type ApiHandlerResult<D> = conditional` — What a handler may return: a value matching def.response (or anything), a Response, or an ApiErr.
 - `apiKeyRole(keys: SupabaseKeys, value: string, options?: VerifySupabaseJwtOptions): Promise<anon | service_role>` — The role an API key grants — an opaque publishable / secret key, or a legacy anon / service_role JWT signed by these keys. A user's access token is not an API key.
 - `interface ApiMatch` — An API route matched against a pathname, with its extracted params.
 - `type ApiMiddleware<Ctx, Ext> = (input: ApiMiddlewareInput<Ctx>) => Ext | Response | void | Promise<Ext | Response | void>` — A "before" middleware: return an object to extend the context (typed), a Response to short-circuit, or nothing. Throw (unauthorized(), an ApiError) to fail.
@@ -1529,8 +1544,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CustomProviderRecord` — One stored OAuth / OIDC identity provider (custom:<name>).
 - `interface DataEntry` — A cached data entry (the value returned by an unstable_cache loader).
 - `defaultLoader(filePath: unknown): Promise<unknown>` — Default module loader: dynamic import by absolute file path. A module is shared by every request, so it is loaded outside the request that first asks for it: its top-level code, and anything that code schedules, never runs as that request.
-- `defineAction<Out, In>(config: object): TypedAction<Out>` — Define a typed Server Action. Put it in a "use server" module and pass it to useActionState; denext dispatches the form submission to the server, where this runs.
-- `defineApi<D, R>(def: D, handler: (input: ApiHandlerInput<D, Record<never, never>>) => R | Promise<R>): ApiRouteHandler<D, R>` — Define a schema-validated route handler with no middleware (createApi().define(def, handler)). Export it as the method: export const POST = defineApi(…).
+- `defineAction<Out, In>(config: object): TypedAction<ActionData<Out>>` — Define a typed Server Action. Put it in a "use server" module and pass it to useActionState; denext dispatches the form submission to the server, where this runs.
+- `defineApi<D, R>(def: D, handler: parenthesized & ApiErrGuard<D, R>): ApiRouteHandler<D, R>` — Define a schema-validated route handler with no middleware (createApi().define(def, handler)). Export it as the method: export const POST = defineApi(…).
 - `defineConfig(config: DenextConfig): DenextConfig` — Validating helper that gives a denext.config.ts full editor autocomplete and inline type-checking — the idiomatic way to author config (like Vite's defineConfig):
 - `defineJob<R>(def: JobDefinition<R>): Job<R>` — Define a scheduled/background job. Validates any declared schedule up front (throws on a malformed cron expression). Place the result as the default export of a jobs/<name>.ts file, or register it programmatically with registerJob.
 - `defineService(def: ServiceDefinition): Service` — Define a supervised service: a long-lived piece of server work (a queue consumer, a socket to an upstream, a cache warmer) that a supervisor starts, restarts when it crashes, and stops on shutdown. Default-export it from services/<name>.ts, or pass it to supervise.
@@ -2331,7 +2346,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useSyncExternalStore<T>(subscribe: (onChange: () => void) => () => void, getSnapshot: () => T, getServerSnapshot?: () => T): T` — Subscribe to an external (non-React) store and re-render when it changes. subscribe registers a change listener and returns an unsubscribe function; getSnapshot reads the current value; getServerSnapshot (optional) provides the value used during server rendering.
 - `useTransition(): tuple` — Return [isPending, startTransition]. isPending stays true from the moment the transition starts until its low-priority updates have been flushed — so a pending indicator can paint (and the browser can handle input) before the transition's work runs. For an async callback it is held until the returned promise settles and the resulting flush lands. Falls back to a synchronous run when no client scheduler is installed.
 - `useTranslations(): TranslateFn` — Access a translation function t(key, vars?) for the active locale (reactive). Looks up key in the locale's catalog and interpolates {var} placeholders; a missing key returns the key itself. The catalog comes from the render-time provider during SSR and from the hydration payload on the client, re-read on soft navigation (so switching locales updates the strings).
-- `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
+- `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
 - `type VNodeChildren = VNodeChild | VNodeChild[]` — One child or an array of children, as accepted by JSX.
@@ -3245,6 +3260,28 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/feature`
 
 - `feature(name: string): boolean` — Whether the feature flag name is enabled. A feature("KEY") call with a **string literal** argument is folded to a boolean literal at build time (for a KEY listed in features) so the branch is dead-code eliminated; otherwise it reads the build-seeded flag map at runtime, defaulting to false for any unset flag.
+
+### `denext/result`
+
+- `andThen<T, E, U, F>(result: Result<T, E>, fn: (value: T) => Result<U, F>): Result<U, E | F>` — Chain a step that can itself fail: run fn on the success value; a failure short-circuits.
+- `assertNever(value: never, message?: string): never` — Fail at compile time when a value that should be impossible is still possible: put it in the default of a switch over a union (default: return assertNever(shape)), and a missing case becomes a type error. Reached at runtime (data that broke the types), it throws a TypeError.
+- `err<E>(error: E): Err<E, undefined>` — A failure carrying error (a string literal stays a literal type: err("not_found") is Err<"not_found">).
+- `interface Err<E, D>` — A failure: ok is false, error says what went wrong, details optionally adds more.
+- `isErr<T, E>(result: Result<T, E>): result is Err` — Is result a failure? Reads .ok (see isOk).
+- `isOk<T, E>(result: Result<T, E>): result is Ok` — Is result a success? Reads .ok, so it also works on a Result that crossed a serialization boundary (a Server Component prop, a Server Action's return).
+- `map<T, E, U>(result: Result<T, E>, fn: (value: T) => U): Result<U, E>` — Transform the success value; a failure passes through unchanged.
+- `mapErr<T, E, F>(result: Result<T, E>, fn: (error: E) => F): Result<T, F>` — Transform the error; a success passes through unchanged. The failure's details are kept.
+- `match<T>(value: T): Match<T, never>` — Start an exhaustive match over a literal union or a discriminated union:
+- `interface Match<Remaining, Out>` — A pattern match in progress (see match). Remaining is what no .with() has handled yet; Out is the union of the handlers' results.
+- `type Narrowed<T, P> = conditional` — The members of T that pattern P can match, narrowed by it.
+- `interface NonExhaustiveMatch<Remaining>` — The type of .exhaustive when cases remain: not callable, and its one property names what is still unhandled, so the compile error says which case is missing.
+- `ok(): Ok<undefined>` — A success with no value (Ok<undefined>).
+- `interface Ok<T>` — A success: ok is true and value is the result.
+- `type Pattern<T> = conditional` — What .with() accepts for a value of type T: a literal (for a literal union), or an object whose listed keys must equal the given literals (for a discriminated union — { type: "circle" }). Matching is shallow and uses === (with NaN equal to itself).
+- `type Result<T, E> = Ok<T> | Err<E>` — Either a success (Ok) or a failure (Err). Narrow on .ok.
+- `tryAsync<T, E>(fn: () => T | PromiseLike<T>, mapError?: (thrown: unknown) => E): Promise<Result<Awaited<T>, E>>` — Run a throwing (or rejecting) async call and capture the outcome as a Result.
+- `trySync<T, E>(fn: () => T, mapError?: (thrown: unknown) => E): Result<T, E>` — Run a throwing synchronous call and capture the outcome as a Result.
+- `unwrapOr<T, E, U>(result: Result<T, E>, fallback: U): T | U` — The success value, or fallback for a failure.
 
 ### `denext/jsx-directives`
 

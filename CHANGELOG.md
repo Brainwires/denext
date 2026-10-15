@@ -82,6 +82,28 @@ and this project adheres to
   now compute their delays with the same helper. Sidecar and job delays are unchanged, except
   that a sidecar's `maxBackoffMs` above 2^31-1 ms is now capped at the timer limit. Before, a
   timer given that delay fired immediately.
+- **`denext/result`: errors as values and exhaustive matching, opt-in.** `Result<T, E>`, `ok`,
+  `err` (a string literal keeps its literal type), `isOk` / `isErr`, `map`, `mapErr`, `andThen`,
+  `unwrapOr`, and `trySync` / `tryAsync` with a typed error mapper. `tryAsync` re-throws Suspense
+  promises and `notFound()` / `redirect()` / `forbidden()` / `unauthorized()` rather than
+  capturing them. `match(value).with(pattern, fn)…exhaustive()` matches literal and
+  discriminated unions, and a missing case is a compile error that names it; `.otherwise()` is
+  the catch-all. `assertNever(x)` does the same for a `switch`. The module works on the server
+  and the client, and an app that doesn't import it bundles none of it.
+- **`defineApi` and `defineAction` handlers may return `err()`.** In `defineApi`,
+  `return err("code", { message?, data?, fieldErrors?, headers? })` sends the same envelope as
+  `fail()`. The code must be one of the endpoint's `errors` (otherwise it's a compile error), the
+  `Err` is left out of the response type the typed client sees, and `isApiClientError` narrows
+  as before. In `defineAction`, `return err("message", { fieldErrors })` resolves to the same
+  failed `ActionResult` as a thrown `ActionValidationError`. A plain `{ ok: false }` object that
+  `err()` didn't make is still an ordinary return value, and `fail()` / throws are unchanged.
+- **Opt-in lint rules `denext/exhaustive-switch` and `denext/no-throw`.**
+  `denextLintPlugin({ exhaustiveSwitch, noThrow: { include } })` from `denext/lint-plugin`
+  returns the plugin with them added, and the default plugin is unchanged.
+  `exhaustive-switch` names the unhandled members when the file declares the discriminant's
+  literal union. Otherwise it asks for a `default` (ideally `assertNever`), because Deno lint
+  plugins have no type information. `no-throw` reports `throw` statements in the listed
+  directories. Docs: https://denext.dev/docs/errors-as-values
 - **`smtpMailer({ host, port, secure, user, pass, from })` (`denext/server`): an SMTP client with
   no npm dependency, usable as `sendVerificationRequest`.** It runs on `Deno.connect` /
   `Deno.connectTls` / `Deno.startTls`. TLS is required: port 465 (or `secure`) is implicit TLS,

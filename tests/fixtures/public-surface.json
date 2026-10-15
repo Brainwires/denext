@@ -468,6 +468,10 @@
   ],
   "denext/server": [
     "AccountDeletedPayload:interface",
+    "ActionData:typeAlias",
+    "ActionErr:typeAlias",
+    "ActionErrDetails:interface",
+    "ActionErrGuard:typeAlias",
     "ActionHandlerOptions:interface",
     "ActionResult:typeAlias",
     "ActionValidationError:class",
@@ -481,6 +485,8 @@
     "ApiContext:interface",
     "ApiDefinition:interface",
     "ApiDispatchOptions:interface",
+    "ApiErr:typeAlias",
+    "ApiErrGuard:typeAlias",
     "ApiError:class",
     "ApiErrorBody:interface",
     "ApiErrorCodes:typeAlias",
@@ -1821,6 +1827,27 @@
   ],
   "denext/feature": [
     "feature:function"
+  ],
+  "denext/result": [
+    "Err:interface",
+    "Match:interface",
+    "Narrowed:typeAlias",
+    "NonExhaustiveMatch:interface",
+    "Ok:interface",
+    "Pattern:typeAlias",
+    "Result:typeAlias",
+    "andThen:function",
+    "assertNever:function",
+    "err:function",
+    "isErr:function",
+    "isOk:function",
+    "map:function",
+    "mapErr:function",
+    "match:function",
+    "ok:function",
+    "tryAsync:function",
+    "trySync:function",
+    "unwrapOr:function"
   ],
   "denext/jsx-directives": [
     "ClientDirectives:interface"
@@ -4324,8 +4351,11 @@
     "startGlobalErrorClient:function"
   ],
   "denext/lint-plugin": [
+    "DenextLintOptions:interface",
     "LintPlugin:interface",
-    "default:variable"
+    "NoThrowOptions:interface",
+    "default:variable",
+    "denextLintPlugin:function"
   ],
   "denext/react": [
     "Activity:function",

@@ -18,6 +18,7 @@ import type {
   SchemaOutput,
 } from "../server/define-api.ts";
 import type { BuiltinApiErrorCode } from "../server/api-error.ts";
+import type { Err } from "../result.ts";
 
 /** True when `T` is `any`. */
 export type IsAny<T> = 0 extends 1 & T ? true : false;
@@ -46,9 +47,13 @@ export type PlainResponse<H> = H extends (...args: never[]) => infer R
     : unknown)
   : unknown;
 
-/** A `defineApi` handler's returned VALUE type (a returned `Response` carries no body type). */
-export type ValueResult<R> = [Exclude<R, Response>] extends [never] ? unknown
-  : Exclude<R, Response>;
+/**
+ * A `defineApi` handler's returned VALUE type: a returned `Response` carries no body type, and
+ * a returned `err(...)` is an error envelope, not a body.
+ */
+export type ValueResult<R> = [Exclude<R, Response | Err<unknown, unknown>>] extends [never]
+  ? unknown
+  : Exclude<R, Response | Err<unknown, unknown>>;
 
 /**
  * The JSON request body a handler expects: a `defineApi` route's `body` schema input, else the

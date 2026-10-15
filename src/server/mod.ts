@@ -97,6 +97,8 @@ export { apiDefinitionOf, createApi, defineApi, documentsSecurity } from "./defi
 export type {
   ApiBuilder,
   ApiDefinition,
+  ApiErr,
+  ApiErrGuard,
   ApiErrorCodes,
   ApiHandlerInput,
   ApiHandlerResult,
@@ -543,6 +545,10 @@ export type { ActionHandlerOptions } from "./action-handler.ts";
 // Typed Server Actions: define an action with a validated, typed input + typed result.
 export { ActionValidationError, defineAction } from "../runtime/define-action.ts";
 export type {
+  ActionData,
+  ActionErr,
+  ActionErrDetails,
+  ActionErrGuard,
   ActionResult,
   FormFields,
   InputSpec,

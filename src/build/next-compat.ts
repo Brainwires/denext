@@ -246,6 +246,8 @@ function coreRuntimeEntries(u: EntryUrl): Record<string, string> {
     "devtools": u("src/devtools.ts"),
     // `denext/feature` — the import survives the build-time fold of `feature()` calls.
     "feature": u("src/feature.ts"),
+    // `denext/result` — Result values + exhaustive match, usable from "use client" modules.
+    "result": u("src/result.ts"),
   };
 }
 
@@ -752,6 +754,7 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/client-runtime": "client-runtime.js",
   "denext/devtools": "devtools.js",
   "denext/feature": "feature.js",
+  "denext/result": "result.js",
   "denext/mobile": "mobile.js",
   // `denext/mobile/clerk` shares the one `denext/mobile` instance (its auth-session state).
   "denext/mobile/clerk": "mobile-clerk.js",

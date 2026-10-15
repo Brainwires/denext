@@ -29,8 +29,14 @@
 //
 // `input` may be a plain function over the form fields, or any **Standard Schema**
 // (Zod/Valibot/ArkType — `input: z.object({...})`) — zero denext dependency either way.
+//
+// Instead of throwing `ActionValidationError`, a handler may RETURN
+// `err("message", { fieldErrors })` from `denext/result`: the action resolves to the same
+// failed `ActionResult`, and the `Err` is excluded from the success type.
 
 import { isControlSignal, toClientError } from "./error-boundary.ts";
+import { isReturnedErr } from "./result-brand.ts";
+import type { Err } from "../result.ts";
 
 /** The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic. */
 export interface StandardSchemaV1<Output = unknown> {
@@ -110,6 +116,31 @@ export class ActionValidationError extends Error {
   }
 }
 
+/** What a returned `err(message, details?)` may carry: per-field messages. */
+export interface ActionErrDetails {
+  /** Per-field messages, keyed by form field name. */
+  fieldErrors?: Record<string, string>;
+}
+
+/** A failure an action handler may RETURN: `err(message, { fieldErrors? })` from `denext/result`. */
+export type ActionErr = Err<string, ActionErrDetails | undefined>;
+
+/** A handler's success type: its return type without the returned `err(...)` values. */
+export type ActionData<Out> = Exclude<Out, Err<unknown, unknown>>;
+
+/**
+ * `unknown` when every `err(...)` a handler returns is an {@link ActionErr} (a string message,
+ * optional `fieldErrors`); otherwise a type the handler can't satisfy, so the mistake is a
+ * compile error.
+ */
+export type ActionErrGuard<Out> = [Exclude<Extract<Out, Err<unknown, unknown>>, ActionErr>] extends
+  [never] ? unknown : {
+  readonly "denext: a defineAction err() takes a string message and { fieldErrors? }": Exclude<
+    Extract<Out, Err<unknown, unknown>>,
+    ActionErr
+  >;
+};
+
 /** The initial `ActionResult` for `useActionState` — an idle (not-yet-submitted) state. */
 export function idleActionState<Out>(): ActionResult<Out> {
   return { ok: false, error: "" };
@@ -178,32 +209,45 @@ function toFailure<Out>(err: unknown): ActionResult<Out> {
  *
  * @param config `input` (optional) validates `FormData` into the typed input — a function
  *   over the form fields, or a Standard Schema (Zod/Valibot/…); omit it to receive the raw
- *   fields object. `handler` receives the validated input and returns the typed `Out`.
+ *   fields object. `handler` receives the validated input and returns the typed `Out` — or
+ *   returns `err(message, { fieldErrors })` (from `denext/result`) to fail.
  * @returns An action `(prevState, formData) => Promise<ActionResult<Out>>` for `useActionState`.
  */
 export function defineAction<Out, In = FormFields>(
-  config: { input?: InputSpec<In>; handler: (input: In) => Out | Promise<Out> },
-): TypedAction<Out> {
+  config: {
+    input?: InputSpec<In>;
+    handler: ((input: In) => Out | Promise<Out>) & ActionErrGuard<Out>;
+  },
+): TypedAction<ActionData<Out>> {
+  type Data = ActionData<Out>;
   return async (
-    prevOrForm: ActionResult<Out> | FormData,
+    prevOrForm: ActionResult<Data> | FormData,
     maybeForm?: FormData,
-  ): Promise<ActionResult<Out>> => {
+  ): Promise<ActionResult<Data>> => {
     // Tolerate both call shapes: useActionState's (prevState, formData) and a bare (formData).
     const formData = (maybeForm instanceof FormData ? maybeForm : prevOrForm) as FormData;
     let input: In;
     try {
       input = await parseInput(config.input, formData);
     } catch (err) {
-      return toFailure<Out>(err);
+      return toFailure<Data>(err);
     }
+    let out: Out;
     try {
-      return { ok: true, data: await config.handler(input) };
+      out = await config.handler(input);
     } catch (err) {
       // `redirect()` / `notFound()` / `forbidden()` / `unauthorized()` inside the handler
       // are control flow, not failures: the action pipeline turns them into the redirect /
       // boundary response.
       if (isControlSignal(err)) throw err;
-      return toFailure<Out>(err);
+      return toFailure<Data>(err);
     }
+    // A returned `err(message, { fieldErrors })` is the same failure a thrown
+    // `ActionValidationError` produces (authored for the user, so not redacted).
+    if (isReturnedErr(out)) {
+      const details = out.details as ActionErrDetails | undefined;
+      return { ok: false, error: String(out.error), fieldErrors: details?.fieldErrors };
+    }
+    return { ok: true, data: out as Data };
   };
 }
