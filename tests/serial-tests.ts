@@ -56,6 +56,8 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/mobile-build.test.ts",
   "tests/mobile-sentry.test.ts",
   "tests/next-compat-build.test.ts",
+  // Deno.chdir into a fixture: next/font/local resolves its files against the cwd.
+  "tests/next-font-local-fallback.test.ts",
   "tests/ota-manifest.test.ts",
   // Both set and restore DENEXT_BOOT_DDL around each case (the boot-DDL opt-out every Postgres
   // store reads when it starts): a parallel test starting a store would see the other value.

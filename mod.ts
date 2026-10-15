@@ -99,6 +99,7 @@ export { collapseHeadTags, escapeHtml, renderToString } from "./src/jsx/render-t
 export type { HeadCollector, HeadTag, RenderOptions } from "./src/jsx/render-to-string.ts";
 
 export { renderToReadableStream } from "./src/jsx/render-to-stream.ts";
+export type { RenderStream } from "./src/jsx/render-to-stream.ts";
 export type { StreamOptions } from "./src/jsx/render-to-stream.ts";
 
 export { createResource, Suspense, SuspenseList, use } from "./src/runtime/suspense.ts";

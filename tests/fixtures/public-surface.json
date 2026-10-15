@@ -128,6 +128,7 @@
     "RegisteredRoutes:interface",
     "RegisteredSchema:typeAlias",
     "RenderOptions:interface",
+    "RenderStream:interface",
     "RequestArgs:typeAlias",
     "RequestOf:typeAlias",
     "RequiredKeys:typeAlias",
