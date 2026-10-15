@@ -42,6 +42,16 @@ if ! git diff --quiet -- .github/badges/tests.json; then
   git add -- .github/badges/tests.json
 fi
 
+# `check:fix` also regenerated the CLI's verb table (`deno task gen:command-table`): the
+# entrypoint parses from it, so a flag added to a verb — or pulled in by a rebase — that the
+# committed table lacks is an "unknown flag" on development. Stage it when it moved (the drift
+# test in tests/cli-startup-graph.test.ts stays the backstop).
+for generated in src/cli/command-table.generated.ts src/cli/lazy-modules.generated.ts; do
+  if ! git diff --quiet -- "$generated"; then
+    git add -- "$generated"
+  fi
+done
+
 # Fallow code-intelligence gate. `fallow audit` scopes dead-code + complexity +
 # duplication to the changeset and exits 1 on a `fail` verdict (0 otherwise), so
 # `set -e` aborts the commit on failure. Fallow is REQUIRED — resolve it like
