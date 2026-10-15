@@ -12,6 +12,7 @@
 
 import type { FontFileMetrics } from "./font-file.ts";
 import { FONT_METRICS } from "./font-metrics.ts";
+import { addFontFace, fontClassName } from "./registry.ts";
 
 /** A local system face a fallback can be built on (Next's two choices). */
 export type FallbackFace = "Arial" | "Times New Roman";
@@ -153,4 +154,43 @@ export function localFallbackOverrides(
     descentOverride: pct(font.descent / scale),
     lineGapOverride: pct(font.lineGap / scale),
   };
+}
+
+/** What {@link registerFontClass} registers a loader's class from. */
+export interface FontClassSpec {
+  /** The web font's family (quoted into the stack). */
+  family: string;
+  /** The loader's option signature (keys the class name). */
+  signature: string;
+  /** A metric-matched fallback face to declare and splice in after the family, if any. */
+  fallbackFace: FallbackFontFace | null;
+  /** The caller's fallback families, after the fallback face. */
+  fallback: string[];
+  /** The CSS custom property to expose (`variable`), if any. */
+  variable?: string;
+}
+
+/**
+ * Register a font loader's class (and `variable` class): the stack is the family, then the
+ * metric-matched fallback face (Next's order), then the caller's fallbacks.
+ *
+ * @returns The class name, the `variable` class (`""` when none) and the font stack.
+ */
+export function registerFontClass(
+  spec: FontClassSpec,
+): { className: string; variable: string; stack: string } {
+  if (spec.fallbackFace) addFontFace(spec.fallbackFace.css);
+  const stack = [
+    `'${spec.family}'`,
+    ...(spec.fallbackFace ? [`'${spec.fallbackFace.family}'`] : []),
+    ...spec.fallback,
+  ].join(", ");
+  const className = fontClassName(spec.family, spec.signature);
+  addFontFace(`.${className}{font-family:${stack};}`);
+  let variable = "";
+  if (spec.variable) {
+    variable = `${className}_var`;
+    addFontFace(`.${variable}{${spec.variable}:${stack};}`);
+  }
+  return { className, variable, stack };
 }

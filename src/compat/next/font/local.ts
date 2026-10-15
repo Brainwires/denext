@@ -15,7 +15,12 @@
  */
 
 import { addFontFace, fontClassName, type FontResult } from "./registry.ts";
-import { fallbackFace, type FallbackFontFace, localFallbackOverrides } from "./fallback.ts";
+import {
+  fallbackFace,
+  type FallbackFontFace,
+  localFallbackOverrides,
+  registerFontClass,
+} from "./fallback.ts";
 import { fontFileMetrics } from "./font-file.ts";
 
 export type { FontResult } from "./registry.ts";
@@ -156,6 +161,14 @@ function localFallbackFace(
   return fallbackFace(family, localFallbackOverrides(metrics, face));
 }
 
+/** The `@font-face` block for one source file. */
+function sourceFace(family: string, s: LocalFontSource, display: string): string {
+  return `@font-face{font-family:'${family}';` +
+    `src:url('${s.path}') format('${formatOf(s.path)}');` +
+    `font-weight:${s.weight ?? "normal"};font-style:${s.style ?? "normal"};` +
+    `font-display:${display};}`;
+}
+
 /**
  * Register a local font and return its `{ className, style, variable }`.
  *
@@ -167,32 +180,15 @@ export default function localFont(options: LocalFontOptions): FontResult {
   const signature = JSON.stringify(options);
   const family = `dnx-local-${fontClassName("local", signature).slice(7)}`;
   const display = options.display ?? "swap";
+  for (const s of srcs) addFontFace(sourceFace(family, s, display));
 
-  for (const s of srcs) {
-    addFontFace(
-      `@font-face{font-family:'${family}';` +
-        `src:url('${s.path}') format('${formatOf(s.path)}');` +
-        `font-weight:${s.weight ?? "normal"};font-style:${s.style ?? "normal"};` +
-        `font-display:${display};}`,
-    );
-  }
-
-  const adjusted = localFallbackFace(family, srcs, options.adjustFontFallback);
-  if (adjusted) addFontFace(adjusted.css);
-  const stack = [
-    `'${family}'`,
-    ...(adjusted ? [`'${adjusted.family}'`] : []),
-    ...(options.fallback ?? []),
-  ].join(", ");
-  const className = fontClassName(family, signature);
-  addFontFace(`.${className}{font-family:${stack};}`);
-
-  let variable = "";
-  if (options.variable) {
-    variable = `${className}_var`;
-    addFontFace(`.${variable}{${options.variable}:${stack};}`);
-  }
-
+  const { className, variable, stack } = registerFontClass({
+    family,
+    signature,
+    fallbackFace: localFallbackFace(family, srcs, options.adjustFontFallback),
+    fallback: options.fallback ?? [],
+    variable: options.variable,
+  });
   const style: FontResult["style"] = { fontFamily: stack };
   if (srcs.length === 1) {
     if (srcs[0].weight) style.fontWeight = srcs[0].weight;
