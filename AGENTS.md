@@ -793,6 +793,11 @@ export default defineJob({
 // anywhere on the server: import { runJob } from "denext/server"; await runJob("cleanup");
 ```
 
+**Shutdown:** on SIGTERM, `denext start` drains in-flight requests, stops `services/`, runs the
+plugin teardowns, then `instrumentation.ts`'s `onShutdown()`. Close app-owned resources there,
+for example `export async function onShutdown() { await sql.end(); }`. The process exits by
+`DENEXT_SHUTDOWN_DRAIN_MS` even if a pool, timer or socket stays open.
+
 **Long-lived server work (supervised services):** `services/<name>.ts` default-exports
 `defineService({ start(ctx) })` from `denext/server` — `start`'s promise is the service's life (a
 throw is a crash; hold a resource with `await ctx.stopped`; `ctx.signal` aborts on stop). The

@@ -48,6 +48,7 @@ function startSpec(projectDir: string): CommandSpec {
         hostname: ctx.flags.host as string | undefined,
         strictPort: port !== undefined,
         signal: controller.signal,
+        exitAfterShutdown: true, // this process is the server's
       });
     },
   };

@@ -10355,6 +10355,18 @@
           "denextOnly": true
         },
         {
+          "name": "OnShutdown",
+          "slug": "OnShutdown",
+          "kind": "typeAlias",
+          "signature": "type OnShutdown = () => void | Promise<void>",
+          "doc": "The onShutdown export (a denext extension): run once when the production server shuts down, after the drain, the services/ tree and the plugin teardowns. Close app-owned resources here (a postgres.js pool: await sql.end()), or the drain deadline (DENEXT_SHUTDOWN_DRAIN_MS) ends the process with them open. A throw from it is logged and swallowed.",
+          "docFull": "The `onShutdown` export (a denext extension): run once when the production server shuts down,\nafter the drain, the `services/` tree and the plugin teardowns. Close app-owned resources here\n(a postgres.js pool: `await sql.end()`), or the drain deadline (`DENEXT_SHUTDOWN_DRAIN_MS`)\nends the process with them open. A throw from it is logged and swallowed.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "opaqueKeyRole",
           "slug": "opaqueKeyRole",
           "kind": "function",

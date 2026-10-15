@@ -131,6 +131,16 @@ export async function GET(): Promise<Response> {
   return Response.json({ text: got ? await new Response(got.body).text() : null });
 }
 `,
+    "app/api/slow/route.ts": `export async function GET(): Promise<Response> {
+  await new Promise((r) => setTimeout(r, 1500));
+  return new Response("slow done");
+}
+`,
+    // A stand-in for an app-owned pool nothing closes: a ref'd timer started at boot.
+    "instrumentation.ts": `export function register() {
+  if (Deno.env.get("FIXTURE_HOLD_OPEN")) setInterval(() => {}, 1000);
+}
+`,
     "jobs/ping.ts": `import { defineJob } from "denext/server";
 export default defineJob({
   description: "ping",
@@ -185,15 +195,24 @@ async function run(
 /** A running binary: fetch its pages, then stop it. */
 interface Served {
   get(path: string): Promise<{ status: number; type: string; text: string }>;
-  stop(): Promise<string>;
+  /** SIGTERM, then wait for the exit: the output. Fails if it outlives `withinMs`. */
+  stop(withinMs?: number): Promise<string>;
+  /**
+   * SIGTERM while a request to `path` is in flight: its body, how long the process took to exit
+   * after the signal, and the output.
+   */
+  stopDuring(path: string): Promise<{ text: string; exitMs: number; output: string }>;
 }
+
+/** The drain deadline the shutdown checks run with. */
+const DRAIN_MS = 3000;
 
 /** Start the binary on a free port and wait until `/` answers. */
 async function serve(bin: string, cwd: string, env: Record<string, string>): Promise<Served> {
   const port = freePort();
   const child = new Deno.Command(bin, {
     cwd,
-    env: { NO_COLOR: "1", PORT: String(port), ...env },
+    env: { NO_COLOR: "1", PORT: String(port), DENEXT_SHUTDOWN_DRAIN_MS: String(DRAIN_MS), ...env },
     stdin: "null",
     stdout: "piped",
     stderr: "piped",
@@ -215,21 +234,35 @@ async function serve(bin: string, cwd: string, env: Record<string, string>): Pro
       text: await res.text(),
     };
   };
-  const stop = async () => {
-    if (!exited) child.kill("SIGTERM");
-    // An app-owned Postgres pool (npm:postgres) keeps the process alive after the drain, as
-    // under `denext start`: give it the drain deadline, then stop it hard.
-    const hard = setTimeout(() => {
-      if (!exited) child.kill("SIGKILL");
-    }, 15_000);
+  let signalled = false;
+  const stop = async (withinMs = 30_000) => {
+    // Once: a second SIGTERM ends the process on the spot (the shutdown handler is one-shot).
+    if (!exited && !signalled) child.kill("SIGTERM");
+    signalled = true;
+    let hung = false;
+    const guard = setTimeout(() => {
+      hung = !exited;
+      if (hung) child.kill("SIGKILL");
+    }, withinMs);
     await child.status;
-    clearTimeout(hard);
+    clearTimeout(guard);
     await drained;
+    if (hung) throw new Error(`still running ${withinMs} ms after SIGTERM:\n${output}`);
     return output;
+  };
+  const stopDuring = async (path: string) => {
+    const inFlight = fetch(origin + path).then((r) => r.text());
+    await new Promise((r) => setTimeout(r, 300)); // the handler is running
+    const at = performance.now();
+    child.kill("SIGTERM");
+    signalled = true;
+    const text = await inFlight;
+    const out = await stop(DRAIN_MS + 10_000);
+    return { text, exitMs: performance.now() - at, output: out };
   };
   for (let i = 0; i < 1200 && !exited; i++) {
     try {
-      if ((await get("/")).status === 200) return { get, stop };
+      if ((await get("/")).status === 200) return { get, stop, stopDuring };
     } catch { /* not listening yet */ }
     await new Promise((r) => setTimeout(r, 100));
   }
@@ -294,9 +327,10 @@ Deno.test({
         name: "serves pages, stylesheets, the island, assets and handlers",
         ignore: !compiled,
         fn: async () => {
-          const env = { DENEXT_STORAGE_SECRET: STORAGE_SECRET };
+          const env = { DENEXT_STORAGE_SECRET: STORAGE_SECRET, FIXTURE_HOLD_OPEN: "1" };
           const app = await serve(bin, runDir, env);
           let output = "";
+          let stopped = false;
           try {
             const home = await app.get("/");
             assertStringIncludes(home.text, "server component rendered");
@@ -325,8 +359,16 @@ Deno.test({
             assertEquals(outside, { wrote: false, error: "NotCapable" });
             const stored = JSON.parse((await app.get("/api/backend")).text);
             assertEquals(stored, { text: "stored in the binary's data dir" });
+            // A handle nothing closes holds the process after the drain: the in-flight request
+            // still finishes, and the process exits at the drain deadline anyway.
+            const shut = await app.stopDuring("/api/slow");
+            stopped = true;
+            output = shut.output;
+            assertEquals(shut.text, "slow done");
+            assert(shut.exitMs < DRAIN_MS + 3000, `exited ${shut.exitMs} ms after SIGTERM`);
+            assertStringIncludes(output, "open handle");
           } finally {
-            output = await app.stop();
+            if (!stopped) output = await app.stop();
           }
           assert(!output.includes("Module not found"), output);
           // The run-time state went to the working directory, not into the binary.
@@ -368,10 +410,17 @@ Deno.test({
           assertEquals(up.code, 0, up.out);
           try {
             const app = await serve(bin, runDir, env);
+            let stopped = false;
             try {
               assertEquals(JSON.parse((await app.get("/api/backend")).text), { notes: 0 });
+              // The config's postgres.js pool stays open: the process still exits by the deadline,
+              // after the in-flight request.
+              const shut = await app.stopDuring("/api/slow");
+              stopped = true;
+              assertEquals(shut.text, "slow done");
+              assert(shut.exitMs < DRAIN_MS + 3000, `exited ${shut.exitMs} ms after SIGTERM`);
             } finally {
-              await app.stop();
+              if (!stopped) await app.stop();
             }
           } finally {
             const down = await run(bin, ["db", "rollback"], runDir, env);

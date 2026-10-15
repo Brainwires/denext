@@ -167,6 +167,56 @@ export function installDrainDeadline(
   return cancel;
 }
 
+/** Why a shut-down process is still alive at the drain deadline. */
+export type LingerReason = "teardown" | "handles";
+
+/** Default action when the process outlives its shutdown: warn and exit. */
+function defaultLingerExit(reason: LingerReason): void {
+  console.warn(
+    reason === "teardown"
+      ? "denext: drained, but the shutdown teardowns (services, plugins, instrumentation's " +
+        "onShutdown) were still running at the drain deadline — exiting."
+      : "denext: shut down and drained, but an open handle (a database pool, a timer, a socket) " +
+        "still holds the process at the drain deadline — exiting. Close app-owned resources in " +
+        "instrumentation's onShutdown() to exit sooner.",
+  );
+  Deno.exit(0);
+}
+
+/**
+ * Bound the life of a process that has shut down. When `drainMs` after the shutdown signal have
+ * passed and the server has drained (`drained`), `onLinger` (exit) runs: with `"teardown"` when
+ * the teardowns (`cleanedUp`) are still running, `"handles"` when they finished and something
+ * still holds the process open. The timer is unref'd, so a process with nothing left open exits
+ * on its own first; while the server is still draining, the drain deadline
+ * ({@linkcode installDrainDeadline}) is the one that fires. `drainMs <= 0` waits indefinitely.
+ *
+ * @param drained Settles once the server has drained.
+ * @param cleanedUp Settles once the teardowns after the drain have run.
+ * @param drainMs The drain deadline in ms, counted from now (the shutdown signal).
+ * @param onLinger Invoked once at the deadline when the server has drained.
+ * @returns A function that cancels the pending deadline.
+ */
+export function installExitDeadline(
+  drained: Promise<unknown>,
+  cleanedUp: Promise<unknown>,
+  drainMs: number,
+  onLinger: (reason: LingerReason) => void = defaultLingerExit,
+): () => void {
+  if (!(drainMs > 0)) return () => {};
+  const state = { drained: false, cleanedUp: false };
+  const mark = (key: keyof typeof state) => () => void (state[key] = true);
+  drained.then(mark("drained"), mark("drained"));
+  cleanedUp.then(mark("cleanedUp"), mark("cleanedUp"));
+  const timer = setTimeout(() => {
+    if (state.drained) onLinger(state.cleanedUp ? "handles" : "teardown");
+  }, drainMs);
+  try {
+    Deno.unrefTimer(timer);
+  } catch { /* older runtime without unrefTimer */ }
+  return () => clearTimeout(timer);
+}
+
 /**
  * Like `Deno.serve`, but if the port is in use it retries on `port + 1`,
  * `port + 2`, … up to `maxAttempts` times. Returns the bound server.

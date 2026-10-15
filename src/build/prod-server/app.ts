@@ -146,7 +146,8 @@ function sweepStalePagesAfterStartup(paths: ProjectPaths, info: BuildInfo): void
  * share/poison one cache; fails safe to in-memory) and `createApp`. Live Server
  * Components: the WebSocket hub is mounted only when the app has a Flight route (only
  * Flight routes can carry a `<Live>` boundary); the socket's own cookies still gate
- * every push.
+ * every push. `loaded.instrumentation` receives the loaded instrumentation hooks, whose
+ * `onShutdown` the server runs after its drain.
  */
 export async function createProdApp(
   paths: ProjectPaths,
@@ -155,11 +156,13 @@ export async function createProdApp(
   { flightRoutes, boundary }: FlightBoundary,
   assets: AssetResolvers,
   load: ModuleLoader,
+  loaded: { instrumentation?: Instrumentation } = {},
 ): Promise<(request: Request) => Promise<Response>> {
   await timed("warmRouteModules", () => warmRouteModules(manifest, load));
   const middlewareRunner = await loadMiddleware(paths, load);
   setNextRuntimeEnv();
   const instrumentation = await loadInstrumentation(paths.instrumentationPath);
+  loaded.instrumentation = instrumentation; // the server runs its `onShutdown` after the drain
   await runRegister(instrumentation);
   const rules = await bootProdServices(paths, info, instrumentation);
   const appConfig = prodAppConfig(

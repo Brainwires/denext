@@ -191,7 +191,9 @@ Vercel. It is a larger, separate bet; see
 A denext process gives an orchestrator the two signals it needs: a health
 endpoint that goes away only when the process does, and a drain on `SIGTERM`
 bounded by `DENEXT_SHUTDOWN_DRAIN_MS` (10 s default; `0` waits forever; the
-force-exit skips plugin teardown). The rolling recipe is the same everywhere:
+force-exit skips plugin teardown). The process exits by that deadline even when
+an open handle, such as an app's database pool, outlives the drain. Close such
+resources in `instrumentation.ts`'s `onShutdown()` to exit sooner. The rolling recipe is the same everywhere:
 
 1. Start the new version; wait for `/_denext/health` to answer `200`.
 2. Shift traffic (the balancer, the endpoint slice, the upstream).
@@ -294,9 +296,7 @@ toolchain build, so:
 - the build verbs: `dev`, `build` and `export` stay on the `denext` CLI.
 
 `next-compat` (drop-in) builds and the Pages Router plugin are untested in a
-binary. An app-owned Postgres pool (npm `postgres`) keeps the process alive
-after the drain, exactly as under `denext start`, so give your supervisor a
-kill timeout. The binary is about 200 MB: the runtime plus the framework's and
+binary. The binary is about 200 MB: the runtime plus the framework's and
 your packages' module graph.
 
 The **`denext` executable** is a separate thing: the CLI itself, a

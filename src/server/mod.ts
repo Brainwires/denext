@@ -446,6 +446,7 @@ export type {
   InstrumentationRequest,
   OnRequestError,
   OnServiceError,
+  OnShutdown,
   RegisterFn,
   RequestErrorContext,
   ServiceErrorContext,

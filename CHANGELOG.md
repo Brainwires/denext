@@ -414,6 +414,15 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext start` (and a `denext build --compile` binary) exits by the drain deadline after
+  SIGTERM, even with an open handle.** An app-owned database pool (postgres.js), a timer or a
+  socket kept the event loop alive after the drain, so the process never exited until the
+  orchestrator killed it. Now the in-flight requests finish, the `services/` tree, the plugin
+  teardowns and the new `onShutdown()` run, and the process exits once
+  `DENEXT_SHUTDOWN_DRAIN_MS` has passed since the signal, with a warning naming the cause. The
+  new `onShutdown()` export of `instrumentation.ts` closes what the app opened (a pool's
+  `sql.end()`), so the process exits as soon as it is done.
+
 - **`@denext/backend` 0.5.0: `denext db diff`, `pull` and `lint` build their shadow database as
   `db push` does.** The shadow got the backend's migrations and the app's, but not realtime's
   per-table triggers, which a push applies after the app's migrations. A diff against a pushed

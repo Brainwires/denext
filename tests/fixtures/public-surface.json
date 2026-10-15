@@ -777,6 +777,7 @@
     "OnRequest:typeAlias",
     "OnRequestError:typeAlias",
     "OnServiceError:typeAlias",
+    "OnShutdown:typeAlias",
     "OpenGraphImage:interface",
     "OpenGraphImageResult:typeAlias",
     "OpenGraphMedia:interface",

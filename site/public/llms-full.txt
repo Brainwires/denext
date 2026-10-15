@@ -797,6 +797,11 @@ export default defineJob({
 // anywhere on the server: import { runJob } from "denext/server"; await runJob("cleanup");
 ```
 
+**Shutdown:** on SIGTERM, `denext start` drains in-flight requests, stops `services/`, runs the
+plugin teardowns, then `instrumentation.ts`'s `onShutdown()`. Close app-owned resources there,
+for example `export async function onShutdown() { await sql.end(); }`. The process exits by
+`DENEXT_SHUTDOWN_DRAIN_MS` even if a pool, timer or socket stays open.
+
 **Long-lived server work (supervised services):** `services/<name>.ts` default-exports
 `defineService({ start(ctx) })` from `denext/server` — `start`'s promise is the service's life (a
 throw is a crash; hold a resource with `await ctx.stopped`; `ctx.signal` aborts on stop). The
@@ -1831,6 +1836,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type OnRequest = (info: RequestLogInfo) => void` — The onRequest export: per-request observability, called once after every response with the method, path, final status, duration and request id (a denext extension — Next has no equivalent; it is the same hook a custom server passes to createApp()). A throw from it is swallowed: observability never breaks the response.
 - `type OnRequestError = (error: unknown, request: InstrumentationRequest, context: RequestErrorContext) => void | Promise<void>` — The onRequestError export: report a server-side request error.
 - `type OnServiceError = (error: unknown, context: ServiceErrorContext) => void | Promise<void>` — The onServiceError export (a denext extension, shaped like onRequestError): a top-level supervisor exceeded its restart intensity, stopped its children and failed. Report it the way a request error is reported. A throw from it is logged and swallowed.
+- `type OnShutdown = () => void | Promise<void>` — The onShutdown export (a denext extension): run once when the production server shuts down, after the drain, the services/ tree and the plugin teardowns. Close app-owned resources here (a postgres.js pool: await sql.end()), or the drain deadline (DENEXT_SHUTDOWN_DRAIN_MS) ends the process with them open. A throw from it is logged and swallowed.
 - `opaqueKeyRole(keys: SupabaseKeys, value: string): Promise<anon | service_role | null>` — The role an opaque API key grants: anon for a publishable key, service_role for a secret key, null for anything else (a JWT included — verify those with verifySupabaseJwt). Constant-time over the key's SHA-256.
 - `interface OpenGraphImage` — A single Open Graph image (og:image plus optional dimensions/alt).
 - `type OpenGraphImageResult = VNode | Uint8Array | Response` — What an opengraph-image module's default export may return:

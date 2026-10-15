@@ -148,6 +148,24 @@ function onToolchain(): boolean {
   return marker !== undefined && marker !== "path";
 }
 
+/**
+ * The `denort` (Deno's standalone runtime) a compiled app is built on, for `target` (undefined:
+ * this machine), as a path for `DENORT_BIN` — or `undefined` to let `deno compile` download
+ * Deno's stock `denort` for the toolchain's Deno version (2.9.7), which has no `Deno.SQL` and
+ * ignores `--unstable-no-legacy-abort`.
+ *
+ * TODO(denort): once the toolchain release ships denext's own `denort` per target (beside the
+ * `deno-cli-*` archives in `deno-toolchain-pin.json`), return the SHA-256-verified copy here
+ * (fetched like the toolchain itself, ./deno-toolchain.ts), so compiled apps get `Deno.SQL` and
+ * the toolchain's abort behaviour. Everything else already routes through this one function.
+ *
+ * @param _target The `deno compile --target` triple, or undefined for this machine.
+ * @returns The denort path, or undefined for the stock download.
+ */
+function denortBinary(_target: string | undefined): Promise<string | undefined> {
+  return Promise.resolve(undefined);
+}
+
 /** `path` exists (file or directory). */
 async function exists(path: string): Promise<boolean> {
   try {
@@ -319,9 +337,11 @@ export async function compileApp(
     output,
     entry,
   ];
+  const denort = await denortBinary(options.target);
   const { code } = await new Deno.Command(deno, {
     args,
     cwd: paths.projectDir,
+    ...(denort ? { env: { DENORT_BIN: denort } } : {}),
     stdin: "null",
     stdout: "inherit",
     stderr: "inherit",

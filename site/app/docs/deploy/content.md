@@ -652,10 +652,22 @@ instead of (or alongside) the env var, see the `onRequest` callback in §14.
 ## 10. Graceful shutdown
 
 On `SIGTERM`/`SIGINT` the server stops accepting new connections and drains
-in-flight requests, then runs plugin teardowns. Draining is bounded by a
-deadline (default **10s**): set `DENEXT_SHUTDOWN_DRAIN_MS` to tune it, or `0` to
-drain indefinitely. If the deadline elapses with requests still in flight the
-process force-exits (and plugin teardown is skipped). Size it above your longest
+in-flight requests. Then it stops the `services/` tree, runs the plugin
+teardowns, and finally runs `instrumentation.ts`'s `onShutdown()`. Draining is
+bounded by a deadline (default **10s**): set `DENEXT_SHUTDOWN_DRAIN_MS` to tune
+it, or `0` to drain indefinitely. If the deadline elapses with requests still in
+flight, the process force-exits and plugin teardown is skipped. When the
+deadline passes after the drain, the process exits even if a handle nothing
+closed keeps it alive, such as an app-owned database pool, a timer or a socket.
+To exit sooner, close such resources in `onShutdown`:
+
+````ts
+// instrumentation.ts
+import { sql } from "./lib/db.ts"; // e.g. postgres(url)
+export async function onShutdown() {
+  await sql.end({ timeout: 5 });
+}
+``` Size it above your longest
 expected request and below your orchestrator's kill grace (e.g. k8s
 `terminationGracePeriodSeconds`, typically 30s; the generated compose file sets
 `stop_grace_period: 30s`). The signal must reach the server process itself: run
@@ -708,7 +720,7 @@ Two mitigations, use either or both:
 // denext.config.ts
 export default { cacheKeyParams: ["page", "sort"] } satisfies DenextConfig;
 // ?page=2&utm_source=x and ?page=2&utm_source=y now share one cached entry.
-```
+````
 
 ## 13. Health & readiness
 
