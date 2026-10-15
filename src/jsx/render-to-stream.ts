@@ -18,7 +18,7 @@ import {
   type HeadCollector,
 } from "./render-to-string.ts";
 import { hostAttrs, renderHostHtml } from "./render-shared.ts";
-import { takeSettled, VNodeRenderer } from "./renderer-base.ts";
+import { VNodeRenderer } from "./renderer-base.ts";
 export type { HeadCollector };
 import { enterScope, rootScope, scopePrefix } from "./tree-id.ts";
 import { SWAP_RUNTIME } from "../server/swap-runtime.ts";
@@ -155,63 +155,204 @@ export interface StreamOptions {
   collectBoundaryTiming?: boolean;
 }
 
+/** A streaming render: the HTML byte stream plus React's `allReady` signal. */
+export interface RenderStream extends ReadableStream<Uint8Array> {
+  /**
+   * Resolves once the shell and every Suspense boundary have **rendered** — independent of
+   * how far the consumer has read (the flush is demand-gated, the rendering is not), so
+   * `await stream.allReady` before reading never deadlocks. Rejects with the error when the
+   * shell fails, or with the abort reason when `signal` aborts before every boundary rendered.
+   * Always carries an internal handler, so an unobserved rejection never crashes the process.
+   */
+  allReady: Promise<void>;
+}
+
+/** Flush at most about this many characters of settled boundaries per consumer pull. */
+const FLUSH_BUDGET = 16 * 1024;
+
+/**
+ * Settled-boundary bookkeeping for a pull-gated stream. Every hole in the renderer's
+ * `active` set (nested ones join it while their parent renders, before the parent settles)
+ * is observed once; a settled hole moves into `ready` until the consumer's next pull
+ * flushes it. Rendering never waits on the consumer — only the flush does.
+ */
+class HoleQueue {
+  readonly ready: Awaited<PendingHole>[] = [];
+  private readonly seen = new WeakSet<PendingHole>();
+  private pending = 0;
+  private wake: (() => void) | null = null;
+  private onIdle: (() => void) | null = null;
+
+  constructor(private readonly active: Set<PendingHole>) {}
+
+  /** Start observing `active`; `idle` runs once every boundary (nested included) settled. */
+  start(idle: () => void): void {
+    this.onIdle = idle;
+    this.adopt();
+  }
+
+  /** True once no boundary is still rendering. */
+  get settled(): boolean {
+    return this.pending === 0;
+  }
+
+  /** Resolves when a boundary settles (or none is left rendering). */
+  next(): Promise<void> {
+    if (this.ready.length > 0 || this.pending === 0) return Promise.resolve();
+    return new Promise((resolve) => (this.wake = resolve));
+  }
+
+  private adopt(): void {
+    for (const hole of this.active) {
+      if (this.seen.has(hole)) continue;
+      this.seen.add(hole);
+      this.pending++;
+      hole.then((settled) => this.settle(hole, settled));
+    }
+    if (this.pending === 0) this.onIdle?.();
+  }
+
+  private settle(hole: PendingHole, settled: Awaited<PendingHole>): void {
+    this.active.delete(hole);
+    this.pending--;
+    this.ready.push(settled);
+    this.adopt(); // the hole's own nested boundaries joined `active` while it rendered
+    const wake = this.wake;
+    this.wake = null;
+    wake?.();
+  }
+}
+
+interface Deferred {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}
+
+/** A deferred whose rejection is pre-handled (an unobserved `allReady` must not crash). */
+function handledDeferred(): Deferred {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  promise.catch(() => {});
+  return { promise, resolve, reject };
+}
+
+/** Reject `ready` with the abort reason when `signal` aborts (now or later). */
+function rejectOnAbort(signal: AbortSignal | undefined, ready: Deferred): void {
+  if (!signal) return;
+  const fire = () => ready.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+  if (signal.aborted) fire();
+  else signal.addEventListener("abort", fire, { once: true });
+}
+
 /**
  * Render a VNode tree to a streaming HTML `ReadableStream<Uint8Array>`,
  * resolving Suspense boundaries progressively.
+ *
+ * The stream is **pull-gated**: the shell is enqueued as the first chunk, and each later
+ * chunk (a batch of settled boundaries, then the tail) is produced only when the consumer
+ * asks for more (`desiredSize > 0`), so a slow consumer applies backpressure instead of the
+ * whole document queueing in memory as encoded chunks. Boundary rendering is not gated —
+ * see {@link RenderStream.allReady}.
  */
 export function renderToReadableStream(
   node: VNodeChildren,
   options: StreamOptions = {},
-): ReadableStream<Uint8Array> {
+): RenderStream {
   const encoder = new TextEncoder();
   const renderer = new StreamRenderer(options.idPrefix ?? "");
   renderer.collectTiming = options.collectBoundaryTiming === true;
   const timings: Array<{ id: string; ms: number }> = [];
+  const queue = new HoleQueue(renderer.active);
+  const ready = handledDeferred();
+  rejectOnAbort(options.signal, ready);
+  // A boundary that never settles must not pin a pull past an abort (a client
+  // disconnect / request deadline): every wait races the abort signal.
+  const aborted = abortedPromise(options.signal);
 
   const write = (controller: ReadableStreamDefaultController<Uint8Array>, text: string) =>
     controller.enqueue(encoder.encode(text));
 
-  /** Flush each settled hole as a `<template>`; ends early when `signal` aborts. */
-  const flushHoles = async (controller: ReadableStreamDefaultController<Uint8Array>) => {
-    // A boundary that never settles must not pin the stream past an abort (a client
-    // disconnect / request deadline): every wait races the abort signal.
-    const aborted = abortedPromise(options.signal);
-    while (renderer.active.size > 0 && !options.signal?.aborted) {
-      const settled = await Promise.race([takeSettled(renderer.active), aborted]);
-      if (settled === undefined) return;
-      const { id, html, ok, ms } = settled;
-      const roundedMs = Math.round((ms ?? 0) * 100) / 100;
-      if (renderer.collectTiming) timings.push({ id, ms: roundedMs });
-      if (!ok) continue; // failed hole: leave its shell fallback
-      // In dev, stamp the server resolve time on the template so the swap runtime can
-      // surface a real-time reveal timeline (client reveal + server resolve) as holes
-      // land — attributes don't affect the swap-runtime script's fixed CSP hash.
-      const msAttr = renderer.collectTiming ? ` data-dnx-ms="${roundedMs}"` : "";
-      write(controller, `<template data-dnx-r="${id}"${msAttr}>${html}</template>`);
+  /** One settled hole as its `<template>` (empty for a failed hole: its fallback stays). */
+  const template = ({ id, html, ok, ms }: Awaited<PendingHole>): string => {
+    const roundedMs = Math.round((ms ?? 0) * 100) / 100;
+    if (renderer.collectTiming) timings.push({ id, ms: roundedMs });
+    if (!ok) return "";
+    // In dev, stamp the server resolve time on the template so the swap runtime can
+    // surface a real-time reveal timeline (client reveal + server resolve) as holes
+    // land — attributes don't affect the swap-runtime script's fixed CSP hash.
+    const msAttr = renderer.collectTiming ? ` data-dnx-ms="${roundedMs}"` : "";
+    return `<template data-dnx-r="${id}"${msAttr}>${html}</template>`;
+  };
+
+  /** Drain up to {@link FLUSH_BUDGET} characters of settled holes into one string. */
+  const takeReady = (): string => {
+    let out = "";
+    while (queue.ready.length > 0 && out.length < FLUSH_BUDGET) {
+      out += template(queue.ready.shift()!);
+    }
+    return out;
+  };
+
+  /** The tail: the dev timeline island and `shellSuffix`, then close. */
+  const finish = (controller: ReadableStreamDefaultController<Uint8Array>) => {
+    // Dev-only per-boundary timeline: a CSP-safe JSON data block (not executed).
+    if (renderer.collectTiming && timings.length > 0) {
+      const json = JSON.stringify(timings).replace(/</g, "\\u003c");
+      write(
+        controller,
+        `<script type="application/json" id="__denext_boundary_timing">${json}</script>`,
+      );
+    }
+    if (options.shellSuffix) write(controller, options.shellSuffix);
+    controller.close();
+  };
+
+  /**
+   * One consumer pull: the next batch of settled holes, or the tail once none are left.
+   * Loops until it enqueues (a failed hole flushes nothing): a pull that returns without
+   * enqueuing would not be called again for the waiting read.
+   */
+  const flushNext = async (controller: ReadableStreamDefaultController<Uint8Array>) => {
+    for (;;) {
+      if (!options.signal?.aborted) await Promise.race([queue.next(), aborted]);
+      const batch = takeReady();
+      if (batch) return write(controller, batch);
+      if (queue.settled || options.signal?.aborted) return finish(controller);
     }
   };
 
-  return new ReadableStream<Uint8Array>({
+  const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
         const shell = await renderer.resolve(node, []);
         write(controller, (options.shellPrefix ?? "") + SWAP_RUNTIME + shell);
-        await flushHoles(controller);
-        // Dev-only per-boundary timeline: a CSP-safe JSON data block (not executed).
-        if (renderer.collectTiming && timings.length > 0) {
-          const json = JSON.stringify(timings).replace(/</g, "\\u003c");
-          write(
-            controller,
-            `<script type="application/json" id="__denext_boundary_timing">${json}</script>`,
-          );
-        }
-        if (options.shellSuffix) write(controller, options.shellSuffix);
-        controller.close();
+        queue.start(ready.resolve);
+        // No boundary left rendering (none, or none that suspended): nothing to gate.
+        if (queue.settled) finish(controller);
       } catch (err) {
+        ready.reject(err);
         controller.error(err);
       }
     },
-  });
+    async pull(controller) {
+      try {
+        await flushNext(controller);
+      } catch (err) {
+        ready.reject(err); // a flush failure errors the stream; never leave allReady pending
+        throw err;
+      }
+    },
+    cancel() {
+      ready.resolve(); // the consumer gave up; rendering already ran on its own
+    },
+  }) as RenderStream;
+  stream.allReady = ready.promise;
+  return stream;
 }
 
 /** A rendered shell plus its still-pending Suspense holes. */

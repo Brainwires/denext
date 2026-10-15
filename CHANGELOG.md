@@ -32,6 +32,20 @@ and this project adheres to
 
 ### Fixed
 
+- **`react-dom/server` streams honour the consumer's backpressure.** `renderToPipeableStream`'s
+  `pipe()` stops writing when the destination's `write()` returns `false` and resumes on
+  `'drain'` (calling a destination's `flush()` after each chunk, as React does); a destination
+  that closes or errors early cancels the flush, and `abort()` tears the pipe down even while it
+  waits for `'drain'`. Rendering starts at the call, so `onShellReady` / `onShellError` /
+  `onAllReady` fire whether or not `pipe()` ran yet — React's documented pattern of calling
+  `pipe()` from inside `onShellReady` now works. `renderToStaticNodeStream` renders on the first
+  read and pushes the document in bounded chunks while the readable wants more. The streaming
+  renderer under `renderToReadableStream` is pull-gated: chunks after the shell are produced on
+  the consumer's demand instead of queueing the whole document; Suspense boundaries keep
+  rendering on their own, so `await stream.allReady` before reading still completes, and a
+  render with many boundaries streams faster (one batch per read instead of a race over every
+  pending boundary).
+
 - **`global-error.tsx` hydrates on the next-compat build and in a static export.** Both paths
   emitted no global-error entry, so the global-error document was dead HTML: its `reset` did
   nothing and no author handler ran. A next-compat `denext build` now bundles the entry

@@ -114,10 +114,6 @@ Each is documented as a manual recipe today (the
 - **Shipped shared stores:** first-party Redis and Deno KV `CacheStore`, `SessionStore` and
   `RateLimitStore`, plus an exported adapter contract suite (`cacheStoreContract` from
   `denext/testing`) so a community adapter can prove itself.
-- **Node-stream `Writable` backpressure** for `renderToPipeableStream` /
-  `renderToStaticNodeStream` (they buffer): make the core renderer pull-gated and resolve the
-  `await allReady`-then-read deadlock the eager drain avoids. SSR-hot-path risk for a narrow
-  payoff; `renderToReadableStream` is the primary path.
 - **Deploy adapter API and presets:** a typed build manifest and a pluggable adapter seam
   (static export, Deno Deploy, Node, Docker; a documented seam for Workers / Vercel), on the
   plugin `addBuildStep` seam.

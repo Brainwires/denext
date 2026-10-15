@@ -84,13 +84,12 @@ export interface RenderToReadableStreamOptions {
  * `ReadableStream<Uint8Array>` with an `allReady` promise, matching
  * `react-dom/server`'s Web API.
  *
- * The source stream is drained eagerly into the returned stream's internal queue,
- * so `allReady` resolves (or rejects) when all boundaries have rendered
- * **independently of when the consumer reads** — this preserves React's contract
- * where you may `await stream.allReady` before piping (e.g. for crawlers/static
- * generation). It therefore buffers the document in memory rather than applying
- * consumer backpressure; for a very large document use denext's own streaming
- * `renderToReadableStream` (from the framework) instead.
+ * The stream is **pull-gated** like React's: each chunk after the shell is produced when the
+ * consumer reads (`desiredSize`), so a slow consumer applies backpressure rather than the
+ * document queueing in memory. Rendering is not gated — every Suspense boundary keeps
+ * rendering on its own — so `allReady` resolves (or rejects) when all boundaries have
+ * rendered **independently of when the consumer reads**, preserving React's contract that
+ * you may `await stream.allReady` before reading (e.g. for crawlers/static generation).
  *
  * Robustness: `allReady` always has an internal handler, so a rejection can never
  * become an unhandled promise rejection (which would crash the Deno process) when
@@ -113,8 +112,7 @@ export async function renderToReadableStream(
   const reader = source.getReader();
   // React's contract: the promise resolves once the SHELL has rendered and REJECTS when the
   // shell itself throws (so `await renderToReadableStream()` in a try/catch can send a 500
-  // instead of a stream that errors after the headers went out). The first chunk is the
-  // shell; it is handed to the drainer below.
+  // instead of a stream that errors after the headers went out). The first chunk is the shell.
   let shell: ReadableStreamReadResult<Uint8Array>;
   try {
     shell = await reader.read();
@@ -128,26 +126,27 @@ export async function renderToReadableStream(
   // error. Attaching a no-op handler marks the promise handled while a consumer
   // that DOES `await allReady` still observes the rejection through its own handler.
   ready.promise.catch(() => {});
+  // The source's `allReady` tracks RENDERING (not flushing): it rejects with the abort
+  // reason when the signal aborts before every boundary rendered — reported once here.
+  source.allReady.then(ready.resolve, (reason) => {
+    options.onError?.(reason);
+    ready.reject(reason);
+  });
 
-  // Set when the consumer cancels `out` (e.g. client disconnect): the drainer then
+  // Set when the consumer cancels `out` (e.g. client disconnect): a pull in flight then
   // stops quietly rather than treating the closed controller as a render error.
   const state = { cancelled: false };
-  let controller!: ReadableStreamDefaultController<Uint8Array>;
   const out = new ReadableStream<Uint8Array>({
     start(c) {
-      controller = c;
+      if (!shell.done && shell.value) c.enqueue(shell.value);
     },
+    pull: (c) => pullSource(reader, c, source.allReady, state),
     cancel(reason) {
       state.cancelled = true;
       ready.resolve(); // consumer gave up; not an error
-      reader.cancel(reason).catch(() => {}); // stop upstream rendering
+      reader.cancel(reason).catch(() => {}); // stop upstream flushing
     },
   }) as ReactDOMServerReadableStream;
-
-  // Drain the source eagerly (buffered in `out`'s queue) so allReady is decoupled
-  // from consumer reads (the `await allReady` crawler/static path).
-  if (!shell.done && shell.value) controller.enqueue(shell.value);
-  drainSource(reader, controller, options, state, ready);
   out.allReady = ready.promise;
   return out;
 }
@@ -169,42 +168,27 @@ function deferred(): Deferred {
 }
 
 /**
- * Pump every chunk of the denext stream into `controller`, settling `ready` when the
- * source ends. The source closes normally on abort too — surface that as a rejection
- * (React's contract) instead of reporting truncated HTML as complete.
+ * Forward ONE chunk of the denext stream into `controller` per consumer pull. The source
+ * closes normally on abort — by then its `allReady` has already rejected with the abort
+ * reason (the signal's listener runs synchronously), so the end of the source settles the
+ * output from it: an error for an aborted, incomplete render (React's contract) instead of
+ * truncated HTML reported as complete.
  */
-async function drainSource(
+async function pullSource(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   controller: ReadableStreamDefaultController<Uint8Array>,
-  options: RenderToReadableStreamOptions,
+  rendered: Promise<void>,
   state: { cancelled: boolean },
-  ready: Deferred,
 ): Promise<void> {
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (state.cancelled) return; // consumer cancelled mid-read; nothing more to do
-      if (done) break;
-      if (value) controller.enqueue(value);
-    }
-    if (options.signal?.aborted) {
-      const reason = options.signal.reason ?? new DOMException("Aborted", "AbortError");
-      options.onError?.(reason);
-      controller.error(reason);
-      ready.reject(reason);
-      return;
-    }
+    const { done, value } = await reader.read();
+    if (state.cancelled) return; // consumer cancelled mid-read; nothing more to do
+    if (!done) return controller.enqueue(value);
+    await rendered;
     controller.close();
-    ready.resolve();
   } catch (error) {
     if (state.cancelled) return; // enqueue-after-cancel etc.; not a real render error
-    options.onError?.(error);
-    try {
-      controller.error(error);
-    } catch {
-      // controller already closed/errored
-    }
-    ready.reject(error);
+    controller.error(error);
   }
 }
 
@@ -292,14 +276,14 @@ function toError(value: unknown): Error {
 /**
  * React-compatible `renderToPipeableStream` — a Node-`Writable` adapter over denext's
  * Web-stream renderer (for npm libraries that hard-code the Node-stream API; denext's own
- * apps use `renderToReadableStream`). Bridges the buffered compat {@link renderToReadableStream}
- * to a Node stream via `node:stream`'s `Readable.fromWeb`.
+ * apps use `renderToReadableStream`).
  *
- * `onShellReady` fires at the shell flush (the shell is enqueued as the first chunk, so we
- * peek it before signalling — a shell that throws surfaces as `onShellError`). Fidelity caveat
- * (documented in KNOWN-LIMITATIONS.md): the document is buffered in memory, so a slow
- * `Writable` gets **no upstream backpressure** — a property of denext's push-based streaming
- * core, not of this adapter.
+ * As in React, rendering starts at the call: `onShellReady` fires once the shell rendered
+ * (so the documented pattern of calling `pipe()` from inside it works), `onShellError` when
+ * the shell throws, `onAllReady` once every boundary rendered — whether or not `pipe()` ran.
+ * `pipe()` honours the destination's backpressure: when `write()` returns `false` nothing more
+ * is written (or produced) until `'drain'`; a destination that closes or errors early
+ * cancels the flush, and `abort()` tears the pipe down even while it waits for `'drain'`.
  *
  * @param node The element tree to render.
  * @param options React-compatible options (`onShellReady`/`onAllReady`/`onError`/`signal`).
@@ -310,21 +294,16 @@ export function renderToPipeableStream(
 ): PipeableStream {
   const controller = new AbortController();
   linkAbort(controller, options.signal);
-  const streamPromise = renderToReadableStream(node, {
-    signal: controller.signal,
-    onError: options.onError,
-  });
+  const shell = startPipeableRender(node, options, controller.signal);
   let piped = false;
   return {
     pipe<T extends Writable>(destination: T): T {
       if (piped) throw new Error("renderToPipeableStream: pipe() may only be called once.");
       piped = true;
-      pipeInto(streamPromise, destination, options).catch((error) => {
-        // Defensive: an unexpected failure setting up the pipe (e.g. node:stream load).
-        options.onShellError?.(error);
-        options.onError?.(error);
-        destination.destroy(toError(error));
-      });
+      shell.then(
+        (stream) => pumpInto(stream, destination, controller.signal),
+        (error) => destination.destroy(toError(error)),
+      );
       return destination;
     },
     abort(reason?: unknown): void {
@@ -341,62 +320,119 @@ function linkAbort(controller: AbortController, external: AbortSignal | undefine
 }
 
 /**
- * Pipe the rendered stream into a Node `Writable`. React fires onShellReady when the shell
- * is rendered and ready to flush — not when the stream object merely exists. denext's
- * renderer enqueues the entire shell as the FIRST chunk, so we peek that chunk before
- * signalling: a shell that throws lands in this read (→ onShellError), and a shell that
- * renders fires onShellReady with the real shell in hand, matching React's contract.
+ * Start rendering now and fire React's lifecycle callbacks: `onShellReady` once the shell
+ * rendered (the compat stream resolves only then; a shell that throws rejects it — after
+ * `onError`, as in React — and fires `onShellError`), then `onAllReady` when every boundary
+ * rendered. The returned promise is pre-handled; `pipe()` consumes it.
  */
-async function pipeInto(
-  streamPromise: Promise<ReactDOMServerReadableStream>,
-  destination: Writable,
+function startPipeableRender(
+  node: VNodeChildren,
   options: RenderToPipeableStreamOptions,
-): Promise<void> {
-  const [stream, { Readable }] = await Promise.all([streamPromise, loadNodeStream()]);
-  const reader = stream.getReader();
-  let first: ReadableStreamReadResult<Uint8Array>;
-  try {
-    first = await reader.read();
-  } catch (error) {
-    // The shell itself errored before any bytes: onShellError, then onError (parity).
-    options.onShellError?.(error);
-    options.onError?.(error);
-    destination.destroy(toError(error));
-    return;
-  }
-  options.onShellReady?.();
-  // `allReady` resolves once every boundary flushed; it rejects on abort (a no-op
-  // handler is already attached), so guard against an unhandled rejection here.
-  stream.allReady.then(() => options.onAllReady?.(), () => {});
-  const readable = Readable.fromWeb(
-    resumeAfter(first, reader) as unknown as Parameters<typeof Readable.fromWeb>[0],
+  signal: AbortSignal,
+): Promise<ReactDOMServerReadableStream> {
+  const shell = renderToReadableStream(node, { signal, onError: options.onError }).then(
+    (stream) => {
+      options.onShellReady?.();
+      // `allReady` rejects on abort (already reported through onError): a no-op handler.
+      stream.allReady.then(() => options.onAllReady?.(), () => {});
+      return stream;
+    },
+    (error) => {
+      options.onShellError?.(error);
+      throw error;
+    },
   );
-  // A later (post-shell) error already reached `onError` via the compat renderer; just
-  // tear the pipe down cleanly so the readable's error event can't go unhandled.
-  readable.on("error", (err) => destination.destroy(toError(err)));
-  readable.pipe(destination);
+  shell.catch(() => {});
+  return shell;
 }
 
-/** Re-emit the peeked shell chunk, then pull the remaining boundary chunks on demand. */
-function resumeAfter(
-  first: ReadableStreamReadResult<Uint8Array>,
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
-    start(c) {
-      if (first.value) c.enqueue(first.value);
-      if (first.done) c.close();
-    },
-    async pull(c) {
-      const { done, value } = await reader.read();
-      if (done) c.close();
-      else if (value) c.enqueue(value);
-    },
-    cancel(reason) {
-      reader.cancel(reason).catch(() => {});
-    },
-  });
+/** Waits for a Node destination's `'drain'`, and tracks an early `'close'`/`'error'`. */
+interface DestinationGate {
+  /** True once the destination closed or errored before the render finished. */
+  readonly closed: boolean;
+  /** Resolves on `'drain'` (or an early close); rejects with the reason on abort. */
+  drained(): Promise<void>;
+  /** Remove every listener this gate added. */
+  dispose(): void;
 }
+
+function destinationGate(
+  destination: Writable,
+  signal: AbortSignal,
+  onClosed: () => void,
+): DestinationGate {
+  let closed = false;
+  let waiter: { resolve: () => void; reject: (reason: unknown) => void } | null = null;
+  const release = () => {
+    waiter?.resolve();
+    waiter = null;
+  };
+  const onClose = () => {
+    closed = true;
+    onClosed();
+    release();
+  };
+  const onAbort = () => {
+    waiter?.reject(signal.reason);
+    waiter = null;
+  };
+  destination.on("drain", release);
+  destination.on("close", onClose);
+  destination.on("error", onClose);
+  signal.addEventListener("abort", onAbort);
+  return {
+    get closed() {
+      return closed;
+    },
+    drained(): Promise<void> {
+      if (signal.aborted) return Promise.reject(signal.reason);
+      if (closed) return Promise.resolve();
+      return new Promise((resolve, reject) => (waiter = { resolve, reject }));
+    },
+    dispose() {
+      destination.off("drain", release);
+      destination.off("close", onClose);
+      destination.off("error", onClose);
+      signal.removeEventListener("abort", onAbort);
+    },
+  };
+}
+
+/**
+ * Write the rendered stream into a Node `Writable`, one chunk per read, honouring
+ * backpressure: after `write()` returns `false` the next chunk is neither read nor produced
+ * until `'drain'`. A destination with `flush()` (compression middleware) is flushed after
+ * each chunk, as React does. The destination is ended when the render completes, destroyed
+ * when it fails or is aborted.
+ */
+async function pumpInto(
+  stream: ReactDOMServerReadableStream,
+  destination: Writable,
+  signal: AbortSignal,
+): Promise<void> {
+  const reader = stream.getReader();
+  const gate = destinationGate(destination, signal, () => {
+    reader.cancel().catch(() => {}); // the client went away: stop flushing
+  });
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done || gate.closed) break;
+      const accepted = destination.write(value);
+      (destination as { flush?: () => void }).flush?.();
+      if (!accepted) await gate.drained();
+    }
+    if (!gate.closed) destination.end();
+  } catch (error) {
+    reader.cancel().catch(() => {});
+    if (!gate.closed) destination.destroy(toError(error));
+  } finally {
+    gate.dispose();
+  }
+}
+
+/** Static-stream chunk size: a large document is pushed in pieces of at most this many bytes. */
+const STATIC_CHUNK = 16 * 1024;
 
 /**
  * React-compatible `renderToStaticNodeStream` — fully static markup as a Node `Readable`,
@@ -404,6 +440,9 @@ function resumeAfter(
  * for emails / static generation). Renders the synchronously-renderable subset via
  * {@link renderToStringSync}: a `<Suspense>` renders its fallback, and a genuinely async
  * Server Component outside a boundary destroys the stream with a guided error.
+ *
+ * Produced on demand, as in React: nothing renders until the consumer first reads, and the
+ * document is pushed in bounded chunks only while the readable wants more (`push()` true).
  *
  * @param node The element tree to render.
  * @param options React-compatible options (`onError` honored; `identifierPrefix` a no-op).
@@ -422,16 +461,24 @@ export function renderToStaticNodeStream(
         "retry on the next tick (this API is server-only).",
     );
   }
-  try {
-    const html = renderToStringSync(node);
-    return mod.Readable.from([new TextEncoder().encode(html)]);
-  } catch (error) {
-    options.onError?.(error);
-    const failed = new mod.PassThrough();
-    // Defer the error so a synchronous consumer can attach an `error` listener first.
-    queueMicrotask(() => failed.destroy(toError(error)));
-    return failed;
-  }
+  let bytes: Uint8Array | undefined;
+  let offset = 0;
+  return new mod.Readable({
+    read(this: Readable) {
+      try {
+        bytes ??= new TextEncoder().encode(renderToStringSync(node));
+      } catch (error) {
+        options.onError?.(error);
+        this.destroy(toError(error));
+        return;
+      }
+      while (offset < bytes.byteLength) {
+        const chunk = bytes.subarray(offset, offset += STATIC_CHUNK);
+        if (!this.push(chunk)) return;
+      }
+      this.push(null);
+    },
+  });
 }
 
 /**
