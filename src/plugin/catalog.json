@@ -1009,8 +1009,8 @@
     },
     {
       "name": "@denext/og",
-      "version": "0.1.1",
-      "spec": "jsr:@denext/og@^0.1.1",
+      "version": "0.1.2",
+      "spec": "jsr:@denext/og@^0.1.2",
       "exports": [
         "."
       ],

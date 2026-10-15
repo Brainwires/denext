@@ -14,7 +14,9 @@ import { warnNoStableOrigin } from "./absolute-url.ts";
 import type { VNode } from "../jsx/types.ts";
 import { escapeHtml, renderToString } from "../jsx/render-to-string.ts";
 import { contentType } from "@std/media-types";
-import { extname } from "@std/path";
+import { dirname, extname } from "@std/path";
+import { DEFAULT_SEGMENT_CONFIG, mergeSegmentConfig, readSegmentConfig } from "./segment-config.ts";
+import { enumerateParamSets, paramsEnumerated } from "./static-params.ts";
 
 // ---- Sitemap ---------------------------------------------------------------
 
@@ -322,7 +324,7 @@ export function serveMetadataFile(
   }
   if (pathname === ROUTES.robots.path && manifest.robots) return serveRobots(manifest.robots, load);
   const image = imageConventionFor(manifest, pathname);
-  if (image) return serveImageConvention(image.file, load, image.params, image.id);
+  if (image) return serveImageHit(manifest, image, load);
   if (pathname === ROUTES.webManifest.path && manifest.webManifest) {
     return serveWebManifest(manifest.webManifest, load);
   }
@@ -400,6 +402,8 @@ interface ImageHit {
   file: string;
   params: RouteParams;
   id?: string;
+  /** A nested image's route segment (`/blog/[slug]` for `/blog/[slug]/opengraph-image`). */
+  segment?: string;
 }
 
 /**
@@ -430,13 +434,79 @@ function nestedImageFor(manifest: RouteManifest, pathname: string): ImageHit | u
   if (exact) return { file: exact, params: {} };
   for (const [route, file] of manifest.imageRoutes ?? []) {
     const pattern = parsePattern(route);
+    const segment = route.slice(0, route.lastIndexOf("/")) || "/";
     const direct = matchSegments(pattern, pathname);
-    if (direct) return { file, params: direct };
+    if (direct) return { file, params: direct, segment };
     // `<route>/<id>`: the id is the last segment.
     const cut = pathname.lastIndexOf("/");
     if (cut <= 0) continue;
     const withId = matchSegments(pattern, pathname.slice(0, cut));
-    if (withId) return { file, params: withId, id: pathname.slice(cut + 1) };
+    if (withId) return { file, params: withId, id: pathname.slice(cut + 1), segment };
   }
   return undefined;
 }
+
+/**
+ * Serve a metadata image, refusing (404) a nested image whose dynamic params its segment
+ * excluded with `dynamicParams = false` (GHSA-f87g-xv8r-7p7x): the image must not render
+ * for a param set the page beside it would 404 on.
+ */
+async function serveImageHit(
+  manifest: RouteManifest,
+  hit: ImageHit,
+  load: ModuleLoader,
+): Promise<Response | null> {
+  if (await imageParamsRefused(manifest, hit, load)) {
+    return new Response("Not Found", { status: 404, headers: { "content-type": "text/plain" } });
+  }
+  return serveImageConvention(hit.file, load, hit.params, hit.id);
+}
+
+/** Enumerated param sets per nested image file (generators run once, as for pages). */
+const imageParamSets = new Map<string, RouteParams[] | null>();
+
+/**
+ * Whether `dynamicParams = false` excludes this nested image's params. The segment config
+ * and `generateStaticParams` come from the layouts at or above the image's directory, the
+ * page beside it (the param set the image describes is that page's), and the image module
+ * itself, merged outermost first — the same rule a page request is held to.
+ */
+async function imageParamsRefused(
+  manifest: RouteManifest,
+  hit: ImageHit,
+  load: ModuleLoader,
+): Promise<boolean> {
+  if (hit.segment === undefined || Object.keys(hit.params).length === 0) return false;
+  const modules = await imageSegmentModules(manifest, hit, load);
+  let config = DEFAULT_SEGMENT_CONFIG;
+  for (const mod of modules) config = mergeSegmentConfig(config, readSegmentConfig(mod));
+  if (config.dynamicParams !== false) return false;
+  let known = imageParamSets.get(hit.file);
+  if (known === undefined) {
+    known = await enumerateParamSets(modules);
+    imageParamSets.set(hit.file, known);
+  }
+  return !paramsEnumerated(known, hit.params);
+}
+
+/** The modules whose segment config governs a nested image, outermost first. */
+async function imageSegmentModules(
+  manifest: RouteManifest,
+  hit: ImageHit,
+  load: ModuleLoader,
+): Promise<unknown[]> {
+  const sibling = manifest.pages.find((p) => p.routePath === hit.segment);
+  const owner = sibling ?? manifest.pages.find((p) => p.routePath.startsWith(`${hit.segment}/`));
+  const imageDir = normalizeDir(dirname(hit.file));
+  const modules: unknown[] = [];
+  for (const layout of owner?.layoutChain ?? []) {
+    const dir = normalizeDir(dirname(layout));
+    if (imageDir === dir || imageDir.startsWith(`${dir}/`)) modules.push(await load(layout));
+  }
+  if (sibling) modules.push(await load(sibling.filePath));
+  if (isCodeModule(hit.file)) modules.push(await load(hit.file));
+  return modules;
+}
+
+/** A directory path with `/` separators and no trailing slash (Windows paths compare too). */
+const normalizeDir = (dir: string): string => dir.replaceAll("\\", "/").replace(/\/+$/, "");

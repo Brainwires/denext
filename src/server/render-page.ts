@@ -36,9 +36,9 @@ import { matchSlot, type PageMatch } from "../router/match.ts";
 import { recordSlotState } from "./slot-state.ts";
 import type { RouteManifest, SegmentLevel, SlotRoutes } from "../router/manifest.ts";
 import { provideLayoutSegments } from "../runtime/layout-segments.ts";
-import { paramPath, type RouteParams } from "../router/segments.ts";
+import type { RouteParams } from "../router/segments.ts";
 import { asyncProps, type SearchParams, searchParamsRecord } from "../runtime/async-props.ts";
-import { enumerateStaticParams } from "./static-params.ts";
+import { enumerateStaticParams, paramsEnumerated } from "./static-params.ts";
 import { type Messages, provideMessages } from "../runtime/i18n-messages.ts";
 import type {
   LayoutModule,
@@ -180,8 +180,7 @@ async function isStaticParamDisallowed(
   load: ModuleLoader,
 ): Promise<boolean> {
   const params = match.params;
-  const keys = Object.keys(params);
-  if (keys.length === 0) return false; // static route: dynamicParams is irrelevant
+  if (Object.keys(params).length === 0) return false; // static route: dynamicParams is irrelevant
 
   const filePath = match.route.filePath;
   let known = staticParamsCache.get(filePath);
@@ -189,10 +188,9 @@ async function isStaticParamDisallowed(
     known = await enumerateStaticParams(match.route, load);
     staticParamsCache.set(filePath, known);
   }
-  // No generateStaticParams → no params are known → every dynamic param 404s.
-  if (known === null) return true;
-  // Allowed only if this request's params match an enumerated set (each key equal).
-  return !known.some((set) => keys.every((k) => paramPath(set[k]) === paramPath(params[k])));
+  // No generateStaticParams → no params are known → every dynamic param 404s; otherwise
+  // allowed only if this request's params match an enumerated set (each key equal).
+  return !paramsEnumerated(known, params);
 }
 
 /**

@@ -64,6 +64,7 @@ package version:
 | ------------ | ---------------------------------------------------------------------- |
 | 0.1.0        | `@cf-wasm/og@0.5.0` (satori@0.29.0 · resvg-wasm@2.4.1 · Noto Sans v27) |
 | 0.1.1        | `@cf-wasm/og@0.5.0` (satori@0.29.0 · resvg-wasm@2.4.1 · Noto Sans v27) |
+| 0.1.2        | `@cf-wasm/og@0.5.0` + the SVG-serialization hardening below            |
 
 ## Vendoring / updating the bundle
 
@@ -82,6 +83,14 @@ echo 'export * from "@cf-wasm/og/node";' > entry.mjs
 npx esbuild entry.mjs --bundle --format=esm --platform=browser \
   '--define:process.env={"NODE_ENV":"production"}' \
   --outfile=lib/og.bundle.js
+```
+
+Then harden satori's inline-SVG serializer (GHSA-vcvr-r3jv-pc5j — attribute values and text
+are otherwise concatenated unescaped into the SVG resvg renders). The script is idempotent and
+fails when an anchor moved, so a refreshed upstream cannot ship unhardened:
+
+```sh
+deno run --allow-read --allow-write scripts/og-harden-svg.ts   # from the repo root
 ```
 
 Then bump this package's version, update the table above + CHANGELOG, refresh
