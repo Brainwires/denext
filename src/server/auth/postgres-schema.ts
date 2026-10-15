@@ -13,7 +13,12 @@ import {
   type SqlClient,
 } from "../postgres.ts";
 import type { Migration } from "../postgres-migrate.ts";
-import { bootMigrate, registerBootCheck } from "../postgres-boot.ts";
+import {
+  bootMigrate,
+  type FrameworkMigrationSet,
+  registerBootCheck,
+  registerFrameworkMigrations,
+} from "../postgres-boot.ts";
 import { inRootContext } from "../root-context.ts";
 import { oauthServerPostgresSql } from "./sql-adapter-oauth-server.ts";
 
@@ -185,6 +190,25 @@ export interface AuthDb {
 }
 
 /**
+ * The auth tables' migrations in `schema`, as `bootMigrate` and `denext db push` take them.
+ *
+ * @param schema The schema (default: the search path).
+ * @param feature The store that applies them.
+ * @returns The set.
+ */
+export function authMigrationSet(
+  schema: string | undefined,
+  feature = "postgresAuthAdapter",
+): FrameworkMigrationSet {
+  return {
+    feature,
+    migrations: authMigrations(schemaPrefix(schema, feature)),
+    table: AUTH_MIGRATIONS_TABLE,
+    ...(schema !== undefined ? { schema } : {}),
+  };
+}
+
+/**
  * Build the shared handle.
  *
  * @param options The store's options.
@@ -196,15 +220,13 @@ export function authDb(options: PostgresAuthStoreOptions, feature: string): Auth
   const { sql, owned } = resolveConnection(options, feature);
   let migrated: Promise<void> | undefined;
   let closed = false;
+  const set = authMigrationSet(options.schema, feature);
   const migrate = (): Promise<void> => {
     if (options.migrate === false) return Promise.resolve();
-    return bootMigrate(sql, {
-      migrations: authMigrations(prefix),
-      table: AUTH_MIGRATIONS_TABLE,
-      schema: options.schema,
-      feature,
-    });
+    return bootMigrate(sql, set);
   };
+  // `denext db push` applies them out of band (a `migrate: false` store's too).
+  registerFrameworkMigrations(`auth:${options.schema ?? ""}`, set);
   const handle: AuthDb = {
     async ready() {
       // A closed store must not reach the database again: the server is draining.

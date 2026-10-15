@@ -28,7 +28,7 @@ import {
   toNumber,
 } from "./postgres.ts";
 import type { Migration } from "./postgres-migrate.ts";
-import { bootMigrate, registerBootCheck } from "./postgres-boot.ts";
+import { bootMigrate, registerBootCheck, registerFrameworkMigrations } from "./postgres-boot.ts";
 import { inRootContext } from "./root-context.ts";
 
 /** Options for {@linkcode postgresCacheStore}. */
@@ -94,8 +94,15 @@ class PostgresCache implements CacheStore {
     this.#sql = sql;
     this.#owned = owned;
     this.#options = options;
-    // DENEXT_BOOT_DDL=off: the server checks the tables before it serves.
+    // DENEXT_BOOT_DDL=off: the server checks the tables before it serves, and `denext db push`
+    // applies them out of band (a `migrate: false` store's too).
     if (options.migrate !== false) registerBootCheck(async () => void await this.#db());
+    registerFrameworkMigrations(`cache:${options.schema ?? ""}`, {
+      feature: "postgresCacheStore",
+      migrations: cacheMigrations(this.#p),
+      table: "cache_migrations",
+      ...(options.schema !== undefined ? { schema: options.schema } : {}),
+    });
     this.#max = {
       data: options.maxDataEntries ?? DEFAULT_MAX,
       page: options.maxPageEntries ?? DEFAULT_MAX,

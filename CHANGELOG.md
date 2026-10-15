@@ -26,6 +26,15 @@ and this project adheres to
 
 ### Added
 
+- **`denext db push` / `migration up` apply denext's own Postgres schemas.** Each Postgres store
+  the config builds now declares its migrations: the auth adapter, the session, rate-limit, cache
+  and job-history stores (a `migrate: false` one too), and the auth tables `@denext/backend`'s
+  defaults use under `denextAuth`. The command applies them after the backend's and before the
+  app's, in their own tracking tables, under the runner's lock, idempotently (printed as
+  `(denext)`). With the logical realtime source, the `denext_realtime` publication is applied after
+  the app's migrations. So a deployment with `DENEXT_BOOT_DDL=off` applies its whole schema with
+  one command. `db reset`, `db diff` and `lint` include them. New in `denext/server`:
+  `registerFrameworkMigrations`, `frameworkMigrationSets`.
 - **`@denext/backend` 0.5.0: webhook events are deleted after a retention.** Delivered events are
   kept 7 days and failed ones 30 (`webhooks.retention: { deliveredMs, failedMs }`, counted from the
   change; `false` keeps them all). Before, every event stayed in

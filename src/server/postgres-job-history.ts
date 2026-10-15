@@ -31,7 +31,7 @@ import {
   toNumber,
 } from "./postgres.ts";
 import type { Migration } from "./postgres-migrate.ts";
-import { bootMigrate, registerBootCheck } from "./postgres-boot.ts";
+import { bootMigrate, registerBootCheck, registerFrameworkMigrations } from "./postgres-boot.ts";
 import { inRootContext } from "./root-context.ts";
 import type {
   JobHistory,
@@ -126,8 +126,15 @@ class PostgresJobHistory implements JobHistoryStore {
     this.#t = `${prefix}job_runs`;
     this.#maxRuns = options.maxRuns ?? DEFAULT_MAX_RUNS;
     this.#options = options;
-    // DENEXT_BOOT_DDL=off: the server checks the table before it serves.
+    // DENEXT_BOOT_DDL=off: the server checks the table before it serves, and `denext db push`
+    // applies it out of band (a `migrate: false` store's too).
     if (options.migrate !== false) registerBootCheck(async () => void await this.#db());
+    registerFrameworkMigrations(`job-history:${options.schema ?? ""}`, {
+      feature: FEATURE,
+      migrations: historyMigrations(prefix),
+      table: "job_history_migrations",
+      ...(options.schema !== undefined ? { schema: options.schema } : {}),
+    });
   }
 
   /** The client, once the migration has run (shared by concurrent first calls). */

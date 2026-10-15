@@ -95,9 +95,9 @@ import { createHub, handleRealtimeRequest, installRealtimeHub } from "./src/real
 import { postgresBus } from "./src/realtime-bus.ts";
 import { channelPermissions } from "./src/realtime-authz.ts";
 import {
-  realtimeMigrations,
   type RealtimeOptions,
   realtimeSchemaMigrations,
+  realtimeTableMigrations,
   resolveRealtime,
 } from "./src/realtime-sql.ts";
 import { resolveRest, type RestOptions, setupRest } from "./src/rest.ts";
@@ -494,13 +494,8 @@ function installDbHooksFor(
           : [],
       // Realtime's per-table triggers need the app's tables: after its migrations.
       afterMigrationSets: () =>
-        postgres && realtimeOptions && !isLogical(realtimeOptions)
-          ? [{
-            table: "backend_migrations",
-            migrations: realtimeMigrations(realtimeOptions).filter((m) =>
-              m.name.startsWith("backend_realtime_t_")
-            ),
-          }]
+        postgres && realtimeOptions
+          ? [{ table: "backend_migrations", migrations: realtimeTableMigrations(realtimeOptions) }]
           : [],
       // Storage's metadata lives on the backend's Postgres: its schema, in its own table.
       migrationSets: () =>
@@ -542,11 +537,6 @@ function startServices(
     Promise.resolve().then(() => ensureWebhooksMigrated(db.service())).catch(warn("webhooks"));
   }
   if (webhooks.delivery === "auto") ctx.addTeardown(startWebhookDelivery(webhooks));
-}
-
-/** Whether realtime reads the WAL (no per-table triggers). */
-function isLogical(options: RealtimeOptions): boolean {
-  return resolveRealtime(options).source === "logical";
 }
 
 /** The services that run on Postgres refuse a config without it. */

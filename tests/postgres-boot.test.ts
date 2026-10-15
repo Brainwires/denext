@@ -11,7 +11,9 @@ import {
   bootDdlEnabled,
   bootMigrate,
   BootSchemaError,
+  frameworkMigrationSets,
   registerBootCheck,
+  registerFrameworkMigrations,
   verifyBootSchemas,
 } from "../src/server/postgres-boot.ts";
 import { QUIET_SQL } from "../src/server/postgres-migrate.ts";
@@ -206,4 +208,19 @@ Deno.test("registerBootCheck: a no-op with boot DDL on; each check runs once", a
     await verifyBootSchemas();
   });
   assertEquals(runs, 1);
+});
+
+Deno.test("frameworkMigrationSets: every store's set once per table and schema, providers resolved", () => {
+  const sql = fakeSqlClient();
+  const schema = `fw_${crypto.randomUUID().replaceAll("-", "").slice(0, 8)}`;
+  postgresAuthAdapter({ sql, schema, migrate: false }); // a migrate: false store is pushed too
+  postgresCacheStore({ sql, schema });
+  postgresAuthAdapter({ sql, schema }); // the same tables: one set
+  registerFrameworkMigrations(`test:${schema}`, () => undefined); // a provider with nothing
+  const mine = frameworkMigrationSets().filter((s) => s.schema === schema);
+  assertEquals(mine.map((s) => [s.feature, s.table]), [
+    ["postgresAuthAdapter", "auth_migrations"],
+    ["postgresCacheStore", "cache_migrations"],
+  ]);
+  assert(mine[0].migrations.length > 0);
 });

@@ -59,6 +59,8 @@ export interface BackendActionInput {
 export interface BackendMigrationSet {
   /** The tracking table (the one the server's start records them in). */
   table: string;
+  /** The tracking table's schema; default: the search path. */
+  schema?: string;
   /** The migrations, in order. */
   migrations: Migration[];
 }

@@ -25,6 +25,9 @@
  * @module
  */
 
+import { registerFrameworkMigrations } from "../postgres-boot.ts";
+import { authMigrationSet } from "./postgres-schema.ts";
+import { backendPostgresClient } from "./backend-postgres.ts";
 import type { DenextPlugin } from "../../plugin/mod.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { isProductionEnv, isWeakSecret } from "../session.ts";
@@ -307,6 +310,12 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
       if (store?.close) ctx.addTeardown(() => store.close!());
       const adapter = config.adapter;
       if (adapter?.close) ctx.addTeardown(() => adapter.close!());
+      // With `@denext/backend`'s Postgres the rate limits and the SAML replay cache default onto
+      // it (backend-postgres.ts), built on first use: declare their tables for `denext db push`.
+      registerFrameworkMigrations(
+        "auth:backend",
+        () => backendPostgresClient() ? authMigrationSet(undefined, "denextAuth") : undefined,
+      );
       // `denext auth reseal`: maintenance against this config's adapter and secret. (A
       // hand-built context in a test may omit the seam.)
       if (typeof ctx.addCommand === "function") ctx.addCommand(createAuthCommand(config));

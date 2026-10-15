@@ -17,7 +17,7 @@
  */
 
 import { migratePostgres, postgresMigrationStatus, trackingTable } from "./postgres-migrate.ts";
-import type { PostgresMigrateOptions } from "./postgres-migrate.ts";
+import type { Migration, PostgresMigrateOptions } from "./postgres-migrate.ts";
 import type { SqlClient } from "./postgres.ts";
 
 /** The environment variable that turns boot-time DDL off (`off`, `0`, `false` or `no`). */
@@ -104,6 +104,62 @@ export async function bootMigrate(sql: SqlClient, options: BootMigrateOptions): 
     `[denext] ${feature}: applied ${applied.length} migration${applied.length === 1 ? "" : "s"} ` +
       `to ${table} (${summarize(applied)})`,
   );
+}
+
+/**
+ * A set of migrations a denext feature applies for itself at startup — what `denext db push` /
+ * `denext migration up` apply out of band (with `DENEXT_BOOT_DDL=off`).
+ */
+export interface FrameworkMigrationSet {
+  /** The feature, named in the CLI's output (`postgresAuthAdapter`). */
+  feature: string;
+  /** The tracking table. */
+  table: string;
+  /** The tracking table's schema (also the one the migrations create their tables in). */
+  schema?: string;
+  /** The migrations, in order. */
+  migrations: Migration[];
+}
+
+/** The process-global registry (a symbol: the CLI may load another copy of this module). */
+const FRAMEWORK_SETS = Symbol.for("denext.boot.migrationSets");
+
+type SetSource = FrameworkMigrationSet | (() => FrameworkMigrationSet | undefined);
+
+function sources(): Map<string, SetSource> {
+  const slot = globalThis as unknown as Record<symbol, Map<string, SetSource> | undefined>;
+  return slot[FRAMEWORK_SETS] ??= new Map();
+}
+
+/**
+ * Declare the migrations a feature applies for itself, so `denext db push` / `migration up`
+ * apply them out of band. Every Postgres store of denext declares its set when it is built (one
+ * per tracking table and schema); a function is resolved when the CLI reads the sets.
+ *
+ * @param key Identifies the set (a later declaration with the same key replaces it).
+ * @param set The set, or a function returning it (or nothing) when the CLI reads them.
+ */
+export function registerFrameworkMigrations(key: string, set: SetSource): void {
+  sources().set(key, set);
+}
+
+/**
+ * Every declared set, resolved, one per tracking table and schema, in declaration order.
+ *
+ * @returns The sets.
+ */
+export function frameworkMigrationSets(): FrameworkMigrationSet[] {
+  const seen = new Set<string>();
+  const out: FrameworkMigrationSet[] = [];
+  for (const source of sources().values()) {
+    const set = typeof source === "function" ? source() : source;
+    if (!set) continue;
+    const id = `${set.schema ?? ""}.${set.table}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(set);
+  }
+  return out;
 }
 
 /** The checks {@linkcode verifyBootSchemas} runs next. */

@@ -27,6 +27,9 @@ import { installPostgres } from "../packages/backend/src/postgres.ts";
 import { installRealtime } from "../packages/backend/src/realtime.ts";
 import { installWebhooks } from "../packages/backend/src/webhooks.ts";
 import { postgresEnvironment } from "./helpers/postgres-env.ts";
+import { MIGRATION_ACTIONS } from "../src/cli/commands/migration.ts";
+import { denextAuth } from "../src/server/auth/mod.ts";
+import { credentials } from "../src/server/auth/providers.ts";
 import { migratePostgres } from "../src/server/postgres-migrate.ts";
 import { type BackendDbHooks, backendHooks } from "../src/cli/db/project.ts";
 
@@ -233,6 +236,105 @@ Deno.test({
       });
     } finally {
       await stopBackend().catch(() => {});
+      await env.drop();
+    }
+  },
+});
+
+/** Run a `denext migration` action against `url` in `root`; resolves its output. */
+async function migration(root: string, url: string, positionals: string[]): Promise<string> {
+  const lines: string[] = [];
+  await MIGRATION_ACTIONS[positionals[0]]({
+    ctx: {
+      positionals,
+      flags: { "db-url": url, yes: true },
+      global: { cwd: root, json: false, verbose: false, quiet: false },
+      rest: [],
+    },
+    projectDir: root,
+    io: { log: (l) => lines.push(l), error: (l) => lines.push(`error: ${l}`) },
+    env: () => undefined,
+  });
+  return lines.join("\n");
+}
+
+Deno.test({
+  name:
+    `boot DDL on a real Postgres: DENEXT_BOOT_DDL=off → \`migration up\` → the server starts${label}`,
+  ignore: reason !== undefined,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    const root = await Deno.makeTempDir({ prefix: "dnx-boot-push-" });
+    try {
+      await env.admin.unsafe(`alter role ${new URL(env.url).username} replication`);
+      await Deno.mkdir(`${root}/migrations`);
+      await Deno.mkdir(`${root}/app`);
+      await Deno.writeTextFile(
+        `${root}/migrations/20260101000000_notes.sql`,
+        "create table notes (id bigint primary key, body text);\n",
+      );
+      // What a config builds: denext's own stores (one in a schema of its own) and the backend
+      // with the logical realtime source, whose publication needs the app's table.
+      const configure = () => {
+        postgresAuthAdapter({ sql: env.app });
+        postgresCacheStore({ sql: env.app, schema: "app_cache" });
+        postgresJobHistoryStore({ sql: env.app });
+        return {
+          plugins: [
+            denextAuth({
+              secret: "boot-push-secret-at-least-32-characters",
+              providers: [credentials({ authorize: () => null })],
+            }),
+            backend({
+              postgres: { sql: env.app },
+              realtime: { source: "logical", tables: { notes: {} } },
+              webhooks: { delivery: "manual" },
+            }),
+          ],
+        } as DenextConfig;
+      };
+      const setUp = (mode: "build" | "prod") => {
+        resetPlugins();
+        installPostgres(undefined);
+        installRealtime(undefined);
+        installWebhooks(undefined);
+        return applyPlugins({
+          projectRoot: root,
+          appDir: `${root}/app`,
+          config: configure(),
+          mode,
+          load,
+        });
+      };
+      await withBootDdl("off", async () => {
+        // Nothing applied yet: the start is refused.
+        await assertRejects(() => setUp("prod"), BootSchemaError);
+        await stopBackend();
+        // `denext migration up` (what `db push` runs), from the CLI's view of the same config.
+        await setUp("build");
+        const out = await migration(root, env.url, ["up"]);
+        await stopBackend();
+        for (const name of ["0001_auth_tables", "0001_cache_tables", "backend_rls_0001"]) {
+          assertStringIncludes(out, name);
+        }
+        assertStringIncludes(out, "(denext)");
+        assertStringIncludes(out, "backend_realtime_lpub_");
+        assert(out.indexOf("20260101000000_notes.sql") < out.indexOf("backend_realtime_lpub_"));
+        // The server starts, its realtime included, without one DDL statement of its own.
+        await setUp("prod");
+        const { realtimeEngine } = await import("../packages/backend/src/realtime.ts");
+        await realtimeEngine().start();
+        await stopBackend();
+        // And a second push has nothing left to do.
+        await setUp("build");
+        assertStringIncludes(await migration(root, env.url, ["up"]), "The database is up to date.");
+        await stopBackend();
+      });
+    } finally {
+      await stopBackend().catch(() => {});
+      await Deno.remove(root, { recursive: true });
       await env.drop();
     }
   },

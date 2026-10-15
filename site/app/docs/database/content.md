@@ -137,16 +137,18 @@ cache and job-history stores, and `@denext/backend`'s RLS roles, storage, realti
 queues and webhooks schemas. `denext dev` and `denext start` instead check that every migration
 those features would apply is recorded, and refuse to start with a `BootSchemaError`
 (`code: "boot_schema_missing"`) that names each missing one and its tracking table. A store built
-later checks on first use. To apply them out of band:
+later checks on first use.
 
-- `@denext/backend`: `denext db push` (or `denext migration up`) applies its migrations, then the
-  app's, then realtime's per-table triggers, which need the app's tables.
-- denext's own stores (`auth_migrations`, `cache_migrations`, `job_history_migrations`): run the
-  app once with `DENEXT_BOOT_DDL` unset as a role that may create them, as a release step.
-- `realtime({ source: "logical" })`: create the `denext_realtime` publication for the configured
-  tables (`CREATE PUBLICATION denext_realtime FOR TABLE …`).
+`denext db push` (or `denext migration up`) applies all of it out of band, under the same locks,
+idempotently: `@denext/backend`'s migrations, then those of every Postgres store the config
+builds (the auth adapter, the session, rate-limit, cache and job-history stores, a `migrate: false`
+one included; printed as `(denext)`), then the app's, then what needs the app's tables (realtime's
+per-table triggers, or the logical source's `denext_realtime` publication). `db reset` re-applies
+them, and `db diff` / `lint` build their shadow database the same way. The stores are the ones
+`denext.config.ts` (and what it imports) builds; the migrations go to the database the command
+targets (`DATABASE_URL`, `--db-url`).
 
-A store's own `migrate: false` still skips both its migrations and the check.
+A store's own `migrate: false` skips both its migrations and the check at startup.
 
 ### Pool sizing, timeouts and PgBouncer
 

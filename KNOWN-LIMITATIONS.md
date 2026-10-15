@@ -137,11 +137,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   notify source, `revalidate.owner: "one"` and the logical source don't work (they need a
   session; webhooks then deliver on the poll interval only), and `backend({ postgres })` takes no second, direct
   connection for them. Connect directly or through a session-mode pool.
-- **`DENEXT_BOOT_DDL=off` has no out-of-band command for denext's own stores.** `denext db push`
-  applies `@denext/backend`'s migrations, but the auth, cache and job-history stores'
-  (`auth_migrations`, `cache_migrations`, `job_history_migrations`) are applied by running the app
-  once with boot DDL on, and the logical realtime source's `denext_realtime` publication is
-  created by hand.
 - **Storage's SQL policies need `storage: { rls: true }`** (otherwise a bucket's `authorize` in
   TypeScript decides, with no `storage` schema to join against). An S3 upload
   whose client skips the completion call was checked by nobody: record the keys completion
