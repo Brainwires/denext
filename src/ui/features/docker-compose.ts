@@ -47,8 +47,8 @@ import {
   PreviewLead,
   Row,
 } from "../components.ts";
-import { Raw, type RawHtml, renderView } from "../view.ts";
-import { control, field as labelled, opButton } from "../form/control.ts";
+import { renderView } from "../view.ts";
+import { Control, type ControlAttrs, Field, OpButton } from "../form/control.ts";
 import { OP_FIELD, parseOp } from "../form/value.ts";
 import type { WidgetOption } from "../form/widget.ts";
 import { StaleWriteError, UI_CSRF_FIELD, uiSafeJoin, writeFileAtomic } from "../security.ts";
@@ -1197,8 +1197,11 @@ function labelledInput(
   value: string,
   placeholder: string,
 ): VNode {
-  const body = control({ tag: "input", name, id, value, placeholder });
-  return h(Raw, { key: name, html: labelled({ id, label, body }) });
+  return h(
+    Field,
+    { key: name, id, label },
+    h(Control, { tag: "input", name, id, value, placeholder }),
+  );
 }
 
 /** A new service: a name plus an image, a build context, or both. */
@@ -1434,14 +1437,14 @@ function ScalarFields(
     readonly disabled: boolean;
   },
 ): VNode {
-  const image = control({
+  const image = h(Control, {
     tag: "input",
     name: "image",
     id: `${id}-image`,
     value: svc.image ?? "",
     placeholder: svc.build === undefined ? "e.g. nginx:1.27" : "optional — built from build:",
   });
-  const restart = control({
+  const restart = h(Control, {
     tag: "select",
     name: "restart",
     id: `${id}-restart`,
@@ -1451,8 +1454,8 @@ function ScalarFields(
   return h(
     Fragment,
     null,
-    h(Raw, { html: labelled({ id: `${id}-image`, label: "image", body: image }) }),
-    h(Raw, { html: labelled({ id: `${id}-restart`, label: "restart", body: restart }) }),
+    h(Field, { id: `${id}-image`, label: "image" }, image),
+    h(Field, { id: `${id}-restart`, label: "restart" }, restart),
     h(BuildEditor, { svc, id, disabled }),
   );
 }
@@ -1506,12 +1509,12 @@ function BuildEditor(
 
 /** One text input with an accessible name (the form renderer's control). */
 function textInput(name: string, label: string, value = "", placeholder?: string): VNode {
-  return h(Raw, { html: control({ tag: "input", name, value, placeholder, ariaLabel: label }) });
+  return h(Control, { tag: "input", name, value, placeholder, ariaLabel: label });
 }
 
 /** A row's ✕ button — a `remove:<row>:<list>` submit (the form renderer's row button). */
 function removeButton(list: string, at: number, title: string, disabled: boolean): VNode {
-  return h(Raw, { html: opButton({ op: "remove", at, list, label: "✕", title, disabled }) });
+  return h(OpButton, { op: "remove", at, list, label: "✕", title, disabled });
 }
 
 /** A list editor: its legend, its rows (or "none"), then its add row. */
@@ -1552,11 +1555,13 @@ function choiceOptions(choices: readonly string[], current: string): WidgetOptio
 }
 
 /** One key's control: a picker where Compose fixes the choices, else a text input. */
-function longControl(name: string, id: string, key: string, current: unknown): RawHtml {
+function longControl(name: string, id: string, key: string, current: unknown): VNode {
   const value = textOf(current);
   const choices = LONG_CHOICES[key];
-  if (!choices) return control({ tag: "input", name, id, value, placeholder: "unset" });
-  return control({ tag: "select", name, id, value, options: choiceOptions(choices, value) });
+  const attrs: ControlAttrs = choices
+    ? { tag: "select", name, id, value, options: choiceOptions(choices, value) }
+    : { tag: "input", name, id, value, placeholder: "unset" };
+  return h(Control, { ...attrs });
 }
 
 /**
@@ -1568,7 +1573,7 @@ function LongEntry({ field, index, entry, id, disabled }: LongEntryProps): VNode
   const controls = Object.keys(LONG_KEYS[field]).map((key) => {
     const cid = `${id}-${prefix}-${index}-${key}`;
     const body = longControl(`${prefix}.${index}.${key}`, cid, key, entry[key]);
-    return h(Raw, { key, html: labelled({ id: cid, label: key, body }) });
+    return h(Field, { key, id: cid, label: key }, body);
   });
   const kept = Object.keys(entry).filter((key) => !Object.hasOwn(LONG_KEYS[field], key));
   return h(
@@ -1672,13 +1677,13 @@ function DepsEditor({ model, svc, disabled }: ServiceProps): VNode {
     { value: "", label: "— add a dependency —" },
     ...candidates.map((value) => ({ value, label: value })),
   ];
-  const picker = control({
+  const picker = h(Control, {
     tag: "select",
     name: "dep.new",
     options,
     ariaLabel: "Add a dependency",
   });
-  const add = candidates.length ? h(Row, null, h(Raw, { html: picker })) : null;
+  const add = candidates.length ? h(Row, null, picker) : null;
   return h(ListEditor, {
     legend: "depends_on",
     rows: chips.length ? [h(Row, null, chips)] : [],
@@ -1694,14 +1699,13 @@ function conditionPicker(svc: ComposeService, name: string, i: number): VNode {
   const current = svc.conditions[name] ?? DEPENDS_CONDITIONS[0];
   const options: WidgetOption[] = DEPENDS_CONDITIONS.map((value) => ({ value, label: value }));
   if (!isCondition(current)) options.push({ value: current, label: current });
-  const html = control({
+  return h(Control, {
     tag: "select",
     name: `dep.${i}.condition`,
     value: current,
     options,
     ariaLabel: `Condition for ${name}`,
   });
-  return h(Raw, { html });
 }
 
 /** Props of {@linkcode EntryListEditor}. */

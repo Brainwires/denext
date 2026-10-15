@@ -1,6 +1,6 @@
 // The component substrate of `denext ui`: render a view's VNode tree to a pre-escaped fragment
-// ({@linkcode RawHtml}) — what the page seam takes, and what the form renderer's string API
-// (`renderWidget`, `control`, `field`, `opButton`) returns for a panel to embed with `Raw`.
+// ({@linkcode RawHtml}) — what the page seam takes, and what `Raw` nests back into a tree (the
+// page shell's body). The form renderer is components all the way down (`denext/ui-kit`).
 //
 // Views are built with `h()` from the JSX runtime, in `.ts` files — never JSX syntax. JSR rewrites
 // a package's `compilerOptions.jsxImportSource` into a per-file `@jsxImportSource` pragma resolved
@@ -55,13 +55,12 @@ export function renderView(node: VNodeChildren): RawHtml {
 }
 
 /**
- * Insert already-escaped markup into a component tree verbatim — how a fragment the form
- * renderer's string API returned (`renderWidget`, `control`, `field`, `opButton`) nests inside a
- * component view. A `RawHtml` placed directly as a child is NOT rendered as markup; wrap it in
- * `Raw`.
+ * Insert already-escaped markup into a component tree verbatim — how a rendered panel nests
+ * inside the page shell. A `RawHtml` placed directly as a child is NOT rendered as markup; wrap it
+ * in `Raw`.
  *
- * **TRUSTED MARKUP ONLY.** The markup must be the output of {@linkcode renderView} (or a form
- * renderer call built on it), or a literal the caller wrote — never user or project text.
+ * **TRUSTED MARKUP ONLY.** The markup must be the output of {@linkcode renderView}, or a literal
+ * the caller wrote — never user or project text.
  * Anything passed here reaches the page unescaped; put untrusted text in a child or an attribute
  * instead, where the renderer escapes it.
  *

@@ -14,10 +14,10 @@ import { Fragment, h } from "../src/jsx/jsx-runtime.ts";
 import { DiffBlock, OpForm } from "../src/ui/components.ts";
 import { Raw, renderView } from "../src/ui/view.ts";
 import { decodePatch } from "../src/ui/features/config.ts";
-import { readWidget, renderWidget } from "../src/ui/form/render.ts";
+import { FormField, readWidget } from "../src/ui/form/render.ts";
 import { branchFor, itemSchema, loadConfigSchema, resolveAt } from "../src/ui/form/schema.ts";
 import { widgetFor } from "../src/ui/form/widget.ts";
-import { control } from "../src/ui/form/control.ts";
+import { Control } from "../src/ui/form/control.ts";
 import { decode, encode } from "../src/ui/form/value.ts";
 import { OVERRIDES } from "../src/ui/form/schema-overrides.ts";
 
@@ -589,10 +589,13 @@ Deno.test("the form modules turn the committed schema into typed controls", () =
   ]);
   assertEquals(decode(spec, encode(spec, ["image/avif"])), ["image/avif"]);
   assertStringIncludes(
-    toHtml(renderWidget(spec, ["image/avif"], { csrf: "tok" })),
+    toHtml(renderView(h(FormField, { spec, value: ["image/avif"], ctx: { csrf: "tok" } }))),
     'value="image/avif" checked',
   );
-  assertStringIncludes(toHtml(control({ tag: "input", name: "x", value: "y" })), 'name="x"');
+  assertStringIncludes(
+    toHtml(renderView(h(Control, { tag: "input", name: "x", value: "y" }))),
+    'name="x"',
+  );
   assertEquals(readWidget(schema, "trailingSlash", "on"), true);
 });
 

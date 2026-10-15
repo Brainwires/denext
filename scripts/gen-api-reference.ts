@@ -54,6 +54,7 @@ const ENTRIES: { module: string; file: string }[] = [
   { module: "denext/cli/command", file: `${ROOT}src/cli/command.ts` },
   { module: "denext/plugin-kit", file: `${ROOT}src/plugin/kit.ts` },
   { module: "denext/plugin-kit/vite-emitter", file: `${ROOT}src/plugin/vite-emitter.ts` },
+  { module: "denext/ui-kit", file: `${ROOT}src/ui/kit.ts` },
   ...(await expoEntries()),
 ];
 

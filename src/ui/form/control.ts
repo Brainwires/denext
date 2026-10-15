@@ -3,12 +3,11 @@
 // than thirteen near-identical markup blocks, and so "every value is escaped" is one claim to
 // audit rather than thirteen.
 //
-// Each piece is a component (`Control`, `Field`, `OpButton`) built with `h()` — the renderer in
-// `render.ts` composes them directly, so a nested widget never round-trips through a string —
-// and each has a string twin (`control`, `field`, `opButton`) that renders the component at the
-// boundary for the panels that embed the form renderer through `Raw`. The string renderer escapes
-// every text child and attribute value, and writes attributes in prop order, so the markup is
-// stable however `deno fmt` wraps the source.
+// Each piece is a component (`Control`, `Field`, `OpButton`) built with `h()`: the renderer in
+// `render.ts`, the panels and a plugin's own pages (`denext/ui-kit`) compose them directly, so a
+// form never round-trips through a string. The string renderer escapes every text child and
+// attribute value, and writes attributes in prop order, so the markup is stable however
+// `deno fmt` wraps the source.
 //
 // Layout uses inline `style=` attributes where `src/ui/styles.ts` has no class: the UI's CSP
 // sets `style-src-attr 'unsafe-inline'` for exactly this (it still forbids inline `<style>`).
@@ -17,7 +16,6 @@ import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import type { BadgeTone } from "../components.ts";
 import { inlineMarkdown } from "../markdown.ts";
-import { Raw, type RawHtml, renderView } from "../view.ts";
 import { OP_FIELD } from "./value.ts";
 import type { WidgetOption } from "./widget.ts";
 
@@ -130,19 +128,8 @@ export function Control(attrs: ControlAttrs): VNode {
   return ELEMENTS[attrs.tag](attrs);
 }
 
-/**
- * Render one control. The string twin of {@linkcode Control}, for panels that embed it through
- * `Raw`.
- *
- * @param spec The control description.
- * @returns The control markup.
- */
-export function control(spec: ControlAttrs): RawHtml {
-  return renderView(h(Control, { ...spec }));
-}
-
-/** The label, help text and validation message around one control. */
-export interface FieldOptions {
+/** The label, help text and validation message around one control ({@linkcode Field}). */
+export interface FieldProps {
   /** The id of the control the label points at. */
   readonly id: string;
   /** The visible label. */
@@ -159,11 +146,8 @@ export interface FieldOptions {
    */
   readonly badges?: ReadonlyArray<{ readonly text: string; readonly tone?: BadgeTone }>;
   /** The control (or group of controls). */
-  readonly body: RawHtml;
+  readonly children?: VNodeChildren;
 }
-
-/** {@linkcode Field}'s props: {@linkcode FieldOptions} with the control as children. */
-type FieldProps = Omit<FieldOptions, "body"> & { readonly children?: VNodeChildren };
 
 /**
  * A control wrapped in its label, help text and validation message.
@@ -203,18 +187,6 @@ export function Field(props: FieldProps): VNode {
   );
 }
 
-/**
- * Wrap a control in its label, help text and validation message. The string twin of
- * {@linkcode Field}.
- *
- * @param options The field description.
- * @returns The field markup.
- */
-export function field(options: FieldOptions): RawHtml {
-  const { body, ...rest } = options;
-  return renderView(h(Field, { ...rest }, h(Raw, { html: body })));
-}
-
 /** One row-operation button (`↑`, `↓`, `✕`, `+ Add`). */
 export interface OpButtonOptions {
   /** The operation. */
@@ -252,14 +224,4 @@ export function OpButton(props: OpButtonOptions): VNode {
     disabled: props.disabled ?? false,
     class: "ghost op-button",
   }, props.label);
-}
-
-/**
- * One list-operation submit button. The string twin of {@linkcode OpButton}.
- *
- * @param options The button description.
- * @returns The button markup.
- */
-export function opButton(options: OpButtonOptions): RawHtml {
-  return renderView(h(OpButton, { ...options }));
 }

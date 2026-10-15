@@ -20,9 +20,26 @@ import {
   parseFieldName,
   parseOp,
 } from "../src/ui/form/value.ts";
-import { readWidget, renderWidget } from "../src/ui/form/render.ts";
-import { control, field, opButton } from "../src/ui/form/control.ts";
+import { FormField, readWidget, type RenderContext } from "../src/ui/form/render.ts";
+import {
+  Control,
+  type ControlAttrs,
+  Field,
+  type FieldProps,
+  OpButton,
+  type OpButtonOptions,
+} from "../src/ui/form/control.ts";
 import { toHtml } from "../src/ui/html.ts";
+import { h } from "../src/jsx/jsx-runtime.ts";
+import { Raw, type RawHtml, renderView } from "../src/ui/view.ts";
+
+/** The form renderer's components, rendered to a fragment (what a panel's page receives). */
+const renderWidget = (spec: WidgetSpec, value: unknown, ctx: RenderContext) =>
+  renderView(h(FormField, { spec, value, ctx }));
+const control = (attrs: ControlAttrs) => renderView(h(Control, { ...attrs }));
+const opButton = (options: OpButtonOptions) => renderView(h(OpButton, { ...options }));
+const field = ({ body, ...props }: Omit<FieldProps, "children"> & { body: RawHtml }) =>
+  renderView(h(Field, { ...props }, h(Raw, { html: body })));
 
 const SCHEMA = loadConfigSchema();
 

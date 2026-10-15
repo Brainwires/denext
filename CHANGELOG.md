@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- **`denext/ui-kit`: the `denext ui` form components, for plugin authors.** `widgetFor` (a JSON
+  Schema node to a widget), `FormField` / `FormFields` (widgets behind the form's one CSRF
+  field), `Widget`, and the primitives `Control`, `Field` and `OpButton`, with `encode` /
+  `decode` and `renderView`: what the config editor and the plugin options forms are built from,
+  for a plugin that renders a form of its own. Each is a component built with `h()`; the form
+  renderer's string API (`control()`, `field()`, `opButton()`, `renderWidget()`,
+  `renderWidgets()`) is gone, and every panel composes the components directly.
 - **`denext/platform`: the build target as a compile-time constant.** `import { platform } from
   "denext/platform"` is `"web"`, `"ios"`, `"android"`, `"macos"`, `"windows"` or `"linux"`. Each
   target's build folds every read of it in the app's own modules to the target's name, and a

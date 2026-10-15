@@ -104,8 +104,6 @@ Each is documented as a manual recipe today (the
   ambiguous export, a SyntaxError in browsers).
 - **Agent control of `denext ui`:** an MCP front end over the UI's operations (every panel
   already answers a JSON twin).
-- **Export the UI's form components** (`FormField`, `Control`, `Field`, `OpButton`, `Widget`)
-  and retire the form renderer's remaining string API.
 - **Per-element `__source`** for a true JSX owner stack (the panel shows the render-parent chain).
 - **Profiler export / compare** across commits, plus component filters.
 - **Server-held live views in DevTools:** list `defineLiveView` instances and their messages
