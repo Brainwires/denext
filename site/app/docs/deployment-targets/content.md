@@ -216,10 +216,11 @@ app in its own process: every module-loading verb — `dev`, `build`, `start`,
 `deno run` child, so a binary can never substitute its own framework for the one
 in your `deno.json`. That is the skew rule in `src/cli/self-exec.ts`: the
 project's pin decides, an unversioned `jsr:@denext/denext` is a pin to latest, a
-directory with no pin is refused with a message naming the fix. The consequence
-is that the binary needs a reachable `deno` for those verbs — it is a
-convenience front end, not a self-contained server
-([Known limitations](/docs/limitations)).
+directory with no pin is refused with a message naming the fix. That child runs
+on denext's own Deno toolchain, downloaded and SHA-256-verified on first need, so
+no Deno install is required (offline on first use, with no toolchain cached, it
+needs a `deno` on PATH). The binary is a front end that launches your pinned
+denext, not a self-contained server ([Known limitations](/docs/limitations)).
 
 Compiling **your app** with `deno compile` into one SSR binary is not something
 denext tests or documents. `denext start` loads route modules from `.denext/` at
