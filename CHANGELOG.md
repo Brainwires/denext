@@ -38,6 +38,17 @@ and this project adheres to
   whole schema can be applied out of band. New in `denext/server`: `bootMigrate`,
   `bootDdlEnabled`, `registerBootCheck`, `BootSchemaError`, and `withMigrationLock` (run DDL that
   is not a recorded migration under a runner's advisory lock).
+- **Type, lint and build errors are explained in plain language.** `denext check`, `denext lint`,
+  `denext build` and `denext dev` print each diagnostic they recognize as one line naming the
+  problem, a codeframe, why it happens and a concrete fix, with the original diagnostic under it
+  unchanged. Assignability errors through `defineApi`, schemas, `useApi` and `createApiClient`
+  collapse to the one property path that mismatches; "possibly null/undefined" errors get a
+  narrowing for the line; non-exhaustive switches list the missing union members; `react` /
+  `next/*` imports point to the denext import; an unknown typed-API route, route param or module
+  gets a did-you-mean; and denext's lint rules are explained with the fix. The dev overlay shows
+  the explanation with the original in a collapsed section. `--raw` (or
+  `DENEXT_RAW_DIAGNOSTICS=1`) prints Deno's output unchanged. The new `denext_explain_error` MCP
+  tool explains pasted tool output or a structured diagnostic.
 - **`smtpMailer({ host, port, secure, user, pass, from })` (`denext/server`): an SMTP client with
   no npm dependency, usable as `sendVerificationRequest`.** It runs on `Deno.connect` /
   `Deno.connectTls` / `Deno.startTls`. TLS is required: port 465 (or `secure`) is implicit TLS,

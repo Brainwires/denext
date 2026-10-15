@@ -146,8 +146,14 @@
     {
       "name": "build",
       "summary": "Build for production",
-      "usage": "denext build [dir]",
-      "flags": [],
+      "usage": "denext build [dir] [options]",
+      "flags": [
+        {
+          "name": "raw",
+          "type": "boolean",
+          "description": "Print diagnostics exactly as Deno reports them, without explanations (also DENEXT_RAW_DIAGNOSTICS=1)"
+        }
+      ],
       "positionals": [
         {
           "name": "dir",
@@ -160,8 +166,15 @@
     {
       "name": "check",
       "summary": "Type-check the app (deno check)",
-      "usage": "denext check [paths] [-- <deno args>]",
-      "flags": [],
+      "usage": "denext check [paths] [options] [-- <deno args>]",
+      "description": "Forwards to `deno check`; each type error is explained in plain language with a suggested fix, the original kept under it (--raw for Deno's output unchanged).",
+      "flags": [
+        {
+          "name": "raw",
+          "type": "boolean",
+          "description": "Print diagnostics exactly as Deno reports them, without explanations (also DENEXT_RAW_DIAGNOSTICS=1)"
+        }
+      ],
       "positionals": [
         {
           "name": "paths",
@@ -681,6 +694,11 @@
           "type": "string",
           "valueName": "<origin>",
           "description": "Also let this origin or host load the dev assets (repeatable, or comma-separated)"
+        },
+        {
+          "name": "raw",
+          "type": "boolean",
+          "description": "Print diagnostics exactly as Deno reports them, without explanations (also DENEXT_RAW_DIAGNOSTICS=1)"
         }
       ],
       "positionals": [
@@ -1109,8 +1127,15 @@
     {
       "name": "lint",
       "summary": "Lint the app (deno lint)",
-      "usage": "denext lint [paths] [-- <deno args>]",
-      "flags": [],
+      "usage": "denext lint [paths] [options] [-- <deno args>]",
+      "description": "Forwards to `deno lint`; each denext rule report is explained with a fix (--raw for Deno's output unchanged).",
+      "flags": [
+        {
+          "name": "raw",
+          "type": "boolean",
+          "description": "Print diagnostics exactly as Deno reports them, without explanations (also DENEXT_RAW_DIAGNOSTICS=1)"
+        }
+      ],
       "positionals": [
         {
           "name": "paths",

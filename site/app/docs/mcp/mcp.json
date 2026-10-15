@@ -13,6 +13,30 @@
       ]
     },
     {
+      "name": "denext_explain_error",
+      "description": "Explain a TypeScript / Deno / denext-lint diagnostic in plain language with a concrete fix and a codeframe: collapses long generic assignability chains (defineApi, useApi, createApiClient) to the one mismatching property path, says why a value may be null/undefined, lists a switch's missing union members, maps react / next/* imports to denext, and suggests the nearest route, param or module for a typo. Pass `output` (what `deno check`, `deno lint`, `denext build` or the dev overlay printed) or one `diagnostic`. The original diagnostic is always included.",
+      "params": [
+        {
+          "name": "output",
+          "type": "string",
+          "description": "Tool output holding one or more diagnostics (deno check / deno lint / a build error).",
+          "required": false
+        },
+        {
+          "name": "diagnostic",
+          "type": "object",
+          "description": "One structured diagnostic: { code (2322 or \"denext/rules-of-hooks\"), message (a string, or TypeScript's { messageText, next } chain), file, line, column, length }.",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory the paths are relative to (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
       "name": "denext_import_map",
       "description": "Map a Next.js/React import specifier to its denext equivalent. Omit `specifier` to get the whole table.",
       "params": [

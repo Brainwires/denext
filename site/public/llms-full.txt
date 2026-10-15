@@ -967,6 +967,9 @@ denext ships tooling so agents get it right the first time:
   `deno run -A jsr:@denext/denext/cli mcp`). It speaks
   MCP over stdio; configure it as an MCP server in your client. Tools:
   `denext_check_snippet` (lint a code string for Next-isms before you write it),
+  `denext_explain_error` (a `deno check` / `deno lint` / build diagnostic explained in plain
+  language with a fix — the same explanation `denext check` and the dev overlay print; `--raw`
+  or `DENEXT_RAW_DIAGNOSTICS=1` gives Deno's original),
   `denext_import_map` (map a Next/React import to denext), `denext_generate` (scaffold —
   takes `force` and `dryRun`),
   `denext_doctor`, `denext_codemod`, `denext_list_routes` (an app's pages + API routes),

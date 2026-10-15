@@ -153,3 +153,46 @@ the failing column) plus a **clickable frame that opens the file in your
 editor**, honoring `DENEXT_EDITOR` / `VISUAL` / `EDITOR` (VS Code, JetBrains,
 Sublime, and terminal editors; default `code`). Build, server-render and type
 errors surface in the same overlay.
+
+### Explained type errors
+
+`denext check`, `denext lint`, `denext build` and `denext dev` print each TypeScript, Deno and
+denext-lint diagnostic they recognize as a short explanation: the problem in one line, a codeframe,
+why it happens, and a concrete fix. The original diagnostic is printed under it, unchanged:
+
+```text
+TS2322: Type mismatch at `author.email`
+  at app/api/posts/route.ts:15:10
+
+    14 |   response: schema<Post>(),
+  > 15 | }, () => draft);
+                  ^^^^^
+
+  This `defineApi` handler returns `author.email` as `number`, but the route's `response`
+  schema says `string`. The handler's return value must match the schema it declares.
+
+  Fix: Return `author.email` as `string` — or, if `number` is right, change the `response` schema.
+
+  Original (deno check):
+  │ TS2322 [ERROR]: Type '{ id: number; title: string; author: { … }; }' is not assignable …
+```
+
+It covers:
+
+- **Assignability** (`TS2322`, `TS2345`): the long generic chains from `defineApi`, schemas,
+  `useApi` and `createApiClient` are collapsed to the one property path that mismatches.
+- **Possibly `null` / `undefined`** (`TS18047`, `TS18048`, `TS2532`): why the value can be missing
+  (`find`, `querySelector`, `Map.get`, …), with a guard and the optional-chaining form of the line.
+- **Non-exhaustive switches**: the union members no `case` handles, from a `never` check or a
+  function that falls off the end of its switch (`TS2366`).
+- **Imports**: `react` / `next/*` in new code points to the denext import, a name used without
+  importing it (`TS2304`) names the denext module that exports it, and a module that doesn't exist
+  gets a did-you-mean from its directory.
+- **The typed API client**: an unknown route path or param gets the nearest real one.
+- **denext's lint rules**: `directive-placement`, `rules-of-hooks`, `hooks-in-component`,
+  `no-hooks-in-async` and `no-handlers-in-async`.
+
+In the browser the overlay shows the explanation first, with the original diagnostic in a
+collapsed **Original diagnostic** section. Pass `--raw` to `denext check`, `lint`, `build` or `dev`,
+or set `DENEXT_RAW_DIAGNOSTICS=1`, to get Deno's output exactly as it prints it. An agent can ask
+for the same explanation through the [`denext_explain_error`](/docs/mcp) MCP tool.

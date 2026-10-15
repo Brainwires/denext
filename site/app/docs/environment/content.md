@@ -224,6 +224,7 @@ Development and diagnostics — all opt-in, none read in production paths:
 | -------------------------------- | ----------------------------------------------------------------------------------------- |
 | `DENEXT_DEV_UNBUNDLED=0`         | Force the bundled whole-route refresh instead of the default per-module HMR loop.         |
 | `DENEXT_DEV_TYPECHECK=0`         | Turn off the dev server's background type-check (and its overlay).                        |
+| `DENEXT_RAW_DIAGNOSTICS=1`       | Print type, lint and build diagnostics as Deno reports them, without explanations.        |
 | `DENEXT_DEV_CAPTURE_CONSOLE=0`   | Stop the dev server buffering the server console for `denext_dev_logs`.                   |
 | `DENEXT_DEV_INSPECT=1`           | Arm the live component-tree inspector from the first render (the MCP DevTools tools).     |
 | `DENEXT_DEV_META=0`              | Kill switch for the DevTools metadata the dev build emits.                                |
