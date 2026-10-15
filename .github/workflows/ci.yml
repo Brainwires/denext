@@ -279,14 +279,14 @@ jobs:
         run: |
           # The files the backend-integration job runs: under coverage, none of their tests may be
           # ignored either (an ignored one means its service env is not wired into this job).
-          files='backend-rls-integration|backend-rest-integration|backend-rest-supabase-integration|backend-realtime-integration|backend-supabase-realtime-integration|backend-auth-integration|db-admin-integration|db-migrations-integration|postgres-integration|backend-s3-minio|backend-supabase-functions|backend-storage-supabase-integration|backend-storage-rls-integration|backend-supabase-auth|backend-supabase-auth-integration|backend-platform-integration'
+          files='backend-rls-integration|backend-rest-integration|backend-rest-supabase-integration|backend-realtime-integration|backend-supabase-realtime-integration|backend-auth-integration|db-admin-integration|db-migrations-integration|postgres-integration|backend-s3-minio|backend-supabase-functions|backend-storage-supabase-integration|backend-storage-rls-integration|backend-supabase-auth|backend-supabase-auth-integration|backend-platform-integration|backend-auth-replicas-integration|backend-rest-reload-integration|doctor-backend'
           awk -v files="^[.]/tests/($files)[.]test[.]ts$" '
             /^running [0-9]+ tests? from / { current = $NF; next }
             current ~ files && /\.\.\. ignored/ { print current ": " $0; bad = 1 }
             current ~ files && /\.\.\. ok/ { ran[current] = 1 }
             END {
               n = 0; for (f in ran) n++
-              if (n < 16) { print "only " n " of 16 backend-integration files ran"; bad = 1 }
+              if (n < 19) { print "only " n " of 19 backend-integration files ran"; bad = 1 }
               exit bad
             }
           ' "$RUNNER_TEMP/coverage.txt" || {
@@ -416,7 +416,10 @@ jobs:
             tests/backend-storage-rls-integration.test.ts \
             tests/backend-supabase-auth.test.ts \
             tests/backend-supabase-auth-integration.test.ts \
-            tests/backend-platform-integration.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
+            tests/backend-platform-integration.test.ts \
+            tests/backend-auth-replicas-integration.test.ts \
+            tests/backend-rest-reload-integration.test.ts \
+            tests/doctor-backend.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
 
       - name: No test was ignored (each service was really reached)
         run: |
