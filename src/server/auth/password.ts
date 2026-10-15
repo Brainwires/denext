@@ -77,6 +77,23 @@ async function deriveKey(
   }
 }
 
+/** What a completed derivation ran at — the cost, not the clock. */
+type ScryptObserver = (params: Readonly<ScryptParams>) => void;
+let scryptObserver: ScryptObserver | null = null;
+
+/**
+ * Test seam: observe every scrypt derivation that completes (its N / r / p), so a test can
+ * assert the work factor a rejection burned instead of timing it. Not part of the public API.
+ *
+ * @param fn The observer, or `null` to remove it.
+ * @returns The previous observer, to restore.
+ */
+export function __observeScryptForTests(fn: ScryptObserver | null): ScryptObserver | null {
+  const previous = scryptObserver;
+  scryptObserver = fn;
+  return previous;
+}
+
 /** The unbounded scrypt call — always reached through {@link deriveKey}. */
 function deriveKeyNow(
   password: string,
@@ -92,7 +109,11 @@ function deriveKeyNow(
       salt,
       KEY_LENGTH,
       { N: params.N, r: params.r, p: params.p, maxmem },
-      (err, key) => err ? reject(err) : resolve(new Uint8Array(key)),
+      (err, key) => {
+        if (err) return reject(err);
+        scryptObserver?.({ ...params });
+        resolve(new Uint8Array(key));
+      },
     );
   });
 }

@@ -200,13 +200,13 @@ Deno.test("config: jobs.history takes a boolean or { store, maxRuns }", () => {
 function memoryStore(mode: "ok" | "throws" | "rejects" | "slow" = "ok") {
   const runs: JobRunRecord[] = [];
   let closed = 0;
+  // A "slow" store's write lands only when the test releases it — an event, not a clock.
+  const slowWrite = Promise.withResolvers<void>();
   const store: JobHistoryStore = {
     record(r) {
       if (mode === "throws") throw new Error("store exploded");
       if (mode === "rejects") return Promise.reject(new Error("store rejected"));
-      if (mode === "slow") {
-        return new Promise((resolve) => setTimeout(() => (runs.push(r), resolve()), 50));
-      }
+      if (mode === "slow") return slowWrite.promise.then(() => void runs.push(r));
       runs.push(r);
     },
     read: () => Promise.resolve({ available: true, windowDays: 7, jobs: [], recent: [] }),
@@ -217,7 +217,7 @@ function memoryStore(mode: "ok" | "throws" | "rejects" | "slow" = "ok") {
       closed++;
     },
   };
-  return { store, runs, closed: () => closed };
+  return { store, runs, closed: () => closed, releaseSlowWrite: () => slowWrite.resolve() };
 }
 
 Deno.test("wiring: a configured store records every run and is not closed by the server", async () => {
@@ -248,11 +248,17 @@ Deno.test("wiring: a store that throws, rejects or is slow never fails or delays
       "/nonexistent",
       { closeCustom: true },
     );
+    // Only a deadlock breaker: a run that waited on the slow write would resolve once this
+    // releases it — with the row already landed, which the assertion below then reports.
+    const breaker = setTimeout(mem.releaseSlowWrite, 20_000);
     try {
-      const started = performance.now();
       assertEquals(await runJob("th-store-job"), "done", mode);
-      assert(performance.now() - started < 40, `${mode}: the run did not wait on the store`);
+      if (mode === "slow") {
+        assertEquals(mem.runs.length, 0, "slow: the run resolved before its write landed");
+      }
     } finally {
+      clearTimeout(breaker);
+      mem.releaseSlowWrite();
       await stop(); // closeCustom: waits for the slow write, then closes
       clearJobs();
     }
