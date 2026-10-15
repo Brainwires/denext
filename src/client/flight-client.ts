@@ -122,22 +122,7 @@ function parseProps(props: FlightProps, registry: ClientRegistry): Record<string
 function parseValue(value: FlightValue, registry: ClientRegistry): unknown {
   if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map((v) => parseValue(v, registry));
-
-  const tagged = value as { $?: string };
-  if (tagged.$ === "a") return clientActionStub((value as { i: string }).i);
-  if (tagged.$ === "e") return qrlStub((value as { i: string }).i);
-  if (tagged.$ === "ch") return { denextChannelId: (value as { i: string }).i };
-  if (tagged.$ === "h" || tagged.$ === "c") {
-    // A VNode-valued prop.
-    return parseFlight(value as FlightNode, registry);
-  }
-  // Date / bigint / URL / non-finite / Map / Set: the wire codec's tags, decoded by the same
-  // switch the HTTP + Live wires use so the two decoders can't drift. Nested Map/Set entries
-  // come back through `parseValue` (they may hold VNodes or action refs).
-  const revived = decodeTagged(
-    value as Record<string, unknown>,
-    (v) => parseValue(v as FlightValue, registry),
-  );
+  const revived = parseTagged(value as Record<string, unknown>, registry);
   if (revived !== NOT_TAGGED) return revived;
 
   // A plain object. Reverse the serializer's `$`-key escaping (a leading `$` was
@@ -151,6 +136,22 @@ function parseValue(value: FlightValue, registry: ClientRegistry): unknown {
     out[key] = parseValue(v, registry);
   }
   return out;
+}
+
+/** A tagged value revived (an action, qrl, channel, element, the wire codec's tags), else NOT_TAGGED. */
+function parseTagged(value: Record<string, unknown>, registry: ClientRegistry): unknown {
+  // A streamed navigation's deferred value: its promise (flight-nav-stream.ts), kept as is.
+  if (typeof value.then === "function") return value;
+  const tag = value.$;
+  if (tag === "a") return clientActionStub(value.i as string);
+  if (tag === "e") return qrlStub(value.i as string);
+  if (tag === "ch") return { denextChannelId: value.i as string };
+  // A VNode-valued prop.
+  if (tag === "h" || tag === "c") return parseFlight(value as unknown as FlightNode, registry);
+  // Date / bigint / URL / non-finite / Map / Set: the wire codec's tags, decoded by the same
+  // switch the HTTP + Live wires use so the two decoders can't drift. Nested Map/Set entries
+  // come back through `parseValue` (they may hold VNodes or action refs).
+  return decodeTagged(value, (v) => parseValue(v as FlightValue, registry));
 }
 
 /** Structural guard exported for callers stitching a payload into the DOM. */

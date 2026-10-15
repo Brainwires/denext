@@ -148,6 +148,8 @@ interface RouteResponse {
   body: string;
   flight: boolean;
   iso: boolean;
+  /** A Flight payload streaming its deferred values: the response, unread (`body` is empty). */
+  res?: Response;
 }
 const prefetchCache = new Map<string, PrefetchEntry>();
 
@@ -179,14 +181,20 @@ function prefetchStore(key: string, body: string, flight: boolean, iso: boolean)
  * server answered with a Flight JSON payload (`x-denext-flight`) rather than a
  * full HTML document. A non-OK, non-404 status rejects (caller hard-navigates).
  */
-async function fetchRoute(href: string): Promise<RouteResponse> {
+async function fetchRoute(href: string, stream = false): Promise<RouteResponse> {
   // A registered request provider (the Remix compat's `shouldRevalidate` optimization) adds
   // per-request headers — and, for an over-large echo, a POST body — so the server can skip
   // unchanged loaders. Never overrides `x-denext-nav`.
   const extra = navRequestProvider?.() ?? {};
   const res = await fetch(href, {
     method: extra.body ? "POST" : "GET",
-    headers: { ...extra.headers, ...slotStateHeader(), "x-denext-nav": "1" },
+    headers: {
+      ...extra.headers,
+      ...slotStateHeader(),
+      "x-denext-nav": "1",
+      // A navigation takes a Flight payload's deferred values as they settle (flight-nav-stream.ts).
+      ...(stream ? { "x-denext-defer": "1" } : {}),
+    },
     body: extra.body,
   });
   if (!res.ok && res.status !== 404) throw new Error(`status ${res.status}`);
@@ -195,10 +203,22 @@ async function fetchRoute(href: string): Promise<RouteResponse> {
   if (res.url && new URL(res.url).origin !== location.origin) {
     throw new Error("cross-origin redirect");
   }
+  return await readRoute(res);
+}
+
+/**
+ * A soft-nav response's payload and kind. A Flight payload streaming its deferred values is left
+ * unread, for the Flight navigator to read line by line.
+ */
+async function readRoute(res: Response): Promise<RouteResponse> {
+  const header = (k: string) => res.headers?.get(k) === "1";
+  const flight = header("x-denext-flight");
+  const streamed = flight && header("x-denext-defer");
   return {
-    body: await res.text(),
-    flight: res.headers?.get("x-denext-flight") === "1",
-    iso: res.headers?.get("x-denext-iso") === "1",
+    body: streamed ? "" : await res.text(),
+    flight,
+    iso: header("x-denext-iso"),
+    res: streamed ? res : undefined,
   };
 }
 
@@ -227,14 +247,19 @@ function prefetchKey(href: string): string {
  * payload — so the whole Flight soft-nav runtime stays out of their bundle (the Flight entry is
  * the only importer of flight-nav.ts).
  */
-let flightNav:
-  | ((body: string, url: URL, href: string, options: NavigateOptions) => Promise<void>)
-  | null = null;
+let flightNav: FlightNavigator | null = null;
+
+/** The Flight soft-nav handler: the payload, or (`res`) the response streaming it. */
+type FlightNavigator = (
+  body: string,
+  url: URL,
+  href: string,
+  options: NavigateOptions,
+  res?: Response,
+) => Promise<void>;
 
 /** Install the Flight soft-nav handler (called by flight-nav.ts's `setFlightParser`). */
-export function setFlightNavigator(
-  fn: (body: string, url: URL, href: string, options: NavigateOptions) => Promise<void>,
-): void {
+export function setFlightNavigator(fn: FlightNavigator): void {
   flightNav = fn;
 }
 
@@ -457,11 +482,11 @@ export function withViewTransition(commit: () => void): void {
 /** The prefetched render for `url`, else a fresh fetch; null when the fetch failed. */
 async function loadRoute(
   url: URL,
-): Promise<{ body: string; flight: boolean; iso: boolean } | null> {
+): Promise<RouteResponse | null> {
   const prefetched = prefetchGet(prefetchKey(url.href));
   if (prefetched && prefetched.body.length > 0) return prefetched;
   try {
-    return await fetchRoute(url.href);
+    return await fetchRoute(url.href, true);
   } catch {
     return null;
   }
@@ -575,14 +600,14 @@ async function navigateSameOrigin(
     location.href = href; // network/parse failure: hard navigate so the user isn't stuck
     return;
   }
-  const { body, flight, iso } = loaded;
+  const { body, flight, iso, res } = loaded;
   // Flight route: the server sent a JSON payload, not HTML. Parse it through the app-wide
   // client registry and reconcile the retained root in place — no HTML parse, no bundle
   // re-run. A root-less islands page mounts a fresh root on its first Flight nav. If we can't
   // (no Flight runtime, or no root to render into: see flight-nav.ts), hard navigate rather
   // than DOMParser-ing JSON.
   if (flight) {
-    if (flightNav) await flightNav(body, url, href, options);
+    if (flightNav) await flightNav(body, url, href, options, res);
     else location.href = href;
     return;
   }

@@ -2,6 +2,7 @@
 // / document options every response shares, the HTML response helper, metadata
 // augmentation, and the Cache-Components (PPR) shell-resume streams.
 
+import { NavDeferredValues, wantsNavDeferred } from "./nav-deferred.ts";
 import type { RouteManifest } from "../router/manifest.ts";
 import type { PageMatch } from "../router/match.ts";
 import { markClassRendered } from "../runtime/render-scope.ts";
@@ -59,6 +60,8 @@ export interface PageRequest {
    * Suspense hole, rendering after the response left) is reported with, as it happens.
    */
   boundaryReportSource?: RequestErrorContext["renderSource"];
+  /** A browser soft navigation's deferred values, streamed after its payload (nav-deferred.ts). */
+  navValues?: NavDeferredValues;
 }
 
 /** The per-navigation data the client hydrates / soft-navigates with. */
@@ -103,6 +106,7 @@ export function documentOptions(pr: PageRequest) {
 export function renderOptions(pr: PageRequest) {
   return {
     flight: pr.useFlight,
+    deferValues: navValuesOf(pr),
     messages: pr.messages,
     signal: pr.state.ctx.signal,
     onCaughtError: (e: unknown) => {
@@ -111,6 +115,17 @@ export function renderOptions(pr: PageRequest) {
       else void reportBoundaryError(pr, e, source);
     },
   };
+}
+
+/**
+ * The deferred values a browser soft navigation of a Flight route streams after its payload
+ * (made once per request), unless streaming is off.
+ */
+function navValuesOf(pr: PageRequest): NavDeferredValues | undefined {
+  if (pr.navValues) return pr.navValues;
+  const streams = pr.soft && pr.useFlight && pr.state.app.config.streaming !== false &&
+    wantsNavDeferred(pr.state.request);
+  return streams ? (pr.navValues = new NavDeferredValues()) : undefined;
 }
 
 /** A finalized HTML document response. */

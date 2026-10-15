@@ -13,7 +13,11 @@ import {
 } from "../jsx/render-to-string.ts";
 import { renderShell, type ShellRender } from "../jsx/render-to-stream.ts";
 import { renderFontStyles } from "../compat/next/font/registry.ts";
-import { type IslandPayload, renderToHtmlFlight } from "../jsx/render-to-html-flight.ts";
+import {
+  type DeferredValueSink,
+  type IslandPayload,
+  renderToHtmlFlight,
+} from "../jsx/render-to-html-flight.ts";
 import { type FlightShellRender, renderFlightShell } from "../jsx/render-to-flight-stream.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { prerenderToShell, type ResumedHole, resumeShellHoles } from "../jsx/render-to-ppr.ts";
@@ -124,6 +128,11 @@ export interface RenderPageOptions {
    * cheap (defer any async reporting).
    */
   onCaughtError?: (error: unknown) => void;
+  /**
+   * A browser soft navigation's deferred-value sink: the Flight render leaves each deferred value
+   * as a hole the response streams after its payload, instead of awaiting it.
+   */
+  deferValues?: DeferredValueSink;
 }
 
 /** The composed page tree plus its resolved metadata/config, before rendering. */
@@ -417,7 +426,12 @@ export async function renderPage(
       // Single-pass: emit HTML and Flight together so useId stays aligned.
       const r = await timed(
         "renderToHtmlFlight",
-        () => renderToHtmlFlight(tree, { head, resumable: config.resumable }),
+        () =>
+          renderToHtmlFlight(tree, {
+            head,
+            resumable: config.resumable,
+            deferValues: options.deferValues,
+          }),
       );
       html = r.html;
       flight = r.flight;

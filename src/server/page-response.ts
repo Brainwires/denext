@@ -1,6 +1,7 @@
 // Serving a matched page end to end: ISR cache → PPR shell → streamed or buffered
 // render → soft-navigation payload / cached document / buffered document.
 
+import { navDeferredBody } from "./nav-deferred.ts";
 import type { RouteManifest } from "../router/manifest.ts";
 import { matchPage, type PageMatch } from "../router/match.ts";
 import type { PeeledLocale } from "./i18n.ts";
@@ -181,11 +182,17 @@ function flightNavResponse(pr: PageRequest, rendered: RenderedPage): Response | 
     islands: rendered.islands,
     signalState: rendered.signalState,
   });
+  // Deferred values left as holes follow the payload, each as it settles (nav-deferred.ts).
+  const values = pr.navValues?.pending.size ? pr.navValues : undefined;
   return finalize(
     pr.state,
-    new Response(payload, {
+    new Response(values ? navDeferredBody(payload, values, pr.state.ctx.signal) : payload, {
       status: rendered.status,
-      headers: { ...SOFT_NAV_HEADERS, "x-denext-flight": "1" },
+      headers: {
+        ...SOFT_NAV_HEADERS,
+        "x-denext-flight": "1",
+        ...(values ? { "x-denext-defer": "1" } : {}),
+      },
     }),
   );
 }

@@ -70,7 +70,7 @@ them.
 | `<Outlet>`, `useOutletContext`, nested layouts                                                 | ✅                                                    |
 | `ErrorBoundary`, `useRouteError`, `isRouteErrorResponse`                                       | ✅ mapped to `error.tsx`                              |
 | v1 `CatchBoundary` / `useCatch`                                                                | ✅ renders, flagged: fold into `ErrorBoundary`        |
-| `defer` + `<Await>`, `useAsyncValue`, `useAsyncError`                                          | ✅ streams; payload finalizes whole (see §8)          |
+| `defer` + `<Await>`, `useAsyncValue`, `useAsyncError`                                          | ✅ streams, on soft navigations too (see §6)          |
 | `shouldRevalidate`                                                                             | ✅ honored; always-revalidate is the default          |
 | `useBlocker`                                                                                   | ✅ in-app navigation + back/forward; not hard unload  |
 | `meta` / `links` / `headers` / `handle`                                                        | ✅ `meta` bridged to `generateMetadata`; root flagged |
@@ -385,8 +385,10 @@ single denext React.
   streams as its own chunk the moment it resolves, next to the `<Await>`
   content of its Suspense boundary, so an early boundary's data is on the wire
   before a slow one resolves; the browser puts every chunk back into the page's
-  Flight tree, so hydration sees real data. A rejection drives `errorElement`
-  through `useAsyncError`.
+  Flight tree, so hydration sees real data. A client navigation streams them
+  the same way: the route renders at its payload, each `<Await>` shows its
+  fallback, and each reveals the moment its own value arrives. A rejection
+  drives `errorElement` through `useAsyncError`.
 - **Nested routes and layouts**: `<Outlet />` in a layout renders the nested
   subtree, `<Outlet context>` / `useOutletContext` work, and an ancestor's
   loader data is readable from a nested route through `useMatches` and
@@ -447,11 +449,10 @@ The CLI prints up to twelve notes and a count of the rest.
   renders from the echoed data. First paint, hard navigations, routes without
   `shouldRevalidate`, and an explicit `true` always run the loader, so nothing
   is ever stale.
-- **A soft navigation's deferred data arrives whole.** On a document load each
-  deferred value streams as it resolves (see §6), and the page hydrates once
-  the document is complete. A client navigation to a deferred route fetches the
-  route's Flight payload in one response, so it carries every resolved value
-  rather than streaming them one by one.
+- **A soft navigation sent as a POST gets its deferred data whole.** A client
+  navigation streams each deferred value as it resolves, as a document load
+  does (see §6); one whose `shouldRevalidate` echo is too large for headers goes
+  out as a POST, and its payload carries every resolved value in one response.
 - **`useBlocker` guards in-app navigations and browser back/forward, not a
   hard unload.** A registered blocker vetoes `<Link>`, `useNavigate`, and
   `<Form>` navigations and undoes a popstate until `proceed()`; one active

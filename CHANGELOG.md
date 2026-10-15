@@ -44,6 +44,13 @@ and this project adheres to
   the provider presets, the adapters and stores, bearer tokens, email verification and password
   reset, MFA, passkeys and SAML. `denext/server` still re-exports every name. `denext create` and
   `denext migrate` map it in the import map they write.
+- **A soft navigation streams its deferred values per boundary, as a document load does.** A
+  browser navigation to a Flight route gets its payload at once, each deferred value (a Remix
+  `defer()` field, promise data passed to a client component) left as a hole, then each value as
+  its own line the moment it settles: the route renders at the payload, every `<Await>` (or
+  `use()`) shows its Suspense fallback, and each reveals when its own value arrives. A rejection
+  still drives `errorElement`. A prefetch, Live's re-render and a navigation sent as a POST still
+  get the complete payload; `streaming: false` turns it off.
 - **SPA `client:interaction` replays the interaction that mounts it, as a Flight island does.**
   The events of the triggering gesture that land on the placeholder before the component commits
   (a `pointerdown`, the focus, the `click`) are dispatched again to the element at the same

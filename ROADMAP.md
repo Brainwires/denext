@@ -80,8 +80,10 @@ or an upstream. Each one's limitation entry is deleted when it ships.
 - **A `ref` on `<ViewTransition>`** (React hands it the boundary's `ViewTransitionInstance`).
   denext's `<ViewTransition>` stays hook-free so it renders inside Server Components, and it has
   no fiber of its own to attach a ref to; the callbacks already receive the instance.
-- **A soft navigation streams `defer()` data per boundary,** as a document load does; today a
-  client navigation's Flight payload waits for every deferred value.
+- **`<ViewTransition onUpdate>` on a soft navigation.** A soft navigation's commit is applied
+  inside its own view transition and its boundaries are matched by DOM element, so it runs
+  `onEnter` / `onExit` / `onShare` but has no measure of a persisting boundary's mutation or
+  movement to fire `onUpdate` on (same-page Transitions do).
 
 ## Server, ops and API surface
 
