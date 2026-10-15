@@ -55,6 +55,10 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/mobile-sentry.test.ts",
   "tests/next-compat-build.test.ts",
   "tests/ota-manifest.test.ts",
+  // Both set and restore DENEXT_BOOT_DDL around each case (the boot-DDL opt-out every Postgres
+  // store reads when it starts): a parallel test starting a store would see the other value.
+  "tests/postgres-boot-integration.test.ts",
+  "tests/postgres-boot.test.ts",
   "tests/public-env.test.ts",
   "tests/react-native-uniwind-css.test.ts",
   "tests/security-remediation.test.ts",
@@ -87,6 +91,9 @@ export const SERIAL_SOURCES: Readonly<
 > = {
   "src/cli/commands/analyze.ts": { exports: ["analyzeCommand"], verbs: ["analyze"] },
   "src/cli/commands/desktop.ts": { exports: ["desktopCommand"], verbs: ["desktop"] },
+  // `applyRawFlag` sets DENEXT_RAW_DIAGNOSTICS=1 for the whole process when `--raw` is given
+  // (the verbs that call it are serve.ts's, listed below).
+  "src/cli/explain-output.ts": { exports: ["applyRawFlag"] },
   "src/cli/commands/serve.ts": {
     exports: ["devCommand", "exportCommand", "startCommand"],
     verbs: ["dev", "export", "start"],
