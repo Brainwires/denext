@@ -335,6 +335,16 @@ export default {
 // config; before the first run, or once one of those files changes, it points at `denext commands`.
 ```
 
+**One executable for the server:** `denext build --compile [--target <triple>] [--output <path>]`
+builds, then `deno compile`s the app (server modules, `.denext/`, `public/`, `jobs/`, migrations,
+`compile.include`) into `dist/<name>`. `./app` serves like `denext start` (`--port` / `$PORT`), and
+`./app job <name>` and `./app db migrate` run jobs and migrations. Stylesheet imports work with no
+import map. No `.env` file is embedded: the environment, `.env` files and relative data paths are
+read from the working directory, and state goes to `./.denext`. It bakes Docker's least-privilege
+`--allow-*` plus `compile.permissions: { write, run, ffi, sys }` (`"all"` opts in to
+`--allow-all`). The runtime is stock `denort`, so it has no `Deno.SQL`: use
+`fromPostgresJs(postgres(url))`. Docs: https://denext.dev/docs/deployment-targets
+
 **Code health and concurrency:** `denext create --fallow` (or `denext fallow init` in an existing
 app) adds the fallow gate denext itself uses — `fallow.toml` with the path-loaded files as entry
 points, `deno task fallow:audit` / `coverage:fallow` / `hooks:install` (a pinned `npm:fallow`

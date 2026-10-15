@@ -339,6 +339,16 @@ export default {
 // config; before the first run, or once one of those files changes, it points at `denext commands`.
 ```
 
+**One executable for the server:** `denext build --compile [--target <triple>] [--output <path>]`
+builds, then `deno compile`s the app (server modules, `.denext/`, `public/`, `jobs/`, migrations,
+`compile.include`) into `dist/<name>`. `./app` serves like `denext start` (`--port` / `$PORT`), and
+`./app job <name>` and `./app db migrate` run jobs and migrations. Stylesheet imports work with no
+import map. No `.env` file is embedded: the environment, `.env` files and relative data paths are
+read from the working directory, and state goes to `./.denext`. It bakes Docker's least-privilege
+`--allow-*` plus `compile.permissions: { write, run, ffi, sys }` (`"all"` opts in to
+`--allow-all`). The runtime is stock `denort`, so it has no `Deno.SQL`: use
+`fromPostgresJs(postgres(url))`. Docs: https://denext.dev/docs/deployment-targets
+
 **Code health and concurrency:** `denext create --fallow` (or `denext fallow init` in an existing
 app) adds the fallow gate denext itself uses — `fallow.toml` with the path-loaded files as entry
 points, `deno task fallow:audit` / `coverage:fallow` / `hooks:install` (a pinned `npm:fallow`
@@ -1512,7 +1522,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `clientIpForLimits(options?: object): string | undefined` — The client address to key a **per-address limit** on (a quota, a connection cap): clientIp — or undefined when that address is the socket peer and a loopback, private, link-local or unique-local one while the proxy is not trusted. Behind a reverse proxy without AppConfig.trustForwardedHeaders (or DENEXT_TRUST_PROXY=1) every visitor arrives from the proxy's address, so limiting on it would make one limit site-wide; key the limit on something else (a session, a connection) instead. A directly connected public peer and a trusted proxy's hop are returned as clientIp returns them — or, with { bucket: true }, as their limit bucket (an IPv6 address's /64), which is what a limit should key on.
 - `collapseHeadTags(tags: HeadTag[]): string` — Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.
 - `compareSpecificity(a: Segment[], b: Segment[]): number` — Order two patterns by specificity the way Next.js does: compare segment by segment from the left, and at the first position that differs the more specific kind wins (static > dynamic > catch-all > optional catch-all). A pattern that has run out of segments (its catch-all consumed the rest) ranks below one that still has a concrete segment there. Returns negative when a should be tried first.
+- `interface CompileConfig` — denext build --compile settings (see DenextConfig.compile).
 - `interface CompiledPattern` — A source pattern compiled to a matcher with its capture keys.
+- `interface CompilePermissions` — Extra --allow-* for CompileConfig.permissions: permission kinds to Deno values.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `composeMiddleware(entries: MiddlewareEntry[], moduleConfig?: MiddlewareConfig): MiddlewareRunner` — Compose an ordered list of entries into a single MiddlewareRunner.
 - `interface CompressConfig` — Response compression settings (DenextConfig.compress as an object: compression on, with these settings).

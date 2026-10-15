@@ -151,6 +151,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   verb (`dev`, `build`, `export`, `start`, …), on denext's Deno toolchain (downloaded on first
   need; no Deno install required). Offline on first use, with no toolchain cached, it needs a
   `deno` on PATH. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
+- **A `denext build --compile` binary runs on Deno's stock `denort` 2.9.7**, not denext's
+  toolchain build, so it has no `Deno.SQL` (Postgres goes through `fromPostgresJs(postgres(url))`;
+  `db migrate` on a plain Postgres `DATABASE_URL` needs `@denext/backend` with that client), and it
+  prints Deno's one-line `request.signal` legacy-abort notice on the first request (`deno compile`
+  does not carry `--unstable-no-legacy-abort`). A SPA has no server to compile. `dev`, `build` and
+  `export` stay on the CLI. next-compat builds and the Pages Router are untested in a binary.
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,

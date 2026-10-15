@@ -4,6 +4,11 @@
 
 ### Added
 
+- **Runs inside a `denext build --compile` binary.** A relative `fs({ dir })` and `metadataPath`
+  resolve against the binary's working directory (its embedded project is read-only). Without
+  `metadataPath`, the storage metadata goes to `storage.db` in the binary's state directory
+  (`./.denext`).
+
 - **Rate limits for the auto-REST routes.** Each client has a request budget (`rest.rateLimit`,
   default 1200 a minute): a signed-in user by user id, anyone else by client address
   (`clientIpForLimits()`), the secret key never. A request with a refused credential counts

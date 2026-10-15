@@ -271,6 +271,20 @@ Deno.test({
         assertEquals(r.code, 0, r.out);
         assertStringIncludes(r.out, "--allow-write=.denext,.storage,app.db");
         assert(!r.out.includes("--allow-all"), r.out);
+        // Every local module the binary loads is reached by a relative path, so it resolves to
+        // its embedded copy: an absolute one would read this checkout from disk instead.
+        const compileDir = join(project, ".denext", "compile");
+        for (const file of ["main.ts", "deno.json"]) {
+          const text = await Deno.readTextFile(join(compileDir, file));
+          const local = text.split("\n").filter((l) => l.includes(FW_URL) && !/\.s?css"/.test(l));
+          assertEquals(local, [], `${file} names a local module absolutely`);
+        }
+        for await (const entry of Deno.readDir(join(project, ".denext", "server-copies"))) {
+          const text = await Deno.readTextFile(
+            join(project, ".denext", "server-copies", entry.name),
+          );
+          assert(!text.includes("file:///"), `${entry.name} imports by absolute URL:\n${text}`);
+        }
         // Nothing left to read from: the binary must carry everything.
         await Deno.remove(project, { recursive: true });
         compiled = true;

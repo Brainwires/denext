@@ -26,6 +26,20 @@ and this project adheres to
 
 ### Added
 
+- **`denext build --compile [--target <triple>] [--output <path>]`: the app's server as one
+  executable.** After the build, `deno compile` (on denext's Deno toolchain) embeds the server
+  modules, `.denext/`, `public/`, `jobs/`, `functions/`, the migrations and `compile.include`
+  paths behind a `denext/standalone` entry. `./app` serves the app as `denext start` does
+  (`--port` / `$PORT`, `--host`, the drain, every config key), and `./app job <name>` and
+  `./app db migrate` run the jobs and migrations. Stylesheet imports need no import map. Neither
+  `.env` files nor SQLite databases are embedded. The binary reads its environment and `.env`
+  files from the working directory at run time, and writes its page cache, job history and
+  storage metadata under `./.denext` (`DENEXT_STATE_DIR` moves them). It bakes the Docker image's
+  least-privilege `--allow-*` plus `compile.permissions` (`write` / `run` / `ffi` / `sys`), and
+  `--allow-all` only with `permissions: "all"`. It cross-compiles to every `deno compile` target.
+  The runtime is Deno's stock `denort`, so it has no `Deno.SQL`: Postgres goes through
+  `fromPostgresJs(postgres(url))`.
+
 - **`denext db push` / `migration up` apply denext's own Postgres schemas.** Each Postgres store
   the config builds now declares its migrations: the auth adapter, the session, rate-limit, cache
   and job-history stores (a `migrate: false` one too), and the auth tables `@denext/backend`'s
@@ -321,6 +335,12 @@ and this project adheres to
   options ask for `"direct"` attestation while it is on.
 
 ### Changed
+
+- **The build's server copies are relocatable.** Each copy imports the modules it reaches by a
+  path relative to itself, and pins `import.meta.url` / `.filename` / `.dirname` relative to its
+  own URL instead of the build machine's absolute path. `denext start` keeps using them after the
+  project moves (it used to recompile them at startup), and a compiled binary serves them from
+  its embedded file system.
 
 - **A credential refused for good is deleted when a read meets it.** The answer is unchanged.
   A server-side cookie session whose user is gone, which the user ended (`sessionsValidAfter`),

@@ -6240,12 +6240,36 @@
           "denextOnly": true
         },
         {
+          "name": "CompileConfig",
+          "slug": "CompileConfig",
+          "kind": "interface",
+          "signature": "interface CompileConfig",
+          "doc": "denext build --compile settings (see DenextConfig.compile).",
+          "docFull": "`denext build --compile` settings (see {@link DenextConfig.compile}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "CompiledPattern",
           "slug": "CompiledPattern",
           "kind": "interface",
           "signature": "interface CompiledPattern",
           "doc": "A source pattern compiled to a matcher with its capture keys.",
           "docFull": "A source pattern compiled to a matcher with its capture keys.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "CompilePermissions",
+          "slug": "CompilePermissions",
+          "kind": "interface",
+          "signature": "interface CompilePermissions",
+          "doc": "Extra --allow-* for CompileConfig.permissions: permission kinds to Deno values.",
+          "docFull": "Extra `--allow-*` for {@link CompileConfig.permissions}: permission kinds to Deno values.",
           "params": [],
           "returns": "",
           "examples": [],

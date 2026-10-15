@@ -11,18 +11,18 @@ process is told to stop — and those are the columns below. The
 [deployment guide](/docs/deploy) has the full Docker, Deno Deploy and systemd
 recipes; this page is the map.
 
-| Target                                                           | Runs                                      | Persistent disk                         | Notes                                                                       |
-| ---------------------------------------------------------------- | ----------------------------------------- | --------------------------------------- | --------------------------------------------------------------------------- |
-| [Docker](#docker)                                                | the image `denext generate docker` writes | if you mount a volume on `/app/.denext` | the reference target; everything below that takes a container starts here   |
-| [Deno Deploy](#deno-deploy)                                      | `deno` on the platform's isolates         | **no**                                  | `Deno.cron` for jobs, `BroadcastChannel` for Live; memory cache per isolate |
-| [systemd / VPS](#systemd--vps)                                   | `deno run … jsr:@denext/denext/cli start` | yes                                     | nginx/Caddy in front for TLS and the connection ceiling                     |
-| [Fly.io](#flyio)                                                 | the Docker image                          | a Fly volume, optional                  | `PORT` from `fly.toml`; health checks on `/_denext/health`                  |
-| [Railway](#railway)                                              | the Docker image                          | a Railway volume, optional              | injects `PORT`; deploys on push                                             |
-| [Kubernetes](#kubernetes)                                        | the Docker image                          | a PVC, optional                         | probes, `terminationGracePeriodSeconds` vs the drain deadline               |
-| [Static hosts](#static-hosts)                                    | `denext export` output, no server         | n/a                                     | any CDN or object store; no SSR, no route handlers                          |
-| [Cloudflare Workers](#not-targets-cloudflare-workers-and-vercel) | —                                         | —                                       | **not a target**: workerd is not Deno                                       |
-| [Vercel](#not-targets-cloudflare-workers-and-vercel)             | —                                         | —                                       | **not a target**: no Deno runtime for the server build                      |
-| [`deno compile`](#a-single-binary-with-deno-compile)             | —                                         | —                                       | **not a documented target** for SSR; see the stanza                         |
+| Target                                                                   | Runs                                       | Persistent disk                         | Notes                                                                       |
+| ------------------------------------------------------------------------ | ------------------------------------------ | --------------------------------------- | --------------------------------------------------------------------------- |
+| [Docker](#docker)                                                        | the image `denext generate docker` writes  | if you mount a volume on `/app/.denext` | the reference target; everything below that takes a container starts here   |
+| [Deno Deploy](#deno-deploy)                                              | `deno` on the platform's isolates          | **no**                                  | `Deno.cron` for jobs, `BroadcastChannel` for Live; memory cache per isolate |
+| [systemd / VPS](#systemd--vps)                                           | `deno run … jsr:@denext/denext/cli start`  | yes                                     | nginx/Caddy in front for TLS and the connection ceiling                     |
+| [Fly.io](#flyio)                                                         | the Docker image                           | a Fly volume, optional                  | `PORT` from `fly.toml`; health checks on `/_denext/health`                  |
+| [Railway](#railway)                                                      | the Docker image                           | a Railway volume, optional              | injects `PORT`; deploys on push                                             |
+| [Kubernetes](#kubernetes)                                                | the Docker image                           | a PVC, optional                         | probes, `terminationGracePeriodSeconds` vs the drain deadline               |
+| [Static hosts](#static-hosts)                                            | `denext export` output, no server          | n/a                                     | any CDN or object store; no SSR, no route handlers                          |
+| [Cloudflare Workers](#not-targets-cloudflare-workers-and-vercel)         | —                                          | —                                       | **not a target**: workerd is not Deno                                       |
+| [Vercel](#not-targets-cloudflare-workers-and-vercel)                     | —                                          | —                                       | **not a target**: no Deno runtime for the server build                      |
+| [`denext build --compile`](#a-single-binary-with-denext-build---compile) | one executable: `./app` (also `job`, `db`) | the working directory (`./.denext`)     | `deno compile` targets; Docker-baseline `--allow-*`; no `.env` embedded     |
 
 ## Docker
 
@@ -206,31 +206,114 @@ the overlap window two builds serve at once; each page links the content-hashed
 chunks of the build that rendered it, so the mix is safe as long as the old
 image keeps serving until it has drained.
 
-## A single binary with `deno compile`
+## A single binary with `denext build --compile`
 
-Not a documented target, and the honest answer has two parts.
+```sh
+denext build --compile                                   # dist/<name> for this machine
+denext build --compile --target x86_64-unknown-linux-gnu --output dist/my-app
+scp dist/my-app server: && ssh server 'PORT=8080 ./my-app'
+./my-app job cleanup --payload '{"days":7}'              # = denext job
+./my-app db migrate                                      # = denext db migrate
+```
 
-The **`denext` executable** (a `deno compile`d CLI) never builds or serves an
-app in its own process: every module-loading verb — `dev`, `build`, `start`,
-`job`, `doctor` — re-execs the denext version the _project_ pins, as a
-`deno run` child, so a binary can never substitute its own framework for the one
-in your `deno.json`. That is the skew rule in `src/cli/self-exec.ts`: the
-project's pin decides, an unversioned `jsr:@denext/denext` is a pin to latest, a
-directory with no pin is refused with a message naming the fix. That child runs
-on denext's own Deno toolchain, downloaded and SHA-256-verified on first need, so
-no Deno install is required (offline on first use, with no toolchain cached, it
-needs a `deno` on PATH). The binary is a front end that launches your pinned
-denext, not a self-contained server ([Known limitations](/docs/limitations)).
+`denext build --compile` builds the app, then runs `deno compile` on denext's
+Deno toolchain over a generated entry (`.denext/compile/main.ts`) that does
+what `denext start` does. The result is one executable with nothing to install
+beside it. It embeds:
 
-Compiling **your app** with `deno compile` into one SSR binary is not something
-denext tests or documents. `denext start` loads route modules from `.denext/` at
-runtime and serves static assets from disk, both of which would have to be
-embedded with `--include`, and the CSS import-map re-exec the CLI performs for a
-project that imports CSS is exactly what a standalone binary cannot do (it
-warns, and `import "./globals.css"` fails). If you want one artifact to ship,
-the supported shapes are the Docker image (one artifact, batteries included) and
-the [desktop packager](/docs/desktop), which compiles a _static export_ plus a
-native window — not an SSR server.
+- the server modules (`app/`, `denext.config.ts`, `middleware.ts`,
+  `instrumentation.ts`, `jobs/`, `functions/`), plus everything they import:
+  the framework and your `jsr:` and `npm:` packages;
+- the build (`.denext/`: client bundles, manifest, server copies), `public/`,
+  `migrations/` and `supabase/migrations/`;
+- any paths you list in `compile.include` (data files the app reads at run
+  time, or a module that only a computed `import()` reaches).
+
+Stylesheet imports work without the CSS import map. Every module that reaches
+a stylesheet is served through its build-time server copy, which imports the
+stylesheet's JS shim instead of the `.css` file. Those copies are relocatable:
+they import the project by relative paths and compute `import.meta.url`,
+`.filename` and `.dirname` from their own location. So a copy works inside the
+binary's embedded file system, and a `new URL("./data.txt", import.meta.url)`
+in a component still finds the file beside it.
+
+**Behaviour matches `denext start`.** The binary takes `--port`, else `$PORT`,
+else 3000, plus `--host`. It drains on SIGTERM within
+`DENEXT_SHUTDOWN_DRAIN_MS`. It reads `trustForwardedHeaders`, the cache and
+every other config key from the embedded `denext.config.ts`, evaluated at
+startup. It also sets the production signal (`DENEXT_ENV` / `NODE_ENV`). Each
+verb (`start`, `job`, `db`) loads the production tier of the `.env` files in
+the **working directory**.
+
+**Nothing secret is baked in.** `.env*` files and SQLite databases are never
+embedded, and the environment is read at run time. What the binary writes goes
+to the working directory:
+
+- the page cache, the job history and `@denext/backend`'s storage metadata go
+  under `./.denext` (`DENEXT_STATE_DIR` moves them);
+- relative data paths (a SQLite `DB_PATH`, `fs({ dir })`, `app.db` in your own
+  code) resolve against the working directory, not against the embedded
+  project.
+
+**Permissions are least-privilege.** By default the binary bakes the Docker
+image's flags: `--allow-net --allow-env --allow-read --allow-write=.denext`,
+with relative paths resolved against the working directory. Grant more in
+`denext.config.ts`; each kind is unioned with the baseline:
+
+```ts
+export default {
+  compile: {
+    include: ["content/"],
+    permissions: { write: ["app.db", ".storage"], sys: ["hostname"] }, // run / ffi too; "*" = unscoped
+  },
+};
+```
+
+`permissions: "all"` bakes `--allow-all`, and only when you ask for it. `denext build --compile`
+prints the flags it baked.
+
+**Cross-compiling** takes any `deno compile` target: `x86_64-unknown-linux-gnu`,
+`aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin` or
+`x86_64-pc-windows-msvc`. The binary's runtime is Deno's own `denort` for that
+target, version 2.9.7, which `deno compile` downloads. It is not denext's
+toolchain build, so:
+
+- **`Deno.SQL` is absent.** For Postgres, give `@denext/backend` (and your own
+  code) a postgres.js client:
+  `backend({ postgres: { sql: fromPostgresJs(postgres(url)) } })`. `db migrate`
+  then runs on that same client. A plain `DATABASE_URL` Postgres without the
+  plugin cannot migrate from the binary; use SQLite or the backend there.
+- **The first request prints one `Deno.serve: request.signal…` notice.**
+  `deno compile` does not carry `--unstable-no-legacy-abort` into the binary.
+  The notice is cosmetic: denext handles both abort behaviours.
+
+**What does not compile:**
+
+- a SPA (`mode: "spa"`), which has no server; ship it with `denext export` or
+  the desktop packager;
+- the build verbs: `dev`, `build` and `export` stay on the `denext` CLI.
+
+`next-compat` (drop-in) builds and the Pages Router plugin are untested in a
+binary. An app-owned Postgres pool (npm `postgres`) keeps the process alive
+after the drain, exactly as under `denext start`, so give your supervisor a
+kill timeout. The binary is about 200 MB: the runtime plus the framework's and
+your packages' module graph.
+
+The **`denext` executable** is a separate thing: the CLI itself, a
+`deno compile`d front end. It never builds or serves an app in its own
+process. Every module-loading verb (`dev`, `build`, `start`, `job`, `doctor`)
+re-execs the denext version the _project_ pins, as a `deno run` child, so a
+binary can never substitute its own framework for the one in your `deno.json`.
+That is the skew rule in `src/cli/self-exec.ts`:
+
+- the project's pin decides;
+- an unversioned `jsr:@denext/denext` is a pin to latest;
+- a directory with no pin is refused, with a message naming the fix.
+
+That child runs on denext's own Deno toolchain, downloaded and SHA-256-verified
+on first need, so no Deno install is required. Offline on first use, with no
+toolchain cached, it needs a `deno` on PATH
+([Known limitations](/docs/limitations)).
 
 See also: [Production checklist](/docs/production-checklist),
 [Deployment](/docs/deploy), [Multi-instance](/docs/multi-instance),
