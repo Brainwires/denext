@@ -102,6 +102,8 @@ export function layout(options: LayoutOptions): VNode {
         h("meta", { charset: "utf-8" }),
         h("meta", { name: "viewport", content: "width=device-width, initial-scale=1" }),
         h("meta", { name: "denext-csrf", content: options.csrf }),
+        // The dashboard routes no `/_ui/events` stream: ui.js must not open one.
+        options.dashboard ? h("meta", { name: "denext-events", content: "off" }) : null,
         h("title", null, options.title, UI_TITLE_SUFFIX),
         options.refresh && options.refresh > 0
           ? h(

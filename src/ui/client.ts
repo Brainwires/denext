@@ -544,8 +544,12 @@ const FRAMES = {
 
 trackAll();
 
-const events = new EventSource(EVENTS);
-events.addEventListener("message", (event) => {
+// The stack's dashboard serves no event stream (no page of it needs pushed progress), and says
+// so with \`<meta name="denext-events" content="off">\`: opening one there would retry a 404 forever.
+const events = document.querySelector('meta[name="denext-events"]')?.content === "off"
+  ? null
+  : new EventSource(EVENTS);
+events?.addEventListener("message", (event) => {
   let payload = null;
   try {
     payload = JSON.parse(event.data);

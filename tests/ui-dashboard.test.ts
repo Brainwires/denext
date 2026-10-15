@@ -648,3 +648,41 @@ Deno.test("dashboard: Realtime, Edge Functions and Health sit behind the same ga
     await stop(d);
   }
 });
+
+Deno.test("dashboard: no event stream — the page tells ui.js not to open one", async () => {
+  const d = await dashboard();
+  try {
+    const session = await signIn(d);
+    const page = await (await fetch(`${d.base}/database`, { headers: { cookie: session.cookie } }))
+      .text();
+    assertStringIncludes(page, '<meta name="denext-events" content="off">');
+    const stream = await fetch(`${d.base}/_ui/events`, { headers: { cookie: session.cookie } });
+    assertEquals(stream.status, 404, "the dashboard routes no /_ui/events");
+    await stream.body?.cancel();
+    const script =
+      await (await fetch(`${d.base}/_ui/ui.js`, { headers: { cookie: session.cookie } }))
+        .text();
+    // The EventSource is opened only when the page does not say "off".
+    assertStringIncludes(
+      script,
+      `document.querySelector('meta[name="denext-events"]')?.content === "off"`,
+    );
+    assert(!/^const events = new EventSource/m.test(script), "never opened unconditionally");
+  } finally {
+    await stop(d);
+  }
+  // denext ui keeps its stream: its pages carry no such meta.
+  const dir = await Deno.makeTempDir({ prefix: "denext_dash_events_" });
+  const ui = await startUiServer({ dir, port: 0 });
+  try {
+    const res = await fetch(ui.url, { redirect: "manual" });
+    await res.body?.cancel();
+    const cookie = res.headers.getSetCookie()[0].split(";")[0];
+    const home = await (await fetch(`http://127.0.0.1:${ui.port}/`, { headers: { cookie } }))
+      .text();
+    assert(!home.includes("denext-events"));
+  } finally {
+    await ui.shutdown();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
