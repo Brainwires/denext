@@ -339,7 +339,8 @@ downloaded and SHA-256-verified on first need. Four ways to get it:
    `& ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -Uninstall`). Each release
    also carries a Homebrew formula, a Scoop manifest and a winget manifest set beside the
    archives.
-2. `deno install -A -g -n denext jsr:@denext/denext/cli` — a launcher through your Deno.
+2. `deno install -A -g -n denext jsr:@denext/denext/cli` — a launcher through your Deno (then
+   `denext toolchain install` fetches the toolchain and caches every verb for offline use).
 3. `deno task compile` from a checkout.
 4. Nothing at all: `deno run -A jsr:@denext/denext/cli <verb>` does the same thing, and the
    scaffolded `dev` / `build` / `start` tasks run that CLI pinned to the project's version.

@@ -24,6 +24,7 @@
 // origin, deep links or single instance); `DENEXT_DESKTOP_RUNTIME_DIR=<dir>` uses a local runtime
 // build unverified (runtime development).
 
+import { denoCacheDir } from "./deno-cache-dir.ts";
 import { acquireCacheLock } from "./project-locks.ts";
 import { basename, dirname, fromFileUrl, join } from "@std/path";
 import { extractArchive, type ExtractedFile } from "./safe-extract.ts";
@@ -130,22 +131,7 @@ export function desktopRuntimeTarget(
   return `${arch}-${vendor}`;
 }
 
-/**
- * Deno's cache directory: `DENO_DIR`, else the platform default Deno itself uses
- * (`~/Library/Caches/deno`, `%LOCALAPPDATA%\deno`, `$XDG_CACHE_HOME/deno` or `~/.cache/deno`).
- *
- * @param env Env reader.
- * @param os The OS.
- * @returns The directory.
- */
-export function denoCacheDir(env: EnvGet = processEnv, os: string = Deno.build.os): string {
-  const explicit = env("DENO_DIR");
-  if (explicit) return explicit;
-  const home = env("HOME") ?? env("USERPROFILE") ?? ".";
-  if (os === "darwin") return join(home, "Library", "Caches", "deno");
-  if (os === "windows") return join(env("LOCALAPPDATA") ?? join(home, "AppData", "Local"), "deno");
-  return join(env("XDG_CACHE_HOME") ?? join(home, ".cache"), "deno");
-}
+export { denoCacheDir };
 
 /** `<deno cache>/denext-desktop-runtime`. */
 function cacheRootFor(env: EnvGet = processEnv): string {

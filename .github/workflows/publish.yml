@@ -199,7 +199,10 @@ jobs:
 
       # The binary has to RUN, not merely link: `--version` proves it starts and knows it is a
       # binary (and that the tag matches the version baked into it — the two are bumped
-      # separately), `--help` proves the command table loads, and `build` in a directory that
+      # separately), `--help` proves the verb table (metadata only) loads, `completions bash`
+      # proves a verb's implementation loads on demand — it is embedded only through
+      # `--include src/cli/lazy-modules.generated.ts`; without it every verb fails while
+      # `--version` and `--help` still pass — and `build` in a directory that
       # pins no denext proves the refusal path (a binary never builds an app in its own
       # process) exits 1 with the message the docs quote, rather than crashing or, worse,
       # building with the binary's own framework.
@@ -210,6 +213,7 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           ./denext --version | tee /dev/stderr | grep -Fx "denext $version (binary)"
           ./denext --help | grep -F "Usage" >/dev/null
+          ./denext completions bash | grep -F "_denext_complete()" >/dev/null
           scratch="$(mktemp -d)"
           set +e
           out="$(cd "$scratch" && "$GITHUB_WORKSPACE/denext" build 2>&1)"
@@ -373,3 +377,4 @@ jobs:
           ./aarch64-apple-darwin/denext --version | tee /dev/stderr |
             grep -Fx "denext $version (binary)"
           ./aarch64-apple-darwin/denext --help | grep -F "Usage" >/dev/null
+          ./aarch64-apple-darwin/denext completions bash | grep -F "_denext_complete()" >/dev/null

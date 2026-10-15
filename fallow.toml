@@ -120,6 +120,7 @@ entry = [
   # for `deno compile --include`; its side-effect imports mark no export used).
   "src/cli/run-verb.ts",
   "src/cli/plugin-commands.ts",
+  "src/cli/cli-cache.ts",
   # Build/codegen scripts run via `deno task`, not imported — declare them so they
   # aren't reported as unused files (e.g. scripts/gen-*.ts feed the docs site).
   "scripts/*.ts",

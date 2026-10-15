@@ -329,8 +329,10 @@ and this project adheres to
   a verb when it runs; `--version` and `--help` load 85 modules and `denext commands` about 170,
   and neither loads `denext/server` (on an idle Linux host, `--version` went from about 0.9 s to
   0.13 s and `commands` from 1.1 s to 0.4 s). A compiled binary embeds the verbs through
-  `deno compile --include src/cli/lazy-modules.generated.ts` (`deno task compile`); a
-  `jsr:@denext/denext/cli` install fetches a verb's modules the first time it runs.
+  `deno compile --include src/cli/lazy-modules.generated.ts` (`deno task compile`). A CLI run
+  from JSR caches every verb's modules once per version — in the background on its first run, or
+  up front with `denext toolchain install` — so a verb first used offline (`--cached-only`) still
+  loads.
 - **denext pins Deno toolchain and Deno Desktop runtime 2.9.7-denext.18** (both pins from the same
   release): the navigation guard below; the toolchain is otherwise unchanged from denext.17.
 - **A first run on Postgres prints one line per store instead of the server's notices.** The

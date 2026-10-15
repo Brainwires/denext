@@ -256,7 +256,25 @@ async function runRouted(route: Extract<VerbRoute, { kind: "deno" }>): Promise<n
   return await runDenoPassthrough(forward.args, forward.cwd, true);
 }
 
+/**
+ * A CLI run from JSR (or another URL) caches every verb's modules once per version, in the
+ * background, so a verb first used offline still loads (src/cli/cli-cache.ts). A checkout and a
+ * compiled binary have them all already.
+ */
+async function warmRemoteCli(): Promise<void> {
+  if (import.meta.url.startsWith("file:") || isStandalone()) return;
+  try {
+    const { warmCliModules } = await lazy<typeof import("./src/cli/cli-cache.ts")>(
+      "./cli-cache.ts",
+    );
+    await warmCliModules();
+  } catch {
+    // Offline before the first warm-up: the module itself is not cached yet. Nothing to do.
+  }
+}
+
 async function main(): Promise<void> {
+  await warmRemoteCli();
   const early = denoBeforeParse(Deno.args);
   if (early) return await runDenoPassthrough(early.args, early.cwd, early.forwarded);
   const registry = buildLazyRegistry();

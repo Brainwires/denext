@@ -31,6 +31,11 @@ no `deno` is on your PATH — `denext toolchain link`, so `deno` is the toolchai
 git hooks and `.mcp.json` too (`DENEXT_NO_DENO_LINK=1` skips the link, `DENEXT_NO_TOOLCHAIN=1`
 both steps). A `deno` you already have is never replaced.
 
+A CLI installed from JSR (`deno install -A -g -n denext jsr:@denext/denext/cli`) loads each
+verb's code the first time that verb runs. `denext toolchain install` also caches every verb, and
+the CLI's first online run does the same in the background, so a verb used offline afterwards
+(`--cached-only`, `denext ui --offline`) still loads. The binary embeds every verb already.
+
 When the toolchain can't be had (offline on first use, `DENEXT_DENO=stock`, a host with no build)
 the binary falls back to a stock `deno` — `DENO_BIN`, `~/.deno/bin/deno`, then `deno` on PATH —
 and with none of those it stops with one error that names the fix: run `denext toolchain install`

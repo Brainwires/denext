@@ -3,6 +3,7 @@
 // code switch to it on their own (src/cli/self-exec.ts `maybeReexecToolchain`); these manage it
 // and run it directly.
 
+import { cacheCliModules, isRemoteCli } from "../cli-cache.ts";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { commandCwd, spawnDenoAndExit } from "../shared.ts";
 import { denoExecutable } from "../../build/bundle.ts";
@@ -111,6 +112,22 @@ async function status(ctx: CommandContext): Promise<void> {
   if (!s.ok) Deno.exit(1);
 }
 
+/**
+ * `denext toolchain install`: download and verify the toolchain, and — for a CLI run from JSR,
+ * which loads each verb on first use — cache every verb now, so all of them work offline after
+ * this post-install step (nothing to do for a checkout or a binary).
+ */
+async function install(): Promise<void> {
+  const rt = await requireToolchain();
+  console.log(`  denext's Deno toolchain ${rt.version}: ${rt.deno}${rt.cached ? " (cached)" : ""}`);
+  if (!isRemoteCli()) return;
+  if (!await cacheCliModules()) {
+    console.error("denext: could not cache the CLI's verbs; they load on first use instead");
+    Deno.exit(1);
+  }
+  console.log("  every denext verb is cached for offline use");
+}
+
 /** `toolchain link` / `unlink`. */
 async function link(unlink: boolean): Promise<void> {
   if (unlink) {
@@ -149,13 +166,7 @@ export const toolchainCommand: CommandSpec = {
   run: async (ctx) => {
     const action = ctx.positionals[0];
     if (action === "status") return await status(ctx);
-    if (action === "install") {
-      const rt = await requireToolchain();
-      console.log(
-        `  denext's Deno toolchain ${rt.version}: ${rt.deno}${rt.cached ? " (cached)" : ""}`,
-      );
-      return;
-    }
+    if (action === "install") return await install();
     if (action === "path") {
       console.log((await toolchainBinary()).deno);
       return;
