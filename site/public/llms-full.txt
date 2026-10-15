@@ -340,7 +340,7 @@ export default {
 ```
 
 **One executable for the server:** `denext build --compile [--target <triple>] [--output <path>]`
-builds, then `deno compile`s the app (server modules, `.denext/`, `public/`, `jobs/`, migrations,
+builds, then `deno compile`s the app (server modules, `.denext/`, `public/`, `jobs/`, `services/`, migrations,
 `compile.include`) into `dist/<name>`. `./app` serves like `denext start` (`--port` / `$PORT`), and
 `./app job <name>` and `./app db migrate` run jobs and migrations. Stylesheet imports work with no
 import map. No `.env` file is embedded: the environment, `.env` files and relative data paths are

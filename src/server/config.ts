@@ -1435,7 +1435,7 @@ export interface CompileConfig {
   /**
    * More project paths (files or directories, relative to the project) to embed: data files the
    * app reads at run time, or a module only a computed `import()` reaches. denext already embeds
-   * `app/`, `.denext/` (the build), `public/`, `jobs/`, `functions/`, `migrations/`,
+   * `app/`, `.denext/` (the build), `public/`, `jobs/`, `services/`, `functions/`, `migrations/`,
    * `supabase/migrations/` and the root config, middleware and instrumentation modules. `.env`
    * files and SQLite databases are never embedded.
    */

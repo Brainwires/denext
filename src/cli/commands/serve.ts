@@ -173,7 +173,8 @@ export const buildCommand: CommandSpec = {
       help: "With --compile: the executable's path (default: dist/<name>)",
     },
   ],
-  usage: "--compile builds, then embeds the build, public/, the server modules, jobs/ and the\n" +
+  usage:
+    "--compile builds, then embeds the build, public/, the server modules, jobs/, services/ and the\n" +
     "migrations into one executable that serves the app as `denext start` does (`./app`,\n" +
     "`./app job <name>`, `./app db migrate`). It bakes the Docker image's least-privilege\n" +
     "--allow-* plus denext.config's compile.permissions, and embeds no .env file: the binary\n" +

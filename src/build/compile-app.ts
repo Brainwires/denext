@@ -5,7 +5,7 @@
 // `startProdServer` `denext start` runs, plus the `job` and `db` verbs. What it embeds:
 //
 // - the project's server modules (`app/`, the root config, middleware and instrumentation,
-//   `jobs/`, `functions/`) — each embedded directory's modules join the compiled module graph, so
+//   `jobs/`, `services/`, `functions/`) — each embedded directory's modules join the compiled module graph, so
 //   their imports (the framework, `jsr:` / `npm:` packages) are embedded too;
 // - the build (`.denext/`: the client bundles, the manifest, the server copies — relocatable, so
 //   they import the embedded project by relative paths), `public/` and the migrations;
@@ -62,7 +62,14 @@ export interface CompileAppResult {
 const COMPILE_DIR = "compile";
 
 /** The project's directories embedded whole (when present), beside the app dir and the build. */
-const EMBEDDED_DIRS = ["public", "jobs", "services", "functions", "migrations", "supabase/migrations"];
+const EMBEDDED_DIRS = [
+  "public",
+  "jobs",
+  "services",
+  "functions",
+  "migrations",
+  "supabase/migrations",
+];
 
 /** The project's root files embedded (when present). */
 const EMBEDDED_FILES = [

@@ -222,7 +222,7 @@ what `denext start` does. The result is one executable with nothing to install
 beside it. It embeds:
 
 - the server modules (`app/`, `denext.config.ts`, `middleware.ts`,
-  `instrumentation.ts`, `jobs/`, `functions/`), plus everything they import:
+  `instrumentation.ts`, `jobs/`, `services/`, `functions/`), plus everything they import:
   the framework and your `jsr:` and `npm:` packages;
 - the build (`.denext/`: client bundles, manifest, server copies), `public/`,
   `migrations/` and `supabase/migrations/`;

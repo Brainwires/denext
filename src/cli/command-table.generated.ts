@@ -50,11 +50,29 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
   [{
     "name": "build",
     "summary": "Build for production",
+    "usage":
+      "--compile builds, then embeds the build, public/, the server modules, jobs/, services/ and the\nmigrations into one executable that serves the app as `denext start` does (`./app`,\n`./app job <name>`, `./app db migrate`). It bakes the Docker image's least-privilege\n--allow-* plus denext.config's compile.permissions, and embeds no .env file: the binary\nreads its environment at run time. Docs: https://denext.dev/docs/deployment-targets",
     "flags": [{
       "name": "raw",
       "type": "boolean",
       "help":
         "Print diagnostics exactly as Deno reports them, without explanations (also DENEXT_RAW_DIAGNOSTICS=1)",
+    }, {
+      "name": "compile",
+      "type": "boolean",
+      "help": "Also compile the app's server into one executable (deno compile on the toolchain)",
+    }, {
+      "name": "target",
+      "type": "string",
+      "valueName": "<triple>",
+      "help":
+        "With --compile: the target (x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, x86_64-apple-darwin, aarch64-apple-darwin, x86_64-pc-windows-msvc; default: this machine)",
+    }, {
+      "name": "output",
+      "alias": "o",
+      "type": "string",
+      "valueName": "<path>",
+      "help": "With --compile: the executable's path (default: dist/<name>)",
     }],
     "positionals": [{ "name": "dir", "help": "Project directory (default: .)" }],
     "loadsModules": true,

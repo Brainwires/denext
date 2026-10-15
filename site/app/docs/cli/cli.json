@@ -147,7 +147,7 @@
       "name": "build",
       "summary": "Build for production",
       "usage": "denext build [dir] [options]",
-      "description": "--compile builds, then embeds the build, public/, the server modules, jobs/ and the\nmigrations into one executable that serves the app as `denext start` does (`./app`,\n`./app job <name>`, `./app db migrate`). It bakes the Docker image's least-privilege\n--allow-* plus denext.config's compile.permissions, and embeds no .env file: the binary\nreads its environment at run time. Docs: https://denext.dev/docs/deployment-targets",
+      "description": "--compile builds, then embeds the build, public/, the server modules, jobs/, services/ and the\nmigrations into one executable that serves the app as `denext start` does (`./app`,\n`./app job <name>`, `./app db migrate`). It bakes the Docker image's least-privilege\n--allow-* plus denext.config's compile.permissions, and embeds no .env file: the binary\nreads its environment at run time. Docs: https://denext.dev/docs/deployment-targets",
       "flags": [
         {
           "name": "raw",

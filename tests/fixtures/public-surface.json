@@ -567,6 +567,8 @@
     "ChannelTapHandlers:interface",
     "ChannelTransport:interface",
     "ChildStatus:interface",
+    "CompileConfig:interface",
+    "CompilePermissions:interface",
     "CompiledPattern:interface",
     "Component:typeAlias",
     "CompressConfig:interface",
@@ -5152,5 +5154,9 @@
     "render:function",
     "userEvent:variable",
     "waitFor:function"
+  ],
+  "denext/standalone": [
+    "runStandalone:function",
+    "standaloneArgv:function"
   ]
 }

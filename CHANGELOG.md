@@ -28,7 +28,7 @@ and this project adheres to
 
 - **`denext build --compile [--target <triple>] [--output <path>]`: the app's server as one
   executable.** After the build, `deno compile` (on denext's Deno toolchain) embeds the server
-  modules, `.denext/`, `public/`, `jobs/`, `functions/`, the migrations and `compile.include`
+  modules, `.denext/`, `public/`, `jobs/`, `services/`, `functions/`, the migrations and `compile.include`
   paths behind a `denext/standalone` entry. `./app` serves the app as `denext start` does
   (`--port` / `$PORT`, `--host`, the drain, every config key), and `./app job <name>` and
   `./app db migrate` run the jobs and migrations. Stylesheet imports need no import map. Neither
