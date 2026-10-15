@@ -71,10 +71,6 @@ or an upstream. Each one's limitation entry is deleted when it ships.
   0.88 once that is final (`REACT_NATIVE_PIN` in `scripts/parity/native/spec.ts`, the lists'
   `PINS`, `REACT_NATIVE_VERSION` in `src/react-native/platform.ts`), then refresh the baselines.
   Against `0.88.0-rc.4` the core and lists diffs already report no gaps.
-- **A build-time `platform` constant** (`import { platform } from "denext/platform"`, folded to
-  the target's name like `feature()`, so `if (platform === "ios")` is dead-code-eliminated per
-  export). Platform-specific files cover the per-target code today, and `runtimePlatform()` the
-  runtime branch; the constant needs a fold pass on every build path.
 - **Platform files through tsconfig `paths`:** an import through a tsconfig `paths` alias does
   not take a variant (only `deno.json` and import-map aliases do); `denext migrate` converts
   `paths` to the import map.

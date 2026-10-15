@@ -37,6 +37,8 @@ export const DEP_ENTRYPOINTS: Record<string, string> = {
   // `feature()` calls are folded at build, but the IMPORT stays in the module (and nothing is
   // folded without `features`), so a "use client" file importing it needs the dep.
   "denext_feature": "src/feature.ts",
+  // `platform` reads are folded per request, but the IMPORT stays in the module.
+  "denext_platform": "src/platform.ts",
   // `denext/result` — Result values + exhaustive match, imported from "use client" modules too.
   "denext_result": "src/result.ts",
   // The Capacitor-shell client runtime — imported only from "use client" modules.
@@ -58,6 +60,7 @@ export const DENEXT_RUNTIME_FILE: Record<string, string> = {
   "denext/client-runtime": "client-runtime.js",
   "denext/devtools": "devtools.js",
   "denext/feature": "feature.js",
+  "denext/platform": "platform.js",
   "denext/result": "result.js",
   "denext/mobile": "mobile.js",
   "denext/virtual-masonry": "virtual-masonry.js",

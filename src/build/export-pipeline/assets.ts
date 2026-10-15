@@ -174,7 +174,7 @@ export async function setupCompat(ctx: ExportContext): Promise<void> {
  */
 export async function exportClientTransforms(ctx: ExportContext): Promise<void> {
   if (ctx.compat) return;
-  ctx.transforms = await clientTransforms(ctx, exportBuildDir(ctx.paths));
+  ctx.transforms = await clientTransforms(ctx, exportBuildDir(ctx.paths), ctx.platform);
 }
 
 /** Client bundles (minified): a whole-tree bundle per isomorphic (non-Flight, non-static) route. */

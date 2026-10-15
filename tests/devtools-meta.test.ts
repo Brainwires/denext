@@ -546,7 +546,11 @@ Deno.test("production SPA transforms emit no DevTools metadata (DCE guard)", asy
     const bundleSrc = await Deno.readTextFile(
       new URL("../src/build/spa/bundle.ts", import.meta.url),
     );
-    assertStringIncludes(bundleSrc, "if (dev) return [spaRefreshPlugin(projectDir)];");
+    assertStringIncludes(bundleSrc, "  if (dev) {\n");
+    assertStringIncludes(
+      bundleSrc,
+      "return [spaRefreshPlugin(projectDir, pre), platformFoldPlugin(",
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

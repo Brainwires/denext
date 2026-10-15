@@ -622,6 +622,11 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   leaves the rest out of the bundle; `mobile dev` and `desktop dev` serve each
   shell its own files. — `src/build/platform-extensions.ts`,
   `src/build/platform-imports.ts`.
+- **The `platform` constant** — `import { platform } from "denext/platform"`,
+  folded to the target's name (and `platform === "ios"` to a boolean) in the
+  app's own modules on every build path and in `denext dev`, so other targets'
+  branches are dead-code-eliminated. — `src/platform.ts`,
+  `src/build/feature-transform.ts`.
 - **Deno Desktop apps** — `denext desktop run | dev | build | package` export
   the app and build it with `deno desktop`: `run` and `dev` build into a temp
   directory with the packaged app's own least-privilege `--allow-*` and launch it,

@@ -52,6 +52,7 @@ on:
       - "src/expo/manifest.ts"
       - "src/mcp/inspect.ts"
       - "src/mcp/next-denext-map.ts"
+      - "src/platform.ts"
       - "src/plugin/mod.ts"
       - "src/react-native-compat/manifest.ts"
       - "src/react-native/lists/manifest.ts"

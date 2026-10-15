@@ -23,10 +23,12 @@
 import { domListsPlugin } from "./dom-lists.ts";
 import {
   missingVariantMessage,
+  type Platform,
   type PlatformResolution,
   platformVariantsOf,
   probePlatformSource,
 } from "./platform-extensions.ts";
+import { platformFoldPlugin } from "./platform-fold-plugin.ts";
 import { denoLoaderPlugins } from "./deno-loader-plugins.ts";
 import { loadDenextPatchSet, patchPlugin } from "./patches.ts";
 import {
@@ -260,6 +262,8 @@ function coreRuntimeEntries(u: EntryUrl): Record<string, string> {
     "devtools": u("src/devtools.ts"),
     // `denext/feature` — the import survives the build-time fold of `feature()` calls.
     "feature": u("src/feature.ts"),
+    // `denext/platform` — the import survives the build-time fold of `platform` reads.
+    "platform": u("src/platform.ts"),
     // `denext/result` — Result values + exhaustive match, usable from "use client" modules.
     "result": u("src/result.ts"),
   };
@@ -803,6 +807,7 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/client-runtime": "client-runtime.js",
   "denext/devtools": "devtools.js",
   "denext/feature": "feature.js",
+  "denext/platform": "platform.js",
   "denext/result": "result.js",
   "denext/mobile": "mobile.js",
   // `denext/mobile/clerk` shares the one `denext/mobile` instance (its auth-session state).
@@ -1429,6 +1434,11 @@ export interface BundleNextCompatModulesOptions {
    * resolve app imports like package subpaths.
    */
   appPlatform?: PlatformResolution | null;
+  /**
+   * The build target `platform` (denext/platform) is folded to in the app's own modules that
+   * import it (under {@link absWorkingDir}). Omit to leave the reads to the runtime value.
+   */
+  buildTarget?: Platform;
   /**
    * Parse every `.js` file with esbuild's `jsx` loader, for npm packages that ship JSX in
    * `.js` (common in React Native libraries, which Metro's Babel preset parses as JSX).
@@ -2508,6 +2518,9 @@ async function compatPlugins(
   const deno = options.platform === "deno";
   let plugins: esbuild.Plugin[] = [
     ...leadingPlugins(options),
+    ...(options.buildTarget && options.absWorkingDir
+      ? [platformFoldPlugin(options.absWorkingDir, options.buildTarget)]
+      : []),
     envPoisonPlugin(deno),
     ...(deno ? [frameworkUrlExternalPlugin()] : []),
     googleFontsPlugin(),

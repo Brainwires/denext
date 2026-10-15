@@ -180,7 +180,10 @@ export function compatBuildOptions(
     // Seed the `denext/feature` shim for the compat esbuild bundles (server + client): any
     // `feature()` call not folded (non-literal arg / unset key) reads this map. The native
     // App Router client path folds via the redirect map instead (build-pipeline/transforms.ts).
-    define: { __DENEXT_FEATURES__: JSON.stringify(featureFlags(paths.config)) },
+    define: {
+      __DENEXT_FEATURES__: JSON.stringify(featureFlags(paths.config)),
+      __DENEXT_PLATFORM__: JSON.stringify(platform),
+    },
     resolveAllNodeModules: nodeResolveEnabled(paths.config),
     momentumSafeScroll: momentumSafeScrollEnabled(paths.config),
     mdxOptions: paths.config?.mdx,
@@ -192,6 +195,8 @@ export function compatBuildOptions(
     // The target's platform files (`BigButton.ios.tsx`), for the server AND client bundles,
     // so the static render and the hydrating client pick the same variant.
     appPlatform: platformResolution(paths.config, platform),
+    // `platform` (denext/platform) folded to the target in the app's modules, server and client.
+    buildTarget: platform,
     // Assets emit into the dir the CLIENT bundles are written to — the build pipeline's
     // staging dir, swapped into `client/` at finalize (emitting into `client/` directly
     // would be wiped by that swap).

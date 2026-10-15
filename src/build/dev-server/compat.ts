@@ -61,6 +61,8 @@ function compatBuildOptions(
     cssImportMap,
     // The target's platform files (`.web.tsx`, `.ios.tsx`, …), server and client bundles alike.
     appPlatform: platformResolution(st.paths.config, platform),
+    // `platform` (denext/platform) folded to the request's target, server and client bundles.
+    buildTarget: platform,
     assets: compatAssets(st.paths.projectDir, join(outDir, "client")),
   };
 }

@@ -4,7 +4,7 @@
 import * as esbuild from "../esbuild/mod.ts";
 import { dirname, fromFileUrl, toFileUrl } from "@std/path";
 import { collectComponents, refreshFooter } from "../spa-refresh-plugin.ts";
-import { transformFeatures } from "../feature-transform.ts";
+import { foldBuildConstants } from "../feature-transform.ts";
 import { transformSpaIslands } from "../spa-islands.ts";
 import { momentumScrollSeed } from "../bundle.ts";
 import { parseModule } from "../swc-ast.ts";
@@ -153,21 +153,24 @@ async function actionStub(st: UnbundledState, abs: string): Promise<string> {
 
 /**
  * The build's source transforms, so dev matches a build: `feature("KEY")` folded (values, not
- * DCE; only with `features`), and in SPA mode `client:*` component elements rewritten to
- * deferred mounts. Best-effort: a throwing transform leaves the source as it was (a module that
- * does not parse is identity in both, so a throw is an internal failure), and says so once per
- * module, since the dev page then differs from a build.
+ * DCE; only with `features`) and `platform` (denext/platform) folded to the request's target,
+ * and in SPA mode `client:*` component elements rewritten to deferred mounts. Best-effort: a
+ * throwing transform leaves the source as it was (a module that does not parse is identity in
+ * both, so a throw is an internal failure), and says so once per module, since the dev page then
+ * differs from a build.
  */
-async function buildTransforms(st: UnbundledState, abs: string, written: string): Promise<string> {
+async function buildTransforms(
+  st: UnbundledState,
+  abs: string,
+  written: string,
+  platform: Platform,
+): Promise<string> {
   let src = written;
-  const features = st.opts.features;
-  if (features && Object.keys(features).length > 0) {
-    try {
-      const folded = await transformFeatures(src, features);
-      if (folded.changed) src = folded.code;
-    } catch (err) {
-      warnTransformFailed("feature() fold", abs, err, "the flags read at runtime");
-    }
+  try {
+    const folded = await foldBuildConstants(src, { features: st.opts.features, platform });
+    if (folded.changed) src = folded.code;
+  } catch (err) {
+    warnTransformFailed("feature() fold / platform fold", abs, err, "the values read at runtime");
   }
   if (st.opts.spaIslands) {
     try {
@@ -213,6 +216,7 @@ function moduleRewritePlugin(
           st,
           abs,
           loaded.source ?? await Deno.readTextFile(abs),
+          platform,
         );
         return {
           contents: src + footer,

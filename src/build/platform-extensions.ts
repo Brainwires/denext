@@ -40,8 +40,9 @@ import { parse as parseJsonc } from "@std/jsonc";
 import { basename, dirname, join, relative, resolve, SEPARATOR as SEP, toFileUrl } from "@std/path";
 import type { DenextConfig } from "../server/config.ts";
 
-/** A build target. */
-export type Platform = "web" | "ios" | "android" | "macos" | "windows" | "linux";
+/** A build target (the type `denext/platform`'s constant has). */
+export type { Platform } from "../platform.ts";
+import type { Platform } from "../platform.ts";
 
 /** Every build target, in the order the docs and `doctor` list them. */
 export const PLATFORMS: readonly Platform[] = [

@@ -2129,6 +2129,10 @@
   "denext/feature": [
     "feature:function"
   ],
+  "denext/platform": [
+    "Platform:typeAlias",
+    "platform:variable"
+  ],
   "denext/result": [
     "Err:interface",
     "Match:interface",

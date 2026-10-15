@@ -34,12 +34,14 @@ import { expoRouterRoot, expoRouterRouteFiles } from "../expo-router.ts";
 import { stopNextCompat } from "../next-compat.ts";
 import type { ProjectPaths } from "../paths.ts";
 import {
+  constantsFoldTransform,
   spaIslandsTransform,
   spaSourceTransform,
   spaSourceTransformPlugin,
 } from "../spa-compiler-plugin.ts";
 import { spaIslandRedirects, spaIslandSources } from "../spa-islands.ts";
 import { tanstackCodeSplitPlugin } from "../tanstack-code-split.ts";
+import { platformFoldPlugin } from "../platform-fold-plugin.ts";
 import { spaFeatureFold } from "./features.ts";
 import { spaNativeRefresh } from "../refresh-modules.ts";
 import { spaRefreshPlugin } from "../spa-refresh-plugin.ts";
@@ -245,7 +247,7 @@ async function bundleCompatSpa(
     entries: [{ id: "index", source: entrySource }],
     minify,
     classComponents: config.classComponents ?? true,
-    define: compatSpaDefine(config, dev, rn?.define),
+    define: compatSpaDefine(config, dev, rn?.define, platform),
     assets: compatSpaAssets(spa),
     // pnpm catalog:/workspace: deps the esbuild deno-loader can't resolve — denext
     // resolves these straight from node_modules (front-runs the loader).
@@ -266,7 +268,13 @@ async function bundleCompatSpa(
     cssImportMap: css?.importMap,
     extraPlugins: withPluginsFirst(
       leadingPlugins(rn?.plugins, modules, paths.projectDir),
-      spaBundlePlugins(paths.projectDir, dev, paths.config, await usesSpaIslands(paths)),
+      spaBundlePlugins(
+        paths.projectDir,
+        dev,
+        paths.config,
+        await usesSpaIslands(paths),
+        platform,
+      ),
     ),
     platformExtensions: rn?.platformExtensions,
     // The target's platform files (`BigButton.ios.tsx`) for the app's own modules.
@@ -281,17 +289,20 @@ async function bundleCompatSpa(
 
 /**
  * Vite `import.meta.env` values, plus the feature-flag map seeding the `denext/feature` shim for
- * any `feature()` call the onLoad fold leaves (non-literal arg, unset key).
+ * any `feature()` call the onLoad fold leaves (non-literal arg, unset key), and the target.
  */
 function compatSpaDefine(
   config: DenextConfig,
   dev: boolean,
   rnDefine: Record<string, string> | undefined,
+  platform: Platform,
 ): Record<string, string> {
   return {
     ...spaDefines(config.spa!, dev),
     ...rnDefine,
     __DENEXT_FEATURES__: JSON.stringify(featureFlags(config)),
+    // `denext/platform`'s value for a read the fold does not reach.
+    __DENEXT_PLATFORM__: JSON.stringify(platform),
   };
 }
 
@@ -359,19 +370,32 @@ function spaBundlePlugins(
   dev: boolean,
   config: ProjectPaths["config"],
   islands: boolean,
+  platform: Platform,
 ): esbuild.Plugin[] | undefined {
-  if (dev && islands) return [spaRefreshPlugin(projectDir, spaIslandsTransform)];
-  if (dev) return [spaRefreshPlugin(projectDir)];
+  if (dev) {
+    // `platform` is folded in dev too (its value must match the target's build), over the
+    // `client:*` rewrite, then the plain modules Fast Refresh does not claim.
+    const fold = constantsFoldTransform({ platform });
+    const pre = async (source: string) => {
+      const rewritten = islands ? await spaIslandsTransform(source) : null;
+      return await fold(rewritten ?? source, "") ?? rewritten;
+    };
+    return [spaRefreshPlugin(projectDir, pre), platformFoldPlugin(projectDir, platform)];
+  }
   const plugins: esbuild.Plugin[] = [];
   // TanStack Router `autoCodeSplitting`: ahead of the source transforms, which it applies itself
   // to the route modules it answers (esbuild runs only the first `onLoad` that answers).
   const tanstack = config?.spa?.tanstackRouter;
   if (tanstack?.autoCodeSplitting === true) {
     plugins.push(
-      tanstackCodeSplitPlugin(projectDir, tanstack, spaSourceTransform(config, islands)),
+      tanstackCodeSplitPlugin(
+        projectDir,
+        tanstack,
+        spaSourceTransform(config, islands, platform) ?? constantsFoldTransform({ platform }),
+      ),
     );
   }
-  const plugin = spaSourceTransformPlugin(projectDir, config, islands);
+  const plugin = spaSourceTransformPlugin(projectDir, config, islands, platform);
   if (plugin) plugins.push(plugin);
   return plugins.length > 0 ? plugins : undefined;
 }
@@ -396,7 +420,7 @@ async function bundleNativeSpa(
   dev: boolean,
   platform: Platform,
 ): Promise<void> {
-  const fold = await spaFeatureFold(paths.projectDir, featureFlags(paths.config), !dev);
+  const fold = await spaFeatureFold(paths.projectDir, featureFlags(paths.config), !dev, platform);
   // Dev: the Fast Refresh family registrations the compat path's `spaRefreshPlugin` appends
   // (dev folds no features, so the two never substitute the same module).
   const refresh = dev ? await spaNativeRefresh(paths.projectDir) : null;

@@ -137,7 +137,10 @@ async function exportLoader(
   redirects: Record<string, string>,
 ): Promise<ModuleLoader> {
   const useCache = resolveCacheComponents(paths.config);
-  if (!useCache && Object.keys(redirects).length === 0) return defaultLoader;
+  // A target other than `web` folds `platform` (denext/platform) in the copies it renders.
+  if (!useCache && Object.keys(redirects).length === 0 && platform === "web") {
+    return defaultLoader;
+  }
   // Per target: Deno caches a module by URL for the life of the process, so two targets'
   // exports in one process must not share a copy's path.
   const cacheDir = join(paths.outDir, "server-cache", platform);
@@ -149,6 +152,7 @@ async function exportLoader(
     cacheDir,
     redirects,
     useCache,
+    platform,
   });
 }
 

@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Added
 
+- **`denext/platform`: the build target as a compile-time constant.** `import { platform } from
+  "denext/platform"` is `"web"`, `"ios"`, `"android"`, `"macos"`, `"windows"` or `"linux"`. Each
+  target's build folds every read of it in the app's own modules to the target's name, and a
+  comparison with a string literal (`platform === "ios"`) to `true` / `false`, so the bundler
+  drops the other targets' branches and the modules only they import, as `feature()` does for
+  flags. The fold runs on the native and next-compat App Router, SPA and React Native mode, and
+  `denext dev` (per request, for the target the page names); the server render of
+  `denext export --platform` and of a shell's dev session reads the same value.
 - **`denext/auth`: the auth surface as its own entry point.** `import { auth, denextAuth, github }
   from "denext/auth"` — `denextAuth()`, `auth()` and the guards (`requireAuth`, `requireSession`),
   the provider presets, the adapters and stores, bearer tokens, email verification and password

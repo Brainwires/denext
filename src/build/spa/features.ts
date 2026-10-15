@@ -1,4 +1,5 @@
-// `features` (denext/feature) on the SPA's denext-native path, which bundles with plain
+// `features` (denext/feature) and the build target (denext/platform) on the SPA's denext-native
+// path, which bundles with plain
 // `deno bundle` (no esbuild `define`, no onLoad plugins): the configured flags are seeded as
 // `globalThis.__DENEXT_FEATURES__` at the top of the entry (so any `feature()` call reads its
 // configured value), and every app module that calls `feature("KEY")` is folded to the boolean
@@ -6,7 +7,8 @@
 // The compat (esbuild) path does both in spa-compiler-plugin.ts.
 
 import { join, relative, SEPARATOR } from "@std/path";
-import { compileFeatureModules } from "../feature-transform.ts";
+import { compileFeatureModules, PLATFORM_SPECIFIER } from "../feature-transform.ts";
+import type { Platform } from "../platform-extensions.ts";
 
 /** Folders under the project that are never app source. */
 const SKIP_DIRS = new Set(["node_modules", "out", "ios", "android", "dist", "build"]);
@@ -26,11 +28,17 @@ export async function appSourceFiles(root: string, dir = root): Promise<string[]
   return out;
 }
 
-/** Every app source file under `root` that mentions `feature` (the fold's own pre-filter). */
-async function featureSources(root: string): Promise<string[]> {
+/**
+ * Every app source file under `root` that mentions `feature` (with `features`) or imports
+ * `denext/platform` (the fold's own pre-filter).
+ */
+async function foldSources(root: string, features: boolean): Promise<string[]> {
   const out: string[] = [];
   for (const path of await appSourceFiles(root)) {
-    if ((await Deno.readTextFile(path)).includes("feature")) out.push(path);
+    const source = await Deno.readTextFile(path);
+    if ((features && source.includes("feature")) || source.includes(PLATFORM_SPECIFIER)) {
+      out.push(path);
+    }
   }
   return out;
 }
@@ -50,28 +58,31 @@ export interface SpaFeatureFold extends SpaModuleRedirects {
 }
 
 /**
- * Seed and fold the configured `features` for a SPA bundled with `deno bundle`.
+ * Seed and fold the configured `features` and the build target's `platform` for a SPA bundled
+ * with `deno bundle`.
  *
  * @param projectDir The app's root.
  * @param features The configured flags.
  * @param fold Fold the calls too (a production bundle); dev only seeds.
+ * @param platform The build target `platform` (denext/platform) folds to.
  * @returns The entry seed, the import-map redirects, and the cleanup.
  */
 export async function spaFeatureFold(
   projectDir: string,
   features: Record<string, boolean>,
   fold = true,
+  platform: Platform = "web",
 ): Promise<SpaFeatureFold> {
-  if (Object.keys(features).length === 0) {
-    return { seed: "", importMap: {}, cleanup: () => Promise.resolve() };
-  }
-  const seed = `globalThis.__DENEXT_FEATURES__ = ${JSON.stringify(features)};\n`;
+  const flags = Object.keys(features).length > 0;
+  const seed = (flags ? `globalThis.__DENEXT_FEATURES__ = ${JSON.stringify(features)};\n` : "") +
+    (platform === "web" ? "" : `globalThis.__DENEXT_PLATFORM__ = ${JSON.stringify(platform)};\n`);
   if (!fold) return { seed, importMap: {}, cleanup: () => Promise.resolve() };
-  const files = (await featureSources(projectDir)).filter((f) =>
+  const files = (await foldSources(projectDir, flags)).filter((f) =>
     !relative(projectDir, f).split(SEPARATOR).some((part) => part.startsWith("."))
   );
+  if (files.length === 0) return { seed, importMap: {}, cleanup: () => Promise.resolve() };
   const outDir = await Deno.makeTempDir({ prefix: "denext_spa_features_" });
-  const importMap = await compileFeatureModules(files, {}, { outDir, features });
+  const importMap = await compileFeatureModules(files, {}, { outDir, features, platform });
   return {
     seed,
     importMap,
