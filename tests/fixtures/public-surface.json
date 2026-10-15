@@ -5091,6 +5091,123 @@
     "defineRouting:function",
     "detectLocale:function"
   ],
+  "denext/next-auth": [
+    "AccessDenied:class",
+    "Account:typeAlias",
+    "Adapter:interface",
+    "AdapterAccount:interface",
+    "AdapterSession:interface",
+    "AdapterUser:interface",
+    "AuthError:class",
+    "AuthFunction:interface",
+    "AuthHandler:typeAlias",
+    "AuthorizedCallbackParams:interface",
+    "Awaitable:typeAlias",
+    "CallbacksOptions:interface",
+    "Configuration:class",
+    "CredentialsSignin:class",
+    "DefaultSession:interface",
+    "EventCallbacks:interface",
+    "JwtCallbackParams:interface",
+    "LoggerInstance:interface",
+    "NextAuthConfig:interface",
+    "NextAuthRequest:typeAlias",
+    "NextAuthResult:interface",
+    "NextRequest:class",
+    "Profile:typeAlias",
+    "Provider:typeAlias",
+    "RouteHandler:typeAlias",
+    "Session:interface",
+    "SessionCallbackParams:interface",
+    "SignInCallbackParams:interface",
+    "SignInOptions:interface",
+    "SignOutOptions:interface",
+    "User:interface",
+    "VerificationToken:interface",
+    "default:function"
+  ],
+  "denext/next-auth/react": [
+    "ClientSafeProvider:interface",
+    "Session:interface",
+    "SessionContextValue:typeAlias",
+    "SessionProvider:function",
+    "SessionProviderProps:interface",
+    "SignInOptions:interface",
+    "SignInResponse:interface",
+    "SignOutParams:interface",
+    "UpdateSession:typeAlias",
+    "UseSessionOptions:interface",
+    "getCsrfToken:function",
+    "getProviders:function",
+    "getSession:function",
+    "signIn:function",
+    "signOut:function",
+    "useSession:function"
+  ],
+  "denext/next-auth/jwt": [
+    "GetTokenParams:interface",
+    "JWT:interface",
+    "JWTDecodeParams:interface",
+    "JWTEncodeParams:interface",
+    "decode:function",
+    "encode:function",
+    "getToken:function"
+  ],
+  "denext/next-auth/providers": [
+    "BuiltProvider:interface",
+    "CredentialInput:interface",
+    "CredentialsConfig:interface",
+    "EmailUserConfig:interface",
+    "EndpointConfig:typeAlias",
+    "EnvReader:typeAlias",
+    "NodemailerUserConfig:interface",
+    "OAuthConfig:interface",
+    "OAuthUserConfig:interface",
+    "ProfileUser:interface",
+    "Provider:typeAlias",
+    "ProviderDescriptor:interface",
+    "ResendUserConfig:interface",
+    "SendVerificationRequestParams:interface",
+    "SmtpServerOptions:interface"
+  ],
+  "denext/next-auth/providers/apple": [
+    "AppleProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/credentials": [
+    "CredentialInput:interface",
+    "CredentialsConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/discord": [
+    "DiscordProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/email": [
+    "default:function"
+  ],
+  "denext/next-auth/providers/github": [
+    "GitHubProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/google": [
+    "GoogleProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/microsoft-entra-id": [
+    "MicrosoftEntraIDProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/nodemailer": [
+    "NodemailerUserConfig:interface",
+    "SmtpServerOptions:interface",
+    "default:function",
+    "smtpSettings:function"
+  ],
+  "denext/next-auth/providers/resend": [
+    "ResendUserConfig:interface",
+    "default:function"
+  ],
   "denext/next": [
     "IconDescriptor:interface",
     "JsonLd:typeAlias",

@@ -18,6 +18,22 @@ and this project adheres to
   flags. The fold runs on the native and next-compat App Router, SPA and React Native mode, and
   `denext dev` (per request, for the target the page names); the server render of
   `denext export --platform` and of a shell's dev session reads the same value.
+- **`next-auth` (Auth.js v5) runs on denext.** A Next app's `auth.ts` (`NextAuth(config)` →
+  `{ handlers, auth, signIn, signOut }`), its `app/api/auth/[...nextauth]` route, `auth()` in
+  Server Components, route handlers and middleware (`export { auth as middleware }`,
+  `auth(handler)`), `next-auth/react` (`SessionProvider`, `useSession`, `signIn`, `signOut`,
+  `getSession`, `getCsrfToken`, `getProviders`) and `next-auth/jwt` (`getToken`, `encode`,
+  `decode`) run unchanged, mapped onto `denextAuth`. Providers: GitHub, Google, Apple, Discord,
+  Microsoft Entra ID, Credentials, Resend, Nodemailer / Email, and custom OAuth / OIDC objects,
+  with Auth.js's `AUTH_<ID>_ID` / `_SECRET` defaults. Both session strategies: `"jwt"` seals the
+  `jwt` callback's token (AES-256-GCM) inside denext's signed cookie; `"database"` uses the
+  adapter's sessions. An Auth.js adapter (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …) is
+  bridged onto denext's adapter port. The `signIn`, `jwt`, `session`, `redirect` and `authorized`
+  callbacks run with Auth.js's arguments. denext's defaults stay: every state-changing POST needs
+  the CSRF token and a same-origin request, OAuth always uses `state` + PKCE, `callbackUrl` and
+  the `redirect` callback's answer stay on the origin, and production needs `AUTH_URL`.
+  `denext migrate` maps `next-auth` and its subpaths when the app depends on it. Differences are
+  listed in KNOWN-DIFFERENCES.md and KNOWN-LIMITATIONS.md.
 - **`denext/auth`: the auth surface as its own entry point.** `import { auth, denextAuth, github }
   from "denext/auth"` — `denextAuth()`, `auth()` and the guards (`requireAuth`, `requireSession`),
   the provider presets, the adapters and stores, bearer tokens, email verification and password

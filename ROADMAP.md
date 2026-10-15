@@ -78,10 +78,6 @@ or an upstream. Each one's limitation entry is deleted when it ships.
 - **`denext profile --android`** over remote CDP; a Skia (CanvasKit) recipe; Tamagui / Unistyles
   verification.
 
-## Auth
-
-- **A `next-auth` compat shim,** so a drop-in Next app that imports `next-auth` runs.
-
 ## React, Remix and SPA surface
 
 - **`<ViewTransition>` callbacks and the rest of its surface:** `onEnter` / `onExit` /

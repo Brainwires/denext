@@ -115,6 +115,29 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **SAML Single Logout is `/auth/v1`'s only:** a `saml()` provider on denext's own endpoints
   signs in, and its session ends with `signOut()`, not with an IdP's LogoutRequest.
 
+### `next-auth` (Auth.js v5) compat
+
+- **Providers:** GitHub, Google, Apple, Discord, Microsoft Entra ID, Credentials, Resend,
+  Nodemailer / Email, and custom OAuth / OIDC objects. Other `next-auth/providers/*` modules are
+  not shipped; write one as a custom provider object, or use the matching `denextAuth` preset.
+  WebAuthn (`next-auth/providers/passkey`) is not mapped — denext's own `passkeys` are.
+- **Per-call `authorizationParams`** (`signIn("google", {}, { prompt: "login" })`) are ignored;
+  set `authorization.params` on the provider.
+- **Lazy config:** `NextAuth((req) => config)` is called once, with no request, and must
+  return the config itself (not a promise).
+- **`pages.newUser` and `pages.signOut`** are not used.
+- **Events:** `updateUser` and `session` don't fire.
+- **Adapters:** an Auth.js adapter (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …) backs
+  users, accounts, verification tokens and database sessions. Its schema has no column for
+  denext's roles, bans, password hashes or `sessionsValidAfter`, so those features don't work
+  through it, `revokeAllSessions()` can't end its database sessions (it warns), and database
+  sessions don't slide. With an adapter, a Credentials `authorize()` must return a user of the
+  adapter's users table (by `id`), as with Auth.js; a user it doesn't know is refused.
+- **More than one email provider:** every link is sent by the first one's sender.
+- **v4 APIs** (`next-auth/next`, `getServerSession`, `next-auth/middleware`'s `withAuth`) are
+  not shipped.
+- **Not parity-gated:** the `next-auth` surface is not part of the React / Next.js parity CI gate.
+
 ### Backend (`@denext/backend`)
 
 - **Not hosted.** The stock supabase-js client works against the app (`/auth/v1`, `/rest/v1`,

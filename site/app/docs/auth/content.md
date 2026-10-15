@@ -2097,6 +2097,72 @@ A network failure, a non-JSON body or an error status from the session endpoint 
 as "signed out" rather than throwing into the tree, so the UI degrades to the logged-out
 view instead of unmounting behind an error boundary.
 
+## `next-auth` (Auth.js v5) apps
+
+A Next.js app written for Auth.js v5 runs on denext with its source unchanged. `denext migrate`
+aliases `next-auth`, `next-auth/react`, `next-auth/jwt` and `next-auth/providers/*` to denext's
+compat modules, which map Auth.js onto `denextAuth`:
+
+```ts
+// auth.ts — as written for Next.js
+import NextAuth from "next-auth";
+import GitHub from "next-auth/providers/github";
+import Credentials from "next-auth/providers/credentials";
+
+export const { handlers, auth, signIn, signOut } = NextAuth({
+  providers: [GitHub, Credentials({ authorize: async (c) => await checkPassword(c) })],
+  callbacks: {
+    jwt: ({ token, user }) => (user ? { ...token, role: user.role } : token),
+    session: ({ session, token }) => ({ ...session, role: token.role }),
+  },
+});
+
+// app/api/auth/[...nextauth]/route.ts
+import { handlers } from "@/auth";
+export const { GET, POST } = handlers;
+
+// middleware.ts
+export { auth as middleware } from "@/auth";
+```
+
+`auth()` reads the session in a Server Component, a route handler or a Server Action;
+`auth(handler)` wraps a route handler or middleware (`request.auth`); `export { auth as middleware }`
+runs `callbacks.authorized`. `next-auth/react` gives the client `SessionProvider`, `useSession`,
+`signIn`, `signOut`, `getSession`, `getCsrfToken` and `getProviders`, and `next-auth/jwt` gives
+`getToken`, `encode` and `decode`.
+
+| Auth.js                                                                        | On denext                                                                                                                                                                                                 |
+| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GitHub`, `Google`, `Apple`, `Discord`, `MicrosoftEntraID`                     | denext's presets; `clientId` / `clientSecret` (and Entra's `issuer`) default to `AUTH_<ID>_ID` / `_SECRET` / `_ISSUER`; `authorization.params`, `profile()` and `allowDangerousEmailAccountLinking` apply |
+| A custom provider object (`{ id, type: "oauth" \| "oidc", authorization, … }`) | `oauthPreset()` / `oidc()`                                                                                                                                                                                |
+| `Credentials`                                                                  | `credentials()`, plus its rate limits                                                                                                                                                                     |
+| `Resend`, `Nodemailer`, `Email`                                                | `magicLink()`; Resend's HTTP API (`AUTH_RESEND_KEY`) or `smtpMailer()` sends the link                                                                                                                     |
+| `session.strategy: "jwt"`                                                      | denext's signed cookie, the `jwt` callback's token sealed inside it (AES-256-GCM, a key derived from `AUTH_SECRET`)                                                                                       |
+| `session.strategy: "database"`                                                 | `session.strategy: "database"` on the adapter's `Session` rows                                                                                                                                            |
+| `adapter` (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …)                 | bridged onto denext's adapter port: users, accounts, sessions, verification tokens                                                                                                                        |
+| `callbacks.signIn` / `jwt` / `session` / `redirect` / `authorized`             | run with Auth.js's arguments (`account` carries the provider tokens, `profile` the raw profile)                                                                                                           |
+| `events.signIn` / `signOut` / `createUser` / `linkAccount`                     | fired from denext's events, each with `ip`                                                                                                                                                                |
+| `pages`                                                                        | `pages`; without them, plain built-in pages under `/api/auth`                                                                                                                                             |
+| `AUTH_SECRET`, `AUTH_URL`                                                      | `secret`, `canonicalOrigin` (+ `basePath` from its path)                                                                                                                                                  |
+
+denext keeps its own defaults where they are stricter, and nothing is relaxed for parity:
+
+- **CSRF.** Every state-changing POST (`signin`, `signout`, the credentials callback, `session`
+  updates) needs Auth.js's double-submit `csrfToken` **and** passes denext's same-origin check.
+  The CSRF cookie is a signed `__Host-` cookie.
+- **OAuth.** Every flow uses `state` and PKCE, plus `nonce` for OIDC, whatever a provider's
+  `checks` say. The `redirect_uri` comes from `AUTH_URL`, never the `Host` header, so production
+  needs `AUTH_URL`.
+- **Redirects.** A `callbackUrl` / `redirectTo` goes through the `redirect` callback, then is kept
+  to a same-origin path. A callback that returns another origin lands on `/`.
+- **Cookies.** The session is `__Host-denext_auth` (`Secure`, `httpOnly`, `SameSite=Lax`), with
+  no `cookies` override. A session also ends 30 days after sign-in at the latest
+  (`session.maxLifetime`), however often it slides.
+- **Email links** open a confirmation page by default; `Resend({ confirm: false })` signs in on
+  the GET, as Auth.js does.
+
+The full list is in [Differences](/docs/differences) and [Limitations](/docs/limitations).
+
 ## Password hashing
 
 `hashPassword` / `verifyPassword` (from `denext/server`) are salted **scrypt** over the

@@ -328,6 +328,51 @@ Where `@denext/backend` deliberately departs from Supabase. See
   password.** Supabase keeps a password set by an earlier unconfirmed sign-up; denext keeps only
   the one the account's own sign-up confirmation proves.
 
+## `next-auth` (Auth.js v5)
+
+The `next-auth` shim maps Auth.js onto `denextAuth`, which keeps its own, stricter defaults. Each
+place it behaves differently from Auth.js:
+
+- **CSRF is checked twice.** A `signin`, `signout`, credentials-callback or `session` POST needs
+  Auth.js's double-submit `csrfToken` and must also pass denext's same-origin check (an `Origin`
+  or `Referer` matching `AUTH_URL`, or the `Host` without one). A cross-origin POST carrying a
+  valid token is refused (`403`); Auth.js accepts it.
+- **`AUTH_URL` is required in production.** denext never derives the OAuth `redirect_uri` or its
+  origin checks from the `Host` header, so `trustHost` / `AUTH_TRUST_HOST` don't stand in for
+  it. Without `AUTH_URL` (or `NEXTAUTH_URL`) `NextAuth()` throws when serving in production.
+- **`AUTH_SECRET` must be at least 32 characters in production** (`npx auth secret` makes 44).
+- **Redirects stay on the origin.** The `redirect` callback runs, but whatever it returns is
+  kept to a same-origin path: a callback that allows another origin lands on `/` instead.
+- **Every OAuth flow uses `state` and PKCE** (and `nonce` for OIDC); a provider's `checks` are
+  ignored.
+- **The session cookie is denext's** (`__Host-denext_auth`, signed, `SameSite=Lax`), not
+  `authjs.session-token`; `cookies` and `useSecureCookies` are ignored. A token is sealed with
+  AES-256-GCM inside it, in denext's own format: `next-auth/jwt`'s `encode` / `decode` don't read
+  an Auth.js JWE (and `jwt.encode` / `jwt.decode` overrides are ignored). The cookie is not
+  chunked, so a token near 4 KB fails to set.
+- **Sessions have an absolute lifetime:** `session.maxLifetime`, 30 days after sign-in by default,
+  however often `updateAge` slides them. Auth.js extends an active session forever.
+- **Credentials sign-ins are rate limited** (per address and identifier) and answered with one
+  generic refusal; Auth.js has no limits. A thrown `CredentialsSignin` subclass's `code` is not
+  passed through: the error is always `CredentialsSignin` with `code=credentials`.
+- **`callbacks.signIn` returning a URL refuses the sign-in** and lands on the sign-in page with
+  `error=AccessDenied` (or `CredentialsSignin`), instead of redirecting to that URL.
+- **An email link opens a confirmation page by default**, so a mail scanner can't spend it;
+  `Resend({ confirm: false })` / `Nodemailer({ confirm: false })` signs in on the GET as Auth.js
+  does. `callbacks.signIn` runs once, when the link is redeemed (not at the send with
+  `email.verificationRequest`).
+- **Account linking follows denext's rules:** an OAuth account is linked to an existing user by
+  email only when both addresses are verified, unless the provider sets
+  `allowDangerousEmailAccountLinking`. A provider `profile()` override sets the session's name
+  and image and the extra fields the callbacks see as `user`; the account id and the email stay
+  the provider's own (the preset's mapping), so an override can't change which account or which
+  address a sign-in links to.
+- **The `session` endpoint and `auth()` also run `callbacks.jwt`** on every read, as Auth.js does;
+  a changed token is written back only where the response is still open (the `session` endpoint,
+  middleware, `auth(handler)` and `unstable_update()`), never from a plain `auth()` call.
+- **`session.user` includes `id`** (the token's `sub`, or the user's id).
+- **The built-in pages are plain HTML** (no `theme`), and their `?error=` codes are Auth.js's.
+
 ## Security posture — safe defaults
 
 Deliberate **safe defaults** that differ from Next's, each with a one-line

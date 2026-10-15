@@ -111,6 +111,7 @@ const DENEXT_OWNED = new Set([
   "react-is",
   "next",
   "next-intl",
+  "next-auth",
   "better-sqlite3",
   // denext provides no-op shims for these (aliased below) — never npm-pin them, or the
   // pin overwrites the alias and the throwing real package resurfaces on the native path.
@@ -290,6 +291,7 @@ async function buildAppRouterImports(
     const target = R.prefix(prefix);
     if (/^(?:file|https?):/.test(target)) imports[prefix] = target;
   }
+  await addNextAuthAliases(imports, R, deps);
   addServerClientStubs(imports, deps, jsr);
   // `/mdx` provides the type-only `mdx/types` module; MDX apps often import it at value syntax.
   if ("@types/mdx" in deps) imports["mdx/types"] = jsr("empty");
@@ -298,6 +300,23 @@ async function buildAppRouterImports(
   addMissing(imports, await collectTsPathAliases(dir));
   addMissing(imports, frameworkDepsFor(R, deps));
   return imports;
+}
+
+/**
+ * `next-auth` (Auth.js v5) and every `next-auth/*` subpath → denext's shim, mapped onto
+ * `denextAuth`, when the app depends on `next-auth` — exact entries, plus the prefix when it is a
+ * URL (see the `next/*` ones above).
+ */
+async function addNextAuthAliases(
+  imports: Record<string, string>,
+  R: DenextResolver,
+  deps: Record<string, string>,
+): Promise<void> {
+  if (!("next-auth" in deps)) return;
+  imports["next-auth"] = R.sub("next-auth");
+  for (const spec of await frameworkSubpaths(["next-auth/"])) imports[spec] = R.sub(spec);
+  const target = R.prefix("next-auth/");
+  if (/^(?:file|https?):/.test(target)) imports["next-auth/"] = target;
 }
 
 /** Add each `[key, value]` to `imports` only when the key isn't already mapped. */

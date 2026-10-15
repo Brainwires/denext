@@ -513,6 +513,33 @@ export async function refreshLiveSession(
 }
 
 /**
+ * Rewrite the current session's payload in place — same expiry, same store id — for a caller
+ * that changed its data (the `next-auth` shim's sealed token). Like a slide, a store-backed
+ * record is rewritten only if it still exists ({@link SessionStore.update}), so a session revoked
+ * in flight is never brought back. Call it only where the response is still open.
+ *
+ * @param config The app's auth config.
+ * @param session The session as read, with its new data.
+ * @returns `true` when it was written; `false` for a store record that is gone (or a store
+ *   without `update`).
+ */
+export async function replaceAuthSession(
+  config: AuthConfig,
+  session: AuthSession,
+): Promise<boolean> {
+  const options = resolveAuthOptions(config);
+  const { sessionId, ...payload } = session;
+  const cookie = await getSession<CookieData>(sessionOptions(config));
+  if (!options.sessionStore) {
+    await cookie.set(payload);
+    return true;
+  }
+  if (!sessionId || !(await rewriteStored(options, sessionId, payload))) return false;
+  await cookie.set({ sid: sessionId });
+  return true;
+}
+
+/**
  * Clear the auth session: delete the cookie and, when store-backed, the store record.
  *
  * @param config The app's auth config.
