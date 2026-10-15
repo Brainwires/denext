@@ -837,20 +837,22 @@ denext dashboard --read-only     # browse without offering any write
 denext dashboard --host 0.0.0.0 --origin https://dash.example.com   # behind a TLS proxy
 ```
 
-| Guard         | What it does                                                                                                                                                                                                                  |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Binding       | `127.0.0.1` unless `--host` says otherwise                                                                                                                                                                                    |
-| Host          | A loopback name, or the host of an `--origin` (a DNS-rebinding defence); a browser's `Sec-Fetch-Site` must be same-origin                                                                                                     |
-| Password      | `DASHBOARD_PASSWORD` from the environment, else the project's `.env`; never an argument. Under 12 characters, or unset, the dashboard is locked                                                                               |
-| Sign-in       | A same-origin form carrying the login form's own token (double-submitted through a short-lived cookie); the password compared in constant time, as two HMAC-SHA256 digests                                                    |
-| Rate limit    | 5 failed sign-ins per client address and 30 overall per 15 minutes, then `429` with `Retry-After`; while limited even the right password waits, so the limit is no oracle                                                     |
-| Session       | A fresh 256-bit id per sign-in in an `HttpOnly; Secure; SameSite=Strict` cookie, held in memory; it ends after 30 idle minutes, 12 hours, a restart, or "Sign out" (a POST)                                                   |
-| Mutations     | Every write needs the session's CSRF token and a same-origin `Origin` — the dashboard's public `--origin` behind a proxy                                                                                                      |
-| What it shows | Connection strings masked, passwords never rendered, log lines redacted; a body over 16 MB is a `413` before anything parses it. Nothing writes project files: "Enable RLS" is not offered (add the migration in the project) |
+| Guard         | What it does                                                                                                                                                                                                                                                                                |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Binding       | `127.0.0.1` unless `--host` says otherwise                                                                                                                                                                                                                                                  |
+| Host          | A loopback name, or the host of an `--origin` (a DNS-rebinding defence); a browser's `Sec-Fetch-Site` must be same-origin                                                                                                                                                                   |
+| Password      | `DASHBOARD_PASSWORD` from the environment, else the project's `.env`; never an argument. Under 12 characters, or unset, the dashboard is locked                                                                                                                                             |
+| Sign-in       | A same-origin form carrying the login form's own token (double-submitted through a short-lived cookie); the password compared in constant time, as two HMAC-SHA256 digests                                                                                                                  |
+| Rate limit    | 5 failed sign-ins per client address and 30 overall per 15 minutes, then `429` with `Retry-After`; while limited even the right password waits, so the limit is no oracle                                                                                                                   |
+| Session       | A fresh 256-bit id per sign-in, held in memory, in an `HttpOnly; SameSite=Strict` cookie — `__Host-`-named and `Secure` over https (directly or through an https `--origin`), plain on an http loopback address; it ends after 30 idle minutes, 12 hours, a restart, or "Sign out" (a POST) |
+| Mutations     | Every write needs the session's CSRF token and a same-origin `Origin` — the dashboard's public `--origin` behind a proxy                                                                                                                                                                    |
+| What it shows | Connection strings masked, passwords never rendered, log lines redacted; a body over 16 MB is a `413` before anything parses it. Nothing writes project files: "Enable RLS" is not offered (add the migration in the project)                                                               |
 
 Behind a reverse proxy, pass the Host through (nginx: `proxy_set_header Host $host;`) and
-terminate TLS there; the cookie is `Secure`, which a browser keeps on `https` and on a loopback
-address.
+terminate TLS there. Over https the session cookie is `__Host-denext_dash` with `Secure`; on a
+plain-http loopback address it is `denext_dash` without `Secure`, so no browser has to bend its
+rules for it. An `--origin` that is plain http on another host is refused at startup: the password
+would cross the network in the clear.
 
 ## Cron
 

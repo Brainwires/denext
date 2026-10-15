@@ -15,8 +15,13 @@
 //                      peer's count), and checked in constant time (HMAC-SHA256 of both values
 //                      under a per-process key, compared without an early exit). Nothing is
 //                      checked while a peer is limited, so the limit is not an oracle either.
-//   4. session       — a fresh 256-bit id per sign-in, kept in memory, in an `HttpOnly; Secure;
-//                      SameSite=Strict` cookie; it ends after 30 idle minutes or 12 hours, and at
+//   4. session       — a fresh 256-bit id per sign-in, kept in memory, in an `HttpOnly;
+//                      SameSite=Strict` cookie: `__Host-`-prefixed and `Secure` when the request
+//                      reached the dashboard over https (directly, or through a configured https
+//                      `--origin`), unprefixed and without `Secure` on a plain-http loopback
+//                      address, so no browser has to bend its rules for it. A plain-http origin on
+//                      any other host is refused at startup: the password would cross a network
+//                      in the clear. It ends after 30 idle minutes or 12 hours, and at
 //                      `POST /logout`. Its CSRF token is HMAC-SHA256(id, "csrf"), as `denext ui`'s.
 //   5. CSRF          — every mutation also passes `checkCsrf` (same-origin + the token).
 //
@@ -38,8 +43,11 @@ import {
   type UiCookie,
 } from "./security.ts";
 
-/** The session cookie. */
+/** The session cookie (on https it carries {@linkcode DASH_SECURE_PREFIX}). */
 export const DASH_COOKIE = "denext_dash";
+
+/** The prefix a cookie set over https carries: `Secure`, `Path=/`, no `Domain` — host-locked. */
+export const DASH_SECURE_PREFIX = "__Host-";
 
 /** The login form's double-submit cookie (scoped to `/login`). */
 export const DASH_LOGIN_COOKIE = "denext_dash_login";
@@ -187,6 +195,13 @@ export class DashboardGate {
       if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
         throw new Error(`denext dashboard: --origin must be an http(s) origin, got ${origin}`);
       }
+      if (parsed.protocol === "http:" && !loopbackHost(parsed.hostname)) {
+        throw new Error(
+          `denext dashboard: --origin ${parsed.origin} is plain http on a host other than this ` +
+            "machine, so the password and the session cookie would cross the network in the " +
+            "clear. Put a TLS proxy in front and pass its https origin.",
+        );
+      }
       this.#origins.set(parsed.host, parsed.origin);
     }
     this.limiter = limiter;
@@ -216,6 +231,17 @@ export class DashboardGate {
    */
   canonicalOrigin(url: URL): string {
     return this.#origins.get(url.host) ?? url.origin;
+  }
+
+  /**
+   * Whether the request reached the dashboard over https: directly, or through a configured
+   * https `--origin` for its host (a TLS proxy forwarding plain http).
+   *
+   * @param url The request URL.
+   * @returns Whether its cookies are `Secure` and `__Host-`-prefixed.
+   */
+  secure(url: URL): boolean {
+    return url.protocol === "https:" || this.canonicalOrigin(url).startsWith("https:");
   }
 
   /**
@@ -265,7 +291,8 @@ export class DashboardGate {
    * @returns The credential (`secret` is the session id), or `null`.
    */
   session(request: Request, now = Date.now()): UiCookie | null {
-    const id = readCookie(request.headers.get("cookie"), DASH_COOKIE);
+    const secure = this.secure(new URL(request.url));
+    const id = readCookie(request.headers.get("cookie"), cookieName(DASH_COOKIE, secure));
     if (id === null) return null;
     // A map lookup by the presented value: the id is 256 random bits, so a guess cannot be
     // narrowed by timing the lookup.
@@ -314,10 +341,24 @@ function readCookie(header: string | null, name: string): string | null {
   return hit === undefined ? null : hit.trim().slice(prefix.length);
 }
 
-/** A `Set-Cookie` value with the dashboard's attributes. */
-function cookie(name: string, value: string, path: string, maxAge?: number): string {
-  return `${name}=${value}; HttpOnly; Secure; SameSite=Strict; Path=${path}` +
-    (maxAge === undefined ? "" : `; Max-Age=${maxAge}`);
+/** A cookie's name: `__Host-`-prefixed over https. */
+function cookieName(name: string, secure: boolean): string {
+  return secure ? DASH_SECURE_PREFIX + name : name;
+}
+
+/**
+ * A `Set-Cookie` value with the dashboard's attributes: `HttpOnly; SameSite=Strict` always, and
+ * over https the `__Host-` name, `Secure` and `Path=/` (which the prefix requires).
+ */
+function cookie(
+  name: string,
+  value: string,
+  options: { secure: boolean; path: string; maxAge?: number },
+): string {
+  const path = options.secure ? "/" : options.path;
+  return `${cookieName(name, options.secure)}=${value}; HttpOnly;` +
+    (options.secure ? " Secure;" : "") + ` SameSite=Strict; Path=${path}` +
+    (options.maxAge === undefined ? "" : `; Max-Age=${options.maxAge}`);
 }
 
 // ── the login page ─────────────────────────────────────────────────────────
@@ -395,13 +436,17 @@ async function loginPage(
   gate: DashboardGate,
   notice: LoginNotice,
   status: number,
+  secure: boolean,
 ): Promise<Response> {
   const pre = newToken();
   const csrf = await deriveCsrf(pre);
   const html = "<!doctype html>" +
     renderView(h(LoginPage, { csrf, notice, locked: gate.locked })).__html;
   const headers = new Headers({ "content-type": "text/html; charset=utf-8" });
-  headers.append("set-cookie", cookie(DASH_LOGIN_COOKIE, pre, DASH_LOGIN_PATH, 600));
+  headers.append(
+    "set-cookie",
+    cookie(DASH_LOGIN_COOKIE, pre, { secure, path: DASH_LOGIN_PATH, maxAge: 600 }),
+  );
   return new Response(html, { status, headers });
 }
 
@@ -434,42 +479,46 @@ export async function dashboardLogin(
   url: URL,
   gate: DashboardGate,
 ): Promise<Response> {
+  const secure = gate.secure(url);
   if (request.method === "GET" || request.method === "HEAD") {
     // Already signed in: straight in.
     if (gate.session(request)) return seeOther("/database");
-    return await loginPage(gate, null, 200);
+    return await loginPage(gate, null, 200, secure);
   }
   if (request.method !== "POST") return new Response(null, { status: 405 });
   if (!verifyOrigin(request, { canonicalOrigin: gate.canonicalOrigin(url) })) {
     return new Response("forbidden origin", { status: 403 });
   }
   const form = await formOf(request);
-  const pre = readCookie(request.headers.get("cookie"), DASH_LOGIN_COOKIE);
+  const pre = readCookie(request.headers.get("cookie"), cookieName(DASH_LOGIN_COOKIE, secure));
   const presented = form?.get(UI_CSRF_FIELD);
   if (
     form === null || pre === null || typeof presented !== "string" ||
     !constantTimeEqual(presented, await deriveCsrf(pre))
   ) {
-    return await loginPage(gate, "expired", 403);
+    return await loginPage(gate, "expired", 403, secure);
   }
-  if (gate.locked) return await loginPage(gate, "locked", 503);
+  if (gate.locked) return await loginPage(gate, "locked", 503, secure);
   const peer = remoteAddrOf(request) ?? "unknown";
   const wait = gate.limiter.retryAfter(peer);
   if (wait > 0) {
-    const res = await loginPage(gate, "limited", 429);
+    const res = await loginPage(gate, "limited", 429, secure);
     res.headers.set("retry-after", String(wait));
     return res;
   }
   const password = form.get("password");
   if (typeof password !== "string" || !await gate.check(password)) {
     gate.limiter.fail(peer);
-    return await loginPage(gate, "wrong", 401);
+    return await loginPage(gate, "wrong", 401, secure);
   }
   gate.limiter.reset(peer);
   const id = await gate.open();
   const headers = new Headers({ location: "/database" });
-  headers.append("set-cookie", cookie(DASH_COOKIE, id, "/"));
-  headers.append("set-cookie", cookie(DASH_LOGIN_COOKIE, "", DASH_LOGIN_PATH, 0));
+  headers.append("set-cookie", cookie(DASH_COOKIE, id, { secure, path: "/" }));
+  headers.append(
+    "set-cookie",
+    cookie(DASH_LOGIN_COOKIE, "", { secure, path: DASH_LOGIN_PATH, maxAge: 0 }),
+  );
   return new Response(null, { status: 303, headers });
 }
 
@@ -478,12 +527,16 @@ export async function dashboardLogin(
  *
  * @param gate The dashboard's gate.
  * @param session The caller's session.
+ * @param url The request URL (whether the cookie to clear is the https one).
  * @returns The 303 to the login page, the cookie cleared.
  */
-export function dashboardLogout(gate: DashboardGate, session: UiCookie): Response {
+export function dashboardLogout(gate: DashboardGate, session: UiCookie, url: URL): Response {
   gate.close(session.secret);
   const headers = new Headers({ location: DASH_LOGIN_PATH });
-  headers.append("set-cookie", cookie(DASH_COOKIE, "", "/", 0));
+  headers.append(
+    "set-cookie",
+    cookie(DASH_COOKIE, "", { secure: gate.secure(url), path: "/", maxAge: 0 }),
+  );
   return new Response(null, { status: 303, headers });
 }
 

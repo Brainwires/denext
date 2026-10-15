@@ -88,8 +88,9 @@ export const dashboardCommand: CommandSpec = {
     "  denext dashboard --host 0.0.0.0 --origin https://dash.example.com\n" +
     "                                    Behind a TLS reverse proxy at that origin\n\n" +
     "  The password comes from DASHBOARD_PASSWORD (the environment, else the project's .env),\n" +
-    "  never from an argument. Sign-ins are rate limited; the session cookie is HttpOnly,\n" +
-    "  Secure and SameSite=Strict; every change needs a same-origin request and a CSRF token.",
+    "  never from an argument. Sign-ins are rate limited; the session cookie is HttpOnly and\n" +
+    "  SameSite=Strict (__Host- and Secure over https); every change needs a same-origin\n" +
+    "  request and a CSRF token. A plain-http --origin off this machine is refused.",
   loadsModules: false,
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   flags: [

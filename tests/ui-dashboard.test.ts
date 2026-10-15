@@ -16,7 +16,9 @@ import { startUiServer, type UiServer } from "../src/ui/server.ts";
 import {
   DASH_COOKIE,
   DASH_LOGIN_COOKIE,
+  DASH_SECURE_PREFIX,
   DashboardGate,
+  dashboardLogin,
   LoginLimiter,
 } from "../src/ui/dashboard.ts";
 import { UI_CSRF_FIELD, uiOriginAllowed } from "../src/ui/security.ts";
@@ -175,7 +177,7 @@ Deno.test("dashboard: without a session a page is sent to sign in; API and POSTs
   }
 });
 
-Deno.test("dashboard: a sign-in sets an HttpOnly, Secure, SameSite=Strict session cookie", async () => {
+Deno.test("dashboard over plain-http loopback: HttpOnly, SameSite=Strict, no Secure, no prefix", async () => {
   const d = await dashboard();
   try {
     const res = await postLogin(d, PASSWORD, await loginForm(d));
@@ -183,20 +185,116 @@ Deno.test("dashboard: a sign-in sets an HttpOnly, Secure, SameSite=Strict sessio
     assertEquals([res.status, res.headers.get("location")], [303, "/database"]);
     const set = res.headers.getSetCookie().find((c) => c.startsWith(`${DASH_COOKIE}=`))!;
     const attrs = set.split(";").map((a) => a.trim());
-    for (const attr of ["HttpOnly", "Secure", "SameSite=Strict", "Path=/"]) {
+    for (const attr of ["HttpOnly", "SameSite=Strict", "Path=/"]) {
       assert(attrs.includes(attr), `${attr} in ${set}`);
     }
+    // A browser need not bend its rules: no `Secure` on a cookie set over plain http.
+    assert(!attrs.includes("Secure"), set);
     const id = attrs[0].slice(DASH_COOKIE.length + 1);
     assert(id.length >= 43, "a 256-bit session id");
-    // The login form's own cookie is HttpOnly, Secure and Strict too, and is cleared.
+    // The login form's own cookie: HttpOnly and Strict, scoped to /login, cleared at sign-in.
     const login = (await fetch(`${d.base}/login`)).headers.getSetCookie()[0];
-    assertStringIncludes(login, "HttpOnly; Secure; SameSite=Strict; Path=/login");
+    assertStringIncludes(login, `${DASH_LOGIN_COOKIE}=`);
+    assertStringIncludes(login, "; HttpOnly; SameSite=Strict; Path=/login; Max-Age=600");
     const page = await fetch(`${d.base}/database`, { headers: { cookie: attrs[0] } });
     assertEquals(page.status, 200);
-    assertStringIncludes(await page.text(), "denext dashboard");
+    assertStringIncludes(await page.text(), "denext\u00a0dashboard");
   } finally {
     await stop(d);
   }
+});
+
+/** The `name=value` of the Set-Cookie `name` (exactly) in `res`, with its attributes. */
+function setCookie(res: Response, name: string): string[] {
+  const set = res.headers.getSetCookie().find((c) => c.startsWith(`${name}=`));
+  assert(set, `${name} set (got ${res.headers.getSetCookie().join(" | ")})`);
+  return set.split(";").map((a) => a.trim());
+}
+
+/** Sign in through `gate` at `origin` (the request URL the dashboard sees is `inner`). */
+async function signInVia(gate: DashboardGate, inner: string, origin: string, prefix: string) {
+  const form = await dashboardLogin(new Request(`${inner}/login`), new URL(`${inner}/login`), gate);
+  const pre = setCookie(form, `${prefix}${DASH_LOGIN_COOKIE}`);
+  const token = new RegExp(`name="${UI_CSRF_FIELD}" value="([^"]+)"`).exec(await form.text())![1];
+  const post = new Request(`${inner}/login`, {
+    method: "POST",
+    headers: {
+      // A server's request always has a Host; a constructed one needs it spelled out.
+      host: new URL(inner).host,
+      cookie: pre[0],
+      origin,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ [UI_CSRF_FIELD]: token, password: PASSWORD }),
+  });
+  return { pre, res: await dashboardLogin(post, new URL(`${inner}/login`), gate) };
+}
+
+Deno.test("dashboard over https, or a TLS proxy's https --origin: __Host-, Secure, Path=/", async () => {
+  // Behind a TLS proxy the dashboard sees plain http on the proxy's host; the configured
+  // https origin is what makes the cookie Secure.
+  const proxied = new DashboardGate({ password: PASSWORD, origins: ["https://dash.example.com"] });
+  for (
+    const [gate, inner, origin] of [
+      [proxied, "http://dash.example.com", "https://dash.example.com"],
+      [
+        new DashboardGate({ password: PASSWORD }),
+        "https://127.0.0.1:3100",
+        "https://127.0.0.1:3100",
+      ],
+    ] as const
+  ) {
+    const { pre, res } = await signInVia(gate, inner, origin, DASH_SECURE_PREFIX);
+    for (const attr of ["HttpOnly", "Secure", "SameSite=Strict", "Path=/"]) {
+      assert(pre.includes(attr), `${attr} in the login cookie (${inner})`);
+    }
+    assertEquals(res.status, 303, inner);
+    const session = setCookie(res, `${DASH_SECURE_PREFIX}${DASH_COOKIE}`);
+    for (const attr of ["HttpOnly", "Secure", "SameSite=Strict", "Path=/"]) {
+      assert(session.includes(attr), `${attr} in the session cookie (${inner})`);
+    }
+    assert(!session.some((a) => a.startsWith("Domain")), "a __Host- cookie names no Domain");
+    // The session is read under its secure name only.
+    const id = session[0].slice(`${DASH_SECURE_PREFIX}${DASH_COOKIE}=`.length);
+    const read = (name: string) =>
+      gate.session(new Request(`${inner}/database`, { headers: { cookie: `${name}=${id}` } }));
+    assert(read(`${DASH_SECURE_PREFIX}${DASH_COOKIE}`));
+    assertEquals(read(DASH_COOKIE), null);
+  }
+  // The same gate, reached on its loopback address over http, sets the plain cookie.
+  const { res } = await signInVia(proxied, "http://127.0.0.1:3100", "http://127.0.0.1:3100", "");
+  assert(!setCookie(res, DASH_COOKIE).includes("Secure"));
+});
+
+Deno.test("dashboard: a plain-http origin off this machine is refused at startup", async () => {
+  for (const origin of ["http://dash.example.com", "http://10.0.0.5:3100"]) {
+    let message = "";
+    try {
+      new DashboardGate({ password: PASSWORD, origins: [origin] });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    assertStringIncludes(message, "plain http", origin);
+    const dir = await Deno.makeTempDir({ prefix: "denext_dash_http_" });
+    try {
+      let refused = false;
+      try {
+        const server = await startUiServer({
+          dir,
+          port: 0,
+          dashboard: { password: PASSWORD, origins: [origin] },
+        });
+        await server.shutdown();
+      } catch {
+        refused = true;
+      }
+      assert(refused, `startUiServer refuses --origin ${origin}`);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  }
+  // A loopback http origin (an SSH tunnel to this machine, say) stays allowed.
+  new DashboardGate({ password: PASSWORD, origins: ["http://localhost:8080"] });
 });
 
 Deno.test("dashboard: a sign-in needs the login form's token and a same-origin request", async () => {

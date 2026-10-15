@@ -697,7 +697,7 @@ operates it: `health [--json] [--watch]`, `logs --level/--since/--until/--grep`,
 `--drop-old`), `backup [--full]` / `restore <file> [--yes]` (`--restart` / `--no-restart`
 after a `.env` change). Its `dashboard` service is `denext dashboard`: `denext ui`'s Database
 section (tables and rows, a SQL editor, RLS policies, storage, auth users, logs) on
-`127.0.0.1:3100` behind `DASHBOARD_PASSWORD` (rate-limited sign-in, `Secure` session cookie,
+`127.0.0.1:3100` behind `DASHBOARD_PASSWORD` (rate-limited sign-in, a `__Host-`/`Secure` session cookie over https,
 CSRF on every change); `--dashboard-logs` adds the relay its Logs page reads the stack through.
 
 **A database (zero-npm, server-only module):**

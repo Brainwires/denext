@@ -269,8 +269,8 @@ It is behind `DASHBOARD_PASSWORD`, which `denext stack up` generates into a new 
 Without one (a stack whose `.env` predates the dashboard) it stays locked and says how to set
 one. `DASHBOARD_PORT` moves the port; `--no-dashboard` on `denext generate docker` (or
 `denext stack up`) leaves it out. To reach it from another machine, put a TLS reverse proxy in
-front and add `"--origin", "https://<its host>"` to its command: the session cookie is `Secure`,
-sign-ins are rate limited, and every change needs a same-origin request and a CSRF token.
+front and add `"--origin", "https://<its host>"` to its command: over that https origin the session
+cookie is `__Host-` and `Secure` (a plain-http origin off this machine is refused), sign-ins are rate limited, and every change needs a same-origin request and a CSRF token.
 
 **Logs.** The dashboard's container has no Docker, so its Logs page reads through a relay:
 `--dashboard-logs` (opt-in) adds a `dashboard-logs` service, the only one that mounts the Docker

@@ -198,7 +198,7 @@ async function dispatchDashboard(
   const session = gate.session(request);
   if (session === null) return signInFirst(request, url);
   const route = url.pathname === DASH_LOGOUT_PATH
-    ? { methods: ["POST"], handle: () => Promise.resolve(dashboardLogout(gate, session)) }
+    ? { methods: ["POST"], handle: () => Promise.resolve(dashboardLogout(gate, session, url)) }
     : DASHBOARD_ROUTES[url.pathname];
   if (!route) return refuse(404, "not found");
   if (!route.methods.includes(request.method)) return refuse(405, "method not allowed");

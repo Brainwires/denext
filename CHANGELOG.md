@@ -139,7 +139,9 @@ and this project adheres to
   (a public origin behind a TLS proxy). A sign-in is a same-origin form carrying its own token,
   the password is compared in constant time (as two HMAC digests), and failures are rate limited
   per client address and overall. The session is an in-memory 256-bit id in an
-  `HttpOnly; Secure; SameSite=Strict` cookie that ends after 30 idle minutes or 12 hours. Every
+  `HttpOnly; SameSite=Strict` cookie (`__Host-` and `Secure` over https, directly or through an
+  https `--origin`; a plain-http `--origin` off this machine is refused at startup) that ends
+  after 30 idle minutes or 12 hours. Every
   change needs the session's CSRF token and a same-origin `Origin`, and a body over 16 MB is a
   `413`. `denext stack status` prints the dashboard's URL, and `denext stack passwd` recreates
   the dashboard's containers when a password changes.
