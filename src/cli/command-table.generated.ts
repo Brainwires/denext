@@ -38,6 +38,11 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
       "repeatable": true,
       "valueName": "<origin>",
       "help": "Also let this origin or host load the dev assets (repeatable, or comma-separated)",
+    }, {
+      "name": "raw",
+      "type": "boolean",
+      "help":
+        "Print diagnostics exactly as Deno reports them, without explanations (also DENEXT_RAW_DIAGNOSTICS=1)",
     }],
     "positionals": [{ "name": "dir", "help": "Project directory (default: .)" }],
     "loadsModules": true,
@@ -45,6 +50,12 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
   [{
     "name": "build",
     "summary": "Build for production",
+    "flags": [{
+      "name": "raw",
+      "type": "boolean",
+      "help":
+        "Print diagnostics exactly as Deno reports them, without explanations (also DENEXT_RAW_DIAGNOSTICS=1)",
+    }],
     "positionals": [{ "name": "dir", "help": "Project directory (default: .)" }],
     "loadsModules": true,
     "envTier": "production",
@@ -150,6 +161,14 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
   [{
     "name": "lint",
     "summary": "Lint the app (deno lint)",
+    "usage":
+      "Forwards to `deno lint`; each denext rule report is explained with a fix (--raw for Deno's output unchanged).",
+    "flags": [{
+      "name": "raw",
+      "type": "boolean",
+      "help":
+        "Print diagnostics exactly as Deno reports them, without explanations (also DENEXT_RAW_DIAGNOSTICS=1)",
+    }],
     "positionals": [{ "name": "paths", "help": "Files/dirs to lint (default: project)" }],
     "passthrough": true,
   }, () => importCliModule("./commands/toolchain.ts").then((m) => m.lintCommand as CommandSpec)],
@@ -163,6 +182,14 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
   [{
     "name": "check",
     "summary": "Type-check the app (deno check)",
+    "usage":
+      "Forwards to `deno check`; each type error is explained in plain language with a suggested fix, the original kept under it (--raw for Deno's output unchanged).",
+    "flags": [{
+      "name": "raw",
+      "type": "boolean",
+      "help":
+        "Print diagnostics exactly as Deno reports them, without explanations (also DENEXT_RAW_DIAGNOSTICS=1)",
+    }],
     "positionals": [{ "name": "paths", "help": "Entry files to check" }],
     "passthrough": true,
   }, () => importCliModule("./commands/toolchain.ts").then((m) => m.checkCommand as CommandSpec)],

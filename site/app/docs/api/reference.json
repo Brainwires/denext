@@ -5065,7 +5065,7 @@
           "name": "ApiTokenRevokedReason",
           "slug": "ApiTokenRevokedReason",
           "kind": "typeAlias",
-          "signature": "type ApiTokenRevokedReason = revoked | password_reset | email_verified | phone_verified",
+          "signature": "type ApiTokenRevokedReason = revoked | owner_refused | password_reset | email_verified | phone_verified",
           "doc": "Why an API token was revoked, as apiTokenRevoked reports it.",
           "docFull": "Why an API token was revoked, as `apiTokenRevoked` reports it.",
           "params": [],
@@ -5506,6 +5506,18 @@
           "denextOnly": true
         },
         {
+          "name": "BackoffOptions",
+          "slug": "BackoffOptions",
+          "kind": "interface",
+          "signature": "interface BackoffOptions",
+          "doc": "How long to wait before restart number n: initialMs, then factor times that per restart, capped at maxMs, with up to jitter of it taken off at random so restarts that failed together do not retry together.",
+          "docFull": "How long to wait before restart number `n`: `initialMs`, then `factor` times that per restart,\ncapped at `maxMs`, with up to `jitter` of it taken off at random so restarts that failed\ntogether do not retry together.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "backupCodeMatcher",
           "slug": "backupCodeMatcher",
           "kind": "function",
@@ -5564,6 +5576,87 @@
             }
           ],
           "returns": "The token, or undefined for another scheme or an empty token.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BOOT_DDL_ENV",
+          "slug": "BOOT_DDL_ENV",
+          "kind": "variable",
+          "signature": "BOOT_DDL_ENV: DENEXT_BOOT_DDL",
+          "doc": "The environment variable that turns boot-time DDL off (off, 0, false or no).",
+          "docFull": "The environment variable that turns boot-time DDL off (`off`, `0`, `false` or `no`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BOOT_SCHEMA_MISSING",
+          "slug": "BOOT_SCHEMA_MISSING",
+          "kind": "variable",
+          "signature": "BOOT_SCHEMA_MISSING: boot_schema_missing",
+          "doc": "The code a BootSchemaError carries.",
+          "docFull": "The `code` a {@linkcode BootSchemaError} carries.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "bootDdlEnabled",
+          "slug": "bootDdlEnabled",
+          "kind": "function",
+          "signature": "bootDdlEnabled(): boolean",
+          "doc": "Whether denext's Postgres features may create their own schema (DENEXT_BOOT_DDL is not off / 0 / false / no). Read on every call.",
+          "docFull": "Whether denext's Postgres features may create their own schema (`DENEXT_BOOT_DDL` is not\n`off` / `0` / `false` / `no`). Read on every call.",
+          "params": [],
+          "returns": "true unless boot-time DDL is turned off.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "bootMigrate",
+          "slug": "bootMigrate",
+          "kind": "function",
+          "signature": "bootMigrate(sql: SqlClient, options: BootMigrateOptions): Promise<void>",
+          "doc": "Bring a feature's schema up at startup or first use. With boot-time DDL on, apply the pending migrations (the server's NOTICEs silenced) and print one line when any were applied. With it off, apply nothing: throw a BootSchemaError unless every migration is recorded.",
+          "docFull": "Bring a feature's schema up at startup or first use. With boot-time DDL on, apply the pending\nmigrations (the server's `NOTICE`s silenced) and print one line when any were applied. With it\noff, apply nothing: throw a {@linkcode BootSchemaError} unless every migration is recorded.",
+          "params": [
+            {
+              "name": "sql",
+              "doc": "The client."
+            },
+            {
+              "name": "options",
+              "doc": "The migrations, their tracking table, and the feature."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BootMigrateOptions",
+          "slug": "BootMigrateOptions",
+          "kind": "interface",
+          "signature": "interface BootMigrateOptions",
+          "doc": "Options for bootMigrate: the migrations and their tracking table, and who asks.",
+          "docFull": "Options for {@linkcode bootMigrate}: the migrations and their tracking table, and who asks.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BootSchemaError",
+          "slug": "BootSchemaError",
+          "kind": "class",
+          "signature": "class BootSchemaError",
+          "doc": "Why a feature can't start with boot-time DDL off: its schema is not (all) there.",
+          "docFull": "Why a feature can't start with boot-time DDL off: its schema is not (all) there.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -5950,6 +6043,30 @@
           "denextOnly": true
         },
         {
+          "name": "ChannelPublisher",
+          "slug": "ChannelPublisher",
+          "kind": "typeAlias",
+          "signature": "type ChannelPublisher<T> = (ctx: ChannelPublisherContext<T>) => unknown",
+          "doc": "A supervised per-key producer (ChannelConfig.publisher).",
+          "docFull": "A supervised per-key producer ({@linkcode ChannelConfig.publisher}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelPublisherContext",
+          "slug": "ChannelPublisherContext",
+          "kind": "interface",
+          "signature": "interface ChannelPublisherContext<T>",
+          "doc": "What a ChannelConfig.publisher receives.",
+          "docFull": "What a {@linkcode ChannelConfig.publisher} receives.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ChannelRef",
           "slug": "ChannelRef",
           "kind": "interface",
@@ -5980,6 +6097,18 @@
           "signature": "interface ChannelTransport",
           "doc": "Carries ChannelEvents to every hub that should deliver them (across instances).",
           "docFull": "Carries {@link ChannelEvent}s to every hub that should deliver them (across instances).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChildStatus",
+          "slug": "ChildStatus",
+          "kind": "interface",
+          "signature": "interface ChildStatus",
+          "doc": "One child's status.",
+          "docFull": "One child's status.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6550,6 +6679,23 @@
           "docFull": "Define a scheduled/background job. Validates any declared `schedule` up front (throws on a\nmalformed cron expression). Place the result as the default export of a `jobs/<name>.ts` file,\nor register it programmatically with {@linkcode registerJob}.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "defineService",
+          "slug": "defineService",
+          "kind": "function",
+          "signature": "defineService(def: ServiceDefinition): Service",
+          "doc": "Define a supervised service: a long-lived piece of server work (a queue consumer, a socket to an upstream, a cache warmer) that a supervisor starts, restarts when it crashes, and stops on shutdown. Default-export it from services/<name>.ts, or pass it to supervise.",
+          "docFull": "Define a supervised service: a long-lived piece of server work (a queue consumer, a socket to\nan upstream, a cache warmer) that a supervisor starts, restarts when it crashes, and stops on\nshutdown. Default-export it from `services/<name>.ts`, or pass it to {@linkcode supervise}.",
+          "params": [
+            {
+              "name": "def",
+              "doc": "start(ctx) (its promise is the service's life), and optionally stop(), restart, shutdownMs and name."
+            }
+          ],
+          "returns": "The service.",
           "examples": [],
           "denextOnly": true
         },
@@ -8591,6 +8737,18 @@
           "denextOnly": true
         },
         {
+          "name": "isService",
+          "slug": "isService",
+          "kind": "function",
+          "signature": "isService(value: unknown): value is Service",
+          "doc": "True if value came from defineService.",
+          "docFull": "True if `value` came from {@linkcode defineService}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "issueApiToken",
           "slug": "issueApiToken",
           "kind": "function",
@@ -8630,6 +8788,18 @@
           "signature": "interface IssuedApiToken",
           "doc": "What issueApiToken returns: the plaintext (once) plus the stored record.",
           "docFull": "What {@linkcode issueApiToken} returns: the plaintext (once) plus the stored record.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "isSupervisor",
+          "slug": "isSupervisor",
+          "kind": "function",
+          "signature": "isSupervisor(value: unknown): value is Supervisor",
+          "doc": "True if value came from supervise.",
+          "docFull": "True if `value` came from {@linkcode supervise}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -8848,6 +9018,27 @@
           "docFull": "Scheduled/background job behaviour ({@link DenextConfig.jobs}).",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "jobService",
+          "slug": "jobService",
+          "kind": "function",
+          "signature": "jobService(job: string, options?: ServiceAdapterOptions & object): Service",
+          "doc": "Supervise a job: a jobs/<name>.ts job whose handler is a long-running loop (a queue consumer, a change-feed tail) runs as a service. Its handler's signal aborts when the service stops; a throw (after the job's own retry, if any) is a crash.",
+          "docFull": "Supervise a job: a `jobs/<name>.ts` job whose handler is a long-running loop (a queue\nconsumer, a change-feed tail) runs as a service. Its handler's `signal` aborts when the service\nstops; a throw (after the job's own `retry`, if any) is a crash.",
+          "params": [
+            {
+              "name": "job",
+              "doc": "The job's registered name."
+            },
+            {
+              "name": "options",
+              "doc": "payload for the handler, plus the service options (name default job:<job>)."
+            }
+          ],
+          "returns": "The service.",
           "examples": [],
           "denextOnly": true
         },
@@ -9621,6 +9812,18 @@
           "denextOnly": true
         },
         {
+          "name": "MigrationLockOptions",
+          "slug": "MigrationLockOptions",
+          "kind": "interface",
+          "signature": "interface MigrationLockOptions",
+          "doc": "Options for withMigrationLock: which runner's lock to take.",
+          "docFull": "Options for {@linkcode withMigrationLock}: which runner's lock to take.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "MigrationState",
           "slug": "MigrationState",
           "kind": "interface",
@@ -10002,6 +10205,18 @@
           "signature": "type OnRequestError = (error: unknown, request: InstrumentationRequest, context: RequestErrorContext) => void | Promise<void>",
           "doc": "The onRequestError export: report a server-side request error.",
           "docFull": "The `onRequestError` export: report a server-side request error.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "OnServiceError",
+          "slug": "OnServiceError",
+          "kind": "typeAlias",
+          "signature": "type OnServiceError = (error: unknown, context: ServiceErrorContext) => void | Promise<void>",
+          "doc": "The onServiceError export (a denext extension, shaped like onRequestError): a top-level supervisor exceeded its restart intensity, stopped its children and failed. Report it the way a request error is reported. A throw from it is logged and swallowed.",
+          "docFull": "The `onServiceError` export (a denext extension, shaped like `onRequestError`): a top-level\nsupervisor exceeded its restart intensity, stopped its children and failed. Report it the way a\nrequest error is reported. A throw from it is logged and swallowed.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11251,6 +11466,23 @@
           "denextOnly": true
         },
         {
+          "name": "registerBootCheck",
+          "slug": "registerBootCheck",
+          "kind": "function",
+          "signature": "registerBootCheck(check: () => Promise<void>): void",
+          "doc": "With boot-time DDL off, register a feature's schema check for the server's startup (verifyBootSchemas); a no-op with it on. Each check runs once.",
+          "docFull": "With boot-time DDL off, register a feature's schema check for the server's startup\n({@linkcode verifyBootSchemas}); a no-op with it on. Each check runs once.",
+          "params": [
+            {
+              "name": "check",
+              "doc": "Resolves when the schema is in place; rejects (a BootSchemaError) when it is not."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "registerCacheLifeProfiles",
           "slug": "registerCacheLifeProfiles",
           "kind": "function",
@@ -11797,12 +12029,36 @@
           "denextOnly": true
         },
         {
+          "name": "ResolvedBackoff",
+          "slug": "ResolvedBackoff",
+          "kind": "interface",
+          "signature": "interface ResolvedBackoff",
+          "doc": "A validated BackoffOptions: every field present.",
+          "docFull": "A validated {@link BackoffOptions}: every field present.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ResolvedMetadata",
           "slug": "ResolvedMetadata",
           "kind": "typeAlias",
           "signature": "type ResolvedMetadata = Metadata",
           "doc": "The merged metadata of the segments ABOVE the current one (what parent resolves to).",
           "docFull": "The merged metadata of the segments ABOVE the current one (what `parent` resolves to).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ResolvedRestart",
+          "slug": "ResolvedRestart",
+          "kind": "interface",
+          "signature": "interface ResolvedRestart",
+          "doc": "A validated RestartOptions.",
+          "docFull": "A validated {@link RestartOptions}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11881,6 +12137,30 @@
           "signature": "type ResolvingViewport = Promise<Viewport>",
           "doc": "Next.js ResolvingViewport: the parent segments' merged viewport, awaitable.",
           "docFull": "Next.js `ResolvingViewport`: the parent segments' merged viewport, awaitable.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RestartOptions",
+          "slug": "RestartOptions",
+          "kind": "interface",
+          "signature": "interface RestartOptions",
+          "doc": "A restart policy for one piece of work (a Live subscription's resolver, a channel publisher).",
+          "docFull": "A restart policy for one piece of work (a Live subscription's resolver, a channel publisher).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RestartPolicy",
+          "slug": "RestartPolicy",
+          "kind": "typeAlias",
+          "signature": "type RestartPolicy = always | crash | never",
+          "doc": "When a child that ended is started again: \"always\" (even after a clean exit), \"crash\" (only after it threw — the default), or \"never\" (it stays failed / stopped).",
+          "docFull": "When a child that ended is started again: `\"always\"` (even after a clean exit), `\"crash\"`\n(only after it threw — the default), or `\"never\"` (it stays `failed` / `stopped`).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -12791,6 +13071,66 @@
           "denextOnly": true
         },
         {
+          "name": "Service",
+          "slug": "Service",
+          "kind": "interface",
+          "signature": "interface Service",
+          "doc": "A service: returned by defineService; the shape a services/ file default-exports.",
+          "docFull": "A service: returned by {@linkcode defineService}; the shape a `services/` file default-exports.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ServiceAdapterOptions",
+          "slug": "ServiceAdapterOptions",
+          "kind": "interface",
+          "signature": "interface ServiceAdapterOptions",
+          "doc": "Options shared by the adapters that turn existing primitives into services.",
+          "docFull": "Options shared by the adapters that turn existing primitives into services.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ServiceContext",
+          "slug": "ServiceContext",
+          "kind": "interface",
+          "signature": "interface ServiceContext",
+          "doc": "What a service's start receives.",
+          "docFull": "What a service's `start` receives.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ServiceDefinition",
+          "slug": "ServiceDefinition",
+          "kind": "interface",
+          "signature": "interface ServiceDefinition",
+          "doc": "A service definition passed to defineService.",
+          "docFull": "A service definition passed to {@linkcode defineService}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ServiceErrorContext",
+          "slug": "ServiceErrorContext",
+          "kind": "interface",
+          "signature": "interface ServiceErrorContext",
+          "doc": "Where a supervision failure happened (OnServiceError).",
+          "docFull": "Where a supervision failure happened ({@linkcode OnServiceError}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Session",
           "slug": "Session",
           "kind": "interface",
@@ -12891,6 +13231,27 @@
             }
           ],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "sidecarService",
+          "slug": "sidecarService",
+          "kind": "function",
+          "signature": "sidecarService(sidecar: SupervisableSidecar, options?: ServiceAdapterOptions): Service",
+          "doc": "Supervise a Deno Desktop sidecar (app.sidecar(name) from runDesktop). The sidecar keeps its own restart-with-backoff; the supervisor steps in once that gives up (failed): it counts as a crash, so the strategy and intensity apply, and a restart starts it with a fresh attempt count.",
+          "docFull": "Supervise a Deno Desktop sidecar (`app.sidecar(name)` from `runDesktop`). The sidecar keeps its\nown restart-with-backoff; the supervisor steps in once that gives up (`failed`): it counts as a\ncrash, so the strategy and intensity apply, and a restart starts it with a fresh attempt count.",
+          "params": [
+            {
+              "name": "sidecar",
+              "doc": "The handle."
+            },
+            {
+              "name": "options",
+              "doc": "The service options (name default sidecar:<name>)."
+            }
+          ],
+          "returns": "The service.",
           "examples": [],
           "denextOnly": true
         },
@@ -13740,6 +14101,143 @@
           "signature": "interface SupabaseSigningKey",
           "doc": "One ES256 key: its id, the private key (signing) and the public JWK (JWKS + verifying).",
           "docFull": "One ES256 key: its id, the private key (signing) and the public JWK (JWKS + verifying).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SupervisableSidecar",
+          "slug": "SupervisableSidecar",
+          "kind": "interface",
+          "signature": "interface SupervisableSidecar",
+          "doc": "The part of a Deno Desktop sidecar handle (sidecarService) a supervisor uses.",
+          "docFull": "The part of a Deno Desktop sidecar handle ({@linkcode sidecarService}) a supervisor uses.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "supervise",
+          "slug": "supervise",
+          "kind": "function",
+          "signature": "supervise(options: SuperviseOptions): Supervisor",
+          "doc": "Create a supervisor: it starts its children in order, restarts a crashed one with exponential backoff (and, per strategy, the siblings that depend on it), gives up after more than intensity restarts within period — failing to its own supervisor, or at the top to the app's error reporting — and stops them in reverse order on shutdown.",
+          "docFull": "Create a supervisor: it starts its children in order, restarts a crashed one with exponential\nbackoff (and, per `strategy`, the siblings that depend on it), gives up after more than\n`intensity` restarts within `period` — failing to its own supervisor, or at the top to the\napp's error reporting — and stops them in reverse order on shutdown.\n\nRestart semantics, not isolation: children share the process, the heap and the event loop.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The children and the policy."
+            }
+          ],
+          "returns": "The supervisor (call start(), or nest it in another supervisor's children).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SuperviseOptions",
+          "slug": "SuperviseOptions",
+          "kind": "interface",
+          "signature": "interface SuperviseOptions",
+          "doc": "The options of supervise.",
+          "docFull": "The options of {@linkcode supervise}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SupervisionEvent",
+          "slug": "SupervisionEvent",
+          "kind": "interface",
+          "signature": "interface SupervisionEvent",
+          "doc": "One thing that happened to a supervised piece of work, for logs and onEvent.",
+          "docFull": "One thing that happened to a supervised piece of work, for logs and `onEvent`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SupervisionLog",
+          "slug": "SupervisionLog",
+          "kind": "typeAlias",
+          "signature": "type SupervisionLog = (event: SupervisionEvent) => void",
+          "doc": "A sink for SupervisionEvents.",
+          "docFull": "A sink for {@link SupervisionEvent}s.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SupervisionState",
+          "slug": "SupervisionState",
+          "kind": "typeAlias",
+          "signature": "type SupervisionState = idle | running | restarting | stopping | stopped | failed",
+          "doc": "Where a child or supervisor is in its life.",
+          "docFull": "Where a child or supervisor is in its life.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "supervisionStatus",
+          "slug": "supervisionStatus",
+          "kind": "function",
+          "signature": "supervisionStatus(): SupervisorStatus[]",
+          "doc": "The status of every started top-level supervisor (the services/ tree among them), each with its children: state (running, restarting, failed, …), restart counts, the last error.",
+          "docFull": "The status of every started top-level supervisor (the `services/` tree among them), each with\nits children: state (`running`, `restarting`, `failed`, …), restart counts, the last error.",
+          "params": [],
+          "returns": "One snapshot per top-level supervisor, in start order.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SupervisionStrategy",
+          "slug": "SupervisionStrategy",
+          "kind": "typeAlias",
+          "signature": "type SupervisionStrategy = one_for_one | one_for_all | rest_for_one",
+          "doc": "Which children restart when one crashes: \"one_for_one\" restarts just that child, \"one_for_all\" stops every other child and restarts them all, \"rest_for_one\" restarts it and every child started after it (they may depend on it).",
+          "docFull": "Which children restart when one crashes: `\"one_for_one\"` restarts just that child,\n`\"one_for_all\"` stops every other child and restarts them all, `\"rest_for_one\"` restarts it\nand every child started after it (they may depend on it).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Supervisor",
+          "slug": "Supervisor",
+          "kind": "interface",
+          "signature": "interface Supervisor",
+          "doc": "A supervisor: returned by supervise; nest it as another supervisor's child.",
+          "docFull": "A supervisor: returned by {@linkcode supervise}; nest it as another supervisor's child.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SupervisorError",
+          "slug": "SupervisorError",
+          "kind": "class",
+          "signature": "class SupervisorError",
+          "doc": "Thrown (as done's rejection, and to onError) when a supervisor exceeds its intensity.",
+          "docFull": "Thrown (as `done`'s rejection, and to `onError`) when a supervisor exceeds its intensity.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SupervisorStatus",
+          "slug": "SupervisorStatus",
+          "kind": "interface",
+          "signature": "interface SupervisorStatus",
+          "doc": "A supervisor's status: its own, plus its children's, in start order.",
+          "docFull": "A supervisor's status: its own, plus its children's, in start order.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -14667,6 +15165,31 @@
           "docFull": "Merge extra headers into a response (returning a new Response if needed).",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "withMigrationLock",
+          "slug": "withMigrationLock",
+          "kind": "function",
+          "signature": "withMigrationLock<T>(sql: SqlClient, options: MigrationLockOptions, fn: (tx: SqlClient) => Promise<T>): Promise<T>",
+          "doc": "Run fn in a transaction holding the same advisory lock migratePostgres takes for the tracking table options names, so DDL that is not a recorded migration (a trigger created at startup, say) never races a migration run, or another instance doing the same. The lock is held until the transaction ends.",
+          "docFull": "Run `fn` in a transaction holding the same advisory lock {@linkcode migratePostgres} takes\nfor the tracking table `options` names, so DDL that is not a recorded migration (a trigger\ncreated at startup, say) never races a migration run, or another instance doing the same.\nThe lock is held until the transaction ends.",
+          "params": [
+            {
+              "name": "sql",
+              "doc": "The client."
+            },
+            {
+              "name": "options",
+              "doc": "The tracking table (and its schema) whose runner's lock to take."
+            },
+            {
+              "name": "fn",
+              "doc": "The work, on the transaction's client."
+            }
+          ],
+          "returns": "What fn returned.",
           "examples": [],
           "denextOnly": true
         }
