@@ -58,7 +58,7 @@ done
 # tests/docs-generated.test.ts). When the commit stages any input, regenerate both and stage them.
 # Only then, so every other commit stays fast.
 if git diff --cached --name-only --diff-filter=ACMDR \
-  | grep -Eq '^(site/app/docs/|AGENTS\.md$|[^/]+\.md$|examples/[^/]+/README\.md$|site/lib/examples\.ts$|site/lib/markdown\.ts$|scripts/(gen-docs-corpus|gen-llms-txt)\.ts$|scripts/lib/docs-corpus\.ts$|src/mcp/(guide|tools)\.ts$)'; then
+  | grep -Eq '^(site/app/docs/|AGENTS\.md$|[^/]+\.md$|examples/[^/]+/README\.md$|site/lib/examples\.ts$|site/lib/markdown\.ts$|site/components/ui\.tsx$|scripts/(gen-docs-corpus|gen-llms-txt)\.ts$|scripts/lib/docs-corpus\.ts$|src/mcp/(guide|tools)\.ts$)'; then
   "$DENO" task docs:corpus
   "$DENO" task docs:llms
   git add -- src/mcp/docs-corpus.ts site/public/llms.txt site/public/llms-full.txt
