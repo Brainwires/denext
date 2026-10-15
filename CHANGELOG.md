@@ -432,6 +432,12 @@ and this project adheres to
 
 ### Fixed
 
+- **A library importing `react-dom/static`, `next/head`, `@remix-run/deno` or
+  `@remix-run/css-bundle` resolves to denext like an app's own import.** `react-dom/static` used
+  to fall back to the base `react-dom` runtime with a build warning and `next/head` loaded the
+  real `next` package from `node_modules`; both now resolve to denext's compat modules (`next/head`
+  for `node_modules` importers only, as `next/router`: an app's own is the Pages Router
+  plugin's). The Remix migration's import map now carries the two Remix packages it left out.
 - **`denext start` (and a `denext build --compile` binary) exits by the drain deadline after
   SIGTERM, even with an open handle.** An app-owned database pool (postgres.js), a timer or a
   socket kept the event loop alive after the drain, so the process never exited until the

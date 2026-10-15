@@ -112,6 +112,7 @@ export const REACT_ALIASES: Record<string, string> = {
   "react-dom/server": "react-dom-server.js",
   "react-dom/server.browser": "react-dom-server.js",
   "react-dom/server.edge": "react-dom-server.js",
+  "react-dom/static": "react-dom-server.js",
   "react-dom/test-utils": "react-dom-test-utils.js",
   "react-is": "react-is.js",
   "react/jsx-runtime": "jsx-runtime.js",
@@ -161,6 +162,8 @@ export const NEXT_ALIASES: Record<string, string> = {
   "next/compat/router": "next-compat-router.js",
   "next/router": "next-router.js",
   "next/form": "next-form.js",
+  // The Pages Router `Head` (a library written for both routers imports it); LIBRARY_ONLY_NEXT.
+  "next/head": "next-head.js",
   "next/font/google": "next-font-google.js",
   "next/font/local": "next-font-local.js",
   // Server-facing surfaces. Safe to include now that the OG/image optimizers
@@ -175,7 +178,11 @@ export const NEXT_ALIASES: Record<string, string> = {
 };
 
 /** {@link NEXT_ALIASES} entries applied to imports from `node_modules` only. */
-const LIBRARY_ONLY_NEXT: ReadonlySet<string> = new Set(["next/router", "next/compat/router"]);
+const LIBRARY_ONLY_NEXT: ReadonlySet<string> = new Set([
+  "next/router",
+  "next/compat/router",
+  "next/head",
+]);
 
 /**
  * The `next/*` alias key for an import specifier as libraries actually write it. Packages
@@ -291,7 +298,7 @@ function compatRuntimeEntries(u: EntryUrl): Record<string, string> {
     "next-intl": u("src/compat/next-intl/index.ts"),
     "next-intl-navigation": u("src/compat/next-intl/navigation.ts"),
     "next-intl-routing": u("src/compat/next-intl/routing.ts"),
-    // `denext/next/head` (the bare `next/head` stays the Pages Router plugin's).
+    // `next/head` for libraries (the app's own stays the Pages Router plugin's).
     "next-head": u("src/compat/next/head.ts"),
     // The empty module behind the runtime-free subpaths (`denext/client-only`,
     // `denext/empty`, the type-only `denext/jsx-directives`).
@@ -756,7 +763,7 @@ async function denextExternalPlugin(): Promise<esbuild.Plugin> {
  * Resolve a react-family specifier to its denext runtime file — **never** to the
  * real npm React (which would instantiate a second React alongside denext's). A
  * mapped specifier ({@link REACT_ALIASES}) resolves directly; an unmapped subpath
- * (e.g. `react/experimental`, `react-dom/static`) fails **safe** to the base
+ * (e.g. `react/experimental`) fails **safe** to the base
  * `react`/`react-dom` runtime and returns a `warning` so the gap surfaces at build
  * time rather than silently loading real React. Exported for testing.
  *
@@ -819,9 +826,7 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   // denext's own spellings of the React and Next.js compat modules (`denext/react`,
   // `denext/next/link`), which a migrated app's import map points `react` / `next/*` at.
   ...prefixedAliases(REACT_ALIASES),
-  "denext/react-dom/static": "react-dom-server.js",
   ...prefixedAliases(NEXT_ALIASES),
-  "denext/next/head": "next-head.js",
   "denext/jsx-runtime": "jsx-runtime.js",
   "denext/jsx-dev-runtime": "jsx-runtime.js",
   "denext/compiler-runtime": "compiler-runtime.js",

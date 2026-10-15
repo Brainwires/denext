@@ -21,6 +21,7 @@ export const REACT_FAMILY_SPECIFIERS = [
   "react-dom/server",
   "react-dom/server.browser",
   "react-dom/server.edge",
+  "react-dom/static",
   "react-dom/test-utils",
   "react/jsx-runtime",
   "react/jsx-dev-runtime",
