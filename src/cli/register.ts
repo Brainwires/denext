@@ -27,6 +27,7 @@ import { patchCommand } from "./commands/patch.ts";
 import { mcpCommand } from "./commands/mcp.ts";
 import { uiCommand } from "./commands/ui.ts";
 import { dbAdminCommand } from "./commands/db-admin.ts";
+import { dashboardCommand, dashboardLogsCommand } from "./commands/dashboard.ts";
 import { dbCommand } from "./commands/db.ts";
 import { migrationCommand } from "./commands/migration.ts";
 import { stackCommand } from "./commands/stack.ts";
@@ -88,6 +89,9 @@ export function buildRegistry(): CommandRegistry {
   reg.register(uiCommand);
   // Its Database section's child process (hidden: a protocol, not a command to type).
   reg.register(dbAdminCommand);
+  // The stack's dashboard (that Database section behind DASHBOARD_PASSWORD) and its log relay.
+  reg.register(dashboardCommand);
+  reg.register(dashboardLogsCommand);
   // AI-agent tooling (MCP server over stdio).
   reg.register(mcpCommand);
   // Both bound to the assembled registry, so they enumerate the real verb set: `commands`

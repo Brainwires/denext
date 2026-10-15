@@ -35,6 +35,34 @@ export const DB_DOWNLOAD_MAX_BYTES = 10 * 1024 * 1024;
 /** Objects per page of the storage browser. */
 export const DB_OBJECTS_PAGE = 50;
 
+/** The largest object the storage browser uploads through the UI. */
+export const DB_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+
+/** The longest the SQL editor's statement may run, in ms. */
+export const DB_SQL_TIMEOUT_MS = 30_000;
+
+/** The longest text the SQL editor runs. */
+export const DB_SQL_MAX_CHARS = 100_000;
+
+/** The most result rows the SQL editor shows (the rest are counted, not sent). */
+export const DB_SQL_MAX_ROWS = 500;
+
+/** The ban lengths the Users page offers, in seconds ("until unbanned" is a century). */
+export const DB_BAN_DURATIONS: readonly { readonly seconds: number; readonly label: string }[] = [
+  { seconds: 3_600, label: "1 hour" },
+  { seconds: 86_400, label: "24 hours" },
+  { seconds: 7 * 86_400, label: "7 days" },
+  { seconds: 30 * 86_400, label: "30 days" },
+  { seconds: 365 * 86_400, label: "1 year" },
+  { seconds: 100 * 365 * 86_400, label: "Until unbanned" },
+];
+
+/** The shortest password the Users page sets (denext auth's own minimum). */
+export const DB_MIN_PASSWORD = 8;
+
+/** The longest password the Users page sets (denext auth's own maximum). */
+export const DB_MAX_PASSWORD = 1024;
+
 /** Who a read runs as: the service role (no row-level security), `anon`, or a user. */
 export type DbActor =
   | { readonly kind: "service" }
@@ -95,13 +123,47 @@ export type DbRequest =
     readonly key: string;
     readonly confirm: boolean;
   }
+  | {
+    readonly op: "upload";
+    readonly bucket: string;
+    readonly key: string;
+    /** The bytes, base64 (at most {@linkcode DB_UPLOAD_MAX_BYTES} decoded). */
+    readonly base64: string;
+    readonly contentType?: string;
+    /** Replace an object already at `key` (otherwise that is refused). */
+    readonly upsert: boolean;
+  }
   | { readonly op: "users"; readonly after?: string; readonly query?: string }
+  | { readonly op: "user"; readonly id: string }
   | {
     readonly op: "userAction";
-    readonly action: "revoke" | "delete";
+    readonly action: DbUserAction;
     readonly id: string;
+    /** `ban`: how long, in seconds (one of {@linkcode DB_BAN_DURATIONS}). */
+    readonly seconds?: number;
+    /** `password`: the new password (never echoed back; its hash is masked in previews). */
+    readonly password?: string;
     readonly confirm: boolean;
+  }
+  | {
+    readonly op: "createUser";
+    readonly email: string;
+    readonly name?: string;
+    /** A password to sign in with; absent: the user signs in another way (a link, OAuth). */
+    readonly password?: string;
+    /** Mark the email verified (an admin vouches for it). */
+    readonly verified: boolean;
+  }
+  | {
+    readonly op: "sql";
+    /** The statement(s), run as the connecting role — the editor is admin-only by design. */
+    readonly text: string;
+    /** `read`: a `READ ONLY` transaction; `write`: one that commits. */
+    readonly mode: "read" | "write";
   };
+
+/** What the Users page can do to one user. */
+export type DbUserAction = "revoke" | "delete" | "ban" | "unban" | "password";
 
 /** What the child is told besides the operation. */
 export interface DbEnvelope {
@@ -240,6 +302,8 @@ export interface DbAuthUser {
   readonly mfa: boolean;
   /** Registered passkeys. */
   readonly passkeys: number;
+  /** Banned until (epoch seconds), when a ban is in force. */
+  readonly bannedUntil?: number | null;
 }
 
 /** One migration's state. */
@@ -309,10 +373,34 @@ export interface DbReplies {
   download: { key: string; contentType: string; size: number; base64: string };
   /** `removeObject`. */
   removeObject: { bucket: string; key: string; applied: boolean };
+  /** `upload`. */
+  upload: { bucket: string; key: string; size: number };
   /** `users`. */
   users: { schema: string | null; users: DbAuthUser[]; next?: string };
+  /** `user`. */
+  user: { schema: string | null; user: DbAuthUser | null };
   /** `userAction`. */
   userAction: { statements: DbStatement[]; applied: boolean };
+  /** `createUser`. */
+  createUser: { id: string; statements: DbStatement[] };
+  /** `sql`. */
+  sql: DbSqlResult;
+}
+
+/** What the SQL editor shows: the last statement's rows, as text. */
+export interface DbSqlResult {
+  /** The transaction it ran in. */
+  readonly mode: "read" | "write";
+  /** The result's column names (empty when it returned no rows). */
+  readonly columns: string[];
+  /** Up to {@linkcode DB_SQL_MAX_ROWS} rows, each a list of values as text (or `null`). */
+  readonly cells: (string | null)[][];
+  /** How many rows it returned in all. */
+  readonly rowCount: number;
+  /** True when rows were cut at {@linkcode DB_SQL_MAX_ROWS}. */
+  readonly truncated: boolean;
+  /** How long it took, in ms. */
+  readonly ms: number;
 }
 
 /** A successful answer to `op`. */

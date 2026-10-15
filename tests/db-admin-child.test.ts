@@ -19,6 +19,8 @@ import {
   openConnection,
 } from "../src/cli/db-admin/connection.ts";
 import type { DbFailure, DbReplies, DbReply, DbRequest } from "../src/ui/database/protocol.ts";
+import { DB_SQL_MAX_ROWS } from "../src/ui/database/protocol.ts";
+import { verifyPassword } from "../src/server/auth/password.ts";
 
 /** One recorded statement. */
 interface Sent {
@@ -416,6 +418,7 @@ Deno.test("users: counts sessions, MFA and passkeys; revoke and delete preview t
     sessions: 2,
     mfa: true,
     passkeys: 1,
+    bannedUntil: null,
   });
   const query = sent.find((s) => s.text.includes('"auth_users" u'))!;
   assertEquals(query.params, ["%a\\%\\_%"]);
@@ -681,6 +684,379 @@ Deno.test("storage: the plugin's admin hooks — runtime buckets, removal throug
     assertEquals([viaAdmin, removed], [["runtime/a.txt"], []]);
     const unknown = await ask(sql, { op: "objects", bucket: "nope" });
     assertEquals((unknown as DbFailure).code, "not_found");
+  } finally {
+    restore();
+  }
+});
+
+// ── the dashboard's operations: the SQL editor, user administration, upload ──
+
+/** The `auth_users` columns of a current auth schema (`banned_until`, …), or older ones. */
+function userColumns(columns = [
+  "id",
+  "email",
+  "email_lc",
+  "email_verified",
+  "name",
+  "roles",
+  "created_at",
+  "updated_at",
+  "banned_until",
+  "sessions_valid_after",
+]): Rule {
+  return [/a.attname AS name FROM pg_attribute a/, () => columns.map((name) => ({ name }))];
+}
+
+/** The auth tables, `auth_credentials` included. */
+const AUTH_TABLES: Rule = [
+  /LIKE 'auth\\_%'/,
+  () =>
+    ["auth_users", "auth_credentials", "auth_sessions", "auth_native_sessions"].map((name) => ({
+      name,
+    })),
+];
+
+/** A client whose `unsafe()` says which protocol a statement went over. */
+function protocolClient(
+  answer: (text: string) => unknown,
+): { sql: SqlClient; sent: { text: string; simple: boolean }[] } {
+  const sent: { text: string; simple: boolean }[] = [];
+  const client = (() => Promise.resolve([])) as unknown as SqlClient;
+  client.unsafe = ((text: string) => {
+    const run = (simple: boolean) => {
+      sent.push({ text, simple });
+      return Promise.resolve(
+        (/^SET |^select set_config/i.test(text) ? [] : answer(text)) as Record<string, unknown>[],
+      );
+    };
+    return { then: (ok, fail) => run(false).then(ok, fail), simple: () => run(true) } as SqlQuery;
+  }) as SqlClient["unsafe"];
+  client.begin = async (fn) => await fn(client);
+  client.close = () => Promise.resolve();
+  return { sql: client, sent };
+}
+
+Deno.test("sql: a read runs ONE statement over the extended protocol, READ ONLY, as text", async () => {
+  const { sql, sent } = protocolClient(() => [{
+    id: 1,
+    data: { a: 1 },
+    at: new Date(0),
+    raw: new Uint8Array([1, 255]),
+    none: null,
+    big: 2n,
+  }]);
+  const reply = await ask(sql, { op: "sql", text: "select * from t", mode: "read" });
+  assert(reply.ok && "cells" in reply);
+  assertEquals(reply.mode, "read");
+  assertEquals(reply.columns, ["id", "data", "at", "raw", "none", "big"]);
+  assertEquals(reply.cells, [[
+    "1",
+    '{"a":1}',
+    "1970-01-01T00:00:00.000Z",
+    "\\x01ff",
+    null,
+    "2",
+  ]]);
+  assertEquals([reply.rowCount, reply.truncated], [1, false]);
+  // READ ONLY first, then the timeouts; the statement itself NOT over the simple protocol, so a
+  // `COMMIT; DELETE …` cannot end the read-only transaction and run what follows outside it.
+  assertEquals(sent[0].text, "SET TRANSACTION READ ONLY");
+  assertStringIncludes(sent[1].text, "statement_timeout");
+  assertEquals(sent.at(-1), { text: "select * from t", simple: false });
+});
+
+Deno.test("sql: a write runs a script over the simple protocol and shows the last result", async () => {
+  const { sql, sent } = protocolClient(() => [[{ a: 1 }], [{ b: "x" }, { b: null, c: "y" }]]);
+  const reply = await ask(sql, { op: "sql", text: "update t set a = 1; select b", mode: "write" });
+  assert(reply.ok && "cells" in reply);
+  assertEquals([reply.mode, reply.columns, reply.cells], ["write", ["b", "c"], [["x", null], [
+    null,
+    "y",
+  ]]]);
+  assert(!sent.some((s) => s.text === "SET TRANSACTION READ ONLY"), "a write commits");
+  assertEquals(sent.at(-1)?.simple, true);
+});
+
+Deno.test("sql: rows are cut at the limit, and bad text and read-only writes are refused", async () => {
+  const many = Array.from({ length: DB_SQL_MAX_ROWS + 1 }, (_, i) => ({ n: i }));
+  const { sql, sent } = protocolClient(() => many);
+  const reply = await ask(sql, { op: "sql", text: "select n", mode: "read" });
+  assert(reply.ok && "cells" in reply);
+  assertEquals([reply.cells.length, reply.rowCount, reply.truncated], [DB_SQL_MAX_ROWS, 501, true]);
+  sent.length = 0;
+  const empty = await ask(sql, { op: "sql", text: "  ", mode: "read" });
+  assertEquals((empty as DbFailure).code, "bad_request");
+  const long = await ask(sql, { op: "sql", text: "x".repeat(100_001), mode: "read" });
+  assertEquals((long as DbFailure).code, "bad_request");
+  const refused = await ask(sql, { op: "sql", text: "delete from t", mode: "write" }, true);
+  assertEquals((refused as DbFailure).code, "read_only");
+  assertEquals(sent, [], "nothing ran");
+});
+
+Deno.test("users: create writes the row and a scrypt credential in one transaction, hash masked", async () => {
+  const { sql, sent } = fakeClient([
+    userColumns(),
+    AUTH_TABLES,
+    [/WHERE email_lc = \$1/, (p) => (p[0] === "taken@x.test" ? [{ hit: 1 }] : [])],
+    ...catalogRules(),
+  ]);
+  const reply = await ask(sql, {
+    op: "createUser",
+    email: "New@Example.com",
+    name: " Ann ",
+    password: "s3cret-password",
+    verified: true,
+  });
+  assert(reply.ok && "id" in reply);
+  assert(/^[0-9a-f-]{36}$/.test(reply.id));
+  assertEquals(reply.statements[0].params, [
+    reply.id,
+    "New@Example.com",
+    "new@example.com",
+    "true",
+    "Ann",
+  ]);
+  assertEquals(reply.statements[1].params, [reply.id, "•••"], "the hash is masked");
+  const text = JSON.stringify(reply);
+  assert(!text.includes("s3cret-password") && !text.includes("scrypt$"), "nothing secret back");
+  const credential = sent.find((s) => s.text.includes('"auth_credentials"'))!;
+  assert(await verifyPassword("s3cret-password", String(credential.params[1])));
+  const user = sent.find((s) => s.text.startsWith('INSERT INTO "public"."auth_users"'))!;
+  assertEquals(user.tx, credential.tx, "one transaction");
+  for (
+    const [request, code] of [
+      [{ email: "taken@x.test", verified: false }, "bad_request"],
+      [{ email: "not an email", verified: false }, "bad_request"],
+      [{ email: "a@b.test", password: "short", verified: false }, "bad_request"],
+    ] as const
+  ) {
+    const failed = await ask(sql, { op: "createUser", ...request });
+    assertEquals((failed as DbFailure).code, code, JSON.stringify(request));
+  }
+  sent.length = 0;
+  const readOnly = await ask(sql, { op: "createUser", email: "a@b.test", verified: false }, true);
+  assertEquals((readOnly as DbFailure).code, "read_only");
+  assertEquals(sent, []);
+});
+
+/** `user`: one user by id (a ban in force read back), or none. */
+async function oneUser(sql: SqlClient): Promise<void> {
+  const one = await ask<"user">(sql, { op: "user", id: "u1" });
+  assert(one.ok);
+  assertEquals(one.user?.bannedUntil, 4102444800);
+  const none = await ask<"user">(sql, { op: "user", id: "nobody" });
+  assert(none.ok);
+  assertEquals(none.user, null);
+}
+
+Deno.test("users: a ban for a listed length ends every session; unban; one user by id", async () => {
+  const row = {
+    id: "u1",
+    email: "a@b.c",
+    name: null,
+    roles: null,
+    created_at: "1",
+    sessions: "0",
+    mfa: "false",
+    passkeys: "0",
+    banned_until: "4102444800",
+  };
+  const { sql, sent } = fakeClient([
+    userColumns(),
+    AUTH_TABLES,
+    [/FROM "public"."auth_users" u WHERE u.id = \$1/, (p) => (p[0] === "u1" ? [row] : [])],
+    [/SELECT 1 AS hit/, (p) => (p[0] === "u1" ? [{ hit: 1 }] : [])],
+    ...catalogRules(),
+  ]);
+  await oneUser(sql);
+  const ban = await ask<"userAction">(sql, {
+    op: "userAction",
+    action: "ban",
+    id: "u1",
+    seconds: 86_400,
+    confirm: false,
+  });
+  assert(ban.ok);
+  assertEquals(ban.applied, false);
+  assertStringIncludes(
+    ban.statements[0].text,
+    "banned_until = extract(epoch FROM now())::bigint + $2::bigint",
+  );
+  assertEquals(ban.statements[0].params, ["u1", "86400"]);
+  assertEquals(ban.statements.map((s) => s.text.split(" ").slice(0, 2).join(" ")), [
+    'UPDATE "public"."auth_users"',
+    'UPDATE "public"."auth_users"',
+    "DELETE FROM",
+    'UPDATE "public"."auth_native_sessions"',
+  ]);
+  assertStringIncludes(ban.statements[1].text, "sessions_valid_after");
+  assertEquals(
+    work(sent).filter((s) => /^(UPDATE|DELETE)/.test(s.text)),
+    [],
+    "a preview runs none",
+  );
+  const odd = await ask(sql, {
+    op: "userAction",
+    action: "ban",
+    id: "u1",
+    seconds: 5,
+    confirm: true,
+  });
+  assertEquals((odd as DbFailure).code, "bad_request");
+  const applied = await ask<"userAction">(sql, {
+    op: "userAction",
+    action: "ban",
+    id: "u1",
+    seconds: 86_400,
+    confirm: true,
+  });
+  assert(applied.ok);
+  assertEquals(applied.applied, true);
+  assertEquals(work(sent).filter((s) => /^(UPDATE|DELETE)/.test(s.text)).length, 4);
+  const unban = await ask<"userAction">(sql, {
+    op: "userAction",
+    action: "unban",
+    id: "u1",
+    confirm: false,
+  });
+  assert(unban.ok);
+  assertStringIncludes(unban.statements[0].text, "SET banned_until = NULL");
+  const unknown = await ask(sql, {
+    op: "userAction",
+    action: "explode" as never,
+    id: "u1",
+    confirm: true,
+  });
+  assertEquals((unknown as DbFailure).code, "bad_request");
+});
+
+Deno.test("users: a new password is hashed, masked in the reply, and ends every session", async () => {
+  const { sql, sent } = fakeClient([
+    userColumns(),
+    AUTH_TABLES,
+    [/SELECT 1 AS hit/, (p) => (p[0] === "u1" ? [{ hit: 1 }] : [])],
+    ...catalogRules(),
+  ]);
+  const short = await ask(sql, {
+    op: "userAction",
+    action: "password",
+    id: "u1",
+    password: "1234567",
+    confirm: true,
+  });
+  assertEquals((short as DbFailure).code, "bad_request");
+  assertEquals(sent, [], "refused before any SQL");
+  const reply = await ask(sql, {
+    op: "userAction",
+    action: "password",
+    id: "u1",
+    password: "a new passphrase",
+    confirm: true,
+  });
+  assert(reply.ok && "statements" in reply && "applied" in reply && reply.applied);
+  assertEquals(reply.statements[0].params, ["u1", "•••"]);
+  assert(!JSON.stringify(reply).includes("a new passphrase"));
+  const stored = sent.find((s) => s.text.includes('"auth_credentials"'))!;
+  assert(await verifyPassword("a new passphrase", String(stored.params[1])));
+  assert(sent.some((s) => s.text.startsWith('DELETE FROM "public"."auth_sessions"')));
+});
+
+Deno.test("users: a ban on an auth schema from before banned_until is unsupported", async () => {
+  const { sql } = fakeClient([
+    userColumns(["id", "email", "email_lc", "name", "roles", "created_at"]),
+    AUTH_TABLES,
+    [/SELECT 1 AS hit/, () => [{ hit: 1 }]],
+    ...catalogRules(),
+  ]);
+  const ban = await ask(sql, {
+    op: "userAction",
+    action: "ban",
+    id: "u1",
+    seconds: 3_600,
+    confirm: false,
+  });
+  assertEquals((ban as DbFailure).code, "unsupported");
+  const list = await ask(sql, { op: "users" });
+  assert(list.ok && "users" in list);
+});
+
+Deno.test("storage: an upload goes through the plugin's own operation, size and base64 checked", async () => {
+  const { restore } = installStorage();
+  const holder = globalThis as { [STORAGE]?: Record<string, unknown> };
+  const uploads: { bucket: string; key: string; bytes: string; type?: string; upsert: boolean }[] =
+    [];
+  try {
+    const { sql } = fakeClient([]);
+    const missing = await ask(sql, {
+      op: "upload",
+      bucket: "files",
+      key: "a.txt",
+      base64: btoa("hi"),
+      upsert: false,
+    });
+    assertEquals((missing as DbFailure).code, "unsupported", "an older backend has no upload");
+    holder[STORAGE]!.admin = {
+      buckets: () => Promise.resolve([]),
+      hasBucket: () => Promise.resolve(false),
+      remove: () => Promise.resolve(),
+      upload: (
+        bucket: string,
+        key: string,
+        bytes: Uint8Array,
+        options: { contentType?: string; upsert: boolean },
+      ) => {
+        uploads.push({
+          bucket,
+          key,
+          bytes: new TextDecoder().decode(bytes),
+          type: options.contentType,
+          upsert: options.upsert,
+        });
+        return Promise.resolve({ key, size: bytes.length });
+      },
+    };
+    const ok = await ask(sql, {
+      op: "upload",
+      bucket: "files",
+      key: "dir/a.txt",
+      base64: btoa("hello"),
+      contentType: "text/plain",
+      upsert: true,
+    });
+    assert(ok.ok && "size" in ok);
+    assertEquals([ok.key, ok.size], ["dir/a.txt", 5]);
+    assertEquals(uploads, [{
+      bucket: "files",
+      key: "dir/a.txt",
+      bytes: "hello",
+      type: "text/plain",
+      upsert: true,
+    }]);
+    const bad = await ask(sql, {
+      op: "upload",
+      bucket: "files",
+      key: "b",
+      base64: "!!!",
+      upsert: false,
+    });
+    assertEquals((bad as DbFailure).code, "bad_request");
+    const huge = await ask(sql, {
+      op: "upload",
+      bucket: "files",
+      key: "b",
+      base64: "A".repeat(14 * 1024 * 1024),
+      upsert: false,
+    });
+    assertEquals((huge as DbFailure).code, "bad_request");
+    const readOnly = await ask(sql, {
+      op: "upload",
+      bucket: "files",
+      key: "b",
+      base64: btoa("x"),
+      upsert: false,
+    }, true);
+    assertEquals((readOnly as DbFailure).code, "read_only");
+    assertEquals(uploads.length, 1);
   } finally {
     restore();
   }

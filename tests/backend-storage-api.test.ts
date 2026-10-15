@@ -796,6 +796,28 @@ Deno.test({
     await files.upload("z.txt", "z", { contentType: "text/plain" });
     await admin.remove("hist", "z.txt");
     assertEquals(await files.exists("z.txt"), false);
+    // Upload as the service: the bytes and the metadata row land together; a duplicate is
+    // refused unless replacing is asked for.
+    const bytes = (text: string) => new TextEncoder().encode(text);
+    assertEquals(
+      await admin.upload("hist", "up.txt", bytes("hey"), {
+        contentType: "text/plain",
+        upsert: false,
+      }),
+      { key: "up.txt", size: 3 },
+    );
+    assertEquals(await new Response((await files.download("up.txt"))!.body).text(), "hey");
+    assertEquals((await files.info("up.txt"))?.contentType, "text/plain");
+    assertEquals(
+      await code(admin.upload("hist", "up.txt", bytes("x"), { upsert: false })),
+      "duplicate",
+    );
+    await admin.upload("hist", "up.txt", bytes("again"), { upsert: true });
+    assertEquals(await new Response((await files.download("up.txt"))!.body).text(), "again");
+    assertEquals(
+      await code(admin.upload("ghost", "a", bytes("x"), { upsert: false })),
+      "unknown_bucket",
+    );
     await storage.emptyBucket("hist", opts);
     await storage.deleteBucket("hist", opts);
   } finally {

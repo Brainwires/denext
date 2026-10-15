@@ -174,10 +174,16 @@ export function constantTimeEqual(a: string, b: string): boolean {
  *
  * @param request The incoming request.
  * @param url Its parsed URL.
+ * @param hostAllowed Whether the request's host may reach this server (default: a loopback name
+ *   only; the dashboard adds its configured public origins' hosts).
  * @returns Whether to proceed (a `false` is a 403).
  */
-export function uiOriginAllowed(request: Request, url: URL): boolean {
-  if (!loopbackHost(url.hostname)) return false;
+export function uiOriginAllowed(
+  request: Request,
+  url: URL,
+  hostAllowed: (url: URL) => boolean = (u) => loopbackHost(u.hostname),
+): boolean {
+  if (!hostAllowed(url)) return false;
   const site = request.headers.get("sec-fetch-site");
   // `none` is a navigation the user started themselves: the printed URL handed to the browser
   // launcher, typed, or opened from a bookmark. No other site's page can produce it — a
@@ -301,6 +307,8 @@ function readCookie(header: string | null, name: string): string | null {
  * @param url Its parsed URL.
  * @param cookie The cookie credential the caller holds (from {@linkcode authorized}).
  * @param form The decoded form body, when the mutation carried one.
+ * @param canonicalOrigin The origin the caller's `Origin` must equal (default: the request's
+ *   own; the dashboard behind a TLS proxy passes its public origin).
  * @returns `null` when the mutation may proceed, else the refusal reason.
  */
 export function checkCsrf(
@@ -308,8 +316,9 @@ export function checkCsrf(
   url: URL,
   cookie: UiCookie,
   form?: FormData,
+  canonicalOrigin: string = url.origin,
 ): string | null {
-  if (!verifyOrigin(request, { canonicalOrigin: url.origin })) return "bad origin";
+  if (!verifyOrigin(request, { canonicalOrigin })) return "bad origin";
   const header = request.headers.get(UI_CSRF_HEADER);
   const field = form?.get(UI_CSRF_FIELD);
   const presented = header ?? (typeof field === "string" ? field : null);

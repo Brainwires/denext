@@ -73,6 +73,16 @@ export interface StorageAdmin {
   hasBucket(name: string): Promise<boolean>;
   /** Remove one object as the service (its metadata row with it). */
   remove(bucket: string, key: string): Promise<void>;
+  /**
+   * Store one object as the service: the bucket's size cap and type allow-list apply, and its
+   * metadata row is written with the bytes.
+   */
+  upload(
+    bucket: string,
+    key: string,
+    bytes: Uint8Array,
+    options: { contentType?: string; upsert: boolean },
+  ): Promise<{ key: string; size: number }>;
 }
 
 const SLOT = Symbol.for("denext.backend.storage");

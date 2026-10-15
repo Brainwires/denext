@@ -13,6 +13,7 @@
 
 import type { VNode } from "../jsx/types.ts";
 import type { SseClients } from "../build/sse.ts";
+import type { RelayConfig } from "./logs/source.ts";
 import { layout, type NavItem, type NavSection, UI_TITLE_SUFFIX } from "./layout.ts";
 import { type RawHtml, renderView } from "./view.ts";
 
@@ -67,6 +68,13 @@ export interface UiContext {
    * never by running its code; absent (hidden) when a caller built the context by hand.
    */
   readonly database?: boolean;
+  /**
+   * Served as the stack's dashboard (`denext dashboard`): only the Database section is routed,
+   * behind the dashboard password, and nothing writes project files.
+   */
+  readonly dashboard?: boolean;
+  /** The stack's `dashboard-logs` relay, when the dashboard reads logs through one. */
+  readonly logs?: RelayConfig;
 }
 
 /** A feature route handler. */
@@ -141,12 +149,40 @@ export const UI_NAV_SECTIONS: readonly NavSection[] = [
  * @param ctx The request.
  * @returns The sections.
  */
-export function navFor(ctx: Pick<UiContext, "database">): readonly NavSection[] {
+export function navFor(ctx: Pick<UiContext, "database" | "dashboard">): readonly NavSection[] {
+  if (ctx.dashboard === true) return DASHBOARD_NAV_SECTIONS;
   if (ctx.database === true) return UI_NAV_SECTIONS;
   return UI_NAV_SECTIONS.map((section) => ({
     ...section,
     items: section.items.filter((item) => item.href !== DATABASE_NAV_HREF),
   }));
+}
+
+/** The dashboard's navigation: the Database section's pages, nothing that touches the project. */
+const DASHBOARD_NAV_SECTIONS: readonly NavSection[] = [{
+  items: [
+    { href: "/database", label: "Tables" },
+    { href: "/database/sql", label: "SQL editor" },
+    { href: "/database/policies", label: "Policies" },
+    { href: "/database/migrations", label: "Migrations" },
+    { href: "/database/storage", label: "Storage" },
+    { href: "/database/users", label: "Users" },
+    { href: "/database/logs", label: "Logs" },
+  ],
+}];
+
+/**
+ * The dashboard navigation entry a path belongs under (a row page under Tables, a user's page
+ * under Users).
+ *
+ * @param pathname The request path.
+ * @returns The entry's href.
+ */
+function dashboardActive(pathname: string): string {
+  const path = pathname.replace(/^\/api(?=\/)/, "");
+  const items = DASHBOARD_NAV_SECTIONS[0].items.map((i) => i.href).filter((h) => h !== "/database");
+  if (path === "/database/user") return "/database/users";
+  return items.find((h) => path === h || path.startsWith(h + "/")) ?? "/database";
 }
 
 /** Every navigation destination, flattened — the sections' items in order. */
@@ -248,9 +284,10 @@ export function panelResponder(
         nav: navFor(ctx),
         body,
         csrf: ctx.csrf,
-        active,
+        active: ctx.dashboard === true ? dashboardActive(ctx.url.pathname) : active,
         readOnly: ctx.readOnly,
         offline: ctx.offline,
+        ...(ctx.dashboard === true ? { dashboard: true } : {}),
       }),
       status,
     );

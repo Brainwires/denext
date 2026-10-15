@@ -17,7 +17,7 @@ import { failureOf, handleDbRequest } from "../db-admin/handle.ts";
 import { setUpProject } from "../db/project.ts";
 
 /** The most a request may carry on stdin. */
-const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
+const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 
 /** Read stdin whole (bounded). */
 async function readStdin(): Promise<string> {

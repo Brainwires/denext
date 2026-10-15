@@ -30,10 +30,13 @@ export class AdminRefusal extends Error {
   /**
    * Build the refusal.
    *
-   * @param code `not_found`, `read_only` or `bad_request`.
+   * @param code `not_found`, `read_only`, `bad_request` or `unsupported`.
    * @param message The reason.
    */
-  constructor(readonly code: "not_found" | "read_only" | "bad_request", message: string) {
+  constructor(
+    readonly code: "not_found" | "read_only" | "bad_request" | "unsupported",
+    message: string,
+  ) {
     super(message);
     this.name = "AdminRefusal";
   }

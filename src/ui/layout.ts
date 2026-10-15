@@ -68,7 +68,12 @@ export interface LayoutOptions {
   readonly readOnly?: boolean;
   /** `--offline`: nothing the UI starts reaches the network. */
   readonly offline?: boolean;
+  /** Served as the stack's dashboard: its own name, and a sign-out button. */
+  readonly dashboard?: boolean;
 }
+
+/** Where the dashboard's sign-out posts (its server answers it; see `dashboard.ts`). */
+const DASHBOARD_LOGOUT_PATH = "/logout";
 
 /**
  * The full HTML document every UI page is served as: one same-origin stylesheet, one
@@ -112,7 +117,7 @@ export function layout(options: LayoutOptions): VNode {
         h(
           "aside",
           { class: "sidebar" },
-          h("span", { class: "brand" }, "denext ui"),
+          h("span", { class: "brand" }, options.dashboard ? "denext dashboard" : "denext ui"),
           // The visible affordance. Decorative to a screen reader, which is handed the checkbox
           // above instead — one control, announced once, carrying its own open/closed state.
           h(
@@ -126,6 +131,7 @@ export function layout(options: LayoutOptions): VNode {
             options.nav.map((section, index) => navSection(section, index, options.active)),
           ),
           modeFooter(options),
+          options.dashboard ? signOut(options.csrf) : null,
         ),
         h("main", { id: "main" }, h(Raw, { html: options.body })),
         h("script", { type: "module", src: UI_JS_PATH }),
@@ -153,6 +159,22 @@ function modeFooter(options: LayoutOptions): VNode | null {
   if (options.readOnly) modes.push(h("span", { key: "ro", class: "badge warn" }, "read-only"));
   if (options.offline) modes.push(h("span", { key: "off", class: "badge info" }, "offline"));
   return modes.length === 0 ? null : h("p", { class: "mode" }, modes);
+}
+
+/**
+ * The dashboard's sign-out: a POST carrying the session's CSRF token (a GET could be triggered by
+ * any page that links here).
+ *
+ * @param csrf The session's CSRF token.
+ * @returns The form.
+ */
+function signOut(csrf: string): VNode {
+  return h(
+    "form",
+    { method: "post", action: DASHBOARD_LOGOUT_PATH, class: "sign-out" },
+    h("input", { type: "hidden", name: "_csrf", value: csrf }),
+    h("button", { type: "submit" }, "Sign out"),
+  );
 }
 
 /**

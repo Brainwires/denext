@@ -17,6 +17,8 @@ Deno.test("registry exposes every first-party verb", () => {
     "commands",
     "completions",
     "create",
+    "dashboard",
+    "dashboard-logs", // hidden: the stack dashboard's log relay
     "db",
     "db-admin", // hidden: denext ui's Database child
     "deno",
