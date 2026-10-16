@@ -18,7 +18,7 @@ import {
   finishCompatGlobalErrorEntry,
 } from "../pipeline-shared.ts";
 import { writeFlightBoot } from "../flight-boot.ts";
-import { type BuildContext, FLIGHT_BUNDLE_FILE, log } from "./context.ts";
+import { assertNoReservedRouteIds, type BuildContext, FLIGHT_BUNDLE_FILE, log } from "./context.ts";
 
 /** The options every compat bundling call shares. */
 function compatOptions(ctx: BuildContext) {
@@ -86,6 +86,7 @@ async function compatClientEntries(ctx: BuildContext): Promise<void> {
       globalError ? " + global-error" : ""
     } -> client/`,
   );
+  assertNoReservedRouteIds(clientRoutes.map((r) => r.routePath), routeId);
   const entries = clientRoutes.map((route) => ({
     id: routeId(route.routePath),
     source: generateRouteEntry(route, {

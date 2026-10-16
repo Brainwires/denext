@@ -336,14 +336,14 @@ Deno.test({
             assertStringIncludes(home.text, "server component rendered");
             assertStringIncludes(home.text, "compiled and relocated"); // a copy's import.meta pin
             assertStringIncludes(home.text, "Clicked 0");
-            assertStringIncludes(home.text, "/_denext/client/flight.js");
+            assertStringIncludes(home.text, "/_denext/client/__denext_flight__.js");
             const href = /<link rel="stylesheet" href="([^"]+)"/.exec(home.text)?.[1];
             assert(href, `no stylesheet link in ${home.text}`);
             const css = await app.get(href);
             assertEquals(css.status, 200);
             assertStringIncludes(css.text, "#010203");
             assertStringIncludes(css.text, "#040506");
-            const island = await app.get("/_denext/client/flight.js");
+            const island = await app.get("/_denext/client/__denext_flight__.js");
             assertEquals(island.status, 200);
             assertStringIncludes(island.type, "javascript");
             assertEquals((await app.get("/hello.txt")).text, "hello from public\n");

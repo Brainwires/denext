@@ -8,8 +8,18 @@ import type { BoundaryManifest } from "../module-graph.ts";
 import type { ClassRuntimeMode } from "../bundle.ts";
 import type { ProjectPaths } from "../paths.ts";
 
+/**
+ * The bundle key of the app-wide Flight (RSC) client entry, and its output's basename:
+ * namespaced, like {@link GLOBAL_ERROR_ENTRY_KEY}, so it can't collide with a route's bundle (a
+ * `/flight` route's id is `flight`).
+ */
+const FLIGHT_ENTRY_KEY = "__denext_flight__";
+
 /** The file name of the app-wide Flight (RSC) client bundle. */
-export const FLIGHT_BUNDLE_FILE = "flight.js";
+export const FLIGHT_BUNDLE_FILE = `${FLIGHT_ENTRY_KEY}.js`;
+
+/** The base name of the Flight entry's deferred boot (`build/flight-boot.ts`). */
+export const FLIGHT_BOOT_KEY = "__denext_flight_boot__";
 
 /**
  * The bundle key the global-error entry is built under, and its output's basename: namespaced so
@@ -21,6 +31,38 @@ export const GLOBAL_ERROR_ENTRY_KEY = "__denext_global_error__";
 
 /** The file name of the `global-error.tsx` hydration bundle (single root file). */
 export const GLOBAL_ERROR_BUNDLE_FILE = `${GLOBAL_ERROR_ENTRY_KEY}.js`;
+
+/**
+ * The client bundle ids the framework writes under fixed names. A route whose id is one of
+ * them (only a dynamic segment spelling it exactly can be) would overwrite that bundle.
+ */
+export const RESERVED_BUNDLE_IDS: readonly string[] = [
+  GLOBAL_ERROR_ENTRY_KEY,
+  FLIGHT_ENTRY_KEY,
+  FLIGHT_BOOT_KEY,
+];
+
+/**
+ * Refuse routes whose bundle id is reserved.
+ *
+ * @param routePaths The client routes' paths.
+ * @param idOf The routeId function.
+ * @throws {Error} Naming the route and the reserved id.
+ */
+export function assertNoReservedRouteIds(
+  routePaths: readonly string[],
+  idOf: (routePath: string) => string,
+): void {
+  for (const routePath of routePaths) {
+    const id = idOf(routePath);
+    if (RESERVED_BUNDLE_IDS.includes(id)) {
+      throw new Error(
+        `denext build: route ${routePath} has the bundle id "${id}", which a framework bundle ` +
+          "uses; rename that dynamic segment",
+      );
+    }
+  }
+}
 
 export interface BuildResult {
   routes: Array<{ routePath: string; bundle: string }>;

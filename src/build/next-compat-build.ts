@@ -11,6 +11,7 @@
  * @module
  */
 
+import { FLIGHT_BUNDLE_FILE } from "./build-pipeline/context.ts";
 import type { Platform, PlatformResolution } from "./platform-extensions.ts";
 import type { ResolveAliasConfig } from "../server/config.ts";
 import { join } from "@std/path";
@@ -552,7 +553,7 @@ export async function buildNextCompatFlightEntry(
   options: BuildNextCompatFlightOptions,
 ): Promise<void> {
   const { runtimeDir, entriesDir } = await prepareClientBuild(options);
-  const flightFile = options.flightFile ?? "flight.js";
+  const flightFile = options.flightFile ?? FLIGHT_BUNDLE_FILE;
   const flightId = flightFile.replace(/\.js$/, "");
   const entryPath = join(entriesDir, `${flightId}.tsx`);
   await Deno.writeTextFile(

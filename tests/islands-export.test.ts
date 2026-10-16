@@ -90,24 +90,35 @@ export default function Eager() {
       `<script id="__denext_flight" type="application/json">null</script>`,
     );
     // The page loads the deferred boot, not the Flight entry; the client:load page keeps it.
-    assertStringIncludes(html, `<script type="module" src="/_denext/client/flight-boot.js">`);
+    assertStringIncludes(
+      html,
+      `<script type="module" src="/_denext/client/__denext_flight_boot__.js">`,
+    );
     const eagerHtml = await Deno.readTextFile(join(result.outDir, "eager", "index.html"));
     assertStringIncludes(eagerHtml, `data-dnx-strategy="load"`);
-    assertStringIncludes(eagerHtml, `<script type="module" src="/_denext/client/flight.js">`);
+    assertStringIncludes(
+      eagerHtml,
+      `<script type="module" src="/_denext/client/__denext_flight__.js">`,
+    );
 
     // The boot loads nothing up front (no static import) and is a couple of KB; flight.js, which
     // it imports on demand, carries the client runtime and exports the promise the boot awaits.
     const clientDir = join(result.outDir, "_denext", "client");
-    const boot = await Deno.readTextFile(join(clientDir, "flight-boot.js"));
-    assertEquals([...await staticClosure(clientDir, "flight-boot.js")], ["flight-boot.js"]);
+    const boot = await Deno.readTextFile(join(clientDir, "__denext_flight_boot__.js"));
+    assertEquals([...await staticClosure(clientDir, "__denext_flight_boot__.js")], [
+      "__denext_flight_boot__.js",
+    ]);
     assert(boot.length < 3_000, `flight-boot.js is ${boot.length} B`);
-    assertStringIncludes(boot, `import("./flight.js")`);
+    assertStringIncludes(boot, `import("./__denext_flight__.js")`);
     for (const s of ["data-dnx-island", "data-dnx-h", "interaction", "visible", "idle", "media"]) {
       assertStringIncludes(boot, s);
     }
-    const runtime = await bytes(clientDir, await staticClosure(clientDir, "flight.js"));
+    const runtime = await bytes(clientDir, await staticClosure(clientDir, "__denext_flight__.js"));
     assert(runtime > 40_000, `flight.js carries the client runtime (${runtime} B)`);
-    assertMatch(await Deno.readTextFile(join(clientDir, "flight.js")), /export\s*\{[^}]*\bready\b/);
+    assertMatch(
+      await Deno.readTextFile(join(clientDir, "__denext_flight__.js")),
+      /export\s*\{[^}]*\bready\b/,
+    );
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }

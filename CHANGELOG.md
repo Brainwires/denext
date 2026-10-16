@@ -199,11 +199,13 @@ and this project adheres to
   Auth.js (it used to set only the name and image). The provider's own "verified" verdict carries
   over only to the address the provider itself returned.
 
-- **A route at `/global-error` keeps its own client bundle.** The native build wrote the
-  `global-error.tsx` hydration bundle as `client/global-error.js`, the same file a
-  `/global-error` route's bundle is written as, so one overwrote the other. The global-error
-  bundle is now `client/__denext_global_error__.js` on every path (build, next-compat, export),
-  and a dynamic segment that would spell that name is refused at build time.
+- **Routes at `/global-error`, `/flight` or `/flight-boot` keep their own client bundles.** The
+  build wrote the framework's fixed-name client bundles as `client/global-error.js`,
+  `client/flight.js` (the Flight islands entry) and `client/flight-boot.js` (its deferred boot),
+  the same files a route with one of those ids is bundled to, so one overwrote the other. They
+  are now `client/__denext_global_error__.js`, `client/__denext_flight__.js` and
+  `client/__denext_flight_boot__.js` on every path (build, next-compat, export, dev's compat
+  outputs), and a dynamic segment that would spell one of those ids is refused at build time.
 
 - **A hidden `<Activity>` holds class lifecycles and refs, as React does.** A class component
   that mounts inside a hidden one no longer runs `componentDidMount` (nor `componentDidUpdate`

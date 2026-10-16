@@ -21,6 +21,7 @@ import { routeId } from "../paths.ts";
 import { appBoundaryManifest } from "../pipeline-shared.ts";
 import { writeFlightBoot } from "../flight-boot.ts";
 import {
+  assertNoReservedRouteIds,
   type BuildContext,
   FLIGHT_BUNDLE_FILE,
   GLOBAL_ERROR_BUNDLE_FILE,
@@ -87,12 +88,7 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
       usesSingletons: ctx.usesSingletons,
     }),
   }));
-  if (globalError && clientRoutes.some((r) => routeId(r.routePath) === GLOBAL_ERROR_ENTRY_KEY)) {
-    throw new Error(
-      `denext build: a route's bundle id is the reserved "${GLOBAL_ERROR_ENTRY_KEY}" (the ` +
-        "global-error.tsx bundle); rename that dynamic segment",
-    );
-  }
+  assertNoReservedRouteIds(clientRoutes.map((r) => r.routePath), routeId);
   if (globalError) {
     entries.push({
       key: GLOBAL_ERROR_ENTRY_KEY,

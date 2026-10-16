@@ -45,13 +45,13 @@ Deno.test({
       const chunk = await findClassChunk(clientDir);
       assert(chunk, "the class runtime is emitted as a client file");
       classChunk = chunk;
-      const entry = await Deno.readTextFile(join(clientDir, "flight.js"));
+      const entry = await Deno.readTextFile(join(clientDir, "__denext_flight__.js"));
       assertStringIncludes(entry, "__denext_classes", "the entry probes the marker");
       assert(
         !entry.includes("componentWillUnmount"),
         "the class runtime is NOT in the entry (the scan saw no class in the app's own sources)",
       );
-      assert(chunk !== "flight.js");
+      assert(chunk !== "__denext_flight__.js");
     });
 
     await t.step(

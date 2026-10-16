@@ -57,9 +57,9 @@ Deno.test({
     const html = await Deno.readTextFile(join(result.outDir, "index.html"));
     assertStringIncludes(html, "EXPORT_SERVER_TEXT");
     assertStringIncludes(html, "EXPORT_ISLAND:0");
-    assertStringIncludes(html, "/_denext/client/flight.js");
+    assertStringIncludes(html, "/_denext/client/__denext_flight__.js");
     const client = join(result.outDir, "_denext", "client");
-    const flight = await Deno.readTextFile(join(client, "flight.js"));
+    const flight = await Deno.readTextFile(join(client, "__denext_flight__.js"));
     // The island is registered by its client id and loaded from a compat chunk.
     assert(/c_[a-z0-9]+/.test(flight), "the Flight entry registers the island");
     let islandChunk = "";

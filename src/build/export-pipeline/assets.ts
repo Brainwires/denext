@@ -7,7 +7,11 @@ import { prodMinify } from "../minify.ts";
 import { setSelfHostedFonts } from "../../compat/next/font/registry.ts";
 import { tagClientModules } from "../../runtime/client-reference.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
-import { FLIGHT_BUNDLE_FILE, GLOBAL_ERROR_BUNDLE_FILE } from "../build-pipeline/context.ts";
+import {
+  assertNoReservedRouteIds,
+  FLIGHT_BUNDLE_FILE,
+  GLOBAL_ERROR_BUNDLE_FILE,
+} from "../build-pipeline/context.ts";
 import { clientTransforms } from "../build-pipeline/transforms.ts";
 import {
   bundleFlightEntry,
@@ -181,6 +185,7 @@ export async function exportClientTransforms(ctx: ExportContext): Promise<void> 
 export async function bundleExportRoutes(ctx: ExportContext): Promise<void> {
   for (const route of ctx.manifest.pages) {
     if (ctx.flightRoutes.has(route.routePath) || ctx.staticRoutes.has(route.routePath)) continue;
+    assertNoReservedRouteIds([route.routePath], routeId);
     // A whole-route bundle stubs the actions it imports, as the Flight bundle does.
     const server = (await boundaryManifest(ctx)).server;
     const bundle = await bundleRoute(route, {
