@@ -230,6 +230,8 @@ and this project adheres to
   `analyze --md` and `doctor --report` now follow the chunks' imports: a chunk no route entry
   imports is listed under islands, or under the on-demand runtime when only the framework's
   on-demand chunks import it. `analyze --json` lists each chunk's `imports` and `lazyImports`.
+- **`denext analyze`'s by-role sizes line up in one column.** The 17-character "on-demand
+  runtime" label was padded to 16, so it ran straight into its size.
 - **A library's `"use client"` components hydrate under `nodeResolve: false` too.** The server
   bundle now resolves the packages on the import paths to a library's own `"use client"` /
   `"use server"` files from `node_modules`, the way the build found those files, so the component

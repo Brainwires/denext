@@ -180,6 +180,15 @@ Deno.test("bundleRoleLines / markdown: an island-only chunk is counted under isl
   assertStringIncludes(md, "| `chunk-RT.js` | shared runtime |");
 });
 
+Deno.test("bundleRoleLines: every role's size starts in one column, a gap after the longest label", () => {
+  const lines = bundleRoleLines(ISLAND_GRAPH).slice(1);
+  assertEquals(lines.length, 4);
+  const starts = lines.map((l) => l.search(/\d/));
+  assertEquals(new Set(starts).size, 1, lines.join("\n"));
+  const onDemand = lines.find((l) => l.includes("on-demand runtime"))!;
+  assertStringIncludes(onDemand, "on-demand runtime  ");
+});
+
 Deno.test("chunkImports / readClientChunks: static and dynamic sibling imports from emitted code", async () => {
   assertEquals(
     chunkImports(

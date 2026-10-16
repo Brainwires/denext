@@ -274,6 +274,9 @@ const ROLE_LABEL: Record<ChunkRole, string> = {
   "on-demand": "on-demand runtime",
 };
 
+/** The role column's width: the longest label plus a two-space gap before the size. */
+const ROLE_COLUMN = Math.max(...Object.values(ROLE_LABEL).map((l) => l.length)) + 2;
+
 /**
  * A per-role subtotal breakdown (shared runtime vs route entries vs islands) — the
  * shared-runtime line is the number the bundle-size budgets track across the
@@ -295,7 +298,7 @@ export function bundleRoleLines(chunks: BundleChunk[]): string[] {
     const gz = group.reduce((s, c) => s + (c.gzip ?? 0), 0);
     const size = gz > 0 ? `${kb(raw)} raw · ${kb(gz)} gz` : kb(raw);
     const n = `${group.length} chunk${group.length === 1 ? "" : "s"}`;
-    lines.push(`  ${ROLE_LABEL[role].padEnd(16)}${size}  (${n})`);
+    lines.push(`  ${ROLE_LABEL[role].padEnd(ROLE_COLUMN)}${size}  (${n})`);
   }
   return lines;
 }
