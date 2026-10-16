@@ -70,8 +70,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   function, a class instance) stays in its process. A view resumed elsewhere carries on from the
   model as last stored, while the parked copy runs on where it was until its window ends. With
   JavaScript disabled only the first render works.
-- **Channels carry state, not a log:** no replay on reconnect, at-most-once, latest-wins, 16 ms
-  coalescing, `seq` ordered per instance. Re-authorization is lazy (`authTtlSeconds`;
+- **Channels carry state unless they keep a log:** without `history`, no replay on reconnect,
+  at-most-once, latest-wins, 16 ms coalescing, `seq` ordered per instance. A log replays what
+  it retains (`size` per key, `ttlSeconds`); the in-memory one is per instance. Re-authorization is lazy (`authTtlSeconds`;
   `channel.revoke(key)` is immediate). The production handshake requires a browser `Origin`.
 - **A batched call carries no custom headers but `x-csrf-token`** (one that needs another goes as
   its own request), and **`useApi({ suspense: true })` is not seeded from a Cache Components

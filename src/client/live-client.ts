@@ -82,7 +82,9 @@ interface ChannelSubClient {
   channelId: string;
   key: string;
   dead?: boolean;
-  onValue: (value: unknown, seq: number) => void;
+  /** Replay from this cursor (`since`); then the last cursor received — a reconnect resumes there. */
+  cursor?: string;
+  onValue: (value: unknown, seq: number, cursor?: string) => void;
   onError: (info: LiveErrorInfo) => void;
   /** Called once when the server acks the subscription is registered (`channel-ready`). */
   onReady?: () => void;
@@ -210,20 +212,23 @@ export function configureLive(opts: {
  *
  * @param channelId The channel's stable id (`ref.denextChannelId`, or the `"use server"` stub's id).
  * @param key The key within the channel.
- * @param onValue Called with each pushed payload and the publisher's `seq`.
+ * @param onValue Called with each pushed payload, the publisher's `seq` and its replay cursor.
  * @param onError Called with a structured refusal.
+ * @param since Replay a channel with `history` after this cursor (`"0"`: all it retains).
  */
 export function subscribeChannel(
   channelId: string,
   key: string,
-  onValue: (value: unknown, seq: number) => void,
+  onValue: (value: unknown, seq: number, cursor?: string) => void,
   onError: (info: LiveErrorInfo) => void,
   onReady?: () => void,
+  since?: string,
 ): () => void {
   const subId = `c${++subCounter}`;
-  channelSubs.set(subId, { channelId, key, onValue, onError, onReady });
+  const sub: ChannelSubClient = { channelId, key, onValue, onError, onReady, cursor: since };
+  channelSubs.set(subId, sub);
   ensureSocket();
-  sendFrame({ type: "channel-subscribe", subId, channelId, key });
+  sendFrame(channelSubscribeFrame(subId, sub));
   return () => {
     channelSubs.delete(subId);
     sendFrame({ type: "channel-unsubscribe", subId });
@@ -487,12 +492,27 @@ function deliverError(msg: LiveErrorInfo & { subId?: string }): void {
   sub.onData(undefined, msg.reason ?? msg.code, msg);
 }
 
-/** Hand a pushed channel payload to its subscription, decoding a codec-flagged value first. */
-function deliverChannel(msg: { subId: string; seq: number; value: unknown; enc?: 1 }): void {
+/** A `channel-subscribe` frame; `since` resumes a logged channel from the last cursor. */
+function channelSubscribeFrame(subId: string, c: ChannelSubClient): LiveClientMessage {
+  const frame = { type: "channel-subscribe" as const, subId, channelId: c.channelId, key: c.key };
+  return c.cursor === undefined ? frame : { ...frame, since: c.cursor };
+}
+
+/**
+ * Hand a pushed channel payload to its subscription, decoding a codec-flagged value first. A
+ * logged payload advances the subscription's cursor; one at or before it was seen already.
+ */
+function deliverChannel(
+  msg: { subId: string; seq: number; value: unknown; enc?: 1; cursor?: string },
+): void {
   const sub = channelSubs.get(msg.subId);
   if (!sub) return;
+  if (msg.cursor !== undefined) {
+    if (sub.cursor !== undefined && !cursorAfter(msg.cursor, sub.cursor)) return;
+    sub.cursor = msg.cursor;
+  }
   try {
-    sub.onValue(msg.enc === WIRE_ENC ? decodeWire(msg.value) : msg.value, msg.seq);
+    sub.onValue(msg.enc === WIRE_ENC ? decodeWire(msg.value) : msg.value, msg.seq, msg.cursor);
   } catch {
     sub.onError({ code: "bad-message", reason: "malformed channel payload" });
   }
@@ -523,11 +543,7 @@ function sendAllSubscriptions(): void {
   if (boundaries.size > 0) sendSubscribe();
   for (const [subId, s] of dataSubs) if (!s.dead) sendFrame(subscribeFrame(subId, s));
   for (const [subId, t] of tagSubs) sendFrame({ type: "tags-subscribe", subId, tags: t.tags });
-  for (const [subId, c] of channelSubs) {
-    if (!c.dead) {
-      sendFrame({ type: "channel-subscribe", subId, channelId: c.channelId, key: c.key });
-    }
-  }
+  for (const [subId, c] of channelSubs) if (!c.dead) sendFrame(channelSubscribeFrame(subId, c));
   for (const [room, r] of presenceRooms) {
     sendFrame({ type: "presence-join", room, state: r.state });
   }
@@ -558,4 +574,9 @@ function closeSocket(): void {
       s.close();
     } catch { /* already closing */ }
   }
+}
+
+/** Is cursor `a` after `b`? (Decimal strings of any length; no leading zeros but `"0"`.) */
+function cursorAfter(a: string, b: string): boolean {
+  return a.length !== b.length ? a.length > b.length : a > b;
 }

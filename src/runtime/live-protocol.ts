@@ -170,6 +170,11 @@ export interface LiveChannelSubscribe {
   channelId: string;
   /** The key within the channel. */
   key: string;
+  /**
+   * Replay the channel's log after this cursor (`"0"`: everything retained) before live pushes —
+   * a channel with `history` only.
+   */
+  since?: string;
 }
 
 /** Client → server: drop a {@link LiveChannelSubscribe}. */
@@ -202,6 +207,8 @@ export interface LiveChannel {
   value: unknown;
   /** `1` when `value` carries codec tags. */
   enc?: 1;
+  /** The payload's replay-log cursor (a channel with `history`); resume with `since`. */
+  cursor?: string;
 }
 
 // ---- Live views (`defineLiveView`) -------------------------------------------

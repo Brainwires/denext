@@ -16,7 +16,10 @@
 // the push half: arbitrary emits (progress, messages, presence-adjacent events) with no recompute.
 // Semantics, stated once: at-most-once; latest-wins per (connection, subscription) under
 // back-pressure and within a publisher burst; no history or replay on reconnect (use SSR
-// `initial` for the cold start); `seq` orders frames from ONE instance only. Delivery reaches
+// `initial` for the cold start) unless the channel opts into `history` — then every publish is
+// logged per key (bounded) with a cursor, a subscriber passing `since` replays what it missed
+// (after `authorize`), a reconnect or a drained socket resumes from its last cursor, and a burst
+// is delivered whole; `seq` orders frames from ONE instance only. Delivery reaches
 // connections on other instances through a `ChannelTransport` — the default is in-memory
 // (single instance); `broadcastChannelTransport` covers Deno Deploy isolates / multi-worker
 // hosts; Redis/NATS implement the two-method interface.
@@ -37,6 +40,12 @@ import {
 } from "./define-action.ts";
 import { decodeWire, prepareWire, WIRE_ENC } from "./wire-codec.ts";
 import { CHANNEL_BRAND, setChannelRegistrar } from "./channel-brand.ts";
+import {
+  type ChannelHistory,
+  type ChannelLog,
+  inMemoryChannelLog,
+  resolveHistory,
+} from "./channel-log.ts";
 import {
   LIVE_RESTART_DEFAULTS,
   type ResolvedRestart,
@@ -69,6 +78,14 @@ export interface ChannelConfig<T> {
   authorize: (ctx: ChannelContext, key: string) => boolean | Promise<boolean>;
   /** Re-authorize a subscriber lazily after this many seconds (default: `live.limits.channelAuthTtlSeconds`). */
   authTtlSeconds?: number;
+  /**
+   * Keep a replay log of each key's publishes: the last `size` (1–1000) for `ttlSeconds`
+   * (default 24 hours). A subscriber passing `since` (`useChannel(ch, key, { since: "0" })`)
+   * receives what it missed after `authorize` allows it, a reconnect resumes from its last
+   * cursor, and a burst is delivered whole rather than latest-wins. The log is this instance's
+   * (in memory, bounded) unless the transport brings a shared one (`redisChannelTransport`).
+   */
+  history?: number | { size: number; ttlSeconds?: number };
   /**
    * Called when `key` gets its first subscriber on THIS instance (after `authorize` allowed it
    * and the subscription was registered). Runs in the root context; a throw is logged.
@@ -160,6 +177,8 @@ export interface ChannelEvent {
   encoded?: string;
   /** `1` when `encoded` carries codec tags. */
   enc?: 1;
+  /** The publish's replay-log cursor (`publish` on a channel with `history`). */
+  cursor?: string;
   /** Per-instance, per-key monotonic sequence (`publish`; `0` otherwise). */
   seq: number;
   /** The publishing instance's id (frames from one instance are ordered by `seq`). */
@@ -205,6 +224,11 @@ export interface ChannelTransport {
   publish(ev: ChannelEvent): void | Promise<void>;
   /** Receive events; returns an unsubscribe. */
   subscribe(fn: (ev: ChannelEvent) => void): () => void;
+  /**
+   * The replay log channels with `history` use while this transport is installed (one every
+   * instance shares, e.g. Redis). Without one, each instance logs its own publishes in memory.
+   */
+  log?: ChannelLog;
 }
 
 /** What the hub needs from a registered channel. */
@@ -217,6 +241,8 @@ export interface ChannelInternals {
   authorize?: (ctx: ChannelContext, key: string) => boolean | Promise<boolean>;
   /** Per-channel re-auth TTL override. */
   authTtlSeconds?: number;
+  /** The replay-log retention (`history`), when the channel keeps one. */
+  history?: ChannelHistory;
   /** A key's first local subscriber arrived. */
   onActive?: (key: string) => void;
   /** A key's last local subscriber left. */
@@ -249,6 +275,10 @@ let payloadCap = 16 * 1024;
 /** The default lazy re-authorization TTL (seconds) — the hub applies `live.limits.channelAuthTtlSeconds`. */
 let authTtlSeconds = 300;
 let transport: ChannelTransport = inMemoryChannelTransport();
+/** The in-memory replay log (used while the transport brings none). */
+let memoryLog: ChannelLog = inMemoryChannelLog();
+/** Warned that the replay log failed (once per process). */
+let warnedLog = false;
 
 /**
  * Create a channel. Export it from a `"use server"` module (or give it an `id`).
@@ -270,6 +300,7 @@ export function createChannel<T>(config: ChannelConfig<T>): Channel<T> {
     keyOk: keyMatcher(config.key),
     authorize: config.authorize,
     authTtlSeconds: config.authTtlSeconds,
+    history: resolveHistory(config.history),
     onActive: config.onActive,
     onIdle: config.onIdle,
   };
@@ -384,6 +415,15 @@ export function setChannelTransport(t: ChannelTransport): void {
 const transportListeners = new Set<(t: ChannelTransport) => void>();
 
 /**
+ * The replay log in use: the transport's own, else this instance's in-memory one.
+ *
+ * @returns The log.
+ */
+export function channelLog(): ChannelLog {
+  return transport.log ?? memoryLog;
+}
+
+/**
  * Be told when the transport changes (the hub uses this to re-subscribe). Returns the current
  * transport immediately.
  *
@@ -438,6 +478,8 @@ export function resetChannels(): void {
   warnedUnknown.clear();
   payloadCap = 16 * 1024;
   authTtlSeconds = 300;
+  memoryLog = inMemoryChannelLog();
+  warnedLog = false;
   setChannelTransport(inMemoryChannelTransport());
 }
 
@@ -477,7 +519,27 @@ async function publish<T>(
     instance: INSTANCE,
   };
   if (p.tagged) ev.enc = WIRE_ENC;
+  if (ch.history) await logPublish(ch.id, key, ev, ch.history);
   await transport.publish(ev);
+}
+
+/**
+ * Log a publish of a channel with `history` and stamp its cursor on `ev`. A log that fails (a
+ * Redis outage) costs the replay, never the live delivery: warned once, sent without a cursor.
+ */
+async function logPublish(
+  id: string,
+  key: string,
+  ev: ChannelEvent,
+  history: ChannelHistory,
+): Promise<void> {
+  try {
+    ev.cursor = await channelLog().append(id, key, { encoded: ev.encoded!, enc: ev.enc }, history);
+  } catch (err) {
+    if (warnedLog) return;
+    warnedLog = true;
+    console.warn("denext channels: the replay log could not record a publish", err);
+  }
 }
 
 async function validate<T>(schema: StandardSchemaV1<T>, payload: T): Promise<T> {

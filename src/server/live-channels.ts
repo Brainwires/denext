@@ -8,10 +8,21 @@
 // per-connection channel cap; a registered channel (an unknown id is `denied`, never a
 // distinguishable "unknown" — no enumeration oracle); the channel's key shape; `authorize` in
 // the subscriber's session (`no-policy` when the channel has none; a throw is a deny); a
-// post-await connected + cap re-check. No initial frame: a channel is stateless.
+// post-await connected + cap re-check. No initial frame: a channel is stateless — unless it keeps
+// a replay log (`history`) and the subscriber passes `since`: then, once `authorize` allowed it
+// and the subscription is live, the log's entries for ITS key after that cursor are sent first
+// (re-authorizing if the TTL lapsed), every frame carries its cursor, a frame at or before the
+// subscriber's last cursor is skipped (replay and live never double up), a burst is fanned out
+// whole, and a back-pressured subscriber resumes from the log once its socket drains.
 
 import { liveDevtoolsEnabled, recordChannelPush } from "./live-devtools.ts";
-import { type ChannelEvent, type ChannelIdleReason, getChannel } from "../runtime/channel.ts";
+import {
+  type ChannelEvent,
+  type ChannelIdleReason,
+  channelLog,
+  getChannel,
+} from "../runtime/channel.ts";
+import { compareCursors, isCursor } from "../runtime/channel-log.ts";
 import { inRootContext } from "./root-context.ts";
 import type { LiveError, LiveServerMessage } from "../runtime/live-protocol.ts";
 
@@ -29,6 +40,8 @@ export interface ChannelSub {
   reauth?: Promise<void>;
   /** This subscription's entry in the fan-out index (so removal is a Set delete, not a scan). */
   entry?: { conn: unknown; subId: string };
+  /** The last replay-log cursor sent (a channel with `history`). */
+  cursor?: string;
 }
 
 /** The hub connection surface this module needs. */
@@ -73,7 +86,10 @@ const COALESCE_MS = 16;
 /** The hub's channel operations. */
 export interface ChannelHub<C extends ChannelConn> {
   /** Handle a `channel-subscribe` frame. */
-  subscribe(conn: C, msg: { subId?: unknown; channelId?: unknown; key?: unknown }): Promise<void>;
+  subscribe(
+    conn: C,
+    msg: { subId?: unknown; channelId?: unknown; key?: unknown; since?: unknown },
+  ): Promise<void>;
   /** Handle a `channel-unsubscribe` frame. */
   unsubscribe(conn: C, subId: string): void;
   /** Drop every subscription of a closing connection. */
@@ -134,14 +150,20 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
   const atCap = (conn: C, subId: string): boolean =>
     !conn.channelSubs.has(subId) && conn.channelSubs.size >= deps.limits().maxChannelsPerConnection;
 
-  /** Send one frame to one sub, honoring back-pressure (latest wins) and the auth TTL. */
+  /**
+   * Send one frame to one sub, honoring back-pressure (latest wins) and the auth TTL. A frame
+   * with a replay cursor at or before the sub's last one is skipped (a replay and a live push of
+   * one publish); one that goes out advances the sub's cursor.
+   */
   const sendTo = (
     conn: C,
     subId: string,
     sub: ChannelSub,
     text: string,
     msg: LiveServerMessage,
+    cursor?: string,
   ): void => {
+    if (cursor && sub.cursor && compareCursors(cursor, sub.cursor) <= 0) return;
     if (sub.authExpires <= Date.now()) {
       sub.pending = text;
       startReauth(conn, subId, sub);
@@ -158,6 +180,38 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     // (which drops `channel` frames). `fanOut` re-enters `sendTo` per subscriber, so a send that
     // pushes the buffer over the limit back-pressures the NEXT sub here, not silently downstream.
     deps.sendFrame(conn, text, msg);
+    if (cursor) sub.cursor = cursor;
+  };
+
+  /** A `channel` frame's text (assembled by interpolation; the cursor is digits only). */
+  const frameText = (subId: string, seq: number, encoded: string, enc?: 1, cursor?: string) =>
+    `{"type":"channel","subId":${JSON.stringify(subId)},"seq":${seq},"value":${encoded}${
+      enc ? ',"enc":1' : ""
+    }${cursor ? `,"cursor":"${cursor}"` : ""}}`;
+
+  /**
+   * Send `sub` its key's logged publishes after `since` — only while it is still this
+   * connection's live subscription and still authorized (re-checked when the TTL lapsed).
+   */
+  const replay = async (conn: C, subId: string, sub: ChannelSub, since: string): Promise<void> => {
+    const history = getChannel(sub.channelId)?.history;
+    if (!history) return;
+    if (sub.authExpires <= Date.now()) {
+      const decision = await deps.withRenderSlot(() => authorizeSub(conn, sub));
+      if (conn.channelSubs.get(subId) !== sub) return;
+      if (decision !== "allow") {
+        deps.sendError(conn, "denied", "channel access revoked", { subId });
+        return remove(conn, subId);
+      }
+      sub.authExpires = Date.now() + ttlMs(sub.channelId);
+    }
+    const entries = await channelLog().since(sub.channelId, sub.key, since, history.size)
+      .catch(() => []);
+    for (const e of entries) {
+      if (conn.channelSubs.get(subId) !== sub || !isJsonText(e.encoded)) return;
+      const text = frameText(subId, 0, e.encoded, e.enc, e.cursor);
+      sendTo(conn, subId, sub, text, { type: "channel", subId, seq: 0, value: null }, e.cursor);
+    }
   };
 
   /** Lazy re-authorization on traffic: allow → refresh the TTL and flush; deny → drop. */
@@ -217,12 +271,12 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     // The frame is assembled by interpolation for speed; the transport is trusted by design,
     // but a malformed event (a non-numeric seq, a non-JSON payload) must not corrupt it.
     if (!Number.isFinite(ev.seq) || !isJsonText(ev.encoded)) return;
-    const tail = `,"seq":${ev.seq},"value":${ev.encoded ?? "null"}${ev.enc ? ',"enc":1' : ""}}`;
+    const cursor = isCursor(ev.cursor) ? ev.cursor : undefined;
     for (const { conn, subId } of [...subs]) {
       const sub = conn.channelSubs.get(subId);
       if (!sub) continue;
-      const text = `{"type":"channel","subId":${JSON.stringify(subId)}${tail}`;
-      sendTo(conn, subId, sub, text, { type: "channel", subId, seq: ev.seq, value: null });
+      const text = frameText(subId, ev.seq, ev.encoded ?? "null", ev.enc, cursor);
+      sendTo(conn, subId, sub, text, { type: "channel", subId, seq: ev.seq, value: null }, cursor);
     }
   };
 
@@ -240,7 +294,7 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     async subscribe(conn, msg) {
       const shape = subscribeShape(msg);
       if (!shape) return;
-      const { subId, channelId, key } = shape;
+      const { subId, channelId, key, since } = shape;
       if (atCap(conn, subId)) {
         return deps.sendError(conn, "limit", "too many subscriptions", { subId });
       }
@@ -272,6 +326,7 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
       // stateful one (no back-pressure queuing or auth-TTL replay).
       const ready: LiveServerMessage = { type: "channel-ready", subId };
       deps.sendFrame(conn, JSON.stringify(ready), ready);
+      if (since !== undefined && ch.history) await replay(conn, subId, sub, since);
     },
     unsubscribe: remove,
     drop(conn) {
@@ -291,7 +346,9 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
         recordChannelPush(ev, index.get(ev.channelId)?.get(ev.key)?.size ?? 0);
       }
       if (ev.kind === "revoke") return revokeAll(ev);
-      pendingEvents.set(`${ev.channelId}\0${ev.key}`, ev); // latest publish wins in the window
+      // Latest publish wins in the window — except a logged one, which is delivered whole.
+      const logged = isCursor(ev.cursor) ? `\0${ev.cursor}` : "";
+      pendingEvents.set(`${ev.channelId}\0${ev.key}${logged}`, ev);
       // The flush serves every subscriber, not the publisher: start its timer outside the
       // publishing request's context.
       if (flushTimer === null) flushTimer = inRootContext(() => setTimeout(flush, COALESCE_MS));
@@ -305,6 +362,11 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
         const text = sub?.pending;
         if (!sub || !text) continue;
         sub.pending = undefined;
+        // A logged channel resumes from its log: every publish it shed, not just the latest.
+        if (sub.cursor && getChannel(sub.channelId)?.history) {
+          void replay(conn, subId, sub, sub.cursor);
+          continue;
+        }
         sendTo(conn, subId, sub, text, { type: "channel", subId, seq: 0, value: null });
       }
     },
@@ -331,15 +393,20 @@ function keyLifecycle(
   }
 }
 
-/** The `channel-subscribe` frame's fields, bounded; `null` when malformed (silently dropped). */
+/**
+ * The `channel-subscribe` frame's fields, bounded; `null` when malformed (silently dropped). A
+ * `since` that is not a cursor is ignored (no replay).
+ */
 function subscribeShape(
-  msg: { subId?: unknown; channelId?: unknown; key?: unknown },
-): { subId: string; channelId: string; key: string } | null {
+  msg: { subId?: unknown; channelId?: unknown; key?: unknown; since?: unknown },
+): { subId: string; channelId: string; key: string; since?: string } | null {
   const { subId, channelId, key } = msg;
   if (typeof subId !== "string" || subId.length === 0 || subId.length > 64) return null;
   if (typeof channelId !== "string" || channelId.length === 0 || channelId.length > 128) {
     return null;
   }
   if (typeof key !== "string" || key.length === 0 || key.length > 128) return null;
-  return { subId, channelId, key };
+  return isCursor(msg.since)
+    ? { subId, channelId, key, since: msg.since }
+    : { subId, channelId, key };
 }

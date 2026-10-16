@@ -213,6 +213,10 @@ const { data } = useSubscription(orderStatus, { id }, { initial });
 const { data: event } = useChannel(orderEvents, `user:${userId}`);
 ```
 
+A channel with `history: 50` logs each key's publishes: `useChannel(ch, key, { since: "0",
+onMessage })` replays the key's history after `authorize`, and a reconnect resumes from its last
+cursor (in memory per instance; `redisChannelTransport()` shares the log in Redis).
+
 **Model–View–Update (Elm / Lustre style):** `denext/mvu` runs `update(msg, model) → [model,
 effects]` in a component, with effects and subscriptions as data the runtime executes; the same
 program held on the SERVER per Live connection is `defineLiveView` from `denext/live` (HTML first

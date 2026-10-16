@@ -217,6 +217,10 @@ const { data } = useSubscription(orderStatus, { id }, { initial });
 const { data: event } = useChannel(orderEvents, `user:${userId}`);
 ```
 
+A channel with `history: 50` logs each key's publishes: `useChannel(ch, key, { since: "0",
+onMessage })` replays the key's history after `authorize`, and a reconnect resumes from its last
+cursor (in memory per instance; `redisChannelTransport()` shares the log in Redis).
+
 **Model–View–Update (Elm / Lustre style):** `denext/mvu` runs `update(msg, model) → [model,
 effects]` in a component, with effects and subscriptions as data the runtime executes; the same
 program held on the SERVER per Live connection is `defineLiveView` from `denext/live` (HTML first
@@ -1605,7 +1609,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ChannelConfig<T>` — The definition passed to createChannel.
 - `interface ChannelContext` — The subscriber's identity handed to authorize (the Live connection context).
 - `interface ChannelEvent` — One transport event: a channel publish/revoke, a cross-instance cache-tag invalidate, an instance's presence snapshot of one usePresence room, or a parked live view's view-resumed (it resumed on another instance, so the one that parked it stops its copy).
+- `interface ChannelHistory` — A channel's retention: how many entries per key, for how long.
 - `type ChannelIdleReason = unsubscribe | disconnect` — Why a channel key lost its last local subscriber (see ChannelConfig.onIdle).
+- `interface ChannelLog` — Where channel publishes are logged for replay.
+- `interface ChannelLogEntry` — One logged publish.
 - `type ChannelPublisher<T> = (ctx: ChannelPublisherContext<T>) => unknown` — A supervised per-key producer (ChannelConfig.publisher).
 - `interface ChannelPublisherContext<T>` — What a ChannelConfig.publisher receives.
 - `interface ChannelRef<T>` — A channel as the browser sees it: the id (and the phantom type).
@@ -1797,6 +1804,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `inMemoryAuthAdapter(options?: InMemoryAuthAdapterOptions): AuthAdapter` — Build a per-process, in-memory AuthAdapter: every method group (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions, passkeys, account deletion) plus a sessions store and close(). Ids are crypto.randomUUID() unless the caller supplies one; emails are matched case-insensitively and whitespace-trimmed.
 - `interface InMemoryAuthAdapterOptions` — Options for inMemoryAuthAdapter.
 - `inMemoryCacheStore(): CacheStore` — The default per-process, in-memory CacheStore.
+- `inMemoryChannelLog(options?: InMemoryChannelLogOptions): ChannelLog` — The default log: this instance's publishes, in memory, bounded per key (ChannelHistory), by key count and by total bytes.
+- `interface InMemoryChannelLogOptions` — Options for inMemoryChannelLog.
 - `inMemoryChannelTransport(): ChannelTransport` — The default transport: loopback, this instance only.
 - `inMemoryRateLimitStore(options?: InMemoryRateLimitStoreOptions): RateLimitStore` — The default per-process RateLimitStore: a bounded Map of fixed windows. Expired windows are dropped on read; past maxKeys expired windows go first, then the least-recently-incremented quiet keys — never a key mid-lockout — so a flood of distinct identifiers can't grow memory without bound.
 - `interface InMemoryRateLimitStoreOptions` — Options for inMemoryRateLimitStore.
@@ -2036,6 +2045,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `enum RedirectType` — next/navigation's RedirectType — how a client-side (soft) navigation applies the redirect: push a new history entry or replace the current one. Server responses ignore it (they always issue an HTTP redirect).
 - `redisCacheStore(options?: RedisCacheStoreOptions): CacheStore & object` — A CacheStore on Redis, shared by every replica. Size-bounded: the oldest-written entries past maxDataEntries / maxPageEntries are evicted, and hard-expired ones are swept on a throttle.
 - `interface RedisCacheStoreOptions` — Options for redisCacheStore.
+- `redisChannelLog(client: RedisClient, options?: RedisChannelLogOptions): ChannelLog` — A channel replay log over a Redis connection.
+- `interface RedisChannelLogOptions` — Options for redisChannelLog.
 - `redisChannelTransport(options?: RedisChannelTransportOptions): RedisChannelTransport` — Carry Live channel events between replicas through Redis pub/sub.
 - `interface RedisChannelTransport` — A ChannelTransport with its connections' lifecycle.
 - `interface RedisChannelTransportOptions` — Options for redisChannelTransport.
@@ -2626,12 +2637,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `LiveViewIsland: (props: LiveViewIslandProps) => VNode` — The live-view island. Rendered by defineLiveView's component, registered by the generated Flight entry; not something to render by hand.
 - `interface LiveViewIslandProps` — The island's props (written by defineLiveView's server render).
 - `interface Presence<S>` — The presence of the current room, from usePresence.
-- `subscribeChannel(channelId: string, key: string, onValue: (value: unknown, seq: number) => void, onError: (info: LiveErrorInfo) => void, onReady?: () => void): () => void` — Receive a createChannel channel's pushes for key. Backs useChannel. Returns an unsubscribe. A refusal (denied / no-policy / …) arrives through onError and marks the subscription dead so a reconnect does not re-send it.
+- `subscribeChannel(channelId: string, key: string, onValue: (value: unknown, seq: number, cursor?: string) => void, onError: (info: LiveErrorInfo) => void, onReady?: () => void, since?: string): () => void` — Receive a createChannel channel's pushes for key. Backs useChannel. Returns an unsubscribe. A refusal (denied / no-policy / …) arrives through onError and marks the subscription dead so a reconnect does not re-send it.
 - `subscribeLiveTags(tags: string[], onInvalidate: () => void, onError?: (info: LiveErrorInfo) => void): () => void` — Be told when any of tags is invalidated on the server (revalidateTag); backs useApi({ tags }). Returns an unsubscribe.
 - `interface SubscriptionRefLike<In, Out>` — A defineSubscription ref as the client sees it (the id, plus the phantom types).
 - `interface SubscriptionState<Out>` — What useSubscription returns.
 - `useApiLive<P, M>(path: P, method: M, opts?: RequestOf<ApiEndpointOf<P, M>>, options?: UseApiOptions): UseApiResult<ResponseOf<ApiEndpointOf<P, M>>, ErrorsOf<ApiEndpointOf<P, M>>>` — useApi whose tags refetch on a server-side revalidateTag — the Live socket delivers the invalidation; the refetch itself is an ordinary HTTP call with the viewer's cookies. Same signature and result as useApi.
-- `useChannel<T>(channel: ChannelRef<T> | object, key: string, options?: UseChannelOptions<T>): SubscriptionState<T>` — Receive a createChannel channel's pushes for key. The server authorizes the subscription in this viewer's session (and re-checks it lazily); every publish(key, payload) — from an action, a webhook, a cron — arrives as a new data. At-most-once, latest-wins; no replay on reconnect.
+- `useChannel<T>(channel: ChannelRef<T> | object, key: string, options?: UseChannelOptions<T>): SubscriptionState<T>` — Receive a createChannel channel's pushes for key. The server authorizes the subscription in this viewer's session (and re-checks it lazily); every publish(key, payload) — from an action, a webhook, a cron — arrives as a new data. At-most-once, latest-wins; no replay on reconnect — unless the channel keeps a history: then since replays what was missed, each payload reaches onMessage, and a reconnect resumes from the last cursor.
 - `interface UseChannelOptions<T>` — Options for useChannel.
 - `useLive<A, R>(action: LiveActionRef<A, R>, args: A, options: UseLiveOptions<R>): R | undefined` — Subscribe to a server function's result, re-rendering whenever one of options.tags is invalidated. The function runs on the server under the viewer's own session (it must authorize its own access, like any server action). Pass a **read** action.
 - `useLiveOptimistic<T, A>(liveValue: T, reducer: (current: T, action: A) => T): tuple` — Pair an optimistic overlay with a live value: apply a local update immediately, and let it reconcile automatically when the authoritative value arrives over the socket (the overlay resets whenever liveValue's identity changes).

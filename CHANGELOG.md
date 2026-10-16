@@ -152,6 +152,16 @@ and this project adheres to
 - **The React Native parity ledger moved to React Native 0.88.** `deno task parity:native`
   checks React Native mode's `react-native` surface and the list adapters against 0.88's types
   (captured from `0.88.0-rc.5`) instead of 0.86.3, and reports no gaps.
+- **Channel message log and replay.** `createChannel({ history: 50 })` (or
+  `{ size, ttlSeconds }`) logs each key's publishes with a cursor: a late subscriber passing
+  `useChannel(ch, key, { since: "0" })` receives the key's retained history once `authorize`
+  allows it, then live pushes (`onMessage` sees every payload); frames carry a `cursor`, a
+  reconnect resumes after the last one, a back-pressured socket resumes from the log when it
+  drains, and a burst is delivered whole instead of latest-wins. The log is bounded: `size` per
+  key (up to 1,000), a TTL (24 hours by default), and in memory a cap on keys and bytes.
+  `redisChannelTransport()` brings a shared log in Redis (`log: false` keeps each instance's
+  own), so a subscriber on any replica replays every replica's publishes; `inMemoryChannelLog`
+  / `redisChannelLog` and a transport's `log` are the seam for another store.
 
 ### Fixed
 

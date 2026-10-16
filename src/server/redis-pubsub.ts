@@ -13,7 +13,9 @@
  * connection holds the `SUBSCRIBE` (a subscribed connection can run nothing else), reconnects
  * with backoff when it drops and subscribes again, calling `onResync`. Delivery is at most once,
  * like every Live transport: an event published while a replica's subscriber is reconnecting is
- * not replayed to it (presence repairs itself on the next heartbeat).
+ * not replayed to it (presence repairs itself on the next heartbeat) — a channel with `history`
+ * fills that gap from its replay log, which this transport keeps in Redis (see
+ * {@linkcode redisChannelLog}).
  *
  * @module
  */
@@ -33,6 +35,7 @@ import {
   type Target,
 } from "./redis.ts";
 import { inRootContext } from "./root-context.ts";
+import { redisChannelLog, type RedisChannelLogOptions } from "./redis-channel-log.ts";
 
 /** Options for {@linkcode redisChannelTransport}. */
 export interface RedisChannelTransportOptions {
@@ -46,6 +49,12 @@ export interface RedisChannelTransportOptions {
   channel?: string;
   /** Called each time the subscriber is back after a dropped connection (events may be missed). */
   onResync?: () => void;
+  /**
+   * The replay log for channels with `history`, kept in Redis so every replica replays the same
+   * publishes (default on, keys under `denext:chlog`). `false` leaves each instance its own
+   * in-memory log.
+   */
+  log?: false | RedisChannelLogOptions;
 }
 
 /** A {@linkcode ChannelTransport} with its connections' lifecycle. */
@@ -213,6 +222,7 @@ export function redisChannelTransport(
       );
     },
     subscribe: (fn) => local.subscribe(fn),
+    ...(options.log === false ? {} : { log: redisChannelLog(publisher, options.log) }),
     ready: () => readyPromise,
     async close() {
       if (state.closed) return;

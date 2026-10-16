@@ -2,7 +2,7 @@
 // validated by the server, whose tags are server-derived, and whose failures arrive as a
 // structured error instead of an opaque string.
 
-import { useEffect, useState } from "../runtime/hooks.ts";
+import { useEffect, useRef, useState } from "../runtime/hooks.ts";
 import type { LiveErrorInfo } from "./live-client.ts";
 import { subscribeChannel, subscribeLiveData } from "./live-client.ts";
 import type { ChannelRef } from "../runtime/channel.ts";
@@ -46,6 +46,8 @@ export interface SubscriptionState<Out> {
   status: "idle" | "subscribed" | "live" | "error";
   /** A channel push's per-instance sequence number (orders frames from one instance). */
   seq?: number;
+  /** A channel push's replay-log cursor (a channel with `history`): pass it as `since` to resume. */
+  cursor?: string;
 }
 
 /** Options for {@link useSubscription}. */
@@ -62,7 +64,7 @@ export interface UseSubscriptionOptions<Out> {
  *
  * @param sub The subscription ref (imported from a `"use server"` module).
  * @param input The typed input.
- * @param options `initial`, `enabled`.
+ * @param options `initial`, `enabled`, `since`, `onMessage`.
  * @returns `{ data, error, status }`.
  */
 export function useSubscription<In, Out>(
@@ -104,6 +106,13 @@ export interface UseChannelOptions<T> {
   initial?: T;
   /** `false` keeps the hook idle (no subscription). Default true. */
   enabled?: boolean;
+  /**
+   * A channel with `history`: first replay what was published after this cursor (`"0"`: all it
+   * retains), then live pushes. A reconnect resumes from the last cursor received either way.
+   */
+  since?: string;
+  /** Called with EVERY payload, replayed ones included (`data` keeps only the latest). */
+  onMessage?: (value: T, cursor: string | undefined) => void;
 }
 
 /** The id under which a channel ref subscribes: the server object's id, or the "use server" stub's. */
@@ -116,7 +125,8 @@ function channelIdOf(ref: ChannelRef<unknown> | { denextActionId: string }): str
  * Receive a `createChannel` channel's pushes for `key`. The server authorizes the subscription
  * in this viewer's session (and re-checks it lazily); every `publish(key, payload)` — from an
  * action, a webhook, a cron — arrives as a new `data`. At-most-once, latest-wins; no replay on
- * reconnect.
+ * reconnect — unless the channel keeps a `history`: then `since` replays what was missed, each
+ * payload reaches `onMessage`, and a reconnect resumes from the last cursor.
  *
  * @param channel The channel ref (imported from a `"use server"` module or received as a prop).
  * @param key The key to subscribe to.
@@ -135,12 +145,17 @@ export function useChannel<T>(
   });
   const enabled = options.enabled ?? true;
   const id = channelIdOf(channel);
+  const onMessage = useRef(options.onMessage);
+  onMessage.current = options.onMessage;
   useEffect(() => {
     if (!enabled) return;
     return subscribeChannel(
       id,
       key,
-      (value, seq) => setState({ data: value as T, error: undefined, status: "live", seq }),
+      (value, seq, cursor) => {
+        onMessage.current?.(value as T, cursor);
+        setState({ data: value as T, error: undefined, status: "live", seq, cursor });
+      },
       (info) =>
         setState((s) => ({
           ...s,
@@ -150,8 +165,9 @@ export function useChannel<T>(
       // Registered but no value yet: reflect `subscribed`, without clobbering a value or error that
       // arrived first (a publish can beat the ack).
       () => setState((s) => (s.status === "idle" ? { ...s, status: "subscribed" } : s)),
+      options.since,
     );
     // deno-lint-ignore no-explicit-any
-  }, [id, key, enabled] as any);
+  }, [id, key, enabled, options.since] as any);
   return state;
 }

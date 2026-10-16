@@ -293,7 +293,9 @@ deployment — that is its purpose; on a self-host it reaches only the workers o
 one process, so it does not make two containers talk. Install either, or your own
 two-method NATS transport, with `setChannelTransport(t)`; the hub re-subscribes.
 Delivery is at most once (an event published while a subscriber is reconnecting
-is not replayed). An event carries an `instance` id and a per-instance `seq`,
+is not replayed) — except on a channel with `history`, whose subscribers resume
+from its log; `redisChannelTransport()` keeps that log in Redis, so it spans the
+replicas. An event carries an `instance` id and a per-instance `seq`,
 so ordering holds per publisher, not globally. Without a transport, the
 practical alternative is **sticky sessions** at the balancer so a viewer's
 socket and the actions that publish to it land on the same node — which works

@@ -6163,12 +6163,48 @@
           "denextOnly": true
         },
         {
+          "name": "ChannelHistory",
+          "slug": "ChannelHistory",
+          "kind": "interface",
+          "signature": "interface ChannelHistory",
+          "doc": "A channel's retention: how many entries per key, for how long.",
+          "docFull": "A channel's retention: how many entries per key, for how long.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ChannelIdleReason",
           "slug": "ChannelIdleReason",
           "kind": "typeAlias",
           "signature": "type ChannelIdleReason = unsubscribe | disconnect",
           "doc": "Why a channel key lost its last local subscriber (see ChannelConfig.onIdle).",
           "docFull": "Why a channel key lost its last local subscriber (see {@linkcode ChannelConfig.onIdle}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelLog",
+          "slug": "ChannelLog",
+          "kind": "interface",
+          "signature": "interface ChannelLog",
+          "doc": "Where channel publishes are logged for replay.",
+          "docFull": "Where channel publishes are logged for replay.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelLogEntry",
+          "slug": "ChannelLogEntry",
+          "kind": "interface",
+          "signature": "interface ChannelLogEntry",
+          "doc": "One logged publish.",
+          "docFull": "One logged publish.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -8733,6 +8769,35 @@
           "signature": "inMemoryCacheStore(): CacheStore",
           "doc": "The default per-process, in-memory CacheStore.",
           "docFull": "The default per-process, in-memory {@link CacheStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "inMemoryChannelLog",
+          "slug": "inMemoryChannelLog",
+          "kind": "function",
+          "signature": "inMemoryChannelLog(options?: InMemoryChannelLogOptions): ChannelLog",
+          "doc": "The default log: this instance's publishes, in memory, bounded per key (ChannelHistory), by key count and by total bytes.",
+          "docFull": "The default log: this instance's publishes, in memory, bounded per key ({@link ChannelHistory}),\nby key count and by total bytes.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The key and byte caps."
+            }
+          ],
+          "returns": "The log.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "InMemoryChannelLogOptions",
+          "slug": "InMemoryChannelLogOptions",
+          "kind": "interface",
+          "signature": "interface InMemoryChannelLogOptions",
+          "doc": "Options for inMemoryChannelLog.",
+          "docFull": "Options for {@linkcode inMemoryChannelLog}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11943,6 +12008,39 @@
           "signature": "interface RedisCacheStoreOptions",
           "doc": "Options for redisCacheStore.",
           "docFull": "Options for {@linkcode redisCacheStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "redisChannelLog",
+          "slug": "redisChannelLog",
+          "kind": "function",
+          "signature": "redisChannelLog(client: RedisClient, options?: RedisChannelLogOptions): ChannelLog",
+          "doc": "A channel replay log over a Redis connection.",
+          "docFull": "A channel replay log over a Redis connection.",
+          "params": [
+            {
+              "name": "client",
+              "doc": "The connection (the transport's publishing client)."
+            },
+            {
+              "name": "options",
+              "doc": "The key prefix."
+            }
+          ],
+          "returns": "The log.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisChannelLogOptions",
+          "slug": "RedisChannelLogOptions",
+          "kind": "interface",
+          "signature": "interface RedisChannelLogOptions",
+          "doc": "Options for redisChannelLog.",
+          "docFull": "Options for {@linkcode redisChannelLog}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -19841,7 +19939,7 @@
           "name": "subscribeChannel",
           "slug": "subscribeChannel",
           "kind": "function",
-          "signature": "subscribeChannel(channelId: string, key: string, onValue: (value: unknown, seq: number) => void, onError: (info: LiveErrorInfo) => void, onReady?: () => void): () => void",
+          "signature": "subscribeChannel(channelId: string, key: string, onValue: (value: unknown, seq: number, cursor?: string) => void, onError: (info: LiveErrorInfo) => void, onReady?: () => void, since?: string): () => void",
           "doc": "Receive a createChannel channel's pushes for key. Backs useChannel. Returns an unsubscribe. A refusal (denied / no-policy / …) arrives through onError and marks the subscription dead so a reconnect does not re-send it.",
           "docFull": "Receive a `createChannel` channel's pushes for `key`. Backs `useChannel`. Returns an\nunsubscribe. A refusal (`denied` / `no-policy` / …) arrives through `onError` and marks the\nsubscription dead so a reconnect does not re-send it.",
           "params": [
@@ -19855,11 +19953,15 @@
             },
             {
               "name": "onValue",
-              "doc": "Called with each pushed payload and the publisher's seq."
+              "doc": "Called with each pushed payload, the publisher's seq and its replay cursor."
             },
             {
               "name": "onError",
               "doc": "Called with a structured refusal."
+            },
+            {
+              "name": "since",
+              "doc": "Replay a channel with history after this cursor (\"0\": all it retains)."
             }
           ],
           "returns": "",
@@ -19949,8 +20051,8 @@
           "slug": "useChannel",
           "kind": "function",
           "signature": "useChannel<T>(channel: ChannelRef<T> | object, key: string, options?: UseChannelOptions<T>): SubscriptionState<T>",
-          "doc": "Receive a createChannel channel's pushes for key. The server authorizes the subscription in this viewer's session (and re-checks it lazily); every publish(key, payload) — from an action, a webhook, a cron — arrives as a new data. At-most-once, latest-wins; no replay on reconnect.",
-          "docFull": "Receive a `createChannel` channel's pushes for `key`. The server authorizes the subscription\nin this viewer's session (and re-checks it lazily); every `publish(key, payload)` — from an\naction, a webhook, a cron — arrives as a new `data`. At-most-once, latest-wins; no replay on\nreconnect.",
+          "doc": "Receive a createChannel channel's pushes for key. The server authorizes the subscription in this viewer's session (and re-checks it lazily); every publish(key, payload) — from an action, a webhook, a cron — arrives as a new data. At-most-once, latest-wins; no replay on reconnect — unless the channel keeps a history: then since replays what was missed, each payload reaches onMessage, and a reconnect resumes from the last cursor.",
+          "docFull": "Receive a `createChannel` channel's pushes for `key`. The server authorizes the subscription\nin this viewer's session (and re-checks it lazily); every `publish(key, payload)` — from an\naction, a webhook, a cron — arrives as a new `data`. At-most-once, latest-wins; no replay on\nreconnect — unless the channel keeps a `history`: then `since` replays what was missed, each\npayload reaches `onMessage`, and a reconnect resumes from the last cursor.",
           "params": [
             {
               "name": "channel",
@@ -20094,7 +20196,7 @@
             },
             {
               "name": "options",
-              "doc": "initial, enabled."
+              "doc": "initial, enabled, since, onMessage."
             }
           ],
           "returns": "{ data, error, status }.",
