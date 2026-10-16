@@ -451,7 +451,9 @@ all text by the system font scale, which `allowFontScaling={false}` cannot undo)
 Screen readers hear each screen change: the stack and tab navigators (React Navigation's and Expo
 Router's, drawn by `denext/navigation`) and the drawer read the new screen's `title` into an
 `aria-live` region, as VoiceOver and TalkBack announce a native screen change. The first screen is
-not announced.
+not announced. A stack push or pop also moves focus into the new screen (its header title, or
+back to the element that opened the screen on a pop); see
+[Native-feel navigation](/docs/navigation-native#screen-readers-and-focus).
 
 ### `Platform.OS` in the shell
 

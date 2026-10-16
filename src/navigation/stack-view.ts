@@ -39,6 +39,7 @@ import { LARGE_TITLE_COLLAPSE, LargeTitle, StackHeader } from "./header.ts";
 import { Sheet } from "./sheet.ts";
 import { navigationContexts } from "./context.ts";
 import { useRouteAnnouncer } from "./announcer.ts";
+import { type FocusNode, stackFocusMove } from "./focus.ts";
 import { listenAll, type ListenerTarget } from "./listen.ts";
 import { type NavigationThemeProps, themeAttributes, useNavigationTheme } from "./theme.ts";
 import type { NavigationPlatform, ScreenOptions, StackViewEntry } from "./types.ts";
@@ -93,6 +94,12 @@ export interface StackViewProps extends NavigationThemeProps {
    * `aria-live` region; the `title` option, else the document title). Default `true`.
    */
   readonly announceRouteChanges?: boolean;
+  /**
+   * Move focus into the screen a push or pop shows (default `true`): a push focuses its first
+   * heading (the header title), else the screen; a pop returns focus to the element that had it
+   * when the screen was left. Focus outside the stack is never taken.
+   */
+  readonly focusOnNavigation?: boolean;
   /**
    * Lay each screen's content out as React Native does (default `false`): the screen body (and
    * a `formSheet`'s) is a flex column the content fills, so a `flex: 1` view takes the screen's
@@ -900,6 +907,29 @@ function useStackAnnouncer(rt: StackRt, props: StackViewProps): void {
   useRouteAnnouncer(top?.id ?? "", title, props.announceRouteChanges !== false);
 }
 
+/** Move focus into the new top screen on a push or pop (`focusOnNavigation`). */
+function useStackFocus(rt: StackRt, props: StackViewProps): void {
+  const top = props.entries[props.entries.length - 1];
+  const last = useRef<string | null>(null);
+  // The element focused when each screen still in the stack was pushed over.
+  const left = useRef(new Map<string, FocusNode>());
+  useLayoutEffect(() => {
+    const prev = last.current;
+    last.current = top?.id ?? "";
+    if (prev === null || !top || prev === top.id || props.focusOnNavigation === false) return;
+    stackFocusMove({
+      root: rt.root as FocusNode | null,
+      section: rt.sections.get(top.id) as FocusNode | undefined,
+      ids: new Set(props.entries.map((e) => e.id)),
+      prev,
+      top: top.id,
+      // A form sheet traps and restores focus itself.
+      sheet: optionsOf(rt, top).presentation === "formSheet",
+      saved: left.current,
+    });
+  }, [top?.id]);
+}
+
 /**
  * The router-independent stack view; see the module docs. {@linkcode StackLayout} is the App
  * Router binding most apps use.
@@ -922,6 +952,7 @@ export function StackView(props: StackViewProps): VNode {
     return () => onHandle?.(null);
   }, []);
   useStackAnnouncer(rt, props);
+  useStackFocus(rt, props);
   useEdgeSwipe(rt, props.swipeBack ?? rt.platform === "ios");
   useAndroidBack(rt, props.entries.length > 1);
   useNavigationTheme(props.theme ?? "auto");

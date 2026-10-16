@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- **Stacks move focus to the new screen.** In `denext/navigation` (`StackView`, `StackLayout`,
+  `HistoryStack`, and React Native mode's React Navigation and Expo Router stacks) a push focuses
+  the new screen's header title (else the screen), and a pop gives focus back to the element that
+  had it when the screen was left, as VoiceOver and TalkBack do on a native screen change. Focus
+  in a field outside the stack is left alone, and the route announcement is skipped when the
+  focused heading already says the title. `focusOnNavigation: false` turns it off.
+
 - **`adjustsFontSizeToFit` shrinks nested `Text` too** in React Native mode. The fit probes
   every element inside the fitting `Text` at its scaled size, and a nested `Text` with its own
   `fontSize` draws it times the outer `Text`'s factor, as React Native does. It used to shrink

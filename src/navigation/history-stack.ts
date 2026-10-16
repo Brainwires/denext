@@ -118,6 +118,8 @@ export interface HistoryStackProps extends NavigationThemeProps {
   readonly swipeHaptic?: boolean;
   /** Announce the new top screen's title to screen readers (default `true`). */
   readonly announceRouteChanges?: boolean;
+  /** Move focus into the screen a push or pop shows (default `true`; see `StackView`). */
+  readonly focusOnNavigation?: boolean;
   /** Extra style for the container (its height defaults to `100dvh`). */
   readonly style?: Readonly<Record<string, string | number | undefined>>;
   /** A class for the container. */
@@ -525,6 +527,7 @@ export function HistoryStack(props: HistoryStackProps): VNode {
       fullScreenSwipe: props.fullScreenSwipe ?? true,
       swipeHaptic: props.swipeHaptic,
       announceRouteChanges: props.announceRouteChanges,
+      focusOnNavigation: props.focusOnNavigation,
       theme: props.theme,
       material: props.material,
       accentColor: props.accentColor,

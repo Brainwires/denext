@@ -47,8 +47,7 @@
   maps / video / symbols wiring of the Expo and community packages, and a migrated React Native
   app larger than `examples/expo-app` (a large real-world one).
 - **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
-- **Accessibility:** move focus to the new screen on navigation; read bold text and grayscale
-  from the OS (both read `false` today).
+- **Accessibility:** read bold text and grayscale from the OS (both read `false` today).
 - **`denext migrate --from expo` advice** for the most-used native-only SDKs
   (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`), pointing at
   the [native SDK recipes](https://denext.dev/docs/native-sdk-recipes).
