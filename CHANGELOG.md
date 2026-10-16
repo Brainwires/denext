@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Added
 
+- **A soft navigation sent as a POST streams its deferred values.** A navigation whose Remix
+  `shouldRevalidate` echo is too large for headers goes out as a POST; it now gets the same
+  answer as a GET: a Flight route's payload at once with each `defer()` value following as it
+  settles (an isomorphic route's compact payload), instead of a whole HTML document carrying
+  every resolved value.
 - **Boot diagnosis follows the import map and catches ambiguous exports.** The walk follows a
   bare specifier the page's import map resolves (an exact key, a `"pkg/"` prefix, or a scope
   containing the importer) into the mapped module, so its imports and link edges are checked

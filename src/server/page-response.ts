@@ -164,6 +164,15 @@ async function recoverPageError(
 }
 
 /**
+ * A soft navigation's method: a GET, or the POST it becomes when its render payload is too large
+ * for headers (the Remix `shouldRevalidate` echo; request-pipeline.ts read the body), which is
+ * answered the same way. `pr.soft` already says the request carries `x-denext-nav`.
+ */
+function isNavMethod(request: Request): boolean {
+  return request.method === "GET" || request.method === "POST";
+}
+
+/**
  * Flight soft-navigation: a client nav to a Flight route gets the JSON Flight payload
  * instead of a full HTML document — the client parses it through the app-wide client
  * registry and reconciles the retained root in place (no HTML parse, no bundle re-run).
@@ -173,7 +182,7 @@ async function recoverPageError(
  */
 function flightNavResponse(pr: PageRequest, rendered: RenderedPage): Response | null {
   const isFlightNav = pr.soft && pr.useFlight && rendered.flight !== undefined &&
-    pr.state.request.method === "GET";
+    isNavMethod(pr.state.request);
   if (!isFlightNav) return null;
   const payload = serializeFlightNav({
     flight: rendered.flight!,
@@ -205,7 +214,7 @@ function flightNavResponse(pr: PageRequest, rendered: RenderedPage): Response | 
  */
 function isoNavResponse(pr: PageRequest, rendered: RenderedPage): Response | null {
   const { config } = pr.state.app;
-  const isoEntry = pr.soft && !pr.useFlight && pr.state.request.method === "GET"
+  const isoEntry = pr.soft && !pr.useFlight && isNavMethod(pr.state.request)
     ? config.clientEntryFor?.(pr.page.route)
     : undefined;
   if (!isoEntry) return null;

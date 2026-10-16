@@ -206,8 +206,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **`getLoadContext` values read from the Express request are `TODO` stubs** after migration, and
   `cspNonce` is `undefined` (denext's CSP is hash-based). The synthesized `ServerBuild` is flat.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
-- **A soft navigation sent as a POST gets its `defer()` values whole** (one whose
-  `shouldRevalidate` echo is too large for headers); a GET navigation streams them as they settle.
 - **`@denext/react-router` generates no route types.** `import type { Route } from
   "./+types/…"` is type-only, so it erases and the app runs, but denext writes no `+types`
   modules for a type check to resolve. (How `serverLoader()` behaves on a client navigation is a

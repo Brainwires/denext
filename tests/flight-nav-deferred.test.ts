@@ -105,6 +105,27 @@ Deno.test("a browser soft navigation gets its payload first, then each deferred 
   assert((await reader.read()).done);
 });
 
+Deno.test("a soft navigation sent as a POST (an over-large render payload) streams its values too", async () => {
+  const slow = deferred<string>();
+  const app = makeApp({ fast: "now", slow: slow.promise });
+  const res = await app(
+    new Request("http://x/d", {
+      method: "POST",
+      headers: { ...navHeaders, "content-type": "application/json" },
+      body: JSON.stringify({ revalidate: { "routes/d": { echo: "x".repeat(8192) } } }),
+    }),
+  );
+  assertEquals(res.status, 200);
+  assertEquals(res.headers.get("x-denext-defer"), "1", "the POST response streams its values");
+  const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+  const payload = JSON.parse((await reader.read()).value!);
+  assertStringIncludes(JSON.stringify(payload.flight), `"fast":"now"`);
+  assertStringIncludes(JSON.stringify(payload.flight), `"slow":{"$":"vh","r":"dnxv0"}`);
+  slow.resolve("late");
+  assertEquals((await reader.read()).value, '{"v":"dnxv0","x":"late"}\n');
+  assert((await reader.read()).done);
+});
+
 Deno.test("a soft navigation without x-denext-defer (a prefetch, Live) still gets the values resolved", async () => {
   const app = makeApp({ fast: Promise.resolve("f"), slow: Promise.resolve([3]) });
   const res = await app(new Request("http://x/d", { headers: { "x-denext-nav": "1" } }));

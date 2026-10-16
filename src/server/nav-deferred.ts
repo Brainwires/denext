@@ -44,9 +44,14 @@ export class NavDeferredValues implements DeferredValueSink {
   }
 }
 
-/** Whether a request is a browser soft navigation that streams its deferred values. */
+/**
+ * Whether a request is a browser soft navigation that streams its deferred values: a GET, or the
+ * POST a navigation becomes when its render payload is too large for headers (the Remix
+ * `shouldRevalidate` echo; request-pipeline.ts has read its body by now).
+ */
 export function wantsNavDeferred(request: Request): boolean {
-  return request.method === "GET" && request.headers.get("x-denext-nav") === "1" &&
+  return (request.method === "GET" || request.method === "POST") &&
+    request.headers.get("x-denext-nav") === "1" &&
     request.headers.get("x-denext-defer") === "1";
 }
 
