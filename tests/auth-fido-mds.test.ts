@@ -30,11 +30,13 @@ import {
   leafOf,
   makeCert,
   signBlob,
+  TEST_NOW,
   testKey,
   testPki,
 } from "./_x509-test-ca.ts";
 
-const NOW = Date.now();
+/** Every check runs on the injected clock, never the wall clock (see TEST_NOW). */
+const NOW = TEST_NOW;
 const DAY = 86_400_000;
 const hexBytes = (s: string) => Uint8Array.from(s.match(/../g) ?? [], (b) => parseInt(b, 16));
 const b64u = (bytes: Uint8Array) =>

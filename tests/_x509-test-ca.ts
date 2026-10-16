@@ -102,13 +102,21 @@ function extensionsFor(o: CertOptions): Uint8Array[] {
 let serial = 1;
 
 /**
+ * The fixed clock the FIDO metadata tests run on (passed as every `now`): noon UTC, so a BLOB's
+ * day-granular `nextUpdate` is never within hours of it. The wall clock made the rollback test
+ * fail between 23:00 and 24:00 UTC, when `day(now + 5 days)` + the grace day fell before the
+ * test's own `now + 5 days + 1 h`.
+ */
+export const TEST_NOW: number = Date.UTC(2026, 5, 15, 12);
+
+/**
  * A DER certificate, really signed by its issuer's key (ECDSA P-256 / SHA-256).
  *
  * @param o What it says.
  * @returns The DER.
  */
 export async function makeCert(o: CertOptions): Promise<Uint8Array> {
-  const now = Date.now();
+  const now = TEST_NOW;
   const issuer = o.issuer ?? { cn: o.subject, key: o.key };
   const algId = der(0x30, derOid("1.2.840.10045.4.3.2"));
   const extensions = extensionsFor(o);
@@ -120,8 +128,8 @@ export async function makeCert(o: CertOptions): Promise<Uint8Array> {
     nameOf(issuer.cn),
     der(
       0x30,
-      utcTime(o.notBefore ?? now - 365 * 86_400_000),
-      utcTime(o.notAfter ?? now + 365 * 86_400_000),
+      utcTime(o.notBefore ?? now - 3650 * 86_400_000),
+      utcTime(o.notAfter ?? now + 3650 * 86_400_000),
     ),
     nameOf(o.subject),
     o.key.spki,
