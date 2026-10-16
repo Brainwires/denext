@@ -765,6 +765,12 @@ export interface VerificationRequestParams {
   purpose: "email" | "reset" | "magic" | "otp";
   /** Expiry, epoch seconds. */
   expiresAt: number;
+  /**
+   * The email provider that issued it (a magic link's or a one-time code's `id`), so an app
+   * with several can send each one's mail its own way; absent for a password reset or an
+   * address verification.
+   */
+  provider?: string;
 }
 
 /**

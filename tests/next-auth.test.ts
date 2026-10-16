@@ -814,6 +814,7 @@ Deno.test("next-auth adapter bridge: users, accounts, tokens and sessions on Aut
     email: "a@b.co",
     emailVerified: 1_700_000_000,
     name: "A",
+    roles: undefined, // an absent field is no write (and no warning)
   });
   const row = raw.users.get(user.id)!;
   assertEquals(row.emailVerified?.getTime(), 1_700_000_000_000, "epoch seconds ↔ Date");
@@ -971,6 +972,14 @@ Deno.test("next-auth pages: GET signout goes to pages.signOut when the app has o
   const builtIn = await app().call("/api/auth/signout");
   assertEquals(builtIn.status, 200);
   assert((await builtIn.text()).includes("Are you sure you want to sign out?"));
+});
+
+Deno.test("next-auth email: each email provider sends its own links", async () => {
+  const a = emailApp();
+  await a.requestLink("nodemailer", "n@example.com");
+  await a.requestLink("resend", "r@example.com");
+  assertEquals(a.sent.map((m) => m.provider), ["nodemailer", "resend"]);
+  assert(a.sent[0].url.includes("/api/auth/callback/nodemailer"));
 });
 
 Deno.test("next-auth events: session fires on every read, updateUser on a verifying sign-in", async () => {

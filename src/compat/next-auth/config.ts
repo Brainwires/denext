@@ -15,6 +15,8 @@
  *   `authorized` → run by the shim;
  * - `events.signIn` / `signOut` / `createUser` / `linkAccount` → the denext events;
  *   `events.updateUser` from the adapter bridge, `events.session` on every session read;
+ * - several email providers → one `sendVerificationRequest` dispatching on the issuing
+ *   provider;
  * - `pages` → `pages` (the built-in pages under the base path otherwise);
  * - `logger` / `debug` → `logger`.
  *
@@ -125,19 +127,19 @@ function events(active: () => ActiveNextAuth): AuthEvents {
   };
 }
 
-/** The one sender the email providers share (denext has one per config). */
+/**
+ * denext's one `sendVerificationRequest` over the email providers' own senders: a link or code
+ * goes out through the provider that issued it (its `provider` id), anything else (a provider
+ * denext doesn't name) through the first.
+ */
 function emailSender(
   built: { provider: AuthProvider; send?: SendVerificationRequest }[],
-  warn: (message: string) => void,
 ): SendVerificationRequest | undefined {
-  const senders = built.filter((b) => b.send);
-  if (senders.length > 1) {
-    warn(
-      `more than one email provider is configured; every sign-in link is sent by ` +
-        `"${senders[0].provider.id}"'s sender`,
-    );
-  }
-  return senders[0]?.send;
+  const senders = new Map<string, SendVerificationRequest>();
+  for (const { provider, send } of built) if (send) senders.set(provider.id, send);
+  const first = senders.values().next().value;
+  if (!first) return undefined;
+  return (params) => ((params.provider && senders.get(params.provider)) || first)(params);
 }
 
 /** denext's `callbacks.signIn`: the app's `signIn`, refusing on anything but `true` (a URL too). */
@@ -256,7 +258,7 @@ export function translateConfig(
   if (rateLimit) denext.rateLimit = rateLimit;
   const adapter = bridgedAdapter(config, descriptors, log);
   if (adapter) denext.adapter = adapter;
-  const send = emailSender(built, (message) => log.warn?.(message));
+  const send = emailSender(built);
   if (send) denext.sendVerificationRequest = send;
   const maxAge = session.maxAge!;
   ref.current = {

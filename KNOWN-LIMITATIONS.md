@@ -129,7 +129,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   through it, `revokeAllSessions()` can't end its database sessions (it warns), and database
   sessions don't slide. With an adapter, a Credentials `authorize()` must return a user of the
   adapter's users table (by `id`), as with Auth.js; a user it doesn't know is refused.
-- **More than one email provider:** every link is sent by the first one's sender.
 - **v4 APIs** (`next-auth/next`, `getServerSession`, `next-auth/middleware`'s `withAuth`) are
   not shipped.
 - **Not parity-gated:** the `next-auth` surface is not part of the React / Next.js parity CI gate.
