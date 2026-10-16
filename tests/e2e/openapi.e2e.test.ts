@@ -86,11 +86,16 @@ Deno.test({
       assertEquals(doc.info.title, "Pets API");
     });
 
-    await t.step("/docs renders Swagger UI (from unpkg)", async () => {
+    await t.step("/docs renders the vendored Swagger UI from the app's own origin", async () => {
       const html = await (await fetch(server.origin + "/docs")).text();
-      assertStringIncludes(html, "swagger-ui");
-      assertStringIncludes(html, "SwaggerUIBundle");
-      assertStringIncludes(html, "unpkg.com/swagger-ui-dist");
+      assertStringIncludes(html, 'id="swagger-ui"');
+      assertStringIncludes(html, "/docs/swagger-ui/swagger-ui-bundle.js");
+      assertEquals(html.includes("unpkg.com"), false, "no CDN unless `cdn` is set");
+      const bundle = await fetch(server.origin + "/docs/swagger-ui/swagger-ui-bundle.js");
+      assertEquals(bundle.status, 200);
+      await bundle.body?.cancel();
+      const init = await (await fetch(server.origin + "/docs/swagger-ui/init.js")).text();
+      assertStringIncludes(init, "SwaggerUIBundle");
     });
 
     await t.step("reads are public; writes are 401 without a bearer token", async () => {
