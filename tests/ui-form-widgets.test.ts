@@ -129,7 +129,6 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     trailingSlash: "toggle",
     assetPrefix: "text",
     redirects: "list-of-forms",
-    resolveAlias: "map", // specifier → a target string or `{ to, except }`
     rewrites: "list-of-forms",
     headers: "list-of-forms",
     scheduledJobs: "map",

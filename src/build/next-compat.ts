@@ -932,8 +932,6 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/cli/command",
   "denext/plugin-kit",
   "denext/plugin-kit/vite-emitter",
-  // The `denext ui` form components (server-rendered HTML for a plugin's own pages).
-  "denext/ui-kit",
   "denext/lint-plugin",
   "denext/bundle",
   "denext/build/css",
