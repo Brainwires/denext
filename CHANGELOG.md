@@ -99,6 +99,12 @@ and this project adheres to
   renderer are iterative, so `plural` / `select` / `selectordinal` nest to any depth (the
   64-level cap is gone) with no stack to overflow.
 
+### Changed
+
+- **The React Native parity ledger moved to React Native 0.88.** `deno task parity:native`
+  checks React Native mode's `react-native` surface and the list adapters against 0.88's types
+  (captured from `0.88.0-rc.5`) instead of 0.86.3, and reports no gaps.
+
 ### Fixed
 
 - **A library's `"use client"` components hydrate under `nodeResolve: false` too.** The server

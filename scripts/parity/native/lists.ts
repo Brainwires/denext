@@ -34,7 +34,7 @@ const gapsPath = (root: string) => `${root}/${DIR}/lists.known-gaps.json`;
 
 /** The pinned versions (React Native: T3's; the packages: the manifest's). */
 const PINS: Record<string, string> = {
-  "react-native": "0.86.3",
+  "react-native": "0.88.0-rc.5",
   "react-native-web": "0.21.2",
   "@shopify/flash-list": LIST_PACKAGES["@shopify/flash-list"].pinned,
   "@legendapp/list": LIST_PACKAGES["@legendapp/list"].pinned,

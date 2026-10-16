@@ -898,7 +898,7 @@ back at a fling's speed while animation frames are counted, then the callback ge
 rate and FlashList's suggestions. For a profile of a route, use `denext profile`.
 
 `deno task parity:native` checks every adapter's props, ref methods and exports against the
-pinned React Native 0.86.3, react-native-web 0.21.2, FlashList 2.3.2 and LegendList 3.4.0. None
+pinned React Native 0.88 (`0.88.0-rc.5`), react-native-web 0.21.2, FlashList 2.3.2 and LegendList 3.4.0. None
 is missing: `scripts/parity/native/baselines/lists.known-gaps.json` is empty. SectionList's
 `data`, `getItem` and `getItemCount` are waived: its type inherits them, but React Native's
 `SectionList` never reads them (the items come from `sections`).

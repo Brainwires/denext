@@ -54,10 +54,12 @@
 - **Capabilities:** background audio with lock-screen controls, multi-select and video image
   picking, file transfer with progress, a notification service extension and badges, SQLite
   encryption, a PowerSync recipe.
-- **React Native 0.88 in the parity ledger:** the baseline is React Native 0.86.3; move it to
-  0.88 once that is final (`REACT_NATIVE_PIN` in `scripts/parity/native/spec.ts`, the lists'
-  `PINS`, `REACT_NATIVE_VERSION` in `src/react-native/platform.ts`), then refresh the baselines.
-  Against `0.88.0-rc.4` the core and lists diffs already report no gaps.
+- **React Native 0.88.0 final in the parity ledger:** the baselines are captured from
+  `0.88.0-rc.5` (97 expected names, no gaps; the lists too). 0.88.0 was published on
+  2026-10-15 and this machine's npm installs a version only two days after its release, so move
+  `REACT_NATIVE_PIN` (`scripts/parity/native/spec.ts`) and the lists' `PINS` to `0.88.0`,
+  refresh the baselines (`deno task parity:native:refresh -- react-native lists`), and set
+  `REACT_NATIVE_VERSION` in `src/react-native/platform.ts` (still 0.86.3) once it installs.
 - **`denext profile --android`** over remote CDP; a Skia (CanvasKit) recipe; Tamagui / Unistyles
   verification.
 
