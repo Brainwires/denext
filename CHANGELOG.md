@@ -38,6 +38,30 @@ and this project adheres to
   DevTools owner stack now follow React's owner chain (a component passed as `children` through
   a wrapper is owned by the component that wrote it), each frame located where its owner wrote
   the JSX. Production builds compile to `jsx` and carry none of it.
+- **Typed-API batching carries mutations.** The POST / PUT / PATCH / DELETE calls a page makes
+  in one tick ride the same `POST /_denext/api-batch` as its reads. The server runs reads
+  concurrently and each mutation alone — after every item before it has settled, before any
+  item after it starts — so a batch behaves like the calls made one by one in order; each
+  mutation item gets the batch's verified `Origin` (and `Host`) and may carry its own
+  `x-csrf-token`, so the route's `csrf()` (double submit included) checks it as a direct call.
+  `createApiClient({ batch: { mutations: false } })` and `apiBatch.mutations: false` keep
+  mutations out; a mutation with another custom header goes alone. Only GET/HEAD batched before.
+- **`useApi({ suspense: true })` seeds hydration on routes that don't use Flight.** An isomorphic
+  route (no `"use client"` boundary, hydrated as one client bundle) now records the signal state
+  its render produced — buffered or streamed — into `#__denext_state`, its route entry adopts it
+  before hydrating, and an isomorphic soft navigation's payload carries it (`signalState`). The
+  suspense result hydrates without a refetch, as on a Flight route; `useSignal` values resume
+  there too. It fetched on mount before.
+- **Typed clients in Python, Go, Swift and Kotlin (`@denext/openapi` 0.6.0, `@denext/graphql`
+  0.6.0).** `denext openapi client --lang python|go|swift|kotlin [--out] [--package]` writes one
+  file from the app's OpenAPI document with no dependency beyond the language's standard library:
+  every schema as a type (`TypedDict` / `Literal`, Go structs with `json` tags, `Codable` Swift
+  types, Kotlin data and enum classes), one method per operation (path, query and body typed, the
+  response decoded), and an error type carrying the status and the `ApiError` envelope.
+  `denext graphql client --lang …` does the same from the schema: its types plus an `execute`
+  helper. `emitClient()` / `modelFromOpenApi()` from `@denext/openapi/clients` script it. The
+  generated code is held to golden files, compiled and type-checked (mypy `--strict`, `go vet`,
+  `swiftc -typecheck` in Swift 6 mode, `kotlinc`) and run end to end against a server.
 
 ## [4.2.0] - 2026-10-16
 
@@ -403,20 +427,6 @@ and this project adheres to
   through the config's relative imports, and re-imported from there after an edit, as a
   module-path `schema` is; subscriptions on the old schema complete. One it cannot trace keeps
   needing a restart, with a dev notice.
-- **Typed-API batching carries mutations.** The POST / PUT / PATCH / DELETE calls a page makes
-  in one tick ride the same `POST /_denext/api-batch` as its reads. The server runs reads
-  concurrently and each mutation alone — after every item before it has settled, before any
-  item after it starts — so a batch behaves like the calls made one by one in order; each
-  mutation item gets the batch's verified `Origin` (and `Host`) and may carry its own
-  `x-csrf-token`, so the route's `csrf()` (double submit included) checks it as a direct call.
-  `createApiClient({ batch: { mutations: false } })` and `apiBatch.mutations: false` keep
-  mutations out; a mutation with another custom header goes alone. Only GET/HEAD batched before.
-- **`useApi({ suspense: true })` seeds hydration on routes that don't use Flight.** An isomorphic
-  route (no `"use client"` boundary, hydrated as one client bundle) now records the signal state
-  its render produced — buffered or streamed — into `#__denext_state`, its route entry adopts it
-  before hydrating, and an isomorphic soft navigation's payload carries it (`signalState`). The
-  suspense result hydrates without a refetch, as on a Flight route; `useSignal` values resume
-  there too. It fetched on mount before.
 
 ### Changed
 

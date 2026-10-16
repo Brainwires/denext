@@ -62,16 +62,6 @@
 - **`denext profile --android`** over remote CDP; a Skia (CanvasKit) recipe; Tamagui / Unistyles
   verification.
 
-## Server, ops and API surface
-
-Each is documented as a manual recipe today (the
-[production checklist](https://denext.dev/docs/production-checklist),
-[multi-instance](https://denext.dev/docs/multi-instance) and
-[route handler recipes](https://denext.dev/docs/route-handler-recipes) pages).
-
-- **Generated clients in other languages** from the OpenAPI / GraphQL documents (TypeScript is
-  served by `denext openapi types`).
-
 ## `denext ui` and DevTools
 
 ## Router plugins

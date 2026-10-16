@@ -1,17 +1,19 @@
 {
   "name": "@denext/graphql",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
     "./subscriptions": "./subscriptions.ts",
-    "./command": "./command.ts"
+    "./command": "./command.ts",
+    "./client": "./client.ts"
   },
   "imports": {
     "@denext/denext": "jsr:@denext/denext@^4.2.0",
     "@std/path": "jsr:@std/path@^1.0.0",
     "graphql": "npm:graphql@^16.9.0",
-    "graphql-yoga": "npm:graphql-yoga@^5.10.0"
+    "graphql-yoga": "npm:graphql-yoga@^5.10.0",
+    "@denext/openapi": "jsr:@denext/openapi@^0.6.0"
   },
   "denext": {
     "catalog": {
@@ -49,6 +51,7 @@
       "limits.ts",
       "trace.ts",
       "command.ts",
+      "client.ts",
       "README.md",
       "CHANGELOG.md",
       "LICENSE",

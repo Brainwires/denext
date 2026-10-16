@@ -1,0 +1,43 @@
+"""A thing to do."""
+type Todo {
+  id: ID!
+  title: String!
+  done: Boolean!
+  status: Status!
+  tags: [String!]!
+  score: Float
+  parent: Todo
+  owner: User
+  attachments: [Attachment!]
+}
+
+type User {
+  id: ID!
+  name: String
+}
+
+union Attachment = Todo | User
+
+enum Status {
+  OPEN
+  DONE
+  IN_PROGRESS
+}
+
+input NewTodo {
+  title: String!
+  tags: [String!]
+  priority: Int = 1
+  meta: JSON
+}
+
+scalar JSON
+
+type Query {
+  todos(first: Int): [Todo!]!
+  todo(id: ID!): Todo
+}
+
+type Mutation {
+  addTodo(input: NewTodo!): Todo!
+}

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0
+
+### Added
+
+- **`denext graphql client --lang python|go|swift|kotlin`** (`--out`, `--package`): the schema's
+  types — object and interface types with every field optional, input types required where
+  non-null without a default, enums, the built-in scalars typed and the rest JSON — plus a client
+  whose `execute(query, variables, operationName)` posts one operation and raises the response's
+  `errors`. One file, standard library only, through `@denext/openapi`'s emitters (a new
+  dependency, `jsr:@denext/openapi@^0.6.0`, loaded only when the verb runs). `modelFromSdl(sdl,
+  path)` from `@denext/graphql/client`.
+
 ## 0.5.0
 
 ### Added

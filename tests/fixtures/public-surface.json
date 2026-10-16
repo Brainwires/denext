@@ -4755,6 +4755,7 @@
     "ensureFlightModules:function",
     "flightClientIds:function",
     "installActivitySupport:function",
+    "installIsoIslands:function",
     "installShellSupport:function",
     "installSingletonSupport:function",
     "installViewTransitionSupport:function",

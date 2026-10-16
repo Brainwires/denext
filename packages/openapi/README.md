@@ -29,7 +29,7 @@ and `denext build` writes `openapi.json` into the output directory.
 denext plugin add @denext/openapi
 ```
 
-Or by hand: add `"@denext/openapi": "jsr:@denext/openapi@^0.5.0"` to `deno.json`'s
+Or by hand: add `"@denext/openapi": "jsr:@denext/openapi@^0.6.0"` to `deno.json`'s
 `imports` and the plugin to `denext.config.ts` as above.
 
 ## What gets described
@@ -186,7 +186,21 @@ denext openapi emit --out openapi.json   # regenerate the committed spec
 denext openapi diff openapi.json         # exit 1 when an operation or schema changed
 denext openapi lint --strict             # exit 1 when anything is undescribed
 denext openapi types --out api-types.ts  # TypeScript types for a consumer outside the app
+denext openapi client --lang python --out client.py   # a typed client in another language
 ```
+
+## Clients in other languages
+
+`denext openapi client --lang python|go|swift|kotlin [--out <file>] [--package <name>]` writes one
+file with no dependency beyond the language's standard library — Python 3.11+ (`urllib` +
+`json`; `TypedDict` / `Literal` types), Go (`net/http` + `encoding/json`; structs with `json`
+tags, methods taking a `context.Context`), Swift (`URLSession` async/await; `Codable` types) and
+Kotlin (`java.net.http`, JVM 11+; data classes with `toJson` / `fromJson` and a small JSON
+reader/writer in the file). One method per operation; a non-2xx answer raises the language's
+error type with the status and the envelope's `code`, `message` and `data`. From a script:
+`emitClient(document, lang)` from `@denext/openapi/clients` (`modelFromOpenApi` gives the
+language-neutral model the emitters share). Values the wire codec tags (a `Date`, a `Map`)
+arrive in their tagged JSON form.
 
 ## Consume the API from another project
 

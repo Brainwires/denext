@@ -438,7 +438,7 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
         });
       }
 
-      ctx.addCommand(createGraphqlCommand(() => getSdl()));
+      ctx.addCommand(createGraphqlCommand(() => getSdl(), undefined, path));
     },
   };
 }

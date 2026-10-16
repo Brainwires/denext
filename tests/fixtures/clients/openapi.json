@@ -1,0 +1,173 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Todos", "version": "1.2.0" },
+  "paths": {
+    "/api/todos": {
+      "get": {
+        "operationId": "getApiTodos",
+        "summary": "List todos",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["open", "done"] }
+          },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer" } },
+          {
+            "name": "tag",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "array", "items": { "type": "string" } }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Todo" } }
+              }
+            }
+          }
+        },
+        "x-denext-errors": { "validation": 400 }
+      },
+      "post": {
+        "operationId": "postApiTodos",
+        "summary": "Create a todo",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["title"],
+                "properties": {
+                  "title": { "type": "string", "minLength": 1 },
+                  "tags": { "type": "array", "items": { "type": "string" } },
+                  "due": { "type": ["string", "null"], "format": "date-time" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Todo" } } }
+          },
+          "409": { "description": "duplicate" }
+        },
+        "x-denext-errors": {
+          "validation": 400,
+          "bad_request": 400,
+          "duplicate": 409,
+          "unauthorized": 401
+        }
+      }
+    },
+    "/api/todos/{id}": {
+      "get": {
+        "operationId": "getApiTodosById",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Todo" } } }
+          }
+        },
+        "x-denext-errors": { "not_found": 404 }
+      },
+      "patch": {
+        "operationId": "patchApiTodosById",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/TodoPatch" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Todo" } } }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteApiTodosById",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK (a handler that returns nothing answers 204)" } }
+      }
+    },
+    "/api/stats": {
+      "get": {
+        "operationId": "getApiStats",
+        "parameters": [
+          { "name": "class", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["counts", "meta"],
+                  "properties": {
+                    "counts": { "type": "object", "additionalProperties": { "type": "integer" } },
+                    "meta": {},
+                    "ratio": { "type": "number" },
+                    "owner-id": { "type": "string" },
+                    "nested": { "type": "object", "properties": { "deep": { "type": "boolean" } } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiError": { "type": "object" },
+      "Status": {
+        "type": "string",
+        "enum": ["open", "done", "in-progress"],
+        "description": "Where a todo stands."
+      },
+      "Todo": {
+        "type": "object",
+        "description": "One todo.",
+        "required": ["id", "title", "status", "tags"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string", "description": "What to do." },
+          "status": { "$ref": "#/components/schemas/Status" },
+          "tags": { "$ref": "#/components/schemas/Tags" },
+          "parent": { "anyOf": [{ "$ref": "#/components/schemas/Todo" }, { "type": "null" }] },
+          "type": { "type": "string" },
+          "score": { "type": ["number", "null"] }
+        }
+      },
+      "TodoPatch": {
+        "allOf": [
+          { "type": "object", "properties": { "title": { "type": "string" } } },
+          {
+            "type": "object",
+            "properties": { "status": { "$ref": "#/components/schemas/Status" } }
+          }
+        ]
+      },
+      "Tags": { "type": "array", "items": { "type": "string" } }
+    }
+  }
+}
