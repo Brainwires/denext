@@ -4,8 +4,9 @@
  * menu can report, so a click on anything else is ignored.
  *
  * Wire form (an array of):
- * - `{ id, label, enabled?, checked?, accelerator?, tooltip?, icon? }`: an item (`icon` a base64
- *   PNG, `accelerator` in the `"CommandOrControl+Shift+K"` syntax);
+ * - `{ id, label, enabled?, checked?, accelerator?, tooltip?, icon?, destructive? }`: an item
+ *   (`icon` a base64 PNG, `accelerator` in the `"CommandOrControl+Shift+K"` syntax, `destructive`
+ *   drawn red where the backend does: runtime 2.9.7-denext.20);
  * - `{ label, children }`: a submenu;
  * - `{ role }`: a standard item (`"copy"`, `"quit"`, …, see `MENU_ROLES`);
  * - `"separator"` (or `{ separator: true }`).
@@ -104,6 +105,7 @@ function item(x: Record<string, unknown>, ids: Set<string>): DesktopMenuItem {
         : {}),
       ...(x.tooltip !== undefined ? { tooltip: str(x.tooltip, "tooltip") } : {}),
       ...(x.icon !== undefined ? { icon: iconBytes(x.icon) } : {}),
+      ...(x.destructive === true ? { destructive: true } : {}),
     },
   };
 }

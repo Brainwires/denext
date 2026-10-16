@@ -10,6 +10,38 @@ and this project adheres to
 
 ### Added
 
+- **Deno Desktop runtime 2.9.7-denext.20, pinned** (the toolchain moves with it). What it brings to
+  denext apps is below; [the runtime releases](https://denext.dev/docs/desktop-runtime#runtime-releases)
+  list the rest.
+- **`denext build --compile` builds onto the toolchain's own `denort`.** The runtime release ships
+  a `denort` per target (`deno-denort-*`); `deno task desktop:pin-runtime` pins each (file, URL,
+  SHA-256, size, attestation) in `deno-toolchain-pin.json`, and `build --compile` downloads it into
+  the toolchain cache, verifies it the way the toolchain binary is verified, and hands it to
+  `deno compile` (`DENORT_BIN`), cross-compiles included. A compiled app now has `Deno.SQL`;
+  `DENEXT_DENO=stock` keeps Deno's stock `denort`.
+- **Delivered notifications from the OS on macOS and Windows.** `deliveredNotifications()` /
+  `removeDeliveredNotifications()` in a Deno Desktop window read and clear the notification centre
+  itself (`UNUserNotificationCenter`, Windows' toast history), so a notification the user dismissed
+  is no longer listed and one from an earlier run is. Linux keeps the run's own list.
+- **Destructive menu items and PNG icons in the desktop context menu.** `setAppMenu`, tray and Dock
+  menus take `destructive: true` (red on macOS, WebKitGTK and CEF's menus;
+  `appCapabilities().destructive`), and `showContextMenu` / `useContextMenu` draw `destructive`
+  items in red and an item's new `iconPng` (a base64 PNG) in the Deno Desktop OS menu.
+- **The share sheet in a Deno Desktop window.** `share()` from `denext/mobile` opens the OS share
+  sheet over the window on macOS (`NSSharingServicePicker`) and Windows (`DataTransferManager`),
+  and keeps its web path on Linux. `shareFromWindow` from `denext/desktop/window` also shares
+  picked or app-folder files (never a raw path) and anchors the macOS sheet;
+  `windowCapabilities().share` says whether there is one.
+- **Handoff and Spotlight on macOS.** `setUserActivity` / `clearUserActivity` /
+  `onUserActivityContinued` in `denext/desktop/app` (`NSUserActivity`: `type`, `title`, `url`,
+  `userInfo`, `keywords`, `handoff`, `searchable`); `desktop.macos.userActivityTypes` lists the
+  types the app continues, which the macOS package script writes to `NSUserActivityTypes`.
+- **`desktop.windows.proxy`** (`"system"` | `"direct"`): the Windows CEF window's proxy launch
+  setting, written to the bundle's `laufey-launch.json` and passed as `LAUFEY_PROXY` by
+  `denext desktop run` / `dev`. `"direct"` skips proxy discovery, so a slow WPAD / PAC lookup no
+  longer holds the page's loopback WebSocket at startup; under `"system"` the runtime now warms the
+  resolver up as the window is created.
+
 - **`ViewTransitionCallback`, `ViewTransitionInstance` and `ViewTransitionPseudoElement`
   (`denext`) and `DeferredValueSink` (`denext/server`) are exported**: the types the public
   `<ViewTransition>` props and the render options already referenced (`deno task doc-lint` is
@@ -240,6 +272,13 @@ and this project adheres to
 
 ### Changed
 
+- **CEF on macOS keeps a team-signed app's cookie key in the Keychain.** From runtime
+  2.9.7-denext.20 a Developer ID or Apple Development signed CEF app stores its cookie key in a
+  login-keychain item of its own (`"<app id> Safe Storage"`) instead of Chromium's mock keychain,
+  migrating the existing profile once; `cookieEncryption` reads `"os"` there. Ad-hoc signed and
+  unsigned builds keep the mock keychain (`"basic"`).
+- **A desktop window hands at most 3 refused navigations a second to the browser** (runtime
+  2.9.7-denext.20), so a page navigating away in a loop can't open a tab per attempt.
 - **An OAuth provider's `profile` may be async.** `OAuthProvider.profile` returns `AuthUser` or
   a promise of one; the callback awaits it. A sync mapper is unchanged.
 

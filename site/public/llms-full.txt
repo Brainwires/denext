@@ -379,8 +379,8 @@ builds, then `deno compile`s the app (server modules, `.denext/`, `public/`, `jo
 import map. No `.env` file is embedded: the environment, `.env` files and relative data paths are
 read from the working directory, and state goes to `./.denext`. It bakes Docker's least-privilege
 `--allow-*` plus `compile.permissions: { write, run, ffi, sys }` (`"all"` opts in to
-`--allow-all`). The runtime is stock `denort`, so it has no `Deno.SQL`: use
-`fromPostgresJs(postgres(url))`. Docs: https://denext.dev/docs/deployment-targets
+`--allow-all`). The runtime is the toolchain's own `denort` (SHA-256-pinned beside the CLI), so
+`Deno.SQL` works in the binary. Docs: https://denext.dev/docs/deployment-targets
 
 **Code health and concurrency:** `denext create --fallow` (or `denext fallow init` in an existing
 app) adds the fallow gate denext itself uses — `fallow.toml` with the path-loaded files as entry
@@ -544,16 +544,26 @@ spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url })
 add it, else every call answers `unavailable`). Under the pinned runtime `notifications` are the OS's own: scheduled
 (repeating ones 16 occurrences ahead, topped up while the app runs), cancel / pending, category action
 buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped`;
-`requestPermission("notifications")` / `requestPushPermission()` report the OS setting. `context-menu`
-is the native menu (submenus, `null` on dismiss). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
-`onAppMenuItem(id => …)` with accelerators and roles, `createTray({ icon, tooltip, menu })`,
-`setBadge(n)`, `bounce()`; `setQuickActions` sets the macOS Dock menu. With no tray host (stock GNOME)
+`requestPermission("notifications")` / `requestPushPermission()` report the OS setting;
+`deliveredNotifications()` / `removeDeliveredNotifications()` read and clear the OS notification centre
+on macOS and Windows (on Linux, what denext posted this run). `context-menu`
+is the native menu (submenus, `destructive` items in red, an item's `iconPng`, `null` on dismiss).
+`share()` opens the OS share sheet over the window (macOS, Windows; `shareFromWindow({ files })` from
+`denext/desktop/window` shares picked / app-folder files). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
+`onAppMenuItem(id => …)` with accelerators, roles, PNG `icon`s and `destructive` items, `createTray({ icon, tooltip, menu })`,
+`setBadge(n)`, `bounce()`, Handoff / Spotlight on macOS (`setUserActivity({ type, title, url, userInfo,
+searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.userActivityTypes`);
+`setQuickActions` sets the macOS Dock menu. With no tray host (stock GNOME)
 `createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
 reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` (`"basic"` — obfuscated,
-not OS-protected — always on macOS CEF, Chromium's mock keychain) / `sandbox` / `fileChooser` from the
+not OS-protected — for an ad-hoc signed macOS CEF build; a team-signed one keeps its key in its own
+`"<app id> Safe Storage"` keychain item, `"os"`) / `sandbox` / `fileChooser` from the
 runtime's probe (`"unknown"` before the runtime that added each), and `denext desktop doctor [--linux]`
 lists what the session lacks, with fixes. `desktop.linux.requireSandbox: true` makes a Linux CEF app
-exit 78 instead of running without Chromium's sandbox (a tarball / AppImage on Ubuntu 23.10+). `registerShortcut(accel, fn)`
+exit 78 instead of running without Chromium's sandbox (a tarball / AppImage on Ubuntu 23.10+).
+`desktop.windows.proxy: "direct"` keeps a Windows CEF window off a slow WPAD / PAC lookup (`"system"`, the
+default, warms the resolver up at launch). A window hands at most 3 refused navigations a second to the
+browser. `registerShortcut(accel, fn)`
 needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`. DevTools are on in
 `desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`. `denext desktop run` / `dev` build the app into a temp dir with the
 packaging scripts' least-privilege flags and launch it (a bare `deno desktop` only compiles). An extension's
@@ -592,7 +602,7 @@ origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origi
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.19 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.20 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /

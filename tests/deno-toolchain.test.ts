@@ -14,12 +14,14 @@ import {
 import { join, toFileUrl } from "@std/path";
 import {
   DENO_TOOLCHAIN,
+  denortTargetKey,
   DenoToolchainDownloadError,
   DenoToolchainHashError,
   type DenoToolchainPin,
   denoToolchainStatus,
   denoToolchainTarget,
   DenoToolchainUnavailableError,
+  ensureDenort,
   ensureDenoToolchain,
   linkDenoToolchain,
   loadDenoToolchainPin,
@@ -141,6 +143,50 @@ Deno.test("ci.yml's backend-integration toolchain matches the checked-in linux-x
   assertEquals(env("DENEXT_DENO_RELEASE"), `denext-runtime-v${DENO_TOOLCHAIN.version}`);
   assertEquals(env("DENEXT_DENO_ZIP"), pin.file);
   assertEquals(env("DENEXT_DENO_SHA256"), pin.sha256, "re-pin ci.yml's hash with the toolchain");
+});
+
+Deno.test("ensureDenort: the pinned denort, verified into its own cache dir; a mismatch is refused", async () => {
+  const body = await zip([{ name: "denort", data: "fake denort", unixMode: 0o100755 }]);
+  const f = await fixture(body);
+  try {
+    const denortPin: DenoToolchainPin = { ...f.pin, targets: {}, denort: f.pin.targets };
+    const opts = { pin: denortPin, target: TARGET, cacheRoot: f.root, log: quiet };
+    const first = await ensureDenort(opts);
+    assertEquals(first.cached, false);
+    assertEquals(first.denort, join(f.root, VERSION, `${TARGET}-denort`, "denort"));
+    assertEquals(await Deno.readTextFile(first.denort), "fake denort");
+    assertEquals((await ensureDenort(opts)).cached, true);
+    assertEquals(f.hits(), 1);
+    // The toolchain's own directory is untouched: the two never share a stamp.
+    assertEquals(await names(binDir(f)), []);
+    // A Windows target's binary is denort.exe.
+    const win = { ...denortPin, denort: { "windows-x86_64": f.pin.targets[TARGET] } };
+    const err = await assertRejects(
+      () => ensureDenort({ ...opts, pin: win, target: "windows-x86_64" }),
+      Error,
+    );
+    assertStringIncludes(err.message, "no top-level denort.exe");
+    // A tampered download is refused and nothing is installed.
+    const bad = { ...denortPin, version: "9.9.9-denext.2" };
+    f.setBody(new TextEncoder().encode("tampered"));
+    await assertRejects(() => ensureDenort({ ...opts, pin: bad }), DenoToolchainDownloadError);
+    assertEquals(await names(join(f.root, "9.9.9-denext.2", `${TARGET}-denort`)), []);
+    // A pin without denort archives (before 2.9.7-denext.20): unavailable.
+    const none = await assertRejects(
+      () => ensureDenort({ ...opts, pin: f.pin }),
+      DenoToolchainUnavailableError,
+    );
+    assertStringIncludes(none.message, "has no denort for linux-x86_64");
+  } finally {
+    await f.close();
+  }
+});
+
+Deno.test("denortTargetKey: deno compile's triples to the pin's keys", () => {
+  assertEquals(denortTargetKey("x86_64-unknown-linux-gnu"), "linux-x86_64");
+  assertEquals(denortTargetKey("aarch64-apple-darwin"), "darwin-aarch64");
+  assertEquals(denortTargetKey("x86_64-pc-windows-msvc"), "windows-x86_64");
+  assertEquals(denortTargetKey("aarch64-pc-windows-msvc"), undefined);
 });
 
 Deno.test("pin selection: no pin yet, an unpinned host — each a clear unavailable error", async () => {

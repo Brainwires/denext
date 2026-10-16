@@ -25,6 +25,13 @@
 // (it must be the esbuild denext's vendored API speaks, src/build/esbuild/version.ts), and the
 // attestation pass extracts it from each archive and checks that SHA-256 too. Before denext.17 the
 // field is absent and denext's builds use the npm esbuild.
+//
+// From 2.9.7-denext.20 the release also ships `deno-denort-<version>-<target>.zip` (the standalone
+// runtime the fork's `deno compile` builds onto, holding `denort[.exe]`; the manifest's `denort`
+// section): the toolchain pin records them under `denort`, keyed like the CLI archives, with the
+// same checks (manifest = SHA256SUMS, this tag's URL, every SHA256SUMS `deno-denort-*` archive
+// listed, the hash and the attestation). `denext build --compile` hands the verified copy to
+// `deno compile` (src/build/compile-app.ts).
 
 import { encodeHex } from "@std/encoding/hex";
 import { fromFileUrl, join } from "@std/path";
@@ -47,6 +54,8 @@ const TOOLCHAIN_TARGETS: Readonly<Record<string, string>> = {
 };
 /** A CLI archive's name prefix (the rest is `<version>-<target>.zip`). */
 const CLI_PREFIX = "deno-cli-";
+/** A denort archive's name prefix (the rest is `<version>-<target>.zip`). */
+const DENORT_PREFIX = "deno-denort-";
 const BACKENDS = ["webview", "cef"] as const;
 
 /** One archive in the pin. */
@@ -80,6 +89,9 @@ interface PinEsbuild {
 /** One CLI archive in the toolchain pin. */
 type CliPinArtifact = PinArtifact & { format: "zip"; esbuild?: PinEsbuild };
 
+/** One denort archive in the toolchain pin. */
+type DenortPinArtifact = PinArtifact & { format: "zip" };
+
 /** The toolchain pin's shape (mirrors `DenoToolchainPin` in src/build/deno-toolchain.ts). */
 export interface ToolchainPinFile {
   schema: 1;
@@ -88,6 +100,8 @@ export interface ToolchainPinFile {
   repository: string;
   deno: string;
   targets: Record<string, CliPinArtifact>;
+  /** The `denort` archives per `<os>-<arch>` (2.9.7-denext.20 on). */
+  denort?: Record<string, DenortPinArtifact>;
 }
 
 /** Parse GNU `sha256sum` output into file → digest. */
@@ -204,8 +218,8 @@ export function pinFromRelease(tag: string, manifest: unknown, sumsText: string)
   );
   if (pinned.size === 0) fail("the manifest lists no archives");
   for (const file of ctx.sums.keys()) {
-    // The CLI archives are toolchainPinFromRelease's to check.
-    if (file.startsWith(CLI_PREFIX)) continue;
+    // The CLI and denort archives are toolchainPinFromRelease's to check.
+    if (file.startsWith(CLI_PREFIX) || file.startsWith(DENORT_PREFIX)) continue;
     if (/\.(tar\.gz|zip)$/.test(file) && !pinned.has(file)) fail(`${file} is in SHA256SUMS only`);
   }
   return {
@@ -239,6 +253,61 @@ function cliArtifact(ctx: ReleaseCtx, target: string, a: Loose): CliPinArtifact 
   return esbuild ? { ...artifact, esbuild } : artifact;
 }
 
+/** One denort archive entry, checked like {@linkcode cliArtifact} (a zip holding `denort[.exe]`). */
+function denortArtifact(ctx: ReleaseCtx, target: string, a: Loose): DenortPinArtifact {
+  const where = `denort ${target}`;
+  const binary = target.includes("windows") ? "denort.exe" : "denort";
+  if (a?.binary !== undefined && a.binary !== binary) {
+    fail(`${where}: binary ${a.binary}, expected ${binary}`);
+  }
+  return checkedArtifact(ctx, where, `${DENORT_PREFIX}${ctx.version}-${target}.zip`, "zip", a);
+}
+
+/**
+ * A manifest section of per-target zips (`cli`, `denort`) as the pin's `<os>-<arch>` map, every
+ * archive cross-checked against SHA256SUMS, and every SHA256SUMS archive named `prefix…` pinned.
+ * `undefined` when the release has no such section (then SHA256SUMS may list none either).
+ */
+function sectionPin<A extends PinArtifact>(
+  ctx: ReleaseCtx,
+  name: string,
+  section: Loose,
+  prefix: string,
+  artifact: (ctx: ReleaseCtx, triple: string, a: Loose) => A,
+): Record<string, A> | undefined {
+  const listed = [...ctx.sums.keys()].filter((f) => f.startsWith(prefix));
+  if (section === undefined || section === null) {
+    if (listed.length > 0) fail(`${listed[0]} is in SHA256SUMS only`);
+    return undefined;
+  }
+  if (section.version !== ctx.version) {
+    fail(`${name} version ${section.version}, expected ${ctx.version}`);
+  }
+  const out = sectionTargets(ctx, name, section.targets ?? {}, artifact);
+  const pinned = new Set(Object.values(out).map((a) => a.file));
+  for (const file of listed) {
+    if (!pinned.has(file)) fail(`${file} is in SHA256SUMS only`);
+  }
+  return out;
+}
+
+/** A section's `targets`, keyed by `<os>-<arch>` in key order; at least one. */
+function sectionTargets<A extends PinArtifact>(
+  ctx: ReleaseCtx,
+  name: string,
+  targets: Loose,
+  artifact: (ctx: ReleaseCtx, triple: string, a: Loose) => A,
+): Record<string, A> {
+  const out: Array<[string, A]> = [];
+  for (const triple of Object.keys(targets).sort()) {
+    const key = TOOLCHAIN_TARGETS[triple];
+    if (!key) fail(`${name}: unknown target ${triple}`);
+    out.push([key, artifact(ctx, triple, targets[triple])]);
+  }
+  if (out.length === 0) fail(`the manifest's ${name} section lists no archives`);
+  return Object.fromEntries(out.sort(([a], [b]) => a < b ? -1 : 1));
+}
+
 /** A CLI entry's `esbuild` (absent before denext.17), checked against denext's esbuild version. */
 function cliEsbuild(where: string, e: Loose): PinEsbuild | undefined {
   if (e === undefined || e === null) return undefined;
@@ -253,8 +322,9 @@ function cliEsbuild(where: string, e: Loose): PinEsbuild | undefined {
 
 /**
  * Build the toolchain pin (`deno-toolchain-pin.json`) from the same release's manifest `cli`
- * section, cross-checking every CLI archive against SHA256SUMS. A release without a `cli`
- * section (before 2.9.7-denext.15) gives `null`. Throws on any inconsistency.
+ * section (and its `denort` section, 2.9.7-denext.20 on), cross-checking every CLI and denort
+ * archive against SHA256SUMS. A release without a `cli` section (before 2.9.7-denext.15) gives
+ * `null`. Throws on any inconsistency.
  *
  * @param tag The release tag.
  * @param manifest The parsed manifest.json.
@@ -268,33 +338,21 @@ export function toolchainPinFromRelease(
 ): ToolchainPinFile | null {
   const m = manifest as Loose;
   const { version, deno } = checkManifest(tag, m);
-  const sums = parseSha256Sums(sumsText);
-  const listedCli = [...sums.keys()].filter((f) => f.startsWith(CLI_PREFIX));
-  if (m.cli === undefined || m.cli === null) {
-    if (listedCli.length > 0) fail(`${listedCli[0]} is in SHA256SUMS only`);
+  const ctx = { tag, version, sums: parseSha256Sums(sumsText) };
+  const targets = sectionPin(ctx, "cli", m.cli, CLI_PREFIX, cliArtifact);
+  const denort = sectionPin(ctx, "denort", m.denort, DENORT_PREFIX, denortArtifact);
+  if (!targets) {
+    if (denort) fail("the manifest has a denort section but no cli section");
     return null;
   }
-  if (m.cli.version !== version) fail(`cli version ${m.cli.version}, expected ${version}`);
-  const ctx = { tag, version, sums };
-  const targets: ToolchainPinFile["targets"] = {};
-  for (const triple of Object.keys(m.cli.targets ?? {}).sort()) {
-    const key = TOOLCHAIN_TARGETS[triple];
-    if (!key) fail(`cli: unknown target ${triple}`);
-    targets[key] = cliArtifact(ctx, triple, m.cli.targets[triple]);
-  }
-  if (Object.keys(targets).length === 0) fail("the manifest's cli section lists no archives");
-  const pinned = new Set(Object.values(targets).map((a) => a.file));
-  for (const file of listedCli) {
-    if (!pinned.has(file)) fail(`${file} is in SHA256SUMS only`);
-  }
-  const sorted = Object.fromEntries(Object.entries(targets).sort(([a], [b]) => a < b ? -1 : 1));
   return {
     schema: 1,
     version,
     tag,
     repository: `https://github.com/${REPO}`,
     deno,
-    targets: sorted,
+    targets,
+    ...(denort ? { denort } : {}),
   };
 }
 
@@ -321,7 +379,7 @@ async function sha256File(path: string): Promise<string> {
   return encodeHex(await crypto.subtle.digest("SHA-256", await Deno.readFile(path)));
 }
 
-/** The pin's archives, in target then backend order (then the CLI archives, when given). */
+/** The pin's archives, in target then backend order (then the CLI and denort archives, when given). */
 function pinArchives(
   pin: PinFile,
   cli?: ToolchainPinFile | null,
@@ -329,6 +387,7 @@ function pinArchives(
   return [
     ...Object.values(pin.targets).flatMap((t) => BACKENDS.flatMap((b) => t[b] ? [t[b]!] : [])),
     ...Object.values(cli?.targets ?? {}),
+    ...Object.values(cli?.denort ?? {}),
   ];
 }
 
@@ -448,9 +507,11 @@ export async function main(
   await Deno.writeTextFile(out, JSON.stringify(pin, null, 2) + "\n");
   if (cli) {
     await Deno.writeTextFile(toolchainOut, JSON.stringify(cli, null, 2) + "\n");
+    const denort = Object.keys(cli.denort ?? {}).length;
     console.log(
       `wrote ${toolchainOut}: deno toolchain ${cli.version}, ` +
-        `${Object.keys(cli.targets).length} CLI archives`,
+        `${Object.keys(cli.targets).length} CLI archives` +
+        (denort > 0 ? `, ${denort} denort archives` : ""),
     );
   }
   const count = Object.values(pin.targets).reduce(

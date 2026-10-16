@@ -176,12 +176,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   verb (`dev`, `build`, `export`, `start`, …), on denext's Deno toolchain (downloaded on first
   need; no Deno install required). Offline on first use, with no toolchain cached, it needs a
   `deno` on PATH. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
-- **A `denext build --compile` binary runs on Deno's stock `denort` 2.9.7**, not denext's
-  toolchain build, so it has no `Deno.SQL` (Postgres goes through `fromPostgresJs(postgres(url))`;
-  `db migrate` on a plain Postgres `DATABASE_URL` needs `@denext/backend` with that client), and it
-  prints Deno's one-line `request.signal` legacy-abort notice on the first request (`deno compile`
-  does not carry `--unstable-no-legacy-abort`). A SPA has no server to compile. `dev`, `build` and
-  `export` stay on the CLI. next-compat builds and the Pages Router are untested in a binary.
+- **`denext build --compile` compiles a server only:** a SPA has no server to compile, and `dev`,
+  `build` and `export` stay on the CLI. next-compat builds and the Pages Router are untested in a
+  binary. The binary prints Deno's one-line `request.signal` legacy-abort notice on the first
+  request: a compiled binary does not take `--unstable-no-legacy-abort`, the toolchain's `denort`
+  included (it is cosmetic: denext handles both abort behaviours).
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
@@ -323,19 +322,14 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   untrusted: the runtime drops clicks it never posted (each carries a MAC from a per-install key,
   `<app data dir>/laufey-notification-key`), but any process of the same user can read that key.
   A notification's tag is at most 256 bytes, its data 4 KiB and an action id 1 KiB (UTF-8): a
-  larger click is dropped, so denext refuses to post one. The runtime cannot list delivered
-  notifications, so `deliveredNotifications()` there lists only what denext posted during this run
-  and has not removed (a notification the user dismissed is still listed, one from an earlier run
-  is not), and `threadId` does not group them in the OS. [Details](https://denext.dev/docs/desktop#desktop-notifications).
+  larger click is dropped, so denext refuses to post one. Linux notification servers keep no list
+  of an app's notifications, so `deliveredNotifications()` there lists only what denext posted
+  during this run and has not removed (a notification the user dismissed is still listed, one from
+  an earlier run is not); on every OS `threadId` does not group them in the OS. [Details](https://denext.dev/docs/desktop#desktop-notifications).
 - **Linux sessions differ:** with no tray host `createTray` rejects `unsupported`; with a locked
   keyring no one can unlock, CEF stores cookies obfuscated, not OS-protected
   (`cookieEncryption: "basic"`). `denext desktop doctor --linux` lists what is missing
   ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
-- **CEF cookies on macOS are only obfuscated, not protected by the OS.** CEF runs with
-  Chromium's mock keychain, whose key is a constant, so the cookie store on disk is encrypted with
-  a key every copy of Chromium knows (`cookieEncryption: "basic"`, always): any process that can
-  read the app's data directory can read its cookies. The macOS WebView backend (WKWebView) keeps
-  cookies in WebKit's own store; Windows CEF uses DPAPI (`"os"`).
 - **A Linux CEF app run from a tarball or AppImage on Ubuntu 23.10+ has no Chromium sandbox**
   (AppArmor restricts user namespaces, and only the `.deb` / `.rpm` install the setuid
   `chrome-sandbox`): `appCapabilities().sandbox` reads `"off"`. Set
@@ -351,10 +345,6 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
   needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
   doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).
-- **A CEF window on Windows can wait for slow proxy auto-detection.** On a network where WPAD / PAC
-  discovery is slow, Chromium waits for the proxy configuration before it applies its loopback
-  bypass, so the page's Live WebSocket (through the runtime's loopback relay) can take 10 s or more
-  to connect at startup. The webview backend and macOS / Linux are unaffected.
 - **CEF on Linux has no spellcheck unless the app ships its dictionaries** (runtime
   2.9.7-denext.11): the runtime makes no network requests of its own, so it no longer downloads
   Hunspell dictionaries from Google. Put the `.bdic` files in `<data dir>/CEF/Dictionaries` to
@@ -402,7 +392,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   macOS notifications, the update signer match with real identities, Mica, real HiDPI displays):
   no CI runner has the hardware or identities, so they are checked before each final release
   ([checklist](https://denext.dev/docs/contributing#manual-desktop-checks-before-a-final-release)).
-- **No share sheet, Handoff, Spotlight or Touch Bar.** `react-native-windows` / `-macos` native
+- **No Touch Bar.** `react-native-windows` / `-macos` native
   modules don't run (write a desktop extension); their extra components are DOM stand-ins.
 - **`denext desktop dev` runs under the `deno` CLI only;** with `--lan` the per-launch token is
   not injected, so token-gated features are refused.

@@ -397,6 +397,7 @@
       "denext.exe",
       "CHANGELOG.md",
       "ROADMAP.md",
+      "FEATURES.md",
       ".github/",
       ".vscode/",
       ".agents/",

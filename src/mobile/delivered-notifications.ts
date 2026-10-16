@@ -10,9 +10,10 @@
  * - Android: `NotificationManager.getActiveNotifications()` through the same plugin. A thread is
  *   the notification's group key (`threadId` for a local notification); a `tag` is its tag (FCM's
  *   `android.notification.tag` for a push FCM draws).
- * - Deno Desktop (`notifications` capability, pinned runtime): the runtime lists no delivered
- *   notifications, so the list is the ones this capability posted during this run of the app whose
- *   time has come and that denext has not removed (see the docs' limits).
+ * - Deno Desktop (`notifications` capability, pinned runtime): on macOS and Windows the OS's
+ *   notification centre (runtime 2.9.7-denext.20); on Linux, whose notification servers keep no
+ *   list, the ones the capability posted during this run whose time has come and that denext has
+ *   not removed (see the docs' limits).
  * - Web: the notifications `scheduleNotification` showed in this page that are still open, plus
  *   the service worker registration's (`getNotifications()`), whose thread is `data.threadId`.
  *
@@ -275,10 +276,11 @@ function wireOf(raw: RawDelivered): { id: string; tag?: string } {
  * - iOS / Android: everything the OS shows for the app (needs `denext mobile add
  *   local-notifications` or `push`, generation 3 of denext's `DenextSettings` plugin; it rejects in
  *   a binary built before, until the command is re-run and a new binary shipped).
- * - Deno Desktop (`notifications` capability): the notifications denext posted during this run
- *   whose time has come and that were not removed through denext. The runtime cannot list the
- *   OS's notification centre, so one the user dismissed is still listed, and one from an earlier
- *   run is not.
+ * - Deno Desktop (`notifications` capability): on macOS and Windows the app's notifications the
+ *   OS's notification centre still shows (runtime 2.9.7-denext.20), local ones the app scheduled
+ *   through denext. On Linux, whose notification servers keep no list, the ones denext posted
+ *   during this run whose time has come and that were not removed through denext: one the user
+ *   dismissed is still listed, and one from an earlier run is not.
  * - Web: the open notifications `scheduleNotification` showed from this page, plus the service
  *   worker registration's (a web push's thread is its `data.threadId`).
  *

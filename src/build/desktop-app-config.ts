@@ -12,14 +12,15 @@
 //                            module and the plugins it imports are never compiled into the app;
 //                            written only for an entry that imports it
 //   laufey-launch.json       the backend's launch settings (`appId`, `customSchemes`,
-//                            `singleInstance`, `inspectable`, `bridgeOrigins`, and on Linux
-//                            `requireSandbox`), read at process
+//                            `singleInstance`, `inspectable`, `bridgeOrigins`, on Linux
+//                            `requireSandbox`, on Windows `proxy`), read at process
 //                            start from the packaged bundle:
 //                            `<App>.app/Contents/Resources/` on macOS, next to the executable on
 //                            Windows and Linux
 //
 // The scaffolded `scripts/package-*.ts` call {@linkcode syncDesktopAppConfig} before `deno desktop`
-// and {@linkcode writeLaufeyLaunchConfig} on its output (before signing on macOS). `denext desktop
+// and {@linkcode writeLaufeyLaunchConfig} on its output (before signing on macOS; there it also
+// lists `desktop.macos.userActivityTypes` as the bundle's `NSUserActivityTypes`). `denext desktop
 // run` / `dev` sync `app.json` and pass the launch settings as `LAUFEY_*` env instead.
 
 import { dirname, fromFileUrl, join } from "@std/path";
@@ -33,6 +34,7 @@ import {
   parseDesktopAppOrigin,
 } from "../desktop/app-origin.ts";
 import type { DesktopOs } from "./desktop-capabilities.ts";
+import { parsePlist, type PlistNode, renderPlist } from "./plist-value.ts";
 import { parseOtaPublicKey } from "./ota-signing.ts";
 
 /** Where the runtime looks for the embedded origin + identifier, relative to the project root. */
@@ -72,6 +74,11 @@ export interface LaufeyLaunchConfig {
    * (`desktop.linux.requireSandbox`). Written only for Linux, and only when `true`.
    */
   readonly requireSandbox?: boolean;
+  /**
+   * Windows CEF: `"system"` (the OS proxy configuration, the default) or `"direct"` (no proxy)
+   * (`desktop.windows.proxy`, runtime 2.9.7-denext.20). Written only for Windows, when set.
+   */
+  readonly proxy?: "system" | "direct";
 }
 
 /** Where a window is launched from, for {@linkcode desktopInspectable}. */
@@ -103,6 +110,50 @@ export function desktopRequireSandbox(config: unknown): boolean {
   const desktop = (config as { desktop?: { linux?: { requireSandbox?: unknown } } } | undefined)
     ?.desktop;
   return desktop?.linux?.requireSandbox === true;
+}
+
+/**
+ * The packaged Windows app's proxy setting (`desktop.windows.proxy`), when set.
+ *
+ * @param config The project config.
+ * @returns `"system"`, `"direct"`, or `undefined`.
+ */
+export function desktopWindowsProxy(config: unknown): "system" | "direct" | undefined {
+  const proxy = (config as { desktop?: { windows?: { proxy?: unknown } } } | undefined)?.desktop
+    ?.windows?.proxy;
+  return proxy === "system" || proxy === "direct" ? proxy : undefined;
+}
+
+/**
+ * The user activity types the macOS app continues (`desktop.macos.userActivityTypes`).
+ *
+ * @param config The project config.
+ * @returns The types (empty when none are configured).
+ */
+export function desktopUserActivityTypes(config: unknown): string[] {
+  const raw = (config as { desktop?: { macos?: { userActivityTypes?: unknown } } } | undefined)
+    ?.desktop?.macos?.userActivityTypes;
+  return Array.isArray(raw) ? raw.filter((t): t is string => typeof t === "string") : [];
+}
+
+/**
+ * `Info.plist` text with `NSUserActivityTypes` set to `types` (replacing any list already there),
+ * so the app can continue those activities (Handoff, Spotlight).
+ *
+ * @param text The bundle's `Contents/Info.plist` (XML).
+ * @param types The activity types.
+ * @returns The new text.
+ * @throws When the file is not an XML plist dict.
+ */
+export function withUserActivityTypes(text: string, types: readonly string[]): string {
+  const root = parsePlist(text);
+  if (root.kind !== "dict") throw new Error("Info.plist is not a dict");
+  const value: PlistNode = {
+    kind: "array",
+    items: types.map((t) => ({ kind: "string", text: t })),
+  };
+  const entries = root.entries.filter(([k]) => k !== "NSUserActivityTypes");
+  return renderPlist({ kind: "dict", entries: [...entries, ["NSUserActivityTypes", value]] });
 }
 
 /** The `desktop.app` block of an untyped config value. */
@@ -230,27 +281,33 @@ export function laufeyLaunchEnv(launch: LaufeyLaunchConfig | null): Record<strin
     env.LAUFEY_SINGLE_INSTANCE = launch.singleInstance ? "1" : "0";
   }
   if (launch?.inspectable !== undefined) env.LAUFEY_INSPECTABLE = launch.inspectable ? "1" : "0";
+  if (launch?.proxy) env.LAUFEY_PROXY = launch.proxy;
   return env;
 }
 
 /**
  * The `LAUFEY_*` env of an unpackaged window (`denext desktop run` / `dev`): the app id, the
- * origin's custom scheme and whether DevTools open ({@linkcode desktopInspectable}). Single
- * instance is left out on purpose: a dev window must never hand itself to an installed copy.
+ * origin's custom scheme, whether DevTools open ({@linkcode desktopInspectable}) and, on Windows,
+ * the proxy setting. Single instance is left out on purpose: a dev window must never hand itself
+ * to an installed copy.
  *
  * @param config The project config.
  * @param mode `"dev"` or `"run"`.
+ * @param os The OS the window runs on (default this one).
  * @returns The env vars.
  */
 export function unpackagedLaunchEnv(
   config: unknown,
   mode: Exclude<DesktopLaunchMode, "package">,
+  os: string = Deno.build.os,
 ): Record<string, string> {
   const launch = desktopLaunchConfig(config);
+  const proxy = os === "windows" ? desktopWindowsProxy(config) : undefined;
   return laufeyLaunchEnv({
     ...(launch?.appId ? { appId: launch.appId } : {}),
     ...(launch?.customSchemes ? { customSchemes: launch.customSchemes } : {}),
     inspectable: desktopInspectable(config, mode),
+    ...(proxy ? { proxy } : {}),
   });
 }
 
@@ -282,11 +339,12 @@ async function loadConfigBeside(entryUrl: string): Promise<unknown> {
 }
 
 /**
- * Write the packaged app's `laufey-launch.json` from `desktop.app`, `desktop.inspectable` and (on
- * Linux) `desktop.linux.requireSandbox` in the project's `denext.config.ts` (the bridge pinned to
- * the app origin, {@linkcode
- * desktopBridgeOrigins}) (resolved beside `entryUrl`'s directory, like `desktopPackageFlags`).
- * On macOS call it BEFORE code-signing: the file lives inside the sealed bundle.
+ * Write the packaged app's `laufey-launch.json` from `desktop.app`, `desktop.inspectable`, (on
+ * Linux) `desktop.linux.requireSandbox` and (on Windows) `desktop.windows.proxy` in the project's
+ * `denext.config.ts` (the bridge pinned to the app origin, {@linkcode desktopBridgeOrigins})
+ * (resolved beside `entryUrl`'s directory, like `desktopPackageFlags`). On macOS it also lists
+ * `desktop.macos.userActivityTypes` as the bundle's `NSUserActivityTypes`. On macOS call it BEFORE
+ * code-signing: both files live inside the sealed bundle.
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
  * @param os The target OS.
@@ -299,6 +357,7 @@ export async function writeLaufeyLaunchConfig(
   bundle: string,
 ): Promise<string | null> {
   const config = await loadConfigBeside(entryUrl);
+  const proxy = os === "windows" ? desktopWindowsProxy(config) : undefined;
   // DevTools are off in a packaged app unless `desktop.inspectable: true`, so the file is always
   // written: without it the runtime would leave them on.
   const launch: LaufeyLaunchConfig = {
@@ -306,10 +365,16 @@ export async function writeLaufeyLaunchConfig(
     inspectable: desktopInspectable(config, "package"),
     bridgeOrigins: desktopBridgeOrigins(config),
     ...(os === "linux" && desktopRequireSandbox(config) ? { requireSandbox: true } : {}),
+    ...(proxy ? { proxy } : {}),
   };
   const path = laufeyLaunchPath(os, bundle);
   await Deno.mkdir(dirname(path), { recursive: true });
   await Deno.writeTextFile(path, JSON.stringify(launch, null, 2) + "\n");
+  const types = os === "darwin" ? desktopUserActivityTypes(config) : [];
+  if (types.length > 0) {
+    const plist = join(bundle, "Contents", "Info.plist");
+    await Deno.writeTextFile(plist, withUserActivityTypes(await Deno.readTextFile(plist), types));
+  }
   return path;
 }
 

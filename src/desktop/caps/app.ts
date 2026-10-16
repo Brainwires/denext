@@ -19,8 +19,10 @@
  * window shown instead, so it is never unreachable. Without the probe the facts read `"unknown"`.
  *
  * Clicks are PULLED (an `action` signal, then `take`), so each is delivered once, never again after
- * a reload. A new page load removes the trays the previous page created (their click handlers went
- * with it); the application menu and the dock menu stay until the new page sets its own.
+ * a reload. The current user activity (Handoff and Spotlight, macOS; runtime 2.9.7-denext.20) and
+ * the activities the user continues are `./user-activity.ts`'s. A new page load removes the trays
+ * the previous page created (their click handlers went with it); the application menu and the
+ * dock menu stay until the new page sets its own.
  *
  * Runtime-only (imported by `runDesktop`, never a client bundle).
  *
@@ -33,6 +35,7 @@ import type { DesktopAppApi, DesktopMenuItem } from "../launch-events.ts";
 import { clickedId, nativeMenu } from "./menu.ts";
 import { platformFacts, reasonText } from "./platform.ts";
 import { createPullQueue, type PullQueue } from "./queue.ts";
+import { createUserActivity, type UserActivityHandle } from "./user-activity.ts";
 
 /** The most tray icons the page may hold. */
 const MAX_TRAYS = 8;
@@ -187,6 +190,7 @@ interface AppState {
   dockMenuIds: Set<string>;
   nextTray: number;
   installed: boolean;
+  readonly activity: UserActivityHandle;
 }
 
 /** Whether the dock menu can be set here (macOS with `Deno.dock.setMenu`). */
@@ -304,6 +308,7 @@ async function appCapabilities(s: AppState) {
     accelerators: caps.accelerators === true,
     icons: caps.icons === true,
     tooltips: caps.tooltips === true,
+    destructive: caps.destructive === true,
     tray: trayReason === null,
     trayReason,
     trayHost: facts.trayHost,
@@ -406,6 +411,7 @@ function trayMethods(s: AppState): DesktopCapability["methods"] {
 function installAppEvents(s: AppState): void {
   if (s.installed) return;
   s.installed = true;
+  s.activity.install();
   s.win?.addEventListener("menuclick", (e) => {
     const id = clickedId(e);
     if (id !== undefined && s.appMenuIds.has(id)) s.queue.push({ source: "menu", id });
@@ -442,11 +448,12 @@ export function createAppController(options: AppControllerOptions): AppControlle
     dockMenuIds: new Set(),
     nextTray: 1,
     installed: false,
+    activity: createUserActivity(options.api, options.emit),
   };
   const capability: DesktopCapability = {
     name: "app",
-    methods: { ...menuAndDockMethods(s), ...trayMethods(s) },
-    events: ["action"],
+    methods: { ...menuAndDockMethods(s), ...trayMethods(s), ...s.activity.methods },
+    events: ["action", "activity"],
     onPageLoad: () => {
       destroyTrays(s);
       s.queue.clear();

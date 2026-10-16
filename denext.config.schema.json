@@ -2112,6 +2112,13 @@
                   }
                 ]
               }
+            },
+            "userActivityTypes": {
+              "description": "The user activity types the app continues (Handoff from another device, a Spotlight result): reverse-DNS names, written to the bundle's `NSUserActivityTypes` by the package script. A type `setUserActivity` (in `denext/desktop/app`) sets must be listed here for `onUserActivityContinued` to receive it.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           }
         },
@@ -2122,6 +2129,19 @@
             "requireSandbox": {
               "description": "Refuse to start where the CEF backend would run web content without Chromium's sandbox: no unprivileged user namespaces and no usable `chrome-sandbox` helper, as for a tarball or an AppImage on Ubuntu 23.10 and later (the `.deb` / `.rpm` install the helper setuid root). The app then prints one line (`laufey: this app requires the Chromium sandbox (requireSandbox), …`) and exits with status 78 before the runtime loads. Default `false`: the app starts unsandboxed there and `appCapabilities().sandbox` reads `\"off\"`. The package scripts write it to the Linux bundle's `laufey-launch.json` (`\"requireSandbox\": true`), where `LAUFEY_REQUIRE_SANDBOX=0` cannot turn it off. The WebView backend ignores it. Needs denext's pinned runtime. `denext desktop doctor --linux` says which sandbox this machine allows.",
               "type": "boolean"
+            }
+          }
+        },
+        "windows": {
+          "description": "Windows launch settings the package scripts write to the app's `laufey-launch.json`.",
+          "type": "object",
+          "properties": {
+            "proxy": {
+              "description": "How the CEF window reaches the network (runtime 2.9.7-denext.20): `\"system\"` (the default) uses the OS proxy configuration, WPAD and PAC files included, and the runtime starts resolving it as the window is created; `\"direct\"` uses no proxy at all, so a slow WPAD / PAC lookup never holds the page's requests (its Live WebSocket to the loopback relay included) at startup. Choose `\"direct\"` only for an app whose users never need a proxy. The package scripts write it to the Windows bundle's `laufey-launch.json` (`\"proxy\"`); `denext desktop run` / `dev` pass it as `LAUFEY_PROXY`. A proxy switch on the app's own command line wins. The WebView2 backend and macOS / Linux ignore it.",
+              "enum": [
+                "system",
+                "direct"
+              ]
             }
           }
         },

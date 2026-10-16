@@ -546,13 +546,32 @@ desktop: {
           <a href="#desktop-app-updates">full-app update</a>: reinstall it once.
         </li>
       </ul>
-      <p>
-        A CEF window on Windows can also wait for slow proxy auto-detection: on a network where WPAD
-        / PAC discovery is slow, Chromium waits for the proxy configuration before it applies its
-        loopback bypass, so a WebSocket through the runtime&apos;s loopback relay (the Live socket,
-        say) can take 10 s or more to connect at startup. The webview backend and macOS / Linux are
-        unaffected.
+      <p id="desktop-windows-proxy">
+        <strong>The proxy setting.</strong>{" "}
+        Under the OS proxy configuration Chromium holds every request, the loopback ones included,
+        until its proxy resolver is ready, so on a network where WPAD / PAC discovery is slow the
+        page&apos;s WebSocket to the runtime&apos;s loopback relay (the Live socket, say) used to
+        wait for it at startup. From runtime 2.9.7-denext.20 the Windows CEF host starts resolving
+        the proxy as the window is created, so that wait overlaps the app&apos;s own startup, and
+        {" "}
+        <code>desktop.windows.proxy</code> chooses the launch setting: <code>"system"</code>{" "}
+        (the default: the OS configuration, WPAD and PAC files included) or <code>"direct"</code>
+        {" "}
+        (no proxy at all, so nothing waits on proxy discovery; only for an app whose users never
+        need a proxy). Under a PAC file that took 12 s, the relay WebSocket connected after 11.7 s
+        with <code>"system"</code> and 14 ms with{" "}
+        <code>"direct"</code>. The package script writes it to the bundle&apos;s{" "}
+        <code>laufey-launch.json</code>; <code>denext desktop run</code> / <code>dev</code>{" "}
+        pass it as{" "}
+        <code>LAUFEY_PROXY</code>; a proxy switch on the app&apos;s own command line wins. The
+        webview backend and macOS / Linux ignore it.
       </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  desktop: { windows: { proxy: "direct" } }, // or "system" (the default)
+};`}
+      </Code>
 
       <h2 id="notarization">Notarization</h2>
       <p>
@@ -649,14 +668,27 @@ denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         them: the app starts, and requests that carry a cookie wait until someone unlocks the
         keyring or opens the wallet.
       </p>
-      <p>
-        <strong>CEF cookies on macOS are only obfuscated.</strong>{" "}
-        CEF runs with Chromium&apos;s mock keychain, whose key is a constant, so a CEF app&apos;s
-        cookie store on macOS is encrypted with a key every copy of Chromium knows:{" "}
-        <code>cookieEncryption</code> always reads <code>"basic"</code>{" "}
-        there, and any process that can read the app&apos;s data directory can read its cookies.
-        Nothing in the macOS Keychain protects them. The WebView backend (WKWebView) keeps cookies
-        in WebKit&apos;s own store; on Windows CEF uses DPAPI (<code>"os"</code>).
+      <p id="desktop-cef-macos-cookies">
+        <strong>CEF cookies on macOS.</strong>{" "}
+        From runtime 2.9.7-denext.20 a team-signed CEF app (a Developer ID or Apple Development
+        identity, with{" "}
+        <code>desktop.app.identifier</code>) keeps its cookie key in a login-keychain item of its
+        own, <code>"&lt;app id&gt; Safe Storage"</code> (account{" "}
+        <code>&lt;app id&gt;</code>, as Electron does), not Chromium&apos;s shared{" "}
+        <code>"Chromium Safe Storage"</code>{" "}
+        item, so another program asking for it gets macOS&apos;s prompt and{" "}
+        <code>cookieEncryption</code> reads{" "}
+        <code>"os"</code>. A profile written before (under Chromium&apos;s mock keychain) moves to
+        the new key once, at the first launch, before CEF starts; if that fails the launch keeps the
+        mock keychain, says why on stderr and deletes nothing. The package script signs the{" "}
+        <code>liblaufey_keychain_interpose.dylib</code>{" "}
+        the host links with the other Mach-O files. An ad-hoc signed or unsigned build (a
+        development run, an unsigned package) keeps the mock keychain, whose key is a constant: its
+        cookies are only obfuscated and <code>cookieEncryption</code> reads <code>"basic"</code>
+        {" "}
+        (each rebuild of such a build would otherwise be asked for keychain access). The WebView
+        backend (WKWebView) keeps cookies in WebKit&apos;s own store; on Windows CEF uses DPAPI (
+        <code>"os"</code>).
       </p>
       <p>
         Linux&apos;s <code>clipboard</code>{" "}
@@ -2176,6 +2208,34 @@ exportRow.addEventListener("dragstart", (e) => {
   void startFileDrag([{ directory: "cache", path: "export/report.pdf" }]);
 });`}
       </Code>
+      <h3 id="desktop-share">The share sheet</h3>
+      <p>
+        Under runtime 2.9.7-denext.20, <code>denext/mobile</code>&apos;s <code>share()</code>{" "}
+        opens the OS share sheet over the window for a <code>text</code> or <code>url</code> (macOS
+        {" "}
+        <code>NSSharingServicePicker</code>, Windows{" "}
+        <code>DataTransferManager</code>), as it opens the phone&apos;s in the Capacitor shell; on
+        Linux, which has no share sheet, it keeps its web path (<code>navigator.share</code>, else a
+        copy to the clipboard). <code>shareFromWindow</code> from <code>denext/desktop/window</code>
+        {" "}
+        also shares files (picked handles or files in the app&apos;s folders, as for{" "}
+        <code>startFileDrag</code>; never a raw path) and points the macOS sheet at <code>x</code> /
+        {" "}
+        <code>y</code>. It resolves the outcome: <code>"completed"</code> (with the{" "}
+        <code>target</code> where macOS names it), <code>"shown"</code> (Windows reports no more),
+        {" "}
+        <code>"cancelled"</code>, <code>"not_supported"</code> or{" "}
+        <code>"failed"</code>; a file the app may not read rejects <code>forbidden</code>.{" "}
+        <code>windowCapabilities().share</code> says whether there is a sheet.
+      </p>
+      <Code lang="ts">
+        {`import { shareFromWindow } from "denext/desktop/window";
+
+const { outcome } = await shareFromWindow({
+  title: "Q3 report",
+  files: [{ directory: "documents", path: "reports/q3.pdf" }],
+});`}
+      </Code>
 
       <h2 id="desktop-notifications">Notifications and menus</h2>
       <p>
@@ -2261,13 +2321,18 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
         </li>
         <li>
           <code>deliveredNotifications()</code> / <code>removeDeliveredNotifications()</code>{" "}
-          (<a href="/docs/mobile#delivered-notifications">delivered notifications</a>): the runtime
-          removes a delivered notification by its tag but has no call that lists the notification
-          centre, so denext lists the notifications it posted during this run of the app whose time
-          has come and that were not removed through denext (the newest 200). One the user dismissed
-          is still listed, one from an earlier run is not, and removing a repeating
-          notification&apos;s delivered occurrences leaves its pending ones scheduled.{" "}
-          <code>threadId</code> groups only for these two calls; the OS does not group them.
+          (<a href="/docs/mobile#delivered-notifications">delivered notifications</a>): on macOS and
+          Windows they read and clear the OS&apos;s own notification centre (runtime
+          2.9.7-denext.20:{" "}
+          <code>UNUserNotificationCenter</code>, Windows&apos; toast history), so one the user
+          dismissed is gone from the list and one from an earlier run is listed. They cover the
+          notifications the app scheduled through denext (a web <code>Notification</code>{" "}
+          is not listed). On Linux the notification servers keep no list for apps, so denext lists
+          the notifications it posted during this run whose time has come and that were not removed
+          through denext (the newest 200): one the user dismissed is still listed there, one from an
+          earlier run is not. Removing a repeating notification&apos;s delivered occurrences leaves
+          its pending ones scheduled. <code>threadId</code>{" "}
+          groups only for these two calls; the OS does not group them.
         </li>
       </ul>
       <h3 id="desktop-web-notification">The web Notification API</h3>
@@ -2323,8 +2388,14 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
         <code>useContextMenu</code>{" "}
         open the OS&apos;s native menu at the pointer: submenus nest, disabled items show, a
         subtitle is appended to its label, and the call resolves <code>null</code>{" "}
-        when the user dismisses the menu. Under the stock runtime (or without the capability) the
-        accessible in-page menu runs instead.
+        when the user dismisses the menu. From runtime 2.9.7-denext.20 a <code>destructive</code>
+        {" "}
+        item is drawn in red (macOS, Linux WebKitGTK and the CEF backend&apos;s menus; Windows&apos;
+        own menus draw it as a normal item), and an item&apos;s <code>iconPng</code>{" "}
+        (a base64 PNG; on macOS a black-and-transparent image is a template image) is drawn next to
+        its label where the backend draws menu icons (<code>icons</code>{" "}
+        in the capability&apos;s answer: not the CEF backend&apos;s Linux context menus). Under the
+        stock runtime (or without the capability) the accessible in-page menu runs instead.
       </p>
 
       <h2 id="desktop-app-menu">App menu, tray and Dock</h2>
@@ -2369,11 +2440,16 @@ await bounce({ critical: true }); // until the app is focused`}
           <code>id</code>, <code>label</code>, <code>accelerator</code>{" "}
           (<code>"CommandOrControl+Shift+K"</code>), <code>disabled</code>, <code>checked</code>,
           {" "}
-          <code>tooltip</code> and a PNG <code>icon</code>; <code>{"{ label, submenu }"}</code>{" "}
-          nests; <code>{"{ role }"}</code> is a standard item the OS handles (<code>copy</code>,
-          {" "}
-          <code>paste</code>, <code>selectAll</code>, <code>undo</code>, <code>redo</code>,{" "}
-          <code>quit</code>, <code>about</code>, <code>hide</code>, <code>minimize</code>,{" "}
+          <code>tooltip</code>, a PNG <code>icon</code>{" "}
+          (drawn on macOS, Windows and Linux WebKitGTK; not in the CEF backend&apos;s application
+          menu on Windows and Linux: <code>appCapabilities().icons</code>) and{" "}
+          <code>destructive</code>{" "}
+          (red on macOS, WebKitGTK and CEF&apos;s menus, a normal item in Windows&apos; menus;
+          runtime 2.9.7-denext.20, <code>appCapabilities().destructive</code>);{" "}
+          <code>{"{ label, submenu }"}</code> nests; <code>{"{ role }"}</code>{" "}
+          is a standard item the OS handles (<code>copy</code>, <code>paste</code>,{" "}
+          <code>selectAll</code>, <code>undo</code>, <code>redo</code>, <code>quit</code>,{" "}
+          <code>about</code>, <code>hide</code>, <code>minimize</code>,{" "}
           <code>toggleFullScreen</code>, …).
         </li>
         <li>
@@ -2408,6 +2484,36 @@ await bounce({ critical: true }); // until the app is focused`}
           none, and the call does nothing there).
         </li>
       </ul>
+      <h3 id="desktop-user-activity">Handoff and Spotlight</h3>
+      <p>
+        On macOS, under runtime 2.9.7-denext.20, <code>setUserActivity</code>{" "}
+        makes what the user is doing the app&apos;s current{" "}
+        <code>NSUserActivity</code>: Handoff offers it on the user&apos;s other devices, and{" "}
+        <code>searchable: true</code> indexes it in Spotlight. <code>onUserActivityContinued</code>
+        {" "}
+        gets each activity the user continues (from another Mac, or a Spotlight result), including
+        the one that launched the app. A type is continued only when the bundle lists it in{" "}
+        <code>NSUserActivityTypes</code>: list them in <code>desktop.macos.userActivityTypes</code>
+        {" "}
+        and the package script writes them there. Windows and Linux have no user activities:{" "}
+        <code>setUserActivity</code> resolves <code>false</code> there.
+      </p>
+      <Code lang="ts">
+        {`import { clearUserActivity, onUserActivityContinued, setUserActivity } from "denext/desktop/app";
+
+await setUserActivity({
+  type: "com.example.notes.editing", // listed in desktop.macos.userActivityTypes
+  title: note.title,
+  url: \`https://notes.example.com/n/\${note.id}\`, // opened in a browser where the app isn't
+  userInfo: { noteId: note.id },
+  keywords: ["note"],
+  searchable: true, // Spotlight; handoff defaults to true
+});
+onUserActivityContinued(({ type, userInfo }) => {
+  if (type === "com.example.notes.editing") openNote(userInfo.noteId); // untrusted input
+});
+await clearUserActivity(); // the user left the note`}
+      </Code>
 
       <h3 id="desktop-shortcuts">Global shortcuts and launch at login</h3>
       <p>
@@ -3026,7 +3132,10 @@ export default {
           <code>location = …</code>, a form, a server redirect, <code>window.open()</code>,{" "}
           <code>target="_blank"</code>) never loads in the window: an <code>http(s)</code>{" "}
           destination opens in the user&apos;s browser instead (a popup only from a user action: one
-          a script opens on a timer or on load opens nothing), and anything else (<code>
+          a script opens on a timer or on load opens nothing; and, from runtime 2.9.7-denext.20, at
+          most 3 browser opens a second per window, so a page navigating away in a loop or a
+          redirect loop can&apos;t flood the browser with tabs: the rest are cancelled and logged),
+          and anything else (<code>
             file:
           </code>, a custom scheme) is dropped. Iframes are not affected; the CSP&apos;s{" "}
           <code>frameSrc</code>{" "}

@@ -304,6 +304,7 @@ export {
   type DesktopUiUpdateConfig,
   type DesktopUpdateConfig,
   type DesktopWindowConfig,
+  type DesktopWindowsConfig,
   type ExperimentalConfig,
   type HeaderRule,
   type HstsConfig,

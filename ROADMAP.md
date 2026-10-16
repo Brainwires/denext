@@ -8,18 +8,6 @@
 > The current release is denext **4.1.0**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 
-## 4.1.0: Limitations that can be lifted
-
-Entries in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) that aren't forced by an OS, a browser
-or an upstream. Each one's limitation entry is deleted when it ships.
-
-- **Deno Desktop (runtime work):** CEF on macOS keeps cookies under a real Keychain key in a
-  signed app, not Chromium's mock keychain; a share sheet (macOS `NSSharingServicePicker`,
-  Windows `DataTransferManager`); Spotlight indexing and Handoff on macOS; icons and the
-  destructive style in native context menus; `deliveredNotifications()` reads the OS's list on
-  macOS and Windows; the CEF window on Windows bypasses proxy auto-detection for its loopback
-  relay.
-
 ## Deno toolchain
 
 - **Deno's next minor:** rebase denext's patches onto it and cut a new `-denext.N`. That release

@@ -25,6 +25,12 @@ export interface ContextMenuItem {
   /** An optional leading glyph/emoji rendered before the label (the web popover). */
   readonly icon?: string;
   /**
+   * A PNG (base64) drawn next to the label by a Deno Desktop window's OS menu, where the backend
+   * draws menu icons (runtime 2.9.7-denext.20: macOS, Windows, Linux WebKitGTK; on macOS a
+   * black-and-transparent image is a template image). Other paths show `icon` / `systemIcon`.
+   */
+  readonly iconPng?: string;
+  /**
    * An SF Symbol name (`"trash"`, `"square.and.arrow.up"`) drawn by the native iOS menu. The
    * web popover shows `icon` instead; Android's menu shows none.
    */
@@ -353,9 +359,11 @@ async function showNativeMenu(
  *   element with {@linkcode useContextMenu} instead.
  * - Inside a Deno Desktop window with the `contextMenu` capability (`denext desktop add
  *   context-menu`) and denext's pinned runtime, the OS's own menu at `(x, y)`: submenus,
- *   disabled items, subtitles appended to the label, and `null` when the user dismisses it
- *   (`destructive`, `icon` and `systemIcon` are not drawn there; a `title` is a disabled first
- *   item). Without the capability, or under the stock runtime, the in-page popover below.
+ *   disabled items, subtitles appended to the label, `destructive` items in red (macOS, Linux and
+ *   the CEF backend; runtime 2.9.7-denext.20), an `iconPng` next to the label where the backend
+ *   draws icons, and `null` when the user dismisses it (`icon` and `systemIcon` are not drawn there;
+ *   a `title` is a disabled first item). Without the capability, or under the stock runtime, the
+ *   in-page popover below.
  * - Otherwise (the web, and SSR-safe) an accessible in-DOM popover: `role="menu"`
  *   with a `role="menuitem"` per item (a submenu is a `role="group"` labelled by its item),
  *   opened at `(x, y)` or under `anchor`. It is keyboard navigable (Up/Down to move,

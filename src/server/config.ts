@@ -1154,6 +1154,8 @@ export interface DesktopConfig {
   macos?: DesktopMacosConfig;
   /** Linux launch settings the package scripts write to the app's `laufey-launch.json`. */
   linux?: DesktopLinuxConfig;
+  /** Windows launch settings the package scripts write to the app's `laufey-launch.json`. */
+  windows?: DesktopWindowsConfig;
   /**
    * Extra `deno desktop` flags, passed before the entry by `denext desktop run` / `dev` and the
    * package scripts: for a project that needs them to build at all. npm resolution needs none:
@@ -1292,6 +1294,21 @@ export interface DesktopLinuxConfig {
   requireSandbox?: boolean;
 }
 
+/** {@link DesktopConfig.windows}: Windows launch settings of the packaged app. */
+export interface DesktopWindowsConfig {
+  /**
+   * How the CEF window reaches the network (runtime 2.9.7-denext.20): `"system"` (the default) uses
+   * the OS proxy configuration, WPAD and PAC files included, and the runtime starts resolving it as
+   * the window is created; `"direct"` uses no proxy at all, so a slow WPAD / PAC lookup never holds
+   * the page's requests (its Live WebSocket to the loopback relay included) at startup. Choose
+   * `"direct"` only for an app whose users never need a proxy. The package scripts write it to the
+   * Windows bundle's `laufey-launch.json` (`"proxy"`); `denext desktop run` / `dev` pass it as
+   * `LAUFEY_PROXY`. A proxy switch on the app's own command line wins. The WebView2 backend and
+   * macOS / Linux ignore it.
+   */
+  proxy?: "system" | "direct";
+}
+
 /** One entitlement's value in {@link DesktopMacosConfig.entitlements}. */
 export type DesktopEntitlementValue = string | number | boolean | string[];
 
@@ -1316,6 +1333,13 @@ export interface DesktopMacosConfig {
    * {@link provisioningProfile}.
    */
   entitlements?: Record<string, DesktopEntitlementValue>;
+  /**
+   * The user activity types the app continues (Handoff from another device, a Spotlight result):
+   * reverse-DNS names, written to the bundle's `NSUserActivityTypes` by the package script. A type
+   * `setUserActivity` (in `denext/desktop/app`) sets must be listed here for
+   * `onUserActivityContinued` to receive it.
+   */
+  userActivityTypes?: string[];
 }
 
 /** {@link DesktopConfig.app}'s `icons`: the app icon file per OS, relative to the project. */

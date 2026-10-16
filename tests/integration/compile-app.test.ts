@@ -9,7 +9,8 @@
 // everything it serves must come from what it embedded. The checks: the pages, the stylesheets,
 // the island bundle, the public asset, the route handler, the storage round trip, a write outside
 // the baked permissions refused, the `.env` of the project NOT embedded while the working
-// directory's is read, the run-time state written under ./.denext, `job` and `db migrate`.
+// directory's is read, the run-time state written under ./.denext, `job` and `db migrate`, and
+// (on denext's toolchain) that the binary runs on the toolchain's own `denort`: `Deno.SQL` exists.
 //
 // Heavy (a full build and a `deno compile`, ~200 MB written): run it where there is room.
 
@@ -21,6 +22,9 @@ const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
 const PG_URL = Deno.env.get("DENEXT_TEST_POSTGRES_URL") || undefined;
 const STORAGE_SECRET = "compile-test-storage-secret-0123456789abcdef";
+/** Whether the build runs on denext's toolchain (the default): the binary is then on its denort. */
+const ON_TOOLCHAIN = Deno.env.get("DENEXT_DENO") === undefined ||
+  Deno.env.get("DENEXT_DENO") === "pinned";
 
 /** The fixture project's files (path → content). */
 function fixtureFiles(): Record<string, string> {
@@ -129,6 +133,10 @@ export async function GET(): Promise<Response> {
   await files.upload("greeting.txt", "stored in the binary's data dir", { contentType: "text/plain" });
   const got = await files.download("greeting.txt");
   return Response.json({ text: got ? await new Response(got.body).text() : null });
+}
+`,
+    "app/api/runtime/route.ts": `export function GET(): Response {
+  return Response.json({ sql: typeof (Deno as { SQL?: unknown }).SQL, deno: Deno.version.deno });
 }
 `,
     "app/api/slow/route.ts": `export async function GET(): Promise<Response> {
@@ -359,6 +367,12 @@ Deno.test({
             assertEquals(outside, { wrote: false, error: "NotCapable" });
             const stored = JSON.parse((await app.get("/api/backend")).text);
             assertEquals(stored, { text: "stored in the binary's data dir" });
+            // Compiled onto the toolchain's own denort (the pinned release): Deno.SQL is there.
+            const runtime = JSON.parse((await app.get("/api/runtime")).text);
+            if (ON_TOOLCHAIN) {
+              assertEquals(runtime.sql, "function", JSON.stringify(runtime));
+              assert(/-denext\.\d+$/.test(runtime.deno), runtime.deno);
+            }
             // A handle nothing closes holds the process after the drain: the in-flight request
             // still finishes, and the process exits at the drain deadline anyway.
             const shut = await app.stopDuring("/api/slow");

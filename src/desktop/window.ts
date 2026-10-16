@@ -2,8 +2,8 @@
  * The page's control over its own Deno Desktop window (`denext/desktop/window`): maximize,
  * minimize, fullscreen and their events, size and size limits, the displays, the title bar and
  * backdrop, the user's title bar preferences ({@linkcode getTitleBarPreferences}), a cancelable
- * close, quitting, and files dragged in ({@linkcode onFileDrop}) and out
- * ({@linkcode startFileDrag}).
+ * close, quitting, files dragged in ({@linkcode onFileDrop}) and out
+ * ({@linkcode startFileDrag}), and the OS share sheet ({@linkcode shareFromWindow}).
  *
  * Each call goes through the desktop runtime's `window` capability, which `runDesktop` registers
  * for every app (no `denext desktop add` needed). The basics (size, position, title, show / hide)
@@ -129,6 +129,8 @@ export interface WindowCapabilities {
   readonly fileDrop: boolean;
   /** {@linkcode startFileDrag} works. */
   readonly fileDragOut: boolean;
+  /** {@linkcode shareFromWindow} shows a share sheet (macOS, Windows; runtime 2.9.7-denext.20). */
+  readonly share: boolean;
   /** Native file dialogs (`pickDocument` / `saveFile` / `pickFolder` in `denext/mobile`). */
   readonly fileDialogs: boolean;
   /** {@linkcode onCloseRequested} can keep the window open. */
@@ -142,10 +144,11 @@ export interface WindowCapabilities {
   readonly sessionType: "wayland" | "x11" | "tty" | "unknown" | null;
   /**
    * CEF's cookie store: `"os"` (encrypted with a key the OS keeps: Windows' DPAPI, the Linux
-   * keyring) or `"basic"` (obfuscated with a fixed key, not protected by the OS: always on macOS,
-   * where CEF runs with Chromium's mock keychain and its constant key, and on Linux when the login
-   * keyring was locked with no one to unlock it); `null` on the WebView backends, `"unknown"`
-   * before runtime 2.9.7-denext.10.
+   * keyring, a team-signed macOS app's own keychain item from runtime 2.9.7-denext.20) or
+   * `"basic"` (obfuscated with a fixed key, not protected by the OS: an ad-hoc signed or unsigned
+   * macOS build, where CEF runs with Chromium's mock keychain, and Linux when the login keyring was
+   * locked with no one to unlock it); `null` on the WebView backends, `"unknown"` before runtime
+   * 2.9.7-denext.10.
    */
   readonly cookieEncryption: "os" | "basic" | "unknown" | null;
   /** Any other key the runtime reports. */
@@ -257,6 +260,36 @@ export interface DragOutItem {
 
 /** What a drag-out ended with. */
 export type DragOutResult = "dropped" | "cancelled" | "failed";
+
+/** What {@linkcode shareFromWindow} shares: at least one of `text`, `url` or `files`. */
+export interface WindowShareData {
+  /** A title for the share (an email subject, say). */
+  readonly title?: string;
+  /** The text. */
+  readonly text?: string;
+  /** An http(s) URL. */
+  readonly url?: string;
+  /** Files: picked handles, or files in the app's own folders (like {@linkcode startFileDrag}). */
+  readonly files?: readonly DragOutItem[];
+  /** Where the sheet points (macOS), in the window's CSS pixels; its middle by default. */
+  readonly x?: number;
+  /** Where the sheet points (macOS), in the window's CSS pixels; its middle by default. */
+  readonly y?: number;
+}
+
+/**
+ * How a share sheet ended: `"completed"` (a target was chosen; `target` names it where the OS
+ * says), `"shown"` (the sheet opened and this OS reports nothing more: Windows), `"cancelled"`,
+ * `"not_supported"` (Linux has no share sheet) or `"failed"` (`reason`).
+ */
+export interface WindowShareResult {
+  /** How it ended. */
+  readonly outcome: "completed" | "shown" | "cancelled" | "not_supported" | "failed";
+  /** The chosen target's name, where the OS says (macOS). */
+  readonly target?: string;
+  /** Why it failed. */
+  readonly reason?: string;
+}
 
 /** A call with no result. */
 async function act(method: string, args: Record<string, unknown> = {}): Promise<void> {
@@ -710,6 +743,58 @@ export async function startFileDrag(
   }, { timeoutMs: false });
   const result = out?.result;
   return result === "dropped" || result === "cancelled" ? result : "failed";
+}
+
+/**
+ * Show the OS share sheet over the window: macOS `NSSharingServicePicker` (anchored at `x` / `y`),
+ * Windows `DataTransferManager` (files go as their paths in the text). Linux has none (`outcome`
+ * `"not_supported"`). Needs denext's pinned runtime, 2.9.7-denext.20 or later (`share` in
+ * {@linkcode windowCapabilities}); elsewhere it rejects `unsupported`. A file the app may not read
+ * rejects `forbidden`. `share()` in `denext/mobile` uses it for text and URLs, and falls back to
+ * the web where it can't.
+ *
+ * @param data What to share.
+ * @returns How the sheet ended.
+ * @example
+ * ```ts
+ * import { shareFromWindow } from "denext/desktop/window";
+ *
+ * const { outcome } = await shareFromWindow({
+ *   title: "Q3 report",
+ *   files: [{ directory: "documents", path: "reports/q3.pdf" }],
+ * });
+ * ```
+ */
+export async function shareFromWindow(data: WindowShareData): Promise<WindowShareResult> {
+  const out = await desktopRpc<{ outcome?: unknown; target?: unknown; reason?: unknown }>(
+    CAP,
+    "share",
+    {
+      ...(data.title !== undefined ? { title: data.title } : {}),
+      ...(data.text !== undefined ? { text: data.text } : {}),
+      ...(data.url !== undefined ? { url: data.url } : {}),
+      ...(data.files
+        ? {
+          files: data.files.map((i) => ({
+            directory: i.directory,
+            ...(i.path ? { path: i.path } : {}),
+          })),
+        }
+        : {}),
+      ...(data.x !== undefined ? { x: data.x } : {}),
+      ...(data.y !== undefined ? { y: data.y } : {}),
+    },
+    { timeoutMs: false },
+  );
+  const outcome = out?.outcome;
+  return {
+    outcome: outcome === "completed" || outcome === "shown" || outcome === "cancelled" ||
+        outcome === "not_supported"
+      ? outcome
+      : "failed",
+    ...(typeof out?.target === "string" ? { target: out.target } : {}),
+    ...(typeof out?.reason === "string" ? { reason: out.reason } : {}),
+  };
 }
 
 /** The slice of a DOM element {@linkcode makeWindowDraggable} uses. */

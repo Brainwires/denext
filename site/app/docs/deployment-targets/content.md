@@ -297,18 +297,18 @@ prints the flags it baked.
 
 **Cross-compiling** takes any `deno compile` target: `x86_64-unknown-linux-gnu`,
 `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin` or
-`x86_64-pc-windows-msvc`. The binary's runtime is Deno's own `denort` for that
-target, version 2.9.7, which `deno compile` downloads. It is not denext's
-toolchain build, so:
+`x86_64-pc-windows-msvc`. The binary's runtime is the `denort` of denext's
+[Deno toolchain](/docs/toolchain) for that target (`2.9.7-denext.20` and later):
+the same release as the CLI, pinned by SHA-256 in denext and downloaded into the
+toolchain cache on first use, so the binary carries the toolchain's patches.
+`Deno.SQL` is there (`postgresClient(url)` and `backend({ postgres: {} })` work
+as under `denext start`). With `DENEXT_DENO=stock` (or another `deno` through
+`DENEXT_DENO=<path>`), `deno compile` picks its own runtime, Deno's stock
+`denort`, which has no `Deno.SQL`.
 
-- **`Deno.SQL` is absent.** For Postgres, give `@denext/backend` (and your own
-  code) a postgres.js client:
-  `backend({ postgres: { sql: fromPostgresJs(postgres(url)) } })`. `db migrate`
-  then runs on that same client. A plain `DATABASE_URL` Postgres without the
-  plugin cannot migrate from the binary; use SQLite or the backend there.
-- **The first request prints one `Deno.serve: request.signal…` notice.**
-  `deno compile` does not carry `--unstable-no-legacy-abort` into the binary.
-  The notice is cosmetic: denext handles both abort behaviours.
+The first request prints one `Deno.serve: request.signal…` notice: a compiled
+binary does not take `--unstable-no-legacy-abort`. The notice is cosmetic:
+denext handles both abort behaviours.
 
 **What does not compile:**
 

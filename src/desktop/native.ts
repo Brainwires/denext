@@ -222,18 +222,27 @@ export interface DesktopContextMenuEntry {
   readonly id: string;
   readonly label: string;
   readonly disabled?: boolean;
+  readonly destructive?: boolean;
+  readonly iconPng?: string;
   readonly subtitle?: string;
   readonly children?: readonly DesktopContextMenuEntry[];
 }
 
-/** The menu wire form: items, and submenus for entries with children (a disabled one's too). */
+/**
+ * The menu wire form: items (with their destructive style and PNG icon), and submenus for entries
+ * with children (a disabled one's too).
+ */
 function contextMenuWire(items: readonly DesktopContextMenuEntry[], off = false): unknown[] {
   return items.map((it) => {
     const label = it.subtitle ? `${it.label} — ${it.subtitle}` : it.label;
     const disabled = off || it.disabled === true;
-    return it.children
-      ? { label, children: contextMenuWire(it.children, disabled) }
-      : { id: it.id, label, enabled: !disabled };
+    return it.children ? { label, children: contextMenuWire(it.children, disabled) } : {
+      id: it.id,
+      label,
+      enabled: !disabled,
+      ...(it.destructive ? { destructive: true } : {}),
+      ...(it.iconPng !== undefined ? { icon: it.iconPng } : {}),
+    };
   });
 }
 
@@ -260,6 +269,43 @@ export async function showNativeContextMenu(
     { timeoutMs: false },
   );
   return typeof out?.id === "string" ? out.id : null;
+}
+
+// --- share sheet (cap "window"; share) ---------------------------------------
+
+/**
+ * `share` on desktop: the window's OS share sheet (runtime 2.9.7-denext.20: macOS, Windows).
+ * Resolves `"shared"` / `"cancelled"`, or `undefined` where the window has none (Linux, an older
+ * runtime), so the caller takes its web path. A failed sheet rejects.
+ */
+export async function desktopShare(
+  data: { title?: string; text?: string; url?: string },
+): Promise<"shared" | "cancelled" | undefined> {
+  let out: { outcome?: unknown; reason?: unknown } | null;
+  try {
+    out = await desktopRpc<{ outcome?: unknown; reason?: unknown }>("window", "share", data, {
+      timeoutMs: false,
+    });
+  } catch (err) {
+    if ((err as { code?: unknown })?.code === "unsupported") return undefined;
+    throw err;
+  }
+  switch (out?.outcome) {
+    case "completed":
+    case "shown":
+      return "shared";
+    case "cancelled":
+      return "cancelled";
+    case "not_supported":
+      return undefined;
+    default:
+      throw desktopError(
+        "window",
+        "share",
+        "share_failed",
+        typeof out?.reason === "string" ? out.reason : "the share sheet failed",
+      );
+  }
 }
 
 // --- dock menu (cap "app"; setQuickActions / onQuickAction) -------------------
@@ -448,8 +494,9 @@ export async function notifyPending(): Promise<
 }
 
 /**
- * `deliveredNotifications` on desktop: the notifications the capability posted this run whose
- * time has come (raw `{ id, threadId?, title?, data? }` records, `id` a string).
+ * `deliveredNotifications` on desktop: the OS's notification centre on macOS and Windows (runtime
+ * 2.9.7-denext.20), else the notifications the capability posted this run whose time has come
+ * (raw `{ id, threadId?, title?, data? }` records, `id` a string).
  */
 export async function notifyDelivered(): Promise<
   Array<{ id?: unknown; threadId?: unknown; title?: unknown; data?: unknown }>

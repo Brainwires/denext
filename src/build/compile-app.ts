@@ -30,6 +30,12 @@ import { readConfig, readImportsAbsolute } from "./module-config.ts";
 import { CONFIG_FILES, type ProjectPaths, resolveProject } from "./paths.ts";
 import { relativeSpecifier } from "./swc-ast.ts";
 import { childToolchainMarker } from "../cli/self-exec.ts";
+import {
+  denortTargetKey,
+  type DenoToolchainPin,
+  ensureDenort,
+  loadDenoToolchainPin,
+} from "./deno-toolchain.ts";
 
 /** The targets `deno compile --target` takes. */
 export const COMPILE_TARGETS: readonly string[] = [
@@ -135,8 +141,8 @@ async function appName(paths: ProjectPaths): Promise<string> {
   return raw.replace(/^@[^/]+\//, "").replace(/[^\w.-]+/g, "-") || "app";
 }
 
-/** Whether the `deno` {@linkcode denoExecutable} resolves is denext's toolchain (a known build). */
-function onToolchain(): boolean {
+/** The toolchain version this process runs on (`DENEXT_TOOLCHAIN_ACTIVE`), else `undefined`. */
+function toolchainVersion(): string | undefined {
   const env = (name: string) => {
     try {
       return Deno.env.get(name);
@@ -145,25 +151,51 @@ function onToolchain(): boolean {
     }
   };
   const marker = childToolchainMarker(env, Deno.version.deno);
-  return marker !== undefined && marker !== "path";
+  return marker !== undefined && marker !== "path" ? marker : undefined;
+}
+
+/** Whether the `deno` {@linkcode denoExecutable} resolves is denext's toolchain (a known build). */
+function onToolchain(): boolean {
+  return toolchainVersion() !== undefined;
+}
+
+/** How {@linkcode denortBinary} reaches the toolchain (tests pass fakes). */
+export interface DenortBinaryDeps {
+  /** The toolchain version this process runs on, or `undefined` off the toolchain. */
+  readonly toolchain?: () => string | undefined;
+  /** The pin in force (default {@linkcode loadDenoToolchainPin}). */
+  readonly pin?: () => DenoToolchainPin;
+  /** Fetch and verify one (default {@linkcode ensureDenort}). */
+  readonly ensure?: (options: { pin: DenoToolchainPin; target: string }) => Promise<
+    { denort: string }
+  >;
 }
 
 /**
  * The `denort` (Deno's standalone runtime) a compiled app is built on, for `target` (undefined:
- * this machine), as a path for `DENORT_BIN` — or `undefined` to let `deno compile` download
- * Deno's stock `denort` for the toolchain's Deno version (2.9.7), which has no `Deno.SQL` and
- * ignores `--unstable-no-legacy-abort`.
+ * this machine), as a path for `DENORT_BIN`: on denext's toolchain, the release's own `denort`
+ * from the toolchain pin (2.9.7-denext.20 on), downloaded into the toolchain cache and
+ * SHA-256-verified like the toolchain itself ({@linkcode ensureDenort}), so a compiled app has
+ * `Deno.SQL` and the toolchain's patches. `undefined` — `deno compile` then picks its own — when the
+ * compile runs on another Deno (`DENEXT_DENO=stock` / `=<path>`, or a `deno` given explicitly),
+ * when that Deno is not the pinned version, or when the pin names no denort for the target. A
+ * failed download or a hash mismatch throws: nothing is compiled onto an unverified runtime.
  *
- * TODO(denort): once the toolchain release ships denext's own `denort` per target (beside the
- * `deno-cli-*` archives in `deno-toolchain-pin.json`), return the SHA-256-verified copy here
- * (fetched like the toolchain itself, ./deno-toolchain.ts), so compiled apps get `Deno.SQL` and
- * the toolchain's abort behaviour. Everything else already routes through this one function.
- *
- * @param _target The `deno compile --target` triple, or undefined for this machine.
- * @returns The denort path, or undefined for the stock download.
+ * @param target The `deno compile --target` triple, or undefined for this machine.
+ * @param deps Test seams.
+ * @returns The denort path, or undefined to let `deno compile` choose.
  */
-function denortBinary(_target: string | undefined): Promise<string | undefined> {
-  return Promise.resolve(undefined);
+export async function denortBinary(
+  target: string | undefined,
+  deps: DenortBinaryDeps = {},
+): Promise<string | undefined> {
+  const version = (deps.toolchain ?? toolchainVersion)();
+  if (version === undefined) return undefined;
+  const pin = (deps.pin ?? loadDenoToolchainPin)();
+  if (pin.version !== version) return undefined;
+  const key = denortTargetKey(target ?? Deno.build.target);
+  if (key === undefined || !pin.denort?.[key]) return undefined;
+  return (await (deps.ensure ?? ensureDenort)({ pin, target: key })).denort;
 }
 
 /** `path` exists (file or directory). */
@@ -337,7 +369,8 @@ export async function compileApp(
     output,
     entry,
   ];
-  const denort = await denortBinary(options.target);
+  // Only for the toolchain compile ({@linkcode onToolchain}): an explicit `deno` keeps its own.
+  const denort = options.deno ? undefined : await denortBinary(options.target);
   const { code } = await new Deno.Command(deno, {
     args,
     cwd: paths.projectDir,

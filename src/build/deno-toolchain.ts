@@ -24,6 +24,12 @@
 //      toolchain: denext's esbuild API (src/build/esbuild/) then uses the npm binary, with one
 //      warning ({@linkcode toolchainEsbuild}).
 //
+// From 2.9.7-denext.20 the pin also names the release's `denort` per target (the standalone
+// runtime `deno compile` builds onto, `deno-denort-<version>-<target>.zip`): {@linkcode
+// ensureDenort} fetches and verifies it the same way into `<version>/<target>-denort/`, and
+// `denext build --compile` hands it to `deno compile` as `DENORT_BIN`, so a compiled app carries
+// the fork's patches (`Deno.SQL`) like the toolchain itself.
+//
 // `DENEXT_DENO=stock` opts out; `DENEXT_DENO=<path>` uses that binary unverified (a warning).
 // `DENEXT_TOOLCHAIN_PIN_FILE=<json>` replaces the built-in pin (tests and fork development).
 
@@ -73,6 +79,11 @@ export interface DenoToolchainPin {
   readonly deno?: string;
   /** Per host target (`darwin-aarch64`, `linux-x86_64`, `windows-x86_64`, …). */
   readonly targets: Readonly<Record<string, DenoToolchainArtifact>>;
+  /**
+   * The release's `denort` zips (holding `denort[.exe]`), keyed like `targets`; absent before
+   * 2.9.7-denext.20.
+   */
+  readonly denort?: Readonly<Record<string, DenoToolchainArtifact>>;
 }
 
 /** The toolchain denext pins (see the module header). */
@@ -185,19 +196,24 @@ function binaryDir(root: string, version: string, target: string): string {
   return join(root, version, target);
 }
 
-/** The pinned artifact for `target`, or why there is none. */
-function pinnedArtifact(pin: DenoToolchainPin, target: string): DenoToolchainArtifact {
+/** The pinned artifact for `target`, or why there is none (`denort`: the pin's denort zips). */
+function pinnedArtifact(
+  pin: DenoToolchainPin,
+  target: string,
+  denort = false,
+): DenoToolchainArtifact {
   if (pin.version === null) {
     throw new DenoToolchainUnavailableError(
       "denext: denext's Deno toolchain is not available for this denext version " +
         "(no CLI archives are pinned).",
     );
   }
-  const artifact = pin.targets[target];
+  const table = (denort ? pin.denort : pin.targets) ?? {};
+  const artifact = table[target];
   if (artifact) return artifact;
   throw new DenoToolchainUnavailableError(
-    `denext: denext's Deno toolchain ${pin.version} has no build for ${target} (it has: ` +
-      `${Object.keys(pin.targets).join(", ") || "none"}).`,
+    `denext: denext's Deno toolchain ${pin.version} has no ${denort ? "denort" : "build"} for ` +
+      `${target} (it has: ${Object.keys(table).join(", ") || "none"}).`,
   );
 }
 
@@ -497,13 +513,10 @@ async function archiveEsbuildProblem(
 
 /** Download, verify and atomically install the binary into `dir` (the write lock is held). */
 async function install(
-  dir: string,
-  exe: string,
-  version: string,
-  target: string,
-  artifact: DenoToolchainArtifact,
+  slot: CacheSlot,
   opts: EnsureDenoToolchainOptions,
 ): Promise<void> {
+  const { dir, exe, version, target, artifact } = slot;
   await Deno.mkdir(dir, { recursive: true });
   await sweepLeftovers(dir);
   const scratch = await Deno.makeTempDir({ dir, prefix: ".tmp-" });
@@ -511,7 +524,7 @@ async function install(
     const downloaded = join(scratch, artifact.file.replace(/[\\/]/g, "_"));
     const mb = artifact.size ? ` (${(artifact.size / 1024 / 1024).toFixed(1)} MB)` : "";
     (opts.log ?? ((l: string) => console.error(l)))(
-      `  denext: downloading denext's Deno toolchain ${version} for ${target}${mb}…`,
+      `  denext: downloading denext's ${slot.what} ${version} for ${target}${mb}…`,
     );
     try {
       checkDownload(artifact, await download(artifact, downloaded, opts.fetch ?? fetch));
@@ -519,9 +532,9 @@ async function install(
       await Deno.remove(downloaded).catch(() => {});
       throw err;
     }
-    const os = opts.os ?? Deno.build.os;
+    const os = slot.os;
     const { binary, extracted } = await binaryFrom(artifact, downloaded, scratch, exe);
-    if (os !== "windows") await Deno.chmod(binary, 0o755);
+    if (os !== "windows" && Deno.build.os !== "windows") await Deno.chmod(binary, 0o755);
     // A stale stamp goes first: a crash between here and the new stamp leaves NO stamp, which
     // the next run treats as missing (a fresh download), never as a verified binary.
     await Deno.remove(join(dir, TOOLCHAIN_STAMP)).catch(() => {});
@@ -531,6 +544,60 @@ async function install(
   } finally {
     await Deno.remove(scratch, { recursive: true }).catch(() => {});
   }
+}
+
+/** One verified binary in the cache: where it goes and the pinned archive it comes from. */
+interface CacheSlot {
+  /** The cache root (the lock lives there). */
+  readonly root: string;
+  /** The binary's directory (its stamp beside it). */
+  readonly dir: string;
+  /** The binary's file name. */
+  readonly exe: string;
+  /** The OS the binary runs on. */
+  readonly os: string;
+  readonly version: string;
+  readonly target: string;
+  readonly artifact: DenoToolchainArtifact;
+  /** What the progress and error lines call it (`Deno toolchain`, `denort`). */
+  readonly what: string;
+}
+
+/**
+ * Make `slot`'s binary available and verified in the cache (see the module header): reuse it when
+ * its stamp matches, else download, verify and install it under the cache lock. Resolves whether
+ * it was already cached.
+ */
+async function ensureCached(
+  slot: CacheSlot,
+  options: EnsureDenoToolchainOptions,
+): Promise<boolean> {
+  const { root, dir, exe, version, target, artifact } = slot;
+  const descr = slot.what === "Deno toolchain" ? CACHE_DESCR : `${slot.what} cache`;
+  await Deno.mkdir(root, { recursive: true });
+  {
+    using _shared = await acquireCacheLock(root, "shared", descr);
+    if (await cacheVerdict(dir, exe, version, target, artifact, false) === "ok") return true;
+  }
+  const present = await cacheVerdict(dir, exe, version, target, artifact, false) !== "missing";
+  using _write = await acquireCacheLock(root, present ? "mutate" : "download", descr);
+  // Re-check once granted: the process this one waited on may have installed it.
+  const verdict = await cacheVerdict(dir, exe, version, target, artifact, true);
+  if (verdict === "ok") return true;
+  if (verdict === "rehashed") {
+    await restamp(dir, exe, version, target, artifact);
+    return true;
+  }
+  if (verdict === "bad") {
+    (options.log ?? ((l: string) => console.error(l)))(
+      `  denext: the cached ${slot.what} at ${dir} failed verification; re-downloading.`,
+    );
+  }
+  await install(slot, options);
+  if (await cacheVerdict(dir, exe, version, target, artifact, false) !== "ok") {
+    throw new Error(`denext: the ${slot.what} at ${dir} did not verify after install`);
+  }
+  return false;
 }
 
 /**
@@ -549,34 +616,67 @@ export async function ensureDenoToolchain(
   const version = pin.version!;
   const root = options.cacheRoot ?? denoToolchainCacheRoot();
   const dir = binaryDir(root, version, target);
-  const exe = exeName(options.os ?? Deno.build.os);
-  const resolved = (cached: boolean) => ({ deno: join(dir, exe), version, target, cached });
-  await Deno.mkdir(root, { recursive: true });
-  {
-    using _shared = await acquireCacheLock(root, "shared", CACHE_DESCR);
-    if (await cacheVerdict(dir, exe, version, target, artifact, false) === "ok") {
-      return resolved(true);
-    }
-  }
-  const present = await cacheVerdict(dir, exe, version, target, artifact, false) !== "missing";
-  using _write = await acquireCacheLock(root, present ? "mutate" : "download", CACHE_DESCR);
-  // Re-check once granted: the process this one waited on may have installed it.
-  const verdict = await cacheVerdict(dir, exe, version, target, artifact, true);
-  if (verdict === "ok") return resolved(true);
-  if (verdict === "rehashed") {
-    await restamp(dir, exe, version, target, artifact);
-    return resolved(true);
-  }
-  if (verdict === "bad") {
-    (options.log ?? ((l: string) => console.error(l)))(
-      `  denext: the cached Deno toolchain at ${dir} failed verification; re-downloading.`,
-    );
-  }
-  await install(dir, exe, version, target, artifact, options);
-  if (await cacheVerdict(dir, exe, version, target, artifact, false) !== "ok") {
-    throw new Error(`denext: the Deno toolchain at ${dir} did not verify after install`);
-  }
-  return resolved(false);
+  const os = options.os ?? Deno.build.os;
+  const exe = exeName(os);
+  const slot = { root, dir, exe, os, version, target, artifact, what: "Deno toolchain" };
+  const cached = await ensureCached(slot, options);
+  return { deno: join(dir, exe), version, target, cached };
+}
+
+/** A verified `denort` ({@linkcode ensureDenort}). */
+export interface ResolvedDenort {
+  /** The `denort[.exe]` path, for `DENORT_BIN`. */
+  readonly denort: string;
+  readonly version: string;
+  readonly target: string;
+  /** Whether it was already cached (nothing was downloaded). */
+  readonly cached: boolean;
+}
+
+/** `deno compile --target` triples → the pin's `<os>-<arch>` keys. */
+const COMPILE_TARGET_KEYS: Readonly<Record<string, string>> = {
+  "aarch64-apple-darwin": "darwin-aarch64",
+  "x86_64-apple-darwin": "darwin-x86_64",
+  "aarch64-unknown-linux-gnu": "linux-aarch64",
+  "x86_64-unknown-linux-gnu": "linux-x86_64",
+  "x86_64-pc-windows-msvc": "windows-x86_64",
+};
+
+/**
+ * The pin key (`<os>-<arch>`) of a `deno compile --target` triple (`x86_64-unknown-linux-gnu` →
+ * `linux-x86_64`), or `undefined` for a triple denext's toolchain is not built for.
+ *
+ * @param triple The Rust target triple (`Deno.build.target` spells this machine's).
+ * @returns The key, or `undefined`.
+ */
+export function denortTargetKey(triple: string): string | undefined {
+  return COMPILE_TARGET_KEYS[triple];
+}
+
+/**
+ * Make the pinned `denort` for `options.target` (an `<os>-<arch>` key, default this host's)
+ * available in the cache — SHA-256-verified exactly like the toolchain binary, under
+ * `<cache>/<version>/<target>-denort/` — and return its path. Throws
+ * {@linkcode DenoToolchainUnavailableError} when the pin names no denort for the target (a pin
+ * from before 2.9.7-denext.20), and the toolchain's download / hash errors otherwise.
+ *
+ * @param options What to fetch and how (`os` defaults to the target's).
+ * @returns The verified `denort`.
+ */
+export async function ensureDenort(
+  options: EnsureDenoToolchainOptions = {},
+): Promise<ResolvedDenort> {
+  const pin = options.pin ?? loadDenoToolchainPin();
+  const target = options.target ?? denoToolchainTarget();
+  const artifact = pinnedArtifact(pin, target, true);
+  const version = pin.version!;
+  const root = options.cacheRoot ?? denoToolchainCacheRoot();
+  const dir = join(root, version, `${target}-denort`);
+  const os = options.os ?? target.split("-")[0];
+  const exe = os === "windows" ? "denort.exe" : "denort";
+  const slot = { root, dir, exe, os, version, target, artifact, what: "denort" };
+  const cached = await ensureCached(slot, options);
+  return { denort: join(dir, exe), version, target, cached };
 }
 
 // ---------------------------------------------------------------------------------------------
