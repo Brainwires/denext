@@ -181,7 +181,9 @@ project (the config, `__mocks__`, automock) and of the environment variables Vit
 grant, so a `deno test` without `-A` lists only what its tests use (`denext deno test
 --allow-read=tests/fixtures …`). `denext test` runs `deno test -A` and needs nothing more.
 
-Coverage of a suite with Vitest files (from `2.9.7-denext.17`): run every pass on the toolchain
+Coverage of a suite with Vitest files (from `2.9.7-denext.17`): `denext test --coverage[=<dir>]`
+runs the `Deno.test` files and then the `*.vitest.ts` files into one directory and makes one report
+from both (the summary, `<dir>/lcov.info`, `<dir>/html/`). By hand, run every pass on the toolchain
 into one directory, each with `--coverage-raw-data-only` so no pass empties what another wrote,
 then report that directory with the toolchain's `deno coverage`:
 

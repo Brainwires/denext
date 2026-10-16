@@ -2367,7 +2367,7 @@
       "name": "test",
       "summary": "Run the app's tests (deno test)",
       "usage": "denext test [paths] [-- <deno args>]",
-      "description": "Forwards to `deno test -A`. Extra args/paths pass through:\n  denext test                  Run every test\n  denext test --watch          Re-run on change (deno test --watch)\n  denext test --coverage=cov   Collect coverage, then `deno coverage cov`\n  denext test --filter Auth    Forward deno test flags\n  denext test routes/          Restrict to a path",
+      "description": "Forwards to `deno test -A`. Extra args/paths pass through. With no path named, the\nproject's `*.vitest.ts` files run as a second pass, and --coverage reports both as one.\n  denext test                  Run every test (Deno.test files, then *.vitest.ts)\n  denext test --watch          Re-run on change (deno test --watch)\n  denext test --coverage=cov   Collect coverage from both passes into one report\n  denext test --filter Auth    Forward deno test flags\n  denext test routes/          Restrict to a path",
       "flags": [],
       "positionals": [
         {

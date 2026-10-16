@@ -74,6 +74,12 @@ and this project adheres to
   helper. `emitClient()` / `modelFromOpenApi()` from `@denext/openapi/clients` script it. The
   generated code is held to golden files, compiled and type-checked (mypy `--strict`, `go vet`,
   `swiftc -typecheck` in Swift 6 mode, `kotlinc`) and run end to end against a server.
+- **`denext test` runs the `*.vitest.ts` files and reports coverage over both passes.** With no
+  path named, the files Deno's discovery skips (named `*.vitest.ts` so a plain `deno test` never
+  loads `vitest`) run as a second pass after the `Deno.test` files, on denext's Deno toolchain.
+  `denext test --coverage[=<dir>]` writes both passes into one directory and makes one report
+  (summary, `<dir>/lcov.info`, `<dir>/html/`); the toolchain's `deno coverage` maps each profile
+  back through the form its module was emitted in, so a line either pass ran counts as covered.
 
 ### Fixed
 

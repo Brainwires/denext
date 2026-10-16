@@ -295,13 +295,17 @@ describe("scheduleReminder", () => {
       <p>
         Stock Deno cannot resolve <code>vitest</code>. If a plain <code>deno test</code>{" "}
         also runs in your project, give these files a name its discovery skips, such as{" "}
-        <code>*.vitest.ts</code>, and name them to <code>denext test</code>{" "}
-        (<code>denext test tests/reminder.vitest.ts</code>). The Vitest layer needs no permission of
-        its own, so <code>denext deno test --allow-read …</code>{" "}
-        lists only what the tests use. Coverage: keep a Vitest run&apos;s coverage in a report of
-        its own (<code>denext deno coverage</code>). The Vitest transform changes the code a module
-        emits, and <code>deno coverage</code>{" "}
-        under-reports a module whose plain-run and Vitest-run profiles it merges.
+        <code>*.vitest.ts</code>: <code>denext test</code>{" "}
+        with no path named runs them as a second pass after the <code>Deno.test</code>{" "}
+        files (name one to run it alone:{" "}
+        <code>denext test tests/reminder.vitest.ts</code>). The Vitest layer needs no permission of
+        its own, so <code>denext deno test --allow-read …</code> lists only what the tests use.{" "}
+        <code>denext test --coverage</code>{" "}
+        writes both passes into one directory and makes one report from them (the summary,{" "}
+        <code>coverage/lcov.info</code> and{" "}
+        <code>coverage/html/</code>): the Vitest transform changes the code a module emits, and the
+        toolchain&apos;s <code>deno coverage</code>{" "}
+        maps each run back through its own source map, so a line either pass ran counts as covered.
       </p>
 
       <h2 id="probing-every-route">Probing every route</h2>

@@ -980,7 +980,8 @@ await screen.fireEvent.click(screen.getByRole("button"));
 A test that needs a fake clock or a module mock imports `vitest` (`vi.useFakeTimers()`,
 `vi.mock()`, `vi.stubEnv`) and runs under `denext test` — the toolchain's `deno test` has
 Vitest's API; stock Deno can't resolve `vitest`, so name such files `*.vitest.ts` if a plain
-`deno test` also runs. Keep a Vitest run's coverage in its own report.
+`deno test` also runs. `denext test` runs the `*.vitest.ts` files as a second pass, and
+`denext test --coverage` reports both passes as one.
 
 **Conformance-probing every route (CI gate):**
 
