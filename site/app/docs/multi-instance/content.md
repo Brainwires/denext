@@ -13,6 +13,7 @@ lead: One denext process is self-contained by default — its cache, sessions, r
 | Rate-limit counters                    | `inMemoryRateLimitStore()` per process                                | every limit is multiplied by the replica count                                     | `store` → `redisRateLimitStore()` / `denoKvRateLimitStore()` / `postgres…`           |
 | Users, accounts, credentials           | `sqliteAuthAdapter` = one SQLite file                                 | single node (or a shared volume)                                                   | `adapter` → `postgresAuthAdapter()` / `backendAuthAdapter()` or your `AuthAdapter`   |
 | Live channels + tag pushes             | in-memory loopback transport                                          | a `publish` on A reaches A's sockets only                                          | `setChannelTransport(t)` → `redisChannelTransport()` / `broadcastChannelTransport()` |
+| Parked live views                      | `memoryLiveViewStore()` per process                                   | a reconnect that lands on B runs the view's `init` again                           | `setLiveViewStore(s)` → `redisLiveViewStore()` / `postgresLiveViewStore()`           |
 | Scheduled jobs (userland)              | minute-tick scheduler in every process                                | **fires on every replica**                                                         | one designated instance, or `Deno.cron`                                              |
 | Job run history                        | `.denext/jobs.db` per process                                         | each node sees its own fragment                                                    | `jobs: { history: { store: postgresJobHistoryStore() } }` or your `JobHistoryStore`  |
 | Connection and concurrency caps        | per process (`maxConcurrency`, `live.limits`, `@denext/graphql`)      | each cap is multiplied by the replica count                                        | (per process by design; size each to one instance, and cap the total at the edge)    |
@@ -298,8 +299,29 @@ practical alternative is **sticky sessions** at the balancer so a viewer's
 socket and the actions that publish to it land on the same node — which works
 for a single user's own updates and not for anything shared between users. See
 [Live › Delivery semantics & scaling](/docs/live#delivery-semantics--scaling).
-Server-held [live views](/docs/live-views#more-than-one-instance) also need a shared
-`DENEXT_LIVE_VIEW_SECRET`, and resume after a reconnect only on the same node.
+
+### Live views: `LiveViewStore`
+
+Server-held [live views](/docs/live-views#more-than-one-instance) need a shared
+`DENEXT_LIVE_VIEW_SECRET` on every instance. When a socket drops, each of its views is
+parked in its process and its model is written, sealed under that secret, to the
+installed `LiveViewStore`; a reconnect that lands on any instance takes it back and
+resumes the model. The default store is in memory (one process), so install a shared
+one at startup:
+
+```ts
+// instrumentation.ts
+import { redisLiveViewStore, setLiveViewStore } from "denext/server";
+setLiveViewStore(redisLiveViewStore({ url: Deno.env.get("REDIS_URL") }));
+// or: setLiveViewStore(postgresLiveViewStore({ url: Deno.env.get("DATABASE_URL") }));
+```
+
+The store holds only sealed snapshots (AES-256-GCM, bound to the view instance id),
+each for `live.limits.viewResumeSeconds`, and hands each back once. A store of your own
+is three methods — `set(id, sealed, ttlSeconds)`, `take(id)` (read and delete, atomically)
+and `delete(id)`. Only a model the wire codec can encode is stored (plain data, `Date`,
+`Map`, `Set`, `BigInt`, `URL`); one holding a function or a class instance stays parked
+in its process, with a warning.
 
 ## Scheduled jobs: one runner, not one per replica
 

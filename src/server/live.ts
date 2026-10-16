@@ -35,6 +35,7 @@ import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import { getSubscriptionDef, type SubscriptionDef } from "../runtime/server-action.ts";
 import { type ChannelHub, type ChannelSub, createChannelHub } from "./live-channels.ts";
 import { createLiveViewHub, type ViewHub, type ViewInstance } from "./live-views.ts";
+import { getLiveViewStore } from "./live-view-store.ts";
 import {
   broadcastInvalidation,
   type ChannelEvent,
@@ -1533,6 +1534,7 @@ const viewHub: ViewHub<Conn> = createLiveViewHub<Conn>({
   render: (conn, fn) =>
     withRenderSlot(() => withDeadline(renderDeadlineMs(), () => withConnContext(conn, fn))),
   backPressured: (conn) => conn.socket.bufferedAmount > MAX_BUFFERED,
+  store: getLiveViewStore,
   armRecover: (conn) => {
     if (conn.recoverTimer == null) {
       conn.recoverTimer = setTimeout(() => drainRecover(conn), RECOVER_POLL_MS);

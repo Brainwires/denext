@@ -23,6 +23,8 @@ import {
   sessionStoreContract,
 } from "../src/testing/mod.ts";
 import { fakeRedis } from "./helpers/fake-redis.ts";
+import { liveViewStoreContract } from "./helpers/live-view-store-contract.ts";
+import { redisLiveViewStore } from "../src/server/live-view-stores.ts";
 
 /** Run `fn` with a fake server and a client on it, closing both. */
 async function withRedis(
@@ -52,6 +54,10 @@ Deno.test("Redis stores pass the store contracts (fake server)", async (t) => {
       await t.step(
         "RateLimitStore",
         (t) => rateLimitStoreContract(t, () => redisRateLimitStore({ client, prefix: prefix() })),
+      );
+      await t.step(
+        "LiveViewStore",
+        (t) => liveViewStoreContract(t, () => redisLiveViewStore({ client, prefix: prefix() })),
       );
     } finally {
       await client.close();

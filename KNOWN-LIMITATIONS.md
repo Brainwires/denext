@@ -69,9 +69,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **Live is single-instance without a `ChannelTransport`** (`redisChannelTransport()`,
   `broadcastChannelTransport()` on Deno Deploy, or your own makes publishes, tag invalidations
   and `usePresence` rooms cross-instance).
-- **Live views keep their model in one process:** a reconnect that lands on another instance, or
-  after `live.limits.viewResumeSeconds`, re-runs `init` (sticky sessions keep it on one node).
-  With JavaScript disabled only the first render works.
+- **Live views resume across instances only through a shared view store and from a
+  serializable model:** without `setLiveViewStore(redisLiveViewStore() | postgresLiveViewStore())`
+  a reconnect that lands on another instance, or any reconnect after
+  `live.limits.viewResumeSeconds`, re-runs `init`; a model the wire codec cannot encode (a
+  function, a class instance) stays in its process. A view resumed elsewhere carries on from the
+  model as last stored, while the parked copy runs on where it was until its window ends. With
+  JavaScript disabled only the first render works.
 - **Channels carry state, not a log:** no replay on reconnect, at-most-once, latest-wins, 16 ms
   coalescing, `seq` ordered per instance. Re-authorization is lazy (`authTtlSeconds`;
   `channel.revoke(key)` is immediate). The production handshake requires a browser `Origin`.

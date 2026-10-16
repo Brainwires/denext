@@ -107,11 +107,14 @@ const TOKEN_DOMAIN = "denext.liveview.v1";
 let fallbackSecret: string | null = null;
 
 /**
- * The key live-view tokens are signed with: `DENEXT_LIVE_VIEW_SECRET` (shared by every instance
- * behind one load balancer), else a random per-process one (a reconnect to another instance, or
- * after a restart, re-renders the route for a fresh token).
+ * The key live-view tokens are signed with, and the shared view store's snapshots are sealed
+ * under: `DENEXT_LIVE_VIEW_SECRET` (shared by every instance behind one load balancer), else a
+ * random per-process one (a reconnect to another instance, or after a restart, re-renders the
+ * route for a fresh token, and another instance cannot open this one's snapshots).
+ *
+ * @returns The secret.
  */
-function tokenSecret(): string {
+export function liveViewSecret(): string {
   let configured: string | undefined;
   try {
     configured = (globalThis as { Deno?: typeof Deno }).Deno?.env.get("DENEXT_LIVE_VIEW_SECRET");
@@ -168,7 +171,7 @@ function fromBase64Url(text: string): Uint8Array<ArrayBuffer> | null {
  * @returns The token.
  */
 export async function signLiveViewToken(view: string, props: string): Promise<string> {
-  const key = await hmacKey(tokenSecret());
+  const key = await hmacKey(liveViewSecret());
   const sig = await crypto.subtle.sign("HMAC", key, tokenInput(view, props));
   return toBase64Url(new Uint8Array(sig));
 }
@@ -188,7 +191,7 @@ export async function verifyLiveViewToken(
 ): Promise<boolean> {
   const sig = typeof token === "string" && token.length <= 128 ? fromBase64Url(token) : null;
   if (!sig) return false;
-  const key = await hmacKey(tokenSecret());
+  const key = await hmacKey(liveViewSecret());
   return crypto.subtle.verify("HMAC", key, sig, tokenInput(view, props));
 }
 

@@ -12,15 +12,32 @@ const INSTANCE = new URL("./live-redis-instance.ts", import.meta.url);
 const WAIT_MS = Number(Deno.env.get("DENEXT_TEST_WS_TIMEOUT_MS")) || 20_000;
 
 /** One replica process and the port it serves on. */
-interface Replica {
+export interface Replica {
   port: number;
   stop(): Promise<void>;
 }
 
 /** Start a replica; resolves once it prints its port. */
-async function startReplica(url: string, channel: string): Promise<Replica> {
+function startReplica(url: string, channel: string): Promise<Replica> {
+  return startReplicaProcess(INSTANCE, [url, channel]);
+}
+
+/**
+ * Start a replica process running `script` with `args`; resolves once it prints `{"port": N}`.
+ *
+ * @param script The replica module.
+ * @param args Its arguments.
+ * @param env Extra environment.
+ * @returns The replica.
+ */
+export async function startReplicaProcess(
+  script: URL,
+  args: string[],
+  env: Record<string, string> = {},
+): Promise<Replica> {
   const child = new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", "--no-check", INSTANCE.href, url, channel],
+    args: ["run", "-A", "--no-check", script.href, ...args],
+    env,
     stdout: "piped",
     stderr: "inherit",
   }).spawn();
@@ -42,8 +59,14 @@ async function startReplica(url: string, channel: string): Promise<Replica> {
   };
 }
 
-/** A socket that records every frame, with a wait for one matching a predicate. */
-async function socket(port: number) {
+/**
+ * A socket on a replica's Live endpoint that records every frame, with a wait for one matching a
+ * predicate.
+ *
+ * @param port The replica's port.
+ * @returns The socket's handle.
+ */
+export async function socket(port: number) {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/_denext/live`);
   const frames: Any[] = [];
   const waiters: { pred: (f: Any) => boolean; resolve: (f: Any) => void }[] = [];

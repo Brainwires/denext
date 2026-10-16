@@ -38,6 +38,12 @@ and this project adheres to
   list by key: a reorder is one `m` op that moves the rows instead of rewriting each in place.
   A reordered row keeps its DOM node and typed input state. `<Live>` pushes and soft
   navigation reconcile by key as well. Lists without keys are still patched by position.
+- **Live views resume on another instance.** A parked view's model is written to a shared
+  `LiveViewStore` (`setLiveViewStore(…)` from `denext/server`: `memoryLiveViewStore()`, the
+  per-process default, `redisLiveViewStore()` or `postgresLiveViewStore()`), sealed with
+  AES-256-GCM under a key derived from `DENEXT_LIVE_VIEW_SECRET` and bound to the instance id.
+  A reconnect that lands on any instance takes the snapshot (once) and resumes the model instead
+  of running `init`. Models must be serializable by the wire codec to be stored.
 
 - **The MCP DevTools tools work on SPA apps.** The SPA dev server now serves
   `/_denext/dev-inspect` (the page's DevTools sink posts its tree, `denext_component_tree`,

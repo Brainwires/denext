@@ -4,7 +4,8 @@
 //
 //   deno run -A tests/helpers/live-redis-instance.ts <redis-url> <pubsub-channel>
 
-import { handleLiveUpgrade, installLiveHub } from "../../src/server/live.ts";
+import { installLiveHub } from "../../src/server/live.ts";
+import { serveLiveReplica } from "./live-replica-server.ts";
 import { createChannel, setChannelTransport } from "../../src/runtime/channel.ts";
 import { redisChannelTransport } from "../../src/server/redis-pubsub.ts";
 
@@ -18,13 +19,8 @@ installLiveHub({
   originAllowed: () => true,
   config: { allowAnonymous: true },
 });
-const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, async (req) => {
-  const u = new URL(req.url);
-  if (u.pathname === "/_denext/live") return handleLiveUpgrade(req);
-  if (u.pathname === "/publish") {
-    await chat.publish(u.searchParams.get("key")!, { text: u.searchParams.get("text")! });
-    return new Response("ok");
-  }
-  return new Response("not found", { status: 404 });
+serveLiveReplica(async (u) => {
+  if (u.pathname !== "/publish") return null;
+  await chat.publish(u.searchParams.get("key")!, { text: u.searchParams.get("text")! });
+  return new Response("ok");
 });
-console.log(JSON.stringify({ port: (server.addr as Deno.NetAddr).port }));

@@ -144,6 +144,14 @@ export type {
   ChannelTapHandlers,
   ChannelTransport,
 } from "../runtime/channel.ts";
+// The shared store parked live views (`defineLiveView`) resume from on any instance.
+export { getLiveViewStore, memoryLiveViewStore, setLiveViewStore } from "./live-view-store.ts";
+export type { LiveViewStore, MemoryLiveViewStoreOptions } from "./live-view-store.ts";
+export { postgresLiveViewStore, redisLiveViewStore } from "./live-view-stores.ts";
+export type {
+  PostgresLiveViewStoreOptions,
+  RedisLiveViewStoreOptions,
+} from "./live-view-stores.ts";
 // The authorized server-side subscriber a protocol bridge (GraphQL subscriptions) hands a viewer.
 export { ChannelAccessError, tapChannelAuthorized } from "./channel-subscriber.ts";
 export type { AuthorizedTapOptions } from "./channel-subscriber.ts";

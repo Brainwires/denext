@@ -325,6 +325,12 @@ const COMMANDS: Record<string, (s: Store, a: string[]) => Reply> = {
     if (expireAt !== undefined && expireAt <= Date.now()) s.db.delete(k);
     return OK;
   },
+  GETDEL: (s, [k]) => {
+    const v = s.get(k, "string");
+    if (isError(v)) return v;
+    s.db.delete(k);
+    return v ?? null;
+  },
   DEL: (s, keys) => keys.filter((k) => s.item(k) !== undefined && s.db.delete(k)).length,
   EXISTS: (s, keys) => keys.filter((k) => s.item(k) !== undefined).length,
   PTTL: (s, [k]) => {

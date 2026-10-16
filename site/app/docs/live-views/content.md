@@ -158,10 +158,11 @@ list without keys is patched by position.
 When the socket drops, the server parks the connection's views for `viewResumeSeconds`. The
 browser reconnects with backoff and re-mounts each view with the instance id it was given; if
 the server still holds it, for the same view and the same signed props, the model carries on
-(effects and subscriptions kept running meanwhile) and the browser gets its whole tree. Past
-the window, after a restart, or on another instance, the mount runs `init` again from the
-props — the documented re-init. Events fired while the socket was down wait (up to 16) and are
-sent once the view is mounted again.
+(effects and subscriptions kept running meanwhile) and the browser gets its whole tree. A parked
+view's model is also written to the view store (below), so a reconnect that reaches another
+instance resumes it there, from the model as it last stood. Past the window, or when no store
+holds it, the mount runs `init` again from the props — the documented re-init. Events fired
+while the socket was down wait (up to 16) and are sent once the view is mounted again.
 
 If the server cannot mount the view at all — its module is not loaded in this process yet, or
 the HMAC does not verify (another instance's key, a restart with a per-process key) — it answers
@@ -175,10 +176,18 @@ A live view's state lives in the process that holds the viewer's socket, so:
   `DENEXT_LIVE_VIEW_SECRET` (any long random string) on all of them. Without it each process
   uses a random key, and a page rendered by one instance and mounted on another costs one
   route re-render (`gone`) before it works.
-- **Resuming needs the same instance.** A reconnect that lands elsewhere re-runs `init`. Use
-  sticky sessions at the balancer (by cookie or address) so a reconnecting viewer returns to
-  the node that parked its views, or keep the state that must survive in your database and
-  load it in `init`.
+- **Resuming anywhere needs a shared view store.** Install one at startup —
+  `setLiveViewStore(redisLiveViewStore())` or `setLiveViewStore(postgresLiveViewStore({ url }))`
+  from `denext/server` — and a reconnect that lands on another instance takes the parked
+  model from it (once) and carries on, with effects and subscriptions started again from that
+  model; `init` and its effects do not run again. The default store is in memory, per process:
+  without a shared one, a reconnect that lands elsewhere re-runs `init` (sticky sessions keep a
+  viewer on one node). See [Multi-instance › Live views](/docs/multi-instance#live-views-liveviewstore).
+- **Models must be serializable to travel.** The stored model goes through the same codec as
+  live props: plain data plus `Date`, `Map`, `Set`, `BigInt` and `URL`. A model holding a
+  function, a class instance or a socket is parked in its own process only (a warning says so).
+- **The store sees no model.** Each snapshot is sealed (AES-256-GCM) under a key derived from
+  `DENEXT_LIVE_VIEW_SECRET` and bound to its instance id; every instance must share that secret.
 - **Cross-viewer updates use the channel transport.** One viewer's update reaching another
   viewer's view goes through a channel: publish to it (from `update`'s task, an action, a
   webhook) and subscribe the views with `subs.channel`. Install a cross-instance

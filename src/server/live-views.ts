@@ -23,7 +23,10 @@
 // back-pressured socket drained (outbound back-pressure: nothing is queued per patch — the
 // client catches up with one full render). A dropped connection parks its views for
 // `viewResumeSeconds` (at most `maxParkedViews` across the hub, oldest evicted) so a reconnect
-// resumes the model; otherwise the next mount runs `init` again.
+// resumes the model; otherwise the next mount runs `init` again. A parked view's model is also
+// written, sealed, to the shared view store (`setLiveViewStore`), and rewritten when it changes
+// while parked: a reconnect that reaches another instance (or this one after eviction) takes the
+// snapshot back and resumes the model under a new instance id instead of running `init`.
 
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { renderToFlight } from "../jsx/render-to-flight.ts";
@@ -48,6 +51,7 @@ import {
 import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import { tapChannelAuthorized } from "./channel-subscriber.ts";
 import { inRootContext } from "./root-context.ts";
+import { type LiveViewStore, openViewSnapshot, sealViewSnapshot } from "./live-view-store.ts";
 
 /** The hub connection surface this module needs. */
 export interface ViewConn {
@@ -97,6 +101,8 @@ export interface ViewHubDeps<C extends ViewConn> {
   backPressured(conn: C): boolean;
   /** Arm the hub's drain-recovery timer for `conn`. */
   armRecover(conn: C): void;
+  /** The shared store parked views are written to (none: parked in this process only). */
+  store?(): LiveViewStore | null;
 }
 
 /** One server-held view. */
@@ -131,6 +137,8 @@ interface Instance<C> extends ViewInstance {
   chain: Promise<void>;
   authExpires: number;
   parkTimer?: ReturnType<typeof setTimeout>;
+  /** The store writes for this instance, in order. */
+  storeChain?: Promise<void>;
 }
 
 /** The hub's live-view operations. */
@@ -265,6 +273,35 @@ function mountShape(msg: Record<string, unknown>) {
 export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): ViewHub<C> {
   const parkedViews = new Map<string, Instance<C>>();
   const all = new Set<Instance<C>>();
+  const unstorable = new Set<string>();
+
+  /** Queue a store operation for `inst` (in order; a failure is logged, never thrown). */
+  const storeOp = (inst: Instance<C>, op: (store: LiveViewStore) => Promise<void>): void => {
+    const store = deps.store?.();
+    if (!store) return;
+    inst.storeChain = inRootContext(() =>
+      (inst.storeChain ?? Promise.resolve()).then(() => op(store)).catch((err) => {
+        if (err instanceof TypeError && !unstorable.has(inst.def.id)) {
+          unstorable.add(inst.def.id);
+          console.warn(
+            `denext live view ${inst.def.id}: its model is not serializable, so it is parked in ` +
+              `this process only (${err.message})`,
+          );
+        } else if (!(err instanceof TypeError)) {
+          console.warn(`denext live view ${inst.def.id}: view store failed:`, err);
+        }
+      })
+    );
+  };
+
+  /** Write a parked instance's snapshot to the shared store. */
+  const persist = (inst: Instance<C>): void => {
+    const ttl = deps.limits().viewResumeSeconds;
+    const snapshot = { view: inst.def.id, signed: inst.signed, model: inst.engine.model };
+    storeOp(inst, async (store) => {
+      await store.set(inst.iid, await sealViewSnapshot(inst.iid, snapshot), ttl);
+    });
+  };
 
   const own = (conn: C, vid: string): Instance<C> | undefined =>
     conn.views.get(vid) as Instance<C> | undefined;
@@ -463,10 +500,12 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     def: LiveViewDef,
     props: unknown,
     signed: string,
+    restored?: { model: unknown },
   ): Instance<C> | null => {
     let init;
     try {
-      init = def.init(props);
+      // A model resumed from the store carries on; `init` (and its effects) ran where it began.
+      init = restored ? [restored.model] as [unknown] : def.init(props);
     } catch (err) {
       deps.sendError(conn, "failed", toClientError(err).message, { subId: vid });
       return null;
@@ -489,6 +528,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
           return end(inst, "limit", "view state too large");
         }
         inst.modelBytes = bytes;
+        if (!inst.attached && !inst.stopped) persist(inst); // the stored snapshot follows it
         scheduleRender(inst);
       },
       onUpdateError: (err) => {
@@ -663,7 +703,55 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     clearTimeout(parked.parkTimer);
     parked.parkTimer = undefined;
     parked.authExpires = Date.now() + ttlMs();
+    storeOp(parked, (store) => store.delete(parked.iid));
     return parked;
+  };
+
+  /** The model a stored snapshot of `resume` holds, when it is this view with these props. */
+  const takeStored = async (
+    resume: string | undefined,
+    view: string,
+    signed: string,
+  ): Promise<{ model: unknown } | undefined> => {
+    const store = resume === undefined ? null : deps.store?.();
+    if (!store) return undefined;
+    let sealed: string | null;
+    try {
+      sealed = await inRootContext(() => store.take(resume!));
+    } catch (err) {
+      console.warn(`denext live view ${view}: view store failed:`, err);
+      return undefined;
+    }
+    const snapshot = sealed === null ? null : await openViewSnapshot(resume!, sealed);
+    if (!snapshot || snapshot.view !== view || snapshot.signed !== signed) return undefined;
+    return { model: snapshot.model };
+  };
+
+  /**
+   * Put an admitted view on the connection: the instance parked here, else the model a stored
+   * snapshot holds, else a fresh `init`.
+   */
+  const place = async (
+    conn: C,
+    shape: NonNullable<ReturnType<typeof mountShape>>,
+    admitted: { def: LiveViewDef; props: unknown },
+  ): Promise<void> => {
+    const { vid } = shape;
+    const signed = `${shape.view}\0${shape.token}`;
+    const parked = takeParked(shape.resume, shape.view, signed);
+    // Not parked here: another instance (or this one, before an eviction) may have stored it.
+    const restored = parked ? undefined : await takeStored(shape.resume, shape.view, signed);
+    if (restored && !deps.isConnected(conn)) return;
+    if (restored && atCap(conn, vid)) {
+      return deps.sendError(conn, "limit", "too many views", { subId: vid });
+    }
+    const replaced = own(conn, vid);
+    if (replaced) stop(replaced);
+    if (parked) return attach(conn, vid, parked);
+    const inst = create(conn, vid, admitted.def, admitted.props, signed, restored);
+    if (!inst) return;
+    attach(conn, vid, inst);
+    inst.engine.start();
   };
 
   return {
@@ -676,17 +764,10 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
       }
       const admitted = await admit(conn, shape);
       if (!admitted || !deps.isConnected(conn)) return;
-      const { vid } = shape;
-      if (atCap(conn, vid)) return deps.sendError(conn, "limit", "too many views", { subId: vid });
-      const replaced = own(conn, vid);
-      if (replaced) stop(replaced);
-      const signed = `${shape.view}\0${shape.token}`;
-      const parked = takeParked(shape.resume, shape.view, signed);
-      if (parked) return attach(conn, vid, parked);
-      const inst = create(conn, vid, admitted.def, admitted.props, signed);
-      if (!inst) return;
-      attach(conn, vid, inst);
-      inst.engine.start();
+      if (atCap(conn, shape.vid)) {
+        return deps.sendError(conn, "limit", "too many views", { subId: shape.vid });
+      }
+      await place(conn, shape, admitted);
     },
 
     event(conn, msg) {
@@ -735,6 +816,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
         inst.attached = false;
         if (inst.stopped) continue;
         parkedViews.set(inst.iid, inst);
+        persist(inst);
         // The park timer serves the instance, not the closing socket's handler context.
         inst.parkTimer = inRootContext(() =>
           setTimeout(() => stop(inst), viewResumeSeconds * 1000)

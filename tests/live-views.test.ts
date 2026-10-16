@@ -10,6 +10,7 @@ import { type FlightNode, renderToFlight } from "../src/jsx/render-to-flight.ts"
 import { createChannel, resetChannels } from "../src/runtime/channel.ts";
 import { defineLiveView, signLiveViewToken } from "../src/runtime/live-view.ts";
 import { fx, type Next, subs } from "../src/runtime/mvu.ts";
+import { applyFlightOps } from "../src/runtime/flight-patch.ts";
 import type { StandardSchemaV1 } from "../src/runtime/define-action.ts";
 import {
   checkEventPayload,
@@ -19,6 +20,13 @@ import {
   type ViewConn,
   type ViewLimits,
 } from "../src/server/live-views.ts";
+import { liveViewStoreContract } from "./helpers/live-view-store-contract.ts";
+import {
+  type LiveViewStore,
+  memoryLiveViewStore,
+  openViewSnapshot,
+  sealViewSnapshot,
+} from "../src/server/live-view-store.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -50,7 +58,7 @@ function next(conn: Conn, pred: (f: Any) => boolean): Promise<Any> {
 const isType = (type: string) => (f: Any) => f.type === type;
 const isError = (code: string) => (f: Any) => f.type === "error" && f.code === code;
 
-function fakeHub(limits: Partial<ViewLimits> = {}) {
+function fakeHub(limits: Partial<ViewLimits> = {}, store?: LiveViewStore) {
   let contexts = 0;
   const hub = createLiveViewHub<Conn>({
     limits: () => ({
@@ -78,6 +86,7 @@ function fakeHub(limits: Partial<ViewLimits> = {}) {
     render: (_conn, fn) => fn(),
     backPressured: (conn) => conn.pressured === true,
     armRecover: (conn) => void (conn.armed = true),
+    ...(store ? { store: () => store } : {}),
   });
   let n = 0;
   const conn = (cookie = ""): Conn => ({
@@ -547,4 +556,99 @@ Deno.test("live views: a channel subscription feeds messages after the channel's
     hub.dispose();
     resetChannels();
   }
+});
+
+/** A sealed snapshot's bytes as text (what anyone reading the store sees). */
+function plainText(sealed: string): string {
+  return atob(
+    sealed.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - sealed.length % 4) % 4),
+  );
+}
+
+Deno.test("live views: a shared store resumes a dropped view on another instance", async () => {
+  const store = memoryLiveViewStore();
+  const writes: string[] = [];
+  let wrote = () => {};
+  const written = () => new Promise<void>((resolve) => (wrote = resolve));
+  const spy: LiveViewStore = {
+    set: async (id, sealed, ttl) => {
+      writes.push(sealed);
+      await store.set(id, sealed, ttl);
+      wrote();
+    },
+    take: (id) => store.take(id),
+    delete: (id) => store.delete(id),
+  };
+  const instanceA = fakeHub({}, spy);
+  const instanceB = fakeHub({}, spy);
+  const a = instanceA.conn("ok");
+  const first = await mounted(instanceA.hub, a, 1);
+  for (const n of [2, 3]) {
+    const patched = next(a, isType("view-patch"));
+    instanceA.hub.event(a, { type: "view-event", vid: "v1", rev: first.rev + n - 2, h: 0 });
+    await patched;
+  }
+  a.closed = true;
+  const firstWrite = written();
+  instanceA.hub.drop(a);
+  await firstWrite; // the sealed write lands
+  assertEquals(writes.length, 1);
+  assert(!plainText(writes[0]).includes('"n":3'), "the store holds no readable model");
+
+  const initsBefore = inits;
+  const b = instanceB.conn("ok");
+  const resumed = next(b, isType("view-render"));
+  await instanceB.hub.mount(
+    b,
+    await mountFrame("test-counter", { start: 1 }, { resume: first.iid }),
+  );
+  const r = await resumed;
+  assertEquals(shown(r.flight), "n=3", "the model came over from instance A");
+  assertEquals(inits, initsBefore, "init did not run again");
+  assert(r.iid !== first.iid, "the resumed view gets a new instance id");
+  // The snapshot was taken: it resumes once, and the view keeps working on B.
+  assertEquals(await store.take(first.iid), null);
+  const patched = next(b, isType("view-patch"));
+  instanceB.hub.event(b, { type: "view-event", vid: "v1", rev: r.rev, h: 0 });
+  assertEquals(shown(applyFlightOps(r.flight, (await patched).ops)), "n=4");
+
+  // Other signed props never adopt a stored snapshot: they run init.
+  b.closed = true;
+  const secondWrite = written();
+  instanceB.hub.drop(b);
+  await secondWrite;
+  const c = instanceA.conn("ok");
+  const fresh = next(c, isType("view-render"));
+  await instanceA.hub.mount(c, await mountFrame("test-counter", { start: 9 }, { resume: r.iid }));
+  assertEquals(shown((await fresh).flight), "n=9");
+  instanceA.hub.dispose();
+  instanceB.hub.dispose();
+});
+
+Deno.test("live view snapshots: sealed, bound to their instance id, models must serialize", async () => {
+  const sealed = await sealViewSnapshot("iid-1", {
+    view: "v",
+    signed: "v\0tok",
+    model: { secret: "hunter2", at: new Date(5), tags: new Set(["a"]) },
+  });
+  assert(!plainText(sealed).includes("hunter2"));
+  const opened = await openViewSnapshot("iid-1", sealed);
+  assertEquals(opened?.model, { secret: "hunter2", at: new Date(5), tags: new Set(["a"]) });
+  assertEquals(await openViewSnapshot("iid-2", sealed), null, "moved to another id: refused");
+  assertEquals(await openViewSnapshot("iid-1", sealed.slice(0, -4) + "AAAA"), null, "tampered");
+  let threw = false;
+  try {
+    await sealViewSnapshot("iid-1", { view: "v", signed: "s", model: { f: () => 1 } });
+  } catch {
+    threw = true;
+  }
+  assert(threw, "a function in the model is not storable");
+});
+
+Deno.test("memoryLiveViewStore keeps the LiveViewStore contract and its cap", async (t) => {
+  await liveViewStoreContract(t, () => memoryLiveViewStore());
+  const store = memoryLiveViewStore({ maxEntries: 2 });
+  for (const id of ["a", "b", "c"]) await store.set(id, id, 60);
+  assertEquals(await store.take("a"), null, "the oldest went past the cap");
+  assertEquals(await store.take("c"), "c");
 });

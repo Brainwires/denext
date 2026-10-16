@@ -18,6 +18,8 @@ import { redisCacheStore } from "../src/server/redis-cache.ts";
 import { redisSessionStore } from "../src/server/auth/redis-session-store.ts";
 import { redisRateLimitStore } from "../src/server/auth/redis-rate-limit.ts";
 import { liveAcrossTwoReplicas } from "./helpers/live-two-instances.ts";
+import { liveViewStoreContract } from "./helpers/live-view-store-contract.ts";
+import { redisLiveViewStore } from "../src/server/live-view-stores.ts";
 import {
   cacheStoreContract,
   rateLimitStoreContract,
@@ -72,6 +74,10 @@ Deno.test({
       await t.step(
         "RateLimitStore",
         (t) => rateLimitStoreContract(t, () => redisRateLimitStore({ client, prefix: p.next() })),
+      );
+      await t.step(
+        "LiveViewStore",
+        (t) => liveViewStoreContract(t, () => redisLiveViewStore({ client, prefix: p.next() })),
       );
       await t.step("cache caps and the sweep", async () => {
         const store = redisCacheStore({
