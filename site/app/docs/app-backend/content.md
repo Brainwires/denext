@@ -95,7 +95,11 @@ guard must let `OPTIONS` under `/auth` through (guards usually exempt `/auth` al
 Pages, Server Actions, the `/_denext/api-batch` endpoint and the Live socket run under the app
 policy (a route's own `export const cors` covers only its route handler). The Live socket is a
 WebSocket, which CORS doesn't cover: its handshake from an allowed origin is accepted only without
-a cookie.
+a cookie, from an origin listed exactly (`["*"]` never opens it), and only when it names the app's
+own host — `canonicalOrigin`'s (read from `X-Forwarded-Host` only under `trustForwardedHeaders`),
+so set `canonicalOrigin` for a cross-origin Live client. Under `denext dev` the dev server's Host
+allowlist (loopback names and `allowedDevOrigins`, its DNS-rebinding defense) applies first, as it
+does to every dev endpoint.
 
 ## Native sessions
 

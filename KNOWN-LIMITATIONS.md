@@ -117,8 +117,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   email local part must be ASCII.
 - **Native sessions:** Apple token revocation needs `native.apple.clientSecret`.
 - **`cors` lets a cross-origin caller into Server Actions, the API batch and Live only without
-  cookies** (those keep the same-origin rule, or `allowedOrigins`); middleware must let `OPTIONS`
-  under `/auth` through.
+  cookies** (those keep the same-origin rule, or `allowedOrigins`), and a cross-origin Live socket
+  needs `canonicalOrigin`; middleware must let `OPTIONS` under `/auth` through.
 - **SAML Single Logout with stateless sessions ends every session of the user:** a cookie session
   has no id, so an IdP's LogoutRequest naming one SessionIndex ends all of that user's sessions
   signed in before it (a `sessionStore` ends exactly the named one).

@@ -6,7 +6,8 @@ import { basename, fromFileUrl, resolve, SEPARATOR } from "@std/path";
 import { browserLogEvent, type DevEventKind } from "../dev-events.ts";
 import { denoExecutable } from "../bundle.ts";
 import { isCompat } from "./compat.ts";
-import { customSchemeOrigin } from "../../server/origin-check.ts";
+import { customSchemeOrigin, liveCorsAllowed } from "../../server/origin-check.ts";
+import type { CorsPolicy } from "../../server/cors.ts";
 import { enrichFrame, explainForOverlay, explainForTerminal, pushError } from "./reload.ts";
 import type { DevState } from "./state.ts";
 
@@ -55,6 +56,27 @@ export function devOriginAllowed(request: Request, url: URL, allowed: string[]):
   if (host === url.host) return true; // same-origin
   const hostname = host.split(":")[0];
   return allowed.some((a) => a === origin || a === host || a === hostname);
+}
+
+/**
+ * The dev Live handshake gate: {@link devOriginAllowed}, or an exactly listed `cors` origin
+ * carrying no cookie — and in every case a `Host` that is loopback or an `allowedDevOrigins`
+ * entry. That Host check is the DNS-rebinding defense, so a `cors` entry never lifts it.
+ *
+ * @param request The upgrade request.
+ * @param url Its URL.
+ * @param allowed The effective `allowedDevOrigins`.
+ * @param cors The app's `cors` policy.
+ * @returns True when the upgrade may proceed.
+ */
+export function devLiveOriginAllowed(
+  request: Request,
+  url: URL,
+  allowed: string[],
+  cors: CorsPolicy | null,
+): boolean {
+  if (!devHostAllowed(url.hostname, allowed)) return false;
+  return devOriginAllowed(request, url, allowed) || liveCorsAllowed(request, cors);
 }
 
 /**

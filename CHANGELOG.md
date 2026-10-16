@@ -328,8 +328,11 @@ and this project adheres to
   markers). The same-origin check that is the CSRF defense of Server Actions, the batch and the
   Live handshake still holds for every cookie-carrying request: an allowed origin gets in only
   with no `Cookie` and no `Authorization` but an explicit `Bearer`, so it acts with the
-  credentials it presented and nothing ambient. Before, `cors` covered route handlers and the
-  native auth endpoints only.
+  credentials it presented and nothing ambient. The Live handshake also needs an exactly listed
+  origin (never `["*"]`) and the app's own host: `canonicalOrigin`'s in production (no
+  `canonicalOrigin`, no cross-origin socket), the dev Host allowlist under `denext dev` — so a
+  DNS-rebinding page can't use a `cors` entry to reach either. Before, `cors` covered route
+  handlers and the native auth endpoints only.
 - **Passkeys verify `tpm`, `android-key`, `apple` and `fido-u2f` attestation.** Each statement
   is checked as WebAuthn Level 3 §8 says: TPM (`ver` 2.0, `pubArea` is the credential key,
   `certInfo` a TPM-generated certify statement whose `extraData` hashes this ceremony and whose

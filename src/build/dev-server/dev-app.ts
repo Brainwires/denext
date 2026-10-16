@@ -2,7 +2,7 @@
 // cache store booted once, then `createApp` wired to the per-generation dev state, and the
 // Live Server Components hub on top.
 
-import { corsCredentialless, resolveCors } from "../../server/cors.ts";
+import { resolveCors } from "../../server/cors.ts";
 import { renderPlatform } from "./platform.ts";
 import { join } from "@std/path";
 import { type AppConfig, createApp, type RequestHandler } from "../../server/app.ts";
@@ -29,7 +29,7 @@ import {
 import { bootScheduledJobs } from "../../server/job-loader.ts";
 import { bootServices } from "../../server/service-loader.ts";
 import { clientEntryFor, getMiddleware, styleHrefsFor } from "./bundles.ts";
-import { devOriginAllowed } from "./dev-endpoints.ts";
+import { devLiveOriginAllowed } from "./dev-endpoints.ts";
 import { devActionScope, devBoundaryFor, getManifest } from "./manifest.ts";
 import { devPlatformOf } from "../platform-extensions.ts";
 import { broadcastError } from "./reload.ts";
@@ -144,9 +144,7 @@ export function createDevApp(st: DevState): RequestHandler {
   const cors = resolveCors(paths.config?.cors);
   installLiveHub({
     appHandler,
-    originAllowed: (req) =>
-      devOriginAllowed(req, new URL(req.url), st.allowedDevOrigins) ||
-      corsCredentialless(req, cors),
+    originAllowed: (req) => devLiveOriginAllowed(req, new URL(req.url), st.allowedDevOrigins, cors),
     config: resolveLive(paths.config),
     trustForwardedHeaders: appConfig.trustForwardedHeaders,
     limitPolicy: resolveLimitPolicy(appConfig),
@@ -157,6 +155,7 @@ export function createDevApp(st: DevState): RequestHandler {
 /** The {@linkcode createApp} configuration of this dev server (`onRequest` is set later). */
 function devAppConfig(st: DevState, rules: ReturnType<typeof startConfigRules>): AppConfig {
   const { paths } = st;
+  const config = paths.config ?? {};
   return {
     getManifest: () => getManifest(st),
     load: st.load,
@@ -171,8 +170,8 @@ function devAppConfig(st: DevState, rules: ReturnType<typeof startConfigRules>):
     onRequestError: onRequestError(st),
     devScriptSrc: DEV_RELOAD_JS_PATH,
     i18n: paths.i18n ?? undefined,
-    basePath: paths.config?.basePath,
-    trailingSlash: paths.config?.trailingSlash,
+    basePath: config.basePath,
+    trailingSlash: config.trailingSlash,
     redirects: rules.redirects,
     rewrites: rules.rewrites,
     headerRules: rules.headers,
@@ -182,13 +181,13 @@ function devAppConfig(st: DevState, rules: ReturnType<typeof startConfigRules>):
     flightClients: st.flightClients,
     flightServers: st.flightServers,
     cacheComponents: resolveCacheComponents(paths.config),
-    csp: paths.config?.csp,
+    csp: config.csp,
     streaming: resolveStreaming(paths.config),
-    hsts: paths.config?.hsts,
-    apiBatch: paths.config?.apiBatch,
-    apiMaxBodyBytes: paths.config?.apiMaxBodyBytes,
-    cors: paths.config?.cors,
-    appLinks: paths.config?.appLinks,
+    hsts: config.hsts,
+    apiBatch: config.apiBatch,
+    apiMaxBodyBytes: config.apiMaxBodyBytes,
+    cors: config.cors,
+    appLinks: config.appLinks,
     // canonicalOrigin / trustForwardedHeaders / requestTimeout / maxConcurrency /
     // slotBackstop / actionMaxBodyBytes / cacheKeyParams — config, else their env vars.
     ...resolveServerOptions(paths.config),
