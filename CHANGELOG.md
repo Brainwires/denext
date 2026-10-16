@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- **Boot diagnosis follows the import map and catches ambiguous exports.** The walk follows a
+  bare specifier the page's import map resolves (an exact key, a `"pkg/"` prefix, or a scope
+  containing the importer) into the mapped module, so its imports and link edges are checked
+  too. A name the target gets only through `export *` from two modules with different bindings
+  (a SyntaxError in browsers) is reported with both sources, and Chrome's "conflicting star
+  exports" / Firefox's "ambiguous indirect export" messages are surfaced like a missing export.
+
 - **DevTools: Live views and Live tabs.** Two dev-only panel tabs read the dev server: **Live
   views** lists the server-held live views (`defineLiveView`) on the instance, attached or
   parked, with their models and the recent messages their `update` ran; **Live** lists each

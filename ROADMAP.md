@@ -84,9 +84,6 @@ Each is documented as a manual recipe today (the
 
 ## `denext ui` and DevTools
 
-- **Boot diagnosis, the last gaps:** follow import-map-resolved bare specifiers in the walk (so
-  their link edges are checked too), and flag a name two `export *` sources both provide (an
-  ambiguous export, a SyntaxError in browsers).
 - **Per-element `__source`** for a true JSX owner stack (the panel shows the render-parent chain).
 - **Profiler export / compare** across commits, plus component filters.
 
