@@ -177,10 +177,9 @@ export function claimText(wip: Fiber): void {
 /**
  * The props an adopted host's markup already reflects, for its first `applyProps` (null: none).
  * An adopted `dangerouslySetInnerHTML` host keeps the server's inner HTML — the very nodes the
- * parser built, never cleared or re-created (React parity) — so its prop reads as already
- * applied. Only a real
- * difference — the markup still differs once `__html` is parsed into a copy of the element, so
- * mere re-serialization (`<br/>` vs `<br>`) is not one — is reported and patched.
+ * parser built, never cleared or re-created — so its prop reads as already applied. As in React
+ * 19, a server markup that differs from `__html` is kept too, never patched: development warns
+ * ({@link installHydrationWarning}); production carries no comparison at all.
  */
 export function adoptServerHtml(
   wip: Fiber,
@@ -188,17 +187,32 @@ export function adoptServerHtml(
   value: { __html?: unknown } | undefined,
 ): Record<string, unknown> | null {
   if (value === undefined) return null;
-  const html = value.__html;
-  const server = el.innerHTML;
-  if (typeof html === "string" && server !== html) {
-    const probe = el.cloneNode(false) as Element;
-    probe.innerHTML = html;
-    if (probe.innerHTML !== server) {
-      reportHydrationMismatch(wip, "dangerouslySetInnerHTML differs from the server");
-      el.innerHTML = html;
-    }
-  }
+  checkServerHtml?.(wip, el, value.__html);
   return { dangerouslySetInnerHTML: value };
+}
+
+/** Dev only: the `__html` comparison {@link adoptServerHtml} runs (installed with the warning). */
+let checkServerHtml: ((wip: Fiber, el: Element, html: unknown) => void) | null = null;
+
+/**
+ * React 19's dev check (`diffHydratedProperties`): `__html` parsed into a copy of the element
+ * (so mere re-serialization, `<br/>` vs `<br>`, is no difference) against the server's inner
+ * HTML. A difference is a `console.error` that says it won't be patched up — not an
+ * `onRecoverableError`, which React keeps for mismatches it recovers from by re-rendering —
+ * and `suppressHydrationWarning` on the element silences it.
+ */
+function warnServerHtml(wip: Fiber, el: Element, html: unknown): void {
+  if (typeof html !== "string" || !devHydrationActive() || suppressed(wip)) return;
+  const server = el.innerHTML;
+  if (server === html) return;
+  const probe = el.cloneNode(false) as Element;
+  probe.innerHTML = html;
+  if (probe.innerHTML === server) return;
+  console.error(
+    `denext: hydration mismatch — <${el.tagName.toLowerCase()}>'s dangerouslySetInnerHTML ` +
+      `differs from the server's markup. This won't be patched up: the server's markup is ` +
+      `kept, as React keeps it. Render the same __html on the server and the client.`,
+  );
 }
 
 /**
@@ -236,4 +250,5 @@ let warnMismatch: ((detail: string) => void) | null = null;
 /** Install (or, with `false`, remove) the dev-only hydration-mismatch warning. */
 export function installHydrationWarning(on = true): void {
   warnMismatch = on ? warnHydrationMismatch : null;
+  checkServerHtml = on ? warnServerHtml : null;
 }

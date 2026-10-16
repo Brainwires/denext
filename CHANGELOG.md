@@ -214,10 +214,11 @@ and this project adheres to
   or a client component) was emptied: hydration re-applied the HTML, then pruned the element's
   children as nodes no fiber owned. A re-render then re-created the markup, because the prop was
   compared by object identity rather than by its `__html`. Hydration now adopts the parser's own
-  nodes as-is; markup that differs from `__html` (beyond re-serialization, such as `<br/>` and
-  `<br>`) is reported as a hydration mismatch and replaced. A fresh client mount, a keyed move and
-  a switch to `dangerouslySetInnerHTML` no longer drop the injected markup either, and a re-render
-  with the same `__html` leaves its nodes alone.
+  nodes as-is, and, as in React 19, markup that differs from `__html` (beyond re-serialization,
+  such as `<br/>` and `<br>`) is kept, not patched up: development logs a `console.error`
+  (`suppressHydrationWarning` silences it), and a production build carries no comparison. A
+  fresh client mount, a keyed move and a switch to `dangerouslySetInnerHTML` no longer drop the
+  injected markup either, and a re-render with the same `__html` leaves its nodes alone.
 - **A source checkout's `denext start` resolves an app's own import-map entries.** From a
   checkout (`deno run -A <denext>/cli.ts start`), a server module importing a specifier only the
   app's `deno.json` maps, such as a `"@gleam/"` prefix for compiled Gleam, failed with "not a

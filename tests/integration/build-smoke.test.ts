@@ -199,6 +199,9 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * the class-runtime-unavailable error became reconciler code 5, its full text installed with the
  * others (−166 B); and the SVG namespace is one constant (−32 B). Each gate is asserted in
  * {@link assertGatedRuntimeAbsent}.
+ * A hydrated `dangerouslySetInnerHTML` mismatch is then kept, as React 19 keeps it: the `__html`
+ * comparison rides the dev hydration warning and production neither compares nor patches
+ * (−160 B: 64,770 → 64,610 B, Deno 2.9.7), with no budget change.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;

@@ -1,7 +1,9 @@
 // dangerouslySetInnerHTML in the reconciler (React parity): hydration ADOPTS the server's inner
 // HTML as-is — the same nodes, never cleared or re-created — and a host whose content is raw
 // HTML owns no reconciled children, so neither a fresh mount nor a later commit prunes the
-// markup it injected. A real `__html` mismatch is reported and patched.
+// markup it injected. A real `__html` mismatch keeps the server's markup, as React 19 does: a
+// dev-only console.error (silenced by suppressHydrationWarning), never a patch, and production
+// runs no comparison at all.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
@@ -99,27 +101,55 @@ Deno.test("hydration adopts raw HTML rendered by nested client components", () =
   assert(kids(div)[0] === b && kids(div)[1] === i, "nested: same nodes");
 });
 
-Deno.test("hydration with a different __html reports a mismatch and patches", () => {
+Deno.test("hydration with a different __html keeps the server markup and warns (dev)", () => {
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+  const { div, b, i } = serverRaw(doc);
+  container.appendChild(div);
+  let recovered = 0;
+
+  const warnings = withWarnings(() => {
+    hydrateRoot(asEl(container), h("div", { id: "raw", ...raw("<u>new</u>") }), {
+      onRecoverableError: () => void recovered++,
+    });
+    flushSync();
+  });
+  assertEquals(div.innerHTML, HTML, "not patched up (React parity)");
+  assert(kids(div)[0] === b && kids(div)[1] === i, "the server's own nodes are kept");
+  assertEquals(warnings.length, 1, warnings.join("\n"));
+  assertStringIncludes(warnings[0], "error:");
+  assertStringIncludes(warnings[0], "hydration mismatch");
+  assertStringIncludes(warnings[0], "dangerouslySetInnerHTML");
+  assertStringIncludes(warnings[0], "won't be patched up");
+  assertEquals(recovered, 0, "a dev warning, not an onRecoverableError");
+});
+
+Deno.test("hydration: a kept mismatched markup survives a re-render with the same __html", () => {
   const { doc, container } = makeDom();
   setDocument(asDoc(doc));
   const { div, b } = serverRaw(doc);
   container.appendChild(div);
-
-  const warnings = withWarnings(() => {
-    hydrateRoot(asEl(container), h("div", { id: "raw", ...raw("<u>new</u>") }));
+  let bump: () => void = () => {};
+  function Host(): VNode {
+    const [n, setN] = useState(0);
+    bump = () => setN((v) => v + 1);
+    return h("div", { id: "raw", title: String(n), ...raw("<u>new</u>") });
+  }
+  withWarnings(() => {
+    hydrateRoot(asEl(container), h(Host, null));
     flushSync();
   });
-  assertEquals(div.innerHTML, "<u>new</u>");
-  assert(kids(div)[0] !== b);
-  assertEquals(warnings.length, 1, warnings.join("\n"));
-  assertStringIncludes(warnings[0], "hydration mismatch");
-  assertStringIncludes(warnings[0], "dangerouslySetInnerHTML");
+  bump();
+  flushSync();
+  assertEquals(div.getAttribute("title"), "1");
+  assert(kids(div)[0] === b, "an unchanged __html is not applied on a re-render either");
+  assertEquals(div.innerHTML, HTML);
 });
 
-Deno.test("hydration: suppressHydrationWarning silences a raw HTML mismatch (still patched)", () => {
+Deno.test("hydration: suppressHydrationWarning silences a raw HTML mismatch (still kept)", () => {
   const { doc, container } = makeDom();
   setDocument(asDoc(doc));
-  const { div } = serverRaw(doc);
+  const { div, b } = serverRaw(doc);
   container.appendChild(div);
   const warnings = withWarnings(() => {
     hydrateRoot(
@@ -128,8 +158,31 @@ Deno.test("hydration: suppressHydrationWarning silences a raw HTML mismatch (sti
     );
     flushSync();
   });
-  assertEquals(div.innerHTML, "<u>x</u>");
+  assertEquals(div.innerHTML, HTML);
+  assert(kids(div)[0] === b);
   assertEquals(warnings.length, 0, warnings.join("\n"));
+});
+
+Deno.test("hydration in production: a raw HTML mismatch is neither compared nor patched", () => {
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+  const { div, b } = serverRaw(doc);
+  let probes = 0;
+  Object.assign(div, { cloneNode: () => (probes++, doc.createElement("div")) });
+  container.appendChild(div);
+  const warnings: string[] = [];
+  const { warn, error } = console;
+  console.warn = console.error = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    hydrateRoot(asEl(container), h("div", { id: "raw", ...raw("<u>new</u>") }));
+    flushSync();
+  } finally {
+    Object.assign(console, { warn, error });
+  }
+  assertEquals(div.innerHTML, HTML);
+  assert(kids(div)[0] === b);
+  assertEquals(probes, 0, "no __html comparison without the dev warning installed");
+  assertEquals(warnings, []);
 });
 
 Deno.test("a fresh client mount keeps the raw HTML it injected", () => {
@@ -172,17 +225,21 @@ Deno.test("switching between children and dangerouslySetInnerHTML (both ways)", 
 
 const devFlag = globalThis as { __denextDev?: boolean };
 
-/** Run `fn` in dev with the hydration warning installed, collecting console.warn output. */
+/**
+ * Run `fn` in dev with the hydration warning installed, collecting console.warn and
+ * console.error output (each prefixed with its level).
+ */
 function withWarnings(fn: () => void): string[] {
   const warnings: string[] = [];
-  const original = console.warn;
-  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  const { warn, error } = console;
+  console.warn = (...args: unknown[]) => void warnings.push(`warn: ${args.join(" ")}`);
+  console.error = (...args: unknown[]) => void warnings.push(`error: ${args.join(" ")}`);
   devFlag.__denextDev = true;
   installHydrationWarning();
   try {
     fn();
   } finally {
-    console.warn = original;
+    Object.assign(console, { warn, error });
     delete devFlag.__denextDev;
     installHydrationWarning(false);
   }

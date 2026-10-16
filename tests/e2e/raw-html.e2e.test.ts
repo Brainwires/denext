@@ -7,6 +7,8 @@
 //   /nested  the host in a client component nested in another client component
 //   /lazy    the /client component as a `client:load` island (the deferred, resumable path)
 //   /iso     a page that calls a hook (one isomorphic client tree)
+//   /mismatch the client's `__html` differs from the server's: as in React 19, the server's
+//            markup is kept (not patched up) in a production build, with no warning
 // The markup holds `<br/>` and a bare `value`, which the browser re-serializes differently, so a
 // naive string comparison would read them as a mismatch and re-create the nodes.
 //
@@ -69,7 +71,7 @@ function assertAdopted(e: Evidence, when: string): void {
   assert(e.input, `the server's <input> is the same element (${when})`);
 }
 
-const ROUTES = ["/", "/client", "/nested", "/lazy", "/iso"];
+const ROUTES = ["/", "/client", "/nested", "/lazy", "/iso", "/mismatch"];
 
 Deno.test({
   name: "e2e: hydration adopts dangerouslySetInnerHTML markup (same nodes) on every path",
@@ -82,6 +84,9 @@ Deno.test({
     for (const route of ROUTES) {
       await t.step(route, async () => {
         const page = await browser.newPage();
+        const logged: string[] = [];
+        // deno-lint-ignore no-explicit-any
+        page.addEventListener("console", (e) => void logged.push(String((e as any).detail?.text)));
         // deno-lint-ignore no-explicit-any
         const cdp = page.unsafelyGetCelestialBindings() as any;
         await cdp.Page.addScriptToEvaluateOnNewDocument({ source: PROBE });
@@ -90,6 +95,8 @@ Deno.test({
         assertAdopted(await evidence(page), "after hydration");
         await clickTo(page, 2); // a re-render with a fresh { __html } object
         assertAdopted(await evidence(page), "after a re-render");
+        // A production build warns about nothing (React's mismatch warning is dev-only).
+        assertEquals(logged.filter((t) => t.includes("hydration")), [], route);
         await page.close();
       });
     }
