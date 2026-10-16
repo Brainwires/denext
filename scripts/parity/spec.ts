@@ -22,9 +22,44 @@ export const REAL_PACKAGES = [
   // their own `.d.ts`, so no separate `@types/*`.
   "@remix-run/react",
   "@remix-run/node",
+  // Auth.js v5 for Next.js — what `denext/next-auth` (the `next-auth` shim) mirrors. v5 ships
+  // under npm's `beta` tag (`latest` is still v4), see REAL_PACKAGE_TAGS.
+  "next-auth",
   "@types/react",
   "@types/react-dom",
   "@types/react-is",
+] as const;
+
+/**
+ * The npm dist-tag each real package installs at when it isn't `latest` — `next-auth`'s v5,
+ * the line denext's shim mirrors, is published as `beta`.
+ */
+export const REAL_PACKAGE_TAGS: Readonly<Record<string, string>> = { "next-auth": "beta" };
+
+/** The `next-auth/providers/*` modules the shim ships (each one's default export is checked). */
+export const NEXT_AUTH_PROVIDERS = [
+  "apple",
+  "auth0",
+  "cognito",
+  "credentials",
+  "discord",
+  "email",
+  "facebook",
+  "github",
+  "gitlab",
+  "google",
+  "keycloak",
+  "linkedin",
+  "microsoft-entra-id",
+  "nodemailer",
+  "notion",
+  "okta",
+  "resend",
+  "slack",
+  "spotify",
+  "twitch",
+  "twitter",
+  "zoom",
 ] as const;
 
 /** One React/Next(-adjacent) specifier and the two files that must agree on it. */
@@ -36,7 +71,7 @@ export interface SpecEntry {
   /** denext's backing file, repo-root-relative (the `deno doc` input). */
   denext: string;
   /** Package family, for grouping the test output. */
-  group: "react" | "react-dom" | "next" | "next-intl" | "pages-router" | "remix";
+  group: "react" | "react-dom" | "next" | "next-intl" | "pages-router" | "remix" | "next-auth";
 }
 
 /**
@@ -224,6 +259,31 @@ export const CATALOG: SpecEntry[] = [
     denext: "src/compat/remix/server.ts",
     group: "remix",
   },
+  // Auth.js v5 (`next-auth@beta`): the shim's entry points and every provider it ships.
+  {
+    specifier: "next-auth",
+    real: "next-auth",
+    denext: "src/compat/next-auth/index.ts",
+    group: "next-auth",
+  },
+  {
+    specifier: "next-auth/react",
+    real: "next-auth/react",
+    denext: "src/compat/next-auth/react.ts",
+    group: "next-auth",
+  },
+  {
+    specifier: "next-auth/jwt",
+    real: "next-auth/jwt",
+    denext: "src/compat/next-auth/jwt.ts",
+    group: "next-auth",
+  },
+  ...NEXT_AUTH_PROVIDERS.map((p) => ({
+    specifier: `next-auth/providers/${p}`,
+    real: `next-auth/providers/${p}`,
+    denext: `src/compat/next-auth/providers/${p}.ts`,
+    group: "next-auth" as const,
+  })),
 ];
 
 /**

@@ -2906,10 +2906,9 @@ in its test mode (`+clerk_test` addresses verify with `424242`).
 What the first-party auth layer still does not do — the full ledger is
 [Known limitations](/docs/limitations):
 
-- **No next-auth compatibility shim.** Every emailed token goes through your
+- **Emailed tokens are delivered after the response.** Every one goes through your
   `sendVerificationRequest` (`smtpMailer()` or your own), handed over after the response, so
-  delivery is best-effort where the platform freezes the isolate; a `next-auth` shim is on the
-  roadmap.
+  delivery is best-effort where the platform freezes the isolate.
 - **Passkeys: two attestation formats, three algorithms.** Only `none` and `packed` statements
   are verified — `tpm`, `android-key`, `apple` and `fido-u2f` are refused, or with
   [`attestation.mds`](#attestation-the-fido-metadata-service) and `allowUnattested` registered

@@ -112,7 +112,10 @@ and this project adheres to
   `sendVerificationRequest` now receives the issuing `provider` id. An Auth.js adapter with the
   optional `getUserExtension` / `updateUserExtension` methods (an extension table beside its
   users) keeps roles, bans and `sessionsValidAfter`, so `requireAuth({ role })`, a ban and
-  `revokeAllSessions()` work through it — its database sessions included. Both session strategies: `"jwt"` seals the
+  `revokeAllSessions()` work through it — its database sessions included. The shim is in the
+  signature-parity gate (`tests/react-parity.test.ts`) against `next-auth@5.0.0-beta.32`: the
+  entry points, `next-auth/react`, `next-auth/jwt` and every provider it ships;
+  `deno task parity:refresh --pinned` adds a package without moving the others. Both session strategies: `"jwt"` seals the
   `jwt` callback's token (AES-256-GCM) inside denext's signed cookie; `"database"` uses the
   adapter's sessions. An Auth.js adapter (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …) is
   bridged onto denext's adapter port. The `signIn`, `jwt`, `session`, `redirect` and `authorized`

@@ -136,7 +136,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   adapter's users table (by `id`), as with Auth.js; a user it doesn't know is refused.
 - **v4 APIs** (`next-auth/next`, `getServerSession`, `next-auth/middleware`'s `withAuth`) are
   not shipped.
-- **Not parity-gated:** the `next-auth` surface is not part of the React / Next.js parity CI gate.
 
 ### Backend (`@denext/backend`)
 

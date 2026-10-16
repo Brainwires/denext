@@ -73,6 +73,13 @@ export type { RouteHandler } from "./handlers.ts";
 export type { AuthorizationParamsInput } from "./flows.ts";
 export type { NextRequest } from "../next/request.ts";
 
+/**
+ * Auth.js's key for a provider's own `fetch` (`{ [customFetch]: myFetch }`). Accepted and
+ * ignored: denext reaches providers through its own pinned fetch, which refuses private
+ * addresses and hosts the provider's endpoints don't name.
+ */
+export const customFetch: unique symbol = Symbol("custom-fetch");
+
 /** The base of every error the Auth.js surface throws; `type` names which. */
 export class AuthError extends Error {
   /** The Auth.js error type (`"CredentialsSignin"`, `"AccessDenied"`, …). */

@@ -5189,11 +5189,14 @@
     "SignOutOptions:interface",
     "User:interface",
     "VerificationToken:interface",
+    "customFetch:variable",
     "default:function"
   ],
   "denext/next-auth/react": [
     "ClientSafeProvider:interface",
+    "GetSessionParams:interface",
     "Session:interface",
+    "SessionContext:variable",
     "SessionContextValue:typeAlias",
     "SessionProvider:function",
     "SessionProviderProps:interface",

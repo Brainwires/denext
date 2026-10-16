@@ -132,12 +132,23 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T | null>
   }
 }
 
+/** What Auth.js's `getSession()` takes; accepted for compatibility (it always fetches). */
+export interface GetSessionParams {
+  /** Why the session is read (Auth.js's broadcast reason). */
+  event?: "storage" | "timer" | "hidden" | string;
+  /** Whether to notify other tabs. */
+  triggerEvent?: boolean;
+  /** Whether to broadcast the result. */
+  broadcast?: boolean;
+}
+
 /**
  * The current session, fetched from `{basePath}/session`.
  *
+ * @param _params Accepted for compatibility with Auth.js's signature.
  * @returns The session, or `null`.
  */
-export async function getSession(): Promise<Session | null> {
+export async function getSession(_params?: GetSessionParams): Promise<Session | null> {
   const data = await fetchJson<Session | null>("session");
   return data && typeof data === "object" && data.expires ? data : null;
 }
@@ -294,10 +305,12 @@ function refreshProviders(): Promise<void> {
   return Promise.resolve();
 }
 
-/** Where the session state lives. */
-const SessionContext: Context<SessionContextValue | undefined> = /* @__PURE__ */ createContext<
-  SessionContextValue | undefined
->(undefined);
+/**
+ * Where the session state lives — what {@linkcode useSession} reads; `undefined` outside a
+ * {@linkcode SessionProvider}.
+ */
+export const SessionContext: Context<SessionContextValue | undefined> = /* @__PURE__ */
+  createContext<SessionContextValue | undefined>(undefined);
 
 /** The context value for a fetched session. */
 function valueOf(session: Session | null | undefined, update: UpdateSession): SessionContextValue {
