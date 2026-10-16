@@ -94,7 +94,7 @@ Deno.test("plugin catalog: kinds, verbs and libraries have the expected shape", 
     }
   }
   assertEquals(plugins.map((e) => e.verb).filter(Boolean).sort(), VERBS, "plugin CLI verbs");
-  assertEquals(entries.length - plugins.length, 5, "five packages are plain libraries");
+  assertEquals(entries.length - plugins.length, 6, "six packages are plain libraries");
 });
 
 Deno.test("plugin catalog: every row carries a plain-text title and blurb", () => {

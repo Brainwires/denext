@@ -1,4 +1,3 @@
-// fallow-ignore-file duplicate-export -- the readable source of the same-named published exports
 // The readable source of the native templates in src/build/native-views-native-templates.ts. NOT
 // published: `deno task gen:native-templates` (scripts/gen-native-templates.ts) packs every
 // exported record below into src/build/native-templates.packed.ts (Brotli + base64), which

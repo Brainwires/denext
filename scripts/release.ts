@@ -19,7 +19,9 @@
 //   2b. a stable release folds the rc sections in and re-points the docs pages' links to
 //       their anchors (`/docs/changelog#250-rc1---…`) at the folded release header
 //   3. deno task docs:api  — regenerate the in-site API reference
-//   3a. gen:plugin-catalog, docs:mcp, docs:corpus, docs:llms — regenerated from the bumped tree
+//   3a. gen:plugin-catalog, docs:mcp, docs:corpus, docs:llms — regenerated from the bumped tree;
+//       when JSR already has the pinned @denext/docs-corpus version with other content, its patch
+//       version is bumped (and the plugin catalog regenerated)
 //   3b. deno task badge:tests — refresh the test-count badge (CI `check` gates it)
 //   3c. deno task badge:fallow — refresh the fallow health-score badge
 //   4. deno cache mod.ts   — refresh deno.lock
@@ -27,7 +29,11 @@
 //      lint + the full suite) green on HEAD, so only the release's own changes are re-checked —
 //      fmt, lint and RELEASE_DELTA_TESTS. publish.yml runs the same delta gate on the tagged
 //      release commit (scripts/publish-verify.ts). `--full-gate` runs `deno task check` instead.
-//   6. confirm  → git add -A, commit, tag v<version>, push branch + tag
+//   6. confirm  → git add -A, commit; when the pinned @denext/docs-corpus version is not on JSR,
+//      tag docs-corpus-v<x>, push branch + that tag and wait for JSR to list it; REFUSE to tag
+//      while any workspace member denext imports at run time (scripts/lib/jsr-pins.ts) pins a
+//      version JSR does not have (4.1.0 shipped pinning an unpublished @denext/og); then tag
+//      v<version> and push branch + tag
 //
 // After tagging, every release gets a `development → main` PR so main catches up to the
 // tag (a hard rule — see AGENTS.md "Releasing"); this script prints the `gh pr create`
@@ -39,6 +45,12 @@ import { exists, walk } from "@std/fs";
 import { join, relative } from "@std/path";
 import { bumpVersion, REPO_ROOT, VERSION_RE } from "./bump-version.ts";
 import { desktopCiVerdict, releaseCiHint, releaseCiVerdict } from "./release-ci.ts";
+import {
+  CORPUS_PACKAGE,
+  releaseCorpusVersion,
+  setCorpusVersion,
+} from "./lib/docs-corpus-package.ts";
+import { type MemberPin, missingPins } from "./lib/jsr-pins.ts";
 
 /**
  * Regenerate the `examples/effect` migrate golden against the just-bumped framework
@@ -397,6 +409,17 @@ async function dryRun(version: string, tag: string, branch: string): Promise<voi
   console.log("3c. badge:fallow     (skipped — dry run)");
   console.log("4. deno cache        (skipped — dry run)");
   console.log("5. release gate      (skipped — dry run)");
+  const missing = await missingPins().catch((err: Error) => {
+    console.log(`6. JSR pins: could not ask JSR (${err.message})`);
+    return null;
+  });
+  if (missing) {
+    console.log(
+      missing.length
+        ? `6. JSR pins not published yet: ${missing.map((p) => p.tag).join(", ")}`
+        : "6. JSR pins: every runtime package version is on JSR",
+    );
+  }
   console.log(`\nDry run complete — nothing written, nothing committed. Would tag ${tag}.`);
 }
 
@@ -429,6 +452,11 @@ async function checkPreconditions(tag: string, branch: string): Promise<void> {
   }
   const existing = await capture("git", "tag", "--list", tag);
   if (existing) die(`tag ${tag} already exists`);
+  // The release publishes a new docs corpus itself (step 6); any other unpublished pin stops it
+  // here, before anything changes.
+  const others = (await missingPins()).filter((p) => p.name !== CORPUS_PACKAGE);
+  const refusal = pinRefusal(others, tag);
+  if (refusal) die(refusal);
   if (branch !== "development") {
     console.warn(`release: warning — on branch "${branch}", not "development".`);
   }
@@ -472,6 +500,7 @@ export const RELEASE_REGEN_TASKS = ["gen:plugin-catalog", "docs:mcp", "docs:corp
  */
 export const RELEASE_DELTA_TESTS = [
   "tests/release-tools.test.ts",
+  "tests/release-pins.test.ts",
   "tests/release-blockers.test.ts",
   "tests/plugin-catalog.test.ts",
   "tests/mcp-docs-corpus.test.ts",
@@ -528,7 +557,7 @@ async function runGate(fullGate: boolean): Promise<void> {
   if (await run("deno", "task", "docs:api") !== 0) {
     die("docs:api failed — release aborted (changes left in tree).");
   }
-  // The MCP docs corpus + llms*.txt ship IN the JSR package (src/mcp/docs-corpus.ts) and
+  // The MCP docs corpus (@denext/docs-corpus, packages/docs-corpus) + llms*.txt
   // embed the version, so they must be regenerated on the release commit, not after the tag.
   // docs:mcp runs first: the MCP page (mcp.json) is one of the corpus's inputs. The bump
   // re-points every packages/* plugin's `@denext/denext` range, and the plugin catalog is
@@ -541,6 +570,7 @@ async function runGate(fullGate: boolean): Promise<void> {
   for (const task of RELEASE_REGEN_TASKS) {
     if (await run("deno", "task", task) !== 0) die(`${task} failed — release aborted.`);
   }
+  await bumpPublishedCorpus();
   console.log("\n3b. Regenerating the test-count badge (deno task badge:tests)…");
   if (await run("deno", "task", "badge:tests") !== 0) {
     die("badge:tests failed — release aborted (changes left in tree).");
@@ -599,19 +629,95 @@ async function confirmRelease(tag: string, branch: string, confirmed: boolean): 
   return false;
 }
 
-/** Step 6: commit, tag and push; each command that fails aborts with its own message. */
-async function publish(version: string, tag: string, branch: string): Promise<void> {
-  console.log("\n6. Committing, tagging, and pushing…");
-  const steps: Array<[string[], string]> = [
-    [["git", "add", "-A"], "git add failed"],
-    [["git", "commit", "-m", `release: denext ${version}`], "git commit failed"],
-    [["git", "tag", "-a", tag, "-m", `denext ${version}`], "git tag failed"],
-    [["git", "push", "origin", branch], "git push (branch) failed"],
-    [["git", "push", "origin", tag], "git push (tag) failed"],
-  ];
+/** Run each command; the first that fails aborts with its message. */
+async function runSteps(steps: Array<[string[], string]>): Promise<void> {
   for (const [[cmd, ...args], message] of steps) {
     if (await run(cmd, ...args) !== 0) die(message);
   }
+}
+
+/**
+ * Step 3a's JSR check: `docs:corpus` bumps the corpus version when the version it had was tagged
+ * (released) here, but tags may be missing from this clone. JSR is the authority: when it has
+ * the pinned version with another source hash, pin the next free patch instead.
+ */
+async function bumpPublishedCorpus(): Promise<void> {
+  const next = await releaseCorpusVersion().catch((err: Error) =>
+    die(`could not ask JSR about ${CORPUS_PACKAGE}: ${err.message} — release aborted.`)
+  );
+  if (!next) return;
+  await setCorpusVersion(next);
+  console.log(`3a. ${CORPUS_PACKAGE}: JSR has the pinned version with older content → ${next}`);
+  if (await run("deno", "task", "gen:plugin-catalog") !== 0) {
+    die("gen:plugin-catalog failed — release aborted.");
+  }
+}
+
+/**
+ * The refusal for a release tag while `missing` members (pinned by it, absent from JSR) are
+ * unpublished, or null when every pin resolves.
+ */
+export function pinRefusal(missing: readonly MemberPin[], tag: string): string | null {
+  if (missing.length === 0) return null;
+  const list = missing.map((p) => `  ${p.name}@${p.version} — push the tag ${p.tag}`).join("\n");
+  return `refusing to tag ${tag}: it would pin package versions JSR does not have yet:\n${list}\n` +
+    "Publish them first (publish.yml), wait until jsr.io lists them, then release again.";
+}
+
+/** How long step 6 waits for JSR to list a docs-corpus version it pushed (the publish runs the gate). */
+const JSR_WAIT_MS = 45 * 60_000;
+
+/** Poll JSR until it lists `pin` or {@linkcode JSR_WAIT_MS} passes. */
+async function waitForJsr(pin: MemberPin): Promise<boolean> {
+  const deadline = Date.now() + JSR_WAIT_MS;
+  while (Date.now() < deadline) {
+    if ((await missingPins().catch(() => [pin])).every((p) => p.name !== pin.name)) return true;
+    console.log(`   waiting for jsr.io to list ${pin.name}@${pin.version}…`);
+    await new Promise((resolve) => setTimeout(resolve, 30_000));
+  }
+  return false;
+}
+
+/**
+ * Step 6: commit; publish a new docs corpus first when the release pins one; refuse the tag while
+ * any pinned member is not on JSR; then tag and push. Each command that fails aborts.
+ */
+async function publish(version: string, tag: string, branch: string): Promise<void> {
+  console.log("\n6. Committing, tagging, and pushing…");
+  await runSteps([
+    [["git", "add", "-A"], "git add failed"],
+    [["git", "commit", "-m", `release: denext ${version}`], "git commit failed"],
+  ]);
+  const corpus = (await missingPins()).find((p) => p.name === CORPUS_PACKAGE);
+  if (corpus) {
+    console.log(
+      `   ${corpus.name}@${corpus.version} is not on JSR: publishing it first (${corpus.tag})`,
+    );
+    await runSteps([
+      [
+        ["git", "tag", "-a", corpus.tag, "-m", `${corpus.name} ${corpus.version}`],
+        "git tag failed",
+      ],
+      [["git", "push", "origin", branch], "git push (branch) failed"],
+      [["git", "push", "origin", corpus.tag], `git push (${corpus.tag}) failed`],
+    ]);
+    if (!await waitForJsr(corpus)) {
+      die(
+        `${corpus.tag} is pushed but jsr.io does not list ${corpus.name}@${corpus.version} yet ` +
+          `(check publish.yml's run). The release commit is pushed; once JSR lists it:\n` +
+          `  git tag -a ${tag} -m "denext ${version}" && git push origin ${tag}`,
+      );
+    }
+  }
+  const refusal = pinRefusal(await missingPins(), tag);
+  if (refusal) {
+    die(`${refusal}\n(the release commit is made; tag it by hand once they are published)`);
+  }
+  await runSteps([
+    [["git", "tag", "-a", tag, "-m", `denext ${version}`], "git tag failed"],
+    [["git", "push", "origin", branch], "git push (branch) failed"],
+    [["git", "push", "origin", tag], "git push (tag) failed"],
+  ]);
   console.log(
     `\n✓ Released ${version}. The ${tag} tag fires the JSR publish workflow ` +
       "(it re-runs the gate, then publishes).\n" +

@@ -24,6 +24,9 @@ name: Publish to JSR
 #   git tag backend-v0.1.0    && git push origin backend-v0.1.0      # @denext/backend
 #   git tag lightningcss-v1.0.0-rc.72 && git push origin lightningcss-v1.0.0-rc.72  # @denext/lightningcss
 #   git tag swc-v76.0.0      && git push origin swc-v76.0.0          # @denext/swc
+#   git tag docs-corpus-v0.1.0 && git push origin docs-corpus-v0.1.0  # @denext/docs-corpus
+#   (the release script tags docs-corpus-v* itself when the release pins a new corpus, and
+#   waits for JSR to list it before it tags v*: see scripts/release.ts)
 #   (likewise avif-v* / og-v* / sqlite-v*)
 #
 # Bump the version in that package's deno.json before tagging — JSR rejects
@@ -49,6 +52,7 @@ on:
       - "backend-v*" # @denext/backend
       - "lightningcss-v*" # @denext/lightningcss
       - "swc-v*" # @denext/swc
+      - "docs-corpus-v*" # @denext/docs-corpus
 
 permissions:
   contents: read
@@ -105,6 +109,7 @@ jobs:
             backend-v*)      cfg=packages/backend/deno.json ;;
             lightningcss-v*) cfg=packages/lightningcss/deno.json ;;
             swc-v*)          cfg=packages/swc/deno.json ;;
+            docs-corpus-v*)  cfg=packages/docs-corpus/deno.json ;;
             v*)              cfg=deno.json ;;
             *) echo "::error::unrecognized tag '$GITHUB_REF_NAME'"; exit 1 ;;
           esac

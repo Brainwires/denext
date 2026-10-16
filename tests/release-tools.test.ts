@@ -4,6 +4,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { renderMarkdown } from "../packages/content-collections/markdown.ts";
+import { publishedFiles } from "./_published-files.ts";
 import { bumpVersion, docSpecifierPattern, printBumpResult } from "../scripts/bump-version.ts";
 import {
   foldedAnchorRewrites,
@@ -277,28 +278,6 @@ Deno.test("the release gate re-checks only the release's own changes unless --fu
   }
 });
 
-/**
- * What `deno publish` sends for @denext/denext, repo-relative with each file's size: tracked
- * files minus `publish.exclude` and the workspace members (published on their own). `null`
- * outside a git checkout.
- */
-async function publishedFiles(): Promise<Map<string, number> | null> {
-  const root = new URL("../", import.meta.url);
-  const deno = JSON.parse(await Deno.readTextFile(new URL("deno.json", root)));
-  const excluded: string[] = [...deno.publish.exclude, "packages/"];
-  const out = await new Deno.Command("git", {
-    args: ["ls-files", "-z", "-co", "--exclude-standard"],
-    cwd: root,
-  }).output();
-  if (!out.success) return null;
-  const files = new Map<string, number>();
-  for (const file of new TextDecoder().decode(out.stdout).split("\0")) {
-    if (!file || excluded.some((e) => e.endsWith("/") ? file.startsWith(e) : file === e)) continue;
-    files.set(file, (await Deno.stat(new URL(file, root)).catch(() => ({ size: 0 }))).size);
-  }
-  return files;
-}
-
 Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async () => {
   // JSR refuses a package over 20 MiB at upload, after the tag is pushed (4.0.0's first two
   // publishes). Sum what `deno publish` sends, with 1 MiB of headroom for the next release.
@@ -320,7 +299,7 @@ const UNCOMPRESSED_GENERATED_OK: Readonly<Record<string, string>> = {
 
 Deno.test("no published generated file over 50 KiB ships uncompressed", async () => {
   // A generated table or a template set is data the package can carry Brotli-compressed (see
-  // src/build/packed-text.ts and src/mcp/docs-corpus.ts): a quarter of its size. One that grows
+  // src/build/packed-text.ts and packages/docs-corpus/mod.ts): a quarter of its size. One that grows
   // past 50 KiB as plain text is the creep that took 4.0.0 to JSR's cap. Compress it, or list it
   // in UNCOMPRESSED_GENERATED_OK with the reason it must stay plain.
   const files = await publishedFiles();
