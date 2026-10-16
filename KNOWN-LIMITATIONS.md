@@ -21,10 +21,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   instruments every client `await`; `yield*` delegation and top-level `await` are not).
 - **`next-intl` formats the common ICU subset.** An unknown number/date skeleton token is
   ignored, and deeply nested `plural`/`select` is depth-capped (an error, not a wrong render).
-- **`captureOwnerStack()` reports the render-parent chain** (the DevTools panel's), not React's
-  JSX-owner chain: a component passed as `children` through a wrapper is listed under the wrapper.
-  Each frame's location is where the component was declared, and during a server render it
-  returns `null`.
+- **`captureOwnerStack()` follows the JSX owner only for `jsxDEV` elements:** an element made with
+  `h()` / `createElement` records no owner, so its stack is the render-parent chain, and during
+  a server render it returns `null`.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`), Next's `taint` config
   (React's `experimental_taint*` are enforced), and Next canary's navigation-stage APIs
   (`unstable_navigation` / `unstable_prefetch` from `next/cache`; an import fails the build).

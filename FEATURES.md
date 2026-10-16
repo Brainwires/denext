@@ -147,7 +147,7 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   window.
 - Class components (`Component`/`PureComponent`) on every path, through an on-demand
   runtime chunk (Part 2 §3.2).
-- React 19.2's `captureOwnerStack()` (the render-parent chain, in development) and
+- React 19.2's `captureOwnerStack()` (the JSX-owner chain with call sites, in development) and
   `cacheSignal()` (aborts when the server render ends).
 
 ## Data, caching & ISR

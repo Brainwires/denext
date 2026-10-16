@@ -1253,7 +1253,7 @@ export function absolutizeImports(
  */
 export async function prepareConfig(
   tmpDir: string,
-  opts: Pick<BundleOptions, "configPath" | "importMap">,
+  opts: Pick<BundleOptions, "configPath" | "importMap" | "dev">,
 ): Promise<string> {
   // `configPath` may be a plain filesystem path OR a `file://` URL — the latter when the
   // app has no `deno.json` of its own and `resolveProject` falls back to
@@ -1295,11 +1295,36 @@ export async function prepareConfig(
     ...appImports,
     ...opts.importMap,
   };
+  if (opts.dev) devJsx(base);
   // `links` name directories relative to the config, which now lives in `tmpDir`.
   carryLinks(base, base, dirname(configFsPath), tmpDir);
   const configPath = join(tmpDir, "deno.merged.json");
   await Deno.writeTextFile(configPath, JSON.stringify(base));
   return configPath;
+}
+
+/**
+ * A dev bundle compiles the automatic JSX runtime's dev form (`react-jsx` → `react-jsxdev`):
+ * `jsxDEV` with each element's source, which the owner stack (`captureOwnerStack()`, the
+ * DevTools panel) follows. A production bundle keeps `react-jsx`, so none of it ships. An
+ * import map that names `<source>/jsx-runtime` but not `<source>/jsx-dev-runtime` gets the
+ * latter pointed at the same module (denext's runtime exports `jsxDEV` too).
+ */
+function devJsx(
+  config: {
+    compilerOptions?: { jsx?: string; jsxImportSource?: string };
+    imports?: Record<string, string>;
+  },
+): void {
+  const options = config.compilerOptions;
+  if (options?.jsx !== "react-jsx") return;
+  options.jsx = "react-jsxdev";
+  const source = options.jsxImportSource ?? "react";
+  const imports = config.imports ?? {};
+  const runtime = imports[`${source}/jsx-runtime`];
+  if (runtime && !imports[`${source}/jsx-dev-runtime`]) {
+    imports[`${source}/jsx-dev-runtime`] = runtime;
+  }
 }
 
 /** The running framework's version (its `deno.json`), read once. */
@@ -1734,6 +1759,7 @@ async function bundleResolution(tmpDir: string, opts: BundleOptions): Promise<Bu
   const configPath = await prepareConfig(tmpDir, {
     configPath: opts.configPath,
     importMap: { ...opts.importMap, ...client.importMap },
+    dev: opts.dev,
   });
   return { client, configPath };
 }

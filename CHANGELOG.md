@@ -32,6 +32,12 @@ and this project adheres to
   tree, so context, events and error boundaries work as without the directive. The click that
   wakes a `client:interaction` island reaches its handler. The runtime ships only in an app whose
   sources write a directive (a build scan).
+- **A true JSX owner stack in development.** The dev builds compile JSX to `jsxDEV` (esbuild's
+  `jsxDev` in the unbundled dev loop, `react-jsxdev` in a dev `deno bundle`), which records each
+  element's owner and the file, line and column of its JSX. `captureOwnerStack()` and the
+  DevTools owner stack now follow React's owner chain (a component passed as `children` through
+  a wrapper is owned by the component that wrote it), each frame located where its owner wrote
+  the JSX. Production builds compile to `jsx` and carry none of it.
 
 ## [4.2.0] - 2026-10-16
 

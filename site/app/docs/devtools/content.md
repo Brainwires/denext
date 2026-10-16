@@ -65,11 +65,19 @@ on every streamed-hole reveal.
   the accent colour and the header carries a `rendered ×N` count. Tracking is
   refcounted between the panel and the MCP sink, so closing and reopening the
   panel no longer wipes the history `denext_why_render` is reading.
-- **Owner stack** — the component ancestors above the selection, nearest first,
-  joined with `←`. The same chain is what `captureOwnerStack()` (from `denext/react`,
-  the `react` alias) returns while a component renders in development, formatted as
-  React 19's `\n    at Name (file:line:column)` lines; it returns `null` in production,
-  outside a client render (an event handler, an effect) and during a server render.
+- **Owner stack** — React's JSX-owner chain above the selection, nearest first,
+  joined with `←`: the component whose render created each element, so a component
+  passed as `children` through a wrapper is owned by the component that wrote it.
+  The dev builds compile JSX to `jsxDEV` (esbuild's `jsxDev` in the unbundled dev
+  loop, `react-jsxdev` in a dev `deno bundle`), which records each element's owner
+  and the file, line and column of its JSX; a production build compiles to `jsx`
+  and carries none of it. An element made with `h()` / `createElement` records no
+  owner, so for it the chain is the component fibers above it. The same chain is
+  what `captureOwnerStack()` (from `denext/react`, the `react` alias) returns while
+  a component renders in development, formatted as React 19's
+  `\n    at Name (file:line:column)` lines, each location being where that owner
+  wrote the JSX of the element below it; it returns `null` in production, outside a
+  client render (an event handler, an effect) and during a server render.
 - **Effect annotations** — an effect/memo/callback/deferred cell shows its `deps`
   (`[] (once)` when empty) and a `cleanup ƒ` row when it currently holds one.
 
@@ -664,11 +672,9 @@ function and type is listed in the [API reference](/docs/api).
 
 ## Limitations
 
-- **The owner stack is the render-parent chain**, not React's JSX-owner chain.
-  They coincide for the common case; a component passed as `children` through a
-  wrapper is reported under the wrapper that rendered it. `captureOwnerStack()`
-  returns the same chain, each frame's location being where the component was
-  declared (React's is where its element was created).
+- **The owner stack falls back to the render-parent chain** for an element made
+  with `h()` / `createElement` (framework-generated elements and library code
+  included), which records no owner.
 - **Cross-module hook naming follows static relative imports only.** A hook
   imported by a bare, `npm:`/`jsr:`, URL specifier (or, in SPA mode, an import-map
   alias), through a namespace import, or through a barrel's `export *` still consumed an unknowable

@@ -74,8 +74,6 @@ Each is documented as a manual recipe today (the
 
 ## `denext ui` and DevTools
 
-- **Per-element `__source`** for a true JSX owner stack (the panel shows the render-parent chain).
-
 ## Router plugins
 
 - **TanStack Start, the rest:** `@denext/tanstack-start` server-renders and hydrates a Start

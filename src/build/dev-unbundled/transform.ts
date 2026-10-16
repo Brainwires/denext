@@ -45,6 +45,9 @@ function singleModuleBuild(
     platform: "browser",
     jsx: "automatic",
     jsxImportSource: "denext",
+    // `jsxDEV` with each element's source: the owner stack (`captureOwnerStack()`, the
+    // DevTools panel) follows the JSX owner and names the line the JSX was written on.
+    jsxDev: true,
     sourcemap: "inline",
     logLevel: "silent",
     plugins,
