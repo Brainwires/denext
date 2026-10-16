@@ -143,6 +143,9 @@ runbook step.
 > `denext doctor` and `probeApp` fail a route whose `error.tsx` caught a server error and
 > rendered at status 200 (the `no-caught-error` check, with the error's message and digest).
 > They read it through their own `onRequestError` hook, so the response carries nothing more.
+> A streamed Suspense hole that threw with no `error.tsx` inside it keeps its fallback; the
+> server reports that error to `onRequestError` too, and the probes fail the route
+> (`no-stuck-hole`).
 
 ## In development
 

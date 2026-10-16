@@ -23,6 +23,7 @@ import { CLASS_MARKER_ID, takeClassRendered } from "../runtime/render-scope.ts";
 import { getImageRuntimeConfig, IMAGE_CONFIG_ID, imageConfigNeedsEmbed } from "../runtime/image.ts";
 import type { PendingHole, ShellRender } from "../jsx/render-to-stream.ts";
 import { takeSettled } from "../jsx/renderer-base.ts";
+import { reportHoleError } from "../jsx/render-shared.ts";
 import type { FlightShellRender } from "../jsx/render-to-flight-stream.ts";
 import { SWAP_RUNTIME } from "./swap-runtime.ts";
 import type { ResumedHole } from "../jsx/render-to-ppr.ts";
@@ -551,13 +552,17 @@ function streamedBody(
  * signal thrown in a hole never reaches here: the resume renderer turns it into the
  * hole's replacement (a client-side redirect, or the nearest signal boundary's UI).
  */
-function pprHoles(holes: ResumedHole[]): Set<PendingHole> {
+function pprHoles(
+  holes: ResumedHole[],
+  onHoleError?: (error: unknown) => void,
+): Set<PendingHole> {
   return new Set(
     holes.map((h) =>
       Promise.resolve(h.html)
         .then((html) => ({ id: h.id, html, ok: true }))
         .catch((err) => {
           console.error("denext: PPR hole failed to resume:", h.id, err);
+          reportHoleError(onHoleError, err);
           return { id: h.id, html: "", ok: false };
         })
     ),
@@ -574,10 +579,15 @@ function pprHoles(holes: ResumedHole[]): Set<PendingHole> {
  *
  * @param opts Document options; `bodyHtml` is the cached shell body (with
  *   `data-dnx-b` hole placeholders), `holes` are the per-request holes (each `html`
- *   may still be resolving), and `signal` aborts a disconnected stream.
+ *   may still be resolving), `signal` aborts a disconnected stream, and `onHoleError` is
+ *   told each error a hole threw that nothing inside it caught.
  */
 export function streamPprDocument(
-  opts: DocumentOptions & { holes: ResumedHole[]; signal?: AbortSignal },
+  opts: DocumentOptions & {
+    holes: ResumedHole[];
+    signal?: AbortSignal;
+    onHoleError?: (error: unknown) => void;
+  },
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const lang = opts.lang ?? "en";
@@ -590,7 +600,7 @@ ${bodyOpenTag(opts.bodyAttrs)}<div id="${ROOT_ID}"${
   }>${opts.bodyHtml}</div>${SWAP_RUNTIME}`;
   const tail = `${renderBodyScripts(opts)}</body>
 </html>`;
-  const active = pprHoles(opts.holes);
+  const active = pprHoles(opts.holes, opts.onHoleError);
   return streamedBody(async (controller) => {
     controller.enqueue(encoder.encode(prefix));
     await streamHoles(controller, encoder, active, opts.signal);
@@ -704,13 +714,14 @@ export function streamPprFlightDocument(
         finishSignals(): Record<string, unknown>;
       };
       signal?: AbortSignal;
+      onHoleError?: (error: unknown) => void;
     },
 ): ReadableStream<Uint8Array> {
   const { encoder, docOpts, prefix, renderModeScript } = streamedDocumentStart(
     opts,
     opts.shellBody,
   );
-  const active = settlingHoles(opts.resume.holes);
+  const active = settlingHoles(opts.resume.holes, opts.onHoleError);
   // Close signal collection exactly once (success, failure or cancel) so the module-global
   // collector never leaks into a later render. The success path uses its result.
   let signalMap: Record<string, unknown> | null = null;
@@ -745,13 +756,17 @@ interface SettledHole {
  * Non-rejecting holes: each resolves to `{ id, html, flight, ok }`. A failed hole
  * streams nothing (its shell fallback stays) and its Flight hole fills with `null`.
  */
-function settlingHoles(holes: ResumedFlightHole[]): Set<Promise<SettledHole>> {
+function settlingHoles(
+  holes: ResumedFlightHole[],
+  onHoleError?: (error: unknown) => void,
+): Set<Promise<SettledHole>> {
   return new Set(
     holes.map((hole) =>
       Promise.all([Promise.resolve(hole.html), Promise.resolve(hole.flight)])
         .then(([html, flight]) => ({ id: hole.id, html, flight, ok: true }))
         .catch((err) => {
           console.error("denext: Flight PPR hole failed to resume:", hole.id, err);
+          reportHoleError(onHoleError, err);
           return { id: hole.id, html: "", flight: null as FlightNode, ok: false };
         })
     ),

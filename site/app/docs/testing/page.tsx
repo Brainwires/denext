@@ -315,8 +315,10 @@ describe("scheduleReminder", () => {
         <code>error.tsx</code> boundary caught and rendered at 200 (the <code>no-caught-error</code>
         {" "}
         check, with the error's message and digest), a streamed Suspense hole included; it reads the
-        error in process, so nothing is added to the response. <code>denext doctor</code>{" "}
-        runs the same probe.
+        error in process, so nothing is added to the response. A streamed Suspense hole left on its
+        fallback by an error nothing inside it caught fails the <code>no-stuck-hole</code> check.
+        {" "}
+        <code>denext doctor</code> runs the same probe.
       </p>
       <Code lang="ts">
         {`import { formatReport, probeApp } from "denext/testing";

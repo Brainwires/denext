@@ -12,7 +12,8 @@ in-process **route conformance** — exiting non-zero when a critical one fails.
 Conformance renders **every route** on the real SSR path, expanding dynamic
 routes through `generateStaticParams`, and asserts a well-formed document:
 `<!DOCTYPE>`, one `<html>`/`<head>`/`<body>`, a non-empty `<title>`, no server
-crash, and no error an `error.tsx` boundary caught (the `no-caught-error` check). Each route
+crash, no error an `error.tsx` boundary caught (the `no-caught-error` check), and no streamed
+Suspense hole left on its fallback (`no-stuck-hole`). Each route
 is classified **static** (0 KB JS) or **interactive**.
 
 The other checks run only where they apply: the denext Deno toolchain, css-shim import
@@ -45,6 +46,12 @@ A server error that a segment `error.tsx` caught renders the boundary's fallback
 (`an error boundary rendered a caught error: "db down" [digest 66355f2c903f1967]`). A catch
 in a Suspense hole that streams after the shell counts too. Nothing about the error is added
 to the response: the probe reads it in process, so production responses are unchanged.
+
+A streamed Suspense hole whose render threw with **nothing inside it to catch** the error
+streams no content, so its fallback stays in a 200 page. The `no-stuck-hole` check fails a
+streamed document with a placeholder that no content filled and names the hole and the error
+the server reported to `onRequestError` (`streamed Suspense hole dnx0 kept the fallback: "upstream
+exploded" [digest …]`). A hole cut off by the request deadline fails it too, with no error.
 
 ## What doctor cannot see
 

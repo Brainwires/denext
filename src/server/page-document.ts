@@ -114,7 +114,17 @@ export function renderOptions(pr: PageRequest) {
       if (source === undefined) pr.boundaryErrors.push(e);
       else void reportBoundaryError(pr, e, source);
     },
+    onHoleError: holeErrorReporter(pr),
   };
+}
+
+/**
+ * Reports an error a streamed Suspense hole threw that nothing inside it caught: the hole
+ * keeps its fallback in a 200 response that already left, so `onRequestError` (and through
+ * it `denext doctor` / `probeApp`) is the only place it can surface.
+ */
+function holeErrorReporter(pr: PageRequest): (error: unknown) => void {
+  return (error) => void reportBoundaryError(pr, error, renderSourceOf(pr));
 }
 
 /**
@@ -332,6 +342,7 @@ async function resumeHtmlShell(
     ...doc,
     holes,
     signal: pr.state.ctx.signal,
+    onHoleError: holeErrorReporter(pr),
   });
   return { stream, metadata, viewport };
 }
@@ -374,6 +385,7 @@ async function resumeFlightShell(
     viewport,
     ...doc,
     signal: pr.state.ctx.signal,
+    onHoleError: holeErrorReporter(pr),
   });
   return { stream, metadata, viewport };
 }

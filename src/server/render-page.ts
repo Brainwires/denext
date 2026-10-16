@@ -129,6 +129,12 @@ export interface RenderPageOptions {
    */
   onCaughtError?: (error: unknown) => void;
   /**
+   * Invoked with the **raw** error each time a streamed Suspense hole throws and nothing
+   * inside the hole catches it: the hole keeps its fallback in a response whose 200 status
+   * already left, so the caller reports it to `onRequestError`. Keep it non-throwing.
+   */
+  onHoleError?: (error: unknown) => void;
+  /**
    * A browser soft navigation's deferred-value sink: the Flight render leaves each deferred value
    * as a hole the response streams after its payload, instead of awaiting it.
    */
@@ -631,7 +637,7 @@ export async function renderPageShell(
     load,
     options,
     prebuilt,
-    (tree, head) => renderShell(tree, head, collectTiming),
+    (tree, head) => renderShell(tree, head, collectTiming, options.onHoleError),
   );
   const { metadata, viewport, config, status } = r;
   return r.inner !== undefined
@@ -676,7 +682,7 @@ export async function renderPageFlightShell(
     load,
     options,
     prebuilt,
-    (tree, head, config) => renderFlightShell(tree, config.resumable, head),
+    (tree, head, config) => renderFlightShell(tree, config.resumable, head, options.onHoleError),
   );
   const { metadata, viewport, config, status } = r;
   return r.inner !== undefined

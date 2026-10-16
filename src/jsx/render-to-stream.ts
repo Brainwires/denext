@@ -17,7 +17,7 @@ import {
   flushServerInsertedHTML,
   type HeadCollector,
 } from "./render-to-string.ts";
-import { hostAttrs, renderHostHtml } from "./render-shared.ts";
+import { hostAttrs, renderHostHtml, reportHoleError } from "./render-shared.ts";
 import { VNodeRenderer } from "./renderer-base.ts";
 export type { HeadCollector };
 import { enterScope, rootScope, scopePrefix } from "./tree-id.ts";
@@ -43,6 +43,8 @@ class StreamRenderer extends VNodeRenderer<string> {
   private id = 0;
   /** Dev-only: record each boundary's server resolve duration (see StreamOptions). */
   collectTiming = false;
+  /** Told each error a streamed hole's render threw that nothing inside the hole caught. */
+  onHoleError?: (error: unknown) => void;
   /**
    * In-flight boundary renders. Each **resolves, never rejects**, to its id + html
    * + an `ok` flag: a boundary whose render throws is logged and resolves `ok:false`
@@ -107,6 +109,7 @@ class StreamRenderer extends VNodeRenderer<string> {
         .then((html) => ({ id, html, ok: true, ms: elapsed() }))
         .catch((err) => {
           console.error("denext: streamed Suspense boundary failed to resolve:", id, err);
+          reportHoleError(this.onHoleError, err);
           return { id, html: "", ok: false, ms: elapsed() };
         }),
     );
@@ -376,15 +379,20 @@ export interface ShellRender {
  *
  * @param node The tree to render.
  * @param head Collector for in-tree `<title>`/`<meta>`/`<link>` (shell only), or null.
+ * @param collectTiming Dev-only: record each boundary's server resolve time.
+ * @param onHoleError Told each error a streamed hole threw that nothing inside it caught
+ *   (the hole keeps its fallback); the server reports it to `onRequestError`.
  * @returns The shell HTML and the pending {@link PendingHole holes}.
  */
 export async function renderShell(
   node: VNodeChildren,
   head: HeadCollector | null,
   collectTiming = false,
+  onHoleError?: (error: unknown) => void,
 ): Promise<ShellRender> {
   const renderer = new StreamRenderer();
   renderer.collectTiming = collectTiming;
+  renderer.onHoleError = onHoleError;
   // Collect `useServerInsertedHTML` callbacks (CSS-in-JS registries) fired during the
   // shell render and hoist their <style> markup into `head.serverInserted` BEFORE the
   // head flushes. Without this, styled-components/emotion styles are dropped on the

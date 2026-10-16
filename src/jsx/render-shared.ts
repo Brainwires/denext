@@ -468,6 +468,21 @@ export function holeClose(id: string): string {
   return `<!--/dnx-h:${id}-->`;
 }
 
+/**
+ * Tell `onHoleError` (when set) about an error a streamed hole threw that nothing inside the
+ * hole caught. A throwing reporter must not turn the hole's settled `ok:false` into a rejection.
+ */
+export function reportHoleError(
+  onHoleError: ((error: unknown) => void) | undefined,
+  error: unknown,
+): void {
+  try {
+    onHoleError?.(error);
+  } catch (reportError) {
+    console.error("denext: a streamed hole's error reporter threw:", reportError);
+  }
+}
+
 // ---- Client islands ------------------------------------------------------------------------
 
 /** A deferred-hydration island: its tree-path id, strategy, and own Flight tree. */

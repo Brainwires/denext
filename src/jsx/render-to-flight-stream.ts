@@ -35,6 +35,7 @@ import {
   renderClientIsland,
   renderDualChildren,
   renderHostDual,
+  reportHoleError,
   serializeCompound,
   type Serialized,
   serializeFlightProps,
@@ -73,6 +74,8 @@ class StreamFlightRenderer extends VNodeRenderer<Dual> implements IslandRenderer
   >();
   /** Resolved boundary flights, spliced into the shell flight at the end. */
   readonly holes = new Map<string, FlightNode>();
+  /** Told each error a streamed hole's render threw that nothing inside the hole caught. */
+  onHoleError?: (error: unknown) => void;
   /**
    * Deferred promise props (Remix `defer()` fields) encountered while serializing props,
    * each settling to its value-hole id and serialized value. The shell emits a
@@ -163,6 +166,7 @@ class StreamFlightRenderer extends VNodeRenderer<Dual> implements IslandRenderer
         })
         .catch((err) => {
           console.error("denext: streamed Flight boundary failed to resolve:", id, err);
+          reportHoleError(this.onHoleError, err);
           return { id, html: "", flight: null, ok: false };
         }),
     );
@@ -362,13 +366,17 @@ export interface FlightShellRender {
  * @param resumable Auto-defer islands + stamp handler hosts.
  * @param head Collector for in-tree `<title>`/`<meta>`/`<link>` hoisted from the
  *   shell (holes resolve after the head flush, so their head tags stay inline).
+ * @param onHoleError Told each error a streamed hole threw that nothing inside it caught
+ *   (the hole keeps its fallback); the server reports it to `onRequestError`.
  */
 export async function renderFlightShell(
   node: VNodeChildren,
   resumable = false,
   head: HeadCollector | null = null,
+  onHoleError?: (error: unknown) => void,
 ): Promise<FlightShellRender> {
   const renderer = new StreamFlightRenderer(resumable);
+  renderer.onHoleError = onHoleError;
   beginSignalCollection();
   // Hoist `useServerInsertedHTML` (CSS-in-JS) markup produced during the shell render
   // into <head> before it flushes — the client-boundary streaming counterpart of the

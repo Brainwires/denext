@@ -186,9 +186,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
   `allowedDevOrigins`; no wildcards), the CVE-2025-48068 defence.
-- **`denext doctor` / `probeApp` don't see a streamed Suspense hole whose error nothing inside it
-  catches:** the hole keeps its fallback in a 200 page. Put an `error.tsx` inside the hole, or
-  assert on the route's content yourself.
 - **DevTools hook names are all-or-nothing per component** (a conditional hook, or one imported
   by a bare / `npm:` / `jsr:` / URL specifier, a namespace import or `export *`, aborts naming).
   The bundled App Router path names route files only. Network, Cache, Routes and the MCP snapshot

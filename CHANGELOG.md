@@ -308,6 +308,13 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext doctor` / `probeApp` catch a streamed Suspense hole stuck on its fallback.** A hole
+  whose render threw with nothing inside it to catch the error streamed no content, so its
+  fallback stayed in a 200 page the probe passed. The new `no-stuck-hole` check fails a streamed
+  document with a placeholder no content filled, naming the hole and the error. The server now
+  reports that error to `onRequestError` (`routeType: "render"`), as Next reports every render
+  error, on the streamed HTML, Flight and PPR-resume paths alike.
+
 - **A conditional child no longer takes its sibling's state.** In
   `{open && <Counter />}<Counter />`, showing the first one handed it the second one's fiber (its
   state, effects and DOM) because unkeyed children were matched by type alone. Each unkeyed child
