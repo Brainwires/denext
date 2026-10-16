@@ -3561,6 +3561,35 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ViteEmitterSetupContext` — The setup context viteEmitterPlugin's plugin uses (a subset of PluginContext).
 - `interface VitePluginLike` — The slice of a Vite plugin viteEmitterPlugin runs.
 
+### `denext/ui-kit`
+
+- `type BadgeTone = ok | todo | warn | fail | info` — How a Badge reads. The CSS colours each one; a badge with no tone stays grey.
+- `Control(attrs: ControlAttrs): VNode` — One control. Every widget in render.ts bottoms out here, so escaping, the disabled flag and the element vocabulary are decided exactly once.
+- `interface ControlAttrs` — One <input>, <select> or <textarea>.
+- `decode(spec: WidgetSpec, entries: typeOperator, prefix?: string): unknown` — Parse a posted body back into the config value its widget stands for.
+- `encode(spec: WidgetSpec, value: unknown, prefix?: string): FormEntry[]` — Render a config value as the flat fields its widget posts.
+- `Field(props: FieldProps): VNode` — A control wrapped in its label, help text and validation message.
+- `interface FieldProps` — The label, help text and validation message around one control (Field).
+- `interface FormEntry` — One posted field.
+- `FormField(props: FormFieldProps): VNode` — A widget and everything under it, with the CSRF field the row buttons need: the form body of a form that edits one key.
+- `interface FormFieldProps` — FormField's props: one widget, the value it holds, and the render context.
+- `FormFields(props: FormFieldsProps): VNode` — Several widgets as one form body, behind a single CSRF field.
+- `interface FormFieldsProps` — FormFields's props: the widgets in render order, and the render context.
+- `OpButton(props: OpButtonOptions): VNode` — A real submit button carrying one list operation — the whole list editor works with JavaScript disabled, and ui.js upgrades the same submit to a fragment swap.
+- `interface OpButtonOptions` — One row-operation button (↑, ↓, ✕, + Add).
+- `interface RawHtml` — A pre-escaped HTML fragment: Raw inserts it into a component tree verbatim.
+- `interface RenderContext` — What the renderer is told beyond the spec and the value.
+- `renderView(node: VNodeChildren): RawHtml` — Render a component view to a pre-escaped fragment — synchronously, with no hydration markers and no client code. The result nests inside another tree through Raw without being escaped a second time. A throwing component throws out of this call (the UI server answers 500), and so does an async component: a view must be synchronous.
+- `interface SchemaNode` — The subset of JSON Schema the config schema actually uses, plus denext's x-denext hints.
+- `Widget(props: WidgetProps): VNode` — One widget and everything under it, dispatched to its kind's component — the recursive half of the form, without the CSRF field (FormField adds it).
+- `interface WidgetBranch` — One alternative shape of a union field, behind the discriminator picker.
+- `interface WidgetField` — One field of a multi-widget form: its widget, and the value to render it holding.
+- `widgetFor(node: SchemaNode, path: typeOperator, required: boolean): WidgetSpec` — The widget for one schema node — the first matching rule of the table above wins.
+- `type WidgetKind = text | textarea | number | toggle | select | segmented | multi-select | chips | list-of-forms | map | union | group | code` — Every control the config editor can render.
+- `interface WidgetOption` — One choice of a select, segmented control or checkbox group.
+- `type WidgetProps = object` — What every widget component is handed (Widget's props).
+- `interface WidgetSpec` — A resolved widget: what to render at one path, and everything the renderer needs.
+
 ### `denext/expo/apple-authentication`
 
 - `addRevokeListener(_listener: () => void): Subscription` — Listen for the user revoking the app's access: never reported here.

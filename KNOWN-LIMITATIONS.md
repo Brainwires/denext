@@ -119,9 +119,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### `next-auth` (Auth.js v5) compat
 
-- **Providers:** GitHub, Google, Apple, Discord, Microsoft Entra ID, Credentials, Resend,
-  Nodemailer / Email, and custom OAuth / OIDC objects. Other `next-auth/providers/*` modules are
-  not shipped; write one as a custom provider object, or use the matching `denextAuth` preset.
+- **Providers:** GitHub, Google, Apple, Discord, Microsoft Entra ID, GitLab, X (Twitter),
+  LinkedIn, Facebook, Slack, Twitch, Spotify, Okta, Auth0, Keycloak, Cognito, Zoom, Notion,
+  Credentials, Resend, Nodemailer / Email, and custom OAuth / OIDC objects. Auth.js's other
+  `next-auth/providers/*` modules are not shipped; write one as a custom provider object.
   WebAuthn (`next-auth/providers/passkey`) is not mapped — denext's own `passkeys` are.
 - **Per-call `authorizationParams`** (`signIn("google", {}, { prompt: "login" })`) are ignored;
   set `authorization.params` on the provider.

@@ -33021,6 +33021,397 @@
       ]
     },
     {
+      "module": "denext/ui-kit",
+      "symbols": [
+        {
+          "name": "BadgeTone",
+          "slug": "BadgeTone",
+          "kind": "typeAlias",
+          "signature": "type BadgeTone = ok | todo | warn | fail | info",
+          "doc": "How a Badge reads. The CSS colours each one; a badge with no tone stays grey.",
+          "docFull": "How a {@linkcode Badge} reads. The CSS colours each one; a badge with no tone stays grey.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Control",
+          "slug": "Control",
+          "kind": "function",
+          "signature": "Control(attrs: ControlAttrs): VNode",
+          "doc": "One control. Every widget in render.ts bottoms out here, so escaping, the disabled flag and the element vocabulary are decided exactly once.",
+          "docFull": "One control. Every widget in `render.ts` bottoms out here, so escaping, the disabled flag and\nthe element vocabulary are decided exactly once.",
+          "params": [
+            {
+              "name": "attrs",
+              "doc": "The control description."
+            }
+          ],
+          "returns": "The control element.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ControlAttrs",
+          "slug": "ControlAttrs",
+          "kind": "interface",
+          "signature": "interface ControlAttrs",
+          "doc": "One <input>, <select> or <textarea>.",
+          "docFull": "One `<input>`, `<select>` or `<textarea>`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "decode",
+          "slug": "decode",
+          "kind": "function",
+          "signature": "decode(spec: WidgetSpec, entries: typeOperator, prefix?: string): unknown",
+          "doc": "Parse a posted body back into the config value its widget stands for.",
+          "docFull": "Parse a posted body back into the config value its widget stands for.\n\nType driven throughout: numbers are parsed (and range-checked), toggles become booleans, chip\nand list rows are reassembled by index, map rows by their `~key` field, and a union by the\nbranch its discriminator names. A field nothing posted stays `undefined`, which the config\nwriter reads as \"leave this key alone\".",
+          "params": [
+            {
+              "name": "spec",
+              "doc": "The widget the fields were rendered from."
+            },
+            {
+              "name": "entries",
+              "doc": "The posted fields."
+            },
+            {
+              "name": "prefix",
+              "doc": "The prefix the form was rendered with."
+            }
+          ],
+          "returns": "The config value.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "encode",
+          "slug": "encode",
+          "kind": "function",
+          "signature": "encode(spec: WidgetSpec, value: unknown, prefix?: string): FormEntry[]",
+          "doc": "Render a config value as the flat fields its widget posts.",
+          "docFull": "Render a config value as the flat fields its widget posts.",
+          "params": [
+            {
+              "name": "spec",
+              "doc": "The widget the value is edited with."
+            },
+            {
+              "name": "value",
+              "doc": "The config value (undefined renders no fields at all)."
+            },
+            {
+              "name": "prefix",
+              "doc": "An optional prefix shared by every name in the form."
+            }
+          ],
+          "returns": "The fields, in render order.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Field",
+          "slug": "Field",
+          "kind": "function",
+          "signature": "Field(props: FieldProps): VNode",
+          "doc": "A control wrapped in its label, help text and validation message.",
+          "docFull": "A control wrapped in its label, help text and validation message.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The field description; children is the control (or group of controls)."
+            }
+          ],
+          "returns": "The field element.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FieldProps",
+          "slug": "FieldProps",
+          "kind": "interface",
+          "signature": "interface FieldProps",
+          "doc": "The label, help text and validation message around one control (Field).",
+          "docFull": "The label, help text and validation message around one control ({@linkcode Field}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FormEntry",
+          "slug": "FormEntry",
+          "kind": "interface",
+          "signature": "interface FormEntry",
+          "doc": "One posted field.",
+          "docFull": "One posted field.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FormField",
+          "slug": "FormField",
+          "kind": "function",
+          "signature": "FormField(props: FormFieldProps): VNode",
+          "doc": "A widget and everything under it, with the CSRF field the row buttons need: the form body of a form that edits one key.",
+          "docFull": "A widget and everything under it, with the CSRF field the row buttons need: the form body of\na form that edits one key.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The widget, its value and the render context."
+            }
+          ],
+          "returns": "The field elements.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FormFieldProps",
+          "slug": "FormFieldProps",
+          "kind": "interface",
+          "signature": "interface FormFieldProps",
+          "doc": "FormField's props: one widget, the value it holds, and the render context.",
+          "docFull": "{@linkcode FormField}'s props: one widget, the value it holds, and the render context.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FormFields",
+          "slug": "FormFields",
+          "kind": "function",
+          "signature": "FormFields(props: FormFieldsProps): VNode",
+          "doc": "Several widgets as one form body, behind a single CSRF field.",
+          "docFull": "Several widgets as one form body, behind a single CSRF field.\n\nThe config editor puts a view's plain scalars in one form with one Save, so their widgets are\nrendered together. Emitting the token once is the point: rendering each field separately would\nrepeat a hidden `_csrf` for every control in the form.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The widgets and the render context."
+            }
+          ],
+          "returns": "The field elements.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FormFieldsProps",
+          "slug": "FormFieldsProps",
+          "kind": "interface",
+          "signature": "interface FormFieldsProps",
+          "doc": "FormFields's props: the widgets in render order, and the render context.",
+          "docFull": "{@linkcode FormFields}'s props: the widgets in render order, and the render context.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "OpButton",
+          "slug": "OpButton",
+          "kind": "function",
+          "signature": "OpButton(props: OpButtonOptions): VNode",
+          "doc": "A real submit button carrying one list operation — the whole list editor works with JavaScript disabled, and ui.js upgrades the same submit to a fragment swap.",
+          "docFull": "A real submit button carrying one list operation — the whole list editor works with\nJavaScript disabled, and `ui.js` upgrades the same submit to a fragment swap.\n\nThe operation, the row and the list travel in the button's single `value` (a button can only\npost one name/value pair); `parseOp` in `value.ts` reads them back.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The button description."
+            }
+          ],
+          "returns": "The button element.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "OpButtonOptions",
+          "slug": "OpButtonOptions",
+          "kind": "interface",
+          "signature": "interface OpButtonOptions",
+          "doc": "One row-operation button (↑, ↓, ✕, + Add).",
+          "docFull": "One row-operation button (`↑`, `↓`, `✕`, `+ Add`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RawHtml",
+          "slug": "RawHtml",
+          "kind": "interface",
+          "signature": "interface RawHtml",
+          "doc": "A pre-escaped HTML fragment: Raw inserts it into a component tree verbatim.",
+          "docFull": "A pre-escaped HTML fragment: {@linkcode Raw} inserts it into a component tree verbatim.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RenderContext",
+          "slug": "RenderContext",
+          "kind": "interface",
+          "signature": "interface RenderContext",
+          "doc": "What the renderer is told beyond the spec and the value.",
+          "docFull": "What the renderer is told beyond the spec and the value.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "renderView",
+          "slug": "renderView",
+          "kind": "function",
+          "signature": "renderView(node: VNodeChildren): RawHtml",
+          "doc": "Render a component view to a pre-escaped fragment — synchronously, with no hydration markers and no client code. The result nests inside another tree through Raw without being escaped a second time. A throwing component throws out of this call (the UI server answers 500), and so does an async component: a view must be synchronous.",
+          "docFull": "Render a component view to a pre-escaped fragment — synchronously, with no hydration markers\nand no client code. The result nests inside another tree through {@linkcode Raw} without\nbeing escaped a second time. A throwing component throws out of this call (the UI server\nanswers `500`), and so does an async component: a view must be synchronous.\n\nAlways render UI views through this function (or `renderPage`), never the renderer directly —\nit is what removes {@linkcode Raw}'s wrapper.",
+          "params": [
+            {
+              "name": "node",
+              "doc": "The view's element tree."
+            }
+          ],
+          "returns": "The rendered markup as a fragment.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SchemaNode",
+          "slug": "SchemaNode",
+          "kind": "interface",
+          "signature": "interface SchemaNode",
+          "doc": "The subset of JSON Schema the config schema actually uses, plus denext's x-denext hints.",
+          "docFull": "The subset of JSON Schema the config schema actually uses, plus denext's `x-denext` hints.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Widget",
+          "slug": "Widget",
+          "kind": "function",
+          "signature": "Widget(props: WidgetProps): VNode",
+          "doc": "One widget and everything under it, dispatched to its kind's component — the recursive half of the form, without the CSRF field (FormField adds it).",
+          "docFull": "One widget and everything under it, dispatched to its kind's component — the recursive half of\nthe form, without the CSRF field ({@linkcode FormField} adds it).",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The widget, the value it holds and the render context."
+            }
+          ],
+          "returns": "The widget's elements.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WidgetBranch",
+          "slug": "WidgetBranch",
+          "kind": "interface",
+          "signature": "interface WidgetBranch",
+          "doc": "One alternative shape of a union field, behind the discriminator picker.",
+          "docFull": "One alternative shape of a union field, behind the discriminator picker.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WidgetField",
+          "slug": "WidgetField",
+          "kind": "interface",
+          "signature": "interface WidgetField",
+          "doc": "One field of a multi-widget form: its widget, and the value to render it holding.",
+          "docFull": "One field of a multi-widget form: its widget, and the value to render it holding.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "widgetFor",
+          "slug": "widgetFor",
+          "kind": "function",
+          "signature": "widgetFor(node: SchemaNode, path: typeOperator, required: boolean): WidgetSpec",
+          "doc": "The widget for one schema node — the first matching rule of the table above wins.",
+          "docFull": "The widget for one schema node — the first matching rule of the table above wins.\n\nRecursive: a group carries its children, a list its row template, a union its branches, so one\ncall at a top-level config key yields the whole sub-form.",
+          "params": [
+            {
+              "name": "node",
+              "doc": "The schema node (already OVERRIDES-patched by resolveAt)."
+            },
+            {
+              "name": "path",
+              "doc": "Its path segments (array indices as numeric segments)."
+            },
+            {
+              "name": "required",
+              "doc": "Whether the field is required (an optional enum gains \"— unset —\")."
+            }
+          ],
+          "returns": "The widget to render.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WidgetKind",
+          "slug": "WidgetKind",
+          "kind": "typeAlias",
+          "signature": "type WidgetKind = text | textarea | number | toggle | select | segmented | multi-select | chips | list-of-forms | map | union | group | code",
+          "doc": "Every control the config editor can render.",
+          "docFull": "Every control the config editor can render.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WidgetOption",
+          "slug": "WidgetOption",
+          "kind": "interface",
+          "signature": "interface WidgetOption",
+          "doc": "One choice of a select, segmented control or checkbox group.",
+          "docFull": "One choice of a select, segmented control or checkbox group.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WidgetProps",
+          "slug": "WidgetProps",
+          "kind": "typeAlias",
+          "signature": "type WidgetProps = object",
+          "doc": "What every widget component is handed (Widget's props).",
+          "docFull": "What every widget component is handed ({@linkcode Widget}'s props).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WidgetSpec",
+          "slug": "WidgetSpec",
+          "kind": "interface",
+          "signature": "interface WidgetSpec",
+          "doc": "A resolved widget: what to render at one path, and everything the renderer needs.",
+          "docFull": "A resolved widget: what to render at one path, and everything the renderer needs.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        }
+      ]
+    },
+    {
       "module": "denext/expo/apple-authentication",
       "symbols": [
         {

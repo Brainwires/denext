@@ -8,7 +8,11 @@
  * @module
  */
 
-import { oauthPreset, oidcClaimProfile } from "../../../server/auth/providers-presets.ts";
+import {
+  oauthPreset,
+  type OAuthPresetSpec,
+  oidcClaimProfile,
+} from "../../../server/auth/providers-presets.ts";
 import { oidc } from "../../../server/auth/providers.ts";
 import type {
   AuthProvider,
@@ -112,6 +116,11 @@ export interface OAuthUserConfig<P = Record<string, unknown>> {
   allowDangerousEmailAccountLinking?: boolean;
   /** Accepted and ignored: denext always runs `state` + PKCE (+ `nonce` for OIDC). */
   checks?: string[];
+  /**
+   * denext-only: extra hosts the provider's endpoints may live on (exact, or `*.domain`) — a
+   * discovered endpoint on another host is refused otherwise (a Cognito custom domain).
+   */
+  allowedHosts?: string[];
 }
 
 /** The `AUTH_<ID>` prefix Auth.js reads a provider's defaults from. */
@@ -198,6 +207,11 @@ function overrideUser(mine: ProfileUser, preset: AuthUser): AuthUser {
   return user;
 }
 
+/** The raw profile Auth.js hands `profile()`: the userinfo response and the id_token claims. */
+function mergedProfile(input: ProfileInput): Record<string, unknown> {
+  return { ...(input.userinfo ?? {}), ...(input.claims ?? {}) };
+}
+
 /**
  * Wrap a denext profile mapper so the app's `profile()` override (sync or async) decides the
  * user, and the Auth.js callbacks see the round-trip: the raw profile, the account with its
@@ -208,10 +222,11 @@ function recordingProfile<P>(
   custom: OAuthUserConfig<P>["profile"],
   providerId: string,
   type: string,
+  rawProfile: (input: ProfileInput) => Record<string, unknown> = mergedProfile,
 ): OAuthProvider["profile"] {
   return async (input: ProfileInput) => {
     const base = await preset(input);
-    const raw = { ...(input.userinfo ?? {}), ...(input.claims ?? {}) };
+    const raw = rawProfile(input);
     const record = signInRecord();
     record.profile = raw;
     let user = base;
@@ -237,13 +252,17 @@ function recordingProfile<P>(
 function withAuthJsOptions<P>(
   built: OAuthProvider,
   options: OAuthUserConfig<P>,
+  rawProfile?: (input: ProfileInput) => Record<string, unknown>,
 ): OAuthProvider {
   const id = options.id ?? built.id;
   const { rest } = authorizationParams(options.authorization);
   const provider: OAuthProvider = { ...built, id };
   if (rest) provider.authorizationParams = { ...built.authorizationParams, ...rest };
   if (options.allowDangerousEmailAccountLinking) provider.allowDangerousEmailAccountLinking = true;
-  provider.profile = recordingProfile(built.profile, options.profile, id, built.type);
+  if (options.allowedHosts?.length) {
+    provider.allowedHosts = [...(built.allowedHosts ?? []), ...options.allowedHosts];
+  }
+  provider.profile = recordingProfile(built.profile, options.profile, id, built.type, rawProfile);
   return provider;
 }
 
@@ -256,7 +275,13 @@ function withAuthJsOptions<P>(
  * @returns The descriptor.
  */
 export function oauthDescriptor<P, O extends OAuthUserConfig<P>>(
-  meta: { id: string; name: string; type: "oauth" | "oidc" },
+  meta: {
+    id: string;
+    name: string;
+    type: "oauth" | "oidc";
+    /** The raw profile `profile()` receives, when it is not the userinfo + claims. */
+    rawProfile?: (input: ProfileInput) => Record<string, unknown>;
+  },
   options: O,
   preset: (
     credentials: { clientId: string; clientSecret: string; scopes?: string[] },
@@ -272,8 +297,59 @@ export function oauthDescriptor<P, O extends OAuthUserConfig<P>>(
       clientSecret: optionOrEnv(env, id, options.clientSecret, "SECRET"),
       ...(scopes ? { scopes } : {}),
     }, optionOrEnv(env, id, options.issuer, "ISSUER"));
-    return { provider: withAuthJsOptions(built, { ...options, id }) };
+    return { provider: withAuthJsOptions(built, { ...options, id }, meta.rawProfile) };
   });
+}
+
+/** A preset's static data, plus how it authenticates at the token endpoint. */
+export interface ProviderSpec extends OAuthPresetSpec {
+  /** `"client_secret_basic"` for a provider that wants the credentials in a Basic header. */
+  tokenEndpointAuthMethod?: OAuthProvider["tokenEndpointAuthMethod"];
+}
+
+/**
+ * A provider from static endpoint data the shim carries itself (where denext has no preset).
+ * Unlike `oauthPreset()` it allows no scopes at all, for a provider that takes them from the
+ * app registration (Zoom, Notion): the authorization request then carries no `scope`.
+ *
+ * @param spec The endpoints, scopes, mapper and token-endpoint auth method.
+ * @param credentials The client credentials and an optional scope override.
+ * @returns The denext provider.
+ */
+export function specProvider(
+  spec: ProviderSpec,
+  credentials: { clientId: string; clientSecret: string; scopes?: string[] },
+): OAuthProvider {
+  const scopes = credentials.scopes ?? spec.scopes;
+  const { tokenEndpointAuthMethod, ...preset } = spec;
+  // `oauthPreset` refuses an empty list; the placeholder is replaced by the real (empty) one.
+  const built = oauthPreset(
+    { ...preset, scopes: scopes.length ? scopes : ["openid"] },
+    { clientId: credentials.clientId, clientSecret: credentials.clientSecret },
+  );
+  return { ...built, scopes, ...(tokenEndpointAuthMethod ? { tokenEndpointAuthMethod } : {}) };
+}
+
+/**
+ * The issuer a provider needs (its option, else `AUTH_<ID>_ISSUER`), parsed; a config-time
+ * error naming both when it is missing or not an https URL.
+ *
+ * @param id The provider id.
+ * @param issuer The resolved issuer (`""` when neither is set).
+ * @returns The issuer URL.
+ * @throws {TypeError} When it is missing or not https.
+ */
+export function issuerUrl(id: string, issuer: string): URL {
+  let url: URL | undefined;
+  try {
+    url = issuer ? new URL(issuer) : undefined;
+  } catch { /* reported below */ }
+  if (!url || url.protocol !== "https:") {
+    throw new TypeError(
+      `next-auth: provider "${id}" needs an https \`issuer\` (or ${envPrefix(id)}_ISSUER)`,
+    );
+  }
+  return url;
 }
 
 /** A custom Auth.js OAuth / OIDC provider written as a plain object. */
@@ -288,6 +364,8 @@ export interface CustomOAuthConfig extends OAuthUserConfig {
   userinfo?: EndpointConfig;
   /** The JWKS endpoint (OIDC with explicit endpoints). */
   jwks_endpoint?: string;
+  /** The client's token-endpoint authentication (`client_secret_post` by default). */
+  client?: { token_endpoint_auth_method?: string };
 }
 
 /** An endpoint's URL. */
@@ -392,10 +470,14 @@ export function customDescriptor(config: CustomOAuthConfig): ProviderDescriptor 
     type: config.type,
     options: config,
   };
-  return describeProvider(
-    descriptor,
-    (env) => ({ provider: withAuthJsOptions(buildCustomOAuth(config, env), config) }),
-  );
+  return describeProvider(descriptor, (env) => {
+    const provider = withAuthJsOptions(buildCustomOAuth(config, env), config);
+    const method = config.client?.token_endpoint_auth_method;
+    if (method === "client_secret_basic" || method === "client_secret_post") {
+      provider.tokenEndpointAuthMethod = method;
+    }
+    return { provider };
+  });
 }
 
 /**

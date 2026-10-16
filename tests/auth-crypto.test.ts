@@ -10,6 +10,7 @@ import {
   randomToken,
 } from "../src/server/auth/oauth.ts";
 import { type Jwk, verifyIdToken } from "../src/server/auth/jwt.ts";
+import { exchangeCodeForTokens } from "../src/server/auth/flow.ts";
 
 // ---- PKCE + tokens ---------------------------------------------------------
 
@@ -50,6 +51,62 @@ Deno.test("buildAuthorizationUrl: PKCE + state + nonce + extras", () => {
   assertEquals(url.searchParams.get("nonce"), "n0nce");
   assertEquals(url.searchParams.get("scope"), "openid email profile");
   assertEquals(url.searchParams.get("access_type"), "offline");
+});
+
+Deno.test("buildAuthorizationUrl: no scope parameter when the provider asks for none", () => {
+  const url = new URL(buildAuthorizationUrl({
+    authorizationUrl: "https://zoom.example/oauth/authorize",
+    clientId: "abc",
+    redirectUri: "https://app.example.com/auth/callback/zoom",
+    scope: "",
+    state: "st4te",
+    codeChallenge: "chal",
+  }));
+  assertEquals(url.searchParams.has("scope"), false);
+  assertEquals(url.searchParams.get("state"), "st4te");
+});
+
+Deno.test("exchangeCodeForTokens: client_secret_basic sends a Basic header, not the secret in the body", async () => {
+  const seen: { headers: Headers; body: URLSearchParams }[] = [];
+  const doFetch = (_url: string, init: RequestInit) => {
+    seen.push({
+      headers: new Headers(init.headers),
+      body: new URLSearchParams(String(init.body)),
+    });
+    return Promise.resolve(Response.json({ access_token: "at", token_type: "bearer" }));
+  };
+  const provider = {
+    id: "x",
+    type: "oauth" as const,
+    authorizationUrl: "https://x.example/authorize",
+    tokenUrl: "https://x.example/token",
+    scopes: ["a"],
+    clientId: "id:1",
+    clientSecret: "s3cr&t é",
+    profile: () => ({ id: "1" }),
+  };
+  const params = {
+    code: "c",
+    codeVerifier: "v",
+    redirectUri: "https://app.example/cb",
+    tokenUrl: "https://x.example/token",
+  };
+  await exchangeCodeForTokens(provider, params, doFetch);
+  await exchangeCodeForTokens(
+    { ...provider, tokenEndpointAuthMethod: "client_secret_basic" },
+    params,
+    doFetch,
+  );
+  const [post, basic] = seen;
+  assertEquals(post.body.get("client_secret"), "s3cr&t é");
+  assertEquals(post.headers.get("authorization"), null);
+  assertEquals(basic.body.has("client_secret"), false);
+  assertEquals(basic.body.has("client_id"), false);
+  assertEquals(basic.body.get("code_verifier"), "v");
+  const decoded = new TextDecoder().decode(
+    Uint8Array.from(atob(basic.headers.get("authorization")!.slice(6)), (c) => c.charCodeAt(0)),
+  );
+  assertEquals(decoded, "id%3A1:s3cr%26t+%C3%A9");
 });
 
 // ---- RS256 id_token verification -------------------------------------------

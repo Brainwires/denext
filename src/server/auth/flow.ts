@@ -170,6 +170,22 @@ export interface TokenResponse {
 }
 
 /**
+ * The HTTP Basic `Authorization` value for a client id and secret: each form-urlencoded first,
+ * as RFC 6749 §2.3.1 requires (a secret with `:` or non-ASCII characters survives).
+ *
+ * @param clientId The client id.
+ * @param clientSecret The client secret.
+ * @returns `Basic <base64(id:secret)>`.
+ */
+function basicClientAuth(clientId: string, clientSecret: string): string {
+  const encode = (value: string) => new URLSearchParams({ v: value }).toString().slice(2);
+  const pair = new TextEncoder().encode(`${encode(clientId)}:${encode(clientSecret)}`);
+  let binary = "";
+  for (const byte of pair) binary += String.fromCharCode(byte);
+  return `Basic ${btoa(binary)}`;
+}
+
+/**
  * Exchange an authorization `code` (+ PKCE verifier) for tokens at the provider's
  * token endpoint.
  *
@@ -185,22 +201,27 @@ export async function exchangeCodeForTokens(
   params: { code: string; codeVerifier: string; redirectUri: string; tokenUrl: string },
   doFetch: ProviderFetch,
 ): Promise<TokenResponse> {
-  const body = new URLSearchParams({
+  const form = new URLSearchParams({
     grant_type: "authorization_code",
     code: params.code,
     redirect_uri: params.redirectUri,
-    client_id: provider.clientId,
-    client_secret: provider.clientSecret,
     code_verifier: params.codeVerifier,
-  }).toString();
+  });
+  const headers: Record<string, string> = {
+    "content-type": "application/x-www-form-urlencoded",
+    "accept": "application/json",
+  };
+  if (provider.tokenEndpointAuthMethod === "client_secret_basic") {
+    headers.authorization = basicClientAuth(provider.clientId, provider.clientSecret);
+  } else {
+    form.set("client_id", provider.clientId);
+    form.set("client_secret", provider.clientSecret);
+  }
 
   const res = await doFetch(params.tokenUrl, {
     method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      "accept": "application/json",
-    },
-    body,
+    headers,
+    body: form.toString(),
   });
   const tokens = await res.json().catch(() => ({})) as TokenResponse;
   if (!res.ok || tokens.error) {

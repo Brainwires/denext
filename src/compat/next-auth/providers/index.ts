@@ -1,8 +1,10 @@
 /**
  * `next-auth/providers` on denext: the provider types. Each provider is its own module
- * (`next-auth/providers/github`, `…/google`, `…/credentials`, `…/resend`, `…/nodemailer`,
- * `…/email`, `…/apple`, `…/discord`, `…/microsoft-entra-id`); a custom OAuth / OIDC provider
- * is a plain object (`{ id, name, type: "oauth", authorization, token, userinfo, … }`).
+ * (`next-auth/providers/github`, `…/google`, `…/apple`, `…/discord`, `…/microsoft-entra-id`,
+ * `…/gitlab`, `…/twitter`, `…/linkedin`, `…/facebook`, `…/slack`, `…/twitch`, `…/spotify`,
+ * `…/okta`, `…/auth0`, `…/keycloak`, `…/cognito`, `…/zoom`, `…/notion`, `…/credentials`,
+ * `…/resend`, `…/nodemailer`, `…/email`); a custom OAuth / OIDC provider is a plain object
+ * (`{ id, name, type: "oauth", authorization, token, userinfo, … }`).
  *
  * @module
  */

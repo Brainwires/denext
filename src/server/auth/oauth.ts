@@ -96,7 +96,8 @@ export function buildAuthorizationUrl(params: AuthorizationUrlParams): string {
   q.set("response_type", "code");
   q.set("client_id", params.clientId);
   q.set("redirect_uri", params.redirectUri);
-  q.set("scope", params.scope);
+  // A provider that takes its scopes from the app registration (Zoom, Notion) gets none.
+  if (params.scope) q.set("scope", params.scope);
   q.set("state", params.state);
   q.set("code_challenge", params.codeChallenge);
   q.set("code_challenge_method", "S256");

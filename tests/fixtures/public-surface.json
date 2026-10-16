@@ -5208,6 +5208,14 @@
     "AppleProfile:typeAlias",
     "default:function"
   ],
+  "denext/next-auth/providers/auth0": [
+    "Auth0Profile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/cognito": [
+    "CognitoProfile:typeAlias",
+    "default:function"
+  ],
   "denext/next-auth/providers/credentials": [
     "CredentialInput:interface",
     "CredentialsConfig:interface",
@@ -5220,12 +5228,28 @@
   "denext/next-auth/providers/email": [
     "default:function"
   ],
+  "denext/next-auth/providers/facebook": [
+    "FacebookProfile:typeAlias",
+    "default:function"
+  ],
   "denext/next-auth/providers/github": [
     "GitHubProfile:typeAlias",
     "default:function"
   ],
+  "denext/next-auth/providers/gitlab": [
+    "GitLabProfile:typeAlias",
+    "default:function"
+  ],
   "denext/next-auth/providers/google": [
     "GoogleProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/keycloak": [
+    "KeycloakProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/linkedin": [
+    "LinkedInProfile:typeAlias",
     "default:function"
   ],
   "denext/next-auth/providers/microsoft-entra-id": [
@@ -5238,8 +5262,37 @@
     "default:function",
     "smtpSettings:function"
   ],
+  "denext/next-auth/providers/notion": [
+    "NotionProfile:typeAlias",
+    "NotionUserConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/okta": [
+    "OktaProfile:typeAlias",
+    "default:function"
+  ],
   "denext/next-auth/providers/resend": [
     "ResendUserConfig:interface",
+    "default:function"
+  ],
+  "denext/next-auth/providers/slack": [
+    "SlackProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/spotify": [
+    "SpotifyProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/twitch": [
+    "TwitchProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/twitter": [
+    "TwitterProfile:typeAlias",
+    "default:function"
+  ],
+  "denext/next-auth/providers/zoom": [
+    "ZoomProfile:typeAlias",
     "default:function"
   ],
   "denext/next": [

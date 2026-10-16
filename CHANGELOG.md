@@ -63,8 +63,9 @@ and this project adheres to
   `auth(handler)`), `next-auth/react` (`SessionProvider`, `useSession`, `signIn`, `signOut`,
   `getSession`, `getCsrfToken`, `getProviders`) and `next-auth/jwt` (`getToken`, `encode`,
   `decode`) run unchanged, mapped onto `denextAuth`. Providers: GitHub, Google, Apple, Discord,
-  Microsoft Entra ID, Credentials, Resend, Nodemailer / Email, and custom OAuth / OIDC objects,
-  with Auth.js's `AUTH_<ID>_ID` / `_SECRET` defaults. Both session strategies: `"jwt"` seals the
+  Microsoft Entra ID, GitLab, X (Twitter), LinkedIn, Facebook, Slack, Twitch, Spotify, Okta,
+  Auth0, Keycloak, Cognito, Zoom, Notion, Credentials, Resend, Nodemailer / Email, and custom
+  OAuth / OIDC objects, with Auth.js's `AUTH_<ID>_ID` / `_SECRET` / `_ISSUER` defaults. Both session strategies: `"jwt"` seals the
   `jwt` callback's token (AES-256-GCM) inside denext's signed cookie; `"database"` uses the
   adapter's sessions. An Auth.js adapter (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …) is
   bridged onto denext's adapter port. The `signIn`, `jwt`, `session`, `redirect` and `authorized`
@@ -73,6 +74,11 @@ and this project adheres to
   the `redirect` callback's answer stay on the origin, and production needs `AUTH_URL`.
   `denext migrate` maps `next-auth` and its subpaths when the app depends on it. Differences are
   listed in KNOWN-DIFFERENCES.md and KNOWN-LIMITATIONS.md.
+- **OAuth providers that authenticate at the token endpoint with HTTP Basic.** An
+  `OAuthProvider` takes `tokenEndpointAuthMethod: "client_secret_basic"` (RFC 6749 §2.3.1; X,
+  Zoom and Notion require it) instead of the default `client_secret_post`; a provider with no
+  scopes sends no `scope` parameter; and an `allowedHosts` entry `*.domain` admits a discovered
+  endpoint on that domain's subdomains (a Cognito pool's hosted domain), never the apex.
 
 - **Live across replicas through Redis: `redisChannelTransport()`, and `usePresence` on every
   instance.** `setChannelTransport(redisChannelTransport({ url }))` (`denext/server`) carries

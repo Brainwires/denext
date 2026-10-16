@@ -14,6 +14,7 @@ import Discord from "../src/compat/next-auth/providers/discord.ts";
 import Email from "../src/compat/next-auth/providers/email.ts";
 import Google from "../src/compat/next-auth/providers/google.ts";
 import Nodemailer, { smtpSettings } from "../src/compat/next-auth/providers/nodemailer.ts";
+import Zoom from "../src/compat/next-auth/providers/zoom.ts";
 import { translateConfig } from "../src/compat/next-auth/config.ts";
 import { decode, encode, getToken } from "../src/compat/next-auth/jwt.ts";
 import { type AuthJsAdapter, fromAuthJsAdapter } from "../src/compat/next-auth/adapter.ts";
@@ -544,6 +545,54 @@ Deno.test("next-auth: an OAuth sign-in starts with state + PKCE through the POST
   assert(to.searchParams.get("state"));
   assertEquals(to.searchParams.get("redirect_uri"), `${ORIGIN}/api/auth/callback/github`);
   assert(a.jar.cookies.has("__Host-denext_auth_tx"), "the transaction cookie");
+});
+
+Deno.test("next-auth: per-call authorizationParams reach the provider, the flow's own never", async () => {
+  const a = app({ providers: [GitHub({ clientId: "id", clientSecret: "secret" })] });
+  const query = new URLSearchParams({
+    prompt: "login",
+    login_hint: "ada@example.com",
+    state: "attacker",
+    redirect_uri: "https://evil.test/cb",
+    Code_Challenge: "x",
+    request_uri: "https://evil.test/req",
+  });
+  const res = await a.call(`/api/auth/signin/github?${query}`, {
+    form: { csrfToken: await a.csrf(), callbackUrl: "/after" },
+  });
+  const to = new URL(res.headers.get("location")!);
+  assertEquals(to.searchParams.get("prompt"), "login");
+  assertEquals(to.searchParams.get("login_hint"), "ada@example.com");
+  assertNotEquals(to.searchParams.get("state"), "attacker");
+  assertEquals(to.searchParams.get("redirect_uri"), `${ORIGIN}/api/auth/callback/github`);
+  assertNotEquals(to.searchParams.get("code_challenge"), "x");
+  assertEquals(to.searchParams.has("Code_Challenge"), false);
+  assertEquals(to.searchParams.has("request_uri"), false);
+
+  // The server-side signIn() takes them as its third argument (a record or a query string).
+  const server = await a.run(() =>
+    a.result.signIn("github", { redirect: false }, { prompt: "consent", nonce: "n" })
+  );
+  const url = new URL(server.value!);
+  assertEquals(url.searchParams.get("prompt"), "consent");
+  assertNotEquals(url.searchParams.get("nonce"), "n");
+  const asString = await a.run(() =>
+    a.result.signIn("github", { redirect: false }, "access_type=offline&state=s")
+  );
+  const parsed = new URL(asString.value!);
+  assertEquals(parsed.searchParams.get("access_type"), "offline");
+  assertNotEquals(parsed.searchParams.get("state"), "s");
+});
+
+Deno.test("next-auth: a provider without scopes (Zoom) starts with none in the URL", async () => {
+  const a = app({ providers: [Zoom({ clientId: "id", clientSecret: "secret" })] });
+  const res = await a.call("/api/auth/signin/zoom", {
+    form: { csrfToken: await a.csrf(), callbackUrl: "/after" },
+  });
+  const to = new URL(res.headers.get("location")!);
+  assertEquals(to.origin + to.pathname, "https://zoom.us/oauth/authorize");
+  assertEquals(to.searchParams.has("scope"), false);
+  assertEquals(to.searchParams.get("code_challenge_method"), "S256");
 });
 
 Deno.test("next-auth: server-side signIn / signOut from a Server Action", async () => {

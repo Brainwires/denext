@@ -371,6 +371,17 @@ place it behaves differently from Auth.js:
 - **The `session` endpoint and `auth()` also run `callbacks.jwt`** on every read, as Auth.js does;
   a changed token is written back only where the response is still open (the `session` endpoint,
   middleware, `auth(handler)` and `unstable_update()`), never from a plain `auth()` call.
+- **GitLab, Slack, LinkedIn, Twitch, Okta, Auth0, Keycloak and Cognito sign in with OpenID
+  Connect**, so a `profile()` override receives the id_token claims (`sub`, `email`,
+  `email_verified`, `picture`, …), not GitLab's `/api/v4/user` body. The account id is the same
+  (GitLab's user id). An address links to an existing user only when the claims mark it
+  verified; X shares no address, and Facebook, Spotify, Zoom and Notion addresses are never
+  treated as verified.
+- **Okta, Auth0, Keycloak and Cognito need an https `issuer`** (or `AUTH_<ID>_ISSUER`) when
+  `NextAuth()` runs, not at the first sign-in. A Cognito pool's endpoints may live on its
+  `*.auth.<region>.amazoncognito.com` domain; a custom domain is listed in the provider's
+  `allowedHosts` (a denext option), since a discovered endpoint on any other host is refused.
+- **Notion's `redirectUri` is ignored:** the callback URL is denext's (`AUTH_URL` + the base path).
 - **`session.user` includes `id`** (the token's `sub`, or the user's id).
 - **The built-in pages are plain HTML** (no `theme`), and their `?error=` codes are Auth.js's.
 

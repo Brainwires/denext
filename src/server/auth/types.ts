@@ -158,6 +158,13 @@ export interface OAuthProvider {
   /** Extra authorization-request query params (e.g. `{ access_type: "offline" }`). */
   authorizationParams?: Record<string, string>;
   /**
+   * How the client authenticates at the token endpoint (RFC 6749 §2.3.1).
+   * `"client_secret_post"` (the default) sends `client_id` / `client_secret` in the form body;
+   * `"client_secret_basic"` sends them as an HTTP Basic `Authorization` header instead, which
+   * some providers (X, Zoom, Notion) require.
+   */
+  tokenEndpointAuthMethod?: "client_secret_post" | "client_secret_basic";
+  /**
    * How the provider returns the authorization response (OAuth 2.0 Multiple Response Type
    * Encoding Practices §2.1). `"query"` (the default) redirects back with `?code=…&state=…`,
    * answered by `GET {basePath}/callback/:id`. `"form_post"` (OAuth 2.0 Form Post Response
@@ -169,7 +176,8 @@ export interface OAuthProvider {
   responseMode?: "query" | "form_post";
   /**
    * Hosts `safeFetch` may reach for this provider (token/userinfo/jwks). Derived
-   * from the configured endpoints when omitted.
+   * from the configured endpoints when omitted. A `*.domain` entry admits that domain's
+   * subdomains (not the apex), for an endpoint discovery finds on a per-tenant subdomain.
    */
   allowedHosts?: string[];
   /**
