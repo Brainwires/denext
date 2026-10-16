@@ -124,10 +124,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `next-auth/providers/*` modules are not shipped; write one as a custom provider object.
   WebAuthn (`next-auth/providers/passkey`) is not mapped — denext's own `passkeys` are.
 - **Adapters:** an Auth.js adapter (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …) backs
-  users, accounts, verification tokens and database sessions. Its schema has no column for
-  denext's roles, bans, password hashes or `sessionsValidAfter`, so those features don't work
-  through it, `revokeAllSessions()` can't end its database sessions (it warns), and database
-  sessions don't slide. With an adapter, a Credentials `authorize()` must return a user of the
+  users, accounts, verification tokens and database sessions. Roles, bans and
+  `sessionsValidAfter` need its two optional extension methods (`getUserExtension` /
+  `updateUserExtension`, an extension table); without them those fields are dropped with a
+  warning and `revokeAllSessions()` can't end its database sessions. Password hashes are not
+  stored through it, and database sessions don't slide. With an adapter, a Credentials `authorize()` must return a user of the
   adapter's users table (by `id`), as with Auth.js; a user it doesn't know is refused.
 - **v4 APIs** (`next-auth/next`, `getServerSession`, `next-auth/middleware`'s `withAuth`) are
   not shipped.

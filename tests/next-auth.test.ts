@@ -17,7 +17,12 @@ import Nodemailer, { smtpSettings } from "../src/compat/next-auth/providers/node
 import Zoom from "../src/compat/next-auth/providers/zoom.ts";
 import { translateConfig } from "../src/compat/next-auth/config.ts";
 import { decode, encode, getToken } from "../src/compat/next-auth/jwt.ts";
-import { type AuthJsAdapter, fromAuthJsAdapter } from "../src/compat/next-auth/adapter.ts";
+import {
+  type AuthJsAdapter,
+  type AuthJsUserExtension,
+  fromAuthJsAdapter,
+} from "../src/compat/next-auth/adapter.ts";
+import { requireAuth, revokeAllSessions } from "../src/server/auth/mod.ts";
 import type { OAuthProvider } from "../src/server/auth/types.ts";
 import {
   createRequestContext,
@@ -901,7 +906,12 @@ Deno.test("next-auth adapter bridge: users, accounts, tokens and sessions on Aut
   await store.delete("sid-1"); // a missing row is already ended
   assertEquals(await store.get("sid-1"), undefined);
   await store.deleteByUser(user.id);
-  assertEquals(warnings.length, 1, "deleteByUser can't be done and says so");
+  // Without the extension methods, the denext-only fields and the revocation can't be stored,
+  // and each says so.
+  assertEquals(warnings.length, 3);
+  assert(warnings[0].includes("roles, sessionsValidAfter"), warnings[0]);
+  assert(warnings[1].includes("bannedUntil"), warnings[1]);
+  assert(warnings[2].includes("were not ended"), warnings[2]);
 });
 
 Deno.test("next-auth: database sessions through an Auth.js adapter", async () => {
@@ -1017,4 +1027,77 @@ Deno.test("next-auth events: a throwing session listener never fails the read", 
   await signInWithPassword(a);
   const session = await (await a.call("/api/auth/session")).json();
   assertEquals(session.user.email, "ada@example.com");
+});
+
+/** The adapter with an in-memory extension table beside its users, as an app would add one. */
+function withExtensionTable<T extends object>(adapter: T) {
+  const extensions = new Map<string, AuthJsUserExtension>();
+  return Object.assign(adapter, {
+    extensions,
+    getUserExtension: (id: string) => extensions.get(id) ?? null,
+    updateUserExtension: (id: string, patch: AuthJsUserExtension) =>
+      void extensions.set(id, { ...extensions.get(id), ...patch }),
+  });
+}
+
+Deno.test("next-auth adapter bridge: an extension table keeps roles, bans and sessionsValidAfter", async () => {
+  const raw = withExtensionTable(memoryAdapter());
+  const warnings: string[] = [];
+  const bridged = fromAuthJsAdapter(raw, {
+    credentialsProviders: new Set(["credentials"]),
+    warn: (m) => void warnings.push(m),
+  });
+  const user = await bridged.createUser({ email: "a@b.co", roles: ["admin"] });
+  assertEquals(raw.extensions.get(user.id), { roles: ["admin"] });
+  assertEquals(user.roles, ["admin"]);
+  assertEquals((await bridged.getUser(user.id))?.roles, ["admin"]);
+  await bridged.updateUser({ id: user.id, bannedUntil: 99, sessionsValidAfter: 5 });
+  const read = await bridged.getUserByEmail("a@b.co");
+  assertEquals([read?.roles, read?.bannedUntil, read?.sessionsValidAfter], [["admin"], 99, 5]);
+  await bridged.updateUser({ id: user.id, bannedUntil: undefined });
+  assertEquals((await bridged.getUser(user.id))?.bannedUntil, undefined, "null clears it");
+  assertEquals(Object.keys(raw.users.get(user.id)!).sort(), [
+    "email",
+    "emailVerified",
+    "id",
+    "image",
+    "name",
+  ]);
+  const store = bridged.sessions!;
+  const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+  await store.create("sid-1", { user: { id: user.id }, provider: "credentials", expiresAt });
+  assertEquals((await store.get("sid-1"))?.user.roles, ["admin"], "a session carries the roles");
+  await store.deleteByUser(user.id);
+  assertEquals(warnings, [], "revocation goes through sessionsValidAfter instead");
+});
+
+Deno.test("next-auth: with an extension table, revokeAllSessions and a ban end database sessions", async () => {
+  const sessions = new Map<string, { sessionToken: string; userId: string; expires: Date }>();
+  const adapter = withExtensionTable(memoryAdapter(sessions));
+  adapter.createUser({
+    id: "u1",
+    email: "ada@example.com",
+    emailVerified: null,
+    name: "Ada",
+    image: null,
+  });
+  adapter.extensions.set("u1", { roles: ["editor"] });
+  const a = app({ adapter, session: { strategy: "database" } });
+  const readSession = async () => await (await a.call("/api/auth/session")).json();
+  await signInWithPassword(a);
+  assertEquals((await readSession())?.user.email, "ada@example.com");
+  const guard = await a.run(() => requireAuth(new Request(`${ORIGIN}/admin`), { role: "editor" }));
+  assertEquals(guard.value, null, "the stored role reaches the session");
+
+  // Signed in a minute ago (a row's sign-in time is its expiry less maxAge), then revoked.
+  for (const row of sessions.values()) row.expires = new Date(row.expires.getTime() - 60_000);
+  await a.run(() => revokeAllSessions("u1"));
+  assertEquals(await readSession(), null, "signed out everywhere");
+  assertEquals(sessions.size, 0, "the dead row is deleted");
+
+  await signInWithPassword(a);
+  assertEquals((await readSession())?.user.email, "ada@example.com", "a new sign-in works");
+  const until = Math.floor(Date.now() / 1000) + 3600;
+  adapter.extensions.set("u1", { ...adapter.extensions.get("u1"), bannedUntil: until });
+  assertEquals(await readSession(), null, "a ban ends the session");
 });

@@ -3,12 +3,15 @@
  * Auth.js's `Adapter` methods) behind denext's {@link AuthAdapter} port, so `NextAuth({ adapter:
  * PrismaAdapter(prisma) })` keeps its tables: users, accounts, sessions and verification tokens.
  *
- * What Auth.js's schema has no column for is not stored: roles, bans, `sessionsValidAfter` and
- * the other denext-only user fields are dropped on write; a Credentials sign-in links no account
- * row (as in Auth.js: `authorize()` returns a user of the users table, looked up by its id); a
- * verification token is keyed `<purpose>:<email>` and stores the token's SHA-256, never the
- * token. Database sessions are the adapter's `Session` rows; they can't be listed by user, so
- * "sign out everywhere" can't end them (see KNOWN-LIMITATIONS).
+ * What Auth.js's schema has no column for — roles, a ban (`bannedUntil`) and
+ * `sessionsValidAfter` — is kept through two optional adapter methods, `getUserExtension` and
+ * `updateUserExtension` (an extension table beside the users table); an adapter without them
+ * keeps working, and those fields are dropped on write (with a warning). A Credentials sign-in
+ * links no account row (as in Auth.js: `authorize()` returns a user of the users table, looked
+ * up by its id); a verification token is keyed `<purpose>:<email>` and stores the token's
+ * SHA-256, never the token. Database sessions are the adapter's `Session` rows; they can't be
+ * listed by user, so "sign out everywhere" ends them through `sessionsValidAfter` — only with
+ * the extension methods (see KNOWN-LIMITATIONS).
  *
  * @module
  */
@@ -84,6 +87,19 @@ export interface AuthJsVerificationToken {
   expires: Date;
 }
 
+/**
+ * The denext user fields an Auth.js schema has no column for, as the optional extension methods
+ * store them. Times are epoch seconds; `null` clears a field.
+ */
+export interface AuthJsUserExtension {
+  /** Authorization roles (`requireAuth({ role })`). */
+  roles?: string[] | null;
+  /** Banned until this time: no sign-in or session before it. */
+  bannedUntil?: number | null;
+  /** Sessions signed in before this time are ended (`revokeAllSessions`, a ban). */
+  sessionsValidAfter?: number | null;
+}
+
 /** Auth.js's `Adapter` interface — every method optional, as there. */
 export interface AuthJsAdapter {
   /** Insert a user. */
@@ -122,6 +138,57 @@ export interface AuthJsAdapter {
   useVerificationToken?(
     ref: { identifier: string; token: string },
   ): Awaitable<AuthJsVerificationToken | null>;
+  /**
+   * denext-only: a user's {@linkcode AuthJsUserExtension} (roles, ban, `sessionsValidAfter`),
+   * or `null` when none is stored. With {@linkcode updateUserExtension}, those features work
+   * through an Auth.js adapter.
+   */
+  getUserExtension?(userId: string): Awaitable<AuthJsUserExtension | null>;
+  /** denext-only: merge `patch` into a user's extension (creating it); `null` clears a field. */
+  updateUserExtension?(userId: string, patch: AuthJsUserExtension): Awaitable<unknown>;
+}
+
+/** The extension fields of a denext user (what the users table can't hold). */
+const EXTENSION_FIELDS = ["roles", "bannedUntil", "sessionsValidAfter"] as const;
+
+/** The extension methods, when the adapter has both. */
+interface Extension {
+  read(userId: string): Promise<AuthJsUserExtension | null>;
+  write(userId: string, patch: AuthJsUserExtension): Promise<void>;
+}
+
+/** The adapter's extension methods, bound; `null` unless it has both. */
+function extensionOf(adapter: AuthJsAdapter): Extension | null {
+  const get = adapter.getUserExtension?.bind(adapter);
+  const update = adapter.updateUserExtension?.bind(adapter);
+  if (!get || !update) return null;
+  return {
+    read: async (userId) => (await get(userId)) ?? null,
+    write: async (userId, patch) => void await update(userId, patch),
+  };
+}
+
+/** The extension part of a denext user patch (`null` for a field set to `undefined`). */
+function extensionPatch(patch: Partial<AdapterUser>): AuthJsUserExtension | null {
+  const out: AuthJsUserExtension = {};
+  let any = false;
+  for (const field of EXTENSION_FIELDS) {
+    if (!(field in patch)) continue;
+    (out as Record<string, unknown>)[field] = patch[field] ?? null;
+    any = true;
+  }
+  return any ? out : null;
+}
+
+/** `user` with its stored extension fields. */
+function withExtension(user: AdapterUser, stored: AuthJsUserExtension | null): AdapterUser {
+  if (!stored) return user;
+  if (Array.isArray(stored.roles)) user.roles = [...stored.roles];
+  if (typeof stored.bannedUntil === "number") user.bannedUntil = stored.bannedUntil;
+  if (typeof stored.sessionsValidAfter === "number") {
+    user.sessionsValidAfter = stored.sessionsValidAfter;
+  }
+  return user;
 }
 
 /** Epoch seconds of a date (or a date-ish value a driver returned). */
@@ -198,8 +265,12 @@ function verificationTokens(adapter: AuthJsAdapter): Partial<AuthAdapter> {
 }
 
 /** A user's session row as a denext session payload (no `authTime`: it never slides). */
-function sessionPayload(row: AuthJsAdapterSession, user: AuthJsAdapterUser): AuthSession {
-  const stored = fromRow(user);
+function sessionPayload(
+  row: AuthJsAdapterSession,
+  user: AuthJsAdapterUser,
+  extension: AuthJsUserExtension | null,
+): AuthSession {
+  const stored = withExtension(fromRow(user), extension);
   const session: AuthSession = {
     user: { id: stored.id, emailVerified: stored.emailVerified !== undefined },
     provider: "authjs",
@@ -209,6 +280,7 @@ function sessionPayload(row: AuthJsAdapterSession, user: AuthJsAdapterUser): Aut
   for (const key of ["email", "name", "image"] as const) {
     if (stored[key]) session.user[key] = stored[key];
   }
+  if (stored.roles) session.user.roles = stored.roles;
   return session;
 }
 
@@ -216,6 +288,7 @@ function sessionPayload(row: AuthJsAdapterSession, user: AuthJsAdapterUser): Aut
 function sessionStore(
   adapter: AuthJsAdapter,
   warn: (message: string) => void,
+  extension: Extension | null,
 ): SessionStore | undefined {
   const { createSession, getSessionAndUser, deleteSession, updateSession } = adapter;
   if (!createSession || !getSessionAndUser || !deleteSession) return undefined;
@@ -230,7 +303,8 @@ function sessionStore(
     async get(id) {
       const found = await getSessionAndUser.call(adapter, id);
       if (!found || seconds(found.session.expires) * 1000 <= Date.now()) return undefined;
-      return sessionPayload(found.session, found.user);
+      const stored = extension ? await extension.read(String(found.user.id)) : null;
+      return sessionPayload(found.session, found.user, stored);
     },
     async update(id, session) {
       if (!updateSession) return false;
@@ -248,6 +322,9 @@ function sessionStore(
       }
     },
     deleteByUser(userId) {
+      // With the extension, revocation stamps the user's `sessionsValidAfter`, which ends every
+      // session signed in before it — these rows included — on its next read.
+      if (extension) return;
       warn(
         `next-auth: the Auth.js adapter can't list a user's sessions, so the database sessions ` +
           `of user ${JSON.stringify(userId)} were not ended — they expire on their own.`,
@@ -284,6 +361,19 @@ export function fromAuthJsAdapter(
   const getUserByAccount = required(adapter, "getUserByAccount");
   const updateUser = required(adapter, "updateUser");
   const linkAccount = required(adapter, "linkAccount");
+  const extension = extensionOf(adapter);
+  /** A row as a denext user, with its extension fields. */
+  const userOf = async (row: AuthJsAdapterUser): Promise<AdapterUser> =>
+    withExtension(fromRow(row), extension ? await extension.read(String(row.id)) : null);
+  /** Store a patch's extension fields, or report that they can't be stored. */
+  const writeExtension = async (userId: string, patch: AuthJsUserExtension | null) => {
+    if (!patch) return;
+    if (extension) return await extension.write(userId, patch);
+    options.warn(
+      `next-auth: the Auth.js adapter has no getUserExtension / updateUserExtension, so ` +
+        `${Object.keys(patch).join(", ")} of user ${JSON.stringify(userId)} were not stored`,
+    );
+  };
   const bridged: AuthAdapter = {
     async createUser(user) {
       const row = await createUser(defined({
@@ -293,15 +383,17 @@ export function fromAuthJsAdapter(
         name: user.name ?? null,
         image: user.image ?? null,
       }));
-      return fromRow(row);
+      // Only the fields the new user actually has (an absent role list is not a write).
+      await writeExtension(String(row.id), extensionPatch(defined(user)));
+      return await userOf(row);
     },
     async getUser(id) {
       const row = await getUser(id);
-      return row ? fromRow(row) : undefined;
+      return row ? await userOf(row) : undefined;
     },
     async getUserByEmail(email) {
       const row = await getUserByEmail(email);
-      return row ? fromRow(row) : undefined;
+      return row ? await userOf(row) : undefined;
     },
     async getUserByAccount(ref: AdapterAccountRef) {
       // A Credentials "account" is the user itself: `authorize()` returned the user row's id.
@@ -311,18 +403,19 @@ export function fromAuthJsAdapter(
           provider: ref.provider,
           providerAccountId: ref.providerAccountId,
         });
-      return row ? fromRow(row) : undefined;
+      return row ? await userOf(row) : undefined;
     },
     async updateUser(patch) {
       const row = rowPatch(patch);
+      await writeExtension(patch.id, extensionPatch(patch));
       if (Object.keys(row).length === 0) {
         const current = await getUser(patch.id);
         if (!current) throw new Error(`next-auth: no user ${JSON.stringify(patch.id)}`);
-        return fromRow(current);
+        return await userOf(current);
       }
       const updated = await updateUser({ ...row, id: patch.id });
       await options.onUpdateUser?.(updated);
-      return fromRow(updated);
+      return await userOf(updated);
     },
     async linkAccount(account: AdapterAccount) {
       if (account.type === "credentials") return;
@@ -347,7 +440,7 @@ export function fromAuthJsAdapter(
       await unlink({ provider: ref.provider, providerAccountId: ref.providerAccountId });
     };
   }
-  const sessions = sessionStore(adapter, options.warn);
+  const sessions = sessionStore(adapter, options.warn, extension);
   if (sessions) bridged.sessions = sessions;
   return bridged;
 }

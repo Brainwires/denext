@@ -66,9 +66,11 @@ export type {
   AuthJsAdapterAccount as AdapterAccount,
   AuthJsAdapterSession as AdapterSession,
   AuthJsAdapterUser as AdapterUser,
+  AuthJsUserExtension as AdapterUserExtension,
   AuthJsVerificationToken as VerificationToken,
 } from "./adapter.ts";
 export type { RouteHandler } from "./handlers.ts";
+export type { AuthorizationParamsInput } from "./flows.ts";
 export type { NextRequest } from "../next/request.ts";
 
 /** The base of every error the Auth.js surface throws; `type` names which. */
