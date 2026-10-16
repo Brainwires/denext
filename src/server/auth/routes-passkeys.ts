@@ -32,12 +32,18 @@
  * `passkeys.timeout`), so ceremonies in several tabs of one browser run side by side; a
  * missing, replayed or swapped id is refused.
  *
+ * `passkeys.corsOrigins` lets listed web origins call these rows from another origin: the
+ * preflights are answered, the answers carry credentialed CORS headers for exactly those
+ * origins, and each ceremony is bound to the origin that started it (the verifying request must
+ * come from it, with client data naming it; a same-origin ceremony finishes same-origin only).
+ *
  * Without `denextAuth({ passkeys })` every row answers `null` (a plain 404).
  *
  * @module
  */
 
 import { readCappedBody } from "../body.ts";
+import { applyCors, corsOriginAllowed, isPreflight, preflightResponse } from "../cors.ts";
 import { emitAuthEvent } from "./events.ts";
 import { forgetPasskeyFactor } from "./factors.ts";
 import { completeStepUp, pendingSessionLive, recentlyAuthenticated } from "./mfa.ts";
@@ -107,6 +113,17 @@ function passkeyContext(ctx: AuthRouteContext): PasskeyContext | null {
   return rp && adapter ? { ctx, rp, adapter } : null;
 }
 
+/**
+ * Who is calling: `null` for this app's own origin, the origin itself for a
+ * `passkeys.corsOrigins` entry (its exact `Origin` header — never a `Referer`), or `false`
+ * (refused) for anyone else.
+ */
+function callerOrigin(pk: PasskeyContext): string | null | false {
+  const origin = pk.ctx.request.headers.get("origin");
+  if (pk.rp.cors && origin !== null && corsOriginAllowed(pk.rp.cors, origin)) return origin;
+  return isSameOrigin(pk.ctx.request, pk.ctx.config) ? null : false;
+}
+
 /** The JSON body as an object; anything unusable (oversized, stalled, not JSON) is `{}`. */
 async function readBody(ctx: AuthRouteContext): Promise<Record<string, unknown>> {
   const bytes = await readCappedBody(ctx.request, MAX_BODY_BYTES).catch(() => null);
@@ -142,18 +159,26 @@ interface StartedCeremony {
 async function beginCeremony(
   pk: PasskeyContext,
   kind: PasskeyCeremony,
+  origin: string | null,
   userId?: string,
 ): Promise<StartedCeremony> {
   const ceremonyId = randomToken(16);
   const binding = await sha256Hex(ceremonyId);
-  const challenge = await issueChallenge(pk.adapter, pk.rp, { kind, userId, binding });
+  const challenge = await issueChallenge(pk.adapter, pk.rp, {
+    kind,
+    userId,
+    binding,
+    ...(origin !== null && { origin }),
+  });
   return { challenge, ceremonyId };
 }
 
 /**
  * Redeem the challenge `clientDataJSON` carries — once, whatever follows — and check it was
- * issued to `ceremonyId` (the id its options response handed out) and to one of `kinds`. A
- * missing, replayed or swapped id is refused, and the challenge is spent either way.
+ * issued to `ceremonyId` (the id its options response handed out), to one of `kinds`, and to
+ * this caller: a ceremony started cross-origin completes only from that origin, with client data
+ * naming it, and a same-origin one only same-origin. A missing, replayed or swapped id is
+ * refused, and the challenge is spent either way.
  *
  * @returns The ceremony data, or `null`.
  */
@@ -162,27 +187,39 @@ async function redeemCeremony(
   clientDataJSON: Uint8Array,
   kinds: readonly PasskeyCeremony[],
   ceremonyId: unknown,
+  origin: string | null,
 ): Promise<ChallengeData | null> {
-  const challenge = parseClientData(clientDataJSON).challenge;
-  const data = await redeemChallenge(pk.adapter, challenge);
+  const clientData = parseClientData(clientDataJSON);
+  const data = await redeemChallenge(pk.adapter, clientData.challenge);
   if (!data || !kinds.includes(data.kind)) return null;
+  if (!sameCaller(data, origin, clientData.origin)) return null;
   if (typeof ceremonyId !== "string" || !ceremonyId || ceremonyId.length > MAX_CEREMONY_ID) {
     return null;
   }
   return data.binding === await sha256Hex(ceremonyId) ? data : null;
 }
 
+/** The ceremony's caller binding: the same origin started and finishes it. */
+function sameCaller(data: ChallengeData, origin: string | null, clientOrigin: string): boolean {
+  if ((data.origin ?? null) !== origin) return false;
+  return origin === null || clientOrigin === origin;
+}
+
 // ---- registration -------------------------------------------------------------------
 
-/** The complete, recently signed-in cookie session, or the answer to send. */
-async function recentSession(ctx: AuthRouteContext): Promise<AuthSession | Response> {
-  if (!isSameOrigin(ctx.request, ctx.config)) return json({ error: "forbidden" }, 403);
+/** The complete, recently signed-in cookie session (and its caller), or the answer to send. */
+async function recentSession(
+  pk: PasskeyContext,
+): Promise<{ session: AuthSession; origin: string | null } | Response> {
+  const ctx = pk.ctx;
+  const origin = callerOrigin(pk);
+  if (origin === false) return json({ error: "forbidden" }, 403);
   const session = await readAuthSession(ctx.config);
   if (!session || session.mfaPending) return json({ error: "unauthorized" }, 401);
   if (!recentlyAuthenticated(ctx.options, session)) {
     return json({ error: "reauth_required" }, 403);
   }
-  return session;
+  return { session, origin };
 }
 
 /**
@@ -191,30 +228,32 @@ async function recentSession(ctx: AuthRouteContext): Promise<AuthSession | Respo
  * on the stored `emailVerified`, and so does this — a passkey registered before the owner
  * proves the mailbox would be the attacker's.
  */
-async function registrationSession(pk: PasskeyContext): Promise<AuthSession | Response> {
-  const session = await recentSession(pk.ctx);
-  if (session instanceof Response) return session;
-  const stored = await pk.adapter.getUser(session.user.id);
+async function registrationSession(
+  pk: PasskeyContext,
+): Promise<{ session: AuthSession; origin: string | null } | Response> {
+  const caller = await recentSession(pk);
+  if (caller instanceof Response) return caller;
+  const stored = await pk.adapter.getUser(caller.session.user.id);
   if (!stored) return json({ error: "unauthorized" }, 401);
   // An SSO user signs in through its identity provider only: no passkey to bypass it with.
   if (isSsoUser(stored)) return json({ error: "sso_user" }, 403);
   if (stored.email && !isVerified(stored.emailVerified)) {
     return json({ error: "email_unverified" }, 403);
   }
-  return session;
+  return caller;
 }
 
 /** `POST /passkey/register/options`. */
 async function handleRegisterOptions(ctx: AuthRouteContext): Promise<Response | null> {
   const pk = passkeyContext(ctx);
   if (!pk) return null;
-  const session = await registrationSession(pk);
-  if (session instanceof Response) return session;
-  const user = session.user;
+  const caller = await registrationSession(pk);
+  if (caller instanceof Response) return caller;
+  const user = caller.session.user;
   try {
     const existing = await pk.adapter.listPasskeys(user.id);
     userHandleOf(user.id);
-    const { challenge, ceremonyId } = await beginCeremony(pk, "register", user.id);
+    const { challenge, ceremonyId } = await beginCeremony(pk, "register", caller.origin, user.id);
     return json({ ...creationOptions(pk.rp, user, existing, challenge), ceremonyId });
   } catch (error) {
     if (!(error instanceof WebAuthnError)) throw error;
@@ -227,13 +266,20 @@ async function handleRegisterOptions(ctx: AuthRouteContext): Promise<Response | 
 async function handleRegister(ctx: AuthRouteContext): Promise<Response | null> {
   const pk = passkeyContext(ctx);
   if (!pk) return null;
-  const session = await registrationSession(pk);
-  if (session instanceof Response) return session;
+  const caller = await registrationSession(pk);
+  if (caller instanceof Response) return caller;
+  const { session } = caller;
   const body = await readBody(ctx);
   try {
     const credential = credentialOf(body.credential);
     const clientDataJSON = base64UrlField(credential.response.clientDataJSON, "clientDataJSON");
-    const ceremony = await redeemCeremony(pk, clientDataJSON, ["register"], body.ceremonyId);
+    const ceremony = await redeemCeremony(
+      pk,
+      clientDataJSON,
+      ["register"],
+      body.ceremonyId,
+      caller.origin,
+    );
     if (!ceremony || ceremony.userId !== session.user.id) {
       throw new WebAuthnError("challenge", "no registration ceremony for this response");
     }
@@ -257,23 +303,32 @@ async function handleRegister(ctx: AuthRouteContext): Promise<Response | null> {
 
 // ---- authentication -----------------------------------------------------------------
 
+/** Who an authentication row serves: the feature, the caller, and a pending session. */
+interface AuthenticationCaller {
+  pk: PasskeyContext;
+  origin: string | null;
+  pending: AuthSession | null;
+}
+
 /**
  * The gate both authentication rows share: the feature configured (else `null`), a
- * same-origin request, and the cookie session's pending (second-factor-owed) state.
+ * same-origin (or `passkeys.corsOrigins`) request, and the cookie session's pending
+ * (second-factor-owed) state.
  */
 async function authenticationCaller(
   ctx: AuthRouteContext,
-): Promise<{ pk: PasskeyContext; pending: AuthSession | null } | Response | null> {
+): Promise<AuthenticationCaller | Response | null> {
   const pk = passkeyContext(ctx);
   if (!pk) return null;
-  if (!isSameOrigin(ctx.request, ctx.config)) return json({ error: "forbidden" }, 403);
+  const origin = callerOrigin(pk);
+  if (origin === false) return json({ error: "forbidden" }, 403);
   const session = await readAuthSession(ctx.config);
-  if (!session?.mfaPending) return { pk, pending: null };
+  if (!session?.mfaPending) return { pk, origin, pending: null };
   // A stateless pending cookie outlives a ban or an eviction: refuse it from the stored user.
   if (!(await pendingSessionLive(ctx.config, session))) {
     return json({ error: "unauthorized" }, 401);
   }
-  return { pk, pending: session };
+  return { pk, origin, pending: session };
 }
 
 /**
@@ -295,6 +350,7 @@ async function handleAuthenticateOptions(ctx: AuthRouteContext): Promise<Respons
   const { challenge, ceremonyId } = await beginCeremony(
     pk,
     stepUp ? "mfa" : "signin",
+    caller.origin,
     stepUp?.user.id,
   );
   return json({ ...requestOptions(pk.rp, challenge, allow), ceremonyId });
@@ -329,10 +385,10 @@ interface VerifiedAssertion {
  * two racing assertions can't both pass the clone check).
  */
 async function verifyAssertion(
-  pk: PasskeyContext,
+  caller: AuthenticationCaller,
   body: Record<string, unknown>,
-  pending: AuthSession | null,
 ): Promise<VerifiedAssertion> {
+  const { pk, pending } = caller;
   const credential = credentialOf(body.credential);
   const clientDataJSON = base64UrlField(credential.response.clientDataJSON, "clientDataJSON");
   const ceremony = await redeemCeremony(
@@ -340,6 +396,7 @@ async function verifyAssertion(
     clientDataJSON,
     pending ? ["mfa"] : ["signin"],
     body.ceremonyId,
+    caller.origin,
   );
   if (!ceremony || (pending && ceremony.userId !== pending.user.id)) {
     throw new WebAuthnError("challenge", "no authentication ceremony for this response");
@@ -413,7 +470,7 @@ async function handleAuthenticate(ctx: AuthRouteContext): Promise<Response | nul
   const body = await readBody(ctx);
   let verified: VerifiedAssertion;
   try {
-    verified = await verifyAssertion(pk, body, pending);
+    verified = await verifyAssertion(caller, body);
   } catch (error) {
     if (!(error instanceof WebAuthnError)) throw error;
     return await refuse(ctx, pending ? "invalid_mfa_code" : "invalid_passkey", error.code);
@@ -439,8 +496,9 @@ async function handleList(ctx: AuthRouteContext): Promise<Response | null> {
 async function handleDelete(ctx: AuthRouteContext): Promise<Response | null> {
   const pk = passkeyContext(ctx);
   if (!pk) return null;
-  const session = await recentSession(ctx);
-  if (session instanceof Response) return session;
+  const caller = await recentSession(pk);
+  if (caller instanceof Response) return caller;
+  const { session } = caller;
   const record = await pk.adapter.getPasskey(ctx.params.id);
   if (!record || record.userId !== session.user.id) return json({ error: "not found" }, 404);
   await pk.adapter.deletePasskey(record.id);
@@ -448,34 +506,58 @@ async function handleDelete(ctx: AuthRouteContext): Promise<Response | null> {
   return json({ ok: true });
 }
 
+/**
+ * Wrap a handler: failures contained, and the answer carrying the `passkeys.corsOrigins`
+ * policy's headers (credentialed, the one allowed origin echoed, `Vary: Origin`).
+ */
+function passkeyRow(what: string, handler: AuthRoute["handler"]): AuthRoute["handler"] {
+  const guarded = contained(what, handler);
+  return async (ctx) => {
+    const res = await guarded(ctx);
+    const cors = res ? resolvePasskeys(ctx.config)?.cors ?? null : null;
+    return res ? applyCors(ctx.request, res, cors) : res;
+  };
+}
+
+/** `OPTIONS` on a passkey path: a preflight under the `passkeys.corsOrigins` policy. */
+function handlePreflight(ctx: AuthRouteContext): Response | null {
+  const cors = passkeyContext(ctx)?.rp.cors;
+  if (!cors || !isPreflight(ctx.request)) return null;
+  return preflightResponse(ctx.request, cors);
+}
+
 /** The passkey rows, relative to `basePath`. */
 export const passkeyRoutes: AuthRoute[] = [
   {
     method: "POST",
     pattern: "/passkey/register/options",
-    handler: contained("passkey registration options", handleRegisterOptions),
+    handler: passkeyRow("passkey registration options", handleRegisterOptions),
   },
   {
     method: "POST",
     pattern: "/passkey/register",
-    handler: contained("passkey registration", handleRegister),
+    handler: passkeyRow("passkey registration", handleRegister),
   },
   {
     method: "POST",
     pattern: "/passkey/authenticate/options",
-    handler: contained("passkey sign-in options", handleAuthenticateOptions),
+    handler: passkeyRow("passkey sign-in options", handleAuthenticateOptions),
     limit: "signin-start",
   },
   {
     method: "POST",
     pattern: "/passkey/authenticate",
-    handler: contained("passkey sign-in", handleAuthenticate),
+    handler: passkeyRow("passkey sign-in", handleAuthenticate),
     limit: "signin-start",
   },
-  { method: "GET", pattern: "/passkeys", handler: contained("listing passkeys", handleList) },
+  { method: "GET", pattern: "/passkeys", handler: passkeyRow("listing passkeys", handleList) },
   {
     method: "DELETE",
     pattern: "/passkeys/:id",
-    handler: contained("removing a passkey", handleDelete),
+    handler: passkeyRow("removing a passkey", handleDelete),
   },
+  { method: "OPTIONS", pattern: "/passkey/:step", handler: handlePreflight },
+  { method: "OPTIONS", pattern: "/passkey/:step/options", handler: handlePreflight },
+  { method: "OPTIONS", pattern: "/passkeys", handler: handlePreflight },
+  { method: "OPTIONS", pattern: "/passkeys/:id", handler: handlePreflight },
 ];

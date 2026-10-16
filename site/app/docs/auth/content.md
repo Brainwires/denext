@@ -1514,17 +1514,39 @@ denextAuth({
 | `rpId`             | `canonicalOrigin`'s host | The RP ID credentials are scoped to — the host, or a registrable suffix of it to span subdomains              |
 | `rpName`           | the RP ID                | The name an authenticator may show                                                                            |
 | `origins`          | `[canonicalOrigin]`      | Origins a ceremony may come from, matched exactly; each must be `https:` (or `http://localhost`) on the RP ID |
+| `corsOrigins`      | none                     | Web origins (also in `origins`) allowed to call the passkey endpoints from another origin, with credentials   |
 | `userVerification` | `"required"`             | `"preferred"` accepts a presence-only assertion — one factor instead of two                                   |
 | `timeout`          | `300`                    | Seconds a ceremony's challenge lives (`30–900`)                                                               |
 
 `origins` lists what `clientDataJSON.origin` may say; it does not open the endpoints to other
-origins. Every `/passkey/*` row is same-origin gated (`403` otherwise), so each listed origin
-must serve the auth routes itself — an app answering on
-several hosts under one RP ID (no `canonicalOrigin`, so the request's `Host` decides; with one,
-only that origin is same-origin). A page on another origin can't run a ceremony against these
-endpoints, and neither can a native Android app (`android:apk-key-hash:…` is accepted in the
-signed client data, but the routes need a same-origin browser request) — such a client needs
-endpoints of your own.
+origins. Every `/passkey/*` row is same-origin gated (`403` otherwise) unless the caller is one of
+`corsOrigins`. A native Android app (`android:apk-key-hash:…` is accepted in the signed client
+data) has no web origin, so it can't call the routes cross-origin — such a client needs endpoints
+of your own.
+
+**A front end on another origin.** With the auth server at `https://auth.example.com` and the
+pages at `https://www.example.com` (one RP ID, `example.com`):
+
+```ts
+passkeys: {
+  rpId: "example.com",
+  origins: ["https://auth.example.com", "https://www.example.com"],
+  corsOrigins: ["https://www.example.com"], // each must also be in `origins`
+},
+```
+
+The passkey endpoints then answer their preflights (before `middleware.ts`) and send credentialed
+CORS headers (`Access-Control-Allow-Origin` echoing exactly that origin,
+`Access-Control-Allow-Credentials: true`, `Vary: Origin`) to the listed origins only; any other
+origin is still `403`. Each ceremony is bound to the origin that started it: the options request's
+exact `Origin` is stored with the challenge, and the verifying request must come from that same
+origin with client data naming it — so a ceremony started on `www` can't be finished same-origin,
+from another listed origin, or with client data from another accepted origin, and a same-origin
+ceremony can't be finished cross-origin. The per-tab `ceremonyId` is required as before. On that
+front end, pass the server's origin to the client calls — `signInWithPasskey({ origin:
+"https://auth.example.com" })`, `registerPasskey({ origin: … })` — which then send credentials
+(`credentials: "include"`); the session cookie is the auth server's, so the two origins must be
+same-site for the browser to send it.
 
 It needs an adapter with the passkey group (both shipped adapters have it), and a relying
 party that doesn't come from the request: with neither `rpId` nor `canonicalOrigin`,

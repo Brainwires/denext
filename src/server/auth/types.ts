@@ -882,6 +882,16 @@ export interface AuthPasskeyConfig {
    */
   origins?: string[];
   /**
+   * The web origins allowed to call the passkey endpoints from another origin — a front end
+   * served apart from the auth server (`["https://www.example.com"]` for an auth server at
+   * `https://auth.example.com`). Each must also be in {@linkcode origins} (its page runs the
+   * ceremony). The endpoints then answer their preflights and send credentialed CORS headers to
+   * exactly these origins, and a ceremony started from one completes only from that origin, with
+   * client data naming it — on top of the per-tab ceremony id. Default: none (same-origin only).
+   * Pass `origin` to the `denext/client` passkey calls on that front end.
+   */
+  corsOrigins?: string[];
+  /**
    * `"required"` (the default) asks the authenticator to verify the user (biometric, PIN) and
    * refuses an assertion without the UV flag — such a sign-in is two factors in one, so it
    * also satisfies a pending second factor. `"preferred"` accepts a presence-only assertion,

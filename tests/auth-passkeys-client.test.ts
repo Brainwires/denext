@@ -13,7 +13,7 @@ const buf = (...bytes: number[]) => Uint8Array.from(bytes).buffer;
 
 /** What one stubbed exchange saw. */
 interface Seen {
-  posts: Array<{ url: string; body: Record<string, unknown> }>;
+  posts: Array<{ url: string; body: Record<string, unknown>; credentials?: string }>;
   created?: PublicKeyCredentialCreationOptions;
   requested?: PublicKeyCredentialRequestOptions;
   navigated?: string;
@@ -34,7 +34,11 @@ async function withBrowser(
     credentials: Object.getOwnPropertyDescriptor(navigator, "credentials"),
   };
   g.fetch = (url: string, init: RequestInit) => {
-    seen.posts.push({ url, body: JSON.parse(String(init.body)) });
+    seen.posts.push({
+      url,
+      body: JSON.parse(String(init.body)),
+      credentials: init.credentials,
+    });
     const [status, body] = answers[url] ?? [404, {}];
     return Promise.resolve(new Response(JSON.stringify(body), { status }));
   };
@@ -170,6 +174,49 @@ Deno.test("signInWithPasskey: an assertion is encoded and the server's vetted UR
         signature: "Aw",
         userHandle: "dTE",
       });
+    },
+  );
+});
+
+Deno.test("passkey helpers: an auth server on another origin is called there, with credentials", async () => {
+  const AUTH = "https://auth.app.test";
+  await withBrowser(
+    {
+      [`${AUTH}/auth/passkey/authenticate/options`]: [200, {
+        challenge: "AAAA",
+        rpId: "app.test",
+        ceremonyId: "tab-x",
+      }],
+      [`${AUTH}/auth/passkey/authenticate`]: [200, { ok: true, url: "/home" }],
+    },
+    {
+      get: () => ({
+        id: "AQ",
+        rawId: buf(1),
+        type: "public-key",
+        response: { clientDataJSON: buf(1), authenticatorData: buf(1), signature: buf(1) },
+      }),
+    },
+    async (seen) => {
+      assertEquals(await signInWithPasskey({ origin: `${AUTH}/ignored`, redirect: false }), {
+        ok: true,
+      });
+      assertEquals(seen.posts.map((p) => [p.url, p.credentials]), [
+        [`${AUTH}/auth/passkey/authenticate/options`, "include"],
+        [`${AUTH}/auth/passkey/authenticate`, "include"],
+      ]);
+      assertEquals(seen.posts[1].body.ceremonyId, "tab-x");
+    },
+  );
+  // Without `origin`, same-origin paths and same-origin credentials, as before.
+  await withBrowser(
+    { "/auth/passkey/register/options": [401, { error: "unauthorized" }] },
+    {},
+    async (seen) => {
+      assertEquals(await registerPasskey(), { ok: false, error: "unauthorized" });
+      assertEquals(seen.posts.map((p) => [p.url, p.credentials]), [
+        ["/auth/passkey/register/options", "same-origin"],
+      ]);
     },
   );
 });

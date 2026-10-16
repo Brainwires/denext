@@ -278,6 +278,13 @@ and this project adheres to
   (`409 already_enrolled` once one is verified), the single-use five-minute token with five
   attempts, the `rateLimit.mfa` budget on every confirm, and a banned or deleted user never
   finishes.
+- **Passkey endpoints callable from another origin: `passkeys.corsOrigins`.** A front end served
+  apart from the auth server lists its origin (also in `passkeys.origins`); the `/passkey/*`
+  endpoints then answer its preflights and send it credentialed CORS headers, and refuse every
+  other origin as before. Each ceremony is bound to the origin that started it — the verifying
+  request must come from that origin with client data naming it, and a same-origin ceremony
+  can't be finished cross-origin — on top of the per-tab `ceremonyId`. `registerPasskey` and
+  `signInWithPasskey` take `origin` for an auth server on another origin.
 
 ### Changed
 
