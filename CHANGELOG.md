@@ -10,6 +10,15 @@ and this project adheres to
 
 ### Added
 
+- **DevTools: Live views and Live tabs.** Two dev-only panel tabs read the dev server: **Live
+  views** lists the server-held live views (`defineLiveView`) on the instance, attached or
+  parked, with their models and the recent messages their `update` ran; **Live** lists each
+  Live socket and what it subscribes to (`<Live>` boundaries and tags, data subscriptions, tag
+  watches, channel keys, presence rooms), the recent channel pushes and the recent cache
+  entries written. Both are served from origin-gated `/_denext/dev-live-views` and
+  `/_denext/dev-live`, record only under `denext dev`, ship in no production bundle, and are
+  redacted like the MCP bridge (every string inside a model, message or payload is
+  `string(n)`).
 - **Deno Desktop runtime 2.9.7-denext.20, pinned** (the toolchain moves with it). What it brings to
   denext apps is below; [the runtime releases](https://denext.dev/docs/desktop-runtime#runtime-releases)
   list the rest.

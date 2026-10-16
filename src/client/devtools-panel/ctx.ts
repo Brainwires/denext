@@ -5,7 +5,7 @@ import type { DenextDevtoolsApi, InspectNode } from "../devtools-inspect.ts";
 import { devFetch, type DevFetchFailure } from "./dev-api.ts";
 import { el, type PanelStyles } from "./styles.ts";
 
-/** The panel's eight tabs (see `TABS` in `./shell.ts` for their order and labels). */
+/** The panel's ten tabs (see `TABS` in `./shell.ts` for their order and labels). */
 export type TabId =
   | "components"
   | "render"
@@ -14,7 +14,9 @@ export type TabId =
   | "cache"
   | "routes"
   | "console"
-  | "mvu";
+  | "mvu"
+  | "views"
+  | "live";
 
 /** Which console levels the Console tab shows. */
 export type ConsoleLevelFilter = "all" | "error" | "warn" | "info" | "log";
@@ -91,6 +93,10 @@ export interface PanelState {
   cache: DevTabCache<unknown>;
   /** Last `/_denext/dev-routes` read (the Routes tab). */
   routes: DevTabCache<unknown>;
+  /** Last `/_denext/dev-live-views` read (the Live views tab). */
+  liveViews: DevTabCache<unknown>;
+  /** Last `/_denext/dev-live` read (the Live tab). */
+  live: DevTabCache<unknown>;
   /** The Console tab's level filter. */
   consoleLevel: ConsoleLevelFilter;
   /** Console entry ids whose stack is expanded. */

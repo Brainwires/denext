@@ -52,6 +52,7 @@ import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import { tapChannelAuthorized } from "./channel-subscriber.ts";
 import { inRootContext } from "./root-context.ts";
 import { type LiveViewStore, openViewSnapshot, sealViewSnapshot } from "./live-view-store.ts";
+import { recordViewMessages, type RedactedValue, redactValue } from "./live-devtools.ts";
 
 /** The hub connection surface this module needs. */
 export interface ViewConn {
@@ -161,6 +162,30 @@ export interface ViewHub<C extends ViewConn> {
   dispose(): void;
   /** Parked instances (tests, diagnostics). */
   parked(): number;
+  /** Every running instance, redacted (the DevTools' Live views tab). */
+  inspect(): ViewSummary[];
+}
+
+/** One running view, as the DevTools list it (the model redacted). */
+export interface ViewSummary {
+  /** The view id. */
+  view: string;
+  /** The instance id. */
+  iid: string;
+  /** `attached` to a socket, or `parked` waiting for a reconnect. */
+  state: "attached" | "parked";
+  /** The peer it is attached to (or was, while parked). */
+  peer: string;
+  /** The render revision. */
+  rev: number;
+  /** Events waiting to be processed. */
+  inbox: number;
+  /** JSON size of the model. */
+  modelBytes: number;
+  /** JSON size of the rendered tree. */
+  flightBytes: number;
+  /** The model: its structure, every string as `string(n)`. */
+  model: RedactedValue;
 }
 
 /**
@@ -521,13 +546,14 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
       update: () => def.update,
       subscriptions: () => def.subscriptions,
       host: host(() => self!),
-      onChange: (model) => {
+      onChange: (model, msgs) => {
         const inst = self!;
         const bytes = modelSize(model);
         if (overBudget(inst, bytes, inst.flightBytes)) {
           return end(inst, "limit", "view state too large");
         }
         inst.modelBytes = bytes;
+        recordViewMessages(def.id, inst.iid, msgs);
         if (!inst.attached && !inst.stopped) persist(inst); // the stored snapshot follows it
         scheduleRender(inst);
       },
@@ -854,5 +880,18 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     },
 
     parked: () => parkedViews.size,
+
+    inspect: () =>
+      [...all].map((inst) => ({
+        view: inst.def.id,
+        iid: inst.iid,
+        state: inst.attached ? "attached" as const : "parked" as const,
+        peer: inst.owner.peerId,
+        rev: inst.rev,
+        inbox: inst.inbox,
+        modelBytes: inst.modelBytes,
+        flightBytes: inst.flightBytes,
+        model: redactValue(inst.engine.model),
+      })),
   };
 }

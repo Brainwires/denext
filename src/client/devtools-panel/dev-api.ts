@@ -1,4 +1,4 @@
-// DevTools panel: the dev-server data contract the data tabs (Network, Cache, Routes)
+// DevTools panel: the dev-server data contract the data tabs (Network, Cache, Routes, Live)
 // and the editor link are built on.
 //
 // Every read is a same-origin GET against a `/_denext/*` dev endpoint, which the dev
@@ -17,6 +17,10 @@ export const DEV_STATE_PATH = "/_denext/dev-state";
 export const DEV_CACHE_PATH = "/_denext/dev-cache";
 /** The app's route map (pages + API routes). */
 export const DEV_ROUTES_PATH = "/_denext/dev-routes";
+/** The server-held live views and their recent messages. */
+export const DEVTOOLS_LIVE_VIEWS_FEED = "/_denext/dev-live-views";
+/** Live connections, channel pushes and cache entries written. */
+export const DEVTOOLS_LIVE_FEED = "/_denext/dev-live";
 /** Open a source file in the developer's editor (`?file=&line=&column=`). */
 export const OPEN_IN_EDITOR_PATH = "/_denext/open-in-editor";
 

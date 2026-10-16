@@ -66,6 +66,8 @@ export function initialState(): PanelState {
     network: emptyTabCache(),
     cache: emptyTabCache(),
     routes: emptyTabCache(),
+    liveViews: emptyTabCache(),
+    live: emptyTabCache(),
     consoleLevel: "all",
     consoleExpanded: new Set(),
   };

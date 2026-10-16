@@ -34,7 +34,12 @@ import {
 import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import { getSubscriptionDef, type SubscriptionDef } from "../runtime/server-action.ts";
 import { type ChannelHub, type ChannelSub, createChannelHub } from "./live-channels.ts";
-import { createLiveViewHub, type ViewHub, type ViewInstance } from "./live-views.ts";
+import {
+  createLiveViewHub,
+  type ViewHub,
+  type ViewInstance,
+  type ViewSummary,
+} from "./live-views.ts";
 import { getLiveViewStore } from "./live-view-store.ts";
 import {
   broadcastInvalidation,
@@ -1541,6 +1546,64 @@ const viewHub: ViewHub<Conn> = createLiveViewHub<Conn>({
     }
   },
 });
+
+/**
+ * Every running live view on this instance — attached or parked — with its model redacted
+ * (the DevTools' Live views tab, under `denext dev`).
+ *
+ * @returns One summary per instance.
+ */
+export function inspectLiveViews(): ViewSummary[] {
+  return viewHub.inspect();
+}
+
+/** One Live connection as the DevTools' Live tab lists it. */
+export interface LiveConnectionSummary {
+  /** The peer id. */
+  peer: string;
+  /** The page path it was opened from. */
+  path: string;
+  /** `<Live>` boundaries and the cache tags each watches. */
+  boundaries: Array<{ id: string; tags: string[] }>;
+  /** `useLive` / `defineSubscription` data subscriptions (the action, never its arguments). */
+  data: Array<{ id: string; action: string; tags: string[] }>;
+  /** `useApi({ tags })` tag watches. */
+  tags: Array<{ id: string; tags: string[] }>;
+  /** Channel subscriptions. */
+  channels: Array<{ id: string; channel: string; key: string }>;
+  /** Presence rooms joined. */
+  rooms: string[];
+  /** Live views mounted. */
+  views: number;
+}
+
+/**
+ * Every Live connection on this instance and what it subscribes to (the DevTools' Live tab,
+ * under `denext dev`). Arguments, payloads and cookies are never included.
+ *
+ * @returns One summary per connection.
+ */
+export function inspectLiveConnections(): LiveConnectionSummary[] {
+  return [...connections].map((c) => ({
+    peer: c.peerId,
+    path: pathOf(c.url),
+    boundaries: c.boundaries.map((b) => ({ id: b.id, tags: [...b.tags] })),
+    data: [...c.dataSubs].map(([id, sub]) => ({ id, action: sub.actionId, tags: [...sub.tags] })),
+    tags: [...c.tagSubs].map(([id, tags]) => ({ id, tags: [...tags] })),
+    channels: [...c.channelSubs].map(([id, sub]) => ({ id, channel: sub.channelId, key: sub.key })),
+    rooms: [...c.presenceRooms.keys()],
+    views: c.views.size,
+  }));
+}
+
+/** A connection URL's path (no query: it may carry tokens). */
+function pathOf(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return "";
+  }
+}
 
 /** The transport subscription delivering channel events to this hub (re-bound on transport change). */
 let stopChannelTransport: (() => void) | null = null;

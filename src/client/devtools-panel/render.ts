@@ -13,6 +13,8 @@ import { refreshNetworkTab, renderNetworkTab } from "./network.ts";
 import { refreshRoutesTab, renderRoutesTab } from "./routes.ts";
 import { renderConsoleTab } from "./console.ts";
 import { renderMvuTab } from "./mvu.ts";
+import { refreshLiveViewsTab, renderLiveViewsTab } from "./live-views.ts";
+import { refreshLiveTab, renderLiveTab } from "./live.ts";
 import { syncSize } from "./size.ts";
 import type { PanelCtx, TabId } from "./ctx.ts";
 import { type Shell, syncTitle, TABS } from "./shell.ts";
@@ -41,6 +43,8 @@ const TAB_RENDERERS: Record<TabId, TabRenderer> = {
   routes: renderRoutesTab,
   console: renderConsoleTab,
   mvu: (ctx) => renderMvuTab(ctx),
+  views: renderLiveViewsTab,
+  live: renderLiveTab,
 };
 
 /** Tab id → its dev-server read, for the tabs that have one. */
@@ -48,6 +52,8 @@ const TAB_REFRESHERS: Partial<Record<TabId, TabRenderer>> = {
   network: refreshNetworkTab,
   cache: refreshCacheTab,
   routes: refreshRoutesTab,
+  views: refreshLiveViewsTab,
+  live: refreshLiveTab,
 };
 
 /**

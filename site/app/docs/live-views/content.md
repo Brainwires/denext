@@ -194,6 +194,13 @@ A live view's state lives in the process that holds the viewer's socket, so:
   `ChannelTransport` and every instance's views receive it — see
   [Multi-instance › Live](/docs/multi-instance#live-channeltransport).
 
+## Debugging
+
+Under `denext dev`, the DevTools panel's [Live views tab](/docs/devtools#live-views) lists
+every view the dev server holds — attached or parked — with its model and the recent messages
+its `update` ran, and the [Live tab](/docs/devtools#live) shows each socket's subscriptions and
+the channel pushes. Strings in models and messages are shown as `string(n)`.
+
 ## Limits
 
 - `view` must be a pure function of the model: the server and the page number handlers by the

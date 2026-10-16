@@ -89,9 +89,6 @@ Each is documented as a manual recipe today (the
   ambiguous export, a SyntaxError in browsers).
 - **Per-element `__source`** for a true JSX owner stack (the panel shows the render-parent chain).
 - **Profiler export / compare** across commits, plus component filters.
-- **Server-held live views in DevTools:** list `defineLiveView` instances and their messages
-  (the MVU tab covers browser programs only).
-- **A Live / channel and state inspector tab** (subscriptions, channel pushes, cache entries).
 
 ## Router plugins
 

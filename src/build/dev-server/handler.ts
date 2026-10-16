@@ -24,8 +24,11 @@ import {
   devCacheResponse,
   devInspectRead,
   devInspectSink,
+  devLiveResponse,
+  devLiveViewsResponse,
   devRoutesResponse,
 } from "./devtools-endpoints.ts";
+import { enableLiveDevtools } from "../../server/live-devtools.ts";
 import { getManifest, getUnbundled } from "./manifest.ts";
 import { broadcastError, explainForOverlay, reloadStream } from "./reload.ts";
 import { DEV_RELOAD_SCRIPT } from "./reload-script.ts";
@@ -34,6 +37,8 @@ import { serveImmutableAsset } from "../../server/serve-utils.ts";
 import {
   DEV_CACHE_PATH,
   DEV_INSPECT_PATH,
+  DEV_LIVE_PATH,
+  DEV_LIVE_VIEWS_PATH,
   DEV_LOG_PATH,
   DEV_RELOAD_JS_PATH,
   DEV_ROUTES_PATH,
@@ -100,6 +105,10 @@ function gatedDevEndpoint(
       return devCacheResponse(st);
     case DEV_ROUTES_PATH:
       return devRoutesResponse(st, url);
+    case DEV_LIVE_VIEWS_PATH:
+      return devLiveViewsResponse(st);
+    case DEV_LIVE_PATH:
+      return devLiveResponse(st);
     case DEV_INSPECT_PATH:
       // POST = the in-page DevTools sink, GET = the MCP bridge's read; nothing else.
       if (request.method === "POST") return devInspectSink(st, request);
@@ -268,6 +277,7 @@ async function appResponse(
 
 /** The dev server's request handler over `appHandler` (the createApp handler). */
 export function createDevHandler(st: DevState, appHandler: RequestHandler): RequestHandler {
+  enableLiveDevtools(); // the DevTools' Live tabs: record view messages, pushes, cache writes
   const handle = devRequestHandler(st, appHandler);
   // A shell's `?__denext_platform=ios` is pinned in a cookie, so the page's module, Flight and
   // navigation requests resolve that target's platform files too.

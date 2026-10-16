@@ -13,6 +13,7 @@
 // across replicas and `revalidateTag`/`revalidatePath` reach every instance. Time is
 // read via Date.now(); a shared store assumes a shared wall clock.
 
+import { liveDevtoolsEnabled, recordCacheEntry } from "./live-devtools.ts";
 import { type CacheLifeProfile, type CacheScope, cacheScopeStorage } from "./cache-scope.ts";
 import { currentContext } from "./request-context.ts";
 import { inRootContext } from "./root-context.ts";
@@ -783,10 +784,27 @@ async function leadFlight<T>(key: string, compute: Promise<T>): Promise<T> {
   }
 }
 
+/** Write a data entry to `store` (and, under `denext dev`, to the DevTools' record). */
+async function setDataEntry(store: CacheStore, key: string, entry: DataEntry): Promise<void> {
+  await store.setData(key, entry);
+  if (liveDevtoolsEnabled()) {
+    recordCacheEntry({
+      kind: "data",
+      key,
+      tags: entry.tags,
+      bytes: dataBytes(entry),
+      expiresAt: finiteOrNull(entry.expiresAt),
+    });
+  }
+}
+
+/** A finite epoch, else `null` (never expires). */
+const finiteOrNull = (at: number): number | null => Number.isFinite(at) ? at : null;
+
 /** Store a freshly computed entry; a store failure is logged, the value still served. */
 async function storeData(key: string, entry: DataEntry): Promise<void> {
   try {
-    await currentCacheStore.setData(key, entry);
+    await setDataEntry(currentCacheStore, key, entry);
   } catch (err) {
     logCacheError("setData", err);
   }
@@ -834,7 +852,7 @@ function reviveStaleData(
 ): void {
   reviveInBackground(key, async () => {
     const value = await compute();
-    await currentCacheStore.setData(key, { value, expiresAt: ttlToExpiry(revalidate), tags });
+    await setDataEntry(currentCacheStore, key, { value, expiresAt: ttlToExpiry(revalidate), tags });
   });
 }
 
@@ -1223,7 +1241,7 @@ export async function cachedResponse(
     // 5xx/429 must not be served as "the data" for the whole revalidate window.
     if (res.ok) {
       try {
-        await store.setData(key, { value, expiresAt: ttlToExpiry(revalidate), tags });
+        await setDataEntry(store, key, { value, expiresAt: ttlToExpiry(revalidate), tags });
       } catch (err) {
         logCacheError("setData", err);
       }
@@ -1574,6 +1592,15 @@ export class PageCache {
     try {
       await currentCacheStore.setPage(pageStoreKey(key, this.#buildId), page);
       cacheStats.pageSets++;
+      if (liveDevtoolsEnabled()) {
+        recordCacheEntry({
+          kind: "page",
+          key,
+          tags: page.tags,
+          bytes: page.body.length,
+          expiresAt: finiteOrNull(page.expiresAt),
+        });
+      }
     } catch (err) {
       logCacheError("setPage", err);
     }

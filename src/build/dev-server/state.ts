@@ -87,6 +87,10 @@ export const OPEN_IN_EDITOR_PATH = "/_denext/open-in-editor";
 export const DEV_CACHE_PATH = "/_denext/dev-cache";
 /** DevTools Routes tab: the render tree at a path (`?path=`, GET). */
 export const DEV_ROUTES_PATH = "/_denext/dev-routes";
+/** DevTools Live views tab: the server-held live views and their recent messages (GET). */
+export const DEV_LIVE_VIEWS_PATH = "/_denext/dev-live-views";
+/** DevTools Live tab: Live connections, channel pushes and cache entries written (GET). */
+export const DEV_LIVE_PATH = "/_denext/dev-live";
 /**
  * DevTools → MCP bridge: the in-page inspector POSTs its component tree here, and the MCP
  * component/why-render/hook tools GET it back (`?url=`).

@@ -23,15 +23,15 @@ no reference to the panel, the inspector or the metadata registry at all.
 > the default `img-src 'self' data:` allows.
 
 It mounts on **every** dev path — the native App Router, the Flight/streaming
-path, the Next.js drop-in and [SPA mode](/docs/spa). The three tabs that read the
-dev server (Network, Cache, Routes) are App-Router-only, and say so in place
+path, the Next.js drop-in and [SPA mode](/docs/spa). The tabs that read the
+dev server (Network, Cache, Routes, Live views, Live) are App-Router-only, and say so in place
 rather than showing an empty table.
 
-## The eight tabs
+## The ten tabs
 
 The header is a scrollable `role="tablist"`: **Components**, **Render modes**,
-**Profiler**, **Network**, **Cache**, **Routes**, **Console**, **MVU**. `Alt+1`…`Alt+8`
-jump straight to one. The panel is `min(620px, 94vw)` wide and half the viewport
+**Profiler**, **Network**, **Cache**, **Routes**, **Console**, **MVU**, **Live views**,
+**Live**. `Alt+1`…`Alt+9` jump straight to one (`Ctrl+Shift+]` reaches the tenth). The panel is `min(620px, 94vw)` wide and half the viewport
 tall; the `⤢` button at the right of the header (beside `×`, both 44 px touch
 targets) switches it to the full viewport, inside the safe-area insets, and `⤡`
 back. The size is remembered per tab in `localStorage`. Below 420 px the
@@ -379,7 +379,32 @@ with the model it produced) and the model of the step on screen. Click a step to
 its model replaces the program's, and the component re-renders. A message dispatched after
 that continues from the step on screen and drops the steps after it. Effects and
 subscriptions keep running while you travel. Server-held [live views](/docs/live-views) are
-not listed: their model is on the server.
+not listed here: their model is on the server, and the Live views tab shows it.
+
+### Live views
+
+The server-held [live views](/docs/live-views) (`defineLiveView`) running on the dev server,
+read from `/_denext/dev-live-views` once a second while the tab is open: each instance with
+its view id, whether it is **attached** to a socket or **parked** waiting for a reconnect, its
+render revision, the size of its model, and the model itself; then the recent batches of
+messages their `update` ran, newest first (the last 100).
+
+### Live
+
+What the dev server's Live hub holds, read from `/_denext/dev-live` once a second while the
+tab is open: each open socket with its page and everything it subscribes to — `<Live>`
+boundaries and the cache tags each watches, `useLive` / `defineSubscription` data
+subscriptions (the action and its tags, never its arguments), `useApi({ tags })` watches,
+channel keys, presence rooms and mounted live views — then the recent channel pushes the hub
+fanned out (channel, key, subscribers on this instance, the payload) and the recent cache
+entries written (`unstable_cache` / `"use cache"` data and ISR pages, with their tags and
+size). The Cache tab keeps the counters and the invalidations.
+
+Both tabs are redacted at the source, like the [MCP bridge](#mcp-inspect-the-live-page): every
+string inside a model, a message or a channel payload arrives as `string(n)` — numbers,
+booleans, keys and the structure are kept, cut to four levels and twenty entries — and the
+records are kept only under `denext dev`, so a production server records nothing and the two
+tabs ship in no production bundle.
 
 ## Errors and the dev overlay
 
@@ -414,7 +439,7 @@ resets as soon as it skips a commit, and an unmounted component is forgotten.
 | Chord                           | Does                                                                                             |
 | ------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `Ctrl+Shift+D`                  | Toggle the panel — the only chord that works while it is closed                                  |
-| `Alt+1` … `Alt+8`               | Jump to a tab, in strip order (Components … Console, MVU)                                        |
+| `Alt+1` … `Alt+9`               | Jump to a tab, in strip order (Components … MVU, Live views)                                     |
 | `Ctrl+Shift+[` / `Ctrl+Shift+]` | Previous / next tab, wrapping at both ends (the shifted `{` / `}` a US layout produces work too) |
 | `Escape`                        | Cancel the element picker; with the picker off, close the panel                                  |
 
@@ -643,7 +668,7 @@ function and type is listed in the [API reference](/docs/api).
 - **A `useDebugValue` label rides the row of the cell before the call.** It takes
   no cell of its own, so a component with no hook cells shows none, and a call
   placed between two hooks reads under the earlier one.
-- **Network, Cache, Routes and the MCP bridge need the App Router dev server.**
+- **Network, Cache, Routes, Live views, Live and the MCP bridge need the App Router dev server.**
   SPA dev serves only the dev log (`denext_dev_logs` works there): those tabs
   render `… is not available in SPA dev (App Router only)`, and the Source row
   falls back to a `vscode://` link. Components, Render modes, the Profiler and

@@ -1,4 +1,4 @@
-// DevTools panel: the DOM shell — launcher, header with a scrollable six-tab strip, the
+// DevTools panel: the DOM shell — launcher, header with a scrollable tab strip, the
 // tree toolbar, and the two panes. Pure construction: nothing here reads panel state or
 // binds behaviour (see `./render.ts` and `./interactions.ts`).
 
@@ -12,7 +12,7 @@ export interface TabSpec {
   readonly label: string;
 }
 
-/** The panel's tabs, in `Alt+1…8` / `Ctrl+Shift+[`,`]` order. */
+/** The panel's tabs, in `Alt+1…9` / `Ctrl+Shift+[`,`]` order (the tenth: the brackets only). */
 export const TABS: readonly TabSpec[] = [
   { id: "components", label: "Components" },
   { id: "render", label: "Render modes" },
@@ -22,6 +22,8 @@ export const TABS: readonly TabSpec[] = [
   { id: "routes", label: "Routes" },
   { id: "console", label: "Console" },
   { id: "mvu", label: "MVU" },
+  { id: "views", label: "Live views" },
+  { id: "live", label: "Live" },
 ];
 
 /**

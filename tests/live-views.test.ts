@@ -22,6 +22,11 @@ import {
 } from "../src/server/live-views.ts";
 import { liveViewStoreContract } from "./helpers/live-view-store-contract.ts";
 import {
+  enableLiveDevtools,
+  resetLiveDevtools,
+  viewMessageRecords,
+} from "../src/server/live-devtools.ts";
+import {
   type LiveViewStore,
   memoryLiveViewStore,
   openViewSnapshot,
@@ -651,4 +656,29 @@ Deno.test("memoryLiveViewStore keeps the LiveViewStore contract and its cap", as
   for (const id of ["a", "b", "c"]) await store.set(id, id, 60);
   assertEquals(await store.take("a"), null, "the oldest went past the cap");
   assertEquals(await store.take("c"), "c");
+});
+
+Deno.test("live views: inspect lists attached and parked views with the model redacted", async () => {
+  enableLiveDevtools();
+  try {
+    const { hub, conn } = fakeHub();
+    const a = conn("ok");
+    const first = await mounted(hub, a, 1);
+    const patched = next(a, isType("view-patch"));
+    hub.event(a, { type: "view-event", vid: "v1", rev: first.rev, h: 0 });
+    await patched;
+    const [attached] = hub.inspect();
+    assertEquals(attached.view, "test-counter");
+    assertEquals(attached.state, "attached");
+    assertEquals(attached.model, { n: 2, pad: "string(0)" });
+    a.closed = true;
+    hub.drop(a);
+    assertEquals(hub.inspect().map((v) => v.state), ["parked"]);
+    const recorded = viewMessageRecords().filter((r) => r.iid === first.iid);
+    assertEquals(recorded.at(-1)?.msgs, [{ type: "string(3)" }]);
+    hub.dispose();
+    assertEquals(hub.inspect(), []);
+  } finally {
+    resetLiveDevtools();
+  }
 });

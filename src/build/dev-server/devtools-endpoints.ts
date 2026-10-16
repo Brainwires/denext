@@ -1,4 +1,4 @@
-// The two DevTools data endpoints the panel's Cache and Routes tabs read.
+// The DevTools data endpoints the panel's Cache, Routes, Live views and Live tabs read.
 //
 // Both are served from inside `gatedDevEndpoint` (./handler.ts), so they inherit the gate
 // EVERY `/_denext/*` endpoint passes first — a cross-origin page, or a foreign Host, gets
@@ -23,6 +23,8 @@
 // file add/remove. So polling either one costs nothing but the JSON.
 
 import { getCacheStats } from "../../server/cache.ts";
+import { inspectLiveConnections, inspectLiveViews } from "../../server/live.ts";
+import { liveRecords, viewMessageRecords } from "../../server/live-devtools.ts";
 import { routeMapData } from "../../mcp/inspect.ts";
 import { getManifest } from "./manifest.ts";
 import {
@@ -56,6 +58,34 @@ const MAX_PROBE_PATH = 1024;
  */
 export function devCacheResponse(_st: DevState): Response {
   return Response.json(getCacheStats(), { headers: NO_STORE });
+}
+
+/**
+ * The Live views tab's feed: every server-held live view on this instance (attached or parked)
+ * with its model redacted, and the recent batches of messages their `update` ran.
+ *
+ * @param _st The dev-server state (unused — the hub is process-global).
+ * @returns `{ views, messages }` as JSON.
+ */
+export function devLiveViewsResponse(_st: DevState): Response {
+  return Response.json(
+    { views: inspectLiveViews(), messages: viewMessageRecords() },
+    { headers: NO_STORE },
+  );
+}
+
+/**
+ * The Live tab's feed: each Live connection and what it subscribes to, the recent channel
+ * pushes (payloads redacted) and the recent cache entries written.
+ *
+ * @param _st The dev-server state (unused — the hub and the cache are process-global).
+ * @returns `{ connections, channelPushes, cacheEntries }` as JSON.
+ */
+export function devLiveResponse(_st: DevState): Response {
+  return Response.json(
+    { connections: inspectLiveConnections(), ...liveRecords() },
+    { headers: NO_STORE },
+  );
 }
 
 /**

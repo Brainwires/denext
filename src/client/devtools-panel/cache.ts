@@ -193,7 +193,7 @@ function invalidationRow(ctx: PanelCtx, event: Invalidation, now: number): HTMLE
  * @param deltaMs Milliseconds since the invalidation was recorded.
  * @returns `"2s ago"` / `"3m ago"` / `"1h ago"`.
  */
-function agoLabel(deltaMs: number): string {
+export function agoLabel(deltaMs: number): string {
   const units: [number, string][] = [[3600, "h"], [60, "m"], [1, "s"]];
   const seconds = Math.max(0, Math.round(deltaMs / 1000));
   const [size, suffix] = units.find(([s]) => seconds >= s) ?? units[2];
