@@ -17,6 +17,13 @@ and this project adheres to
   (a SyntaxError in browsers) is reported with both sources, and Chrome's "conflicting star
   exports" / Firefox's "ambiguous indirect export" messages are surfaced like a missing export.
 
+- **`<ViewTransition ref>` and `onUpdate` on a soft navigation.** A `ref` receives the boundary's
+  `ViewTransitionInstance` once its first host mounts (React's `commitAttachRef`): kept across
+  renders, a new one when `name` changes, detached on unmount or when an `<Activity>` hides it. A
+  boundary with a `ref` renders through a small client wrapper, so a plain `<ViewTransition>`
+  stays hook-free and renders in Server Components. A boundary that persists across a soft
+  navigation now runs `onUpdate` when the navigation changed its content or moved its box and it
+  was or is in the viewport, as a same-page Transition does.
 - **DevTools: Live views and Live tabs.** Two dev-only panel tabs read the dev server: **Live
   views** lists the server-held live views (`defineLiveView`) on the instance, attached or
   parked, with their models and the recent messages their `update` ran; **Live** lists each

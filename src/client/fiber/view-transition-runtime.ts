@@ -173,13 +173,15 @@ function begin(types: readonly string[]): ActiveViewTransition {
     );
   });
   const ev = events(types);
+  const before = snapshotUpdates(outgoing);
   return {
     // The new side carries `enter`/`update`/`share` classes (`::view-transition-new(name)`). A
     // reused element (a morph in place) is re-stamped from its original, so the incoming class wins.
     markIncoming() {
       const incoming: Boundary[] = [];
-      eachMarked((b) => {
-        incoming.push(b);
+      eachMarked((b) => incoming.push(b));
+      navUpdates(incoming, before, ev);
+      for (const b of incoming) {
         const m = b.m;
         stamp(
           marked,
@@ -191,7 +193,7 @@ function begin(types: readonly string[]): ActiveViewTransition {
             resolveClass(m.share, types),
           ),
         );
-      });
+      }
       navEvents(outgoing, incoming, ev);
     },
     ready: ev.fire,
@@ -226,6 +228,41 @@ function navEvents(outgoing: Boundary[], incoming: Boundary[], ev: Events): void
   for (const b of topMost(came)) {
     const name = explicitName(b.m);
     if (!name || !goneNames.has(name)) ev.add(b, "onEnter");
+  }
+}
+
+/** A persisting boundary's state before a soft navigation's commit (see {@link navUpdates}). */
+interface NavBefore {
+  html: string;
+  box: string | null;
+  view: boolean;
+}
+
+/**
+ * Snapshot the outgoing boundaries that have an `onUpdate` (only those: the markup is the measure),
+ * after their stamps, so the comparison sees just the commit's own changes.
+ */
+function snapshotUpdates(outgoing: Boundary[]): Map<Element, NavBefore> {
+  const out = new Map<Element, NavBefore>();
+  for (const b of outgoing) {
+    if (typeof b.ev?.onUpdate !== "function") continue;
+    out.set(b.el, { html: b.el.outerHTML, box: boxOf(b.el), view: inView(b.el) });
+  }
+  return out;
+}
+
+/**
+ * A soft navigation's `onUpdate`: a boundary that persists (the same element on both sides) runs it
+ * when the commit changed its content or moved its box, and it was or is in the viewport — React's
+ * update trigger, measured on the DOM since the navigation's commit has no fiber flags to read.
+ */
+function navUpdates(incoming: Boundary[], before: Map<Element, NavBefore>, ev: Events): void {
+  for (const b of incoming) {
+    const was = before.get(b.el);
+    if (!was || !(was.view || inView(b.el))) continue;
+    if (was.html !== b.el.outerHTML || (was.box !== null && was.box !== boxOf(b.el))) {
+      ev.add(b, "onUpdate");
+    }
   }
 }
 
@@ -968,5 +1005,10 @@ function commit(wipRoot: Fiber, eligible: boolean, run: () => void): void {
  * dev server and tests install it directly. Idempotent.
  */
 export function installViewTransitionSupport(): void {
-  setViewTransitionSupport({ begin, commit, flush });
+  setViewTransitionSupport({
+    begin,
+    commit,
+    flush,
+    instance: (el) => instanceFor(nameOf({ el, m: markerOf(el) ?? {} })),
+  });
 }

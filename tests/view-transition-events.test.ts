@@ -356,3 +356,92 @@ Deno.test("soft navigation: onExit / onEnter / onShare on the boundaries that le
   assertEquals(log.sort(), ["enter:detail", "exit:list", "share:thumb"]);
   tx.clear();
 });
+
+Deno.test("soft navigation: onUpdate on a persisting boundary whose content changed, not on an unchanged one", () => {
+  const log: string[] = [];
+  let page: (p: string) => void = () => {};
+  function App() {
+    const [p, setP] = useState("a");
+    page = setP;
+    return h(
+      "main",
+      null,
+      h(
+        ViewTransition,
+        { name: "crumb", onUpdate: (inst: Any) => log.push(`update:${inst.name}`) },
+        h("nav", { "data-testid": "crumb" }, `at ${p}`),
+      ),
+      h(
+        ViewTransition,
+        { name: "logo", onUpdate: () => log.push("update:logo") },
+        h("header", { "data-testid": "logo" }, "logo"),
+      ),
+    );
+  }
+  mount(App);
+  const tx = getViewTransitionSupport()!.begin([]);
+  page("b");
+  flushSync();
+  tx.markIncoming();
+  tx.ready();
+  assertEquals(log, ["update:crumb"], "only the boundary whose content changed updates");
+  tx.clear();
+});
+
+Deno.test("a ref on <ViewTransition> receives the boundary's ViewTransitionInstance, kept across renders", async () => {
+  const seen: Array<string | null> = [];
+  const objRef: { current: Any } = { current: null };
+  let hostEl: Any = null;
+  let set: (n: number) => void = () => {};
+  let toggle: (b: boolean) => void = () => {};
+  const cb = (inst: Any) => {
+    seen.push(inst ? `${inst.name}:${typeof inst.new.animate}` : null);
+    return () => seen.push("cleanup");
+  };
+  function App() {
+    const [n, setN] = useState(0);
+    const [on, setOn] = useState(true);
+    set = setN;
+    toggle = setOn;
+    return h(
+      "div",
+      null,
+      on
+        ? h(
+          ViewTransition,
+          { name: "card", ref: cb },
+          h("p", { "data-testid": "a", ref: (el: Any) => (hostEl = el) }, `n=${n}`),
+          h("p", { "data-testid": "b" }, "b"),
+        )
+        : null,
+      h(ViewTransition, { ref: objRef, update: "u" }, h("p", { "data-testid": "auto" }, `${n}`)),
+    );
+  }
+  const env = mount(App);
+  assertEquals(
+    seen,
+    ["card:function"],
+    "attached once the first host mounts, named as the boundary",
+  );
+  assert(hostEl?.getAttribute("data-testid") === "a", "the host's own ref still gets the element");
+  const auto = objRef.current;
+  assert(
+    auto && /^_dnx-vt-/.test(auto.name),
+    "an unnamed boundary's instance carries its automatic name",
+  );
+  set(1);
+  flushSync();
+  assertEquals(seen, ["card:function"], "a re-render keeps the same ref attached");
+  assertEquals(objRef.current, auto);
+  // The automatic name is the one a transition stamps on the boundary.
+  startTransition(() => set(2));
+  flushSync();
+  await tick();
+  assertEquals(vtName(env.calls.at(-1)!.next.get("auto")!), auto.name);
+  env.calls.at(-1)!.end();
+  await tick();
+  toggle(false);
+  flushSync();
+  assertEquals(seen, ["card:function", "cleanup"], "unmount runs the callback ref's cleanup");
+  assertEquals(hostEl, null);
+});

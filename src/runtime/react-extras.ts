@@ -5,6 +5,8 @@
 import { Fragment, h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren, VProps } from "../jsx/types.ts";
 import { brandOf, isComponentType, REACT_LAZY_TYPE, resolveComponentType } from "./react-brands.ts";
+import { getViewTransitionSupport } from "../client/fiber/view-transition-support.ts";
+import { useLayoutEffect, useRef } from "./hooks.ts";
 
 /**
  * Marker used as the `type` of an {@link Activity} VNode so the reconciler recognizes it
@@ -116,6 +118,8 @@ interface VTScope {
   m: ViewTransitionMarker;
   /** The boundary's event callbacks (`DNX_VT_EVENTS`), when it has any. */
   ev: object | undefined;
+  /** Records a `ref`'d boundary's first host element (see {@link ViewTransitionWithRef}). */
+  r?: unknown;
   /** The component levels above this one (empty at the `<ViewTransition>` itself). */
   path: number[];
   /** The next position at this level (Fragments and arrays are flat; a component opens a level). */
@@ -144,8 +148,9 @@ function markLevel(
   ev: object | undefined,
   path: number[],
   n: number,
+  r?: unknown,
 ): VNodeChildren {
-  const scope: VTScope = { m, ev, path, n, tail: null };
+  const scope: VTScope = { m, ev, r, path, n, tail: null };
   const out = markHosts(children, scope);
   // The last position is a component: it continues this level's count.
   if (scope.tail) {
@@ -194,8 +199,8 @@ function expanderFor(type: object): (props: Record<PropertyKey, unknown>) => unk
         const { ref, ...noRef } = rest;
         out = call(noRef, ref);
       } else out = call(rest);
-      const { m, ev, path, n } = scope as VTScope;
-      const mark = (o: unknown) => markLevel(o as VNodeChildren, m, ev, path, n);
+      const { m, ev, path, n, r } = scope as VTScope;
+      const mark = (o: unknown) => markLevel(o as VNodeChildren, m, ev, path, n, r);
       return out instanceof Promise ? out.then(mark) : mark(out);
     };
     const named = type as { displayName?: string; name?: string };
@@ -208,12 +213,102 @@ function expanderFor(type: object): (props: Record<PropertyKey, unknown>) => unk
 
 /** Stamp one host (or carrying component) with the boundary's config and its callbacks. */
 function markHost(el: VNode, props: Record<PropertyKey, unknown>, scope: VTScope): VNode {
+  const first = scope.n === 0 && scope.path.every((x) => x === 0);
   const next: Record<PropertyKey, unknown> = {
     ...props,
     [DNX_VT_ATTR]: markerAt(scope, scope.n++),
   };
   if (scope.ev) next[DNX_VT_EVENTS] = scope.ev;
+  // A `ref`'d boundary's first host (whose name is the boundary's own) reports its element.
+  if (scope.r != null && first && typeof el.type === "string") {
+    next.ref = captureRef(scope.r as Capture, props.ref);
+  }
   return withProps(el, next);
+}
+
+type RefTarget = ((v: unknown) => unknown) | { current: unknown } | null | undefined;
+
+/** Attach `v` to one ref, returning its detach (React 19: a callback's cleanup, else `null`). */
+function attachRef(ref: RefTarget, v: unknown): () => void {
+  if (typeof ref === "function") {
+    const done = ref(v);
+    return typeof done === "function" ? done as () => void : () => ref(null);
+  }
+  if (ref != null) {
+    ref.current = v;
+    return () => (ref.current = null);
+  }
+  return () => {};
+}
+
+/** Where a `ref`'d boundary's first host element is recorded (one per boundary instance). */
+type Capture = { current: Element | null };
+
+const NO_REF = {};
+const captureRefs = /* @__PURE__ */ new WeakMap<Capture, WeakMap<object, unknown>>();
+
+/**
+ * The first host's ref: it records the element for the boundary and still hands it to the host's
+ * own ref. Cached per (boundary, host ref), so it changes exactly when the host's ref does and the
+ * host's ref is re-attached as React would.
+ */
+function captureRef(cap: Capture, host: unknown): unknown {
+  let byHost = captureRefs.get(cap);
+  if (!byHost) captureRefs.set(cap, byHost = new WeakMap());
+  const key = host != null && (typeof host === "object" || typeof host === "function")
+    ? host as object
+    : NO_REF;
+  let ref = byHost.get(key);
+  if (!ref) {
+    ref = (el: Element | null) => {
+      if (el === null) return; // the returned cleanup detaches
+      cap.current = el;
+      const detach = attachRef(host as RefTarget, el);
+      return () => {
+        if (cap.current === el) cap.current = null;
+        detach();
+      };
+    };
+    byHost.set(key, ref);
+  }
+  return ref;
+}
+
+/**
+ * A `<ViewTransition ref>`: the boundary plus React's ref semantics. Only a boundary with a `ref`
+ * renders through this (a client-rendered one: a Server Component can't pass a ref), so the plain
+ * `<ViewTransition>` stays hook-free. The ref gets the boundary's {@link ViewTransitionInstance}
+ * once its first host mounts (React's `commitAttachRef`), keeps it across renders, gets a new one
+ * when `name` changes, and is detached on unmount or when hidden by an `<Activity>`.
+ */
+function ViewTransitionWithRef(props: Parameters<typeof ViewTransition>[0]): VNode {
+  const { ref, ...rest } = props;
+  const cap = useRef<Element | null>(null);
+  useLayoutEffect(() => {
+    const el = cap.current;
+    return el
+      ? attachRef(ref as RefTarget, getViewTransitionSupport()?.instance(el) ?? null)
+      : undefined;
+  }, [ref, rest.name]);
+  return markBoundary(rest, cap);
+}
+
+/** A component child: rendered through {@link expanderFor}, at the next position of this level. */
+function expand(el: VNode, props: Record<PropertyKey, unknown>, scope: VTScope): VNode {
+  const inner: VTScope = {
+    m: scope.m,
+    ev: scope.ev,
+    r: scope.r,
+    path: scope.path.concat(scope.n++),
+    n: 0,
+    tail: null,
+  };
+  scope.tail = inner;
+  return {
+    ...el,
+    type: expanderFor(el.type as object) as never,
+    props: { ...props, [VT_SCOPE]: inner } as VProps,
+  };
 }
 
 /**
@@ -234,21 +329,7 @@ function markHosts(children: VNodeChildren, scope: VTScope): VNodeChildren {
     return markHost(el, props, scope);
   }
   if (type === ViewTransition) return el;
-  if (expandable(type)) {
-    const inner: VTScope = {
-      m: scope.m,
-      ev: scope.ev,
-      path: scope.path.concat(scope.n++),
-      n: 0,
-      tail: null,
-    };
-    scope.tail = inner;
-    return {
-      ...el,
-      type: expanderFor(type as object) as never,
-      props: { ...props, [VT_SCOPE]: inner } as VProps,
-    };
-  }
+  if (expandable(type)) return expand(el, props, scope);
   // Fragment / Suspense / Activity / provider / portal: their content is this boundary's.
   const next = { ...props };
   if ("children" in props) next.children = markHosts(props.children as VNodeChildren, scope);
@@ -284,13 +365,20 @@ function markHosts(children: VNodeChildren, scope: VTScope): VNodeChildren {
  * (`ready`), with the boundary's `ViewTransitionInstance` (`name`, and `group` / `imagePair` /
  * `old` / `new` handles with `animate()` / `getAnimations()` / `getComputedStyle()` on its
  * `::view-transition-*` pseudo-elements) and the transition types; a returned function runs
- * when the transition finishes. `onShare` runs on the side that leaves. Callbacks need a
+ * when the transition finishes. `onShare` runs on the side that leaves. On a soft navigation a
+ * boundary that persists runs `onUpdate` when its content changed or its box moved. A `ref`
+ * receives the same instance once the boundary's first host mounts. Callbacks and `ref` need a
  * client-rendered `<ViewTransition>` (a function can't cross from a Server Component).
  *
  * Where the browser lacks the View Transitions API the commit simply applies.
  */
 export function ViewTransition(
   props: {
+    /** Receives the boundary's {@link ViewTransitionInstance} (needs a client-rendered boundary). */
+    ref?:
+      | ((instance: ViewTransitionInstance | null) => void | (() => void))
+      | { current: ViewTransitionInstance | null }
+      | null;
     name?: string;
     default?: string | Record<string, string>;
     enter?: string | Record<string, string>;
@@ -304,17 +392,31 @@ export function ViewTransition(
     children?: VNodeChildren;
   },
 ): VNode {
-  const marker: ViewTransitionMarker = {};
-  for (const k of ["name", "default", "enter", "exit", "update", "share"] as const) {
-    if (props?.[k] != null) (marker as Record<string, unknown>)[k] = props[k];
-  }
-  let ev: Record<string, ViewTransitionCallback> | undefined;
-  for (const k of ["onEnter", "onExit", "onUpdate", "onShare"] as const) {
-    if (typeof props?.[k] === "function") (ev ??= {})[k] = props[k]!;
-  }
+  return props?.ref != null ? h(ViewTransitionWithRef as never, props) : markBoundary(props);
+}
+
+const VT_CONFIG = ["name", "default", "enter", "exit", "update", "share"];
+const VT_EVENTS = ["onEnter", "onExit", "onUpdate", "onShare"];
+
+/** The `keys` of `src` whose value passes `keep` (undefined when none does). */
+function pick(
+  src: Record<string, unknown>,
+  keys: string[],
+  keep: (v: unknown) => boolean,
+): Record<string, never> | undefined {
+  let out: Record<string, unknown> | undefined;
+  for (const k of keys) if (keep(src[k])) (out ??= {})[k] = src[k];
+  return out as Record<string, never> | undefined;
+}
+
+/** A `<ViewTransition>`'s render: mark its nearest hosts (`cap` records a `ref`'d one's first). */
+function markBoundary(props: Parameters<typeof ViewTransition>[0], cap?: Capture): VNode {
+  const p = (props ?? {}) as Record<string, unknown>;
+  const marker: ViewTransitionMarker = pick(p, VT_CONFIG, (v) => v != null) ?? {};
+  const ev = pick(p, VT_EVENTS, (v) => typeof v === "function");
   // A wrapper with no config still marks its hosts: like React's, it participates under an
   // automatic name. Clones keep each element's brand (`$$typeof`) and key.
-  const out = markLevel(props?.children ?? null, marker, ev, [], 0);
+  const out = markLevel((p.children ?? null) as VNodeChildren, marker, ev, [], 0, cap);
   return out != null && typeof out === "object" && !Array.isArray(out)
     ? out as VNode
     : h(Fragment, null, out);

@@ -62,16 +62,6 @@
 - **`denext profile --android`** over remote CDP; a Skia (CanvasKit) recipe; Tamagui / Unistyles
   verification.
 
-## React, Remix and SPA surface
-
-- **A `ref` on `<ViewTransition>`** (React hands it the boundary's `ViewTransitionInstance`).
-  denext's `<ViewTransition>` stays hook-free so it renders inside Server Components, and it has
-  no fiber of its own to attach a ref to; the callbacks already receive the instance.
-- **`<ViewTransition onUpdate>` on a soft navigation.** A soft navigation's commit is applied
-  inside its own view transition and its boundaries are matched by DOM element, so it runs
-  `onEnter` / `onExit` / `onShare` but has no measure of a persisting boundary's mutation or
-  movement to fire `onUpdate` on (same-page Transitions do).
-
 ## Server, ops and API surface
 
 Each is documented as a manual recipe today (the

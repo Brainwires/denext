@@ -10,6 +10,7 @@
 // route-level cross-fade (navigation.ts always wraps the commit in startViewTransition) applies.
 
 import type { Fiber } from "./fiber.ts";
+import type { ViewTransitionInstance } from "../../runtime/react-extras.ts";
 
 /**
  * One in-flight view transition's marking handle. Scoped per transition (not module-global) so
@@ -43,6 +44,8 @@ export interface ViewTransitionSupport {
    * `markIncoming`/`clear` operate only on this transition's own elements.
    */
   begin(types: readonly string[]): ActiveViewTransition;
+  /** The `ViewTransitionInstance` of the boundary whose first host is `el` (its `ref`'s value). */
+  instance(el: Element): ViewTransitionInstance;
 }
 
 let support: ViewTransitionSupport | null = null;

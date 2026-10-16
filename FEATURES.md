@@ -135,7 +135,8 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   is skipped; `onEnter` / `onExit` / `onUpdate` / `onShare` get React's
   `ViewTransitionInstance` (`animate()` on its `::view-transition-*` pseudo-elements)
   and the transition types once it is ready, and a returned cleanup runs when it
-  finishes; import-gated.
+  finishes (a boundary that persists across a soft navigation runs `onUpdate` when its
+  content changed or it moved); a `ref` receives the same instance; import-gated.
 - **Auto-memo compiler** (React-Compiler-style automatic memoization) ⚑.
 - **First-party `AsyncContext`** (TC39-shaped `Variable` + `Snapshot`) — the
   primitive no browser has shipped, implemented in userland. Synchronous scoping
