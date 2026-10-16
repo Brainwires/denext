@@ -3,7 +3,7 @@
 // the generated entries, the route tree from TanStack's own generator, and a project without a
 // Start router left alone. The browser half is tests/e2e/tanstack-start.e2e.test.ts.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import {
   CLIENT_ENTRY,
@@ -108,23 +108,14 @@ Deno.test("tanstack-start: a project without a Start router registers nothing", 
   }
 });
 
-Deno.test("tanstack-start route tree: TanStack's generator, imports with extensions", async () => {
+Deno.test("tanstack-start route tree: the generator comes from the app's own dependencies", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_tss_tree_" });
   try {
-    await Deno.mkdir(join(dir, "src", "routes", "posts"), { recursive: true });
-    await Deno.writeTextFile(
-      join(dir, "src", "routes", "__root.tsx"),
-      `import { createRootRoute } from "@tanstack/react-router";\nexport const Route = createRootRoute({});\n`,
-    );
-    await Deno.writeTextFile(
-      join(dir, "src", "routes", "posts", "$postId.tsx"),
-      `import { createFileRoute } from "@tanstack/react-router";\nexport const Route = createFileRoute("/posts/$postId")({});\n`,
-    );
-    await generateRouteTree(dir, join(dir, "src"));
-    const tree = await Deno.readTextFile(join(dir, "src", "routeTree.gen.ts"));
-    assertStringIncludes(tree, `from './routes/__root.tsx'`);
-    assertStringIncludes(tree, `from './routes/posts/$postId.tsx'`);
-    assert(tree.includes("'/posts/$postId'"), "the file route is in the tree");
+    await Deno.writeTextFile(join(dir, "package.json"), "{}");
+    // No @tanstack/router-generator installed in the app: a guided error, no npm fetch.
+    const err = await assertRejects(() => generateRouteTree(dir, join(dir, "src")));
+    assertStringIncludes((err as Error).message, "@tanstack/router-generator");
+    assertStringIncludes((err as Error).message, "generateRouteTree: false");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

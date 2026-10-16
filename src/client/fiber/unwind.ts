@@ -37,9 +37,7 @@ import { dropHydrationCursor, isHydrating } from "./hydration.ts";
  * promise settles and the retry commits. Distinct object identity so it is never
  * confused with a user throw.
  */
-export const SUSPENDED_TRANSITION: { readonly denextSuspendedTransition: true } = {
-  denextSuspendedTransition: true,
-};
+export const SUSPENDED_TRANSITION: object = {};
 
 /**
  * Thrown by {@link handleThrow} when a component suspends with no Suspense boundary above it:
@@ -47,9 +45,7 @@ export const SUSPENDED_TRANSITION: { readonly denextSuspendedTransition: true } 
  * DOM) and rendering it again once the promise settles. The render is abandoned, not committed
  * ({@link renderRoot} / `resumeConcurrent` catch it).
  */
-export const SUSPENDED_ROOT: { readonly denextSuspendedRoot: true } = {
-  denextSuspendedRoot: true,
-};
+export const SUSPENDED_ROOT: object = {};
 
 /**
  * Re-seed a boundary's children from its committed alternate so its next beginWork

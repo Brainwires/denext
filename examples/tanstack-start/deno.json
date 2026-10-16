@@ -23,7 +23,6 @@
     "@denext/denext/cli/command": "../../src/cli/command.ts",
     "@denext/tanstack-start": "../../packages/tanstack-start/mod.ts",
     "@std/path": "jsr:@std/path@^1.0.0",
-    "@tanstack/router-generator": "npm:@tanstack/router-generator@1.167.40",
     "react": "../../src/compat/react.ts",
     "react-dom": "../../src/compat/react-dom.ts",
     "react-dom/client": "../../src/compat/react-dom-client.ts",

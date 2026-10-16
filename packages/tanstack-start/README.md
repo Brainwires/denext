@@ -14,7 +14,9 @@ export default { compatibilityMode: true, plugins: [tanstackStart()] };
 - **Owns the route tree.** A prepare step runs TanStack's own generator
   (`@tanstack/router-generator`) over `src/routes/` into `src/routeTree.gen.ts` at `denext build`
   and `denext dev` startup, and again whenever a route file changes in dev. Its imports carry
-  extensions, so Deno resolves them as written; `tsr.config.json` still applies.
+  extensions, so Deno resolves them as written; `tsr.config.json` still applies. The generator is
+  loaded from the app's own dependencies: list `@tanstack/router-generator` in `package.json`
+  (`devDependencies`), or pass `generateRouteTree: false`.
 - **Renders every page on the server** through TanStack Router's SSR (`createRequestHandler` +
   `defaultRenderHandler` from `@tanstack/react-router/ssr/server`): the matched routes' `loader`s
   and `beforeLoad`s run on the server, the root route's `shellComponent` renders the document with

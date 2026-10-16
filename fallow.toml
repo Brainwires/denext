@@ -48,7 +48,7 @@ ignoreDependencies = [
   "@clerk/electron", # examples/clerk/deno.json + package.json: @clerk/electron/passkeys in the desktop preload
   "react-router", # examples/react-router/app/*: bare RR runtime import, mapped to denext/remix in that example's deno.json
   "@tanstack/react-router", # examples/tanstack-router + tanstack-start package.json: installed into each example's manual node_modules
-  "@tanstack/router-generator", # packages/tanstack-start/deno.json: npm:@tanstack/router-generator (the build-time route generator)
+  "@tanstack/router-generator", # examples/tanstack-start/package.json devDependency: the route generator @denext/tanstack-start loads from the app
   # examples/scroll-bench/web/package.json: the list libraries the scroll bench compares, installed
   # into that app's manual node_modules (`react-native` resolves to react-native-web through
   # denext's `reactNative: true` mode).

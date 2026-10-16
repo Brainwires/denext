@@ -8,18 +8,28 @@
   "imports": {
     "@denext/denext": "jsr:@denext/denext@^4.1.0",
     "@denext/denext/plugin-kit": "jsr:@denext/denext@^4.1.0/plugin-kit",
-    "@std/path": "jsr:@std/path@^1.0.0",
-    "@tanstack/router-generator": "npm:@tanstack/router-generator@1.167.40"
+    "@std/path": "jsr:@std/path@^1.0.0"
   },
   "denext": {
     "catalog": {
       "kind": "plugin",
       "factory": "tanstackStart",
       "optionsType": "TanStackStartOptions",
-      "configKeys": ["srcDirectory", "router", "generateRouteTree"]
+      "configKeys": [
+        "srcDirectory",
+        "router",
+        "generateRouteTree"
+      ]
     }
   },
   "publish": {
-    "include": ["mod.ts", "src", "README.md", "CHANGELOG.md", "LICENSE", "deno.json"]
+    "include": [
+      "mod.ts",
+      "src",
+      "README.md",
+      "CHANGELOG.md",
+      "LICENSE",
+      "deno.json"
+    ]
   }
 }
