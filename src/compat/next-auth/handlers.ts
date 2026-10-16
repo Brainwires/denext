@@ -190,10 +190,69 @@ async function delegate(active: ActiveNextAuth, request: Request): Promise<Respo
   return new Response(res.body, { status: res.status, headers });
 }
 
+/**
+ * Where an app's own page for a built-in GET endpoint sends the browser, as Auth.js does: the
+ * page with `params` added to its query. `null` — render the built-in page — when the app has
+ * none, when it is on another origin (denext's redirects stay on the origin), or when it is the
+ * built-in endpoint itself (which would loop).
+ */
+function customPage(
+  active: ActiveNextAuth,
+  request: Request,
+  page: string | undefined,
+  action: string,
+  params: Record<string, string> = {},
+): string | null {
+  if (!page) return null;
+  const origin = new URL(appOrigin(active, request)).origin;
+  let url: URL;
+  try {
+    url = new URL(page, origin);
+  } catch {
+    return null;
+  }
+  if (url.origin !== origin || url.pathname === `${active.basePath}/${action}`) return null;
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+  return url.pathname + url.search + url.hash;
+}
+
+/** `GET {basePath}/signin`: `pages.signIn` with `callbackUrl` (and `error`), else the built-in page. */
+async function signInGet(
+  active: ActiveNextAuth,
+  request: Request,
+  query: URLSearchParams,
+): Promise<Response> {
+  const params: Record<string, string> = {
+    callbackUrl: await safeCallbackUrl(active, request, query.get("callbackUrl")),
+  };
+  const error = query.get("error");
+  if (error) params.error = error;
+  const page = customPage(active, request, active.config.pages?.signIn, "signin", params);
+  if (page) return redirectTo(page);
+  return signInPage(active.basePath, active.providers, await csrfToken(active), query);
+}
+
 /** `GET {basePath}/signout`: the app's own sign-out page (`pages.signOut`), else the built-in one. */
-async function signOutGet(active: ActiveNextAuth, query: URLSearchParams): Promise<Response> {
-  const page = active.config.pages?.signOut;
+async function signOutGet(
+  active: ActiveNextAuth,
+  request: Request,
+  query: URLSearchParams,
+): Promise<Response> {
+  const page = customPage(active, request, active.config.pages?.signOut, "signout");
   return page ? redirectTo(page) : signOutPage(active.basePath, await csrfToken(active), query);
+}
+
+/** `GET {basePath}/error`: `pages.error` with `error`, else the built-in page. */
+function errorGet(active: ActiveNextAuth, request: Request, query: URLSearchParams): Response {
+  const error = query.get("error") ?? "Default";
+  const page = customPage(active, request, active.config.pages?.error, "error", { error });
+  return page ? redirectTo(page) : errorPage(query);
+}
+
+/** `GET {basePath}/verify-request`: `pages.verifyRequest`, else the built-in page. */
+function verifyRequestGet(active: ActiveNextAuth, request: Request): Response {
+  const page = customPage(active, request, active.config.pages?.verifyRequest, "verify-request");
+  return page ? redirectTo(page) : verifyRequestPage();
 }
 
 /** The GET endpoints the shim answers itself, by action. */
@@ -211,13 +270,13 @@ async function handleGet(
     case "providers":
       return providersJson(active, request);
     case "signin":
-      return signInPage(active.basePath, active.providers, await csrfToken(active), query);
+      return await signInGet(active, request, query);
     case "signout":
-      return await signOutGet(active, query);
+      return await signOutGet(active, request, query);
     case "verify-request":
-      return verifyRequestPage();
+      return verifyRequestGet(active, request);
     case "error":
-      return errorPage(query);
+      return errorGet(active, request, query);
   }
   return null;
 }

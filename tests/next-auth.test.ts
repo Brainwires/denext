@@ -984,6 +984,40 @@ Deno.test("next-auth pages: GET signout goes to pages.signOut when the app has o
   assert((await builtIn.text()).includes("Are you sure you want to sign out?"));
 });
 
+Deno.test("next-auth pages: the built-in GET pages redirect to the app's own, as Auth.js does", async () => {
+  const a = app({
+    pages: { signIn: "/login", error: "/oops?from=auth", verifyRequest: "/check-email" },
+  });
+  const signIn = await a.call("/api/auth/signin?callbackUrl=%2Fdash&error=CredentialsSignin");
+  assertEquals(signIn.status, 302);
+  assertEquals(
+    signIn.headers.get("location"),
+    "/login?callbackUrl=%2Fdash&error=CredentialsSignin",
+  );
+  // A foreign callbackUrl is kept on the origin, like every other one.
+  const foreign = await a.call("/api/auth/signin?callbackUrl=https%3A%2F%2Fevil.test%2Fx");
+  assertEquals(foreign.headers.get("location"), "/login?callbackUrl=%2F");
+  const error = await a.call("/api/auth/error?error=AccessDenied");
+  assertEquals(error.headers.get("location"), "/oops?from=auth&error=AccessDenied");
+  const verify = await a.call("/api/auth/verify-request");
+  assertEquals(verify.headers.get("location"), "/check-email");
+});
+
+Deno.test("next-auth pages: a custom page on another origin, or the endpoint itself, isn't followed", async () => {
+  const a = app({
+    pages: {
+      signIn: "https://evil.test/login",
+      error: "/api/auth/error",
+      signOut: "//evil.test/bye",
+    },
+  });
+  const signIn = await a.call("/api/auth/signin");
+  assertEquals(signIn.status, 200, "the built-in page instead of an off-origin redirect");
+  const error = await a.call("/api/auth/error?error=Configuration");
+  assertEquals(error.status, 500, "the built-in error page, not a redirect loop");
+  assertEquals((await a.call("/api/auth/signout")).status, 200);
+});
+
 Deno.test("next-auth email: each email provider sends its own links", async () => {
   const a = emailApp();
   await a.requestLink("nodemailer", "n@example.com");

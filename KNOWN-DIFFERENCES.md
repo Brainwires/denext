@@ -385,6 +385,11 @@ place it behaves differently from Auth.js:
   `NextAuth()` runs, not at the first sign-in. A Cognito pool's endpoints may live on its
   `*.auth.<region>.amazoncognito.com` domain; a custom domain is listed in the provider's
   `allowedHosts` (a denext option), since a discovered endpoint on any other host is refused.
+- **A custom page must be on the app's origin.** `GET /api/auth/signin`, `/signout`, `/error`
+  and `/verify-request` redirect to `pages.signIn` / `signOut` / `error` / `verifyRequest` with
+  Auth.js's query (`callbackUrl` and `error`), but a page on another origin is not followed (the
+  built-in page answers instead), and the forwarded `callbackUrl` is the same-origin one the
+  `redirect` callback allowed, not the raw query value.
 - **Notion's `redirectUri` is ignored:** the callback URL is denext's (`AUTH_URL` + the base path).
 - **A lazy config (`NextAuth((req) => config)`) gets the request without its body**, so the
   handler that runs next can still read it. Each config object it returns is translated once;

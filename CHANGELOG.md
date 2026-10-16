@@ -106,8 +106,9 @@ and this project adheres to
   (`state`, PKCE, `nonce`, `redirect_uri`, …) can't be overridden. A lazy config
   (`NextAuth(async (req) => config)`) runs on every request, with the request where Auth.js
   passes one, and concurrent requests each read their own. `pages.newUser` receives a first
-  sign-in (with the landing path as `callbackUrl`) and `pages.signOut` replaces the built-in
-  sign-out page. `events.session` fires on every session read and `events.updateUser` when the
+  sign-in (with the landing path as `callbackUrl`), and the built-in sign-in, sign-out, error
+  and verify-request pages redirect to `pages.signIn` / `signOut` / `error` / `verifyRequest`
+  (same-origin only) with Auth.js's `callbackUrl` / `error` query. `events.session` fires on every session read and `events.updateUser` when the
   adapter updates a user. With several email providers, each sends its own links: denext's
   `sendVerificationRequest` now receives the issuing `provider` id. An Auth.js adapter with the
   optional `getUserExtension` / `updateUserExtension` methods (an extension table beside its
