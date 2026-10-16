@@ -31,7 +31,9 @@
 import * as esbuild from "./esbuild/mod.ts";
 import { dirname, resolve } from "@std/path";
 import { readDirective } from "./directives.ts";
-import { resolveNodeFrom, SSR_CONDITIONS } from "./next-compat.ts";
+import { npmSpecifierToBare, resolveNodeFrom, SSR_CONDITIONS } from "./next-compat.ts";
+
+export { npmSpecifierToBare };
 import { inNodeModules } from "./path-segments.ts";
 import type { NpmBoundaryFound } from "./module-graph.ts";
 
@@ -47,18 +49,6 @@ const ASSET =
   /\.(?:css|scss|sass|less|styl|svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|otf|eot|wasm|mp4|webm|mp3|wav|ogg|txt|md|mdx|html)$/i;
 /** Extensions esbuild can walk as code. */
 const CODE = /\.(?:[cm]?[jt]sx?)$/i;
-
-/** `npm:@scope/pkg@^1/sub` → `@scope/pkg/sub` (the import map's npm specifiers). */
-export function npmSpecifierToBare(spec: string): string {
-  const rest = spec.slice("npm:".length).replace(/^\//, "");
-  const scoped = rest.startsWith("@");
-  const parts = rest.split("/");
-  const nameParts = scoped ? parts.slice(0, 2) : parts.slice(0, 1);
-  const last = nameParts.length - 1;
-  const at = nameParts[last].indexOf("@");
-  if (at > 0) nameParts[last] = nameParts[last].slice(0, at);
-  return [...nameParts, ...parts.slice(nameParts.length)].join("/");
-}
 
 /** An import the walk does not follow. */
 const SKIP = (path: string): esbuild.OnResolveResult => ({ path, external: true });
@@ -171,7 +161,74 @@ async function walkFrom(
     if (directive === "client" && !inClient) client.add(path);
     for (const next of graph.get(path) ?? []) queue.push([next, nowClient]);
   }
-  return { client: [...client], server: [...server] };
+  const boundary = [...client, ...server];
+  return {
+    client: [...client],
+    server: [...server],
+    packages: packagesLeadingTo(local, boundary, graph),
+  };
+}
+
+/**
+ * The package (by name) of a file inside `node_modules`: the segment(s) after the LAST
+ * `node_modules/` (a pnpm `.pnpm/x@1/node_modules/@scope/pkg/…` names `@scope/pkg`).
+ * Exported for testing.
+ */
+export function packageNameOfPath(path: string): string | null {
+  const norm = path.replaceAll("\\", "/");
+  const at = norm.lastIndexOf("/node_modules/");
+  if (at < 0) return null;
+  const parts = norm.slice(at + "/node_modules/".length).split("/");
+  if (parts[0].startsWith("@")) return parts.length > 2 ? `${parts[0]}/${parts[1]}` : null;
+  return parts.length > 1 ? parts[0] : null;
+}
+
+/**
+ * Every package with a file on SOME import path from `local` to one of `boundary`: the
+ * packages whose resolution decides which file the server bundle reaches as the island. With
+ * `nodeResolve: false` the server bundle resolves exactly these through the node_modules
+ * resolver this walk uses, so its island is the walk's file (not a second instance).
+ */
+function packagesLeadingTo(
+  local: string,
+  boundary: readonly string[],
+  graph: Map<string, string[]>,
+): string[] {
+  if (boundary.length === 0) return [];
+  const reverse = reverseEdges(local, graph);
+  const names = new Set<string>();
+  const back = new Set<string>(boundary);
+  const stack = [...boundary];
+  while (stack.length > 0) {
+    const file = stack.pop()!;
+    const name = packageNameOfPath(file);
+    if (name) names.add(name);
+    for (const parent of reverse.get(file) ?? []) {
+      if (back.has(parent) || !inNodeModules(parent)) continue;
+      back.add(parent);
+      stack.push(parent);
+    }
+  }
+  return [...names].sort();
+}
+
+/** Child → importers, over the `node_modules` files `local` reaches. */
+function reverseEdges(local: string, graph: Map<string, string[]>): Map<string, string[]> {
+  const reverse = new Map<string, string[]>();
+  const seen = new Set<string>([local]);
+  const queue = [local];
+  while (queue.length > 0) {
+    const from = queue.shift()!;
+    for (const to of (graph.get(from) ?? []).filter(inNodeModules)) {
+      const parents = reverse.get(to);
+      if (parents) parents.push(from);
+      else reverse.set(to, [from]);
+      if (seen.has(to)) continue;
+      seen.add(to);
+      queue.push(to);
+    }
+  }
+  return reverse;
 }
 
 /**
@@ -187,7 +244,7 @@ export async function npmBoundaryByImporter(
 ): Promise<Map<string, NpmBoundaryModules>> {
   const out = new Map<string, NpmBoundaryModules>();
   const entries = localFiles.filter((f) => CODE.test(f) && !inNodeModules(f));
-  for (const f of localFiles) out.set(f, { client: [], server: [] });
+  for (const f of localFiles) out.set(f, { client: [], server: [], packages: [] });
   if (entries.length === 0) return out;
   const root = Deno.cwd();
   let meta: esbuild.Metafile;

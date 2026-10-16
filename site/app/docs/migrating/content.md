@@ -195,7 +195,9 @@ entries).
 > leaves your source alone; the one `package.json` edit it makes is stripping
 > Prisma's npm client when it wires the Deno-native adapter (see
 > [Databases](/docs/database)). Set `nodeResolve: false` to force app deps back
-> through Deno's strict `npm:` loader (escape hatch).
+> through Deno's strict `npm:` loader (escape hatch). A library that ships its own
+> `"use client"` / `"use server"` files still resolves from `node_modules` in that
+> mode, so its client components hydrate as islands.
 
 ---
 

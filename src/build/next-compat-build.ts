@@ -37,7 +37,7 @@ import {
 } from "./bundle.ts";
 // Public so `BuildNextCompatFlightOptions.classRuntime` documents against a reachable type.
 export type { ClassRuntimeMode } from "./bundle.ts";
-import type { BoundaryManifest } from "./module-graph.ts";
+import { type BoundaryManifest, npmBoundaryPackageNames } from "./module-graph.ts";
 // Re-exported so plugins (e.g. @denext/pages-router) can route their own SSR module
 // loading through the compat bundles — running npm-React page modules on denext's single
 // React and fixing Deno's native CJS default-interop (e.g. `import styled from
@@ -127,6 +127,13 @@ export interface BuildNextCompatModulesOptions {
    * bundle resolve `catalog:`/`workspace:*`/incomplete-`exports` deps like the client path.
    */
   resolveAllNodeModules?: boolean;
+  /**
+   * Without {@link resolveAllNodeModules}: the packages on the import paths to the app's npm
+   * `"use client"` / `"use server"` files, forwarded to
+   * {@link BundleNextCompatModulesOptions.boundaryPackages}. Defaults to every package the
+   * process's npm boundary walks recorded (`npmBoundaryPackageNames`).
+   */
+  boundaryPackages?: readonly string[];
   /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
   mdxOptions?: MdxBuildOptions;
   /**
@@ -229,6 +236,9 @@ export async function buildNextCompatModules(
     classComponents: options.classComponents,
     absWorkingDir: options.projectDir,
     resolveAllNodeModules: options.resolveAllNodeModules,
+    boundaryPackages: options.resolveAllNodeModules
+      ? undefined
+      : options.boundaryPackages ?? npmBoundaryPackageNames(),
     mdxOptions: options.mdxOptions,
     optimizePackageImports: options.optimizePackageImports,
     autoOptimizePackageImports: options.autoOptimizePackageImports,

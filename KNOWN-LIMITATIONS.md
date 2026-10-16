@@ -9,10 +9,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 - **`<Script strategy="worker">` runs on the main thread** (as `afterInteractive`). denext ships
   no Partytown-style DOM-proxying worker runtime; self-host Partytown if you need one.
-- **A library's npm `"use client"` files are found by resolving its packages as the server bundle
-  does** (`node_modules`, `nodeResolve` on, the default). With `nodeResolve: false` the server
-  bundle resolves packages differently, so a package's own client components may render on the
-  server only.
 - **`next/og` renders satori's subset** (flexbox, inline `style`, `tw`): the same engine and
   limits as Next. Arbitrary CSS would need a layout engine or a headless browser.
 - **Async `startTransition` is scoped by a time window by default.** Browsers have no

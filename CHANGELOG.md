@@ -69,6 +69,14 @@ and this project adheres to
   generated code is held to golden files, compiled and type-checked (mypy `--strict`, `go vet`,
   `swiftc -typecheck` in Swift 6 mode, `kotlinc`) and run end to end against a server.
 
+### Fixed
+
+- **A library's `"use client"` components hydrate under `nodeResolve: false` too.** The server
+  bundle now resolves the packages on the import paths to a library's own `"use client"` /
+  `"use server"` files from `node_modules`, the way the build found those files, so the component
+  a page imports is the registered island. They used to resolve through Deno's `npm:` loader in
+  that mode, often to another build of the package, and render on the server only.
+
 ## [4.2.0] - 2026-10-16
 
 ### Added

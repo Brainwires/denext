@@ -1473,6 +1473,13 @@ export interface BundleNextCompatModulesOptions {
    */
   resolveAllNodeModules?: boolean;
   /**
+   * Without {@link resolveAllNodeModules}: the packages (by name) on the import paths to the
+   * app's npm `"use client"` / `"use server"` files, resolved from `node_modules` the way the
+   * boundary walk resolved them (`npm-boundary.ts`), so the island the page imports is the
+   * very module the build registered. Ignored under {@link resolveAllNodeModules}.
+   */
+  boundaryPackages?: readonly string[];
+  /**
    * App MDX config (`denext.config.ts` `mdx`): unified remark/rehype/recma plugin lists
    * forwarded to MDX's `compile` for `.mdx`/`.md` sources. Omit for the baseline
    * plain-MDX loader.
@@ -2500,11 +2507,58 @@ function nodeModulesPlugins(options: BundleNextCompatModulesOptions): esbuild.Pl
   if (options.resolveAllNodeModules) {
     return [catalogResolverPlugin(options.absWorkingDir, "all", conditions, exts)];
   }
+  const plugins: esbuild.Plugin[] = [];
+  if (options.boundaryPackages && options.boundaryPackages.length > 0) {
+    const packages = new Set(options.boundaryPackages);
+    plugins.push(boundaryPackageResolverPlugin(options.absWorkingDir, packages, conditions, exts));
+  }
   if (options.catalogPackages && options.catalogPackages.length > 0) {
     const packages = new Set(options.catalogPackages);
-    return [catalogResolverPlugin(options.absWorkingDir, packages, conditions, exts)];
+    plugins.push(catalogResolverPlugin(options.absWorkingDir, packages, conditions, exts));
   }
-  return [];
+  return plugins;
+}
+
+/** `npm:@scope/pkg@^1/sub` → `@scope/pkg/sub` (the import map's npm specifiers). */
+export function npmSpecifierToBare(spec: string): string {
+  const rest = spec.slice("npm:".length).replace(/^\//, "");
+  const scoped = rest.startsWith("@");
+  const parts = rest.split("/");
+  const nameParts = scoped ? parts.slice(0, 2) : parts.slice(0, 1);
+  const last = nameParts.length - 1;
+  const at = nameParts[last].indexOf("@");
+  if (at > 0) nameParts[last] = nameParts[last].slice(0, at);
+  return [...nameParts, ...parts.slice(nameParts.length)].join("/");
+}
+
+/**
+ * esbuild plugin (`nodeResolve: false`): a bare specifier naming one of `packages` resolves from
+ * the importer's own directory through denext's node_modules resolver — exactly as the npm
+ * boundary walk resolves it — so a library's `"use client"` island is one module in the server
+ * bundle, reached by the page and registered as the island. Anything else (or a package not
+ * installed in `node_modules`) falls through to the deno-loader.
+ */
+function boundaryPackageResolverPlugin(
+  projectDir: string,
+  packages: ReadonlySet<string>,
+  conditions: string[],
+  platformExtensions?: readonly string[],
+): esbuild.Plugin {
+  return {
+    name: "denext-npm-boundary-resolver",
+    setup(build) {
+      build.onResolve({ filter: /^[^./]/ }, async (args) => {
+        if (args.namespace !== "file" && args.namespace !== "") return null;
+        const spec = args.path.startsWith("npm:") ? npmSpecifierToBare(args.path) : args.path;
+        if (/^[a-z][a-z0-9+.-]*:/.test(spec) || spec.startsWith("#")) return null;
+        const [name] = splitPackageSpecifier(spec);
+        if (!packages.has(name)) return null;
+        const fromDir = args.importer ? dirname(args.importer) : projectDir;
+        const resolved = await resolveNodeFrom(fromDir, spec, conditions, platformExtensions);
+        return resolved ? { path: resolved } : null;
+      });
+    },
+  };
 }
 
 /**
