@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0
+## 0.6.0 - 2026-10-16
 
 ### Added
 
@@ -13,7 +13,7 @@
   volatile function is POST only, a `void` one answers 204), and PostgREST's error body as
   `rest.Error`. What only the secret key reaches is left out. `rest: { openapi: false }` opts out.
 
-## 0.5.0
+## 0.5.0 - 2026-10-15
 
 ### Added
 

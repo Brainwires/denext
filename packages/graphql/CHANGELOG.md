@@ -12,7 +12,7 @@
   dependency, `jsr:@denext/openapi@^0.6.0`, loaded only when the verb runs). `modelFromSdl(sdl,
   path)` from `@denext/graphql/client`.
 
-## 0.5.0
+## 0.5.0 - 2026-10-16
 
 ### Added
 
@@ -28,7 +28,7 @@
   after an edit under `watch` (default: its directory). One that cannot be traced logs a dev
   notice and needs a restart, as before.
 
-## 0.4.0
+## 0.4.0 - 2026-10-15
 
 Requires the denext release after 4.0.0 (`tapChannelAuthorized` in `@denext/denext/plugin-kit`).
 

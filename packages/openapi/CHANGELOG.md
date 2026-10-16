@@ -17,7 +17,7 @@
   objects is one type), string enums enums, nullable schemas optional; the `ApiError` envelope
   is each client's own error type.
 
-## 0.5.0
+## 0.5.0 - 2026-10-16
 
 ### Added
 
