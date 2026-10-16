@@ -248,6 +248,8 @@ and this project adheres to
 
 ### Fixed
 
+- A Live socket frame whose `type` names an `Object.prototype` key (`"__proto__"`, `"constructor"`, …) is ignored
+  instead of reaching a prototype function.
 - **Hydration keeps a `dangerouslySetInnerHTML` element's server markup, as React does.** On any
   page that hydrates, an element rendered with `dangerouslySetInnerHTML` (in a Server Component
   or a client component) was emptied: hydration re-applied the HTML, then pruned the element's

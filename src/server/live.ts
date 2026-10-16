@@ -735,7 +735,9 @@ function parseClientFrame(conn: Conn, raw: string): LiveClientMessage | null {
 function handleClientMessage(conn: Conn, raw: string): void {
   const msg = parseClientFrame(conn, raw);
   if (!msg) return;
-  const viewFrame = VIEW_FRAMES[msg.type];
+  // Own keys only: a client's `type` of "__proto__" / "constructor" / "toString" must not reach
+  // Object.prototype.
+  const viewFrame = Object.hasOwn(VIEW_FRAMES, msg.type) ? VIEW_FRAMES[msg.type] : undefined;
   if (viewFrame) return viewFrame(conn, msg as unknown as Record<string, unknown>);
   switch (msg.type) {
     case "subscribe":
