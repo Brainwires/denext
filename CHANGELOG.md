@@ -45,6 +45,29 @@ and this project adheres to
   transform carries a scale with the translation (still one compositor animation per view), and
   each view's transform is computed against the one its ancestor plays, so a child of a resized
   view starts at its own old place and size.
+- **denext's own Capacitor plugins for the Expo calls the pinned plugins have no call for.**
+  `denext mobile add calendar | contacts | print | brightness` still installs the pinned npm
+  plugin and now also writes denext's `DenextCalendar` / `DenextContacts` / `DenextPrint` /
+  `DenextBrightness` beside it (Swift registered by `DenextBridgeViewController`, Java registered
+  from `MainActivity`, upgraded in place while unedited). Through them, `denext/expo/calendar`
+  reads an event by id (`getEventAsync` without `instanceStartDate`, `ExpoCalendarEvent.get`),
+  reads attendees (`getAttendeesForEventAsync`, `ExpoCalendarEvent.getAttendees`) and on Android
+  adds, changes and removes them (`createAttendeeAsync`, `updateAttendeeAsync`,
+  `deleteAttendeeAsync`, `ExpoCalendarAttendee`), changes one occurrence (`updateEventAsync`
+  with `instanceStartDate`: `EKSpan.thisEvent` on iOS, an exception event on Android) and an
+  event's time zone, shows an event in the system viewer (`openEventInCalendarAsync`,
+  `ExpoCalendarEvent.openInCalendar`, Android's `openEventInCalendar`) and one occurrence in the
+  editor. `denext/expo/contacts` reads containers on iOS (`getContainersAsync`,
+  `getDefaultContainerIdAsync`, the `Container` class), fires `addContactsChangeListener` on
+  address-book changes, and on Android keeps the postal addresses, URLs, birthday and photo
+  through an update. `denext/expo/print` renders HTML to a PDF file (`printToFileAsync`:
+  UIMarkupTextPrintFormatter + UIPrintPageRenderer on iOS, a WebView's print adapter on Android)
+  and on iOS picks a printer (`selectPrinterAsync`) and prints to it without the dialog
+  (`printerUrl`). `denext/expo/brightness` reads and writes Android's system brightness and its
+  mode (`WRITE_SETTINGS`, asked for in the system settings screen by `requestPermissionsAsync`,
+  as Expo), reads the system level while the window follows it, and fires
+  `addBrightnessListener` on iOS. A shell from before these plugins keeps rejecting those calls
+  with `ERR_UNAVAILABLE`; run `denext mobile add <capability>` again to add them.
 
 - **`@denext/tanstack-start`: Start-style server rendering for TanStack Router.** A new plugin
   (`plugins: [tanstackStart()]`) for an app with Start's layout (`src/router.tsx` exporting
@@ -153,6 +176,13 @@ and this project adheres to
   5 in a production bundle, its full text installed with the dev warnings and by
   `denext/testing`. `examples/hello`'s shared chunks went from 67,032 B to 64,341 B, and the
   build-smoke budget moves from 67,100 B to 65,500 B.
+- **`denext mobile add brightness` declares `android.permission.WRITE_SETTINGS`** (special
+  access the user grants in the system settings screen), for Android's system brightness. With
+  `DenextBrightness`, `denext/expo/brightness`'s `getPermissionsAsync` on Android answers whether
+  the app may write the system settings (`denied`, askable again, until the user allows it)
+  instead of always `granted`, and `updateEventAsync` / `getEventAsync` in
+  `denext/expo/calendar` and `selectPrinterAsync` / `printToFileAsync` in `denext/expo/print`
+  name the missing plugin when they reject.
 
 ## [4.2.0] - 2026-10-16
 

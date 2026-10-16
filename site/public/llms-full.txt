@@ -1604,7 +1604,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `class ChannelAccessError` — Why tapChannelAuthorized refused a subscriber.
 - `interface ChannelConfig<T>` — The definition passed to createChannel.
 - `interface ChannelContext` — The subscriber's identity handed to authorize (the Live connection context).
-- `interface ChannelEvent` — One transport event: a channel publish/revoke, a cross-instance cache-tag invalidate, or an instance's presence snapshot of one usePresence room.
+- `interface ChannelEvent` — One transport event: a channel publish/revoke, a cross-instance cache-tag invalidate, an instance's presence snapshot of one usePresence room, or a parked live view's view-resumed (it resumed on another instance, so the one that parked it stops its copy).
 - `type ChannelIdleReason = unsubscribe | disconnect` — Why a channel key lost its last local subscriber (see ChannelConfig.onIdle).
 - `type ChannelPublisher<T> = (ctx: ChannelPublisherContext<T>) => unknown` — A supervised per-key producer (ChannelConfig.publisher).
 - `interface ChannelPublisherContext<T>` — What a ChannelConfig.publisher receives.
@@ -3846,24 +3846,24 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/expo/brightness`
 
-- `addBrightnessListener(listener: (event: BrightnessEvent) => void): Subscription` — Call listener when the brightness changes: never, since the plugin reports no changes.
+- `addBrightnessListener(listener: (event: BrightnessEvent) => void): Subscription` — Call listener when the screen's brightness changes (iOS, as in Expo: with DenextBrightness from denext mobile add brightness; never elsewhere).
 - `interface BrightnessEvent` — What a brightness listener receives.
 - `enum BrightnessMode` — How the system sets the brightness (Android).
-- `getBrightnessAsync(): Promise<number>` — The current brightness: the screen's (iOS) or the app window's (Android; -1 while it follows the system).
-- `getPermissionsAsync(): Promise<PermissionResponse>` — The system-settings permission: granted in the shell, undetermined on the web.
-- `getSystemBrightnessAsync(): Promise<number>` — The system brightness: off Android the screen's, as Expo (getBrightnessAsync); Android's system setting is not readable here.
-- `getSystemBrightnessModeAsync(): Promise<BrightnessMode>` — The system brightness mode: off Android BrightnessMode.UNKNOWN, as in Expo; Android's is not readable here (it rejects with ERR_UNAVAILABLE).
+- `getBrightnessAsync(): Promise<number>` — The current brightness: the screen's (iOS) or the app window's (Android; the system's while the window follows it, as in Expo, or -1 without DenextBrightness).
+- `getPermissionsAsync(): Promise<PermissionResponse>` — The system-settings permission (see requestPermissionsAsync).
+- `getSystemBrightnessAsync(): Promise<number>` — The system brightness: off Android the screen's, as Expo (getBrightnessAsync); on Android the system setting.
+- `getSystemBrightnessModeAsync(): Promise<BrightnessMode>` — The system brightness mode: off Android BrightnessMode.UNKNOWN, as in Expo; on Android the system setting's (AUTOMATIC or MANUAL).
 - `isAvailableAsync(): Promise<boolean>` — Whether the brightness can be changed: the shell with the plugin.
 - `isUsingSystemBrightnessAsync(): Promise<boolean>` — Android: whether the app window follows the system brightness (it has no level of its own). Off Android false, as in Expo.
 - `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
 - `type PermissionHookOptions<Options> = Options & object` — Options for a permission hook (createPermissionHook).
 - `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
 - `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
-- `requestPermissionsAsync(): Promise<PermissionResponse>` — Ask for the system-settings permission: as getPermissionsAsync.
+- `requestPermissionsAsync(): Promise<PermissionResponse>` — Ask for the system-settings permission: on Android the system screen for WRITE_SETTINGS; granted elsewhere in the shell, undetermined on the web.
 - `restoreSystemBrightnessAsync(): Promise<void>` — Android: let the app window follow the system brightness again. Off Android it does nothing, as in Expo.
 - `setBrightnessAsync(brightnessValue: number): Promise<void>` — Set the brightness while the app runs.
-- `setSystemBrightnessAsync(brightnessValue: number): Promise<void>` — Set the system brightness: off Android the screen's, as Expo (setBrightnessAsync); Android's system setting is not writable here.
-- `setSystemBrightnessModeAsync(brightnessMode: BrightnessMode): Promise<void>` — Set the system brightness mode: off Android, or for UNKNOWN, it does nothing, as in Expo; Android's is not writable here (it rejects with ERR_UNAVAILABLE).
+- `setSystemBrightnessAsync(brightnessValue: number): Promise<void>` — Set the system brightness: off Android the screen's, as Expo (setBrightnessAsync); on Android the system setting (switching its mode to manual first, as Expo), which needs WRITE_SETTINGS (requestPermissionsAsync).
+- `setSystemBrightnessModeAsync(brightnessMode: BrightnessMode): Promise<void>` — Set the system brightness mode: off Android, or for UNKNOWN, it does nothing, as in Expo; on Android it writes the system setting, which needs WRITE_SETTINGS (requestPermissionsAsync).
 - `interface Subscription` — What Expo's add…Listener functions return.
 - `usePermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the permission: [response, request, get].
 
@@ -3886,38 +3886,41 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `enum Availability` — An event's free/busy state.
 - `interface Calendar` — A calendar (or an iOS reminders list).
 - `enum CalendarAccessLevel` — The current user's access to a calendar (Android).
+- `type CalendarDialogOpenParamsNext = CalendarDialogParamsNext & OpenEventPresentationOptions` — CalendarDialogParamsNext with the viewer's options.
 - `interface CalendarDialogParams` — Which event a dialog shows.
+- `type CalendarDialogParamsNext = Omit<CalendarDialogParams, id> & PresentationOptions` — Which occurrence the object API's dialogs show, and how.
 - `enum CalendarDialogResultActions` — How a calendar dialog ended.
 - `enum CalendarType` — A calendar's kind (iOS).
-- `createAttendeeAsync(_eventId: string, _details?: Partial<Attendee>): Promise<string>` — Add an attendee. Not supported by the plugin.
+- `createAttendeeAsync(eventId: string, details?: Partial<Attendee>): Promise<string>` — Add an attendee to an event (Android).
 - `createCalendar(details?: Partial<Calendar>): Promise<ExpoCalendar>` — Create a calendar (see createCalendarAsync).
 - `createCalendarAsync(details?: Partial<Calendar>): Promise<string>` — Create a calendar, or (iOS, entityType: "reminder") a reminders list. On Android the plugin needs source.name (the account) and ownerAccount.
-- `createEventAsync(calendarId: string, eventData?: Omit<Partial<Event>, id | organizer>): Promise<string>` — Create an event. timeZone, attendees and absolute or location alarms are not passed on.
+- `createEventAsync(calendarId: string, eventData?: Omit<Partial<Event>, id | organizer>): Promise<string>` — Create an event. Attendees and absolute or location alarms are not passed on; timeZone is set through DenextCalendar (ignored without it).
 - `createEventInCalendarAsync(eventData?: Omit<Partial<Event>, id>, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>` — Open the system's new-event editor, pre-filled. On iOS the result says whether it was saved (with the new id) or canceled; Android does not report it (done, id: null).
 - `createReminderAsync(calendarId: string | null, reminder?: Reminder): Promise<string>` — Create a reminder.
 - `enum DayOfTheWeek` — A weekday, as Expo numbers it (Sunday is 1).
 - `interface DaysOfTheWeek` — A weekday of a recurrence.
-- `deleteAttendeeAsync(_id: string): Promise<void>` — Remove an attendee. Not supported by the plugin.
+- `deleteAttendeeAsync(id: string): Promise<void>` — Remove an attendee (Android).
 - `deleteCalendarAsync(id: string): Promise<void>` — Delete a calendar (or reminders list) and everything in it.
 - `deleteEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<void>` — Delete an event, one occurrence (instanceStartDate) or this and the following ones (futureEvents).
 - `deleteReminderAsync(id: string): Promise<void>` — Delete a reminder.
 - `interface DialogEventResult` — How an event dialog ended, and the event's id.
-- `editEventInCalendarAsync(params: CalendarDialogParams, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>` — Open the system's event editor on an event. Android does not report the outcome (done).
+- `editEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: PresentationOptions): Promise<DialogEventResult>` — Open the system's event editor on an event (one occurrence, with instanceStartDate, through DenextCalendar). Android does not report the outcome (done).
 - `enum EntityTypes` — What a calendar holds.
 - `interface Event` — An event.
 - `enum EventAccessLevel` — An event's visibility (Android).
 - `enum EventStatus` — An event's status.
 - `class ExpoCalendar` — A calendar, with methods (the new API).
+- `class ExpoCalendarAttendee` — An event's attendee, with methods (the new API; the methods are Android only).
 - `class ExpoCalendarEvent` — An event, with methods (the new API).
 - `class ExpoCalendarReminder` — A reminder, with methods (the new API, iOS).
 - `enum Frequency` — How often a recurrence repeats.
-- `getAttendeesForEventAsync(_id: string, _recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>` — An event's attendees. The plugin does not read them by event id.
+- `getAttendeesForEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>` — An event's attendees (of one occurrence, with instanceStartDate).
 - `getCalendarPermissions(writeOnly?: boolean): Promise<PermissionResponse>` — The calendar permission, without prompting (the new API).
 - `getCalendarPermissionsAsync(): Promise<PermissionResponse>` — The calendar permission, without prompting (legacy).
 - `getCalendars(entityType?: EntityTypes): Promise<ExpoCalendar[]>` — The calendars, as objects (see getCalendarsAsync).
 - `getCalendarsAsync(entityType?: string): Promise<Calendar[]>` — The calendars. On iOS, entityType picks event calendars or reminders lists (both when omitted; reminders lists only when reminders access allows reading them). Android ignores it, as Expo does.
 - `getDefaultCalendarAsync(): Promise<Calendar>` — The default calendar for new events (isPrimary: true).
-- `getEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Event>` — One event. The plugin cannot look an event up by id alone: pass the occurrence's start as recurringEventOptions.instanceStartDate (the startDate a listing returned).
+- `getEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Event>` — One event: by id (through DenextCalendar), or its occurrence starting at recurringEventOptions.instanceStartDate (the startDate a listing returned).
 - `getEventsAsync(calendarIds: string[], startDate: Date | string, endDate: Date | string): Promise<Event[]>` — The events (occurrences) overlapping [startDate, endDate] in the given calendars (all calendars when the list is empty).
 - `getReminderAsync(id: string): Promise<Reminder>` — One reminder.
 - `getRemindersAsync(calendarIds: parenthesized[], status: ReminderStatus | null, startDate?: Date | string | null, endDate?: Date | string | null): Promise<Reminder[]>` — The reminders in the given lists (all lists when empty), by status; a date range filters on the due date (on the completion date for completed).
@@ -3927,13 +3930,14 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `getSourcesAsync(): Promise<Source[]>` — The calendar accounts.
 - `isAvailableAsync(): Promise<boolean>` — Whether the calendar API works here: the shell with the plugin installed.
 - `listEvents(calendars: parenthesized[], startDate: Date, endDate: Date): Promise<ExpoCalendarEvent[]>` — The events overlapping [startDate, endDate] in the given calendars, as objects.
+- `type ModifiableAttendeeProperties = Pick<Attendee, name | email | role | status | type>` — What ExpoCalendarAttendee.update changes.
 - `type ModifiableCalendarProperties = Pick<Calendar, color | title>` — What ExpoCalendar.update changes.
 - `type ModifiableEventProperties = Pick<Event, title | location | timeZone | url | notes | alarms | recurrenceRule | availability | startDate | endDate | allDay>` — What ExpoCalendarEvent.update changes.
 - `type ModifiableReminderProperties = Pick<Reminder, title | location | timeZone | url | notes | alarms | recurrenceRule | startDate | dueDate | completed | completionDate>` — What ExpoCalendarReminder.update changes.
 - `enum MonthOfTheYear` — A month (January is 1).
 - `interface OpenEventDialogResult` — How an "open event" dialog ended.
-- `openEventInCalendar(_id: string): void` — Open an event in the Android calendar app. The plugin has no such call.
-- `openEventInCalendarAsync(_params: CalendarDialogParams, _presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>` — Show an event in the calendar app. The plugin has no such dialog.
+- `openEventInCalendar(id: string): void` — Open an event in the Android calendar app (Expo's deprecated Android-only call; it returns before the app opens).
+- `openEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>` — Show an event (or, with instanceStartDate, one occurrence) in the system's event viewer: EKEventViewController on iOS, which reports done, responded, deleted or canceled; the calendar app on Android, which reports nothing (done).
 - `interface OpenEventPresentationOptions` — How to present an existing event.
 - `interface Organizer` — An event's organizer.
 - `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
@@ -3953,9 +3957,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `requestRemindersPermissionsAsync(): Promise<PermissionResponse>` — Ask for reminders access (legacy).
 - `interface Source` — A calendar account.
 - `enum SourceType` — A calendar source's kind (iOS).
-- `updateAttendeeAsync(_id: string, _details?: Partial<Attendee>): Promise<string>` — Change an attendee. Not supported by the plugin.
+- `updateAttendeeAsync(id: string, details?: Partial<Attendee>): Promise<string>` — Change an attendee (Android).
 - `updateCalendarAsync(id: string, details?: Partial<Calendar>): Promise<string>` — Change a calendar's (or reminders list's) title and colour; other fields are ignored.
-- `updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>` — Change an event (with futureEvents, this and the following occurrences).
+- `updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>` — Change an event, or with instanceStartDate one occurrence of it (with futureEvents, it and the following ones; iOS only). An occurrence and a time zone are changed through DenextCalendar; on Android the changed occurrence becomes an exception event, whose id is returned.
 - `updateReminderAsync(id: string, details?: Reminder): Promise<string>` — Change a reminder.
 - `useCalendarPermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the calendar permission: [response, request, get].
 - `useRemindersPermissions(options?: PermissionHookOptions<object>): tuple` — Hook form of the reminders permission (iOS): [response, request, get].
@@ -3975,29 +3979,29 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CalendarDialogParams` — Which event a dialog shows.
 - `enum CalendarDialogResultActions` — How a calendar dialog ended.
 - `enum CalendarType` — A calendar's kind (iOS).
-- `createAttendeeAsync(_eventId: string, _details?: Partial<Attendee>): Promise<string>` — Add an attendee. Not supported by the plugin.
+- `createAttendeeAsync(eventId: string, details?: Partial<Attendee>): Promise<string>` — Add an attendee to an event (Android).
 - `createCalendarAsync(details?: Partial<Calendar>): Promise<string>` — Create a calendar, or (iOS, entityType: "reminder") a reminders list. On Android the plugin needs source.name (the account) and ownerAccount.
-- `createEventAsync(calendarId: string, eventData?: Omit<Partial<Event>, id | organizer>): Promise<string>` — Create an event. timeZone, attendees and absolute or location alarms are not passed on.
+- `createEventAsync(calendarId: string, eventData?: Omit<Partial<Event>, id | organizer>): Promise<string>` — Create an event. Attendees and absolute or location alarms are not passed on; timeZone is set through DenextCalendar (ignored without it).
 - `createEventInCalendarAsync(eventData?: Omit<Partial<Event>, id>, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>` — Open the system's new-event editor, pre-filled. On iOS the result says whether it was saved (with the new id) or canceled; Android does not report it (done, id: null).
 - `createReminderAsync(calendarId: string | null, reminder?: Reminder): Promise<string>` — Create a reminder.
 - `enum DayOfTheWeek` — A weekday, as Expo numbers it (Sunday is 1).
 - `interface DaysOfTheWeek` — A weekday of a recurrence.
-- `deleteAttendeeAsync(_id: string): Promise<void>` — Remove an attendee. Not supported by the plugin.
+- `deleteAttendeeAsync(id: string): Promise<void>` — Remove an attendee (Android).
 - `deleteCalendarAsync(id: string): Promise<void>` — Delete a calendar (or reminders list) and everything in it.
 - `deleteEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<void>` — Delete an event, one occurrence (instanceStartDate) or this and the following ones (futureEvents).
 - `deleteReminderAsync(id: string): Promise<void>` — Delete a reminder.
 - `interface DialogEventResult` — How an event dialog ended, and the event's id.
-- `editEventInCalendarAsync(params: CalendarDialogParams, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>` — Open the system's event editor on an event. Android does not report the outcome (done).
+- `editEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: PresentationOptions): Promise<DialogEventResult>` — Open the system's event editor on an event (one occurrence, with instanceStartDate, through DenextCalendar). Android does not report the outcome (done).
 - `enum EntityTypes` — What a calendar holds.
 - `interface Event` — An event.
 - `enum EventAccessLevel` — An event's visibility (Android).
 - `enum EventStatus` — An event's status.
 - `enum Frequency` — How often a recurrence repeats.
-- `getAttendeesForEventAsync(_id: string, _recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>` — An event's attendees. The plugin does not read them by event id.
+- `getAttendeesForEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>` — An event's attendees (of one occurrence, with instanceStartDate).
 - `getCalendarPermissionsAsync(): Promise<PermissionResponse>` — The calendar permission, without prompting (legacy).
 - `getCalendarsAsync(entityType?: string): Promise<Calendar[]>` — The calendars. On iOS, entityType picks event calendars or reminders lists (both when omitted; reminders lists only when reminders access allows reading them). Android ignores it, as Expo does.
 - `getDefaultCalendarAsync(): Promise<Calendar>` — The default calendar for new events (isPrimary: true).
-- `getEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Event>` — One event. The plugin cannot look an event up by id alone: pass the occurrence's start as recurringEventOptions.instanceStartDate (the startDate a listing returned).
+- `getEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Event>` — One event: by id (through DenextCalendar), or its occurrence starting at recurringEventOptions.instanceStartDate (the startDate a listing returned).
 - `getEventsAsync(calendarIds: string[], startDate: Date | string, endDate: Date | string): Promise<Event[]>` — The events (occurrences) overlapping [startDate, endDate] in the given calendars (all calendars when the list is empty).
 - `getReminderAsync(id: string): Promise<Reminder>` — One reminder.
 - `getRemindersAsync(calendarIds: parenthesized[], status: ReminderStatus | null, startDate?: Date | string | null, endDate?: Date | string | null): Promise<Reminder[]>` — The reminders in the given lists (all lists when empty), by status; a date range filters on the due date (on the completion date for completed).
@@ -4007,8 +4011,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `isAvailableAsync(): Promise<boolean>` — Whether the calendar API works here: the shell with the plugin installed.
 - `enum MonthOfTheYear` — A month (January is 1).
 - `interface OpenEventDialogResult` — How an "open event" dialog ended.
-- `openEventInCalendar(_id: string): void` — Open an event in the Android calendar app. The plugin has no such call.
-- `openEventInCalendarAsync(_params: CalendarDialogParams, _presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>` — Show an event in the calendar app. The plugin has no such dialog.
+- `openEventInCalendar(id: string): void` — Open an event in the Android calendar app (Expo's deprecated Android-only call; it returns before the app opens).
+- `openEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>` — Show an event (or, with instanceStartDate, one occurrence) in the system's event viewer: EKEventViewController on iOS, which reports done, responded, deleted or canceled; the calendar app on Android, which reports nothing (done).
 - `interface OpenEventPresentationOptions` — How to present an existing event.
 - `interface Organizer` — An event's organizer.
 - `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
@@ -4025,9 +4029,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `requestRemindersPermissionsAsync(): Promise<PermissionResponse>` — Ask for reminders access (legacy).
 - `interface Source` — A calendar account.
 - `enum SourceType` — A calendar source's kind (iOS).
-- `updateAttendeeAsync(_id: string, _details?: Partial<Attendee>): Promise<string>` — Change an attendee. Not supported by the plugin.
+- `updateAttendeeAsync(id: string, details?: Partial<Attendee>): Promise<string>` — Change an attendee (Android).
 - `updateCalendarAsync(id: string, details?: Partial<Calendar>): Promise<string>` — Change a calendar's (or reminders list's) title and colour; other fields are ignored.
-- `updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>` — Change an event (with futureEvents, this and the following occurrences).
+- `updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>` — Change an event, or with instanceStartDate one occurrence of it (with futureEvents, it and the following ones; iOS only). An occurrence and a time zone are changed through DenextCalendar; on Android the changed occurrence becomes an exception event, whose id is returned.
 - `updateReminderAsync(id: string, details?: Reminder): Promise<string>` — Change a reminder.
 - `useCalendarPermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the calendar permission: [response, request, get].
 - `useRemindersPermissions(options?: PermissionHookOptions<object>): tuple` — Hook form of the reminders permission (iOS): [response, request, get].
@@ -4124,7 +4128,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/expo/contacts`
 
 - `addContactAsync(contact: LegacyContact, _containerId?: string): Promise<string>` — Add a contact to the default container.
-- `addContactsChangeListener(_listener: () => void): EventSubscription` — Listen for address-book changes. The plugin reports none, so the listener never fires (as in Expo's web build); refresh when the app resumes instead.
+- `addContactsChangeListener(listener: () => void): EventSubscription` — Call listener when the address book changes (a contact added, changed or removed, by this app or another): CNContactStoreDidChange on iOS, a ContentObserver on Android (which may batch changes by a few seconds, and report one change twice). Needs DenextContacts; on the web, or without it, the listener never fires (as in Expo's web build).
 - `type Address = object` — A legacy postal address.
 - `enum CalendarFormats` — Calendar formats of a legacy Date.
 - `type CalendarFormatType = CalendarFormats | ${[0m[38;5;12mCalendarFormats[0m}` — A CalendarFormats member or its string.
@@ -4145,6 +4149,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `enum ContactsSortOrder` — The class API's sort orders (ContactQueryOptions.sortOrder).
 - `type ContactType = ContactTypes | ${[0m[38;5;12mContactTypes[0m}` — A ContactTypes member or its string.
 - `enum ContactTypes` — Person or company.
+- `class Container` — A container of contacts (an account: on the device, iCloud, Exchange, …), by id. iOS only, as in Expo, through DenextContacts; elsewhere every call rejects with ERR_UNAVAILABLE.
+- `type ContainerClassType = local | exchange | cardDAV | unassigned | unknown` — A container's kind as the class API reports it.
 - `type ContainerQuery = object` — A legacy container query.
 - `type ContainerType = ContainerTypes | ${[0m[38;5;12mContainerTypes[0m}` — A ContainerTypes member or its string.
 - `enum ContainerTypes` — Kinds of contact container.
@@ -4169,8 +4175,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type FormOptions = object` — Options of a contact form. Only allowsEditing is honoured here.
 - `getContactByIdAsync(id: string, fields?: FieldType[]): Promise<ExistingContact | undefined>` — One contact.
 - `getContactsAsync(contactQuery?: ContactQuery): Promise<ContactResponse>` — A page of contacts. pageSize / pageOffset page it, name keeps names containing the text, id keeps those ids, groupId keeps the group's members, sort orders by given or family name, and fields limits what is read.
-- `getContainersAsync(_containerQuery: ContainerQuery): Promise<LegacyContainer[]>` — The containers. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.
-- `getDefaultContainerIdAsync(): Promise<string>` — The default container's id. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.
+- `getContainersAsync(containerQuery: ContainerQuery): Promise<LegacyContainer[]>` — The containers (iOS): the one holding a contact (contactId) or a group (groupId), the ones with the given ids (containerId), or every one.
+- `getDefaultContainerIdAsync(): Promise<string>` — The default container's id: where new contacts go (iOS).
 - `getGroupsAsync(groupQuery: GroupQuery): Promise<LegacyGroup[]>` — The contact groups, optionally only the one with groupId or the ones named groupName.
 - `getPagedContactsAsync(contactQuery?: ContactQuery): Promise<ContactResponse>` — getContactsAsync, by its paging name.
 - `getPermissionsAsync(): Promise<ContactsPermissionResponse>` — The contacts permission, without prompting. Read and write are asked together; granted means both (iOS 18 limited access reads as granted with accessPrivileges: "limited").
@@ -4202,7 +4208,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `presentContactPickerAsync(): Promise<ExistingContact | null>` — Let the user pick a contact with the system picker.
 - `presentFormAsync(contactId?: string | null, contact?: LegacyContact | null, formOptions?: FormOptions): Promise<void>` — Show the system contact form: an existing contact (editable unless allowsEditing is false), or a new one prefilled from contact.
 - `type Relationship = object` — A legacy relationship (not read here).
-- `removeAllContactsChangeListeners(): void` — Remove every change listener (they never fire here).
+- `removeAllContactsChangeListeners(): void` — Remove every listener addContactsChangeListener added.
 - `removeContactAsync(contactId: string): Promise<void>` — Delete a contact.
 - `removeGroupAsync(groupId: string): Promise<void>` — Delete a contact group.
 - `requestPermissionsAsync(): Promise<ContactsPermissionResponse>` — Ask for the contacts permission (read and write).
@@ -4215,7 +4221,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/expo/contacts/legacy`
 
 - `addContactAsync(contact: LegacyContact, _containerId?: string): Promise<string>` — Add a contact to the default container.
-- `addContactsChangeListener(_listener: () => void): EventSubscription` — Listen for address-book changes. The plugin reports none, so the listener never fires (as in Expo's web build); refresh when the app resumes instead.
+- `addContactsChangeListener(listener: () => void): EventSubscription` — Call listener when the address book changes (a contact added, changed or removed, by this app or another): CNContactStoreDidChange on iOS, a ContentObserver on Android (which may batch changes by a few seconds, and report one change twice). Needs DenextContacts; on the web, or without it, the listener never fires (as in Expo's web build).
 - `type Address = object` — A legacy postal address.
 - `enum CalendarFormats` — Calendar formats of a legacy Date.
 - `type CalendarFormatType = CalendarFormats | ${[0m[38;5;12mCalendarFormats[0m}` — A CalendarFormats member or its string.
@@ -4241,8 +4247,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type FormOptions = object` — Options of a contact form. Only allowsEditing is honoured here.
 - `getContactByIdAsync(id: string, fields?: FieldType[]): Promise<ExistingContact | undefined>` — One contact.
 - `getContactsAsync(contactQuery?: ContactQuery): Promise<ContactResponse>` — A page of contacts. pageSize / pageOffset page it, name keeps names containing the text, id keeps those ids, groupId keeps the group's members, sort orders by given or family name, and fields limits what is read.
-- `getContainersAsync(_containerQuery: ContainerQuery): Promise<LegacyContainer[]>` — The containers. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.
-- `getDefaultContainerIdAsync(): Promise<string>` — The default container's id. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.
+- `getContainersAsync(containerQuery: ContainerQuery): Promise<LegacyContainer[]>` — The containers (iOS): the one holding a contact (contactId) or a group (groupId), the ones with the given ids (containerId), or every one.
+- `getDefaultContainerIdAsync(): Promise<string>` — The default container's id: where new contacts go (iOS).
 - `getGroupsAsync(groupQuery: GroupQuery): Promise<LegacyGroup[]>` — The contact groups, optionally only the one with groupId or the ones named groupName.
 - `getPagedContactsAsync(contactQuery?: ContactQuery): Promise<ContactResponse>` — getContactsAsync, by its paging name.
 - `getPermissionsAsync(): Promise<ContactsPermissionResponse>` — The contacts permission, without prompting. Read and write are asked together; granted means both (iOS 18 limited access reads as granted with accessPrivileges: "limited").
@@ -4961,8 +4967,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `printAsync(options: PrintOptions): Promise<void>` — Print HTML or a file with the system print dialog.
 - `interface Printer` — A printer (selectPrinterAsync).
 - `interface PrintOptions` — What to print.
-- `printToFileAsync(_options?: FilePrintOptions): Promise<FilePrintResult>` — Render HTML to a PDF file: not available here (no PDF renderer in the plugin or the page).
-- `selectPrinterAsync(): Promise<Printer>` — Pick a printer (iOS): not available here.
+- `printToFileAsync(options?: FilePrintOptions): Promise<FilePrintResult>` — Render HTML to a PDF file in the app's cache folder: on pages of width x height points (612 x 792, US Letter, by default) inside margins, with base64 the bytes too.
+- `selectPrinterAsync(): Promise<Printer>` — Pick a printer with the system printer picker (iOS, as in Expo). Pass its url as printAsync's printerUrl to print there without the dialog.
 
 ### `denext/expo/quick-actions`
 

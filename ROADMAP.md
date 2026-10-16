@@ -47,6 +47,13 @@
   text and grayscale (iOS and Android), the stacks' focus move under VoiceOver / TalkBack, the
   maps / video / symbols wiring of the Expo and community packages, and a migrated React Native
   app larger than `examples/expo-app` (a large real-world one).
+- **The Expo SDK plugins on a device (iPhone and Android):** `DenextCalendar` (attendees, an
+  event by id, one occurrence's changes and time zone, the event viewer and editor),
+  `DenextContacts` (containers, change events, Android's full updates), `DenextPrint` (HTML to
+  PDF, the printer picker, printing to a picked printer) and `DenextBrightness` (Android's system
+  brightness and the `WRITE_SETTINGS` screen, iOS's change events) are compiled and type-checked
+  only. Then: splitting a repeating Android event from one occurrence on (`futureEvents` with
+  `instanceStartDate`, refused today).
 - **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
 - **`denext migrate --from expo` advice** for the most-used native-only SDKs
   (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`), pointing at

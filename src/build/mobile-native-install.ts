@@ -70,6 +70,12 @@ import {
   SYSTEM_ICON_TEMPLATE_VERSION,
 } from "./system-icon-native-templates.ts";
 import { nativeJoin } from "./capacitor-native-dirs.ts";
+import {
+  EXPO_SDK_TEMPLATE_VERSIONS,
+  type ExpoSdkFamily,
+  isPristineExpoSdkTemplate,
+  renderExpoSdkTemplate,
+} from "./expo-sdk-native-templates.ts";
 
 /** A denext native feature that registers a plugin with the bridge. */
 export type NativeFeature =
@@ -84,7 +90,11 @@ export type NativeFeature =
   | "system-icons"
   | "native-views"
   | "native-modules"
-  | "storage";
+  | "storage"
+  | "calendar"
+  | "contacts"
+  | "print"
+  | "brightness";
 
 /** Every feature, in the order the bridge view controller registers them after OTA. */
 const ALL_FEATURES: readonly NativeFeature[] = [
@@ -100,16 +110,11 @@ const ALL_FEATURES: readonly NativeFeature[] = [
   "native-views",
   "native-modules",
   "storage",
+  "calendar",
+  "contacts",
+  "print",
+  "brightness",
 ];
-
-/** Every non-empty combination of `features`, for recognising a file denext composed. */
-function featureSets<F extends NativeFeature>(features: readonly F[]): F[][] {
-  const sets: F[][] = [];
-  for (let mask = 1; mask < 1 << features.length; mask++) {
-    sets.push(features.filter((_, i) => mask & (1 << i)));
-  }
-  return sets;
-}
 
 /** The report fields every native installer fills, as project-relative paths and notes. */
 export interface NativeInstallReport {
@@ -202,6 +207,7 @@ const TEMPLATE_GENERATIONS: Readonly<Record<string, number>> = {
   "system-icon": SYSTEM_ICON_TEMPLATE_VERSION,
   "native-views": NATIVE_VIEWS_TEMPLATE_VERSION,
   storage: STORAGE_TEMPLATE_VERSION,
+  ...EXPO_SDK_TEMPLATE_VERSIONS,
 };
 
 /** The manual step for a shared file a newer denext wrote that lacks `step`'s registration. */
@@ -268,6 +274,17 @@ export const SYSTEM_ICON_TEMPLATES: TemplateKind = {
   render: (template) => renderSystemIconTemplate(template),
   isPristine: (_name, text) => isPristineSystemIconTemplate(text),
 };
+
+/**
+ * The templates of an Expo SDK plugin (`DenextCalendar`, `DenextContacts`, `DenextPrint`,
+ * `DenextBrightness`): `// denext-<family>-template:`.
+ */
+export function expoSdkTemplates(family: ExpoSdkFamily): TemplateKind {
+  return {
+    render: (template) => renderExpoSdkTemplate(family, template),
+    isPristine: (_name, text) => isPristineExpoSdkTemplate(family, text),
+  };
+}
 
 /** Accumulates the report while an installer runs. */
 export class NativeInstaller<O extends NativeInstallOptions, R extends NativeInstallReport> {
@@ -384,6 +401,10 @@ const IOS_FEATURE_FILES: Readonly<Record<NativeFeature, string>> = {
   "native-views": "DenextNativeViewsPlugin.swift",
   "native-modules": "DenextNativeModules.swift",
   storage: "DenextStoragePlugin.swift",
+  calendar: "DenextCalendarPlugin.swift",
+  contacts: "DenextContactsPlugin.swift",
+  print: "DenextPrintPlugin.swift",
+  brightness: "DenextBrightnessPlugin.swift",
 };
 
 /** Where the OTA bridge view controller registers its plugin; the others go after it. */
@@ -414,6 +435,14 @@ const IOS_REGISTRATIONS: Readonly<Record<Exclude<NativeFeature, "ota">, string>>
     "        DenextNativeModules.register(bridge)\n",
   storage: "        // denext durable storage: openKeyValueStore() in denext/mobile.\n" +
     "        bridge?.registerPluginInstance(DenextStoragePlugin())\n",
+  calendar: "        // denext calendar: expo-calendar's attendees, event lookup and dialogs.\n" +
+    "        bridge?.registerPluginInstance(DenextCalendarPlugin())\n",
+  contacts: "        // denext contacts: expo-contacts' containers and change events.\n" +
+    "        bridge?.registerPluginInstance(DenextContactsPlugin())\n",
+  print: "        // denext printing: expo-print's printToFileAsync and printer picker.\n" +
+    "        bridge?.registerPluginInstance(DenextPrintPlugin())\n",
+  brightness: "        // denext brightness: expo-brightness's change events.\n" +
+    "        bridge?.registerPluginInstance(DenextBrightnessPlugin())\n",
 };
 
 /** The registration lines of the non-OTA features in `features`, in their fixed order. */
@@ -458,9 +487,16 @@ async function isPristineBridge(text: string): Promise<boolean> {
     await isPristineAuthSessionTemplate(text) || await isPristineAppExtensionTemplate(text);
 }
 
-/** Whether `text` is this release's bridge view controller for some feature combination. */
+/**
+ * Whether `text` is this release's bridge view controller for some feature combination. The
+ * combination is read from the registrations `text` carries (the OTA one and the auth-session
+ * one, whose controllers register differently, tried both ways), rather than by rendering every
+ * combination of the features, which doubles with each feature added.
+ */
 async function isCurrentBridge(text: string): Promise<boolean> {
-  for (const set of [[], ...featureSets(ALL_FEATURES)]) {
+  const found = ALL_FEATURES.filter((f) => f !== "ota" && text.includes(IOS_REGISTRATIONS[f]));
+  const candidates: NativeFeature[][] = [found, [...found, "ota"], ["auth-session"]];
+  for (const set of candidates) {
     if (text === await bridgeViewControllerSource(new Set(set))) return true;
   }
   return false;
@@ -666,6 +702,29 @@ const ANDROID_REGISTRATIONS: Readonly<
       "dev.denext.nativemodules.DenextNativeModules) in MainActivity.onCreate, before " +
       "super.onCreate.",
   },
+  calendar: pluginRegistration(
+    "dev.denext.calendar",
+    "DenextCalendarPlugin",
+    "denext calendar: registers the DenextCalendar plugin (expo-calendar's attendees, event\n" +
+      "        // lookup and dialogs)",
+  ),
+  contacts: pluginRegistration(
+    "dev.denext.contacts",
+    "DenextContactsPlugin",
+    "denext contacts: registers the DenextContacts plugin (expo-contacts' change events and\n" +
+      "        // full updates)",
+  ),
+  print: pluginRegistration(
+    "dev.denext.print",
+    "DenextPrintPlugin",
+    "denext printing: registers the DenextPrint plugin (expo-print's printToFileAsync)",
+  ),
+  brightness: pluginRegistration(
+    "dev.denext.brightness",
+    "DenextBrightnessPlugin",
+    "denext brightness: registers the DenextBrightness plugin (expo-brightness's system\n" +
+      "        // brightness)",
+  ),
   storage: pluginRegistration(
     "dev.denext.storage",
     "DenextStoragePlugin",
@@ -741,6 +800,10 @@ const ANDROID_REGISTRATIONS: Readonly<
  * earlier releases wrote for OTA and auth sessions the same.
  */
 const FEATURE_ORDER: readonly AndroidFeature[] = [
+  "calendar",
+  "contacts",
+  "print",
+  "brightness",
   "context-menu",
   "storage",
   "native-modules",

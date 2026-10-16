@@ -3,9 +3,17 @@
 // from the main table in ./mobile-capabilities.ts (which spreads them in) so each pin sits with
 // what its shim needs. Every plugin below was checked against its published package: a
 // `@capacitor/core` peer range admitting 8 and a Package.swift for Capacitor 8's SPM projects.
+// calendar, contacts, print and brightness also install denext's own plugin beside the pinned
+// one (mobile-expo-sdk-install.ts), for the Expo calls the pinned plugin has no call for.
 
 import type { MobileCapability } from "./mobile-capabilities.ts";
 import { addExpoAppConfigToProject } from "./mobile-expo-app-config.ts";
+import {
+  BRIGHTNESS_INSTALL,
+  CALENDAR_INSTALL,
+  CONTACTS_INSTALL,
+  PRINT_INSTALL,
+} from "./mobile-expo-sdk-install.ts";
 
 /** The Capacitor major these pins target. */
 const CAPACITOR_MAJOR = 8;
@@ -39,15 +47,22 @@ export const EXPO_SDK_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
     npm: "@capacitor-community/screen-brightness",
     version: "^8.0.0",
     capacitorMajor: CAPACITOR_MAJOR,
+    // WRITE_SETTINGS is special access: declared here, granted by the user in the settings
+    // screen requestPermissionsAsync() opens.
+    androidPermissions: ["android.permission.WRITE_SETTINGS"],
     notes: "expo-brightness's get / set / restore (the screen's level on iOS, the app window's " +
-      "on Android)",
+      "on Android), Android's system brightness and mode (WRITE_SETTINGS, asked for by " +
+      "requestPermissionsAsync) and iOS's brightness listener (with denext's DenextBrightness)",
+    configure: () => ({ install: BRIGHTNESS_INSTALL }),
   },
   print: {
     npm: "@capgo/capacitor-printer",
     version: "^8.1.4",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "expo-print's printAsync (HTML or a file through the system print dialog; a " +
-      "WebView cannot print by itself)",
+      "WebView cannot print by itself), printToFileAsync (HTML to PDF) and iOS's " +
+      "selectPrinterAsync / printerUrl (with denext's DenextPrint)",
+    configure: () => ({ install: PRINT_INSTALL }),
   },
   "intent-launcher": {
     npm: "@capgo/capacitor-intent-launcher",
@@ -64,7 +79,9 @@ export const EXPO_SDK_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
     iosPlist: { NSContactsUsageDescription: "Find and save your contacts." },
     androidPermissions: ["android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS"],
     notes: "expo-contacts' address book (read, add, update, remove, the picker and the system " +
-      "contact forms)",
+      "contact forms), containers (iOS), change events and Android's full updates (with " +
+      "denext's DenextContacts)",
+    configure: () => ({ install: CONTACTS_INSTALL }),
   },
   calendar: {
     npm: "@ebarooni/capacitor-calendar",
@@ -78,6 +95,9 @@ export const EXPO_SDK_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
       NSRemindersUsageDescription: "Add and show your reminders.",
     },
     androidPermissions: ["android.permission.READ_CALENDAR", "android.permission.WRITE_CALENDAR"],
-    notes: "expo-calendar's calendars, events and (iOS) reminders, and the native event editor",
+    notes: "expo-calendar's calendars, events and (iOS) reminders, and the native event editor; " +
+      "attendees, an event by id, one occurrence's changes, time zones and the event viewer " +
+      "(with denext's DenextCalendar)",
+    configure: () => ({ install: CALENDAR_INSTALL }),
   },
 };

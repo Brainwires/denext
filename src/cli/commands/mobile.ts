@@ -891,7 +891,11 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  expo-print (@capgo/capacitor-printer), expo-brightness\n" +
     "  (@capacitor-community/screen-brightness) and expo-intent-launcher\n" +
     "  (@capgo/capacitor-intent-launcher, Android); contacts and calendar write their usage\n" +
-    "  strings and permissions.\n" +
+    "  strings and permissions. contacts, calendar, print and brightness also write denext's\n" +
+    "  DenextContacts / DenextCalendar / DenextPrint / DenextBrightness plugin beside the npm\n" +
+    "  one (registered like context-menu) for the Expo calls it lacks: containers and change\n" +
+    "  events, attendees and single occurrences, HTML to PDF and the iOS printer picker,\n" +
+    "  Android's system brightness (brightness also declares WRITE_SETTINGS).\n" +
     "  app-config has no npm package: it writes an Expo app's own native config, read\n" +
     "  statically from app.json / app.config.* as `migrate --from expo` does, into the shell:\n" +
     "  ios.infoPlist usage strings and the ones its config plugins set (Info.plist, each only\n" +

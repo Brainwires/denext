@@ -288,13 +288,12 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   `GLView` is the page's WebGL 2. Barometer and pedometer readings, the carrier facts of
   `expo-cellular`, Low Power Mode, and attachments on `expo-sms` / `expo-mail-composer` (an
   `sms:` / `mailto:` URL cannot carry them) are not available.
-- **Can't (the pinned plugin has no call for it):** `expo-calendar` attendees, looking an event
-  up by id, opening one in the calendar app, changing a single occurrence or setting its time
-  zone; `expo-contacts` containers and change events, and on Android an update keeps only names,
-  company, job title, note, emails and phones (addresses, URLs, the birthday and the photo are
-  dropped); `expo-print`'s `printToFileAsync` (HTML to PDF) and `selectPrinterAsync`; Android's
-  system brightness and brightness mode in `expo-brightness` (no `WRITE_SETTINGS`; brightness
-  listeners never fire). These reject with `ERR_UNAVAILABLE`.
+- **Not verified on a device yet:** the `DenextCalendar`, `DenextContacts`, `DenextPrint` and
+  `DenextBrightness` plugins `denext mobile add calendar | contacts | print | brightness` write
+  are compiled (Java against Capacitor 8) and type-checked (Swift against the iOS SDK) but not
+  yet run on a phone. On Android, splitting a repeating event from one occurrence on
+  (`updateEventAsync` with `instanceStartDate` and `futureEvents`) is refused, and
+  `expo-print`'s `printToFileAsync` lays HTML out without running its scripts.
 - **Won't:** expo-router `+api` / `+middleware` routes (write denext route handlers) and Expo's
   services (`getExpoPushTokenAsync` rejects; use `createPushSender`). The `expo-widgets` shim
   renders the generated SwiftUI, not the `"widget"` layout function. `expo-sqlite` on the web

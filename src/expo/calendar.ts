@@ -1,7 +1,7 @@
 /**
  * `expo-calendar` for denext: the device's calendars, events and (iOS) reminders over
- * `@ebarooni/capacitor-calendar` 8 (Capacitor 8, registered as `CapacitorCalendar`,
- * installed by `denext mobile add calendar`).
+ * `@ebarooni/capacitor-calendar` 8 (Capacitor 8, registered as `CapacitorCalendar`) and
+ * denext's `DenextCalendar` plugin beside it, both installed by `denext mobile add calendar`.
  *
  * Both of Expo's APIs are here: the object API (`getCalendars()` → {@linkcode ExpoCalendar}
  * with `listEvents` / `createEvent` / …, {@linkcode ExpoCalendarEvent},
@@ -9,13 +9,17 @@
  * `createEventAsync`, …), which works here as it does from `expo-calendar/legacy`. Values
  * use Expo's legacy shapes; dates come back as ISO strings.
  *
- * What the plugin cannot do rejects with `ERR_UNAVAILABLE`: attendees, opening an event in
- * the calendar app, looking an event up by id without its start
- * (`recurringEventOptions.instanceStartDate`), and editing a single occurrence. The plugin
- * does not report an event's recurrence rule (`recurrenceRule` reads `null`), an event's
- * time zone cannot be set, and reminders exist on iOS only. Off the shell every data call
- * rejects with `ERR_UNAVAILABLE` and the permissions read `undetermined`, as in Expo's web
- * build.
+ * `DenextCalendar` does what the pinned plugin has no call for: attendees (read on both
+ * platforms; added, changed and removed on Android, as in Expo, since EventKit's are
+ * read-only), looking an event up by id alone, changing one occurrence
+ * (`recurringEventOptions.instanceStartDate`: `EKSpan.thisEvent` on iOS, an exception event on
+ * Android, whose id `updateEventAsync` returns), an event's time zone, and showing an event in
+ * the system viewer (`openEventInCalendarAsync`) or one occurrence in the editor. A shell that
+ * ran `denext mobile add calendar` before `DenextCalendar` existed rejects those with
+ * `ERR_UNAVAILABLE` (and keeps ignoring `timeZone`). The pinned plugin does not report an
+ * event's recurrence rule (`recurrenceRule` reads `null`), and reminders exist on iOS only. Off
+ * the shell every data call rejects with `ERR_UNAVAILABLE` and the permissions read
+ * `undetermined`, as in Expo's web build.
  *
  * @example
  * ```ts
@@ -607,9 +611,23 @@ export interface OpenEventPresentationOptions extends PresentationOptions {
 export interface CalendarDialogParams {
   /** The event's id. */
   id: string;
-  /** The occurrence's start. Not supported here. */
+  /** The occurrence's start, for one occurrence of a repeating event. */
   instanceStartDate?: string | Date;
 }
+
+/** Which occurrence the object API's dialogs show, and how. */
+export type CalendarDialogParamsNext = Omit<CalendarDialogParams, "id"> & PresentationOptions;
+
+/** {@linkcode CalendarDialogParamsNext} with the viewer's options. */
+export type CalendarDialogOpenParamsNext =
+  & CalendarDialogParamsNext
+  & OpenEventPresentationOptions;
+
+/** What {@linkcode ExpoCalendarAttendee.update} changes. */
+export type ModifiableAttendeeProperties = Pick<
+  Attendee,
+  "name" | "email" | "role" | "status" | "type"
+>;
 
 /** What {@linkcode ExpoCalendar.update} changes. */
 export type ModifiableCalendarProperties = Pick<Calendar, "color" | "title">;
@@ -810,6 +828,90 @@ interface CalendarPlugin {
   deleteReminder(o: { id: string }): Promise<void>;
 }
 
+/** An event's attendee as `DenextCalendar` reports it (Expo's values). */
+interface PluginAttendee {
+  id?: string;
+  name?: string;
+  email?: string | null;
+  url?: string;
+  role?: string;
+  status?: string;
+  type?: string;
+  isCurrentUser?: boolean;
+}
+
+/** An event's changes as `DenextCalendar.updateEvent` takes them. */
+interface DenextEventFields {
+  title?: string;
+  startDate?: number;
+  endDate?: number;
+  allDay?: boolean;
+  location?: string;
+  notes?: string;
+  url?: string;
+  alarms?: number[];
+  availability?: number;
+  timeZone?: string;
+}
+
+/** Which event (and occurrence) a `DenextCalendar` call names. */
+interface DenextEventRef {
+  id: string;
+  instanceStartDate?: number;
+}
+
+/** The attendee fields `DenextCalendar` writes (Android). */
+interface DenextAttendeeFields {
+  name?: string;
+  email?: string;
+  role?: string;
+  status?: string;
+  type?: string;
+}
+
+/** denext's `DenextCalendar`: what the pinned plugin has no call for. */
+interface DenextCalendarPlugin {
+  getEvent(o: DenextEventRef): Promise<{ event: PluginEvent | null }>;
+  getAttendees(o: DenextEventRef): Promise<{ attendees: PluginAttendee[] }>;
+  createAttendee(o: DenextAttendeeFields & { eventId: string }): Promise<{ id: string }>;
+  updateAttendee(o: DenextAttendeeFields & { id: string }): Promise<{ id: string }>;
+  deleteAttendee(o: { id: string }): Promise<void>;
+  updateEvent(
+    o: DenextEventRef & DenextEventFields & { futureEvents?: boolean },
+  ): Promise<{ id: string }>;
+  openEvent(
+    o: DenextEventRef & {
+      allowsEditing?: boolean;
+      allowsCalendarPreview?: boolean;
+      startNewActivityTask?: boolean;
+    },
+  ): Promise<{ action: string }>;
+  editEvent(
+    o: DenextEventRef & { startNewActivityTask?: boolean },
+  ): Promise<{ action: string; id?: string | null }>;
+}
+
+/** Why a `DenextCalendar` call is unavailable. */
+const NEEDS_DENEXT = "It needs denext's DenextCalendar plugin in the Capacitor shell (run " +
+  "`denext mobile add calendar` again).";
+
+/** `DenextCalendar` with `method`, or undefined (off the shell, or a shell without it). */
+function maybeDenext(method: keyof DenextCalendarPlugin): DenextCalendarPlugin | undefined {
+  return nativePlugin<DenextCalendarPlugin>("DenextCalendar", [method]);
+}
+
+/** `DenextCalendar` with `method`, or the `ERR_UNAVAILABLE` for `name`. */
+function denext(name: string, method: keyof DenextCalendarPlugin): DenextCalendarPlugin {
+  const found = maybeDenext(method);
+  if (!found) throw unavailable(PKG, name, NEEDS_DENEXT);
+  return found;
+}
+
+/** The `DenextCalendar` reference of `id` and an optional occurrence start. */
+function eventRef(id: string, instanceStartDate: Date | string | undefined): DenextEventRef {
+  return defined({ id, instanceStartDate: optMs(instanceStartDate) });
+}
+
 /** The plugin with `method`, or `undefined` off the shell / without it. */
 function maybePlugin(method: keyof CalendarPlugin): CalendarPlugin | undefined {
   return nativePlugin<CalendarPlugin>("CapacitorCalendar", [method]);
@@ -827,11 +929,6 @@ function remindersPlugin(name: string, method: keyof CalendarPlugin): CalendarPl
   const found = plugin(name, method);
   if (nativePlatform() !== "ios") throw unavailable(PKG, name, IOS_ONLY);
   return found;
-}
-
-/** A rejection with `name`'s unavailability. */
-function reject<T>(name: string, why: string): Promise<T> {
-  return Promise.reject(unavailable(PKG, name, why));
 }
 
 // ---- Mapping ---------------------------------------------------------------------------------
@@ -1011,6 +1108,48 @@ function toReminderFields(details: Reminder): PluginReminderFields {
     recurrence: rule
       ? { frequency: rule.frequency, interval: rule.interval ?? 1, end: optMs(rule.endDate) }
       : undefined,
+  });
+}
+
+/** A `DenextCalendar` attendee as Expo's {@linkcode Attendee}. */
+function toAttendee(a: PluginAttendee): Attendee {
+  return defined({
+    id: a.id,
+    isCurrentUser: a.isCurrentUser,
+    name: a.name ?? "",
+    role: (a.role ?? AttendeeRole.UNKNOWN) as AttendeeRole,
+    status: (a.status ?? AttendeeStatus.UNKNOWN) as AttendeeStatus,
+    type: (a.type ?? AttendeeType.UNKNOWN) as AttendeeType,
+    url: a.url,
+    email: a.email ?? undefined,
+  });
+}
+
+/** Expo attendee details as `DenextCalendar`'s attendee fields. */
+function toAttendeeFields(details: Partial<Attendee> | undefined): DenextAttendeeFields {
+  return defined({
+    name: details?.name,
+    email: details?.email,
+    role: details?.role,
+    status: details?.status,
+    type: details?.type,
+  });
+}
+
+/** Expo event details as `DenextCalendar.updateEvent`'s fields. */
+function toDenextFields(details: Partial<Event>): DenextEventFields {
+  const fields = toEventFields(details);
+  return defined({
+    title: fields.title,
+    startDate: fields.startDate,
+    endDate: fields.endDate,
+    allDay: fields.isAllDay,
+    location: fields.location,
+    notes: fields.description,
+    url: fields.url,
+    alarms: fields.alerts,
+    availability: fields.availability,
+    timeZone: details.timeZone || undefined,
   });
 }
 
@@ -1324,14 +1463,14 @@ export async function getEventsAsync(
 }
 
 /**
- * One event. The plugin cannot look an event up by id alone: pass the occurrence's start as
+ * One event: by id (through `DenextCalendar`), or its occurrence starting at
  * `recurringEventOptions.instanceStartDate` (the `startDate` a listing returned).
  *
  * @param id The event.
- * @param recurringEventOptions `instanceStartDate`, required here.
+ * @param recurringEventOptions `instanceStartDate`, for one occurrence.
  * @returns The event.
- * @throws `ERR_UNAVAILABLE` without `instanceStartDate`; `E_EVENT_NOT_FOUND` when no event
- *   with that id starts then.
+ * @throws `E_EVENT_NOT_FOUND` when there is no such event (or no occurrence starting then);
+ *   `ERR_UNAVAILABLE` by id alone in a shell without `DenextCalendar`.
  */
 export async function getEventAsync(
   id: string,
@@ -1340,12 +1479,9 @@ export async function getEventAsync(
   const p = plugin("getEventAsync", "listEventsInRange");
   const start = recurringEventOptions?.instanceStartDate;
   if (start === undefined) {
-    throw unavailable(
-      PKG,
-      "getEventAsync",
-      "The plugin cannot look an event up by id alone; pass " +
-        "recurringEventOptions.instanceStartDate (or use getEventsAsync).",
-    );
+    const { event } = await denext("getEventAsync", "getEvent").getEvent({ id });
+    if (!event) throw new CodedError("E_EVENT_NOT_FOUND", `There is no event with id ${id}.`);
+    return toEvent(event);
   }
   const at = ms(start);
   const { result } = await p.listEventsInRange({ from: at, to: at + 1 });
@@ -1355,7 +1491,8 @@ export async function getEventAsync(
 }
 
 /**
- * Create an event. `timeZone`, attendees and absolute or location alarms are not passed on.
+ * Create an event. Attendees and absolute or location alarms are not passed on; `timeZone` is
+ * set through `DenextCalendar` (ignored without it).
  *
  * @param calendarId The calendar.
  * @param eventData The event.
@@ -1368,17 +1505,24 @@ export async function createEventAsync(
   const p = plugin("createEventAsync", "createEvent");
   const { id } = await p.createEvent({ title: "", ...toEventFields(eventData), calendarId });
   if (!id) throw new CodedError("E_EVENT_NOT_SAVED", "The event was not saved.");
+  // The pinned plugin takes no time zone: DenextCalendar sets it (ignored without it).
+  if (eventData.timeZone) {
+    await maybeDenext("updateEvent")?.updateEvent({ id, timeZone: eventData.timeZone });
+  }
   return id;
 }
 
 /**
- * Change an event (with `futureEvents`, this and the following occurrences).
+ * Change an event, or with `instanceStartDate` one occurrence of it (with `futureEvents`, it and
+ * the following ones; iOS only). An occurrence and a time zone are changed through
+ * `DenextCalendar`; on Android the changed occurrence becomes an exception event, whose id is
+ * returned.
  *
  * @param id The event.
  * @param details The fields to change.
- * @param recurringEventOptions `futureEvents`; `instanceStartDate` is not supported.
- * @returns The id.
- * @throws `ERR_UNAVAILABLE` for `instanceStartDate` (the plugin cannot pick an occurrence).
+ * @param recurringEventOptions `instanceStartDate` and `futureEvents`.
+ * @returns The id (of the exception, for an Android occurrence).
+ * @throws `ERR_UNAVAILABLE` for `instanceStartDate` without `DenextCalendar`.
  */
 export async function updateEventAsync(
   id: string,
@@ -1386,10 +1530,24 @@ export async function updateEventAsync(
   recurringEventOptions?: RecurringEventOptions,
 ): Promise<string> {
   const p = plugin("updateEventAsync", "modifyEvent");
-  if (recurringEventOptions?.instanceStartDate !== undefined) {
-    throw unavailable(PKG, "updateEventAsync", "The plugin cannot change a single occurrence.");
+  const instance = recurringEventOptions?.instanceStartDate;
+  if (instance !== undefined) {
+    const d = denext("updateEventAsync", "updateEvent");
+    const futureEvents = recurringEventOptions?.futureEvents === true ? true : undefined;
+    const fields = toDenextFields(details);
+    return (await d.updateEvent({
+      ...eventRef(id, instance),
+      ...fields,
+      ...defined({ futureEvents }),
+    })).id;
   }
   await p.modifyEvent({ ...toEventFields(details), id, span: span(recurringEventOptions) });
+  // The pinned plugin takes no time zone: DenextCalendar sets it (ignored without it).
+  const zone = details.timeZone ? maybeDenext("updateEvent") : undefined;
+  if (zone) {
+    const futureEvents = recurringEventOptions?.futureEvents === true ? true : undefined;
+    await zone.updateEvent({ id, timeZone: details.timeZone!, ...defined({ futureEvents }) });
+  }
   return id;
 }
 
@@ -1434,20 +1592,33 @@ export async function createEventInCalendarAsync(
     : { action: CalendarDialogResultActions.canceled, id: null };
 }
 
+/** A dialog outcome `DenextCalendar` reports, as Expo's action. */
+function dialogAction(action: string): CalendarDialogResultActions {
+  const known = Object.values(CalendarDialogResultActions) as string[];
+  return (known.includes(action) ? action : "done") as CalendarDialogResultActions;
+}
+
 /**
- * Open the system's event editor on an event. Android does not report the outcome (`done`).
+ * Open the system's event editor on an event (one occurrence, with `instanceStartDate`, through
+ * `DenextCalendar`). Android does not report the outcome (`done`).
  *
- * @param params The event (`instanceStartDate` is not supported).
- * @param _presentationOptions Ignored.
+ * @param params The event, and the occurrence's start.
+ * @param presentationOptions `startNewActivityTask` (Android, for an occurrence).
  * @returns The outcome.
  */
 export async function editEventInCalendarAsync(
   params: CalendarDialogParams,
-  _presentationOptions?: PresentationOptions,
+  presentationOptions?: PresentationOptions,
 ): Promise<DialogEventResult> {
   const p = plugin("editEventInCalendarAsync", "modifyEventWithPrompt");
   if (params.instanceStartDate !== undefined) {
-    throw unavailable(PKG, "editEventInCalendarAsync", "The plugin cannot open one occurrence.");
+    const d = denext("editEventInCalendarAsync", "editEvent");
+    const out = await d.editEvent({
+      ...eventRef(params.id, params.instanceStartDate),
+      ...defined({ startNewActivityTask: presentationOptions?.startNewActivityTask }),
+    });
+    const action = dialogAction(out.action) as DialogEventResult["action"];
+    return { action, id: action === CalendarDialogResultActions.deleted ? null : params.id };
   }
   const { result } = await p.modifyEventWithPrompt({ id: params.id });
   switch (result) {
@@ -1463,86 +1634,121 @@ export async function editEventInCalendarAsync(
 }
 
 /**
- * Show an event in the calendar app. The plugin has no such dialog.
+ * Show an event (or, with `instanceStartDate`, one occurrence) in the system's event viewer:
+ * EKEventViewController on iOS, which reports `done`, `responded`, `deleted` or `canceled`; the
+ * calendar app on Android, which reports nothing (`done`).
  *
- * @param _params The event.
- * @param _presentationOptions The presentation.
- * @returns Never resolves.
- * @throws `ERR_UNAVAILABLE`, always.
+ * @param params The event, and the occurrence's start.
+ * @param presentationOptions `allowsEditing` / `allowsCalendarPreview` (iOS),
+ *   `startNewActivityTask` (Android).
+ * @returns The outcome.
+ * @throws `ERR_UNAVAILABLE` without `DenextCalendar`.
  */
-export function openEventInCalendarAsync(
-  _params: CalendarDialogParams,
-  _presentationOptions?: OpenEventPresentationOptions,
+export async function openEventInCalendarAsync(
+  params: CalendarDialogParams,
+  presentationOptions?: OpenEventPresentationOptions,
 ): Promise<OpenEventDialogResult> {
-  return reject("openEventInCalendarAsync", "The plugin cannot show an event.");
+  const d = denext("openEventInCalendarAsync", "openEvent");
+  const { action } = await d.openEvent({
+    ...eventRef(params.id, params.instanceStartDate),
+    ...defined({
+      allowsEditing: presentationOptions?.allowsEditing,
+      allowsCalendarPreview: presentationOptions?.allowsCalendarPreview,
+      startNewActivityTask: presentationOptions?.startNewActivityTask,
+    }),
+  });
+  return { action: dialogAction(action) as OpenEventDialogResult["action"] };
 }
 
 /**
- * Open an event in the Android calendar app. The plugin has no such call.
+ * Open an event in the Android calendar app (Expo's deprecated Android-only call; it returns
+ * before the app opens).
  *
- * @param _id The event.
- * @throws `ERR_UNAVAILABLE`, always.
+ * @param id The event.
+ * @throws `ERR_UNAVAILABLE` off Android, or without `DenextCalendar`.
  */
-export function openEventInCalendar(_id: string): void {
-  throw unavailable(PKG, "openEventInCalendar", "The plugin cannot show an event.");
-}
-
-/** The rejection every attendee call answers with. */
-function noAttendees<T>(name: string): Promise<T> {
-  return reject(name, "The plugin does not read or edit attendees.");
+export function openEventInCalendar(id: string): void {
+  if (nativePlatform() !== "android") {
+    throw unavailable(
+      PKG,
+      "openEventInCalendar",
+      "It is Android only; use openEventInCalendarAsync.",
+    );
+  }
+  denext("openEventInCalendar", "openEvent").openEvent({ id }).catch(() => {});
 }
 
 /**
- * An event's attendees. The plugin does not read them by event id.
+ * An event's attendees (of one occurrence, with `instanceStartDate`).
  *
- * @param _id The event.
- * @param _recurringEventOptions Which occurrence (Expo's second argument).
- * @returns Never resolves.
- * @throws `ERR_UNAVAILABLE`, always.
+ * @param id The event.
+ * @param recurringEventOptions Which occurrence.
+ * @returns The attendees.
+ * @throws `ERR_UNAVAILABLE` without `DenextCalendar`.
  */
-export function getAttendeesForEventAsync(
-  _id: string,
-  _recurringEventOptions?: RecurringEventOptions,
+export async function getAttendeesForEventAsync(
+  id: string,
+  recurringEventOptions?: RecurringEventOptions,
 ): Promise<Attendee[]> {
-  return noAttendees("getAttendeesForEventAsync");
+  const d = denext("getAttendeesForEventAsync", "getAttendees");
+  const { attendees } = await d.getAttendees(
+    eventRef(id, recurringEventOptions?.instanceStartDate),
+  );
+  return attendees.map(toAttendee);
+}
+
+/** `DenextCalendar` for an attendee write: Android only, as in Expo (EventKit's are read-only). */
+function attendeeWriter(name: string, method: keyof DenextCalendarPlugin): DenextCalendarPlugin {
+  if (nativePlatform() === "ios") {
+    throw unavailable(
+      PKG,
+      name,
+      "iOS calendars do not let an app add, change or remove attendees.",
+    );
+  }
+  return denext(name, method);
 }
 
 /**
- * Add an attendee. Not supported by the plugin.
+ * Add an attendee to an event (Android).
  *
- * @param _eventId The event.
- * @param _details The attendee.
- * @returns Never resolves.
- * @throws `ERR_UNAVAILABLE`, always.
+ * @param eventId The event.
+ * @param details The attendee.
+ * @returns The new attendee's id.
+ * @throws `ERR_UNAVAILABLE` on iOS (as in Expo), or without `DenextCalendar`.
  */
-export function createAttendeeAsync(
-  _eventId: string,
-  _details?: Partial<Attendee>,
+export async function createAttendeeAsync(
+  eventId: string,
+  details?: Partial<Attendee>,
 ): Promise<string> {
-  return noAttendees("createAttendeeAsync");
+  const d = attendeeWriter("createAttendeeAsync", "createAttendee");
+  return (await d.createAttendee({ ...toAttendeeFields(details), eventId })).id;
 }
 
 /**
- * Change an attendee. Not supported by the plugin.
+ * Change an attendee (Android).
  *
- * @param _id The attendee.
- * @param _details The fields.
- * @returns Never resolves.
- * @throws `ERR_UNAVAILABLE`, always.
+ * @param id The attendee.
+ * @param details The fields to change.
+ * @returns The attendee's id.
+ * @throws `ERR_UNAVAILABLE` on iOS (as in Expo), or without `DenextCalendar`.
  */
-export function updateAttendeeAsync(_id: string, _details?: Partial<Attendee>): Promise<string> {
-  return noAttendees("updateAttendeeAsync");
+export async function updateAttendeeAsync(
+  id: string,
+  details?: Partial<Attendee>,
+): Promise<string> {
+  const d = attendeeWriter("updateAttendeeAsync", "updateAttendee");
+  return (await d.updateAttendee({ ...toAttendeeFields(details), id })).id;
 }
 
 /**
- * Remove an attendee. Not supported by the plugin.
+ * Remove an attendee (Android).
  *
- * @param _id The attendee.
- * @returns Never resolves.
- * @throws `ERR_UNAVAILABLE`, always.
+ * @param id The attendee.
+ * @throws `ERR_UNAVAILABLE` on iOS (as in Expo), or without `DenextCalendar`.
  */
-export function deleteAttendeeAsync(_id: string): Promise<void> {
-  return noAttendees("deleteAttendeeAsync");
+export async function deleteAttendeeAsync(id: string): Promise<void> {
+  await attendeeWriter("deleteAttendeeAsync", "deleteAttendee").deleteAttendee({ id });
 }
 
 // ---- Legacy API: reminders (iOS) -------------------------------------------------------------
@@ -1694,13 +1900,60 @@ export class ExpoCalendarEvent {
   }
 
   /**
-   * Open the system event editor on it.
+   * Open the system event editor on it (one occurrence, with `instanceStartDate`).
    *
-   * @param params Ignored here (`instanceStartDate` is not supported).
+   * @param params The occurrence's start and the presentation.
    * @returns The outcome.
    */
-  editInCalendar(params?: PresentationOptions): Promise<DialogEventResult> {
-    return editEventInCalendarAsync({ id: this.id }, params);
+  editInCalendar(params?: CalendarDialogParamsNext): Promise<DialogEventResult> {
+    const { instanceStartDate, ...presentation } = params ?? {};
+    return editEventInCalendarAsync({ id: this.id, instanceStartDate }, presentation);
+  }
+
+  /**
+   * Show it in the system's event viewer (one occurrence, with `instanceStartDate`).
+   *
+   * @param params The occurrence's start and the presentation.
+   * @returns The outcome.
+   */
+  openInCalendar(params?: CalendarDialogOpenParamsNext): Promise<OpenEventDialogResult> {
+    const { instanceStartDate, ...presentation } = params ?? {};
+    return openEventInCalendarAsync({ id: this.id, instanceStartDate }, presentation);
+  }
+
+  /** Its attendees. */
+  async getAttendees(): Promise<ExpoCalendarAttendee[]> {
+    return (await getAttendeesForEventAsync(this.id)).map(attendeeObject);
+  }
+
+  /**
+   * Add an attendee (Android).
+   *
+   * @param attendee The attendee (its `email` at least).
+   * @returns The attendee object.
+   */
+  async createAttendee(
+    attendee: Pick<Attendee, "email"> & Partial<Attendee>,
+  ): Promise<ExpoCalendarAttendee> {
+    const id = await createAttendeeAsync(this.id, attendee);
+    return attendeeObject({
+      name: "",
+      role: AttendeeRole.UNKNOWN,
+      status: AttendeeStatus.UNKNOWN,
+      type: AttendeeType.UNKNOWN,
+      ...attendee,
+      id,
+    });
+  }
+
+  /**
+   * Read one event.
+   *
+   * @param eventId The event.
+   * @returns The event object.
+   */
+  static async get(eventId: string): Promise<ExpoCalendarEvent> {
+    return eventObject(await getEventAsync(eventId));
   }
 
   /**
@@ -1717,6 +1970,46 @@ export class ExpoCalendarEvent {
   async delete(): Promise<void> {
     await deleteEventAsync(this.id);
   }
+}
+
+/** An event's attendee, with methods (the new API; the methods are Android only). */
+export class ExpoCalendarAttendee {
+  /** The id (Android). */
+  id?: string;
+  /** Whether it is the current user (iOS). */
+  isCurrentUser?: boolean;
+  /** The name. */
+  name = "";
+  /** The role. */
+  role: AttendeeRole = AttendeeRole.UNKNOWN;
+  /** The response. */
+  status: AttendeeStatus = AttendeeStatus.UNKNOWN;
+  /** The kind. */
+  type: AttendeeType = AttendeeType.UNKNOWN;
+  /** The URL (iOS). */
+  url?: string;
+  /** The email. */
+  email = "";
+
+  /**
+   * Change it (Android); the object takes the new values.
+   *
+   * @param details The fields to change.
+   */
+  async update(details: Partial<ModifiableAttendeeProperties>): Promise<void> {
+    await updateAttendeeAsync(this.id ?? "", details);
+    Object.assign(this, details);
+  }
+
+  /** Remove it from its event (Android). */
+  async delete(): Promise<void> {
+    await deleteAttendeeAsync(this.id ?? "");
+  }
+}
+
+/** An attendee object filled from `attendee`. */
+function attendeeObject(attendee: Attendee): ExpoCalendarAttendee {
+  return Object.assign(new ExpoCalendarAttendee(), attendee);
 }
 
 /** A reminder, with methods (the new API, iOS). */

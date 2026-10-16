@@ -2358,6 +2358,26 @@ const status = await requestTrackingPermission();       // "authorized" | "denie
         <code>expo-intent-launcher</code>, Android only).
       </p>
       <p>
+        <code>calendar</code>, <code>contacts</code>, <code>print</code> and <code>brightness</code>
+        {" "}
+        also write denext's own plugin beside the pinned one, for the Expo calls that plugin has no
+        call for (Swift registered by <code>DenextBridgeViewController</code>, Java registered from
+        {" "}
+        <code>MainActivity</code>, upgraded in place while unedited): <code>DenextCalendar</code>
+        {" "}
+        (attendees, an event by id, one occurrence's changes and its time zone, the system event
+        viewer), <code>DenextContacts</code>{" "}
+        (containers on iOS, change events, and the postal addresses, URLs, birthday and photo an
+        Android update would drop), <code>DenextPrint</code>{" "}
+        (<code>printToFileAsync</code>: HTML to a PDF file; on iOS the printer picker and printing
+        to a picked printer) and <code>DenextBrightness</code>{" "}
+        (Android's system brightness and its mode, behind <code>WRITE_SETTINGS</code>, which{" "}
+        <code>requestPermissionsAsync</code>{" "}
+        asks for in the system settings screen; iOS's brightness change events). A project that
+        added the capability before these plugins existed gets them by running the same{" "}
+        <code>denext mobile add</code> again.
+      </p>
+      <p>
         <code>app-config</code>{" "}
         installs nothing: it writes the native config of a migrated Expo app into the shell, read
         statically from <code>app.json</code> / <code>app.config.*</code>: usage strings into{" "}

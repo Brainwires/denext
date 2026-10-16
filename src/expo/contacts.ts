@@ -1,20 +1,29 @@
 /**
  * `expo-contacts` for denext: the device address book over `@capgo/capacitor-contacts` 8
- * (Capacitor 8, the `CapacitorContacts` plugin, installed by `denext mobile add contacts`).
+ * (Capacitor 8, the `CapacitorContacts` plugin) and denext's `DenextContacts` plugin beside it,
+ * both installed by `denext mobile add contacts`.
  *
  * - The legacy function API (`getContactsAsync`, `addContactAsync`, …) speaks Expo's legacy
  *   shapes (`ExistingContact`: `firstName` / `lastName`, `emails`, `phoneNumbers`, a birthday
  *   whose `month` is 0-based) and the class API (`Contact`, `Group`) speaks the new ones.
  * - The plugin reads and writes names, company, job title, note, birthday, emails, phone
  *   numbers, postal addresses, URLs and the photo. Everything else Expo has (nickname,
- *   phonetic names, department, dates, relations, social profiles, IM addresses, favourites,
- *   containers) reads as empty and is not written. Item ids (`emails[i].id`) are positional.
+ *   phonetic names, department, dates, relations, social profiles, IM addresses, favourites)
+ *   reads as empty and is not written. Item ids (`emails[i].id`) are positional.
  * - A partial update (`updateContactAsync`, `contact.patch`, the setters) reads the contact,
- *   overlays the change and writes the whole record back: on Android the plugin rewrites the
- *   record, and keeps only names, company, job title, note, emails and phone numbers.
+ *   overlays the change and writes the whole record back. On Android the plugin's update keeps
+ *   only names, company, job title, note, emails and phone numbers; `DenextContacts` then writes
+ *   the postal addresses, URLs, birthday and photo back.
+ * - Containers (iOS, as in Expo): `getContainersAsync`, `getDefaultContainerIdAsync` and the
+ *   {@linkcode Container} class read them through `DenextContacts`; elsewhere they reject with
+ *   `ERR_UNAVAILABLE`. A new contact or group always goes to the default container.
+ * - `addContactsChangeListener` fires when the address book changes (`CNContactStoreDidChange`
+ *   on iOS; a `ContentObserver` on Android, which may batch changes by a few seconds).
  * - Off the Capacitor shell (or without the plugin) every call rejects with
  *   `ERR_UNAVAILABLE`, except the permission calls, which answer `undetermined` as Expo's web
  *   build does, {@linkcode isAvailableAsync} (`false`) and the change listener (never fires).
+ *   A shell that ran `denext mobile add contacts` before `DenextContacts` existed works as
+ *   before: no containers, no change events, and Android updates drop those four fields.
  *
  * @example
  * ```ts
@@ -30,8 +39,10 @@
  * @module
  */
 
-import { nativePlugin } from "../mobile/plugin.ts";
+import { nativePlatform } from "../mobile/bridge.ts";
+import { listenerDisposer, type ListenerHandle, nativePlugin } from "../mobile/plugin.ts";
 import {
+  createEmitter,
   type PermissionExpiration,
   type PermissionResponse,
   permissionResponse,
@@ -1082,10 +1093,53 @@ function need(name: string): ContactsPlugin {
   return p;
 }
 
-/** `ERR_UNAVAILABLE` for a call the plugin cannot make at all. */
-function cannot(name: string, what: string): Promise<never> {
-  return Promise.reject(
-    unavailable(PKG, name, `@capgo/capacitor-contacts has no ${what}.`),
+/** A container as `DenextContacts` reports it. */
+interface PluginContainer {
+  id: string;
+  name: string;
+  type: ContainerType | "unknown";
+}
+
+/** denext's `DenextContacts` (containers on iOS, change events, Android's full updates). */
+interface DenextContactsPlugin {
+  getContainers(o: {
+    contactId?: string;
+    groupId?: string;
+    containerIds?: string[];
+  }): Promise<{ containers: PluginContainer[] }>;
+  getDefaultContainerId(): Promise<{ id: string }>;
+  getContainerGroups(o: { id: string }): Promise<{ groups: { id: string; name: string }[] }>;
+  getContainerContactIds(o: { id: string }): Promise<{ ids: string[] }>;
+  writeExtras(o: {
+    id: string;
+    postalAddresses: PluginAddress[];
+    urlAddresses: PluginUrl[];
+    birthday: PluginContact["birthday"];
+    photo: string | null;
+  }): Promise<void>;
+  watchChanges(): Promise<void>;
+  addListener(
+    eventName: "contactsChanged",
+    listener: () => void,
+  ): ListenerHandle | Promise<ListenerHandle>;
+}
+
+/** `DenextContacts` with `method`, or undefined (the web, or a shell without it). */
+function denextContacts(method: keyof DenextContactsPlugin): DenextContactsPlugin | undefined {
+  return nativePlugin<DenextContactsPlugin>("DenextContacts", [method]);
+}
+
+/** iOS's `DenextContacts` for a container call, or throw `ERR_UNAVAILABLE` for `name`. */
+function containers(name: string, method: keyof DenextContactsPlugin): DenextContactsPlugin {
+  need(name);
+  const p = nativePlatform() === "ios" ? denextContacts(method) : undefined;
+  if (p) return p;
+  throw unavailable(
+    PKG,
+    name,
+    nativePlatform() === "ios"
+      ? "Containers need denext's DenextContacts plugin: run `denext mobile add contacts` again."
+      : "Containers are iOS only.",
   );
 }
 
@@ -1517,6 +1571,15 @@ async function writeMerged(
   const merged = { ...await stored(p, id), ...change };
   if (clearBirthday) delete merged.birthday;
   await p.updateContactById({ id, contact: merged });
+  // Android: the plugin's update rewrote the record without these; write them back.
+  const extras = nativePlatform() === "android" ? denextContacts("writeExtras") : undefined;
+  await extras?.writeExtras({
+    id,
+    postalAddresses: merged.postalAddresses ?? [],
+    urlAddresses: merged.urlAddresses ?? [],
+    birthday: merged.birthday ?? null,
+    photo: merged.photo ?? null,
+  });
 }
 
 // ---- permissions ----------------------------------------------------------------------------
@@ -1755,28 +1818,40 @@ export async function removeGroupAsync(groupId: string): Promise<void> {
 }
 
 /**
- * The default container's id. The plugin has no container ids, so this always rejects
- * with `ERR_UNAVAILABLE`.
+ * The default container's id: where new contacts go (iOS).
  *
- * @returns Never resolves.
+ * @returns The id.
+ * @throws `ERR_UNAVAILABLE` off iOS, or without `DenextContacts`.
  */
 export async function getDefaultContainerIdAsync(): Promise<string> {
-  need("getDefaultContainerIdAsync");
-  return await cannot("getDefaultContainerIdAsync", "container ids");
+  const p = containers("getDefaultContainerIdAsync", "getDefaultContainerId");
+  return (await p.getDefaultContainerId()).id;
+}
+
+/** `DenextContacts`' query for a legacy {@linkcode ContainerQuery} (all containers when empty). */
+function containerFilter(query: ContainerQuery | undefined) {
+  if (query?.contactId !== undefined) return { contactId: query.contactId };
+  if (query?.groupId !== undefined) return { groupId: query.groupId };
+  if (query?.containerId !== undefined) {
+    return { containerIds: ([] as string[]).concat(query.containerId) };
+  }
+  return {};
 }
 
 /**
- * The containers. The plugin has no container ids, so this always rejects with
- * `ERR_UNAVAILABLE`.
+ * The containers (iOS): the one holding a contact (`contactId`) or a group (`groupId`), the ones
+ * with the given ids (`containerId`), or every one.
  *
- * @param _containerQuery Ignored.
- * @returns Never resolves.
+ * @param containerQuery Which containers.
+ * @returns The containers.
+ * @throws `ERR_UNAVAILABLE` off iOS, or without `DenextContacts`.
  */
 export async function getContainersAsync(
-  _containerQuery: ContainerQuery,
+  containerQuery: ContainerQuery,
 ): Promise<LegacyContainer[]> {
-  need("getContainersAsync");
-  return await cannot("getContainersAsync", "container ids");
+  const p = containers("getContainersAsync", "getContainers");
+  const found = await p.getContainers(containerFilter(containerQuery));
+  return found.containers.map((c) => ({ id: c.id, name: c.name, type: c.type as ContainerType }));
 }
 
 // ---- the class API --------------------------------------------------------------------------
@@ -2186,21 +2261,107 @@ export class Group {
   }
 }
 
+/** A container's kind as the class API reports it. */
+export type ContainerClassType = "local" | "exchange" | "cardDAV" | "unassigned" | "unknown";
+
+/**
+ * A container of contacts (an account: on the device, iCloud, Exchange, …), by id. iOS only,
+ * as in Expo, through `DenextContacts`; elsewhere every call rejects with `ERR_UNAVAILABLE`.
+ */
+export class Container {
+  /** The container's id. */
+  readonly id: string;
+
+  /**
+   * A handle on the container with `id` (nothing is read).
+   *
+   * @param id The container's id.
+   */
+  constructor(id: string) {
+    this.id = id;
+  }
+
+  /** This container as `DenextContacts` reports it, or undefined when it is gone. */
+  async #read(name: string): Promise<PluginContainer | undefined> {
+    const p = containers(name, "getContainers");
+    return (await p.getContainers({ containerIds: [this.id] })).containers[0];
+  }
+
+  /** Read the container's name, or null when it is gone. */
+  async getName(): Promise<string | null> {
+    return (await this.#read("Container.getName"))?.name ?? null;
+  }
+
+  /** Read the container's kind, or null when it is gone. */
+  async getType(): Promise<ContainerClassType | null> {
+    return (await this.#read("Container.getType"))?.type ?? null;
+  }
+
+  /** The groups in the container. */
+  async getGroups(): Promise<Group[]> {
+    const p = containers("Container.getGroups", "getContainerGroups");
+    return (await p.getContainerGroups({ id: this.id })).groups.map((g) => new Group(g.id));
+  }
+
+  /** The contacts in the container. */
+  async getContacts(): Promise<Contact[]> {
+    const p = containers("Container.getContacts", "getContainerContactIds");
+    return (await p.getContainerContactIds({ id: this.id })).ids.map((id) => new Contact(id));
+  }
+
+  /** Every container. */
+  static async getAll(): Promise<Container[]> {
+    const p = containers("Container.getAll", "getContainers");
+    return (await p.getContainers({})).containers.map((c) => new Container(c.id));
+  }
+
+  /** The default container (where new contacts go), or null without one. */
+  static async getDefault(): Promise<Container | null> {
+    const p = containers("Container.getDefault", "getDefaultContainerId");
+    const { id } = await p.getDefaultContainerId();
+    return id ? new Container(id) : null;
+  }
+}
+
 // ---- change events and the access button ---------------------------------------------------
 
 /**
- * Listen for address-book changes. The plugin reports none, so the listener never fires (as
- * in Expo's web build); refresh when the app resumes instead.
- *
- * @param _listener Never called.
- * @returns A subscription whose `remove` does nothing.
+ * The change listeners: fed from `DenextContacts`' `contactsChanged` while any listens (it starts
+ * watching the address book on the first).
  */
-export function addContactsChangeListener(_listener: () => void): EventSubscription {
-  return subscription(() => {});
+const changes = createEmitter<void>((emit) => {
+  const p = denextContacts("watchChanges");
+  if (!p) return () => {};
+  p.watchChanges().catch(() => {});
+  return listenerDisposer(p.addListener("contactsChanged", () => emit()));
+});
+
+/** Every change subscription still listening, for {@linkcode removeAllContactsChangeListeners}. */
+const changeSubscriptions = new Set<Subscription>();
+
+/**
+ * Call `listener` when the address book changes (a contact added, changed or removed, by this
+ * app or another): `CNContactStoreDidChange` on iOS, a `ContentObserver` on Android (which may
+ * batch changes by a few seconds, and report one change twice). Needs `DenextContacts`; on the
+ * web, or without it, the listener never fires (as in Expo's web build).
+ *
+ * @param listener Called with no arguments.
+ * @returns A subscription to remove.
+ */
+export function addContactsChangeListener(listener: () => void): EventSubscription {
+  const inner = changes.subscribe(() => listener());
+  const outer = subscription(() => {
+    changeSubscriptions.delete(outer);
+    inner.remove();
+  });
+  changeSubscriptions.add(outer);
+  return outer;
 }
 
-/** Remove every change listener (they never fire here). */
-export function removeAllContactsChangeListeners(): void {}
+/** Remove every listener {@linkcode addContactsChangeListener} added. */
+export function removeAllContactsChangeListeners(): void {
+  for (const sub of [...changeSubscriptions]) sub.remove();
+}
 
 /** Props of {@linkcode ContactAccessButton} (iOS 18's limited-access button). */
 export type ContactAccessButtonProps = {

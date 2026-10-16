@@ -4262,7 +4262,7 @@
           "kind": "function",
           "signature": "ViewTransition(props: object): VNode",
           "doc": "React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the first keeps name, the others get React's name_<i> suffix), and the hosts a component child renders. Text directly inside is not animated (it can't be named). The import-gated marking runtime finds these elements and applies real view-transition-name (an automatic one when name is unset) and view-transition-class (enter/exit/update/share, else default; \"none\" opts out):",
-          "docFull": "`React.ViewTransition` (experimental) — the client-driven view-transition wrapper. It is\ntransparent (no DOM node of its own) and carries its config by stamping the {@link DNX_VT_ATTR}\nattribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the\nFlight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the\nfirst keeps `name`, the others get React's `name_<i>` suffix), and the hosts a component child\nrenders. Text directly inside is not animated (it can't be named). The import-gated marking\nruntime finds these elements and applies real `view-transition-name` (an automatic one when\n`name` is unset) and `view-transition-class` (`enter`/`exit`/`update`/`share`, else `default`;\n`\"none\"` opts out):\n\n- **Same-page updates** (React's triggers): a commit made only of Transition work — a\n  `startTransition` update, a `useDeferredValue` catch-up, a Suspense reveal — runs inside\n  `document.startViewTransition` when a wrapped element enters, exits, is shared (a `name` that\n  leaves one place and enters another) or updates (its content mutated or its layout moved).\n  An urgent update never animates, and neither does a `useSyncExternalStore` change (React\n  renders a store change synchronously even inside `startTransition`).\n- **Soft navigations** commit inside `document.startViewTransition` (see `withViewTransition`\n  in `src/client/navigation.ts`), so a `name` shared across routes morphs one element into the\n  other; the route-level cross-fade applies regardless.\n\nA hidden `<Activity>` going hidden in a Transition animates its boundaries as exits, and a\nboundary entirely outside the viewport (before and after) is not animated, as in React.\n\n`onEnter` / `onExit` / `onUpdate` / `onShare` run once the transition's pseudo-elements exist\n(`ready`), with the boundary's `ViewTransitionInstance` (`name`, and `group` / `imagePair` /\n`old` / `new` handles with `animate()` / `getAnimations()` / `getComputedStyle()` on its\n`::view-transition-*` pseudo-elements) and the transition types; a returned function runs\nwhen the transition finishes. `onShare` runs on the side that leaves. On a soft navigation a\nboundary that persists runs `onUpdate` when its content changed or its box moved. A `ref`\nreceives the same instance once the boundary's first host mounts. Callbacks and `ref` need a\nclient-rendered `<ViewTransition>` (a function can't cross from a Server Component).\n\nWhere the browser lacks the View Transitions API the commit simply applies.",
+          "docFull": "`React.ViewTransition` (experimental) — the client-driven view-transition wrapper. It is\ntransparent (no DOM node of its own) and carries its config by stamping the {@link DNX_VT_ATTR}\nattribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the\nFlight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the\nfirst keeps `name`, the others get React's `name_<i>` suffix), and the hosts a component child\nrenders. Text directly inside is not animated (it can't be named). The import-gated marking\nruntime finds these elements and applies real `view-transition-name` (an automatic one when\n`name` is unset) and `view-transition-class` (`enter`/`exit`/`update`/`share`, else `default`;\n`\"none\"` opts out):\n\n- **Same-page updates** (React's triggers): a commit made only of Transition work — a\n  `startTransition` update, a `useDeferredValue` catch-up, a Suspense reveal — runs inside\n  `document.startViewTransition` when a wrapped element enters, exits, is shared (a `name` that\n  leaves one place and enters another) or updates (its content mutated or its layout moved).\n  An urgent update never animates, and neither does a `useSyncExternalStore` change (React\n  renders a store change synchronously even inside `startTransition`).\n- **Soft navigations** commit inside `document.startViewTransition` (see `withViewTransition`\n  in `src/client/nav-document.ts`), so a `name` shared across routes morphs one element into the\n  other; the route-level cross-fade applies regardless.\n\nA hidden `<Activity>` going hidden in a Transition animates its boundaries as exits, and a\nboundary entirely outside the viewport (before and after) is not animated, as in React.\n\n`onEnter` / `onExit` / `onUpdate` / `onShare` run once the transition's pseudo-elements exist\n(`ready`), with the boundary's `ViewTransitionInstance` (`name`, and `group` / `imagePair` /\n`old` / `new` handles with `animate()` / `getAnimations()` / `getComputedStyle()` on its\n`::view-transition-*` pseudo-elements) and the transition types; a returned function runs\nwhen the transition finishes. `onShare` runs on the side that leaves. On a soft navigation a\nboundary that persists runs `onUpdate` when its content changed or its box moved. A `ref`\nreceives the same instance once the boundary's first host mounts. Callbacks and `ref` need a\nclient-rendered `<ViewTransition>` (a function can't cross from a Server Component).\n\nWhere the browser lacks the View Transitions API the commit simply applies.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6155,8 +6155,8 @@
           "slug": "ChannelEvent",
           "kind": "interface",
           "signature": "interface ChannelEvent",
-          "doc": "One transport event: a channel publish/revoke, a cross-instance cache-tag invalidate, or an instance's presence snapshot of one usePresence room.",
-          "docFull": "One transport event: a channel `publish`/`revoke`, a cross-instance cache-tag `invalidate`, or\nan instance's `presence` snapshot of one `usePresence` room.",
+          "doc": "One transport event: a channel publish/revoke, a cross-instance cache-tag invalidate, an instance's presence snapshot of one usePresence room, or a parked live view's view-resumed (it resumed on another instance, so the one that parked it stops its copy).",
+          "docFull": "One transport event: a channel `publish`/`revoke`, a cross-instance cache-tag `invalidate`, an\ninstance's `presence` snapshot of one `usePresence` room, or a parked live view's\n`view-resumed` (it resumed on another instance, so the one that parked it stops its copy).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -36192,8 +36192,8 @@
           "slug": "addBrightnessListener",
           "kind": "function",
           "signature": "addBrightnessListener(listener: (event: BrightnessEvent) => void): Subscription",
-          "doc": "Call listener when the brightness changes: never, since the plugin reports no changes.",
-          "docFull": "Call `listener` when the brightness changes: never, since the plugin reports no changes.",
+          "doc": "Call listener when the screen's brightness changes (iOS, as in Expo: with DenextBrightness from denext mobile add brightness; never elsewhere).",
+          "docFull": "Call `listener` when the screen's brightness changes (iOS, as in Expo: with `DenextBrightness`\nfrom `denext mobile add brightness`; never elsewhere).",
           "params": [
             {
               "name": "listener",
@@ -36233,8 +36233,8 @@
           "slug": "getBrightnessAsync",
           "kind": "function",
           "signature": "getBrightnessAsync(): Promise<number>",
-          "doc": "The current brightness: the screen's (iOS) or the app window's (Android; -1 while it follows the system).",
-          "docFull": "The current brightness: the screen's (iOS) or the app window's (Android; `-1` while it\nfollows the system).",
+          "doc": "The current brightness: the screen's (iOS) or the app window's (Android; the system's while the window follows it, as in Expo, or -1 without DenextBrightness).",
+          "docFull": "The current brightness: the screen's (iOS) or the app window's (Android; the system's while\nthe window follows it, as in Expo, or `-1` without `DenextBrightness`).",
           "params": [],
           "returns": "0–1 (or -1, see above).",
           "examples": [],
@@ -36245,8 +36245,8 @@
           "slug": "getPermissionsAsync",
           "kind": "function",
           "signature": "getPermissionsAsync(): Promise<PermissionResponse>",
-          "doc": "The system-settings permission: granted in the shell, undetermined on the web.",
-          "docFull": "The system-settings permission: `granted` in the shell, `undetermined` on the web.",
+          "doc": "The system-settings permission (see requestPermissionsAsync).",
+          "docFull": "The system-settings permission (see {@linkcode requestPermissionsAsync}).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -36257,8 +36257,8 @@
           "slug": "getSystemBrightnessAsync",
           "kind": "function",
           "signature": "getSystemBrightnessAsync(): Promise<number>",
-          "doc": "The system brightness: off Android the screen's, as Expo (getBrightnessAsync); Android's system setting is not readable here.",
-          "docFull": "The system brightness: off Android the screen's, as Expo (`getBrightnessAsync`); Android's\nsystem setting is not readable here.",
+          "doc": "The system brightness: off Android the screen's, as Expo (getBrightnessAsync); on Android the system setting.",
+          "docFull": "The system brightness: off Android the screen's, as Expo (`getBrightnessAsync`); on Android\nthe system setting.",
           "params": [],
           "returns": "0–1.",
           "examples": [],
@@ -36269,8 +36269,8 @@
           "slug": "getSystemBrightnessModeAsync",
           "kind": "function",
           "signature": "getSystemBrightnessModeAsync(): Promise<BrightnessMode>",
-          "doc": "The system brightness mode: off Android BrightnessMode.UNKNOWN, as in Expo; Android's is not readable here (it rejects with ERR_UNAVAILABLE).",
-          "docFull": "The system brightness mode: off Android `BrightnessMode.UNKNOWN`, as in Expo; Android's is not\nreadable here (it rejects with `ERR_UNAVAILABLE`).",
+          "doc": "The system brightness mode: off Android BrightnessMode.UNKNOWN, as in Expo; on Android the system setting's (AUTOMATIC or MANUAL).",
+          "docFull": "The system brightness mode: off Android `BrightnessMode.UNKNOWN`, as in Expo; on Android the\nsystem setting's (`AUTOMATIC` or `MANUAL`).",
           "params": [],
           "returns": "The mode.",
           "examples": [],
@@ -36353,8 +36353,8 @@
           "slug": "requestPermissionsAsync",
           "kind": "function",
           "signature": "requestPermissionsAsync(): Promise<PermissionResponse>",
-          "doc": "Ask for the system-settings permission: as getPermissionsAsync.",
-          "docFull": "Ask for the system-settings permission: as {@linkcode getPermissionsAsync}.",
+          "doc": "Ask for the system-settings permission: on Android the system screen for WRITE_SETTINGS; granted elsewhere in the shell, undetermined on the web.",
+          "docFull": "Ask for the system-settings permission: on Android the system screen for `WRITE_SETTINGS`;\n`granted` elsewhere in the shell, `undetermined` on the web.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -36394,8 +36394,8 @@
           "slug": "setSystemBrightnessAsync",
           "kind": "function",
           "signature": "setSystemBrightnessAsync(brightnessValue: number): Promise<void>",
-          "doc": "Set the system brightness: off Android the screen's, as Expo (setBrightnessAsync); Android's system setting is not writable here.",
-          "docFull": "Set the system brightness: off Android the screen's, as Expo (`setBrightnessAsync`); Android's\nsystem setting is not writable here.",
+          "doc": "Set the system brightness: off Android the screen's, as Expo (setBrightnessAsync); on Android the system setting (switching its mode to manual first, as Expo), which needs WRITE_SETTINGS (requestPermissionsAsync).",
+          "docFull": "Set the system brightness: off Android the screen's, as Expo (`setBrightnessAsync`); on\nAndroid the system setting (switching its mode to manual first, as Expo), which needs\n`WRITE_SETTINGS` ({@linkcode requestPermissionsAsync}).",
           "params": [
             {
               "name": "brightnessValue",
@@ -36411,8 +36411,8 @@
           "slug": "setSystemBrightnessModeAsync",
           "kind": "function",
           "signature": "setSystemBrightnessModeAsync(brightnessMode: BrightnessMode): Promise<void>",
-          "doc": "Set the system brightness mode: off Android, or for UNKNOWN, it does nothing, as in Expo; Android's is not writable here (it rejects with ERR_UNAVAILABLE).",
-          "docFull": "Set the system brightness mode: off Android, or for `UNKNOWN`, it does nothing, as in Expo;\nAndroid's is not writable here (it rejects with `ERR_UNAVAILABLE`).",
+          "doc": "Set the system brightness mode: off Android, or for UNKNOWN, it does nothing, as in Expo; on Android it writes the system setting, which needs WRITE_SETTINGS (requestPermissionsAsync).",
+          "docFull": "Set the system brightness mode: off Android, or for `UNKNOWN`, it does nothing, as in Expo; on\nAndroid it writes the system setting, which needs `WRITE_SETTINGS`\n({@linkcode requestPermissionsAsync}).",
           "params": [
             {
               "name": "brightnessMode",
@@ -36644,12 +36644,36 @@
           "denextOnly": false
         },
         {
+          "name": "CalendarDialogOpenParamsNext",
+          "slug": "CalendarDialogOpenParamsNext",
+          "kind": "typeAlias",
+          "signature": "type CalendarDialogOpenParamsNext = CalendarDialogParamsNext & OpenEventPresentationOptions",
+          "doc": "CalendarDialogParamsNext with the viewer's options.",
+          "docFull": "{@linkcode CalendarDialogParamsNext} with the viewer's options.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "CalendarDialogParams",
           "slug": "CalendarDialogParams",
           "kind": "interface",
           "signature": "interface CalendarDialogParams",
           "doc": "Which event a dialog shows.",
           "docFull": "Which event a dialog shows.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "CalendarDialogParamsNext",
+          "slug": "CalendarDialogParamsNext",
+          "kind": "typeAlias",
+          "signature": "type CalendarDialogParamsNext = Omit<CalendarDialogParams, id> & PresentationOptions",
+          "doc": "Which occurrence the object API's dialogs show, and how.",
+          "docFull": "Which occurrence the object API's dialogs show, and how.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -36683,20 +36707,20 @@
           "name": "createAttendeeAsync",
           "slug": "createAttendeeAsync",
           "kind": "function",
-          "signature": "createAttendeeAsync(_eventId: string, _details?: Partial<Attendee>): Promise<string>",
-          "doc": "Add an attendee. Not supported by the plugin.",
-          "docFull": "Add an attendee. Not supported by the plugin.",
+          "signature": "createAttendeeAsync(eventId: string, details?: Partial<Attendee>): Promise<string>",
+          "doc": "Add an attendee to an event (Android).",
+          "docFull": "Add an attendee to an event (Android).",
           "params": [
             {
-              "name": "_eventId",
+              "name": "eventId",
               "doc": "The event."
             },
             {
-              "name": "_details",
+              "name": "details",
               "doc": "The attendee."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The new attendee's id.",
           "examples": [],
           "denextOnly": false
         },
@@ -36739,8 +36763,8 @@
           "slug": "createEventAsync",
           "kind": "function",
           "signature": "createEventAsync(calendarId: string, eventData?: Omit<Partial<Event>, id | organizer>): Promise<string>",
-          "doc": "Create an event. timeZone, attendees and absolute or location alarms are not passed on.",
-          "docFull": "Create an event. `timeZone`, attendees and absolute or location alarms are not passed on.",
+          "doc": "Create an event. Attendees and absolute or location alarms are not passed on; timeZone is set through DenextCalendar (ignored without it).",
+          "docFull": "Create an event. Attendees and absolute or location alarms are not passed on; `timeZone` is\nset through `DenextCalendar` (ignored without it).",
           "params": [
             {
               "name": "calendarId",
@@ -36825,16 +36849,16 @@
           "name": "deleteAttendeeAsync",
           "slug": "deleteAttendeeAsync",
           "kind": "function",
-          "signature": "deleteAttendeeAsync(_id: string): Promise<void>",
-          "doc": "Remove an attendee. Not supported by the plugin.",
-          "docFull": "Remove an attendee. Not supported by the plugin.",
+          "signature": "deleteAttendeeAsync(id: string): Promise<void>",
+          "doc": "Remove an attendee (Android).",
+          "docFull": "Remove an attendee (Android).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The attendee."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "",
           "examples": [],
           "denextOnly": false
         },
@@ -36909,17 +36933,17 @@
           "name": "editEventInCalendarAsync",
           "slug": "editEventInCalendarAsync",
           "kind": "function",
-          "signature": "editEventInCalendarAsync(params: CalendarDialogParams, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>",
-          "doc": "Open the system's event editor on an event. Android does not report the outcome (done).",
-          "docFull": "Open the system's event editor on an event. Android does not report the outcome (`done`).",
+          "signature": "editEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: PresentationOptions): Promise<DialogEventResult>",
+          "doc": "Open the system's event editor on an event (one occurrence, with instanceStartDate, through DenextCalendar). Android does not report the outcome (done).",
+          "docFull": "Open the system's event editor on an event (one occurrence, with `instanceStartDate`, through\n`DenextCalendar`). Android does not report the outcome (`done`).",
           "params": [
             {
               "name": "params",
-              "doc": "The event (instanceStartDate is not supported)."
+              "doc": "The event, and the occurrence's start."
             },
             {
-              "name": "_presentationOptions",
-              "doc": "Ignored."
+              "name": "presentationOptions",
+              "doc": "startNewActivityTask (Android, for an occurrence)."
             }
           ],
           "returns": "The outcome.",
@@ -36987,6 +37011,18 @@
           "denextOnly": false
         },
         {
+          "name": "ExpoCalendarAttendee",
+          "slug": "ExpoCalendarAttendee",
+          "kind": "class",
+          "signature": "class ExpoCalendarAttendee",
+          "doc": "An event's attendee, with methods (the new API; the methods are Android only).",
+          "docFull": "An event's attendee, with methods (the new API; the methods are Android only).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "ExpoCalendarEvent",
           "slug": "ExpoCalendarEvent",
           "kind": "class",
@@ -37026,20 +37062,20 @@
           "name": "getAttendeesForEventAsync",
           "slug": "getAttendeesForEventAsync",
           "kind": "function",
-          "signature": "getAttendeesForEventAsync(_id: string, _recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>",
-          "doc": "An event's attendees. The plugin does not read them by event id.",
-          "docFull": "An event's attendees. The plugin does not read them by event id.",
+          "signature": "getAttendeesForEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>",
+          "doc": "An event's attendees (of one occurrence, with instanceStartDate).",
+          "docFull": "An event's attendees (of one occurrence, with `instanceStartDate`).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The event."
             },
             {
-              "name": "_recurringEventOptions",
-              "doc": "Which occurrence (Expo's second argument)."
+              "name": "recurringEventOptions",
+              "doc": "Which occurrence."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The attendees.",
           "examples": [],
           "denextOnly": false
         },
@@ -37123,8 +37159,8 @@
           "slug": "getEventAsync",
           "kind": "function",
           "signature": "getEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Event>",
-          "doc": "One event. The plugin cannot look an event up by id alone: pass the occurrence's start as recurringEventOptions.instanceStartDate (the startDate a listing returned).",
-          "docFull": "One event. The plugin cannot look an event up by id alone: pass the occurrence's start as\n`recurringEventOptions.instanceStartDate` (the `startDate` a listing returned).",
+          "doc": "One event: by id (through DenextCalendar), or its occurrence starting at recurringEventOptions.instanceStartDate (the startDate a listing returned).",
+          "docFull": "One event: by id (through `DenextCalendar`), or its occurrence starting at\n`recurringEventOptions.instanceStartDate` (the `startDate` a listing returned).",
           "params": [
             {
               "name": "id",
@@ -37132,7 +37168,7 @@
             },
             {
               "name": "recurringEventOptions",
-              "doc": "instanceStartDate, required here."
+              "doc": "instanceStartDate, for one occurrence."
             }
           ],
           "returns": "The event.",
@@ -37301,6 +37337,18 @@
           "denextOnly": false
         },
         {
+          "name": "ModifiableAttendeeProperties",
+          "slug": "ModifiableAttendeeProperties",
+          "kind": "typeAlias",
+          "signature": "type ModifiableAttendeeProperties = Pick<Attendee, name | email | role | status | type>",
+          "doc": "What ExpoCalendarAttendee.update changes.",
+          "docFull": "What {@linkcode ExpoCalendarAttendee.update} changes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "ModifiableCalendarProperties",
           "slug": "ModifiableCalendarProperties",
           "kind": "typeAlias",
@@ -37364,12 +37412,12 @@
           "name": "openEventInCalendar",
           "slug": "openEventInCalendar",
           "kind": "function",
-          "signature": "openEventInCalendar(_id: string): void",
-          "doc": "Open an event in the Android calendar app. The plugin has no such call.",
-          "docFull": "Open an event in the Android calendar app. The plugin has no such call.",
+          "signature": "openEventInCalendar(id: string): void",
+          "doc": "Open an event in the Android calendar app (Expo's deprecated Android-only call; it returns before the app opens).",
+          "docFull": "Open an event in the Android calendar app (Expo's deprecated Android-only call; it returns\nbefore the app opens).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The event."
             }
           ],
@@ -37381,20 +37429,20 @@
           "name": "openEventInCalendarAsync",
           "slug": "openEventInCalendarAsync",
           "kind": "function",
-          "signature": "openEventInCalendarAsync(_params: CalendarDialogParams, _presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>",
-          "doc": "Show an event in the calendar app. The plugin has no such dialog.",
-          "docFull": "Show an event in the calendar app. The plugin has no such dialog.",
+          "signature": "openEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>",
+          "doc": "Show an event (or, with instanceStartDate, one occurrence) in the system's event viewer: EKEventViewController on iOS, which reports done, responded, deleted or canceled; the calendar app on Android, which reports nothing (done).",
+          "docFull": "Show an event (or, with `instanceStartDate`, one occurrence) in the system's event viewer:\nEKEventViewController on iOS, which reports `done`, `responded`, `deleted` or `canceled`; the\ncalendar app on Android, which reports nothing (`done`).",
           "params": [
             {
-              "name": "_params",
-              "doc": "The event."
+              "name": "params",
+              "doc": "The event, and the occurrence's start."
             },
             {
-              "name": "_presentationOptions",
-              "doc": "The presentation."
+              "name": "presentationOptions",
+              "doc": "allowsEditing / allowsCalendarPreview (iOS), startNewActivityTask (Android)."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The outcome.",
           "examples": [],
           "denextOnly": false
         },
@@ -37635,20 +37683,20 @@
           "name": "updateAttendeeAsync",
           "slug": "updateAttendeeAsync",
           "kind": "function",
-          "signature": "updateAttendeeAsync(_id: string, _details?: Partial<Attendee>): Promise<string>",
-          "doc": "Change an attendee. Not supported by the plugin.",
-          "docFull": "Change an attendee. Not supported by the plugin.",
+          "signature": "updateAttendeeAsync(id: string, details?: Partial<Attendee>): Promise<string>",
+          "doc": "Change an attendee (Android).",
+          "docFull": "Change an attendee (Android).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The attendee."
             },
             {
-              "name": "_details",
-              "doc": "The fields."
+              "name": "details",
+              "doc": "The fields to change."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The attendee's id.",
           "examples": [],
           "denextOnly": false
         },
@@ -37678,8 +37726,8 @@
           "slug": "updateEventAsync",
           "kind": "function",
           "signature": "updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>",
-          "doc": "Change an event (with futureEvents, this and the following occurrences).",
-          "docFull": "Change an event (with `futureEvents`, this and the following occurrences).",
+          "doc": "Change an event, or with instanceStartDate one occurrence of it (with futureEvents, it and the following ones; iOS only). An occurrence and a time zone are changed through DenextCalendar; on Android the changed occurrence becomes an exception event, whose id is returned.",
+          "docFull": "Change an event, or with `instanceStartDate` one occurrence of it (with `futureEvents`, it and\nthe following ones; iOS only). An occurrence and a time zone are changed through\n`DenextCalendar`; on Android the changed occurrence becomes an exception event, whose id is\nreturned.",
           "params": [
             {
               "name": "id",
@@ -37691,10 +37739,10 @@
             },
             {
               "name": "recurringEventOptions",
-              "doc": "futureEvents; instanceStartDate is not supported."
+              "doc": "instanceStartDate and futureEvents."
             }
           ],
-          "returns": "The id.",
+          "returns": "The id (of the exception, for an Android occurrence).",
           "examples": [],
           "denextOnly": false
         },
@@ -37913,20 +37961,20 @@
           "name": "createAttendeeAsync",
           "slug": "createAttendeeAsync",
           "kind": "function",
-          "signature": "createAttendeeAsync(_eventId: string, _details?: Partial<Attendee>): Promise<string>",
-          "doc": "Add an attendee. Not supported by the plugin.",
-          "docFull": "Add an attendee. Not supported by the plugin.",
+          "signature": "createAttendeeAsync(eventId: string, details?: Partial<Attendee>): Promise<string>",
+          "doc": "Add an attendee to an event (Android).",
+          "docFull": "Add an attendee to an event (Android).",
           "params": [
             {
-              "name": "_eventId",
+              "name": "eventId",
               "doc": "The event."
             },
             {
-              "name": "_details",
+              "name": "details",
               "doc": "The attendee."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The new attendee's id.",
           "examples": [],
           "denextOnly": false
         },
@@ -37952,8 +38000,8 @@
           "slug": "createEventAsync",
           "kind": "function",
           "signature": "createEventAsync(calendarId: string, eventData?: Omit<Partial<Event>, id | organizer>): Promise<string>",
-          "doc": "Create an event. timeZone, attendees and absolute or location alarms are not passed on.",
-          "docFull": "Create an event. `timeZone`, attendees and absolute or location alarms are not passed on.",
+          "doc": "Create an event. Attendees and absolute or location alarms are not passed on; timeZone is set through DenextCalendar (ignored without it).",
+          "docFull": "Create an event. Attendees and absolute or location alarms are not passed on; `timeZone` is\nset through `DenextCalendar` (ignored without it).",
           "params": [
             {
               "name": "calendarId",
@@ -38038,16 +38086,16 @@
           "name": "deleteAttendeeAsync",
           "slug": "deleteAttendeeAsync",
           "kind": "function",
-          "signature": "deleteAttendeeAsync(_id: string): Promise<void>",
-          "doc": "Remove an attendee. Not supported by the plugin.",
-          "docFull": "Remove an attendee. Not supported by the plugin.",
+          "signature": "deleteAttendeeAsync(id: string): Promise<void>",
+          "doc": "Remove an attendee (Android).",
+          "docFull": "Remove an attendee (Android).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The attendee."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "",
           "examples": [],
           "denextOnly": false
         },
@@ -38122,17 +38170,17 @@
           "name": "editEventInCalendarAsync",
           "slug": "editEventInCalendarAsync",
           "kind": "function",
-          "signature": "editEventInCalendarAsync(params: CalendarDialogParams, _presentationOptions?: PresentationOptions): Promise<DialogEventResult>",
-          "doc": "Open the system's event editor on an event. Android does not report the outcome (done).",
-          "docFull": "Open the system's event editor on an event. Android does not report the outcome (`done`).",
+          "signature": "editEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: PresentationOptions): Promise<DialogEventResult>",
+          "doc": "Open the system's event editor on an event (one occurrence, with instanceStartDate, through DenextCalendar). Android does not report the outcome (done).",
+          "docFull": "Open the system's event editor on an event (one occurrence, with `instanceStartDate`, through\n`DenextCalendar`). Android does not report the outcome (`done`).",
           "params": [
             {
               "name": "params",
-              "doc": "The event (instanceStartDate is not supported)."
+              "doc": "The event, and the occurrence's start."
             },
             {
-              "name": "_presentationOptions",
-              "doc": "Ignored."
+              "name": "presentationOptions",
+              "doc": "startNewActivityTask (Android, for an occurrence)."
             }
           ],
           "returns": "The outcome.",
@@ -38203,20 +38251,20 @@
           "name": "getAttendeesForEventAsync",
           "slug": "getAttendeesForEventAsync",
           "kind": "function",
-          "signature": "getAttendeesForEventAsync(_id: string, _recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>",
-          "doc": "An event's attendees. The plugin does not read them by event id.",
-          "docFull": "An event's attendees. The plugin does not read them by event id.",
+          "signature": "getAttendeesForEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Attendee[]>",
+          "doc": "An event's attendees (of one occurrence, with instanceStartDate).",
+          "docFull": "An event's attendees (of one occurrence, with `instanceStartDate`).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The event."
             },
             {
-              "name": "_recurringEventOptions",
-              "doc": "Which occurrence (Expo's second argument)."
+              "name": "recurringEventOptions",
+              "doc": "Which occurrence."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The attendees.",
           "examples": [],
           "denextOnly": false
         },
@@ -38266,8 +38314,8 @@
           "slug": "getEventAsync",
           "kind": "function",
           "signature": "getEventAsync(id: string, recurringEventOptions?: RecurringEventOptions): Promise<Event>",
-          "doc": "One event. The plugin cannot look an event up by id alone: pass the occurrence's start as recurringEventOptions.instanceStartDate (the startDate a listing returned).",
-          "docFull": "One event. The plugin cannot look an event up by id alone: pass the occurrence's start as\n`recurringEventOptions.instanceStartDate` (the `startDate` a listing returned).",
+          "doc": "One event: by id (through DenextCalendar), or its occurrence starting at recurringEventOptions.instanceStartDate (the startDate a listing returned).",
+          "docFull": "One event: by id (through `DenextCalendar`), or its occurrence starting at\n`recurringEventOptions.instanceStartDate` (the `startDate` a listing returned).",
           "params": [
             {
               "name": "id",
@@ -38275,7 +38323,7 @@
             },
             {
               "name": "recurringEventOptions",
-              "doc": "instanceStartDate, required here."
+              "doc": "instanceStartDate, for one occurrence."
             }
           ],
           "returns": "The event.",
@@ -38434,12 +38482,12 @@
           "name": "openEventInCalendar",
           "slug": "openEventInCalendar",
           "kind": "function",
-          "signature": "openEventInCalendar(_id: string): void",
-          "doc": "Open an event in the Android calendar app. The plugin has no such call.",
-          "docFull": "Open an event in the Android calendar app. The plugin has no such call.",
+          "signature": "openEventInCalendar(id: string): void",
+          "doc": "Open an event in the Android calendar app (Expo's deprecated Android-only call; it returns before the app opens).",
+          "docFull": "Open an event in the Android calendar app (Expo's deprecated Android-only call; it returns\nbefore the app opens).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The event."
             }
           ],
@@ -38451,20 +38499,20 @@
           "name": "openEventInCalendarAsync",
           "slug": "openEventInCalendarAsync",
           "kind": "function",
-          "signature": "openEventInCalendarAsync(_params: CalendarDialogParams, _presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>",
-          "doc": "Show an event in the calendar app. The plugin has no such dialog.",
-          "docFull": "Show an event in the calendar app. The plugin has no such dialog.",
+          "signature": "openEventInCalendarAsync(params: CalendarDialogParams, presentationOptions?: OpenEventPresentationOptions): Promise<OpenEventDialogResult>",
+          "doc": "Show an event (or, with instanceStartDate, one occurrence) in the system's event viewer: EKEventViewController on iOS, which reports done, responded, deleted or canceled; the calendar app on Android, which reports nothing (done).",
+          "docFull": "Show an event (or, with `instanceStartDate`, one occurrence) in the system's event viewer:\nEKEventViewController on iOS, which reports `done`, `responded`, `deleted` or `canceled`; the\ncalendar app on Android, which reports nothing (`done`).",
           "params": [
             {
-              "name": "_params",
-              "doc": "The event."
+              "name": "params",
+              "doc": "The event, and the occurrence's start."
             },
             {
-              "name": "_presentationOptions",
-              "doc": "The presentation."
+              "name": "presentationOptions",
+              "doc": "allowsEditing / allowsCalendarPreview (iOS), startNewActivityTask (Android)."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The outcome.",
           "examples": [],
           "denextOnly": false
         },
@@ -38664,20 +38712,20 @@
           "name": "updateAttendeeAsync",
           "slug": "updateAttendeeAsync",
           "kind": "function",
-          "signature": "updateAttendeeAsync(_id: string, _details?: Partial<Attendee>): Promise<string>",
-          "doc": "Change an attendee. Not supported by the plugin.",
-          "docFull": "Change an attendee. Not supported by the plugin.",
+          "signature": "updateAttendeeAsync(id: string, details?: Partial<Attendee>): Promise<string>",
+          "doc": "Change an attendee (Android).",
+          "docFull": "Change an attendee (Android).",
           "params": [
             {
-              "name": "_id",
+              "name": "id",
               "doc": "The attendee."
             },
             {
-              "name": "_details",
-              "doc": "The fields."
+              "name": "details",
+              "doc": "The fields to change."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The attendee's id.",
           "examples": [],
           "denextOnly": false
         },
@@ -38707,8 +38755,8 @@
           "slug": "updateEventAsync",
           "kind": "function",
           "signature": "updateEventAsync(id: string, details?: Omit<Partial<Event>, id>, recurringEventOptions?: RecurringEventOptions): Promise<string>",
-          "doc": "Change an event (with futureEvents, this and the following occurrences).",
-          "docFull": "Change an event (with `futureEvents`, this and the following occurrences).",
+          "doc": "Change an event, or with instanceStartDate one occurrence of it (with futureEvents, it and the following ones; iOS only). An occurrence and a time zone are changed through DenextCalendar; on Android the changed occurrence becomes an exception event, whose id is returned.",
+          "docFull": "Change an event, or with `instanceStartDate` one occurrence of it (with `futureEvents`, it and\nthe following ones; iOS only). An occurrence and a time zone are changed through\n`DenextCalendar`; on Android the changed occurrence becomes an exception event, whose id is\nreturned.",
           "params": [
             {
               "name": "id",
@@ -38720,10 +38768,10 @@
             },
             {
               "name": "recurringEventOptions",
-              "doc": "futureEvents; instanceStartDate is not supported."
+              "doc": "instanceStartDate and futureEvents."
             }
           ],
-          "returns": "The id.",
+          "returns": "The id (of the exception, for an Android occurrence).",
           "examples": [],
           "denextOnly": false
         },
@@ -39773,16 +39821,16 @@
           "name": "addContactsChangeListener",
           "slug": "addContactsChangeListener",
           "kind": "function",
-          "signature": "addContactsChangeListener(_listener: () => void): EventSubscription",
-          "doc": "Listen for address-book changes. The plugin reports none, so the listener never fires (as in Expo's web build); refresh when the app resumes instead.",
-          "docFull": "Listen for address-book changes. The plugin reports none, so the listener never fires (as\nin Expo's web build); refresh when the app resumes instead.",
+          "signature": "addContactsChangeListener(listener: () => void): EventSubscription",
+          "doc": "Call listener when the address book changes (a contact added, changed or removed, by this app or another): CNContactStoreDidChange on iOS, a ContentObserver on Android (which may batch changes by a few seconds, and report one change twice). Needs DenextContacts; on the web, or without it, the listener never fires (as in Expo's web build).",
+          "docFull": "Call `listener` when the address book changes (a contact added, changed or removed, by this\napp or another): `CNContactStoreDidChange` on iOS, a `ContentObserver` on Android (which may\nbatch changes by a few seconds, and report one change twice). Needs `DenextContacts`; on the\nweb, or without it, the listener never fires (as in Expo's web build).",
           "params": [
             {
-              "name": "_listener",
-              "doc": "Never called."
+              "name": "listener",
+              "doc": "Called with no arguments."
             }
           ],
-          "returns": "A subscription whose remove does nothing.",
+          "returns": "A subscription to remove.",
           "examples": [],
           "denextOnly": false
         },
@@ -40021,6 +40069,30 @@
           "signature": "enum ContactTypes",
           "doc": "Person or company.",
           "docFull": "Person or company.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Container",
+          "slug": "Container",
+          "kind": "class",
+          "signature": "class Container",
+          "doc": "A container of contacts (an account: on the device, iCloud, Exchange, …), by id. iOS only, as in Expo, through DenextContacts; elsewhere every call rejects with ERR_UNAVAILABLE.",
+          "docFull": "A container of contacts (an account: on the device, iCloud, Exchange, …), by id. iOS only,\nas in Expo, through `DenextContacts`; elsewhere every call rejects with `ERR_UNAVAILABLE`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ContainerClassType",
+          "slug": "ContainerClassType",
+          "kind": "typeAlias",
+          "signature": "type ContainerClassType = local | exchange | cardDAV | unassigned | unknown",
+          "doc": "A container's kind as the class API reports it.",
+          "docFull": "A container's kind as the class API reports it.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -40341,16 +40413,16 @@
           "name": "getContainersAsync",
           "slug": "getContainersAsync",
           "kind": "function",
-          "signature": "getContainersAsync(_containerQuery: ContainerQuery): Promise<LegacyContainer[]>",
-          "doc": "The containers. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.",
-          "docFull": "The containers. The plugin has no container ids, so this always rejects with\n`ERR_UNAVAILABLE`.",
+          "signature": "getContainersAsync(containerQuery: ContainerQuery): Promise<LegacyContainer[]>",
+          "doc": "The containers (iOS): the one holding a contact (contactId) or a group (groupId), the ones with the given ids (containerId), or every one.",
+          "docFull": "The containers (iOS): the one holding a contact (`contactId`) or a group (`groupId`), the ones\nwith the given ids (`containerId`), or every one.",
           "params": [
             {
-              "name": "_containerQuery",
-              "doc": "Ignored."
+              "name": "containerQuery",
+              "doc": "Which containers."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The containers.",
           "examples": [],
           "denextOnly": false
         },
@@ -40359,10 +40431,10 @@
           "slug": "getDefaultContainerIdAsync",
           "kind": "function",
           "signature": "getDefaultContainerIdAsync(): Promise<string>",
-          "doc": "The default container's id. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.",
-          "docFull": "The default container's id. The plugin has no container ids, so this always rejects\nwith `ERR_UNAVAILABLE`.",
+          "doc": "The default container's id: where new contacts go (iOS).",
+          "docFull": "The default container's id: where new contacts go (iOS).",
           "params": [],
-          "returns": "Never resolves.",
+          "returns": "The id.",
           "examples": [],
           "denextOnly": false
         },
@@ -40766,8 +40838,8 @@
           "slug": "removeAllContactsChangeListeners",
           "kind": "function",
           "signature": "removeAllContactsChangeListeners(): void",
-          "doc": "Remove every change listener (they never fire here).",
-          "docFull": "Remove every change listener (they never fire here).",
+          "doc": "Remove every listener addContactsChangeListener added.",
+          "docFull": "Remove every listener {@linkcode addContactsChangeListener} added.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -40914,16 +40986,16 @@
           "name": "addContactsChangeListener",
           "slug": "addContactsChangeListener",
           "kind": "function",
-          "signature": "addContactsChangeListener(_listener: () => void): EventSubscription",
-          "doc": "Listen for address-book changes. The plugin reports none, so the listener never fires (as in Expo's web build); refresh when the app resumes instead.",
-          "docFull": "Listen for address-book changes. The plugin reports none, so the listener never fires (as\nin Expo's web build); refresh when the app resumes instead.",
+          "signature": "addContactsChangeListener(listener: () => void): EventSubscription",
+          "doc": "Call listener when the address book changes (a contact added, changed or removed, by this app or another): CNContactStoreDidChange on iOS, a ContentObserver on Android (which may batch changes by a few seconds, and report one change twice). Needs DenextContacts; on the web, or without it, the listener never fires (as in Expo's web build).",
+          "docFull": "Call `listener` when the address book changes (a contact added, changed or removed, by this\napp or another): `CNContactStoreDidChange` on iOS, a `ContentObserver` on Android (which may\nbatch changes by a few seconds, and report one change twice). Needs `DenextContacts`; on the\nweb, or without it, the listener never fires (as in Expo's web build).",
           "params": [
             {
-              "name": "_listener",
-              "doc": "Never called."
+              "name": "listener",
+              "doc": "Called with no arguments."
             }
           ],
-          "returns": "A subscription whose remove does nothing.",
+          "returns": "A subscription to remove.",
           "examples": [],
           "denextOnly": false
         },
@@ -41254,16 +41326,16 @@
           "name": "getContainersAsync",
           "slug": "getContainersAsync",
           "kind": "function",
-          "signature": "getContainersAsync(_containerQuery: ContainerQuery): Promise<LegacyContainer[]>",
-          "doc": "The containers. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.",
-          "docFull": "The containers. The plugin has no container ids, so this always rejects with\n`ERR_UNAVAILABLE`.",
+          "signature": "getContainersAsync(containerQuery: ContainerQuery): Promise<LegacyContainer[]>",
+          "doc": "The containers (iOS): the one holding a contact (contactId) or a group (groupId), the ones with the given ids (containerId), or every one.",
+          "docFull": "The containers (iOS): the one holding a contact (`contactId`) or a group (`groupId`), the ones\nwith the given ids (`containerId`), or every one.",
           "params": [
             {
-              "name": "_containerQuery",
-              "doc": "Ignored."
+              "name": "containerQuery",
+              "doc": "Which containers."
             }
           ],
-          "returns": "Never resolves.",
+          "returns": "The containers.",
           "examples": [],
           "denextOnly": false
         },
@@ -41272,10 +41344,10 @@
           "slug": "getDefaultContainerIdAsync",
           "kind": "function",
           "signature": "getDefaultContainerIdAsync(): Promise<string>",
-          "doc": "The default container's id. The plugin has no container ids, so this always rejects with ERR_UNAVAILABLE.",
-          "docFull": "The default container's id. The plugin has no container ids, so this always rejects\nwith `ERR_UNAVAILABLE`.",
+          "doc": "The default container's id: where new contacts go (iOS).",
+          "docFull": "The default container's id: where new contacts go (iOS).",
           "params": [],
-          "returns": "Never resolves.",
+          "returns": "The id.",
           "examples": [],
           "denextOnly": false
         },
@@ -49956,16 +50028,16 @@
           "name": "printToFileAsync",
           "slug": "printToFileAsync",
           "kind": "function",
-          "signature": "printToFileAsync(_options?: FilePrintOptions): Promise<FilePrintResult>",
-          "doc": "Render HTML to a PDF file: not available here (no PDF renderer in the plugin or the page).",
-          "docFull": "Render HTML to a PDF file: not available here (no PDF renderer in the plugin or the page).",
+          "signature": "printToFileAsync(options?: FilePrintOptions): Promise<FilePrintResult>",
+          "doc": "Render HTML to a PDF file in the app's cache folder: on pages of width x height points (612 x 792, US Letter, by default) inside margins, with base64 the bytes too.",
+          "docFull": "Render HTML to a PDF file in the app's cache folder: on pages of `width` x `height` points\n(612 x 792, US Letter, by default) inside `margins`, with `base64` the bytes too.",
           "params": [
             {
-              "name": "_options",
+              "name": "options",
               "doc": "The HTML and page setup."
             }
           ],
-          "returns": "Never: it rejects with ERR_UNAVAILABLE.",
+          "returns": "The file's URI, its page count and, when asked for, its base64.",
           "examples": [],
           "denextOnly": false
         },
@@ -49974,10 +50046,10 @@
           "slug": "selectPrinterAsync",
           "kind": "function",
           "signature": "selectPrinterAsync(): Promise<Printer>",
-          "doc": "Pick a printer (iOS): not available here.",
-          "docFull": "Pick a printer (iOS): not available here.",
+          "doc": "Pick a printer with the system printer picker (iOS, as in Expo). Pass its url as printAsync's printerUrl to print there without the dialog.",
+          "docFull": "Pick a printer with the system printer picker (iOS, as in Expo). Pass its `url` as\n`printAsync`'s `printerUrl` to print there without the dialog.",
           "params": [],
-          "returns": "Never: it rejects with ERR_UNAVAILABLE.",
+          "returns": "The printer.",
           "examples": [],
           "denextOnly": false
         }

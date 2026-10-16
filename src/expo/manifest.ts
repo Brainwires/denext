@@ -175,15 +175,18 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     module: "./brightness.ts",
     pinned: "58.0.2",
     status: "partial",
-    notes: "get/setBrightnessAsync over @capacitor-community/screen-brightness (`denext mobile " +
-      "add brightness`): the screen's level on iOS, the app window's on Android (-1 there until " +
-      "the app sets one). Off Android (iOS and the web) the calls are Expo's there: the system " +
-      "brightness is the screen's, restoreSystemBrightnessAsync and setSystemBrightnessModeAsync " +
-      "do nothing, isUsingSystemBrightnessAsync is false and getSystemBrightnessModeAsync is " +
-      "UNKNOWN. On Android restoreSystemBrightnessAsync lets the window follow the system; the " +
-      "system setting and the brightness mode reject with ERR_UNAVAILABLE (no WRITE_SETTINGS). " +
-      "addBrightnessListener never fires. Outside the shell isAvailableAsync() is false, the " +
-      "level calls reject and the permission is undetermined, as Expo's web build.",
+    notes: "get/setBrightnessAsync over @capacitor-community/screen-brightness, and denext's " +
+      "DenextBrightness beside it (`denext mobile add brightness` installs both): the screen's " +
+      "level on iOS, the app window's on Android (the system's while the window follows it). " +
+      "Off Android (iOS and the web) the calls are Expo's there: the system brightness is the " +
+      "screen's, restoreSystemBrightnessAsync and setSystemBrightnessModeAsync do nothing, " +
+      "isUsingSystemBrightnessAsync is false and getSystemBrightnessModeAsync is UNKNOWN. On " +
+      "Android restoreSystemBrightnessAsync lets the window follow the system, and the system " +
+      "brightness and its mode are read and written (WRITE_SETTINGS, which " +
+      "requestPermissionsAsync asks for in the system settings screen, as Expo). " +
+      "addBrightnessListener fires on iOS (as in Expo, iOS only). Outside the shell " +
+      "isAvailableAsync() is false, the level calls reject and the permission is undetermined, " +
+      "as Expo's web build.",
   },
   "expo-build-properties": {
     module: "./build-properties.ts",
@@ -198,26 +201,26 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     omitted: [
       "getDefaultCalendarSync",
       "getSourcesSync",
-      "ExpoCalendarAttendee",
-      "ExpoCalendarEvent.get",
       "ExpoCalendarEvent.getOccurrenceSync",
-      "ExpoCalendarEvent.openInCalendar",
-      "ExpoCalendarEvent.getAttendees",
-      "ExpoCalendarEvent.createAttendee",
     ],
-    notes: "Calendars, events and (iOS) reminders over @ebarooni/capacitor-calendar (`denext " +
-      "mobile add calendar`), in the object API (getCalendars \u2192 ExpoCalendar, listEvents, " +
-      "presentPicker, ExpoCalendarEvent / ExpoCalendarReminder) and the legacy function API " +
-      "(working from the main entry, where Expo 58's throw); dates come back as ISO strings. " +
-      "The plugin has no attendee calls, cannot open an event in the calendar app, cannot " +
-      "look an event up by id (getEventAsync needs recurringEventOptions.instanceStartDate) " +
-      "and cannot change a single occurrence: those reject with ERR_UNAVAILABLE. An event's " +
-      "recurrence rule is not reported (recurrenceRule reads null), its time zone cannot be " +
-      "set, and only relative alarms are passed on. createEventInCalendarAsync / " +
+    notes: "Calendars, events and (iOS) reminders over @ebarooni/capacitor-calendar, and " +
+      "denext's DenextCalendar beside it (`denext mobile add calendar` installs both), in the " +
+      "object API (getCalendars \u2192 ExpoCalendar, listEvents, presentPicker, " +
+      "ExpoCalendarEvent / ExpoCalendarAttendee / ExpoCalendarReminder) and the legacy function " +
+      "API (working from the main entry, where Expo 58's throw); dates come back as ISO " +
+      "strings. DenextCalendar reads attendees (and adds, changes and removes them on Android; " +
+      "iOS's are read-only, as in Expo), looks an event up by id, changes one occurrence " +
+      "(EKSpan.thisEvent on iOS; an exception event on Android, whose id updateEventAsync " +
+      "returns) or an event's time zone, and shows an event in the system viewer " +
+      "(openEventInCalendarAsync: iOS reports done / responded / deleted / canceled, Android " +
+      "done) or one occurrence in the editor. An event's recurrence rule is not reported " +
+      "(recurrenceRule reads null), and only relative alarms are passed on. " +
+      "createEventInCalendarAsync / " +
       "addEventWithForm show the native editor: iOS reports saved (with the id) or canceled, " +
       "Android done. The synchronous getDefaultCalendarSync, getSourcesSync and " +
       "getOccurrenceSync are omitted (no JSI); off the shell every data call rejects with " +
-      "ERR_UNAVAILABLE and the permissions read undetermined, as Expo's web build. " +
+      "ERR_UNAVAILABLE and the permissions read undetermined, as Expo's web build (a shell " +
+      "from before DenextCalendar rejects its calls with ERR_UNAVAILABLE too). " +
       "expo-calendar/next is this shim too (SDK 58 points it at the main entry); " +
       "expo-calendar/legacy is its own, below.",
   },
@@ -227,9 +230,9 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     status: "partial",
     notes: "Expo's legacy function API (getCalendarsAsync, getEventsAsync, createEventAsync, " +
       "…, the enums and the permission calls): the same implementation as the main entry's " +
-      "legacy functions, with the same limits (attendees, opening an event in the calendar " +
-      "app and single-occurrence edits reject with ERR_UNAVAILABLE; off the shell every data " +
-      "call does).",
+      "legacy functions, with the same behaviour (attendees, an event by id, single-occurrence " +
+      "changes and the event viewer through DenextCalendar; off the shell every data call " +
+      "rejects with ERR_UNAVAILABLE).",
   },
   "expo-camera": {
     module: "./camera.ts",
@@ -300,7 +303,6 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     pinned: "58.0.6",
     status: "partial",
     omitted: [
-      "Container",
       "shareContactAsync",
       "writeContactToFileAsync",
       "presentAccessPickerAsync",
@@ -367,7 +369,8 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "Group.addContact",
       "Group.removeContact",
     ],
-    notes: "The address book over @capgo/capacitor-contacts (`denext mobile add contacts`): the " +
+    notes: "The address book over @capgo/capacitor-contacts, and denext's DenextContacts beside " +
+      "it (`denext mobile add contacts` installs both): the " +
       "legacy function API in Expo's legacy shapes (0-based birthday month) and the Contact / " +
       "Group classes for the fields the plugin has: names, company, job title, note, " +
       "birthday, emails, phones, postal addresses, URLs and the photo (a data: URI); other " +
@@ -375,8 +378,12 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "sorts read the whole list and page in JS; otherwise the plugin pages. Partial writes " +
       "(updateContactAsync, patch, the setters) read, merge and write the whole record back; " +
       "on Android the plugin keeps only names, company, job title, note, emails and phones on " +
-      "update. No containers (getDefaultContainerIdAsync / getContainersAsync reject " +
-      "ERR_UNAVAILABLE), no change events (the listener never fires), no iOS 18 access button " +
+      "update, and DenextContacts writes the postal addresses, URLs, birthday and photo back. " +
+      "Containers on iOS (getDefaultContainerIdAsync, getContainersAsync and the Container " +
+      "class, through DenextContacts; ERR_UNAVAILABLE on Android, as in Expo; new contacts " +
+      "and groups go to the default one). addContactsChangeListener fires on address-book " +
+      "changes (CNContactStoreDidChange; a ContentObserver on Android, which may batch them). " +
+      "No iOS 18 access button " +
       "(ContactAccessButton renders nothing). The legacy functions work from the main entry " +
       "(Expo 58's throw there). Off the shell every call rejects with ERR_UNAVAILABLE except " +
       "the permissions (undetermined, as Expo's web build) and isAvailableAsync (false). " +
@@ -399,9 +406,9 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     notes: "Expo's legacy function API in its legacy shapes (getContactsAsync, " +
       "addContactAsync, presentFormAsync, …; Contact, Group and Container are the legacy " +
       "record types): the same implementation as the main entry's legacy functions, with the " +
-      "same limits (no containers, the change listener never fires, ContactAccessButton " +
-      "renders nothing; off the shell every call rejects with ERR_UNAVAILABLE except the " +
-      "permissions and isAvailableAsync).",
+      "same behaviour (containers on iOS and change events through DenextContacts, " +
+      "ContactAccessButton renders nothing; off the shell every call rejects with " +
+      "ERR_UNAVAILABLE except the permissions and isAvailableAsync).",
   },
   "expo-crypto": {
     module: "./crypto.ts",
@@ -758,12 +765,17 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     module: "./print.ts",
     pinned: "58.0.5",
     status: "partial",
-    notes: "printAsync through @capgo/capacitor-printer in the shell (`denext mobile add print`; " +
-      "a WebView cannot print by itself): html, or a uri (data:, http(s) fetched first, or a file " +
-      "path). In a browser, html / uri print from a hidden iframe and otherwise the page " +
-      "(Expo's web behaviour). Page size, margins, orientation and printerUrl are left to the " +
-      "dialog. printToFileAsync (HTML to PDF) and selectPrinterAsync reject with " +
-      "ERR_UNAVAILABLE: neither the plugin nor a browser renders a PDF or lists printers.",
+    notes: "printAsync through @capgo/capacitor-printer in the shell (`denext mobile add print`, " +
+      "which also installs denext's DenextPrint; a WebView cannot print by itself): html, or a " +
+      "uri (data:, http(s) fetched first, or a file path). In a browser, html / uri print from " +
+      "a hidden iframe and otherwise the page (Expo's web behaviour). printAsync's page size, " +
+      "margins and orientation are left to the dialog. Through DenextPrint: printToFileAsync " +
+      "renders HTML to a PDF in the cache folder (UIMarkupTextPrintFormatter + " +
+      "UIPrintPageRenderer on iOS, a WebView's print adapter on Android; width / height in " +
+      "points, US Letter by default, margins, base64), and on iOS selectPrinterAsync shows the " +
+      "printer picker and printAsync's printerUrl prints there without the dialog. In a " +
+      "browser printToFileAsync and selectPrinterAsync reject with ERR_UNAVAILABLE, and " +
+      "selectPrinterAsync does on Android too (as Expo).",
   },
   "expo-quick-actions": {
     module: "./quick-actions.ts",
