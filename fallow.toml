@@ -122,6 +122,9 @@ entry = [
   "src/cli/run-verb.ts",
   "src/cli/plugin-commands.ts",
   "src/cli/cli-cache.ts",
+  # The native templates' readable sources: scripts/gen-native-templates.ts imports each by a
+  # computed path and packs its exports into src/build/native-templates.packed.ts.
+  "src/build/native-templates/*.ts",
   # Build/codegen scripts run via `deno task`, not imported — declare them so they
   # aren't reported as unused files (e.g. scripts/gen-*.ts feed the docs site).
   "scripts/*.ts",

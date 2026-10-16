@@ -220,6 +220,7 @@
     "example:game": "deno run -A --config deno.json examples/game/serve.ts",
     "gen:config-schema": "deno run -A scripts/gen-config-schema.ts",
     "gen:command-table": "deno run -A scripts/gen-command-table.ts",
+    "gen:native-templates": "deno run -A scripts/gen-native-templates.ts",
     "gen:google-fonts": "deno run -A scripts/gen-google-fonts.ts",
     "gen:font-metrics": "deno run -A scripts/gen-font-metrics.ts",
     "desktop:pin-runtime": "deno run -A scripts/desktop-pin-runtime.ts",
@@ -418,7 +419,9 @@
       "coverage/",
       ".fallow/",
       "catalog/",
-      "security/"
+      "security/",
+      "src/build/native-templates/",
+      "src/cli/register.ts"
     ]
   }
 }

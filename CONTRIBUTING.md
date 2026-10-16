@@ -504,6 +504,13 @@ Both generators map TypeScript to JSON Schema through one module,
 `scripts/lib/ts-to-schema.ts`: extend the mapper there, never in a generator.
 Each has a drift test, so a stale artifact fails CI rather than shipping.
 
+The native templates `denext mobile add …` writes (Swift, Java, Kotlin, XML) are edited in
+`src/build/native-templates/*.ts`, which is not published: `deno task gen:native-templates`
+packs them Brotli-compressed into `src/build/native-templates.packed.ts` (the pre-commit hook
+repacks when a source is staged; `tests/native-templates-packed.test.ts` fails on drift). The
+JSR package has a 20 MiB cap: a generated file over 50 KiB ships compressed or is listed, with
+its reason, in `tests/release-tools.test.ts`.
+
 ## Repo layout
 
 ```

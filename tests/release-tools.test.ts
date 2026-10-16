@@ -277,10 +277,12 @@ Deno.test("the release gate re-checks only the release's own changes unless --fu
   }
 });
 
-Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async () => {
-  // JSR refuses a package over 20 MiB at upload, after the tag is pushed (4.0.0's first two
-  // publishes). Sum what `deno publish` sends: tracked files minus `publish.exclude` and the
-  // workspace members (published on their own), with 1 MiB of headroom for the next release.
+/**
+ * What `deno publish` sends for @denext/denext, repo-relative with each file's size: tracked
+ * files minus `publish.exclude` and the workspace members (published on their own). `null`
+ * outside a git checkout.
+ */
+async function publishedFiles(): Promise<Map<string, number> | null> {
   const root = new URL("../", import.meta.url);
   const deno = JSON.parse(await Deno.readTextFile(new URL("deno.json", root)));
   const excluded: string[] = [...deno.publish.exclude, "packages/"];
@@ -288,12 +290,58 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
     args: ["ls-files", "-z", "-co", "--exclude-standard"],
     cwd: root,
   }).output();
-  if (!out.success) return; // not a git checkout: nothing to measure
-  let bytes = 0;
+  if (!out.success) return null;
+  const files = new Map<string, number>();
   for (const file of new TextDecoder().decode(out.stdout).split("\0")) {
     if (!file || excluded.some((e) => e.endsWith("/") ? file.startsWith(e) : file === e)) continue;
-    bytes += (await Deno.stat(new URL(file, root)).catch(() => ({ size: 0 }))).size;
+    files.set(file, (await Deno.stat(new URL(file, root)).catch(() => ({ size: 0 }))).size);
   }
-  const mib = bytes / 1024 / 1024;
+  return files;
+}
+
+Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async () => {
+  // JSR refuses a package over 20 MiB at upload, after the tag is pushed (4.0.0's first two
+  // publishes). Sum what `deno publish` sends, with 1 MiB of headroom for the next release.
+  const files = await publishedFiles();
+  if (!files) return; // not a git checkout: nothing to measure
+  const mib = [...files.values()].reduce((a, b) => a + b, 0) / 1024 / 1024;
   assert(mib < 19, `the package is ${mib.toFixed(2)} MiB; JSR refuses anything over 20 MiB`);
+});
+
+/** Published generated files over 50 KiB that may ship uncompressed, and why. */
+const UNCOMPRESSED_GENERATED_OK: Readonly<Record<string, string>> = {
+  "denext.config.schema.json":
+    "imported as JSON by the project UI and read by editors as-is; already minified",
+  "src/cli/command-table.generated.ts":
+    "read by every CLI start: decoding it would load node:zlib for `denext --version`",
+  "src/compat/next/font/font-metrics.ts":
+    "next/font can run in a browser bundle, which has no node:zlib; already one compact row string",
+};
+
+Deno.test("no published generated file over 50 KiB ships uncompressed", async () => {
+  // A generated table or a template set is data the package can carry Brotli-compressed (see
+  // src/build/packed-text.ts and src/mcp/docs-corpus.ts): a quarter of its size. One that grows
+  // past 50 KiB as plain text is the creep that took 4.0.0 to JSR's cap. Compress it, or list it
+  // in UNCOMPRESSED_GENERATED_OK with the reason it must stay plain.
+  const files = await publishedFiles();
+  if (!files) return;
+  const root = new URL("../", import.meta.url);
+  const offenders: string[] = [];
+  for (const [file, size] of files) {
+    if (size <= 50 * 1024 || file in UNCOMPRESSED_GENERATED_OK) continue;
+    const text = await Deno.readTextFile(new URL(file, root));
+    const generated = /\.(generated|packed)\.|templates?\.ts$/.test(file) ||
+      /\bgenerated (by|from)\b|do not edit/i.test(text.slice(0, 1024));
+    if (!generated) continue;
+    // Compressed: one base64 string literal (Brotli) holds nearly all of it.
+    const blob = Math.max(
+      0,
+      ...[...text.matchAll(/"[A-Za-z0-9+/=]{1024,}"/g)].map((m) => m[0].length),
+    );
+    if (blob < size * 0.8) offenders.push(`${file} (${(size / 1024).toFixed(0)} KiB)`);
+  }
+  assertEquals(offenders, [], "generated files over 50 KiB that ship uncompressed");
+  for (const file of Object.keys(UNCOMPRESSED_GENERATED_OK)) {
+    assert(files.has(file), `UNCOMPRESSED_GENERATED_OK lists ${file}, which is not published`);
+  }
 });
