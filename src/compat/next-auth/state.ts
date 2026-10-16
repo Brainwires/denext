@@ -33,6 +33,9 @@ export interface ActiveNextAuth {
 
 let active: ActiveNextAuth | null = null;
 
+/** The request-context memo key of the instance a lazy config built for one request. */
+const REQUEST_INSTANCE = Symbol.for("denext.next-auth.request-instance");
+
 /**
  * Make `instance` the one `getToken()`, `next-auth/react`'s server half and the handlers read.
  *
@@ -43,12 +46,24 @@ export function setActiveNextAuth(instance: ActiveNextAuth): void {
 }
 
 /**
- * The active instance, or `null` before `NextAuth()` ran.
+ * Make `instance` the one this request reads (a lazy `NextAuth((req) => config)` builds one per
+ * request), whatever another request made active meanwhile. Outside a request it does nothing.
+ *
+ * @param instance The instance built for this request.
+ */
+export function bindActiveNextAuth(instance: ActiveNextAuth): void {
+  currentContext()?.memo.set(REQUEST_INSTANCE, new Map([["instance", instance]]));
+}
+
+/**
+ * The active instance — the one bound to this request, else the last `NextAuth()` built — or
+ * `null` before `NextAuth()` ran.
  *
  * @returns The instance, or `null`.
  */
 export function activeNextAuth(): ActiveNextAuth | null {
-  return active;
+  const bound = currentContext()?.memo.get(REQUEST_INSTANCE)?.get("instance");
+  return (bound as ActiveNextAuth | undefined) ?? active;
 }
 
 /** An Auth.js `account` — the provider account behind a sign-in. */

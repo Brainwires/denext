@@ -2145,6 +2145,10 @@ runs `callbacks.authorized`. `next-auth/react` gives the client `SessionProvider
 `signIn`, `signOut`, `getSession`, `getCsrfToken` and `getProviders`, and `next-auth/jwt` gives
 `getToken`, `encode` and `decode`.
 
+`NextAuth` also takes a lazy config, `NextAuth(async (req) => config)`: it runs on every request,
+with the `NextRequest` in the route handlers and middleware and `undefined` in `auth()`,
+`signIn()` and `signOut()`, as in Auth.js. Concurrent requests each read their own config.
+
 On a next-compat build the aliases need no import map: `next-auth/react` (in the app or in a
 library under `node_modules`) bundles from denext's runtime, and `next-auth`, `next-auth/jwt` and
 the providers resolve to the shim, so an installed `next-auth` package is never loaded.

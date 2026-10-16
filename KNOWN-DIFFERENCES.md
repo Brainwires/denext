@@ -386,6 +386,10 @@ place it behaves differently from Auth.js:
   `*.auth.<region>.amazoncognito.com` domain; a custom domain is listed in the provider's
   `allowedHosts` (a denext option), since a discovered endpoint on any other host is refused.
 - **Notion's `redirectUri` is ignored:** the callback URL is denext's (`AUTH_URL` + the base path).
+- **A lazy config (`NextAuth((req) => config)`) gets the request without its body**, so the
+  handler that runs next can still read it. Each config object it returns is translated once;
+  the ones it builds share one in-memory rate-limit budget, so a config made per request can't
+  reset the credentials limits.
 - **`session.user` includes `id`** (the token's `sub`, or the user's id).
 - **The built-in pages are plain HTML** (no `theme`), and their `?error=` codes are Auth.js's.
 

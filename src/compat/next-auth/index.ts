@@ -27,7 +27,8 @@
 import { NextRequest } from "../next/request.ts";
 import { NextResponse } from "../next/server.ts";
 import { redirect } from "../../runtime/error-boundary.ts";
-import { denextAuth } from "../../server/auth/mod.ts";
+import { bindAuthConfig, denextAuth } from "../../server/auth/mod.ts";
+import { inMemoryRateLimitStore, type RateLimitOptions } from "../../server/auth/rate-limit.ts";
 import { copyRemoteAddr } from "../../server/remote-addr.ts";
 import { translateConfig } from "./config.ts";
 import {
@@ -40,8 +41,8 @@ import {
 } from "./flows.ts";
 import { createHandlers, type RouteHandler } from "./handlers.ts";
 import { currentAuthJsSession } from "./session.ts";
-import { type ActiveNextAuth, setActiveNextAuth } from "./state.ts";
-import type { AuthorizedCallbackParams, NextAuthConfig, Session } from "./types.ts";
+import { type ActiveNextAuth, bindActiveNextAuth, setActiveNextAuth } from "./state.ts";
+import type { AuthorizedCallbackParams, Awaitable, NextAuthConfig, Session } from "./types.ts";
 
 export type {
   Account,
@@ -225,14 +226,24 @@ async function runMiddleware(
   return NextResponse.next();
 }
 
-/** The `auth` function bound to `active`. */
-function authFunction(active: ActiveNextAuth): AuthFunction {
+/**
+ * The instance for one call: the static config's, or — for a lazy config — the one built from
+ * what it returned for `request` (`undefined` where Auth.js passes none: `auth()`, `signIn()`,
+ * `signOut()`, `unstable_update()`).
+ */
+type InstanceResolver = (request: Request | undefined) => Promise<ActiveNextAuth>;
+
+/** The `auth` function over `resolve`. */
+function authFunction(resolve: InstanceResolver): AuthFunction {
   return ((arg?: Request | AuthHandler, context?: unknown) => {
     if (typeof arg === "function") {
-      return (request: Request, ctx?: unknown) => runMiddleware(active, request, ctx, arg);
+      return async (request: Request, ctx?: unknown) =>
+        runMiddleware(await resolve(request), request, ctx, arg);
     }
-    if (arg instanceof Request) return runMiddleware(active, arg, context);
-    return currentAuthJsSession(active, { persist: false });
+    if (arg instanceof Request) {
+      return resolve(arg).then((active) => runMiddleware(active, arg, context));
+    }
+    return resolve(undefined).then((active) => currentAuthJsSession(active, { persist: false }));
   }) as AuthFunction;
 }
 
@@ -272,9 +283,10 @@ async function signInUrl(
 }
 
 /** The server-side `signIn`. */
-function serverSignIn(active: ActiveNextAuth): NextAuthResult["signIn"] {
+function serverSignIn(resolve: InstanceResolver): NextAuthResult["signIn"] {
   return async (providerId, options, authorizationParams) => {
     const request = contextRequest("signIn");
+    const active = await resolve(undefined);
     const { redirectTo, redirect: _redirect, callbackUrl, ...fields } = signInFields(options);
     const requested = redirectTo ?? callbackUrl ?? request.headers.get("referer");
     const target = await safeCallbackUrl(active, request, requested);
@@ -286,9 +298,10 @@ function serverSignIn(active: ActiveNextAuth): NextAuthResult["signIn"] {
 }
 
 /** The server-side `signOut`. */
-function serverSignOut(active: ActiveNextAuth): NextAuthResult["signOut"] {
+function serverSignOut(resolve: InstanceResolver): NextAuthResult["signOut"] {
   return async (options = {}) => {
     const request = contextRequest("signOut");
+    const active = await resolve(undefined);
     const target = await safeCallbackUrl(active, request, options.redirectTo);
     const { url } = await runSignOut(active, request, target);
     if (options.redirect !== false) redirect(url);
@@ -296,32 +309,85 @@ function serverSignOut(active: ActiveNextAuth): NextAuthResult["signOut"] {
   };
 }
 
-/**
- * Set up Auth.js on denext.
- *
- * @param config The Auth.js config, or a function returning it (called once, with no request).
- * @returns `{ handlers, auth, signIn, signOut, unstable_update }`.
- */
-export default function NextAuth(
-  config: NextAuthConfig | ((request: Request | undefined) => NextAuthConfig),
-): NextAuthResult {
-  const resolved = typeof config === "function" ? config(undefined) : config;
-  if (typeof (resolved as { then?: unknown }).then === "function") {
-    throw new Configuration(
-      "next-auth: a lazy config must return the config itself, not a promise (see " +
-        "KNOWN-LIMITATIONS.md)",
-    );
-  }
-  const active = translateConfig(resolved);
+/** Translate `config` and validate it as denext's (which also makes it the process's active one). */
+function instanceOf(config: NextAuthConfig, rateLimit?: RateLimitOptions): ActiveNextAuth {
+  const active = translateConfig(config, undefined, rateLimit);
   // Validates the translated config (secret, providers, origin) and makes it the one `auth()`
   // reads. The plugin it returns is not needed: the handlers serve the endpoints.
   denextAuth(active.denext);
   setActiveNextAuth(active);
+  return active;
+}
+
+/** A static config: translated once, at `NextAuth()`. */
+function staticResolver(config: NextAuthConfig): InstanceResolver {
+  const active = instanceOf(config);
+  return () => Promise.resolve(active);
+}
+
+/**
+ * What a lazy config is handed: the request as a `NextRequest` — its URL, method, headers and
+ * socket peer, never its body, which the handler that runs next still has to read.
+ */
+function configRequest(request: Request): NextRequest {
+  const next = new NextRequest(request.url, { method: request.method, headers: request.headers });
+  copyRemoteAddr(request, next);
+  return next;
+}
+
+/**
+ * A lazy config: called on every request (with the request where Auth.js passes one), its
+ * answer awaited, translated once per config object it returns, and bound to the request — so
+ * concurrent requests never read each other's. Every translation shares one rate-limit store:
+ * a config built per request would otherwise start each with a fresh budget.
+ */
+function lazyResolver(
+  config: (request: NextRequest | undefined) => Awaitable<NextAuthConfig>,
+): InstanceResolver {
+  const built = new WeakMap<object, ActiveNextAuth>();
+  const rateLimit: RateLimitOptions = { store: inMemoryRateLimitStore() };
+  return async (request) => {
+    const resolved = await config(request ? configRequest(request) : undefined);
+    if (typeof resolved !== "object" || resolved === null) {
+      throw new Configuration("next-auth: the lazy config returned no config");
+    }
+    let active = built.get(resolved);
+    if (!active) built.set(resolved, active = instanceOf(resolved, rateLimit));
+    bindActiveNextAuth(active);
+    bindAuthConfig(active.denext);
+    return active;
+  };
+}
+
+/** The route handlers over `resolve`: each request's own instance answers it. */
+function handlersOf(resolve: InstanceResolver): NextAuthResult["handlers"] {
+  const route: RouteHandler = async (request) => {
+    const handlers = createHandlers(await resolve(request));
+    return await (request.method === "GET" ? handlers.GET : handlers.POST)(request);
+  };
+  return { GET: route, POST: route };
+}
+
+/**
+ * Set up Auth.js on denext.
+ *
+ * @param config The Auth.js config, or a function returning it (or a promise of it), called on
+ *   every request — with the `NextRequest` for the route handlers and middleware, `undefined`
+ *   for `auth()`, `signIn()`, `signOut()` and `unstable_update()`, as in Auth.js.
+ * @returns `{ handlers, auth, signIn, signOut, unstable_update }`.
+ */
+export default function NextAuth(
+  config:
+    | NextAuthConfig
+    | ((request: NextRequest | undefined) => Awaitable<NextAuthConfig>),
+): NextAuthResult {
+  const resolve = typeof config === "function" ? lazyResolver(config) : staticResolver(config);
   return {
-    handlers: createHandlers(active),
-    auth: authFunction(active),
-    signIn: serverSignIn(active),
-    signOut: serverSignOut(active),
-    unstable_update: (data) => currentAuthJsSession(active, { persist: true, update: { data } }),
+    handlers: handlersOf(resolve),
+    auth: authFunction(resolve),
+    signIn: serverSignIn(resolve),
+    signOut: serverSignOut(resolve),
+    unstable_update: async (data) =>
+      currentAuthJsSession(await resolve(undefined), { persist: true, update: { data } }),
   };
 }

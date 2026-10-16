@@ -34,6 +34,7 @@ import { authJsUser, sealSignInToken, signInAccount, signInUser } from "./sessio
 import { type ActiveNextAuth, signInRecord } from "./state.ts";
 import type { NextAuthConfig, Provider, User } from "./types.ts";
 import type { AdapterUser } from "../../server/auth/adapter.ts";
+import type { RateLimitOptions } from "../../server/auth/rate-limit.ts";
 import type {
   AuthConfig,
   AuthEvents,
@@ -200,9 +201,15 @@ function bridgedAdapter(
  *
  * @param config The app's Auth.js config.
  * @param env The environment reader (injectable for tests).
+ * @param rateLimit The rate limits, when several translations must share one budget (a lazy
+ *   config builds a config per request; the limiters are per config object otherwise).
  * @returns The instance: the config, the denext config, the base path, strategy and secret.
  */
-export function translateConfig(config: NextAuthConfig, env: EnvReader = readEnv): ActiveNextAuth {
+export function translateConfig(
+  config: NextAuthConfig,
+  env: EnvReader = readEnv,
+  rateLimit?: RateLimitOptions,
+): ActiveNextAuth {
   const url = authUrl(env);
   const basePath = (config.basePath ?? url.path ?? DEFAULT_BASE_PATH).replace(/\/+$/, "");
   const secret = config.secret ?? env("AUTH_SECRET") ?? env("NEXTAUTH_SECRET") ?? "";
@@ -228,6 +235,7 @@ export function translateConfig(config: NextAuthConfig, env: EnvReader = readEnv
     pages: pages(config, basePath),
   };
   if (url.origin) denext.canonicalOrigin = url.origin;
+  if (rateLimit) denext.rateLimit = rateLimit;
   const adapter = bridgedAdapter(config, descriptors, warn);
   if (adapter) denext.adapter = adapter;
   const send = emailSender(built, warn);

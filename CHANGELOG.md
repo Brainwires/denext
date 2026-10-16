@@ -75,7 +75,9 @@ and this project adheres to
   OAuth / OIDC objects, with Auth.js's `AUTH_<ID>_ID` / `_SECRET` / `_ISSUER` defaults.
   Per-call `authorizationParams` (`signIn("google", {}, { prompt: "login" })`, on the server and
   in `next-auth/react`) reach the provider's authorization URL; the flow's own parameters
-  (`state`, PKCE, `nonce`, `redirect_uri`, …) can't be overridden. Both session strategies: `"jwt"` seals the
+  (`state`, PKCE, `nonce`, `redirect_uri`, …) can't be overridden. A lazy config
+  (`NextAuth(async (req) => config)`) runs on every request, with the request where Auth.js
+  passes one, and concurrent requests each read their own. Both session strategies: `"jwt"` seals the
   `jwt` callback's token (AES-256-GCM) inside denext's signed cookie; `"database"` uses the
   adapter's sessions. An Auth.js adapter (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …) is
   bridged onto denext's adapter port. The `signIn`, `jwt`, `session`, `redirect` and `authorized`

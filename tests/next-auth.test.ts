@@ -616,6 +616,94 @@ Deno.test("next-auth: server-side signIn / signOut from a Server Action", async 
   await assertRejects(() => a.result.signIn("credentials", form), Error, "during a request");
 });
 
+/** A browser over any `NextAuth()` result (a lazy config's included), with extra headers. */
+function browserFor(result: ReturnType<typeof NextAuth>, headers: Record<string, string> = {}) {
+  const jar = new Jar();
+  const call = async (path: string, init: CallInit = {}): Promise<Response> => {
+    const req = request(jar, path, { ...init, headers: { ...headers, ...(init.headers ?? {}) } });
+    const handler = req.method === "GET" ? result.handlers.GET : result.handlers.POST;
+    const { value, error } = await inRequest(req, jar, () => handler(req));
+    if (error) throw error;
+    jar.take(value!.headers);
+    return value!;
+  };
+  const csrf = async () =>
+    ((await (await call("/api/auth/csrf")).json()) as { csrfToken: string }).csrfToken;
+  const signInAs = async (password: string) =>
+    await call("/api/auth/callback/credentials", {
+      form: { csrfToken: await csrf(), email: "ada@example.com", password, callbackUrl: "/home" },
+    });
+  return { jar, call, csrf, signInAs };
+}
+
+/** A config whose Credentials accept `pw-<tenant>`, its session naming the tenant. */
+function tenantConfig(tenant: string, secret = SECRET): NextAuthConfig {
+  return {
+    secret,
+    providers: [
+      Credentials({
+        authorize: (c) =>
+          c.password === `pw-${tenant}` ? { id: `u-${tenant}`, name: tenant } : null,
+      }),
+    ],
+    callbacks: { session: ({ session }) => ({ ...session, tenant }) },
+  };
+}
+
+Deno.test("next-auth: a lazy config runs per request, with the request, and may be async", async () => {
+  const seen: (string | undefined)[] = [];
+  const tenants: Record<string, NextAuthConfig> = { a: tenantConfig("a"), b: tenantConfig("b") };
+  const result = NextAuth(async (req) => {
+    seen.push(req ? `${req.nextUrl.pathname}|${req.headers.get("x-tenant")}` : undefined);
+    await Promise.resolve();
+    return tenants[req?.headers.get("x-tenant") ?? "a"];
+  });
+  const b = browserFor(result, { "x-tenant": "b" });
+  assertEquals((await b.signInAs("pw-a")).headers.get("location")?.includes("error="), true);
+  assertEquals((await b.signInAs("pw-b")).headers.get("location"), "/home");
+  assert(seen.includes("/api/auth/csrf|b"), "the handlers hand it the NextRequest");
+  const session = await (await b.call("/api/auth/session")).json();
+  assertEquals([session.user.name, session.tenant], ["b", "b"]);
+  // `auth()` gets `undefined`, as in Auth.js (tenant "a" here).
+  const read = await inRequest(request(b.jar, "/page"), b.jar, () => result.auth());
+  assertEquals(seen.at(-1), undefined);
+  assertEquals((read.value as unknown as Record<string, unknown>)?.tenant, "a");
+});
+
+Deno.test("next-auth: concurrent requests each read their own lazy config", async () => {
+  const tenants: Record<string, NextAuthConfig> = {
+    a: tenantConfig("a", `${SECRET}-tenant-a`),
+    b: tenantConfig("b", `${SECRET}-tenant-b`),
+  };
+  const result = NextAuth(async (req) => {
+    const tenant = req?.headers.get("x-tenant") ?? "a";
+    // Tenant a resolves last, so tenant b's config is the process's latest while a runs.
+    if (tenant === "a") await new Promise((r) => setTimeout(r, 20));
+    return tenants[tenant];
+  });
+  const a = browserFor(result, { "x-tenant": "a" });
+  const b = browserFor(result, { "x-tenant": "b" });
+  await a.signInAs("pw-a");
+  await b.signInAs("pw-b");
+  const guarded = result.auth((req) => Response.json({ name: req.auth?.user?.name ?? null }));
+  const read = (browser: typeof a, tenant: string) => {
+    const req = request(browser.jar, "/api/me", { headers: { "x-tenant": tenant } });
+    return inRequest(req, browser.jar, async () => await (await guarded(req)).json());
+  };
+  const [ra, rb] = await Promise.all([read(a, "a"), read(b, "b")]);
+  assertEquals(ra.value, { name: "a" });
+  assertEquals(rb.value, { name: "b" });
+});
+
+Deno.test("next-auth: a lazy config built fresh per request keeps one rate-limit budget", async () => {
+  const result = NextAuth(() => tenantConfig("a"));
+  const browser = browserFor(result);
+  for (let i = 0; i < 5; i++) await browser.signInAs("wrong");
+  const locked = await browser.signInAs("pw-a");
+  assert(locked.headers.get("location")?.includes("error="), "locked out after 5 failures");
+  assertEquals(await (await browser.call("/api/auth/session")).json(), null);
+});
+
 Deno.test("next-auth: middleware — authorized decides, auth(handler) gets request.auth", async () => {
   const a = app({
     callbacks: {
