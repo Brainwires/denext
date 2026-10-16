@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Added
 
+- **`adjustsFontSizeToFit` shrinks nested `Text` too** in React Native mode. The fit probes
+  every element inside the fitting `Text` at its scaled size, and a nested `Text` with its own
+  `fontSize` draws it times the outer `Text`'s factor, as React Native does. It used to shrink
+  only the outer `Text`, so a nested one with its own size kept it and could keep the text from
+  fitting at all.
+
 - **`LayoutAnimation.configureNext` animates size changes** in React Native mode. A view whose
   size the commit changed now grows or shrinks from its old size instead of snapping: the FLIP
   transform carries a scale with the translation (still one compositor animation per view), and
