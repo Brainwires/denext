@@ -30,6 +30,24 @@ and this project adheres to
   island's chunk; Lustre then adopts the declarative shadow root instead of rendering a new one.
   Props are the element's attributes. `LustreElementAttributes<{ start: string }>` types the tag
   when an app declares it in `JSX.IntrinsicElements`.
+- **Lustre server components over Live: `defineLustreView` in `denext/gleam`.** A Lustre app runs
+  on the server, one runtime per mounted view per Live connection, beside `defineLiveView`: the
+  page renders its first view as HTML, the browser mounts it over the Live socket, Lustre's
+  messages (the whole view, then patches) ride the socket as `lustre` frames, and Lustre's own
+  reconciler applies them from the app's island chunk (no inline script; the strict CSP holds).
+  `authorize` runs at render, mount, resume and every `live.limits.channelAuthTtlSeconds`; client
+  events are checked (Lustre's `EventFired` only, a bounded path and name, small plain JSON, an
+  optional `events` schema) before Lustre's decoders see them; the view count, view size and
+  socket back-pressure (a fresh whole-view send on drain) are capped as for live views. A
+  reconnect to the same instance within `live.limits.viewResumeSeconds` reattaches the running
+  runtime (Lustre's model is not serialisable, so another instance runs `init`), and runtimes stop
+  on unmount, at the end of their resume window and on shutdown. denext builds Lustre's runtime
+  directly (`lustre.start_server_component` shifts its arguments in 5.7.1) and, after every Gleam
+  build, fixes the three lines of Lustre 5.7.1's `runtime.ffi.mjs` that throw
+  `Cannot access 'message' before initialization`: only that version's exact file, nothing else
+  in it, and anything else is left alone with one warning. The Gleam build writes
+  `.denext/lustre-server.ts` and `.denext/lustre-view.ts` for it. A `lustreIsland` root now gets a
+  `lustre:mount` event once Lustre runs it.
 
 - **Background audio with lock-screen controls (`denext mobile add background-audio`).**
   `setNowPlaying({ title, artist, album, artwork, duration, position, playing, controls })`,

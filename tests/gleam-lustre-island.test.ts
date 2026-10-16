@@ -24,6 +24,8 @@ interface Started {
   root: Element;
   flags: unknown;
   stopped: boolean;
+  /** Events dispatched on the root after Lustre started. */
+  events: string[];
   /** The root's HTML when Lustre started on it (what it adopted). */
   adopted: string;
 }
@@ -36,7 +38,18 @@ function fakeLustre(options: { refuse?: boolean } = {}) {
     version: "5.7.1",
     start(_app, root, flags) {
       if (options.refuse) return err("NotABrowser");
-      const s = { root, flags, stopped: false, adopted: (root as Element).innerHTML };
+      const s: Started = {
+        root,
+        flags,
+        stopped: false,
+        events: [],
+        adopted: (root as Element).innerHTML,
+      };
+      // The test DOM has no dispatchEvent: record what the island dispatches on its root.
+      (root as unknown as { dispatchEvent(e: Event): boolean }).dispatchEvent = (e) => {
+        s.events.push(e.type);
+        return true;
+      };
       started.push(s);
       return ok(s);
     },
@@ -153,6 +166,7 @@ Deno.test("lustreIsland: starts Lustre on the root it rendered, restarts on new 
   const first = fake.started[0];
   assertEquals(first.flags, 5);
   assertEquals(first.adopted, "<p>5</p>", "Lustre starts on the root holding the first paint");
+  assertEquals(first.events, ["lustre:mount"], "the root announces that Lustre runs it");
   assertEquals(first.root.getAttribute("data-denext-lustre"), "");
 
   // A parent re-render with the same props leaves the running app alone.

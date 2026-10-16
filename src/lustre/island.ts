@@ -7,7 +7,7 @@
 // that root: it virtualises the markup already there and diffs its first render against it, so the
 // server's nodes (and what the user typed or focused before the island booted) are kept. The root's
 // contents are Lustre's from then on; denext renders the root once and never touches its children
-// again. Unmounting clears the root itself: `lustre.shutdown()` does nothing for a client app in
+// again; the root then gets a `lustre:mount` event. Unmounting clears the root itself: `lustre.shutdown()` does nothing for a client app in
 // Lustre 5.7.1, so effects the app started may still dispatch into the detached runtime.
 
 import { h } from "../jsx/jsx-runtime.ts";
@@ -81,6 +81,8 @@ export function lustreIsland<Flags, Props extends object = { flags: Flags }>(
       const el = root.current;
       if (!el) return;
       const runtime = kit.start(app, el, flagsOf(latest.current));
+      // Lustre runs the root from now on (what a page, or a test, can wait for).
+      if (runtime) el.dispatchEvent?.(new CustomEvent("lustre:mount"));
       return () => {
         if (runtime) kit.stop(runtime);
         el.textContent = "";

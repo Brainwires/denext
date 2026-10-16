@@ -37,12 +37,7 @@ import { fieldErrorsFrom, isStandardSchema } from "../runtime/define-action.ts";
 import { toClientError } from "../runtime/error-boundary.ts";
 import { diffFlight } from "../runtime/flight-patch.ts";
 import type { LiveError, LiveServerMessage } from "../runtime/live-protocol.ts";
-import {
-  createHandlerTable,
-  getLiveView,
-  type LiveViewDef,
-  verifyLiveViewToken,
-} from "../runtime/live-view.ts";
+import { createHandlerTable, getLiveView, type LiveViewDef } from "../runtime/live-view.ts";
 import {
   createMvuEngine,
   type EventPayload,
@@ -51,11 +46,22 @@ import {
   type MvuHost,
   resolveMsg,
 } from "../runtime/mvu.ts";
-import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
+import { prepareWire } from "../runtime/wire-codec.ts";
 import { tapChannelAuthorized } from "./channel-subscriber.ts";
 import { inRootContext } from "./root-context.ts";
 import { type LiveViewStore, openViewSnapshot, sealViewSnapshot } from "./live-view-store.ts";
 import { recordViewMessages, type RedactedValue, redactValue } from "./live-devtools.ts";
+import {
+  authorizeView,
+  endView,
+  enqueueEvent,
+  type MountShape,
+  mountView,
+  str,
+  takeParked as takeParkedFrom,
+  type ViewHubBaseDeps,
+  type ViewHubFrames,
+} from "./view-hub-common.ts";
 
 /** The hub connection surface this module needs. */
 export interface ViewConn {
@@ -70,41 +76,12 @@ export interface ViewConn {
 }
 
 /** The caps this module reads (a subset of `live.limits`). */
-export interface ViewLimits {
-  /** Views one connection may hold. */
-  maxViewsPerConnection: number;
-  /** Bytes of model + rendered tree one connection's views may hold. */
-  maxViewBytesPerConnection: number;
-  /** Seconds a dropped connection's views stay resumable. */
-  viewResumeSeconds: number;
-  /** Parked views across the hub. */
-  maxParkedViews: number;
-  /** Bytes of a view's props. */
-  maxSubscriptionInputBytes: number;
-  /** Seconds before `authorize` runs again (on the next event). */
-  channelAuthTtlSeconds: number;
-}
+export type { ViewLimits } from "./view-hub-common.ts";
 
 /** What the hub lends this module. */
-export interface ViewHubDeps<C extends ViewConn> {
-  /** Current limits. */
-  limits(): ViewLimits;
-  /** Send a pre-encoded frame (the hub's back-pressure-aware send). */
-  sendFrame(conn: C, text: string, msg: LiveServerMessage): void;
-  /** Send an error frame. */
-  sendError(conn: C, code: LiveError["code"], reason: string, extra?: Partial<LiveError>): void;
-  /** Run `fn` inside the connection's own request context (its replayed cookie). */
-  withConnContext<T>(conn: C, fn: () => T | Promise<T>): Promise<T>;
-  /** The identity handed to `authorize`. */
-  connContext(conn: C): { origin: string; url: string; cookie: string; peerId: string };
-  /** Is the connection still registered? */
-  isConnected(conn: C): boolean;
+export interface ViewHubDeps<C extends ViewConn> extends ViewHubBaseDeps<C> {
   /** Run a render: a render slot, the render deadline, the connection's context. */
   render<T>(conn: C, fn: () => Promise<T>): Promise<T>;
-  /** Is the socket back-pressured right now? */
-  backPressured(conn: C): boolean;
-  /** Arm the hub's drain-recovery timer for `conn`. */
-  armRecover(conn: C): void;
   /** The shared store parked views are written to (none: parked in this process only). */
   store?(): LiveViewStore | null;
   /**
@@ -153,21 +130,7 @@ interface Instance<C> extends ViewInstance {
 }
 
 /** The hub's live-view operations. */
-export interface ViewHub<C extends ViewConn> {
-  /** Handle a `view-mount` frame. */
-  mount(conn: C, msg: Record<string, unknown>): Promise<void>;
-  /** Handle a `view-event` frame. */
-  event(conn: C, msg: Record<string, unknown>): void;
-  /** Handle a `view-unmount` frame. */
-  unmount(conn: C, vid: unknown): void;
-  /** Handle a `view-resync` frame. */
-  resync(conn: C, vid: unknown): void;
-  /** Park every view of a closing connection. */
-  drop(conn: C): void;
-  /** Stop every view of a connection without parking it (the hub is shutting down). */
-  discard(conn: C): void;
-  /** Re-send the whole tree of views whose frame was held back (the socket drained). */
-  replayPending(conn: C): void;
+export interface ViewHub<C extends ViewConn> extends ViewHubFrames<C> {
   /**
    * The parked view `iid` resumed on another instance (from the shared store): stop the copy
    * parked here, without writing it back. Nothing happens when `iid` is not parked here.
@@ -285,25 +248,6 @@ function modelSize(model: unknown): number {
   }
 }
 
-/** A bounded string field of a frame, or `null`. */
-function str(v: unknown, max: number): string | null {
-  return typeof v === "string" && v.length > 0 && v.length <= max ? v : null;
-}
-
-/** A `view-mount` frame's fields, bounded; `null` when malformed. */
-function mountShape(msg: Record<string, unknown>) {
-  const fields = {
-    vid: str(msg.vid, 64),
-    view: str(msg.view, 128),
-    token: str(msg.token, 128),
-    props: typeof msg.props === "string" ? msg.props : null,
-  };
-  const resume = msg.resume === undefined ? undefined : str(msg.resume, 64);
-  if (Object.values(fields).includes(null) || resume === null) return null;
-  if (msg.enc !== undefined && msg.enc !== WIRE_ENC) return null;
-  return { ...(fields as Record<keyof typeof fields, string>), resume, enc: msg.enc === WIRE_ENC };
-}
-
 /**
  * Build the live-view half of a hub.
  *
@@ -364,12 +308,8 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
   };
 
   /** End a view and tell its client why (the client stops re-mounting it). */
-  const end = (inst: Instance<C>, code: LiveError["code"], reason: string): void => {
-    if (inst.attached && deps.isConnected(inst.owner)) {
-      deps.sendError(inst.owner, code, reason, { subId: inst.vid });
-    }
-    stop(inst);
-  };
+  const end = (inst: Instance<C>, code: LiveError["code"], reason: string): void =>
+    endView(deps, inst, code, reason, () => stop(inst));
 
   const fail = (inst: Instance<C>, err: unknown): void => {
     const client = toClientError(err);
@@ -395,17 +335,8 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     bytesHeld(inst.owner, inst) + modelBytes + flightBytes >
       deps.limits().maxViewBytesPerConnection;
 
-  const authorize = async (inst: { def: LiveViewDef; props: unknown }, conn: C) => {
-    if (!inst.def.authorize) return true;
-    try {
-      return await deps.withConnContext(
-        conn,
-        () => inst.def.authorize!(inst.props, { connection: deps.connContext(conn) }),
-      ) === true;
-    } catch {
-      return false;
-    }
-  };
+  const authorize = (inst: { def: LiveViewDef; props: unknown }, conn: C) =>
+    authorizeView(deps, conn, inst.def.authorize, inst.props);
 
   const ttlMs = () => deps.limits().channelAuthTtlSeconds * 1000;
 
@@ -620,19 +551,6 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
   const atCap = (conn: C, vid: string): boolean =>
     !conn.views.has(vid) && conn.views.size >= deps.limits().maxViewsPerConnection;
 
-  /** The mount frame's fields, bounded; `null` when malformed. */
-  const decodeProps = (
-    text: string,
-    enc: boolean,
-  ): { ok: true; value: unknown } | { ok: false } => {
-    try {
-      const parsed = JSON.parse(text);
-      return { ok: true, value: enc ? decodeWire(parsed) : parsed };
-    } catch {
-      return { ok: false };
-    }
-  };
-
   /** The event's payload after the built-in check and the view's schema; `null` (answered) if not. */
   const validPayload = async (inst: Instance<C>, raw: unknown): Promise<EventPayload | null> => {
     const payload = checkEventPayload(raw);
@@ -703,36 +621,13 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     if (msg !== null) inst.engine.dispatch(msg);
   };
 
-  /**
-   * The mount checks before an instance is placed: the view cap, the props size, a registered
-   * view with a token over exactly these props, the props decode, `authorize`. `null` (answered)
-   * when one fails.
-   */
-  const admit = async (
-    conn: C,
-    shape: NonNullable<ReturnType<typeof mountShape>>,
-  ): Promise<{ def: LiveViewDef; props: unknown } | null> => {
-    const { vid, view, token, props } = shape;
-    const refuse = (code: LiveError["code"], reason: string) => {
-      deps.sendError(conn, code, reason, { subId: vid });
-      return null;
-    };
-    if (atCap(conn, vid)) return refuse("limit", "too many views");
-    if (new TextEncoder().encode(props).byteLength > deps.limits().maxSubscriptionInputBytes) {
-      return refuse("limit", "view props too large");
-    }
-    // An unknown view and a token that doesn't verify answer alike: `gone` (re-render the route).
-    const def = getLiveView(view);
-    if (!def || !(await verifyLiveViewToken(view, props, token))) {
-      return refuse("gone", "view unavailable");
-    }
-    const decoded = decodeProps(props, shape.enc);
-    if (!decoded.ok) return refuse("bad-message", "malformed view props");
-    if (!(await authorize({ def, props: decoded.value }, conn))) {
-      return refuse("denied", "view not permitted");
-    }
-    return { def, props: decoded.value };
-  };
+  /** The mount checks (view-hub-common.ts `admitView`), with this half's registry. */
+  const policy = (conn: C) => ({
+    atCap: (vid: string) => atCap(conn, vid),
+    lookup: getLiveView,
+    tokenName: (view: string) => view,
+    authorize: (def: LiveViewDef, props: unknown) => authorize({ def, props }, conn),
+  });
 
   /** The parked instance `resume` names, when it is this view with these signed props. */
   const takeParked = (
@@ -740,13 +635,8 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     view: string,
     signed: string,
   ): Instance<C> | undefined => {
-    const parked = resume === undefined ? undefined : parkedViews.get(resume);
-    if (!parked || parked.def.id !== view || parked.signed !== signed || parked.stopped) {
-      return undefined;
-    }
-    parkedViews.delete(parked.iid);
-    clearTimeout(parked.parkTimer);
-    parked.parkTimer = undefined;
+    const parked = takeParkedFrom(parkedViews, resume, view, signed);
+    if (!parked) return undefined;
     parked.authExpires = Date.now() + ttlMs();
     storeOp(parked, (store) => store.delete(parked.iid));
     return parked;
@@ -780,7 +670,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
    */
   const place = async (
     conn: C,
-    shape: NonNullable<ReturnType<typeof mountShape>>,
+    shape: MountShape,
     admitted: { def: LiveViewDef; props: unknown },
   ): Promise<void> => {
     const { vid } = shape;
@@ -802,19 +692,14 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
   };
 
   return {
-    async mount(conn, msg) {
-      const shape = mountShape(msg);
-      if (!shape) {
-        const vid = str(msg.vid, 64);
-        if (vid) deps.sendError(conn, "bad-message", "malformed view mount", { subId: vid });
-        return;
-      }
-      const admitted = await admit(conn, shape);
-      if (!admitted || !deps.isConnected(conn)) return;
-      if (atCap(conn, shape.vid)) {
-        return deps.sendError(conn, "limit", "too many views", { subId: shape.vid });
-      }
-      await place(conn, shape, admitted);
+    mount(conn, msg) {
+      return mountView(
+        deps,
+        conn,
+        msg,
+        policy(conn),
+        (shape, admitted) => place(conn, shape, admitted),
+      );
     },
 
     event(conn, msg) {
@@ -827,17 +712,18 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
       if (!Number.isInteger(rev) || !Number.isInteger(index) || (index as number) < 0) {
         return deps.sendError(conn, "bad-message", "malformed view event", { subId: vid });
       }
-      if (inst.inbox >= MAX_VIEW_INBOX) {
-        return deps.sendError(conn, "limit", "too many pending events", { subId: vid });
-      }
-      inst.inbox++;
-      inst.chain = inst.chain
-        .then(() => processEvent(inst, rev as number, index as number, msg.payload))
-        .catch((err) => {
+      enqueueEvent(
+        deps,
+        conn,
+        vid,
+        inst,
+        MAX_VIEW_INBOX,
+        () => processEvent(inst, rev as number, index as number, msg.payload),
+        (err) => {
           console.error(`denext live view ${inst.def.id}: event failed`, err);
           fail(inst, err);
-        })
-        .finally(() => inst.inbox--);
+        },
+      );
     },
 
     unmount(conn, vid) {

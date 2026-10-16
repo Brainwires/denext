@@ -3,7 +3,12 @@
 // the app's own build (through the `@gleam/` import map entry, exactly as the app's code reaches
 // Lustre, so both see one copy of it) and hands them to denext. App code imports the kit:
 //
-//   import { lustre } from "../.denext/lustre.ts";
+//   import { lustre } from "../.denext/lustre.ts";              // lustreIsland, lustreElement
+//   import { lustreServer } from "../.denext/lustre-server.ts"; // defineLustreView
+//
+// `.denext/lustre-view.ts` is a `"use client"` module: the browser island of `defineLustreView`,
+// bound to Lustre's reconciler, so it is an ordinary island of the app (a file chunk, loaded only on
+// pages that render a Lustre view).
 //
 // Rewritten after every Gleam build (only when the text changes), removed once the project no
 // longer depends on Lustre. Never edited by hand: the header marks the file as denext's.
@@ -16,6 +21,8 @@ const HEADER = "// denext generated: the app's Lustre build, for denext/gleam. D
 /** The kit modules, by file name under `.denext/`. */
 const KITS: Record<string, (version: string) => string> = {
   "lustre.ts": clientKit,
+  "lustre-view.ts": viewIsland,
+  "lustre-server.ts": serverKit,
 };
 
 /**
@@ -61,6 +68,54 @@ export const lustre = lustreKit({
   prerender,
   attribute,
   toList,
+});
+`;
+}
+
+/** `.denext/lustre-view.ts`: `defineLustreView`'s browser island, a `"use client"` module. */
+function viewIsland(version: string): string {
+  return `${HEADER}
+"use client";
+// Rewritten by every Gleam build. The browser island of this app's defineLustreView views.
+import { Reconciler } from "@gleam/lustre/lustre/vdom/reconciler.ffi.mjs";
+import { lustreViewIsland } from "denext/gleam";
+
+/** Lustre ${version}'s reconciler, applying a server component's patches over denext Live. */
+export const LustreView = lustreViewIsland(Reconciler);
+`;
+}
+
+/** `.denext/lustre-server.ts`: what `defineLustreView` runs a server component with. */
+function serverKit(version: string): string {
+  return `${HEADER}
+// Rewritten by every Gleam build (the gleam() plugin, \`denext add gleam:\`).
+import { Runtime } from "@gleam/lustre/lustre/runtime/server/runtime.ffi.mjs";
+import { configure_server_component } from "@gleam/lustre/lustre/runtime/app.mjs";
+import {
+  client_message_to_json,
+  deregister_callback,
+  register_callback,
+  runtime_message_decoder,
+} from "@gleam/lustre/lustre/server_component.mjs";
+import { shutdown } from "@gleam/lustre/lustre.mjs";
+import { to_string } from "@gleam/lustre/lustre/element.mjs";
+import { run } from "@gleam/gleam_stdlib/gleam/dynamic/decode.mjs";
+import { lustreServerKit } from "denext/gleam";
+import { LustreView } from "./lustre-view.ts";
+
+/** Lustre ${version}'s server-component runtime, as this app's Gleam build compiled it. */
+export const lustreServer = lustreServerKit({
+  version: ${JSON.stringify(version)},
+  Runtime,
+  configure_server_component,
+  register_callback,
+  deregister_callback,
+  client_message_to_json,
+  runtime_message_decoder,
+  run,
+  shutdown,
+  to_string,
+  island: LustreView,
 });
 `;
 }

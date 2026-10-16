@@ -25,7 +25,9 @@
  * Lustre apps (the Gleam UI framework) run as denext islands: when the app depends on Lustre, the
  * Gleam build writes `.denext/lustre.ts`, the app's own Lustre build wrapped as a kit, and
  * {@link lustreIsland} turns a Lustre app into an island component; {@link lustreElement} renders a
- * Lustre component as a custom element, its shadow root prerendered as Declarative Shadow DOM.
+ * Lustre component as a custom element, its shadow root prerendered as Declarative Shadow DOM;
+ * {@link defineLustreView} runs a Lustre app on the server as a server component whose DOM patches
+ * travel over the Live socket (beside `defineLiveView`).
  *
  * ```ts
  * // app/counter.tsx
@@ -61,6 +63,18 @@ export { lustreIsland } from "./lustre/island.ts";
 export type { LustreIslandOptions } from "./lustre/island.ts";
 export { lustreElement } from "./lustre/element.ts";
 export type { LustreElementAttributes } from "./lustre/element.ts";
+export { defineLustreView } from "./lustre/view.ts";
+export type { LustreEventPayload, LustreViewComponent, LustreViewConfig } from "./lustre/view.ts";
+export { lustreServerKit } from "./lustre/server-kit.ts";
+export type {
+  LustreRuntimeInstance,
+  LustreServerKit,
+  LustreServerModules,
+  LustreServerRuntime,
+} from "./lustre/server-kit.ts";
+export { lustreViewIsland } from "./lustre/view-island.ts";
+export type { LustreViewIslandProps } from "./lustre/view-island.ts";
+export type { LustreReconciler, LustreReconcilerClass } from "./lustre/view-client.ts";
 
 /**
  * The plugin's implementation, loaded when the plugin is set up. The specifier is not a literal so

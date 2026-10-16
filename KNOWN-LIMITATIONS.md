@@ -84,6 +84,24 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `denext.config.ts` itself, or imported through an alias rather than a relative import, needs a
   dev-server restart after an edit (a module-path `schema` always reloads).
 
+### Gleam and Lustre (`denext/gleam`)
+
+- **A Lustre server component (`defineLustreView`) resumes only on the instance that ran it:**
+  Lustre's model is an arbitrary Gleam value, so it is never written to the shared view store. A
+  reconnect to the same instance within `live.limits.viewResumeSeconds` reattaches the running
+  runtime; a reconnect to another instance, or a later one, runs `init` again. The page's first
+  paint is replaced by Lustre's own render when the view mounts (not adopted), and Lustre's
+  contexts (`provide` / `subscribe`) and client-sent attribute or property changes are not
+  carried over Live.
+- **A stopped Lustre app's own effects keep running:** Lustre gives no way to cancel an app's
+  timers or subscriptions from outside. A stopped server component drops what they dispatch;
+  `lustreIsland` clears its root on unmount, but `lustre.shutdown()` does nothing for a client app
+  in Lustre 5.7.1, so they still dispatch into the detached runtime.
+- **denext fixes Lustre 5.7.1's server runtime only:** the post-build fix applies to that version's
+  exact file; another Lustre version or a changed file is left as it is, with a warning.
+- **The Lustre helpers need the App Router without `compatibilityMode`:** in a compat build
+  `denext/gleam` is a server-only subpath.
+
 ### First-party auth (`denextAuth`)
 
 - **Mail delivery is best-effort:** emailed tokens go to `sendVerificationRequest` (`smtpMailer()`

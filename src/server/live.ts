@@ -41,6 +41,7 @@ import {
   type ViewSummary,
 } from "./live-views.ts";
 import { getLiveViewStore } from "./live-view-store.ts";
+import { createLustreViewHub, type LustreHub, type LustreViewInstance } from "./lustre-views.ts";
 import {
   broadcastInvalidation,
   type ChannelEvent,
@@ -148,6 +149,10 @@ interface Conn {
   views: Map<string, ViewInstance>;
   /** View ids whose frame was shed (the whole tree is re-sent by drain recovery). */
   recoverViews?: Set<string>;
+  /** Lustre server components (`defineLustreView`), keyed by client view id. */
+  lustreViews: Map<string, LustreViewInstance>;
+  /** Lustre view ids whose frames were shed (re-mounted by drain recovery). */
+  recoverLustre?: Set<string>;
   /** A re-render is in flight; further invalidations set `dirty` to re-run once. */
   busy: boolean;
   dirty: Set<string> | null;
@@ -337,6 +342,7 @@ export function uninstallLiveHub(): void {
   unbindChannelTransport();
   channelHub.dispose();
   viewHub.dispose();
+  lustreHub.dispose();
   appHandler = null;
   policy = {};
   trustForwardedHeaders = false;
@@ -351,6 +357,7 @@ export function uninstallLiveHub(): void {
     }
     clearDataSubRestarts(conn);
     viewHub.discard(conn); // stopped, not parked: nothing outlives the hub
+    lustreHub.discard(conn);
     try {
       conn.socket.close();
     } catch { /* already closing */ }
@@ -619,6 +626,7 @@ function attachConnection(
     channelSubs: new Map(),
     presenceRooms: new Map(),
     views: new Map(),
+    lustreViews: new Map(),
     busy: false,
     dirty: null,
     msgWindowStart: 0,
@@ -664,6 +672,7 @@ function dropConnection(conn: Conn): void {
   }
   channelHub.drop(conn);
   viewHub.drop(conn); // parked: a reconnect within viewResumeSeconds resumes the model
+  lustreHub.drop(conn); // parked: a reconnect to this instance reattaches the runtime
   if (conn.recoverTimer != null) {
     clearTimeout(conn.recoverTimer);
     conn.recoverTimer = null;
@@ -765,6 +774,11 @@ const VIEW_FRAMES: Record<string, (conn: Conn, msg: Record<string, unknown>) => 
   "view-event": (conn, msg) => viewHub.event(conn, msg),
   "view-unmount": (conn, msg) => viewHub.unmount(conn, msg.vid),
   "view-resync": (conn, msg) => viewHub.resync(conn, msg.vid),
+  // Lustre server components (`defineLustreView`), routed to the Lustre hub.
+  "lustre-mount": (conn, msg) => guarded(lustreHub.mount(conn, msg)),
+  "lustre-event": (conn, msg) => lustreHub.event(conn, msg),
+  "lustre-unmount": (conn, msg) => lustreHub.unmount(conn, msg.vid),
+  "lustre-resync": (conn, msg) => lustreHub.resync(conn, msg.vid),
 };
 
 /**
@@ -1478,6 +1492,7 @@ function drainRecover(conn: Conn): void {
     conn.recoverSubs = undefined;
     conn.recoverTags = undefined;
     conn.recoverViews = undefined;
+    conn.recoverLustre = undefined;
     return;
   }
   if (s.bufferedAmount > MAX_BUFFERED) {
@@ -1506,6 +1521,7 @@ function drainRecover(conn: Conn): void {
   }
   channelHub.replayPending(conn); // channel frames: the LAST held value per sub, no recompute
   viewHub.replayPending(conn); // live views: the whole current tree, once
+  lustreHub.replayPending(conn); // Lustre views: a fresh mount, once
 }
 
 // ── Channels (`createChannel` → `useChannel`) ────────────────────────────────
@@ -1554,6 +1570,32 @@ const viewHub: ViewHub<Conn> = createLiveViewHub<Conn>({
     }
   },
 });
+
+// ── Lustre server components (`defineLustreView`) ───────────────────────────
+
+const lustreHub: LustreHub<Conn> = createLustreViewHub<Conn>({
+  limits: () => limits,
+  sendFrame,
+  sendError,
+  withConnContext,
+  connContext,
+  isConnected: (conn) => connections.has(conn),
+  backPressured: (conn) => conn.socket.bufferedAmount > MAX_BUFFERED,
+  armRecover: (conn) => {
+    if (conn.recoverTimer == null) {
+      conn.recoverTimer = setTimeout(() => drainRecover(conn), RECOVER_POLL_MS);
+    }
+  },
+});
+
+/**
+ * The Lustre server-component runtimes this instance holds (attached and parked).
+ *
+ * @returns The counts.
+ */
+export function lustreViewRuntimes(): { running: number; parked: number } {
+  return { running: lustreHub.running(), parked: lustreHub.parked() };
+}
 
 /**
  * Every running live view on this instance — attached or parked — with its model redacted
@@ -1700,6 +1742,7 @@ export const __backpressureTestSeam = {
       channelSubs: new Map(),
       presenceRooms: new Map(),
       views: new Map(),
+      lustreViews: new Map(),
       busy: false,
       dirty: null,
       msgWindowStart: 0,
