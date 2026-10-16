@@ -211,6 +211,35 @@ const { data } = useSubscription(orderStatus, { id }, { initial });
 const { data: event } = useChannel(orderEvents, `user:${userId}`);
 ```
 
+**Model–View–Update (Elm / Lustre style):** `denext/mvu` runs `update(msg, model) → [model,
+effects]` in a component, with effects and subscriptions as data the runtime executes; the same
+program held on the SERVER per Live connection is `defineLiveView` from `denext/live` (HTML first
+paint, events over the socket, DOM patches back).
+
+```tsx
+// app/counter.tsx — a server module; render <Counter start={1} /> from a Server Component
+import { defineLiveView } from "denext/live";
+import { fx, subs } from "denext/mvu";
+export const Counter = defineLiveView({
+  id: "counter", // stable, app-unique
+  init: (props: { start: number }) => [{ n: props.start, on: false }],
+  update: (msg: { type: "inc" } | { type: "toggle" }, m) =>
+    msg.type === "inc"
+      ? [{ ...m, n: m.n + 1 }, [fx.task(() => db.save(m.n + 1))]]
+      : [{ ...m, on: !m.on }],
+  subscriptions: (m) => [m.on && subs.interval(1000, { type: "inc" })],
+  view: (m, send) => <button type="button" onClick={send({ type: "inc" })}>{m.n}</button>,
+  authorize: async () => (await auth()) !== null, // render, mount, resume, then every TTL
+  // events: z.object({ value: z.string().max(200).optional() }) — validates send((p) => …) payloads
+});
+// In the browser instead: useMvu(() => [model], update, subscriptions) or <MvuView program={…} />.
+```
+
+`send(msg)` sends only a handler index (the message stays on the server); a reconnect within
+`live.limits.viewResumeSeconds` resumes the model, else `init` re-runs. Set
+`DENEXT_LIVE_VIEW_SECRET` on every instance. Docs: https://denext.dev/docs/live-views,
+https://denext.dev/docs/mvu
+
 **A typed Server Action (the mutation side, also type-checked):** `defineAction` validates
 `FormData` into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its `Out`
 flows into `useActionState`.
@@ -346,8 +375,8 @@ builds, then `deno compile`s the app (server modules, `.denext/`, `public/`, `jo
 import map. No `.env` file is embedded: the environment, `.env` files and relative data paths are
 read from the working directory, and state goes to `./.denext`. It bakes Docker's least-privilege
 `--allow-*` plus `compile.permissions: { write, run, ffi, sys }` (`"all"` opts in to
-`--allow-all`). The runtime is stock `denort`, so it has no `Deno.SQL`: use
-`fromPostgresJs(postgres(url))`. Docs: https://denext.dev/docs/deployment-targets
+`--allow-all`). The runtime is the toolchain's own `denort` (SHA-256-pinned beside the CLI), so
+`Deno.SQL` works in the binary. Docs: https://denext.dev/docs/deployment-targets
 
 **Code health and concurrency:** `denext create --fallow` (or `denext fallow init` in an existing
 app) adds the fallow gate denext itself uses — `fallow.toml` with the path-loaded files as entry
@@ -464,7 +493,9 @@ React Native. Import the plain module (`./BigButton`, `./BigButton.tsx`, or an a
 serves `web` unless a shell names its target (`mobile dev`, `desktop dev`). `denext export
 --platform <t>` (or `DENEXT_PLATFORM=<t>`), `denext mobile build` and `denext desktop build` /
 `package` build the others. `createOtaHandler({ platforms })` serves each target its own export;
-a shell refuses another target's UI (`platform_mismatch`). `.native` is opt-in (`platformExtensions: { native: true }`);
+a shell refuses another target's UI (`platform_mismatch`). A small branch: `import { platform } from "denext/platform"` (`"web" | "ios" | …`), folded to the
+target's name at build time on every path (`platform === "ios"` → `true` / `false`), so other
+targets' branches are dead-code-eliminated. `.native` is opt-in (`platformExtensions: { native: true }`);
 only the app's own modules take a variant; keep a plain file so type checking resolves.
 Docs: https://denext.dev/docs/platform-files
 
@@ -509,16 +540,26 @@ spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url })
 add it, else every call answers `unavailable`). Under the pinned runtime `notifications` are the OS's own: scheduled
 (repeating ones 16 occurrences ahead, topped up while the app runs), cancel / pending, category action
 buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped`;
-`requestPermission("notifications")` / `requestPushPermission()` report the OS setting. `context-menu`
-is the native menu (submenus, `null` on dismiss). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
-`onAppMenuItem(id => …)` with accelerators and roles, `createTray({ icon, tooltip, menu })`,
-`setBadge(n)`, `bounce()`; `setQuickActions` sets the macOS Dock menu. With no tray host (stock GNOME)
+`requestPermission("notifications")` / `requestPushPermission()` report the OS setting;
+`deliveredNotifications()` / `removeDeliveredNotifications()` read and clear the OS notification centre
+on macOS and Windows (on Linux, what denext posted this run). `context-menu`
+is the native menu (submenus, `destructive` items in red, an item's `iconPng`, `null` on dismiss).
+`share()` opens the OS share sheet over the window (macOS, Windows; `shareFromWindow({ files })` from
+`denext/desktop/window` shares picked / app-folder files). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
+`onAppMenuItem(id => …)` with accelerators, roles, PNG `icon`s and `destructive` items, `createTray({ icon, tooltip, menu })`,
+`setBadge(n)`, `bounce()`, Handoff / Spotlight on macOS (`setUserActivity({ type, title, url, userInfo,
+searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.userActivityTypes`);
+`setQuickActions` sets the macOS Dock menu. With no tray host (stock GNOME)
 `createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
 reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` (`"basic"` — obfuscated,
-not OS-protected — always on macOS CEF, Chromium's mock keychain) / `sandbox` / `fileChooser` from the
+not OS-protected — for an ad-hoc signed macOS CEF build; a team-signed one keeps its key in its own
+`"<app id> Safe Storage"` keychain item, `"os"`) / `sandbox` / `fileChooser` from the
 runtime's probe (`"unknown"` before the runtime that added each), and `denext desktop doctor [--linux]`
 lists what the session lacks, with fixes. `desktop.linux.requireSandbox: true` makes a Linux CEF app
-exit 78 instead of running without Chromium's sandbox (a tarball / AppImage on Ubuntu 23.10+). `registerShortcut(accel, fn)`
+exit 78 instead of running without Chromium's sandbox (a tarball / AppImage on Ubuntu 23.10+).
+`desktop.windows.proxy: "direct"` keeps a Windows CEF window off a slow WPAD / PAC lookup (`"system"`, the
+default, warms the resolver up at launch). A window hands at most 3 refused navigations a second to the
+browser. `registerShortcut(accel, fn)`
 needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`. DevTools are on in
 `desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`. `denext desktop run` / `dev` build the app into a temp dir with the
 packaging scripts' least-privilege flags and launch it (a bare `deno desktop` only compiles). An extension's
@@ -557,7 +598,7 @@ origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origi
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.19 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.20 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -732,7 +773,13 @@ Postgres (every replica sharing one database): `postgresClient(url)` from `denex
 tagged-template client on `Deno.SQL`, built into denext's managed Deno toolchain (on stock Deno:
 `fromPostgresJs(postgres(url))` with `npm:postgres`); `postgresAuthAdapter`, `postgresSessionStore`,
 `postgresRateLimitStore` and `postgresCacheStore` take `{ sql | url, schema? }` and create their
-tables by migration on first use (under the migration lock). Behind PgBouncer in transaction mode,
+tables by migration on first use (under the migration lock). The same cache / session / rate-limit
+stores ship on Redis 7+ (`redisCacheStore` / `redisSessionStore` / `redisRateLimitStore`, `{ client |
+url, prefix? }`, on denext's zero-npm RESP client `redisClient(url)`) and Deno KV (`denoKvCacheStore`
+/ `denoKvSessionStore` / `denoKvRateLimitStore`, `{ kv | path, prefix? }`); `cacheStoreContract` /
+`sessionStoreContract` / `rateLimitStoreContract` from `denext/testing` test your own. Live across
+replicas: `setChannelTransport(redisChannelTransport({ url }))` (channels, tag pushes and
+`usePresence` rooms over Redis pub/sub). Behind PgBouncer in transaction mode,
 pass `directUrl` too (`backend({ postgres })` reads `DATABASE_DIRECT_URL`): LISTEN, reserved
 connections and migrations take the direct connection (`withDirectConnection(pooled, direct)`).
 `DENEXT_BOOT_DDL=off` makes startup change no schema and fail with `BootSchemaError` while a
@@ -782,6 +829,18 @@ detected from the project (`--stack`: Postgres 17, MinIO with a bucket bootstrap
 driver is `s3()`, a one-shot `denext job migrate`, `.env.example` listing every secret;
 `--postgres`/`--no-postgres`, `--pgvector`, `--storage`, `--migrate`, `--expose-db`, `--dev`,
 `--dry-run`, `--force`). `denext routes [--json]` lists the app's pages and API routes.
+
+**Deploying (adapters):** `denext build` writes `.denext/deploy-manifest.json` (the typed
+`DeployManifest` from `denext/deploy` / `denext/plugin-kit`: routes as `static` / `isr` /
+`dynamic` / `route-handler` / `middleware`, assets + `Cache-Control`, the start command, jobs and
+schedules, services, env vars, permissions, images, `--compile` output). `deploy: { adapter:
+fly({ app }) }` in `denext.config.ts` runs that adapter's `prepare` after every build; presets from
+`denext/deploy`: `docker()`, `fly()`, `denoDeploy()` (a `denext.deploy.ts` entry: `Deno.cron` at
+top level via `registerCronSchedules`, cache on Deno KV), `genericHost()` (systemd + nginx/Caddy)
+and `staticHost()` (refuses, listing every route that needs a server). `denext deploy prepare
+[--preset <name>] [--dry-run]` writes the files; `denext deploy` also pushes (`FLY_API_TOKEN` /
+`DENO_DEPLOY_TOKEN` from the environment only). A plugin adds one with `addDeployAdapter`. Deno's
+`deno deploy` is `denext deno deploy`. Docs: https://denext.dev/docs/deploy#deploy-adapters
 
 **A scheduled / background job (cron):** put it in `jobs/<name>.ts`; schedule it in
 `denext.config.ts` (`scheduledJobs`) or per-job; run it on demand with `runJob(name)`
@@ -934,7 +993,8 @@ adds brotli; `false`, or `export const compress = false` in a route), `cors`, `c
 (opt-in: ISR pages answer `Cache-Control: public, s-maxage=…` for a CDN, never for a request
 with a cookie or `Authorization`, a negotiated locale or a `middleware.ts` match, unless
 `{ evenWithMiddleware: true }`), `compatibilityMode`,
-`optimizePackageImports`, `momentumSafeScroll`, `desktop`, `mobile`, `appLinks`;
+`optimizePackageImports`, `resolveAlias` (module aliases; `{ to, except: ["pkg"] }` keeps a package's own
+imports, as Metro's `resolveRequest`), `momentumSafeScroll`, `desktop`, `mobile`, `appLinks`;
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 Every key: https://denext.dev/docs/config
 
@@ -991,7 +1051,7 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   current config / `deno.json` / `deno.lock`; one notice). `task` is Deno's; background work is
   `denext job`. `info <module>` is
   Deno's info; `audit` runs denext's checks and `deno audit`. For Deno's meaning of a verb denext
-  keeps (`test`, `fmt`, `upgrade`, `desktop`, `create`, `init`, `completions`): `denext deno <verb>`.
+  keeps (`test`, `fmt`, `upgrade`, `desktop`, `deploy`, `create`, `init`, `completions`): `denext deno <verb>`.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
   (CI-enforced). esbuild is not an npm import either: denext vendors esbuild's JS API and runs the
   esbuild 0.25.5 binary its Deno toolchain ships (verified by SHA-256), else
@@ -1033,12 +1093,15 @@ denext ships tooling so agents get it right the first time:
   tree at a path: layouts, boundaries, server/client split), `denext_component_tree` /
   `denext_why_render` / `denext_hook_state` (the LIVE component tree from a running dev
   page — props, named hooks, why a component re-rendered; these need `denext task dev`
-  AND the app open in a browser, and each answer states how stale its snapshot is. The
-  page starts pushing only once one of them has been called, so the FIRST call may say
-  "posted nothing yet" — call it again after the page's next commit, or start dev with
-  `DENEXT_DEV_INSPECT=1`. String values arrive redacted as `string(n)`),
+  AND the app open in a browser, and each answer states how stale its snapshot is. Each call
+  asks the open pages for a fresh tree over the dev server's reload stream and waits for it, so
+  the first call has one too. String values arrive redacted as `string(n)`),
   `denext_migrations` / `denext_gen_types` (the project's migrations — list, up, down — and its
-  database types, run as CLI children), `denext_profile` (build
+  database types, run as CLI children), `denext_ui_overview` + one `denext_ui_<panel>` per
+  `denext ui` panel (config, plugins, generate, docker, dev, tasks, database, commands, …: its
+  JSON twin, through a `denext ui` child's own loopback / token / CSRF chain; a change goes out
+  only as a preview, `fields.op: "preview"`, or with `apply: true`; `denext mcp --ui-read-only`
+  refuses every change), `denext_profile` (build
   unminified, serve, and profile a route in headless Chromium — CPU self-time by
   function + heap growth + a leak check; pass `interact` to profile a re-render, `budget`
   to gate a regression), `denext_search_docs` (BM25

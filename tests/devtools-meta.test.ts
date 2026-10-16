@@ -274,17 +274,87 @@ Deno.test("collectComponentMeta: a bare / npm: / jsr: / URL specifier records no
   assert(metas.List.hooks.every((hk) => !("from" in hk)), "naming stops at a package hook");
 });
 
-Deno.test("collectComponentMeta: a namespace import stays opaque (no `from`)", async () => {
+Deno.test("collectComponentMeta: a namespace import's member call records the namespace's module", async () => {
   const src = [
     `import * as auth from "./auth.ts";`,
     `import type { useTyped } from "./typed.ts";`,
     `export function Profile() {`,
     `  const user = auth.useAuth();`,
+    `  const other = window.useGlobal();`,
     `  return null;`,
     `}`,
   ].join("\n");
   const metas = await metaOf(src, PROFILE_URL);
-  assertEquals(metas.Profile.hooks, [{ hook: "useAuth", name: "user", line: 4 }]);
+  assertEquals(metas.Profile.hooks, [
+    { hook: "useAuth", name: "user", line: 4, from: "file:///app/ui/auth.ts" },
+    { hook: "useGlobal", name: "other", line: 5 }, // not a namespace import: no `from`
+  ]);
+});
+
+Deno.test("collectComponentMeta: a hook in a branch or after an early return is marked cond", async () => {
+  const src = [
+    `export function Panel({ open, items }) {`,
+    `  const [a] = useState(0);`,
+    `  if (open) { const b = useRef(null); } else useEffect(() => {});`,
+    `  const c = open ? useMemo(() => 1, []) : 0;`,
+    `  const d = open && useId();`,
+    `  const e = items ?? useDefaults();`,
+    `  switch (open) { case true: useLayoutEffect(() => {}); }`,
+    `  for (const i of items) useInsertionEffect(() => {});`,
+    `  useEffect(() => { if (open) return; });`, // a return in a nested function: no exit
+    `  const f = useCallback(() => {}, []);`,
+    `  if (!items) return null;`,
+    `  const [g] = useState(1);`,
+    `  return null;`,
+    `}`,
+  ].join("\n");
+  const metas = await metaOf(src, PROFILE_URL);
+  assertEquals(
+    metas.Panel.hooks.map((hk) => [hk.name || hk.hook, hk.cond === true]),
+    [
+      ["a", false],
+      ["b", true],
+      ["useEffect", true],
+      ["c", true],
+      ["d", true],
+      ["e", true],
+      ["useLayoutEffect", true],
+      ["useInsertionEffect", true],
+      ["useEffect", false],
+      ["f", false],
+      ["g", true],
+    ],
+  );
+});
+
+Deno.test("collectComponentMeta: a barrel's export * lines are one record of modules to look in", async () => {
+  const src = [
+    `export * from "./auth.ts";`,
+    `export * from "./auth.ts";`,
+    `export type * from "./types.ts";`,
+    `export * from "@/hooks/cart.ts";`,
+    `export * from "npm:left-pad";`,
+  ].join("\n");
+  const resolve = (spec: string) =>
+    spec.startsWith("@/") ? `file:///app/${spec.slice(2)}` : undefined;
+  const metas = collectComponentMeta(
+    (await parseModule(src))!,
+    "file:///app/hooks/index.ts",
+    resolve,
+  );
+  assertEquals(metas, {
+    "*": {
+      name: "*",
+      line: 0,
+      column: 0,
+      hooks: [],
+      reExportsAll: ["file:///app/hooks/auth.ts", "file:///app/hooks/cart.ts"],
+    },
+  });
+  assertEquals(
+    collectComponentMeta((await parseModule(`export const x = 1;`))!, "file:///app/x.ts"),
+    {},
+  );
 });
 
 // ---- the emitted footer -----------------------------------------------------
@@ -546,7 +616,11 @@ Deno.test("production SPA transforms emit no DevTools metadata (DCE guard)", asy
     const bundleSrc = await Deno.readTextFile(
       new URL("../src/build/spa/bundle.ts", import.meta.url),
     );
-    assertStringIncludes(bundleSrc, "if (dev) return [spaRefreshPlugin(projectDir)];");
+    assertStringIncludes(bundleSrc, "  if (dev) {\n");
+    assertStringIncludes(
+      bundleSrc,
+      "return [spaRefreshPlugin(projectDir, pre), platformFoldPlugin(",
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -650,7 +724,7 @@ Deno.test("collectComponentMeta: an import-map alias records `from` through the 
   });
 });
 
-Deno.test("collectComponentMeta: a barrel's named hook re-exports become aliases (not components, not export *)", async () => {
+Deno.test("collectComponentMeta: a barrel's named hook re-exports become aliases (not components)", async () => {
   const src = [
     `export { useAuth } from "./use-auth.ts";`,
     `export { useA as useAlias } from "./a.ts";`,
@@ -673,6 +747,7 @@ Deno.test("collectComponentMeta: a barrel's named hook re-exports become aliases
       hooks: [],
       aliasOf: "file:///app/hooks/a.ts#useA",
     },
+    "*": { name: "*", line: 0, column: 0, hooks: [], reExportsAll: ["file:///app/hooks/star.ts"] },
   });
 });
 

@@ -7,8 +7,10 @@
  * must end at one of the caller's trust anchors — a certificate given as an anchor is trusted
  * for its key and name; a certificate carried in the path is never trusted on its own.
  *
- * Signatures: RSASSA-PKCS1-v1_5 and ECDSA (P-256, P-384) with SHA-256/384/512. Revocation
- * (CRL / OCSP) is not checked.
+ * Signatures: RSASSA-PKCS1-v1_5 and ECDSA (P-256, P-384) with SHA-256/384/512. Revocation is
+ * the caller's: pass a {@linkcode RevocationCheck} (the FIDO Metadata Service passes its CRL
+ * cache, {@link ./crl.ts}) and every certificate of the validated path below the anchor is
+ * checked against its issuer once the path is found. OCSP is not used.
  *
  * Used by the FIDO Metadata Service checks ({@link ./fido-mds.ts}): the metadata BLOB's
  * signing chain to the pinned FIDO root, and a packed attestation's `x5c` to the
@@ -25,7 +27,7 @@ import {
   derChildren,
   derToRawEcdsa,
   hex,
-} from "./webauthn.ts";
+} from "./webauthn-der.ts";
 
 /** A path that does not validate. The message names the check, never echoes input. */
 export class CertificateChainError extends Error {
@@ -40,6 +42,8 @@ function fail(message: string): never {
 export interface ParsedCertificate {
   /** The whole certificate, DER. */
   der: Uint8Array;
+  /** The serialNumber's content bytes. */
+  serial: Uint8Array;
   /** The `tbsCertificate`, DER — what the issuer signed. */
   tbs: Uint8Array;
   /** The `signatureAlgorithm` OID, hex. */
@@ -74,8 +78,14 @@ const UNDERSTOOD_CRITICAL = new Set([
 /** The longest path (certificates below the anchor) followed. */
 const MAX_PATH = 6;
 
-/** `UTCTime` (YYMMDDHHMMSSZ) or `GeneralizedTime` (YYYYMMDDHHMMSSZ) → epoch ms. */
-function derTime(node: Der): number {
+/**
+ * `UTCTime` (YYMMDDHHMMSSZ) or `GeneralizedTime` (YYYYMMDDHHMMSSZ) → epoch ms.
+ *
+ * @param node The time node.
+ * @returns Epoch ms.
+ * @throws {CertificateChainError} On any other form.
+ */
+export function derTime(node: Der): number {
   const text = new TextDecoder().decode(node.value);
   const utc = node.tag === 0x17 && /^(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z$/.exec(text);
   const gen = node.tag === 0x18 && /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z$/.exec(text);
@@ -101,13 +111,15 @@ function validityOf(validity: Der): [number, number] {
   return [derTime(notBefore), derTime(notAfter)];
 }
 
-/** The tbsCertificate's issuer, validity, subject and SPKI (after the optional version). */
-function tbsFields(parts: Der[]): { fields: Der[]; rest: Der[] } {
+/** The tbsCertificate's serial, issuer, validity, subject and SPKI (after the optional version). */
+function tbsFields(parts: Der[]): { serial: Uint8Array; fields: Der[]; rest: Der[] } {
   const at = parts[0]?.tag === 0xa0 ? 1 : 0;
   // serialNumber, signature, issuer, validity, subject, subjectPublicKeyInfo
+  const serial = parts[at];
   const fields = parts.slice(at + 2, at + 6);
+  if (serial?.tag !== 0x02) fail("bad serial number");
   if (fields.length !== 4 || fields.some((p) => p.tag !== 0x30)) fail("bad certificate body");
-  return { fields, rest: parts.slice(at + 6) };
+  return { serial: serial.value, fields, rest: parts.slice(at + 6) };
 }
 
 /**
@@ -123,10 +135,13 @@ function parseCertificate(der: Uint8Array): ParsedCertificate {
   const [tbs, alg, sig] = derChildren(cert.value);
   if (tbs?.tag !== 0x30) fail("no tbsCertificate");
   const [signatureAlgorithm, signature] = outerSignature(alg, sig);
-  const { fields: [issuer, validity, subject, spki], rest } = tbsFields(derChildren(tbs.value));
+  const { serial, fields: [issuer, validity, subject, spki], rest } = tbsFields(
+    derChildren(tbs.value),
+  );
   const [notBefore, notAfter] = validityOf(validity);
   return {
     der,
+    serial,
     tbs: tbs.raw,
     signatureAlgorithm,
     signature,
@@ -304,6 +319,31 @@ async function intermediateFor(
 }
 
 /**
+ * Checks one certificate of a validated path for revocation, given its issuer; throws to refuse
+ * the path.
+ */
+export type RevocationCheck = (
+  cert: ParsedCertificate,
+  issuer: ParsedCertificate,
+  now: number,
+) => Promise<void>;
+
+/** Run `revocation` over each certificate of the path and its issuer (the anchor last). */
+async function checkRevocation(
+  path: ParsedCertificate[],
+  anchor: ParsedCertificate,
+  now: number,
+  revocation: RevocationCheck | undefined,
+): Promise<void> {
+  if (!revocation) return;
+  for (let i = 0; i < path.length; i++) {
+    const issuer = path[i + 1] ?? anchor;
+    if (same(path[i].der, anchor.der)) continue; // the anchor itself is trusted as configured
+    await revocation(path[i], issuer, now);
+  }
+}
+
+/**
  * Validate a certification path from `chain[0]` (the end entity) to one of `anchors`, using the
  * rest of `chain` as untrusted intermediates in any order.
  *
@@ -311,29 +351,35 @@ async function intermediateFor(
  * @param anchors The trust anchors (DER) — trusted for their key and name (their own `cA` and
  *   `keyUsage` aren't required), and checked for validity at `now` like every certificate.
  * @param now The validation time, epoch ms.
+ * @param revocation Checks each certificate of the found path against its issuer (optional).
  * @returns The parsed end-entity certificate.
- * @throws {CertificateChainError} When no valid path reaches an anchor.
+ * @throws {CertificateChainError} When no valid path reaches an anchor — or whatever
+ *   `revocation` throws for a revoked certificate.
  */
 export async function verifyCertificateChain(
   chain: readonly Uint8Array[],
   anchors: readonly Uint8Array[],
   now: number,
+  revocation?: RevocationCheck,
 ): Promise<ParsedCertificate> {
   if (chain.length === 0 || chain.length > MAX_PATH) fail("bad certificate path length");
   const [leaf, ...pool] = chain.map(parseCertificate);
   const roots = anchors.map(parseCertificate);
   let current = leaf;
+  const path = [leaf];
   checkUsable(current, now);
   for (let below = 0; below < MAX_PATH; below++) {
     const anchor = await anchorFor(current, roots, below);
     if (anchor) {
       checkUsable(anchor, now);
+      await checkRevocation(path, anchor, now, revocation);
       return leaf;
     }
     const next = await intermediateFor(current, pool, below);
     if (!next) break;
     checkUsable(next, now);
     pool.splice(pool.indexOf(next), 1);
+    path.push(next);
     current = next;
   }
   return fail("the certificate path does not reach a trust anchor");

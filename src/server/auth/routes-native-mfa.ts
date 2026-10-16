@@ -8,6 +8,13 @@
  *   spent), until the attempts run out (`400 { error: "invalid_grant" }`).
  * - `POST {basePath}/native/mfa-challenge` — `{ mfa_token, factor_id }`: send an SMS code to one
  *   of the user's verified phone factors; answers `{ challenge_id, expires_at, mfa_token }`.
+ * - `POST {basePath}/native/mfa-enroll` — `{ mfa_token }` of a sign-in answered with
+ *   `mfa_enroll: true` (`mfa.required: "always"`, a user with no factor yet): start a TOTP factor;
+ *   answers `{ factor_id, secret, uri, mfa_token, expires_in }`.
+ * - `POST {basePath}/native/mfa-confirm` — `{ mfa_token, code }`: confirm it and finish the
+ *   sign-in; answers the native tokens plus `backup_codes` (once). The web flow's rules hold: only
+ *   a first factor is enrolled this way (`409 already_enrolled` once one is verified), every code
+ *   check spends the MFA budget, and a wrong code costs an attempt.
  *
  * Both spend the presented token first (single-use) and re-check the user: one deleted, banned,
  * or whose address was first proven after the id_token sign-in, never finishes it. Code checks
@@ -17,9 +24,20 @@
  */
 
 import { emitAuthEvent } from "./events.ts";
-import { openFactorChallenge, userFactors } from "./factors.ts";
-import { hasMfaAdapter, pendingSessionLive, verifySecondFactor } from "./mfa.ts";
-import { consumeNativeMfaToken, issueNativeMfaToken, type NativeMfaPending } from "./native-mfa.ts";
+import { hasVerifiedFactor, openFactorChallenge, userFactors } from "./factors.ts";
+import {
+  confirmTotp,
+  enrollTotp,
+  hasMfaAdapter,
+  pendingSessionLive,
+  verifySecondFactor,
+} from "./mfa.ts";
+import {
+  consumeNativeMfaToken,
+  issueNativeMfaToken,
+  nativeMfaExpiresIn,
+  type NativeMfaPending,
+} from "./native-mfa.ts";
 import { type ResolvedNative, resolveNative, snapshotFor, startNativeSession } from "./native.ts";
 import {
   authTrustsProxy,
@@ -38,6 +56,7 @@ import {
 } from "./routes-native.ts";
 import { type AuthRoute, type AuthRouteContext, json } from "./routes-shared.ts";
 import { smsSenderOf } from "./sms.ts";
+import type { AuthSession } from "./types.ts";
 
 /** What both endpoints need before they look at the body's other fields. */
 interface Caller {
@@ -114,14 +133,33 @@ async function wrongCode(ctx: AuthRouteContext, caller: Caller): Promise<Respons
   );
 }
 
+/** Spend one unit of the user's MFA budget for a code check: a `429` once it is spent. */
+async function spendCodeCheck(ctx: AuthRouteContext, caller: Caller): Promise<Response | null> {
+  const keys = subjectBucketKeys("mfa", caller.pending.user.id, ctx.request, ctx.config);
+  const retryAfter = await consumeHitBudget(mfaLimiter(ctx.config), keys);
+  return retryAfter === null ? null : await rateLimited(ctx, caller, retryAfter);
+}
+
+/** The second factor passed: start the native session and fire `signIn`; the tokens. */
+async function signInNative(ctx: AuthRouteContext, caller: Caller, method: string) {
+  const { native, pending } = caller;
+  const snapshot = await snapshotFor(ctx.config, pending.user, pending.provider, ["ext", method]);
+  const tokens = await startNativeSession(ctx.config, native, snapshot);
+  await emitAuthEvent(ctx.options, "signIn", {
+    user: pending.user,
+    provider: pending.provider,
+    isNewUser: pending.isNewUser,
+  });
+  return tokens;
+}
+
 /** `POST {basePath}/native/mfa` — finish the pending sign-in with a second factor. */
 async function handleVerify(ctx: AuthRouteContext): Promise<Response | null> {
   const caller = await mfaCaller(ctx);
   if (!caller || caller instanceof Response) return caller;
-  const { native, pending, fields } = caller;
-  const keys = subjectBucketKeys("mfa", pending.user.id, ctx.request, ctx.config);
-  const retryAfter = await consumeHitBudget(mfaLimiter(ctx.config), keys);
-  if (retryAfter !== null) return await rateLimited(ctx, caller, retryAfter);
+  const { pending, fields } = caller;
+  const limited = await spendCodeCheck(ctx, caller);
+  if (limited) return limited;
   const result = await verifySecondFactor(ctx.config, {
     userId: pending.user.id,
     code: fields.code ?? "",
@@ -131,17 +169,7 @@ async function handleVerify(ctx: AuthRouteContext): Promise<Response | null> {
   if (!result.ok) {
     return result.error === "not_enrolled" ? invalidGrant() : await wrongCode(ctx, caller);
   }
-  const snapshot = await snapshotFor(ctx.config, pending.user, pending.provider, [
-    "ext",
-    result.method,
-  ]);
-  const tokens = await startNativeSession(ctx.config, native, snapshot);
-  await emitAuthEvent(ctx.options, "signIn", {
-    user: pending.user,
-    provider: pending.provider,
-    isNewUser: pending.isNewUser,
-  });
-  return json(tokens, 200, NO_STORE);
+  return json(await signInNative(ctx, caller, result.method), 200, NO_STORE);
 }
 
 /** `POST {basePath}/native/mfa-challenge` — text an SMS code to a verified phone factor. */
@@ -175,6 +203,83 @@ async function handleChallenge(ctx: AuthRouteContext): Promise<Response | null> 
   );
 }
 
+/**
+ * The shared gate of the enrollment endpoints: a live `mfa_token` (spent) issued to finish a
+ * sign-in by enrolling, for a user who still has no verified factor, while every user must have
+ * one. Anything else ends the pending sign-in (`invalid_grant`), or — when a factor appeared
+ * meanwhile — answers `409 already_enrolled`: a first factor alone never adds a factor next to a
+ * verified one (the web rule), and the sign-in starts over to be finished with that factor.
+ */
+async function enrollCaller(ctx: AuthRouteContext): Promise<Caller | Response | null> {
+  const caller = await mfaCaller(ctx);
+  if (!caller || caller instanceof Response) return caller;
+  if (!caller.pending.enroll || ctx.options.mfa.required !== "always") return invalidGrant();
+  if (await hasVerifiedFactor(ctx.config, caller.pending.user.id)) {
+    return json({ error: "already_enrolled" }, 409, NO_STORE);
+  }
+  return caller;
+}
+
+/** The pending sign-in as the session shape the web enrollment takes (pending, so it may enrol). */
+function pendingSession(pending: NativeMfaPending): AuthSession {
+  return {
+    user: pending.user,
+    provider: pending.provider,
+    expiresAt: pending.expiresAt,
+    authTime: pending.authTime,
+    mfaPending: true,
+    amr: ["ext"],
+  };
+}
+
+/**
+ * `POST {basePath}/native/mfa-enroll` — `{ mfa_token }`: start the first factor of a pending
+ * sign-in that owes one. Answers `{ factor_id, secret, uri, mfa_token, expires_in }` (render the
+ * URI as a QR code, or offer the secret); the fresh token confirms it.
+ */
+async function handleEnroll(ctx: AuthRouteContext): Promise<Response | null> {
+  const caller = await enrollCaller(ctx);
+  if (!caller || caller instanceof Response) return caller;
+  const result = await enrollTotp(ctx.config, pendingSession(caller.pending));
+  if (!result.ok) return json({ error: "already_enrolled" }, 409, NO_STORE);
+  return json(
+    {
+      factor_id: result.factorId,
+      secret: result.secret,
+      uri: result.uri,
+      mfa_token: await reissue(caller.native, caller.pending),
+      expires_in: nativeMfaExpiresIn(caller.pending),
+    },
+    200,
+    NO_STORE,
+  );
+}
+
+/**
+ * `POST {basePath}/native/mfa-confirm` — `{ mfa_token, code }`: confirm the enrolled factor with
+ * a code from it and finish the sign-in: the native tokens, plus `backup_codes` (shown once).
+ * Every attempt spends the per-user MFA budget; a wrong code costs one attempt (a fresh token
+ * back, as at `/native/mfa`).
+ */
+async function handleConfirm(ctx: AuthRouteContext): Promise<Response | null> {
+  const caller = await enrollCaller(ctx);
+  if (!caller || caller instanceof Response) return caller;
+  const { native, pending, fields } = caller;
+  const limited = await spendCodeCheck(ctx, caller);
+  if (limited) return limited;
+  const result = await confirmTotp(ctx.config, { user: pending.user, code: fields.code ?? "" });
+  if (!result.ok) {
+    if (result.error === "invalid_code") return await wrongCode(ctx, caller);
+    return json(
+      { error: "not_pending", mfa_token: await reissue(native, pending) },
+      400,
+      NO_STORE,
+    );
+  }
+  const tokens = await signInNative(ctx, caller, "totp");
+  return json({ ...tokens, backup_codes: result.backupCodes }, 200, NO_STORE);
+}
+
 /** The rows, relative to `basePath` — listed before `/native/:provider`. */
 export const nativeMfaRoutes: AuthRoute[] = [
   {
@@ -187,6 +292,18 @@ export const nativeMfaRoutes: AuthRoute[] = [
     method: "POST",
     pattern: "/native/mfa-challenge",
     handler: nativeRow("a native sign-in's SMS challenge", handleChallenge),
+    limit: "signin-start",
+  },
+  {
+    method: "POST",
+    pattern: "/native/mfa-enroll",
+    handler: nativeRow("enrolling a native sign-in's first factor", handleEnroll),
+    limit: "signin-start",
+  },
+  {
+    method: "POST",
+    pattern: "/native/mfa-confirm",
+    handler: nativeRow("confirming a native sign-in's first factor", handleConfirm),
     limit: "signin-start",
   },
 ];

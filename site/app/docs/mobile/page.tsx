@@ -1935,7 +1935,12 @@ const user = await signInNative(session, "apple");
         <code>session.completeMfa(error.mfa, code)</code> (a TOTP or backup code;{" "}
         <code>session.sendMfaSms(error.mfa, factorId)</code>{" "}
         texts one for a phone factor first). A wrong code rejects <code>invalid_code</code>{" "}
-        with a fresh <code>error.mfa</code> to retry with, five attempts at most. See{" "}
+        with a fresh <code>error.mfa</code> to retry with, five attempts at most. Under{" "}
+        <code>mfa.required: "always"</code> a user with no factor yet gets{" "}
+        <code>error.mfa.enroll</code>: <code>session.enrollMfa(error.mfa)</code>{" "}
+        answers the secret and its QR URI, and <code>session.confirmMfaEnrollment(mfa, code)</code>
+        {" "}
+        finishes the sign-in with the backup codes. See{" "}
         <a href="/docs/app-backend#native-sign-in-with-apple-and-google">
           App backend › Native Sign in with Apple and Google
         </a>.

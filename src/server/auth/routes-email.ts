@@ -140,12 +140,13 @@ async function magicLinkMessage(
   const path = `${ctx.options.prefix}callback/${encodeURIComponent(provider.id)}`;
   const url = new URL(tokenLink(origin, path, token, identifier));
   if (callbackUrl) url.searchParams.set("callbackUrl", afterSignIn(ctx.config, callbackUrl));
-  return { identifier, url: url.href, token, purpose: "magic", expiresAt };
+  return { identifier, url: url.href, token, purpose: "magic", expiresAt, provider: provider.id };
 }
 
 /** A one-time-code mail: the code as `token`; `url` opens the page it is typed into, never carrying it. */
 async function codeMessage(
   ctx: AuthRouteContext,
+  provider: EmailProvider,
   identifier: string,
   origin: string,
 ): Promise<VerificationRequestParams> {
@@ -157,7 +158,7 @@ async function codeMessage(
     digits: otpDigits,
   });
   const url = new URL(pageWith(ctx.config, noticePage(ctx.config), { email: identifier }), origin);
-  return { identifier, url: url.href, token, purpose: "otp", expiresAt };
+  return { identifier, url: url.href, token, purpose: "otp", expiresAt, provider: provider.id };
 }
 
 /**
@@ -192,7 +193,7 @@ async function sendSignInEmail(
       issue: (origin) =>
         provider.mode === "magic"
           ? magicLinkMessage(ctx, provider, identifier, origin, fields.callbackUrl)
-          : codeMessage(ctx, identifier, origin),
+          : codeMessage(ctx, provider, identifier, origin),
     })
     : undefined;
   return sentAnswer(ctx, result);

@@ -27,10 +27,10 @@ import {
   ISLAND_STRATEGY_ATTR,
 } from "../runtime/lazy-directive.ts";
 import { DNX_H_ATTR } from "../runtime/qrl.ts";
-import { FLIGHT_BUNDLE_FILE } from "./build-pipeline/context.ts";
+import { FLIGHT_BOOT_KEY, FLIGHT_BUNDLE_FILE } from "./build-pipeline/context.ts";
 
 /** The deferred boot's file name, beside {@linkcode FLIGHT_BUNDLE_FILE} in the client dir. */
-export const FLIGHT_BOOT_FILE = "flight-boot.js";
+export const FLIGHT_BOOT_FILE = `${FLIGHT_BOOT_KEY}.js`;
 
 /**
  * The boot's source: plain browser JavaScript with no static imports (comments and

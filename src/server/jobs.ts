@@ -470,6 +470,73 @@ function denoCronName(job: string, cron: string): string {
   return `${readable.slice(0, DENO_CRON_NAME_MAX - fingerprint.length - 1)} ${fingerprint}`;
 }
 
+/** The `Deno.cron` names {@linkcode registerCronSchedules} registered in this process. */
+const preRegistered = new Set<string>();
+
+/** Resolves once `jobs/` has been discovered ({@linkcode markJobsDiscovered}). */
+let resolveDiscovered: () => void = () => {};
+const discovered = new Promise<void>((resolve) => {
+  resolveDiscovered = resolve;
+});
+
+/**
+ * Signal that the server has discovered `jobs/` (the boot calls it), so a cron registered before
+ * that ({@linkcode registerCronSchedules}) can run its job.
+ */
+export function markJobsDiscovered(): void {
+  resolveDiscovered();
+}
+
+/** How long a pre-registered cron waits for the boot to discover its job (ms). */
+const DISCOVERY_WAIT_MS = 60_000;
+
+/** Wait (bounded) until `job` is registered, for a cron that fired during the boot. */
+async function untilRegistered(job: string): Promise<void> {
+  if (registry.has(job)) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    discovered,
+    new Promise<void>((resolve) => timer = setTimeout(resolve, DISCOVERY_WAIT_MS)),
+  ]);
+  clearTimeout(timer);
+}
+
+/**
+ * Register schedules with `Deno.cron` NOW, from an entrypoint's top level — before the server
+ * boots and discovers `jobs/`. Deno Deploy records the crons an app registers while its
+ * entrypoint loads, so the entry `denext deploy` writes for it calls this with the build's
+ * schedules; the boot's scheduler then skips them. A run that fires before the boot has
+ * discovered its job waits for that (up to a minute). A no-op where `Deno.cron` is absent (the
+ * server's own scheduler covers the schedules there).
+ *
+ * @param entries The (cron, job) pairs, as `scheduledJobs` and each job's `schedule` give them.
+ */
+export function registerCronSchedules(
+  entries: readonly { readonly cron: string; readonly job: string }[],
+): void {
+  const cron = denoCron();
+  if (!cron) return;
+  for (const e of entries) {
+    const err = cronError(e.cron);
+    if (err) {
+      console.error(`denext: ignoring schedule for "${e.job}" — ${err}`);
+      continue;
+    }
+    const name = denoCronName(e.job, e.cron);
+    if (preRegistered.has(name)) continue;
+    try {
+      cron(name, toDenoCron(e.cron), () =>
+        detachedFromRequest(async () => {
+          await untilRegistered(e.job);
+          return runJob(e.job, undefined, { trigger: "schedule" });
+        }).catch(onScheduledError(e.job)));
+      preRegistered.add(name);
+    } catch (err) {
+      console.error(`denext: Deno.cron rejected schedule for "${e.job}":`, err);
+    }
+  }
+}
+
 /**
  * Register every valid entry with the scheduler and return a disposer. Entries with a malformed
  * cron or an unknown job name are skipped with an error (never fatal). Uses `Deno.cron` when
@@ -493,6 +560,10 @@ export function scheduleJobs(entries: ScheduledEntry[]): () => void {
   const cron = denoCron();
   if (cron) {
     for (const e of valid) {
+      const name = denoCronName(e.job, e.cron);
+      // Already registered at the entrypoint's top level (`registerCronSchedules`, the Deno
+      // Deploy entry `denext deploy` writes): a second `Deno.cron` under the name would throw.
+      if (preRegistered.has(name)) continue;
       try {
         // RETURN the promise: Deno.cron keeps the isolate alive until it settles and uses it to
         // serialize runs (no overlap). A void handler would let Deno Deploy freeze the isolate
@@ -501,7 +572,7 @@ export function scheduleJobs(entries: ScheduledEntry[]): () => void {
         // The schedule goes through `toDenoCron`: Deno.cron numbers weekdays 1-7 from Sunday and
         // rejects `0`, so a POSIX `0 0 * * 1` (Monday) handed over verbatim would fire on Sunday.
         cron(
-          denoCronName(e.job, e.cron),
+          name,
           toDenoCron(e.cron),
           // A scheduled run belongs to no request, whatever context the runtime fires it in.
           () =>

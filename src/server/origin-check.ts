@@ -15,6 +15,7 @@
 // does not widen browser-borne CSRF.
 
 import { parseDesktopAppOrigin } from "../desktop/app-origin.ts";
+import { corsCredentialless, type CorsPolicy } from "./cors.ts";
 
 /** What {@link verifyOrigin} needs from the app config. */
 export interface OriginCheckOptions {
@@ -111,6 +112,64 @@ export function sameOriginUpgrade(request: Request, desktopAppOrigin?: string): 
   } catch {
     return false;
   }
+}
+
+/**
+ * The production Live handshake gate: {@link sameOriginUpgrade}, or a handshake from an origin
+ * the app's `cors` lists exactly that carries no cookie ({@link liveCorsAllowed}) and names the
+ * app's own public host (`canonicalOrigin`, read through `X-Forwarded-Host` only under
+ * `trustForwardedHeaders`). A WebSocket is not covered by CORS, so a cookie-carrying
+ * cross-origin one stays refused, and so does any handshake when no `canonicalOrigin` pins the
+ * host (a DNS-rebinding page names a host of its own).
+ *
+ * @param request The upgrade request.
+ * @param options The app's `desktop.app.origin` and `cors` policy.
+ * @returns True when the upgrade may proceed.
+ */
+export function liveOriginAllowed(
+  request: Request,
+  options: LiveOriginOptions,
+): boolean {
+  if (sameOriginUpgrade(request, options.desktopAppOrigin)) return true;
+  return liveCorsAllowed(request, options.cors ?? null) && pinnedHost(request, options);
+}
+
+/** What the production Live gate trusts. */
+export interface LiveOriginOptions {
+  /** The app's normalized `desktop.app.origin`, if configured. */
+  desktopAppOrigin?: string;
+  /** The app's `cors` policy. */
+  cors?: CorsPolicy | null;
+  /** The app's public origin — the only `Host` a cross-origin handshake may name. */
+  canonicalOrigin?: string;
+  /** Read the public host from `X-Forwarded-Host` (behind a trusted proxy only). */
+  trustForwardedHeaders?: boolean;
+}
+
+/**
+ * The `cors` half of a Live handshake gate: an exactly listed origin (never `["*"]`, which would
+ * let any page — a DNS-rebinding one included — open a socket) carrying no ambient credential.
+ *
+ * @param request The upgrade request.
+ * @param policy The app's `cors` policy.
+ * @returns True when the policy lets this handshake in.
+ */
+export function liveCorsAllowed(request: Request, policy: CorsPolicy | null): boolean {
+  return !!policy && !policy.any && corsCredentialless(request, policy);
+}
+
+/**
+ * Whether the handshake names the app's own public host: `canonicalOrigin`'s host, compared with
+ * `Host` — or `X-Forwarded-Host` under `trustForwardedHeaders`. Without `canonicalOrigin` the
+ * host can't be told from one an attacker's DNS points here, so nothing is trusted.
+ */
+function pinnedHost(request: Request, options: LiveOriginOptions): boolean {
+  if (!options.canonicalOrigin || !URL.canParse(options.canonicalOrigin)) return false;
+  const forwarded = options.trustForwardedHeaders
+    ? request.headers.get("x-forwarded-host")?.split(",")[0].trim()
+    : undefined;
+  const host = (forwarded || request.headers.get("host") || "").toLowerCase();
+  return host !== "" && host === new URL(options.canonicalOrigin).host;
 }
 
 /**

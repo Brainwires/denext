@@ -441,6 +441,7 @@ export async function buildReactNativeDeps(st: UnbundledState): Promise<void> {
     ],
     platformExtensions: rn.platformExtensions,
     jsxInJs: true,
+    resolveAlias: st.opts.resolveAlias,
   });
 }
 

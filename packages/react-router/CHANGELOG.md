@@ -3,6 +3,15 @@
 All notable changes to this package are documented here. It follows its own
 semver, independent of `@denext/denext`.
 
+## [Unreleased]
+
+- **Route typegen.** Each scan writes React Router's `+types/<route>.ts` modules under
+  `.react-router/types/` (as `react-router typegen` does), and `denext typegen` writes them on
+  demand, so `import type { Route } from "./+types/<route>"` type-checks: `Route.LoaderArgs`,
+  `Route.ComponentProps` and the rest, typed from the route module (params from the pattern,
+  loader / action data from what they return, matches from the ancestors). `denext migrate`
+  writes the `compilerOptions.rootDirs` that resolves them and ignores `.react-router/`.
+
 ## [0.3.0] - 2026-10-13
 
 - Requires `@denext/denext` ^4.0.0-rc.1 (the jobs rename and the rest of denext 4.0's breaking

@@ -63,6 +63,8 @@ function beginHidden(wip: Fiber): Fiber | null {
     if (hidden && old!.vnode.props !== c.vnode.props) scheduleUpdateLane(c, TransitionLane);
   }
   fiberExt(wip).primaryCount = count;
+  // Going hidden marks the commit's flagged paths, as a reveal does (a view transition exits it).
+  if (!hasBit(wip.alternate, OffscreenBit)) wip.flags |= Update;
   wip.bits |= OffscreenBit;
   noteOffscreen(); // so the commit pass hides the primary DOM + parks/disconnects effects
   return wip.child;
@@ -96,13 +98,16 @@ function beginActivity(wip: Fiber): Fiber | null {
  * Park the queued layout + passive effects of fibers under a hidden `<Activity>` (the commit
  * collects them apart): each entry records its setup as a disconnected `reconnect` instead of
  * running it, so the effect first mounts when the Activity is revealed — React 19.2 mounts no
- * effect in hidden content.
+ * effect in hidden content. A class's lifecycle entries are dropped the same way.
  */
 function park(fibers: Fiber[]): void {
   setParkingEffects(true);
   try {
     runCommitEffects(fibers, (f) => {
-      const es = (f.pendingEffects ?? []).concat(f.passiveEffects ?? []);
+      // A class's lifecycle entries are plain thunks (`componentDidMount` / `DidUpdate`): none
+      // runs while hidden — the reveal runs `componentDidMount` (React's reappear), so drop them.
+      const es = (f.pendingEffects ?? []).concat(f.passiveEffects ?? [])
+        .filter((e) => typeof e !== "function");
       f.pendingEffects = undefined;
       f.passiveEffects = undefined;
       return es;

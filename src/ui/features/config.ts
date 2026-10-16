@@ -55,7 +55,7 @@ import {
   SourceBlock,
   Tabs,
 } from "../components.ts";
-import { Raw, renderView } from "../view.ts";
+import { renderView } from "../view.ts";
 import {
   readContained,
   StaleWriteError,
@@ -65,8 +65,8 @@ import {
 } from "../security.ts";
 import { loadConfigSchema, resolveAt, type SchemaNode } from "../form/schema.ts";
 import { selectedBranch, widgetFor, type WidgetKind, type WidgetSpec } from "../form/widget.ts";
-import { readWidget, renderWidget, renderWidgets } from "../form/render.ts";
-import { control } from "../form/control.ts";
+import { FormField, FormFields, readWidget } from "../form/render.ts";
+import { Control } from "../form/control.ts";
 import {
   applyListOp,
   decode,
@@ -656,12 +656,16 @@ interface EditableProps {
  */
 function EditableField({ ctx, base, section, spec, feedback }: EditableProps): VNode {
   const value = feedback ? feedback.value : section.value;
-  const widgets = renderWidget(spec, value, {
-    csrf: ctx.csrf,
-    readOnly: ctx.readOnly,
-    errors: feedback?.errors,
-    // The tab already says which key this is.
-    bareAt: fieldName(spec.path),
+  const widgets = h(FormField, {
+    spec,
+    value,
+    ctx: {
+      csrf: ctx.csrf,
+      readOnly: ctx.readOnly,
+      errors: feedback?.errors,
+      // The tab already says which key this is.
+      bareAt: fieldName(spec.path),
+    },
   });
   const clear = h(
     "button",
@@ -679,7 +683,7 @@ function EditableField({ ctx, base, section, spec, feedback }: EditableProps): V
     "form",
     { method: "post", action: sectionAction(section.key), "data-dirty-track": "1" },
     hidden(BASE_FIELD, base),
-    h(Raw, { html: widgets }),
+    widgets,
     h("button", { type: "submit", disabled: ctx.readOnly }, "Save"),
     section.present ? h(Fragment, null, " ", clear) : null,
   );
@@ -746,10 +750,9 @@ function InlineBand(
     spec: section.spec as WidgetSpec,
     value: feedback?.key === section.key ? feedback.value : section.value,
   }));
-  const widgets = renderWidgets(fields, {
-    csrf: ctx.csrf,
-    readOnly: ctx.readOnly,
-    errors: feedback?.errors,
+  const widgets = h(FormFields, {
+    fields,
+    ctx: { csrf: ctx.csrf, readOnly: ctx.readOnly, errors: feedback?.errors },
   });
   return h(
     "form",
@@ -760,7 +763,7 @@ function InlineBand(
       "data-dirty-track": "1",
     },
     hidden(BASE_FIELD, state.base),
-    h(Raw, { html: widgets }),
+    widgets,
     h("button", { type: "submit", disabled: ctx.readOnly }, "Save"),
   );
 }
@@ -817,15 +820,13 @@ interface StateProps {
  * escapes it and a browser posts back exactly the file's bytes.
  */
 function RawFileEditor({ ctx, state }: StateProps): VNode {
-  const editor = h(Raw, {
-    html: control({
-      tag: "textarea",
-      name: "raw",
-      ariaLabel: `${state.name} source`,
-      disabled: ctx.readOnly,
-      rows: 18,
-      value: state.exists ? state.source : EMPTY_CONFIG,
-    }),
+  const editor = h(Control, {
+    tag: "textarea",
+    name: "raw",
+    ariaLabel: `${state.name} source`,
+    disabled: ctx.readOnly,
+    rows: 18,
+    value: state.exists ? state.source : EMPTY_CONFIG,
   });
   return h(
     "div",

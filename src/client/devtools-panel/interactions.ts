@@ -17,7 +17,7 @@ import { toggleSize } from "./size.ts";
 const POLL_MS = 1000;
 
 /** The tabs the shared poller keeps refreshing while they are open. */
-const POLLED_TABS: readonly TabId[] = ["network", "cache"];
+const POLLED_TABS: readonly TabId[] = ["network", "cache", "views", "live"];
 
 /** The one interval behind the live data tabs. */
 export interface DataPoller {
@@ -87,7 +87,7 @@ function chordOf(e: KeyboardEvent): string {
 }
 
 /**
- * The chords that only work while the panel is open: `Alt+1…7` pick a tab, `Ctrl+Shift+[`
+ * The chords that only work while the panel is open: `Alt+1…9` pick a tab (the tenth: the brackets), `Ctrl+Shift+[`
  * / `]` step through them (both the bracket and the shifted brace the key produces on a
  * US layout), and `Escape` cancels the element picker before it closes the panel.
  */

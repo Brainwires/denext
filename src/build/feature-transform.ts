@@ -19,6 +19,7 @@ import {
   absolutizeSpecifiers,
   applyEdits,
   collectPatternNames,
+  type Ctx,
   type Edit,
   endOf,
   type Node,
@@ -27,9 +28,21 @@ import {
   walkAst,
   writeTransformedModules,
 } from "./swc-ast.ts";
+import type { Platform } from "../platform.ts";
 
 /** The import specifier authors use for the feature helper. */
 const FEATURE_SPECIFIER = "denext/feature";
+
+/** The import specifier of the build-target constant (`import { platform } from …`). */
+export const PLATFORM_SPECIFIER = "denext/platform";
+
+/** The build-time constants a module is folded against. */
+export interface BuildConstants {
+  /** The configured `features` (`feature("KEY")` → its boolean). Empty or absent: none folded. */
+  features?: Record<string, boolean>;
+  /** The build target (`platform` → its name). Absent: `platform` is not folded. */
+  platform?: Platform;
+}
 
 /** The result of folding one module's `feature(...)` calls. */
 export interface FeatureFoldResult {
@@ -98,34 +111,62 @@ function foldableKey(node: Node, names: Set<string>): string | null {
  * @param features The configured flags (`features`).
  * @param opts.moduleUrl The module's own URL — pass it only when the caller relocates folded output.
  */
-export async function transformFeatures(
+export function transformFeatures(
   source: string,
   features: Record<string, boolean>,
   opts: { moduleUrl?: string } = {},
 ): Promise<FeatureFoldResult> {
+  return foldBuildConstants(source, { features }, opts);
+}
+
+/** Whether `source` may hold something {@linkcode foldBuildConstants} folds (a cheap pre-filter). */
+function mayFoldBuildConstants(source: string, constants: BuildConstants): boolean {
+  const features = constants.features && Object.keys(constants.features).length > 0;
+  return (!!features && source.includes("feature")) ||
+    (constants.platform !== undefined && source.includes(PLATFORM_SPECIFIER));
+}
+
+/**
+ * Fold a module's build-time constants: each `feature("KEY")` call whose KEY is configured
+ * (see {@linkcode transformFeatures}), and — with `constants.platform` — each read of the
+ * `platform` constant from `denext/platform` to the target's name, and each comparison of it
+ * with a string literal (`platform === "ios"`, `platform != "web"`) to a boolean literal, so the
+ * bundler drops the other targets' branches. A namespace import's `ns.platform` folds the same
+ * way. `opts.moduleUrl` absolutizes relative imports of a folded module (a relocated copy).
+ *
+ * @param source The module source.
+ * @param constants The configured flags and the build target.
+ * @param opts.moduleUrl The module's own URL — pass it only when the caller relocates folded output.
+ */
+export async function foldBuildConstants(
+  source: string,
+  constants: BuildConstants,
+  opts: { moduleUrl?: string } = {},
+): Promise<FeatureFoldResult> {
   const identity: FeatureFoldResult = { code: source, changed: false };
-  // Cheap pre-filter: no `feature` token anywhere → nothing imported, nothing to fold.
-  if (!source.includes("feature")) return identity;
+  if (!mayFoldBuildConstants(source, constants)) return identity;
   const parsed = await parseModule(source);
   if (!parsed) return identity;
   const { ctx, body } = parsed;
-  const names = featureBindings(body);
-  if (names.size === 0) return identity;
-  // Drop any import name re-bound by an inner scope (a `feature` param) so we never fold a call
-  // that isn't the imported helper.
-  for (const shadowed of shadowedNames(body, names)) names.delete(shadowed);
-  if (names.size === 0) return identity;
   const edits: Edit[] = [];
-  for (const item of body) {
-    walkAst(item, (n) => {
-      const key = foldableKey(n, names);
-      if (key === null || !(key in features)) return; // unconfigured key → runtime shim
-      edits.push({
-        start: startOf(ctx, n),
-        end: endOf(ctx, n),
-        text: features[key] ? "true" : "false",
+  const features = constants.features ?? {};
+  const names = featureBindings(body);
+  for (const shadowed of shadowedNames(body, names)) names.delete(shadowed);
+  if (names.size > 0) {
+    for (const item of body) {
+      walkAst(item, (n) => {
+        const key = foldableKey(n, names);
+        if (key === null || !(key in features)) return; // unconfigured key → runtime shim
+        edits.push({
+          start: startOf(ctx, n),
+          end: endOf(ctx, n),
+          text: features[key] ? "true" : "false",
+        });
       });
-    });
+    }
+  }
+  if (constants.platform !== undefined) {
+    edits.push(...platformEdits(ctx, body, constants.platform));
   }
   if (edits.length === 0) return identity; // imported but nothing foldable → leave in place
   // Only now (a real fold) do we relocate → absolutize its relative imports.
@@ -133,8 +174,139 @@ export async function transformFeatures(
   return { code: applyEdits(ctx.bytes, edits), changed: true };
 }
 
+/** Whether `item` is a value import of `denext/platform`. */
+function isPlatformImport(item: Node): boolean {
+  return item.type === "ImportDeclaration" && item.source?.value === PLATFORM_SPECIFIER &&
+    !item.typeOnly;
+}
+
+/** The `platform` constant's local bindings: named imports and namespace imports. */
+interface PlatformBindings {
+  readonly names: Set<string>;
+  readonly namespaces: Set<string>;
+}
+
+/** Record one specifier of a `denext/platform` import into `out`. */
+function addPlatformSpecifier(s: Node, out: PlatformBindings): void {
+  if (s.type === "ImportNamespaceSpecifier") {
+    out.namespaces.add(s.local.value);
+    return;
+  }
+  if (s.type !== "ImportSpecifier" || s.isTypeOnly) return;
+  if ((s.imported?.value ?? s.local?.value) === "platform") out.names.add(s.local.value);
+}
+
+/** The local names bound to `platform` from `denext/platform`, and its namespace imports. */
+function platformBindings(body: Node[]): PlatformBindings {
+  const out: PlatformBindings = { names: new Set(), namespaces: new Set() };
+  for (const item of body.filter(isPlatformImport)) {
+    for (const s of item.specifiers ?? []) addPlatformSpecifier(s, out);
+  }
+  for (const set of [out.names, out.namespaces]) {
+    for (const shadowed of shadowedNames(body, set)) set.delete(shadowed);
+  }
+  return out;
+}
+
+/** Comparison operators a `platform` read folds through. */
+const EQUALITY: Record<string, boolean> = { "===": true, "==": true, "!==": false, "!=": false };
+
 /**
- * Fold `feature(...)` calls in each client module and return an import-map of
+ * Collects the edits folding `platform` reads to one target: a comparison with a string literal
+ * to a boolean, any other expression read to the target's name. Skips what is not an expression
+ * read: types, property keys and non-computed member names, JSX tag names, labels, and the
+ * module's import / export declarations. A shorthand property `{ platform }` becomes
+ * `{ platform: "ios" }`.
+ */
+class PlatformFold {
+  readonly edits: Edit[] = [];
+  readonly #literal: string;
+
+  constructor(
+    private readonly ctx: Ctx,
+    private readonly bindings: PlatformBindings,
+    private readonly target: Platform,
+  ) {
+    this.#literal = JSON.stringify(target);
+  }
+
+  /** Whether `n` reads the constant: a bound name, or `ns.platform` on a namespace import. */
+  #isRead(n: Node): boolean {
+    if (n?.type === "Identifier") return this.bindings.names.has(n.value);
+    if (n?.type !== "MemberExpression" || n.object?.type !== "Identifier") return false;
+    return this.bindings.namespaces.has(n.object.value) && n.property?.value === "platform" &&
+      n.property.type === "Identifier";
+  }
+
+  #replace(n: Node, text: string): void {
+    this.edits.push({ start: startOf(this.ctx, n), end: endOf(this.ctx, n), text });
+  }
+
+  /** Fold `platform === "…"` (either side, any equality operator); false when `n` is not one. */
+  #foldComparison(n: Node): boolean {
+    if (n.type !== "BinaryExpression" || !(n.operator in EQUALITY)) return false;
+    const [ref, other] = this.#isRead(n.left) ? [n.left, n.right] : [n.right, n.left];
+    if (!this.#isRead(ref) || other?.type !== "StringLiteral") return false;
+    const equal = other.value === this.target;
+    this.#replace(n, String(EQUALITY[n.operator] ? equal : !equal));
+    return true;
+  }
+
+  /** An object literal: a shorthand `{ platform }` keeps its key. */
+  #visitObject(n: Node): void {
+    for (const p of n.properties ?? []) {
+      if (p?.type === "Identifier" && this.bindings.names.has(p.value)) {
+        this.#replace(p, `${p.value}: ${this.#literal}`);
+      } else this.visit(p);
+    }
+  }
+
+  /** Visit a node (or an array of them). */
+  visit(n: Node): void {
+    if (!n || typeof n !== "object") return;
+    if (Array.isArray(n)) {
+      for (const c of n) this.visit(c);
+      return;
+    }
+    if (typeof n.type === "string" && SKIPPED_NODES.test(n.type)) return;
+    if (this.#foldComparison(n)) return;
+    if (this.#isRead(n)) return this.#replace(n, this.#literal);
+    if (n.type === "ObjectExpression") return this.#visitObject(n);
+    for (const key of Object.keys(n)) if (!skippedKey(n, key)) this.visit(n[key]);
+  }
+}
+
+/** Whether `n[key]` holds no expression read: a name, a type, a non-computed member or key. */
+function skippedKey(n: Node, key: string): boolean {
+  if (key === "span") return true;
+  const computed = n[key]?.type === "Computed"; // `{ [platform]: … }`, `x[platform]` are reads
+  if (NAME_KEYS.has(key) || key === "property") return !computed;
+  return key === "name" && typeof n.type === "string" && n.type.startsWith("JSX");
+}
+
+/** The edits that fold `platform` reads in `body` to `target` (see {@linkcode PlatformFold}). */
+function platformEdits(ctx: Ctx, body: Node[], target: Platform): Edit[] {
+  const bindings = platformBindings(body);
+  if (bindings.names.size === 0 && bindings.namespaces.size === 0) return [];
+  const fold = new PlatformFold(ctx, bindings, target);
+  for (const item of body) fold.visit(item);
+  return fold.edits;
+}
+
+/**
+ * Nodes whose subtree holds no expression read of the constant: TypeScript types (not the
+ * expression wrappers `x as T`, `x!`, `x satisfies T`, `<T>x`, `x<T>`), the module's own
+ * import / re-export lists, a JSX member tag name, and a bare `break` / `continue` label.
+ */
+const SKIPPED_NODES =
+  /^(?:Ts(?!AsExpression$|NonNullExpression$|SatisfiesExpression$|TypeAssertion$|ConstAssertion$|Instantiation$)|ImportDeclaration$|ExportNamedDeclaration$|ExportAllDeclaration$|JSXMemberExpression$|JSXNamespacedName$|BreakStatement$|ContinueStatement$)/;
+
+/** Keys that hold a name or a type, never an expression read (property keys, labels, JSX names). */
+const NAME_KEYS = new Set(["key", "label", "typeAnnotation", "typeParameters", "typeArguments"]);
+
+/**
+ * Fold the build-time constants (`feature(...)` calls, and with `opts.platform` the `platform`
+ * constant) in each client module and return an import-map of
  * `original file URL → folded file URL` to merge into the native bundle's redirects. Runs
  * over each module's already-transformed source (`prior[url]` when a prior pass rewrote it,
  * else the original file), so the fold composes with auto-memo/qrl/async-context rather than
@@ -142,21 +314,25 @@ export async function transformFeatures(
  *
  * @param files Absolute paths of candidate client source modules.
  * @param prior The merged rewrite map from the earlier client transforms (`url → file url`).
- * @param opts.outDir The build output directory; opts.features the configured flags.
+ * @param opts.outDir The build output directory; opts.features the configured flags;
+ *   opts.platform the build target (omit to leave `platform` reads alone).
  */
 export function compileFeatureModules(
   files: string[],
   prior: Record<string, string>,
-  opts: { outDir: string; features: Record<string, boolean> },
+  opts: { outDir: string; features: Record<string, boolean>; platform?: Platform },
 ): Promise<Record<string, string>> {
-  if (Object.keys(opts.features).length === 0) return Promise.resolve({});
+  const constants: BuildConstants = { features: opts.features, platform: opts.platform };
+  if (Object.keys(opts.features).length === 0 && opts.platform === undefined) {
+    return Promise.resolve({});
+  }
   return writeTransformedModules(
     files,
     join(opts.outDir, "features"),
-    (source, url) => transformFeatures(source, opts.features, { moduleUrl: url }),
+    (source, url) => foldBuildConstants(source, constants, { moduleUrl: url }),
     // Read each module's already-transformed output when a prior pass rewrote it (so the fold
     // composes with auto-memo/qrl/async-context), else the original file. The map stays keyed
-    // by the ORIGINAL URL, which is also the `url` passed to transformFeatures for absolutizing.
+    // by the ORIGINAL URL, which is also the `url` passed to foldBuildConstants for absolutizing.
     (file) => {
       const transformed = prior[toFileUrl(file).href];
       return transformed ? fromFileUrl(transformed) : file;

@@ -25,8 +25,8 @@ import { dispatch } from "../src/mcp/server.ts";
 Deno.test("docs corpus: the committed corpus matches its sources (run `deno task docs:corpus`)", async () => {
   // Every docs page, root guide, AGENTS.md, README.md, the API reference and the generator
   // itself are fingerprinted; editing any of them without regenerating fails here.
-  const { CORPUS_GZIP_BASE64, CORPUS_SOURCE_HASH } = await import(toFileUrl(CORPUS_OUT).href);
-  const committed = await decodeCorpus(CORPUS_GZIP_BASE64) as { sourceHash: string };
+  const { CORPUS_BROTLI_BASE64, CORPUS_SOURCE_HASH } = await import(toFileUrl(CORPUS_OUT).href);
+  const committed = await decodeCorpus(CORPUS_BROTLI_BASE64) as { sourceHash: string };
   assertEquals(committed.sourceHash, CORPUS_SOURCE_HASH, "the shipped JSON carries the same hash");
   assertEquals(
     committed.sourceHash,
@@ -155,8 +155,8 @@ Deno.test("VNodeMarkdown: renders a JSX page tree (components called, shell/code
 // ── the shipped corpus covers the docs site ──
 
 Deno.test("docs corpus: every docs-site page is in the corpus", async () => {
-  const { CORPUS_GZIP_BASE64 } = await import(toFileUrl(CORPUS_OUT).href);
-  const corpus = await decodeCorpus(CORPUS_GZIP_BASE64) as { pages: { slug: string }[] };
+  const { CORPUS_BROTLI_BASE64 } = await import(toFileUrl(CORPUS_OUT).href);
+  const corpus = await decodeCorpus(CORPUS_BROTLI_BASE64) as { pages: { slug: string }[] };
   const slugs = new Set(corpus.pages.map((p) => p.slug));
   const docs = new URL("../site/app/docs/", import.meta.url);
   for await (const e of Deno.readDir(docs)) {

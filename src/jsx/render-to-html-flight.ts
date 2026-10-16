@@ -13,6 +13,7 @@ import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./typ
 import { isComponentType } from "../runtime/react-brands.ts";
 import { type Dispatcher, setDispatcher } from "../runtime/hooks.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
+import { serializeScalar } from "./flight-scalar.ts";
 import { ACTIVITY } from "../runtime/react-extras.ts";
 import { ERROR_BOUNDARY } from "../runtime/error-boundary.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
@@ -74,6 +75,24 @@ export interface HtmlFlightOptions {
    * {@link SegmentConfig.resumable}.
    */
   resumable?: boolean;
+  /**
+   * A soft navigation that streams its deferred values (a Remix `defer()` field, promise data):
+   * each leaves a `{$:"vh"}` value hole the sink settles after the payload is sent, instead of
+   * the render awaiting it.
+   */
+  deferValues?: DeferredValueSink;
+}
+
+/** Collects the deferred values a streamed soft-navigation payload sends after it. */
+export interface DeferredValueSink {
+  /**
+   * Leave a value hole for `promise` and return it; `serialize` serializes the settled value
+   * (in this render's context).
+   */
+  hole(
+    promise: PromiseLike<unknown>,
+    serialize: (value: unknown) => Promise<FlightValue | symbol>,
+  ): FlightValue;
 }
 
 type ProviderScope = Map<symbol, unknown>;
@@ -108,6 +127,8 @@ interface Ctx {
    * id via object identity.
    */
   carvedNested?: WeakMap<VNode, CarvedIsland>;
+  /** See {@link HtmlFlightOptions.deferValues}. */
+  deferred?: DeferredValueSink;
 }
 
 /**
@@ -134,6 +155,7 @@ export async function renderToHtmlFlight(
     resumable: options.resumable ?? false,
     effects,
     carvedNested: new WeakMap(),
+    deferred: options.deferValues,
   };
   const prev = setDispatcher(dispatcher);
   beginSignalCollection();
@@ -197,9 +219,7 @@ function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
   if (type === FRAGMENT) return renderFragmentDual(props, ctx);
   // Suspense: its own id scope (one slot in its parent; content rooted at its position),
   // resolved inline here, retrying on suspension.
-  if ((type as unknown) === SUSPENSE) {
-    return resolveInBoundaryScope(ctx.ids, () => renderChildrenDual(props.children, ctx));
-  }
+  if ((type as unknown) === SUSPENSE) return renderSuspenseDual(props, ctx);
   // Activity is id-transparent (like a Fragment). Visible → render children; hidden →
   // render nothing (the client pre-renders it offscreen after hydration — no mismatch).
   if ((type as unknown) === ACTIVITY) {
@@ -208,6 +228,17 @@ function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
   if ((type as unknown) === ERROR_BOUNDARY) return renderErrorBoundaryDual(props, ctx);
   if (isComponentType(type)) return renderComponentDual(node, type, props, ctx);
   return renderHostDual(hostOf(ctx), node, ctx.resumable, ctx.scopes, ctx.head);
+}
+
+/**
+ * Suspense: its own id scope (one slot in its parent; content rooted at its position), resolved
+ * inline here, retrying on suspension. A streamed soft navigation sends no HTML, so inside an
+ * island the boundary renders its fallback instead of waiting on a deferred value (the client
+ * suspends on the streamed promise).
+ */
+function renderSuspenseDual(props: Record<string, unknown>, ctx: Ctx): Promise<Dual> {
+  const shown = ctx.deferred && ctx.insideIsland ? props.fallback : props.children;
+  return resolveInBoundaryScope(ctx.ids, () => renderChildrenDual(shown as VNodeChildren, ctx));
 }
 
 /** The dual-render operations {@link renderHostDual} composes (a null `head` renders a hoisted `<title>`'s text). */
@@ -318,6 +349,11 @@ function flightOfVNode(node: VNode, ctx: Ctx): FlightNode | Promise<FlightNode> 
 }
 
 function serializeValue(value: unknown, ctx: Ctx): Promise<Serialized> {
+  // A streamed soft navigation leaves a deferred value as a hole sent after the payload.
+  const scalar = ctx.deferred ? serializeScalar(value) : null;
+  if (scalar?.kind === "thenable") {
+    return Promise.resolve(ctx.deferred!.hole(scalar.promise, (v) => serializeValue(v, ctx)));
+  }
   // Taint check (React `taint*`): refuse to serialize a value marked as secret before it
   // Taint enforcement lives in the shared leaf cascade (`serializeScalar`), so every
   // serializer — not just this one — refuses a tainted value.

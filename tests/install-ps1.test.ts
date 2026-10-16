@@ -14,6 +14,7 @@ const SCRIPT = fromFileUrl(new URL("scripts/install.ps1", ROOT));
 const WORKFLOW = fromFileUrl(new URL(".github/workflows/publish.yml", ROOT));
 const NOT_WINDOWS = Deno.build.os !== "windows";
 const ASSET = "denext-x86_64-pc-windows-msvc.zip";
+const ARM_ASSET = "denext-aarch64-pc-windows-msvc.zip";
 
 /** A release on loopback: `/api/repos/…/releases/latest` and `/dl/<tag>/<file>`. */
 interface Release {
@@ -145,6 +146,111 @@ Deno.test("install.ps1: a good checksum installs the binary; -Uninstall removes 
     const removed = await install(release, root, {}, ["-Uninstall"]);
     assertEquals(removed.code, 0, removed.out);
     assert(!(await exists(root)));
+  } finally {
+    await release.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("install.ps1: -Uninstall waits out a transient lock on denext.exe", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  // Uninstall runs denext.exe (`toolchain unlink`) and deletes it a moment later; Windows can
+  // still hold the file then (a GitHub runner did: "being used by another process"). Here the
+  // hold is the stand-in itself, still running when the uninstall starts.
+  const dir = await Deno.makeTempDir();
+  const release = serveRelease("v9.9.9");
+  let held: Promise<Deno.CommandStatus> | undefined;
+  try {
+    // A 4.x stand-in that answers `toolchain` at once, and `hold <ms>` by running that long.
+    const zip = await stubZip(
+      dir,
+      `if (Deno.args[0] === "--version") console.log("denext 9.9.9 (binary)");
+else if (Deno.args[0] === "hold") await new Promise((r) => setTimeout(r, Number(Deno.args[1])));
+`,
+    );
+    release.files.set(ASSET, zip);
+    release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
+    const root = join(dir, "home");
+    assertEquals((await install(release, root, { DENEXT_NO_TOOLCHAIN: "1" })).code, 0);
+    // While it runs, Windows refuses to delete its image - as it can for a moment after a run.
+    held = new Deno.Command(join(root, "bin", "denext.exe"), { args: ["hold", "3000"] })
+      .spawn().status;
+    const removed = await install(release, root, {}, ["-Uninstall"]);
+    assertEquals(removed.code, 0, removed.out);
+    assert(!(await exists(root)), "nothing left behind once the lock is released");
+    assert((await held).success, "the stand-in ran (holding its image) and exited");
+  } finally {
+    await held; // the temp dir can only go once the stand-in has exited
+    await release.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("install.ps1: Windows on Arm installs the Arm64 binary", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  const release = serveRelease("v9.9.9");
+  try {
+    const zip = await releaseZip(dir);
+    release.files.set(ASSET, zip);
+    release.files.set(ARM_ASSET, zip);
+    release.files.set(
+      "SHA256SUMS",
+      new TextEncoder().encode(
+        `${await sha256(zip)}  ${ASSET}\n${await sha256(zip)}  ${ARM_ASSET}\n`,
+      ),
+    );
+    const root = join(dir, "home");
+    const run = await install(release, root, { PROCESSOR_ARCHITECTURE: "ARM64" });
+    assertEquals(run.code, 0, run.out);
+    assertStringIncludes(run.out, "for aarch64-pc-windows-msvc");
+    assert(release.hits.includes(`/dl/v9.9.9/${ARM_ASSET}`), release.hits.join());
+    assert(!release.hits.includes(`/dl/v9.9.9/${ASSET}`), "never fetches the x64 build");
+    assert(await exists(join(root, "bin", "denext.exe")));
+    // The stand-in binary's `toolchain install` fails, as the real one does on Windows on Arm
+    // (no toolchain build): a note naming the deno it runs instead, not a failure warning.
+    assertStringIncludes(run.out, "has no Windows on Arm build yet");
+    assert(!run.out.includes("could not be installed now"), run.out);
+    // An x64 machine still gets the x64 build from the same release.
+    const x64 = await install(release, join(dir, "x64"), { PROCESSOR_ARCHITECTURE: "AMD64" });
+    assertEquals(x64.code, 0, x64.out);
+    assertStringIncludes(x64.out, "for x86_64-pc-windows-msvc");
+    assertStringIncludes(x64.out, "could not be installed now");
+  } finally {
+    await release.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("install.ps1: a release without an Arm64 build installs x64 on Windows on Arm", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  const release = serveRelease("v4.1.0");
+  try {
+    const zip = await releaseZip(dir);
+    release.files.set(ASSET, zip);
+    release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
+    const root = join(dir, "home");
+    const run = await install(release, root, { PROCESSOR_ARCHITECTURE: "ARM64" });
+    assertEquals(run.code, 0, run.out);
+    assertStringIncludes(run.out, "v4.1.0 has no aarch64-pc-windows-msvc build");
+    assert(release.hits.includes(`/dl/v4.1.0/${ASSET}`), release.hits.join());
+    assertStringIncludes(run.out, "checksum verified");
+    assert(await exists(join(root, "bin", "denext.exe")));
+    // The same from a local build directory (DENEXT_ARTIFACTS).
+    const art = join(dir, "art");
+    await Deno.mkdir(art);
+    await Deno.writeFile(join(art, ASSET), zip);
+    await Deno.writeTextFile(join(art, "SHA256SUMS"), `${await sha256(zip)}  ${ASSET}\n`);
+    const local = await install(release, join(dir, "local"), {
+      PROCESSOR_ARCHITECTURE: "ARM64",
+      DENEXT_ARTIFACTS: art,
+    });
+    assertEquals(local.code, 0, local.out);
+    assertStringIncludes(local.out, `installing ${ASSET} from`);
   } finally {
     await release.close();
     await Deno.remove(dir, { recursive: true });
@@ -311,26 +417,12 @@ Deno.test("install.ps1: DENEXT_ARTIFACTS installs a local build, still checksum-
   }
 });
 
-/**
- * A zip holding a compiled `denext.exe` stand-in that answers `--version` as `denext <version>
- * (binary)` and, like a release before 4.0, refuses every other verb as `unknown command` after
- * logging it to $STUB_LOG.
- */
-async function preToolchainZip(dir: string, version: string): Promise<Uint8Array> {
+/** A zip holding `denext.exe` compiled from the Deno `source` (a stand-in with chosen answers). */
+async function stubZip(dir: string, source: string): Promise<Uint8Array> {
   const stage = join(dir, "stage");
   await Deno.mkdir(stage, { recursive: true });
   const src = join(dir, "stub.ts");
-  await Deno.writeTextFile(
-    src,
-    `if (Deno.args[0] === "--version") console.log("denext ${version} (binary)");
-else {
-  const log = Deno.env.get("STUB_LOG");
-  if (log) Deno.writeTextFileSync(log, Deno.args.join(" ") + "\\n", { append: true });
-  console.error(\`denext: unknown command "\${Deno.args[0]}"\`);
-  Deno.exit(1);
-}
-`,
-  );
+  await Deno.writeTextFile(src, source);
   const compiled = await new Deno.Command(Deno.execPath(), {
     args: [
       "compile",
@@ -345,6 +437,25 @@ else {
   }).output();
   assert(compiled.success, new TextDecoder().decode(compiled.stderr));
   return await zipStage(dir, stage);
+}
+
+/**
+ * A zip holding a compiled `denext.exe` stand-in that answers `--version` as `denext <version>
+ * (binary)` and, like a release before 4.0, refuses every other verb as `unknown command` after
+ * logging it to $STUB_LOG.
+ */
+async function preToolchainZip(dir: string, version: string): Promise<Uint8Array> {
+  return await stubZip(
+    dir,
+    `if (Deno.args[0] === "--version") console.log("denext ${version} (binary)");
+else {
+  const log = Deno.env.get("STUB_LOG");
+  if (log) Deno.writeTextFileSync(log, Deno.args.join(" ") + "\\n", { append: true });
+  console.error(\`denext: unknown command "\${Deno.args[0]}"\`);
+  Deno.exit(1);
+}
+`,
+  );
 }
 
 Deno.test(
@@ -381,9 +492,15 @@ Deno.test("install.ps1 and publish.yml agree on the Windows asset and checksum n
   const script = await Deno.readTextFile(SCRIPT);
   const workflow = await Deno.readTextFile(WORKFLOW);
   assertStringIncludes(script, '$asset = "denext-$target.zip"');
-  assertStringIncludes(script, "$target = 'x86_64-pc-windows-msvc'");
+  // The native Arm64 build first on Windows on Arm, the x64 one as its fallback.
+  assertStringIncludes(
+    script,
+    "'ARM64' { @('aarch64-pc-windows-msvc', 'x86_64-pc-windows-msvc') }",
+  );
+  assertStringIncludes(script, "'AMD64' { @('x86_64-pc-windows-msvc') }");
   assertStringIncludes(script, "'SHA256SUMS', \"$asset.sha256\"");
   assertStringIncludes(workflow, "target: x86_64-pc-windows-msvc");
+  assertStringIncludes(workflow, "target: aarch64-pc-windows-msvc");
   assertStringIncludes(workflow, 'archive="$name.zip"; zip "dist/$archive" denext.exe');
   assertStringIncludes(workflow, "> SHA256SUMS");
   // The release attaches the package-manager manifests generated from the same SHA256SUMS.

@@ -209,8 +209,9 @@ export function libraryDepUrl(spec: string, importer: string): string | undefine
 }
 
 /**
- * The prebuilt-runtime URL (under {@link DEP_PREFIX}) of a react-family, `next/*` or
- * `denext/*` specifier; `null` for an unmapped `next/*` (the server surface, left alone);
+ * The prebuilt-runtime URL (under {@link DEP_PREFIX}) of a react-family, `next/*`, `next-auth/*`
+ * or `denext/*` specifier; `null` for an unmapped `next/*` / `next-auth/*` (the server surface,
+ * left alone);
  * `undefined` when the specifier is not one of those (a package, `node:`, a URL).
  */
 export function runtimeDepUrl(spec: string): string | null | undefined {
@@ -219,7 +220,7 @@ export function runtimeDepUrl(spec: string): string | null | undefined {
     return `${DEP_PREFIX}${f}`;
   }
   if (spec === "react-is") return `${DEP_PREFIX}react-is.js`;
-  if (spec === "next" || spec.startsWith("next/")) {
+  if (spec === "next" || spec.startsWith("next/") || /^next-auth(?:$|\/)/.test(spec)) {
     const f = NEXT_ALIASES[spec];
     return f ? `${DEP_PREFIX}${f}` : null;
   }

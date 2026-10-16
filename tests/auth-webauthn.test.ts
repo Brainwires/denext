@@ -1,7 +1,8 @@
 // WebAuthn relying-party verification (src/server/auth/webauthn.ts) against the W3C WebAuthn
 // Level 3 §16 test vectors (tests/fixtures/webauthn-l3-vectors.json, copied from the spec):
 // every supported registration + authentication verifies — ES256 with `none`, packed self and
-// packed x5c attestation, a 1023-byte credential ID, RS256, Ed25519 — and the unsupported
+// packed x5c attestation, tpm, android-key, apple and fido-u2f, a 1023-byte credential ID, RS256,
+// Ed25519 — and the unsupported
 // algorithms (ES384, ES512, Ed448) are refused. Then the negative cases, each one mutation of a
 // valid vector: wrong origin, RP ID, challenge and ceremony type, a cross-origin call, missing
 // UP / UV, a tampered signature / attestation / authenticator data, a BE change, a counter that
@@ -341,3 +342,37 @@ Deno.test("webauthn: DER ECDSA signatures are parsed strictly", () => {
     "not a SEQUENCE",
   );
 });
+
+// ---- the spec's certificate attestation formats (§16.13–§16.16) -----------------------------
+
+/** The spec's tpm / android-key / apple / fido-u2f registrations (§8.3, §8.4, §8.8, §8.6). */
+const SPEC_FORMATS: Array<[string, string, string]> = [
+  ["tpm-es256", "tpm", "attca"],
+  ["android-key-es256", "android-key", "basic"],
+  ["apple-es256", "apple", "anonca"],
+  ["fido-u2f-es256", "fido-u2f", "basic"],
+];
+
+for (const [name, fmt, type] of SPEC_FORMATS) {
+  Deno.test(`webauthn: the spec's ${fmt} registration verifies (${type}), and so does its assertion`, async () => {
+    const r = V[name as VectorName].registration;
+    const result = await register(name as VectorName);
+    await authenticate(name as VectorName);
+    assertEquals(result.fmt, fmt);
+    assertEquals(result.attestationType, type);
+    assertEquals(result.alg, -7);
+    assert(result.attestationCertificates?.length);
+    assertEquals(
+      Array.from(result.credentialId, (b) => b.toString(16).padStart(2, "0")).join(""),
+      r.credential_id,
+    );
+  });
+
+  Deno.test(`webauthn: the spec's ${fmt} registration bound to another challenge is refused`, async () => {
+    const other = withClientData(name as VectorName, "registration", { extra: "x" });
+    await refused(
+      register(name as VectorName, {}, { clientDataJSON: other }),
+      "attestation",
+    );
+  });
+}

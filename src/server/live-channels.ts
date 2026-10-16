@@ -10,6 +10,7 @@
 // the subscriber's session (`no-policy` when the channel has none; a throw is a deny); a
 // post-await connected + cap re-check. No initial frame: a channel is stateless.
 
+import { liveDevtoolsEnabled, recordChannelPush } from "./live-devtools.ts";
 import { type ChannelEvent, type ChannelIdleReason, getChannel } from "../runtime/channel.ts";
 import { inRootContext } from "./root-context.ts";
 import type { LiveError, LiveServerMessage } from "../runtime/live-protocol.ts";
@@ -286,6 +287,9 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
       index.clear();
     },
     deliver(ev) {
+      if (liveDevtoolsEnabled()) {
+        recordChannelPush(ev, index.get(ev.channelId)?.get(ev.key)?.size ?? 0);
+      }
       if (ev.kind === "revoke") return revokeAll(ev);
       pendingEvents.set(`${ev.channelId}\0${ev.key}`, ev); // latest publish wins in the window
       // The flush serves every subscriber, not the publisher: start its timer outside the

@@ -1,6 +1,7 @@
 // Serving a matched page end to end: ISR cache → PPR shell → streamed or buffered
 // render → soft-navigation payload / cached document / buffered document.
 
+import { navDeferredBody } from "./nav-deferred.ts";
 import type { RouteManifest } from "../router/manifest.ts";
 import { matchPage, type PageMatch } from "../router/match.ts";
 import type { PeeledLocale } from "./i18n.ts";
@@ -163,6 +164,15 @@ async function recoverPageError(
 }
 
 /**
+ * A soft navigation's method: a GET, or the POST it becomes when its render payload is too large
+ * for headers (the Remix `shouldRevalidate` echo; request-pipeline.ts read the body), which is
+ * answered the same way. `pr.soft` already says the request carries `x-denext-nav`.
+ */
+function isNavMethod(request: Request): boolean {
+  return request.method === "GET" || request.method === "POST";
+}
+
+/**
  * Flight soft-navigation: a client nav to a Flight route gets the JSON Flight payload
  * instead of a full HTML document — the client parses it through the app-wide client
  * registry and reconciles the retained root in place (no HTML parse, no bundle re-run).
@@ -172,7 +182,7 @@ async function recoverPageError(
  */
 function flightNavResponse(pr: PageRequest, rendered: RenderedPage): Response | null {
   const isFlightNav = pr.soft && pr.useFlight && rendered.flight !== undefined &&
-    pr.state.request.method === "GET";
+    isNavMethod(pr.state.request);
   if (!isFlightNav) return null;
   const payload = serializeFlightNav({
     flight: rendered.flight!,
@@ -181,11 +191,17 @@ function flightNavResponse(pr: PageRequest, rendered: RenderedPage): Response | 
     islands: rendered.islands,
     signalState: rendered.signalState,
   });
+  // Deferred values left as holes follow the payload, each as it settles (nav-deferred.ts).
+  const values = pr.navValues?.pending.size ? pr.navValues : undefined;
   return finalize(
     pr.state,
-    new Response(payload, {
+    new Response(values ? navDeferredBody(payload, values, pr.state.ctx.signal) : payload, {
       status: rendered.status,
-      headers: { ...SOFT_NAV_HEADERS, "x-denext-flight": "1" },
+      headers: {
+        ...SOFT_NAV_HEADERS,
+        "x-denext-flight": "1",
+        ...(values ? { "x-denext-defer": "1" } : {}),
+      },
     }),
   );
 }
@@ -198,7 +214,7 @@ function flightNavResponse(pr: PageRequest, rendered: RenderedPage): Response | 
  */
 function isoNavResponse(pr: PageRequest, rendered: RenderedPage): Response | null {
   const { config } = pr.state.app;
-  const isoEntry = pr.soft && !pr.useFlight && pr.state.request.method === "GET"
+  const isoEntry = pr.soft && !pr.useFlight && isNavMethod(pr.state.request)
     ? config.clientEntryFor?.(pr.page.route)
     : undefined;
   if (!isoEntry) return null;

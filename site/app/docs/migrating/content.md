@@ -83,6 +83,7 @@ promise is machine-verified".
 | Portals, refs, `react-is`, `Slot`/`asChild`, React event semantics                                                                                                              | ✅                                                                                                                                                                                                                       |
 | `next/font/local` + `next/font/google` (self-hosted at build)                                                                                                                   | ✅                                                                                                                                                                                                                       |
 | `next-intl` (compact ICU on `Intl.*`)                                                                                                                                           | ✅                                                                                                                                                                                                                       |
+| `next-auth` (Auth.js v5): `NextAuth()`, `next-auth/react`, `next-auth/jwt`, the main providers, Auth.js adapters                                                                | ✅ on `denextAuth` ([Auth](/docs/auth#next-auth-authjs-v5-apps))                                                                                                                                                         |
 | `better-sqlite3` → `node:sqlite` shim                                                                                                                                           | ✅                                                                                                                                                                                                                       |
 | Real npm React UI libs (Radix, recharts, RHF, dnd-kit, sonner, …)                                                                                                               | ✅ via next-compat                                                                                                                                                                                                       |
 | React **class components** (for those libs)                                                                                                                                     | ✅ on-demand runtime chunk; `classComponents` forces it on/off                                                                                                                                                           |
@@ -314,6 +315,10 @@ Most App Router code is already compatible. Typical adjustments:
   header overrides work; inbound client `x-middleware-*` headers are ignored
   (not trusted).
 - **`cookies()` / `headers()`** — available from `next/headers`.
+- **`next-auth` (Auth.js v5)** — `auth.ts`, the `[...nextauth]` route, `middleware.ts` and
+  `next-auth/react` run unchanged on `denextAuth` once `denext migrate` maps the package. Set
+  `AUTH_URL` in production; denext keeps its stricter CSRF, redirect and cookie defaults (see
+  [Auth](/docs/auth#next-auth-authjs-v5-apps)).
 - **Metadata** — `<title>`/`<meta>`/`<link>` are hoisted to `<head>` (React 19
   semantics).
 - **`next/image`, `next/link`, `next/script`, `next/dynamic`** — compat shims

@@ -121,16 +121,22 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   `createContext`, `forwardRef`, `createPortal`, `lazy`, `Profiler`,
   `StrictMode`.
 - **`Activity`** — real offscreen scheduling: `mode="hidden"` keeps a subtree
-  mounted-but-hidden (state preserved, effects torn down), `mode="visible"`
-  restores the same instances; content that mounts hidden is pre-rendered and runs
-  no effects until it is revealed (React 19.2); import-gated, so apps that don't
-  use it pay nothing.
+  mounted-but-hidden (state preserved, effects torn down, a class's
+  `componentWillUnmount` run and refs detached), `mode="visible"` restores the same
+  instances (effects, `componentDidMount` and refs again); content that mounts hidden
+  is pre-rendered and runs no effects, class lifecycles or refs until it is revealed
+  (React 19.2); import-gated, so apps that don't use it pay nothing.
 - **`ViewTransition`** — per-element view transitions across navigations: a shared
   `name` morphs an element between routes, `enter`/`exit`/`update`/`share` +
   `addTransitionType` select the animation, on every soft-nav path; and, as in
   React 19.2, on the same page: a commit made only of Transition work animates the
-  boundaries that enter, exit, are shared or update (urgent updates never do);
-  import-gated.
+  boundaries that enter, exit, are shared or update (urgent updates never do), an
+  `<Activity>` going hidden animates as an exit, and a boundary outside the viewport
+  is skipped; `onEnter` / `onExit` / `onUpdate` / `onShare` get React's
+  `ViewTransitionInstance` (`animate()` on its `::view-transition-*` pseudo-elements)
+  and the transition types once it is ready, and a returned cleanup runs when it
+  finishes (a boundary that persists across a soft navigation runs `onUpdate` when its
+  content changed or it moved); a `ref` receives the same instance; import-gated.
 - **Auto-memo compiler** (React-Compiler-style automatic memoization) ⚑.
 - **First-party `AsyncContext`** (TC39-shaped `Variable` + `Snapshot`) — the
   primitive no browser has shipped, implemented in userland. Synchronous scoping
@@ -162,8 +168,17 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   negotiated locale or a request a `middleware.ts` matched.
 - Pluggable **cache stores**: the durable **`node:sqlite`** (real SQLite built
   into Deno; the default — bounded + stale-while-revalidate) with an in-memory
-  LRU fallback; swap in any custom `CacheStore` via `setCacheStore` to share
-  across instances.
+  LRU fallback; swap in a shared one via `setCacheStore` / `cache.store` —
+  `postgresCacheStore`, `redisCacheStore`, `denoKvCacheStore` or your own.
+- **Shared stores on Redis and Deno KV** — `redisCacheStore`, `redisSessionStore`,
+  `redisRateLimitStore` on `redisClient`, a zero-npm RESP2 client over `Deno.connect` /
+  `Deno.connectTls` (AUTH incl. ACL users, SELECT, one pipelined connection, MULTI/EXEC,
+  reconnect); `denoKvCacheStore`, `denoKvSessionStore`, `denoKvRateLimitStore` on any
+  `Deno.Kv` (chunked large values, version-checked commits). The exported contract suites
+  `cacheStoreContract` / `sessionStoreContract` / `rateLimitStoreContract` (`denext/testing`)
+  run against every shipped store and prove a community one. — `src/server/redis.ts`,
+  `redis-cache.ts`, `deno-kv.ts`, `deno-kv-cache.ts`, `src/server/auth/redis-*.ts`,
+  `deno-kv-stores.ts`, `src/testing/store-contracts.ts`.
 
 ## Server features
 
@@ -305,7 +320,8 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   (`src/runtime/channel.ts`) + `publish(key, payload)` from anywhere on the server pushes
   to every authorized `useChannel(ref, key)` subscriber — required `authorize`, lazy TTL
   re-auth + `revoke`, latest-wins under back-pressure, a `ChannelTransport` for
-  multi-instance delivery (`src/server/live-channels.ts`) — which also carries
+  multi-instance delivery (`src/server/live-channels.ts`; `redisChannelTransport()` over Redis
+  pub/sub with reconnect + resubscribe, `src/server/redis-pubsub.ts`) — which also carries
   `revalidateTag`/`updateTag` invalidations cross-instance, so a tag invalidated on one
   instance re-pushes `<Live>` / `useLive` / `useSubscription` / `useApi({ tags })` watchers
   on every instance.
@@ -321,7 +337,8 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   args, { tags })` subscribes to a server function's result
   and re-runs it under the viewer's session on tag invalidation;
   `usePresence(room)` gives who's-online / cursors
-  (`{ self, others, peers, setState }`); `useLiveOptimistic` pairs an optimistic
+  (`{ self, others, peers, setState }`, across instances through the app's `ChannelTransport`:
+  per-instance snapshots plus a heartbeat — `src/server/live-presence.ts`); `useLiveOptimistic` pairs an optimistic
   overlay with the live value. A Convex/Liveblocks-class layer, zero npm. Postgres
   writes reach the same socket through `@denext/backend`'s realtime (`useTableChanges`, or
   `revalidateTag("table:<name>")` per burst; see [Backend](#backend-opt-in-plugin-denextbackend)).
@@ -491,8 +508,8 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   overlay; a **searchable, collapsible component tree** (+ optional host nodes);
   per-node **props, hooks/state, and context** with **named hooks**
   (`count · useState`, custom hooks expanded as breadcrumbs — declared in the same
-  module or across a static relative import — **`useDebugValue`** labels, and an
-  honest all-or-nothing fallback to kind labels when the walk can't be trusted),
+  module or across a static relative import — **`useDebugValue`** labels, conditional
+  and package hooks aligned around, and kind labels only where no name is certain),
   **live `useState` editing**, **ref-set / reducer-dispatch**, **live prop
   overrides**, and **deep lazy value inspection** (copy / `console.log` /
   store-as-`$d`); **capability badges** (memo/forwardRef/Suspense/…); **"why did
@@ -612,6 +629,11 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   leaves the rest out of the bundle; `mobile dev` and `desktop dev` serve each
   shell its own files. — `src/build/platform-extensions.ts`,
   `src/build/platform-imports.ts`.
+- **The `platform` constant** — `import { platform } from "denext/platform"`,
+  folded to the target's name (and `platform === "ios"` to a boolean) in the
+  app's own modules on every build path and in `denext dev`, so other targets'
+  branches are dead-code-eliminated. — `src/platform.ts`,
+  `src/build/feature-transform.ts`.
 - **Deno Desktop apps** — `denext desktop run | dev | build | package` export
   the app and build it with `deno desktop`: `run` and `dev` build into a temp
   directory with the packaged app's own least-privilege `--allow-*` and launch it,
@@ -748,8 +770,8 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - Codecs as first-party zero-npm JSR packages: **`@denext/photon`**
   (resize/WebP), **`@denext/avif`** (AVIF).
 - **`next/font`** (local + Google; Google self-hosted at build, with Next's metric-matched
-  fallback face — `adjustFontFallback` — from a bundled real-metrics table; a local font gets
-  no fallback face yet).
+  fallback face — `adjustFontFallback` — from a bundled real-metrics table; a local font's
+  fallback face is measured from the font file itself).
 - **`next/og`** dynamic OG images via **`@denext/og`** (satori + resvg + yoga) —
   inline `style` + Tailwind (`tw`), **async components**, and an `offline: true`
   switch that renders with zero network egress (errors instead of fetching a
@@ -1083,9 +1105,12 @@ cache uses Deno's built-in `node:sqlite`.)
   a pinned `npm:fallow` through Deno, a pre-commit hook and an `AGENTS.md`. —
   `src/cli/commands/fallow.ts`, `src/build/fallow-template.ts`.
 - **Installers for the CLI** — `install.sh` and, on Windows, `install.ps1`
-  (per-user, no admin) verify the release archive against `SHA256SUMS`; each
-  release also attaches a Homebrew formula, a Scoop manifest and a winget
-  manifest set. — `scripts/install.ps1`, `scripts/gen-package-manifests.ts`.
+  (per-user, no admin) verify the release archive against `SHA256SUMS`; binaries
+  for macOS and Linux (arm64, x64) and Windows (x64, Arm64). Each stable release
+  publishes its Homebrew formula to the `Brainwires/homebrew-denext` tap, its
+  Scoop manifest to the `Brainwires/scoop-denext` bucket and its winget manifests
+  as a pull request to `microsoft/winget-pkgs`. — `scripts/install.ps1`,
+  `scripts/gen-package-manifests.ts`, `scripts/publish-package-manifests.ts`.
 - **A generated first-party package catalog** (`src/plugin/catalog.json`): every
   `@denext/*` package's version, `jsr:` range, plugin-or-library kind, factory
   export, CLI verb, option keys and an options JSON Schema, emitted from the
@@ -1725,8 +1750,13 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   generated table of real metrics (Capsize's set, the one Next ships; regenerate with
   `deno task gen:font-metrics`), using Next's own math — so text laid out before the
   web font arrives takes the same space (no font-swap CLS) and a migrated app gets
-  identical overrides. — `src/compat/next/font/fallback.ts`,
-  `src/compat/next/font/font-metrics.ts`, `scripts/gen-font-metrics.ts`.
+  identical overrides. `next/font/local` gets the same face (default `Arial`, or
+  `adjustFontFallback: "Times New Roman"`), measured from the font file itself — `.ttf` /
+  `.otf` / `.woff` / `.woff2`, parsed with no npm (`head`, `hhea`, `cmap` + `hmtx` for the
+  sample-text width), the file picked by Next's weight-400/normal rule — with Next's
+  `getFallbackMetricsFromFontFile` math. — `src/compat/next/font/fallback.ts`,
+  `src/compat/next/font/font-file.ts`, `src/compat/next/font/font-metrics.ts`,
+  `scripts/gen-font-metrics.ts`.
 
 ### 3.9 SEO — automatic where Next is manual **[default]**
 
@@ -1778,6 +1808,22 @@ the reconciler. Both are opt-in and tree-shake out of apps that don't use them.
   Convex/Liveblocks/PartyKit-class layer with **zero npm and zero extra infra**;
   the socket is shared with `<Live>` and opens only when a live feature mounts.
   — `src/live.ts` exports.
+- **Live views — server-held Model–View–Update.** `defineLiveView({ id, init, update, view,
+  subscriptions?, authorize?, events? })` keeps a program's model on the server per Live
+  connection (Phoenix LiveView / Lustre server components): HTML first paint inside the
+  `denext#LiveView` island, events bound with `send(…)` over the same `/_denext/live` socket
+  (only a handler index travels; payloads shape-checked + the view's Standard Schema), `update`
+  and its effects run as the viewer, and the re-render goes back as a Flight diff the reconciler
+  applies in place. Signed props, `authorize` at render / mount / resume / TTL, per-connection
+  view and memory caps, a bounded per-view inbox, whole-tree catch-up after back-pressure, and
+  resume after a reconnect within `viewResumeSeconds`. — runtime `src/runtime/live-view.ts`;
+  hub half `src/server/live-views.ts`; diff `src/runtime/flight-patch.ts`; island
+  `src/client/live-view-island.ts`; client `src/client/live-view-client.ts`.
+- **Model–View–Update in the browser.** `useMvu(init, update, subscriptions?)` / `MvuView` from
+  `denext/mvu`: effects (`fx.fetch` / `delay` / `task` / `dispatch`) and subscriptions
+  (`subs.interval` / `channel`) are data the runtime executes; the DevTools MVU tab time-travels
+  over each program's steps. — engine `src/runtime/mvu.ts`; entrypoint `src/mvu.ts`; tab
+  `src/client/devtools-panel/mvu.ts`.
 - _Caveat:_ requires a Flight (RSC) route; the WebSocket transport is a new
   attack surface tracked in [the CVE-defense guide](https://denext.dev/docs/security).
 

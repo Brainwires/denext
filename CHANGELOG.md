@@ -8,6 +8,509 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-10-16
+
+### Added
+
+- **`@denext/react-router` route typegen.** The plugin writes React Router's `+types/<route>.ts`
+  modules under `.react-router/types/` on every scan and on `denext typegen`, so a route
+  module's `import type { Route } from "./+types/<route>"` type-checks (`Route.LoaderArgs`,
+  `Route.ComponentProps`, … typed from the module itself). `denext migrate` writes the
+  `compilerOptions.rootDirs` that resolves them.
+- **Profiler export, compare and component filters.** The DevTools Profiler tab filters by
+  component name (the ranking, the flamegraph and the commit strip follow it), pins a commit as
+  a baseline and lists each component's self-time and render-count change against it, and
+  exports a recording as JSON and imports one to compare with the current recording.
+  `denext profile` gets `--out <file>` (save the run), `--compare <file>` (CPU total, heap and
+  per-function deltas against a saved run) and `--filter <text>` (only functions whose name or
+  source contains it; totals and the `--budget` verdict stay the whole run's).
+- **A soft navigation sent as a POST streams its deferred values.** A navigation whose Remix
+  `shouldRevalidate` echo is too large for headers goes out as a POST; it now gets the same
+  answer as a GET: a Flight route's payload at once with each `defer()` value following as it
+  settles (an isomorphic route's compact payload), instead of a whole HTML document carrying
+  every resolved value.
+- **DevTools names hooks around what it can't see.** A hook in a branch or after an early
+  `return` is named whether or not it ran, a package's custom hook (a bare / `npm:` / `jsr:` /
+  URL import) is labelled by its call and takes the cells its neighbours leave, a namespace
+  import's `auth.useAuth()` and a barrel's `export *` are followed to the declaring module, and
+  barrels chain up to three deep. Where two unknown hooks could share cells, those cells stay
+  unnamed instead of the whole component losing its names.
+- **Boot diagnosis follows the import map and catches ambiguous exports.** The walk follows a
+  bare specifier the page's import map resolves (an exact key, a `"pkg/"` prefix, or a scope
+  containing the importer) into the mapped module, so its imports and link edges are checked
+  too. A name the target gets only through `export *` from two modules with different bindings
+  (a SyntaxError in browsers) is reported with both sources, and Chrome's "conflicting star
+  exports" / Firefox's "ambiguous indirect export" messages are surfaced like a missing export.
+- **`<ViewTransition ref>` and `onUpdate` on a soft navigation.** A `ref` receives the boundary's
+  `ViewTransitionInstance` once its first host mounts (React's `commitAttachRef`): kept across
+  renders, a new one when `name` changes, detached on unmount or when an `<Activity>` hides it. A
+  boundary with a `ref` renders through a small client wrapper, so a plain `<ViewTransition>`
+  stays hook-free and renders in Server Components. A boundary that persists across a soft
+  navigation now runs `onUpdate` when the navigation changed its content or moved its box and it
+  was or is in the viewport, as a same-page Transition does.
+- **DevTools: Live views and Live tabs.** Two dev-only panel tabs read the dev server: **Live
+  views** lists the server-held live views (`defineLiveView`) on the instance, attached or
+  parked, with their models and the recent messages their `update` ran; **Live** lists each
+  Live socket and what it subscribes to (`<Live>` boundaries and tags, data subscriptions, tag
+  watches, channel keys, presence rooms), the recent channel pushes and the recent cache
+  entries written. Both are served from origin-gated `/_denext/dev-live-views` and
+  `/_denext/dev-live`, record only under `denext dev`, ship in no production bundle, and are
+  redacted like the MCP bridge (every string inside a model, message or payload is
+  `string(n)`).
+- **Deno Desktop runtime 2.9.7-denext.20, pinned** (the toolchain moves with it). What it brings to
+  denext apps is below; [the runtime releases](https://denext.dev/docs/desktop-runtime#runtime-releases)
+  list the rest.
+- **`denext build --compile` builds onto the toolchain's own `denort`.** The runtime release ships
+  a `denort` per target (`deno-denort-*`); `deno task desktop:pin-runtime` pins each (file, URL,
+  SHA-256, size, attestation) in `deno-toolchain-pin.json`, and `build --compile` downloads it into
+  the toolchain cache, verifies it the way the toolchain binary is verified, and hands it to
+  `deno compile` (`DENORT_BIN`), cross-compiles included. A compiled app now has `Deno.SQL`;
+  `DENEXT_DENO=stock` keeps Deno's stock `denort`.
+- **Delivered notifications from the OS on macOS and Windows.** `deliveredNotifications()` /
+  `removeDeliveredNotifications()` in a Deno Desktop window read and clear the notification centre
+  itself (`UNUserNotificationCenter`, Windows' toast history), so a notification the user dismissed
+  is no longer listed and one from an earlier run is. Linux keeps the run's own list.
+- **Destructive menu items and PNG icons in the desktop context menu.** `setAppMenu`, tray and Dock
+  menus take `destructive: true` (red on macOS, WebKitGTK and CEF's menus;
+  `appCapabilities().destructive`), and `showContextMenu` / `useContextMenu` draw `destructive`
+  items in red and an item's new `iconPng` (a base64 PNG) in the Deno Desktop OS menu.
+- **The share sheet in a Deno Desktop window.** `share()` from `denext/mobile` opens the OS share
+  sheet over the window on macOS (`NSSharingServicePicker`) and Windows (`DataTransferManager`),
+  and keeps its web path on Linux. `shareFromWindow` from `denext/desktop/window` also shares
+  picked or app-folder files (never a raw path) and anchors the macOS sheet;
+  `windowCapabilities().share` says whether there is one.
+- **Handoff and Spotlight on macOS.** `setUserActivity` / `clearUserActivity` /
+  `onUserActivityContinued` in `denext/desktop/app` (`NSUserActivity`: `type`, `title`, `url`,
+  `userInfo`, `keywords`, `handoff`, `searchable`); `desktop.macos.userActivityTypes` lists the
+  types the app continues, which the macOS package script writes to `NSUserActivityTypes`.
+- **`desktop.windows.proxy`** (`"system"` | `"direct"`): the Windows CEF window's proxy launch
+  setting, written to the bundle's `laufey-launch.json` and passed as `LAUFEY_PROXY` by
+  `denext desktop run` / `dev`. `"direct"` skips proxy discovery, so a slow WPAD / PAC lookup no
+  longer holds the page's loopback WebSocket at startup; under `"system"` the runtime now warms the
+  resolver up as the window is created.
+- **`ViewTransitionCallback`, `ViewTransitionInstance` and `ViewTransitionPseudoElement`
+  (`denext`) and `DeferredValueSink` (`denext/server`) are exported**: the types the public
+  `<ViewTransition>` props and the render options already referenced (`deno task doc-lint` is
+  clean again). `denext create` maps `denext/deploy` in the new app's `deno.json`.
+- **Deploy adapters and presets: `denext/deploy`, `denext deploy`.** `denext build` writes
+  `.denext/deploy-manifest.json`, a typed, versioned build manifest (`DeployManifest`, exported
+  from `denext/deploy` and `denext/plugin-kit`): every route classified as `static`, `isr`,
+  `dynamic`, `route-handler` or `middleware` (with the reason, the `revalidate`, the methods, the
+  matcher), the files served as they are with their `Cache-Control`, the server's start command,
+  port, health path and drain, the jobs and every schedule, the services, the environment the app
+  reads, the Deno permissions, the image optimizer, the cache store and the `build --compile`
+  output — read from the sources as text, sorted and project-relative, so one tree writes the same
+  bytes. A deploy adapter turns it into a target's files: `deploy: { adapter }` in
+  `denext.config.ts` (run after every `denext build`), a plugin's new `addDeployAdapter`, or
+  `denext deploy prepare --preset <name>`; `denext deploy` then pushes with the target's CLI.
+  Presets: `docker()` (the `generate docker` files), `fly()` (plus `fly.toml`; `fly deploy` with
+  `FLY_API_TOKEN`), `denoDeploy()` (a `denext.deploy.ts` entrypoint that registers the schedules
+  with `Deno.cron` at its top level and puts the cache on Deno KV; `deno deploy` with
+  `DENO_DEPLOY_TOKEN`), `genericHost()` (a systemd unit, nginx and Caddy snippets, an env example)
+  and `staticHost()` (refuses an app whose routes need a server, listing each, else exports with a
+  `_headers` file). Credentials come from the environment only; a generated project file is
+  replaced only while it carries its marker; `--dry-run` writes and runs nothing. `denext deploy`
+  now means denext's verb: Deno's is `denext deno deploy`.
+- **`registerCronSchedules` (`denext/server`)** registers schedules with `Deno.cron` from an
+  entrypoint's top level, before the server discovers `jobs/`; the boot's scheduler skips those
+  names (a second `Deno.cron` under one name throws).
+- **Keyed lists in live views and `<Live>` patches.** Flight now carries an element's `key` (`k`
+  on a host or client-reference node; a keyed server component passes it to the single element
+  it renders), the browser hands it to the reconciler, and the live-view diff matches a keyed
+  list by key: a reorder is one `m` op that moves the rows instead of rewriting each in place.
+  A reordered row keeps its DOM node and typed input state. `<Live>` pushes and soft
+  navigation reconcile by key as well. Lists without keys are still patched by position.
+- **Live views resume on another instance.** A parked view's model is written to a shared
+  `LiveViewStore` (`setLiveViewStore(…)` from `denext/server`: `memoryLiveViewStore()`, the
+  per-process default, `redisLiveViewStore()` or `postgresLiveViewStore()`), sealed with
+  AES-256-GCM under a key derived from `DENEXT_LIVE_VIEW_SECRET` and bound to the instance id.
+  A reconnect that lands on any instance takes the snapshot (once) and resumes the model instead
+  of running `init`. Models must be serializable by the wire codec to be stored.
+- **The MCP DevTools tools work on SPA apps.** The SPA dev server now serves
+  `/_denext/dev-inspect` (the page's DevTools sink posts its tree, `denext_component_tree`,
+  `denext_why_render` and `denext_hook_state` read it) and answers the on-demand pull over its
+  reload stream, behind the same Host / Origin gate as the App Router dev server.
+- **Agent control of `denext ui`: a `denext_ui_*` MCP tool per panel.** `denext mcp` adds
+  `denext_ui_overview` and one tool per panel (`setup`, `config`, `plugins`, `generate`,
+  `docker`, `desktop`, `dev`, `tasks`, `services`, `database`, `commands`), each calling the
+  panel's JSON twin. The tools are a client of a real `denext ui` the MCP server starts as a child
+  (`--no-open --port 0 --json`): they present its launch token once, hold the session cookie and
+  send every change with a same-origin `Origin` and the derived CSRF token, so the loopback,
+  handshake, origin, CSRF and `--read-only` gates apply as they do to a browser. A change
+  (`POST` / `DELETE`) is sent only as a preview (`fields.op: "preview"`) or with `apply: true`.
+  `denext mcp --ui-read-only` / `--ui-offline` start the UI with `--read-only` / `--offline`;
+  `--disable ui` hides the tools.
+- **The MCP DevTools tools pull a fresh component tree.** `denext_component_tree`,
+  `denext_why_render` and `denext_hook_state` used to answer "posted nothing yet" on a session's
+  first call (the page started pushing only after a read). Now a read that finds no tree younger
+  than a second sends every page on the dev server's reload stream an `inspect` frame; the page's
+  DevTools sink arms and posts its tree at once, and the read waits up to 3 s for it. With no page
+  open the tool says so at once.
+- **`denext/ui-kit`: the `denext ui` form components, for plugin authors.** `widgetFor` (a JSON
+  Schema node to a widget), `FormField` / `FormFields` (widgets behind the form's one CSRF
+  field), `Widget`, and the primitives `Control`, `Field` and `OpButton`, with `encode` /
+  `decode` and `renderView`: what the config editor and the plugin options forms are built from,
+  for a plugin that renders a form of its own. Each is a component built with `h()`; the form
+  renderer's string API (`control()`, `field()`, `opButton()`, `renderWidget()`,
+  `renderWidgets()`) is gone, and every panel composes the components directly.
+- **`denext/platform`: the build target as a compile-time constant.** `import { platform } from
+  "denext/platform"` is `"web"`, `"ios"`, `"android"`, `"macos"`, `"windows"` or `"linux"`. Each
+  target's build folds every read of it in the app's own modules to the target's name, and a
+  comparison with a string literal (`platform === "ios"`) to `true` / `false`, so the bundler
+  drops the other targets' branches and the modules only they import, as `feature()` does for
+  flags. The fold runs on the native and next-compat App Router, SPA and React Native mode, and
+  `denext dev` (per request, for the target the page names); the server render of
+  `denext export --platform` and of a shell's dev session reads the same value.
+- **Platform files through tsconfig `paths`.** An import through a tsconfig / jsconfig `paths`
+  alias (`@/components/Button`) now takes the target's variant (`Button.ios.tsx`) as an
+  import-map alias does, on the esbuild paths (SPA and React Native mode, the next-compat App
+  Router) and in `denext dev`. `paths` are read as TypeScript reads them: relative `extends`, a
+  monorepo root's config, `baseUrl`, JSONC; an import-map entry with the same key wins.
+- **`resolveAlias`: importer-sensitive module aliases in config.** `resolveAlias: { "react-native":
+  { to: "uniwind/components/web", except: ["uniwind"] }, "legacy-sdk": "./src/web/sdk.ts" }`
+  sends an import to another package, subpath or project file; the object form's `except` keeps
+  the original module for the listed packages' own imports, which a library that wraps the module
+  it replaces needs (what Metro's `resolveRequest` does for uniwind). Applied ahead of every
+  resolver in SPA and React Native mode, the next-compat App Router's bundles and `denext dev`'s
+  dependency bundles; the config is validated.
+- **`next-auth` (Auth.js v5) runs on denext.** A Next app's `auth.ts` (`NextAuth(config)` →
+  `{ handlers, auth, signIn, signOut }`), its `app/api/auth/[...nextauth]` route, `auth()` in
+  Server Components, route handlers and middleware (`export { auth as middleware }`,
+  `auth(handler)`), `next-auth/react` (`SessionProvider`, `useSession`, `signIn`, `signOut`,
+  `getSession`, `getCsrfToken`, `getProviders`) and `next-auth/jwt` (`getToken`, `encode`,
+  `decode`) run unchanged, mapped onto `denextAuth`. Providers: GitHub, Google, Apple, Discord,
+  Microsoft Entra ID, GitLab, X (Twitter), LinkedIn, Facebook, Slack, Twitch, Spotify, Okta,
+  Auth0, Keycloak, Cognito, Zoom, Notion, Credentials, Resend, Nodemailer / Email, and custom
+  OAuth / OIDC objects, with Auth.js's `AUTH_<ID>_ID` / `_SECRET` / `_ISSUER` defaults.
+  Per-call `authorizationParams` (`signIn("google", {}, { prompt: "login" })`, on the server and
+  in `next-auth/react`) reach the provider's authorization URL; the flow's own parameters
+  (`state`, PKCE, `nonce`, `redirect_uri`, …) can't be overridden. A lazy config
+  (`NextAuth(async (req) => config)`) runs on every request, with the request where Auth.js
+  passes one, and concurrent requests each read their own. `pages.newUser` receives a first
+  sign-in (with the landing path as `callbackUrl`), and the built-in sign-in, sign-out, error
+  and verify-request pages redirect to `pages.signIn` / `signOut` / `error` / `verifyRequest`
+  (same-origin only) with Auth.js's `callbackUrl` / `error` query. `events.session` fires on every session read and `events.updateUser` when the
+  adapter updates a user. With several email providers, each sends its own links: denext's
+  `sendVerificationRequest` now receives the issuing `provider` id. An Auth.js adapter with the
+  optional `getUserExtension` / `updateUserExtension` methods (an extension table beside its
+  users) keeps roles, bans and `sessionsValidAfter`, so `requireAuth({ role })`, a ban and
+  `revokeAllSessions()` work through it — its database sessions included. The shim is in the
+  signature-parity gate (`tests/react-parity.test.ts`) against `next-auth@5.0.0-beta.32`: the
+  entry points, `next-auth/react`, `next-auth/jwt` and every provider it ships;
+  `deno task parity:refresh --pinned` adds a package without moving the others. Both session strategies: `"jwt"` seals the
+  `jwt` callback's token (AES-256-GCM) inside denext's signed cookie; `"database"` uses the
+  adapter's sessions. An Auth.js adapter (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …) is
+  bridged onto denext's adapter port. The `signIn`, `jwt`, `session`, `redirect` and `authorized`
+  callbacks run with Auth.js's arguments. denext's defaults stay: every state-changing POST needs
+  the CSRF token and a same-origin request, OAuth always uses `state` + PKCE, `callbackUrl` and
+  the `redirect` callback's answer stay on the origin, and production needs `AUTH_URL`.
+  `denext migrate` maps `next-auth` and its subpaths when the app depends on it. Differences are
+  listed in KNOWN-DIFFERENCES.md and KNOWN-LIMITATIONS.md.
+- **OAuth providers that authenticate at the token endpoint with HTTP Basic.** An
+  `OAuthProvider` takes `tokenEndpointAuthMethod: "client_secret_basic"` (RFC 6749 §2.3.1; X,
+  Zoom and Notion require it) instead of the default `client_secret_post`; a provider with no
+  scopes sends no `scope` parameter; and an `allowedHosts` entry `*.domain` admits a discovered
+  endpoint on that domain's subdomains (a Cognito pool's hosted domain), never the apex.
+- **Live across replicas through Redis: `redisChannelTransport()`, and `usePresence` on every
+  instance.** `setChannelTransport(redisChannelTransport({ url }))` (`denext/server`) carries
+  `createChannel` publishes and revokes and `revalidateTag`'s Live re-pushes over Redis pub/sub,
+  on denext's own RESP client: one connection publishes, a dedicated one holds the `SUBSCRIBE`,
+  reconnecting with backoff and subscribing again after a drop (`onResync`). A publish never
+  rejects; a failed one still reaches this instance and is logged once. `usePresence` rooms now
+  span instances through any transport: each Live hub publishes its own peers in a room when they
+  change (and on a 10-second heartbeat once another instance is heard from), merges the others'
+  into the `presence-state` it sends, and drops a crashed instance's peers after 35 seconds.
+  `ChannelEvent.kind` gains `"presence"`.
+- **`denext/auth`: the auth surface as its own entry point.** `import { auth, denextAuth, github }
+  from "denext/auth"` — `denextAuth()`, `auth()` and the guards (`requireAuth`, `requireSession`),
+  the provider presets, the adapters and stores, bearer tokens, email verification and password
+  reset, MFA, passkeys and SAML. `denext/server` still re-exports every name. `denext create` and
+  `denext migrate` map it in the import map they write.
+- **A soft navigation streams its deferred values per boundary, as a document load does.** A
+  browser navigation to a Flight route gets its payload at once, each deferred value (a Remix
+  `defer()` field, promise data passed to a client component) left as a hole, then each value as
+  its own line the moment it settles: the route renders at the payload, every `<Await>` (or
+  `use()`) shows its Suspense fallback, and each reveals when its own value arrives. A rejection
+  still drives `errorElement`. A prefetch, Live's re-render and a navigation sent as a POST still
+  get the complete payload; `streaming: false` turns it off. On such a navigation a client
+  component's own Suspense boundaries are not rendered to HTML on the server (the client renders
+  them), so a boundary waiting on a deferred value doesn't hold the payload back.
+- **SPA `client:interaction` replays the interaction that mounts it, as a Flight island does.**
+  The events of the triggering gesture that land on the placeholder before the component commits
+  (a `pointerdown`, the focus, the `click`) are dispatched again to the element at the same
+  position in the component's DOM (its first element when the placeholder has no element
+  there), and a focus moves there; before, the first interaction only mounted the component.
+- **`<ViewTransition>` callbacks: `onEnter`, `onExit`, `onUpdate` and `onShare`, as in React.**
+  Each runs once the transition is ready (its `::view-transition-*` pseudo-elements exist) with
+  the boundary's `ViewTransitionInstance` (`name`, and `group` / `imagePair` / `old` / `new`
+  with `animate()`, `getAnimations()` and `getComputedStyle()`) and the transition types; a
+  function it returns runs when the transition finishes. `onShare` runs on the side that leaves,
+  and a paired boundary runs no `onEnter` / `onExit`. They run for same-page Transitions and for
+  soft navigations (`onEnter` / `onExit` / `onShare` there). Callbacks need a client-rendered
+  `<ViewTransition>`: a function can't cross from a Server Component.
+- **An `<Activity>` going hidden in a Transition animates its boundaries as exits,** and a
+  boundary entirely outside the viewport is not animated (an enter or exit there, or an update
+  outside it before and after, is skipped and runs no callback), as React does.
+- **`ip` on every auth event.** Each `denextAuth` event payload (`signIn`, `signOut`,
+  `sessionRevoked`, `createUser`, `linkAccount`, `verificationRequested`, `emailVerified`,
+  `phoneVerified`, `userConverted`, `passwordReset`, `apiTokenIssued`, `apiTokenRevoked`, and
+  every `signInFailed`) now carries `ip`: the client address of the request that caused it, read
+  the way `clientIp()` reads it (the socket peer, or with `trustForwardedHeaders` the proxy's last
+  `x-forwarded-for` hop). A rate-limited route's `signInFailed` keeps the limiter's bucket (an
+  IPv6 client's /64) as before; an event raised outside a request (a job) has none.
+- **`next/font/local` emits Next's metric-matched fallback face.** `localFont({ src })` now
+  reads the font file's own metrics (`head`, `hhea`, and the `cmap` + `hmtx` width of Next's
+  sample text) from a `.ttf`, `.otf`, `.woff` or `.woff2` — parsed in-house, no npm; WOFF and
+  WOFF2 decompress through `node:zlib` — and declares a `"<family> Fallback"` face on a local
+  Arial (or Times New Roman with `adjustFontFallback: "Times New Roman"`) with the
+  `size-adjust` / `ascent-override` / `descent-override` / `line-gap-override` Next computes for
+  the same file, placed right after the font in the stack. With several `src` files the one
+  Next picks (closest to weight 400, normal style) is measured. `adjustFontFallback: false`
+  still emits none, and a file that can't be found or parsed emits none. The file is looked up
+  under `public/` for a `/…` path, else under the project root, `public/`, `app/`, `src/app/`
+  and `src/`.
+- **The CLI on Homebrew, Scoop and winget.** A stable release now publishes the manifests it
+  generates: the formula to the `Brainwires/homebrew-denext` tap
+  (`brew install brainwires/denext/denext`), the manifest to the `Brainwires/scoop-denext` bucket
+  (`scoop bucket add denext https://github.com/Brainwires/scoop-denext`, then
+  `scoop install denext/denext`) and a pull request to `microsoft/winget-pkgs`
+  (`winget install Brainwires.denext` once it is merged). A release candidate publishes none of
+  them. `scripts/publish-package-manifests.ts` does it (`--dry-run` prints the plan); a manager
+  whose token secret is not set is skipped with a notice.
+- **A Windows on Arm `denext` binary** (`denext-aarch64-pc-windows-msvc.zip`), in the Scoop and
+  winget manifests as the arm64 entry. `install.ps1` installs it on an Arm64 machine (also from
+  an x64 PowerShell running under emulation), and falls back to the x64 binary for a release that
+  predates it. denext's Deno toolchain has no Windows on Arm build yet, so there the binary runs
+  its Deno verbs on the `deno` on your `Path`.
+- **Shared stores on Redis and Deno KV, and exported store contract suites.** `redisCacheStore`,
+  `redisSessionStore` and `redisRateLimitStore` (`denext/server`) share the data and ISR page
+  cache, revocable sessions and rate-limit counts across replicas through Redis 7+ or Valkey. They
+  run on `redisClient`, a new zero-npm RESP2 client over `Deno.connect` / `Deno.connectTls`
+  (`redis://` / `rediss://` URLs, `AUTH` with a password or an ACL user, `SELECT`, one pipelined
+  connection with `pipeline()` and `MULTI`/`EXEC` `transaction()`, reconnect on the next command).
+  `denoKvCacheStore`, `denoKvSessionStore` and `denoKvRateLimitStore` do the same on any `Deno.Kv`
+  (the project's database on Deno Deploy), with values over 64 KiB stored in chunks and every
+  read-modify-write a version-checked commit. `cacheStoreContract`, `sessionStoreContract` and
+  `rateLimitStoreContract` (`denext/testing`) are the suites every shipped store passes (in-memory,
+  SQLite, Postgres, Redis, Deno KV), so a store of your own can prove itself.
+- **`sqliteAuthAdapter` can rename and drop columns and tables.** A versioned migration list
+  (`auth_schema_migrations`) runs on every open, before the additive reconcile: each migration
+  once, in version order, inside one `BEGIN IMMEDIATE` transaction (SQLite's write lock, so a
+  second process opening the file waits and then finds them recorded), with the recorded versions
+  read again inside the lock and a failure rolling the batch back. The helpers a migration uses
+  (`renameColumn`, `dropColumn`, `renameTable`, `dropTable`) do nothing when the change is already
+  made, so a fresh file records them without change. The schema was additive-only before.
+- **A native `id_token` sign-in enrolls a first second factor.** Under `mfa.required: "always"`
+  a user with no factor yet used to get `403 mfa_required` from `/native/apple` | `/native/google`
+  and had to enroll in the browser. The sign-in now answers a pending result with
+  `mfa_enroll: true`, finished at `POST {basePath}/native/mfa-enroll` (the secret and its URI)
+  and `POST {basePath}/native/mfa-confirm` (the tokens plus `backup_codes`) — `nativeSession()`'s
+  `enrollMfa` and `confirmMfaEnrollment`. The web enrollment's rules hold: first factor only
+  (`409 already_enrolled` once one is verified), the single-use five-minute token with five
+  attempts, the `rateLimit.mfa` budget on every confirm, and a banned or deleted user never
+  finishes.
+- **Passkey endpoints callable from another origin: `passkeys.corsOrigins`.** A front end served
+  apart from the auth server lists its origin (also in `passkeys.origins`); the `/passkey/*`
+  endpoints then answer its preflights and send it credentialed CORS headers, and refuse every
+  other origin as before. Each ceremony is bound to the origin that started it — the verifying
+  request must come from that origin with client data naming it, and a same-origin ceremony
+  can't be finished cross-origin — on top of the per-tab `ceremonyId`. `registerPasskey` and
+  `signInWithPasskey` take `origin` for an auth server on another origin.
+- **`cors` covers pages, Server Actions, the API batch endpoint and the Live socket.** Their
+  preflights are answered before `middleware.ts` under the app policy, and their answers carry
+  its headers for an allowed origin (the default `headers` now include denext's own client
+  markers). The same-origin check that is the CSRF defense of Server Actions, the batch and the
+  Live handshake still holds for every cookie-carrying request: an allowed origin gets in only
+  with no `Cookie` and no `Authorization` but an explicit `Bearer`, so it acts with the
+  credentials it presented and nothing ambient. The Live handshake also needs an exactly listed
+  origin (never `["*"]`) and the app's own host: `canonicalOrigin`'s in production (no
+  `canonicalOrigin`, no cross-origin socket), the dev Host allowlist under `denext dev` — so a
+  DNS-rebinding page can't use a `cors` entry to reach either. Before, `cors` covered route
+  handlers and the native auth endpoints only.
+- **Passkeys verify `tpm`, `android-key`, `apple` and `fido-u2f` attestation.** Each statement
+  is checked as WebAuthn Level 3 §8 says: TPM (`ver` 2.0, `pubArea` is the credential key,
+  `certInfo` a TPM-generated certify statement whose `extraData` hashes this ceremony and whose
+  name is `pubArea`'s, the AIK signature, and the AIK certificate's §8.3.1 profile — empty
+  subject, the TPM manufacturer / model / version in its Subject Alternative Name,
+  `tcg-kp-AIKCertificate`, not a CA, a matching AAGUID extension), Android Key (the signature,
+  the leaf key is the credential key, the key description's challenge is this ceremony's, no
+  `allApplications`, generated in the keystore, signing only), Apple anonymous (the nonce
+  extension holds this ceremony's hash, the certificate key is the credential key) and FIDO U2F
+  (one P-256 certificate signing the U2F registration data). Statement signatures may use
+  ES256/384/512, RS256/384/512, RS1, PS256/384/512 or EdDSA. With `attestation.mds` their `x5c`
+  chains to the authenticator's metadata roots like `packed`'s. Tested against the W3C Level 3
+  §16 vectors and real registrations published with SimpleWebAuthn (MIT).
+- **`@denext/openapi` 0.5.0: middleware responses are described.** `requireSession()` documents
+  its `401` (and its `403` with a `role`), `requireBearer()` its `401` with the
+  `www-authenticate` header (and `403` with a `scope` or `role`), `rateLimit()` its `429` with
+  `retry-after`, beside `csrf()`'s `403`; an endpoint built with `createApi().use(...)` lists them
+  in the OpenAPI document and its `x-denext-errors` like its own `errors`. Tag your own middleware
+  with **`documentsErrors(mw, { code: status | { status, message?, headers? } })`** (new in
+  `denext/server`); `ErrorSpec`'s object form takes `headers` (name → description), rendered on
+  that status's response. They appeared only as the `default` response before.
+- **`@denext/openapi` 0.5.0: Swagger UI is vendored.** `ui: "swagger"` serves swagger-ui-dist
+  5.32.15 from the package under `<docs>/swagger-ui/` instead of unpkg, with a same-origin
+  start-up script in place of the inline one; each file is checked against its recorded SHA-256
+  before it is served. Every docs page answers with its own `content-security-policy` (`'self'`
+  only for `builtin` and `swagger`). `cdn` still loads it from a CDN when set.
+- **Auto-REST routes in the OpenAPI document (`@denext/backend` 0.6.0, `@denext/openapi`
+  0.5.0).** With both plugins installed, `/openapi.json` lists every relation and function of the
+  default schema the `anon` and `authenticated` roles can use as OpenAPI 3.1 operations under
+  `/rest/v1` — typed `rest.<table>` row schemas (nullable columns as `["…", "null"]`, read-only
+  ones marked), the row filters, `select` / `order` / `limit` / `offset` / `Range` / `Prefer`, the
+  insert / update / delete bodies, `rpc` calls with their argument and result schemas, and
+  PostgREST's error body. Plugins describe their own routes through a new seam,
+  **`OpenApiSource`** (`registerOpenApiSource`, or the `Symbol.for("denext.openapi.sources")`
+  map); `openapi({ sources })` adds or (`false`) drops them, `rest: { openapi: false }` keeps
+  auto-REST out. A source that fails is skipped with a `source-failed` lint warning.
+- **`@denext/graphql` 0.5.0: `maxCost` budgets a whole batch.** With Yoga `batching` on, the
+  operations' estimated costs are summed when the request is parsed (a variable page size at its
+  value), and a batch over the budget is refused with `400` (`BATCH_TOO_EXPENSIVE`) before any of
+  them runs. The budget was per operation, so an N-operation batch could cost N×.
+- **`@denext/graphql` 0.5.0: a schema object reloads in `denext dev`.** A `GraphQLSchema` (or
+  factory) imported into `denext.config.ts` is traced to the project module that exports it,
+  through the config's relative imports, and re-imported from there after an edit, as a
+  module-path `schema` is; subscriptions on the old schema complete. One it cannot trace keeps
+  needing a restart, with a dev notice.
+
+### Changed
+
+- **A lighter JSR package (19.16 → 18.45 MiB).** The MCP docs corpus ships Brotli-compressed
+  (quality 11) instead of gzipped: 1.38 MB instead of 1.94 MB, decoded through `node:zlib` on the
+  first docs search. `denext.config.schema.json` is written minified, and `next/font`'s Capsize
+  metrics table is one compact line per family (63 KB instead of 102 KB); the plugin catalog is
+  minified too. `FEATURES.md`, `KNOWN-DIFFERENCES.md` and `KNOWN-LIMITATIONS.md`, which nothing
+  reads at runtime (the docs site and the MCP docs corpus carry them), stay out of the package.
+- **CEF on macOS keeps a team-signed app's cookie key in the Keychain.** From runtime
+  2.9.7-denext.20 a Developer ID or Apple Development signed CEF app stores its cookie key in a
+  login-keychain item of its own (`"<app id> Safe Storage"`) instead of Chromium's mock keychain,
+  migrating the existing profile once; `cookieEncryption` reads `"os"` there. Ad-hoc signed and
+  unsigned builds keep the mock keychain (`"basic"`).
+- **A desktop window hands at most 3 refused navigations a second to the browser** (runtime
+  2.9.7-denext.20), so a page navigating away in a loop can't open a tab per attempt.
+- **An OAuth provider's `profile` may be async.** `OAuthProvider.profile` returns `AuthUser` or
+  a promise of one; the callback awaits it. A sync mapper is unchanged.
+
+### Fixed
+
+- **`denext doctor` / `probeApp` catch a streamed Suspense hole stuck on its fallback.** A hole
+  whose render threw with nothing inside it to catch the error streamed no content, so its
+  fallback stayed in a 200 page the probe passed. The new `no-stuck-hole` check fails a streamed
+  document with a placeholder no content filled, naming the hole and the error. The server now
+  reports that error to `onRequestError` (`routeType: "render"`), as Next reports every render
+  error, on the streamed HTML, Flight and PPR-resume paths alike.
+- **A conditional child no longer takes its sibling's state.** In
+  `{open && <Counter />}<Counter />`, showing the first one handed it the second one's fiber (its
+  state, effects and DOM) because unkeyed children were matched by type alone. Each unkeyed child
+  now keeps the old child of its type in its own position, the holes a conditional child leaves
+  counted (React's implicit index); one left without a match still reuses a leftover child of its
+  type instead of remounting. Found by the `<ViewTransition>` callback e2e test, whose `onEnter`
+  landed on the wrong boundary.
+- **A root layout rendered by client code keeps its `<title>` / `<meta>` / `<link>` in the
+  head.** The server hoists them into the document's head, as React 19 does; hydration now adopts
+  them there (matched by tag and identifying attributes, among the document's own tags) instead
+  of creating them again in the page container with a dev mismatch warning, a fresh render adds
+  them to the head, and unmounting the layout takes them out. The rest of its `<head>` content
+  (a `<style>`, a `<script>`) stays where the parser left it.
+- **`next-auth` resolves to denext's shim in the next-compat build without an import map.**
+  `next-auth/react` (the app's and a `node_modules` library's) bundles from the prebuilt runtime,
+  and `next-auth`, `next-auth/jwt` and the providers stay external to the shim, so an installed
+  `next-auth` package is never loaded.
+- **`denextAuth` (and `next-auth` on it) signs in over plain http under `denext dev`.** Its
+  session and OAuth-transaction cookies (and the shim's CSRF cookie) were always `__Host-`, which a
+  browser refuses over http, even on `localhost`: a sign-in succeeded and the next request was
+  signed out. The prefix now follows the transport — `__Host-` with `Secure` over https (the URL,
+  `x-forwarded-proto` or an `https:` `canonicalOrigin`), plain names over http on a loopback host
+  and, outside production, on any host. Production over http on another host keeps `__Host-`, so
+  no session cookie travels in clear text. A Chromium e2e signs in under `denext dev` on
+  `http://localhost` and `http://127.0.0.1`.
+- **A `next-auth` provider's `profile()` override decides the account id and email**, as in
+  Auth.js (it used to set only the name and image). The provider's own "verified" verdict carries
+  over only to the address the provider itself returned.
+- **Routes at `/global-error`, `/flight` or `/flight-boot` keep their own client bundles.** The
+  build wrote the framework's fixed-name client bundles as `client/global-error.js`,
+  `client/flight.js` (the Flight islands entry) and `client/flight-boot.js` (its deferred boot),
+  the same files a route with one of those ids is bundled to, so one overwrote the other. They
+  are now `client/__denext_global_error__.js`, `client/__denext_flight__.js` and
+  `client/__denext_flight_boot__.js` on every path (build, next-compat, export, dev's compat
+  outputs), and a dynamic segment that would spell one of those ids is refused at build time.
+- **A hidden `<Activity>` holds class lifecycles and refs, as React does.** A class component
+  that mounts inside a hidden one no longer runs `componentDidMount` (nor `componentDidUpdate`
+  while it stays hidden); hiding a shown one runs its `componentWillUnmount`, and revealing runs
+  `componentDidMount` again on the same instance. A hidden subtree's refs are detached (a
+  callback ref gets `null` or its cleanup, an object ref is cleared), none attach while it
+  mounts hidden, and revealing attaches them. A Suspense boundary that re-suspends behind its
+  fallback hides its content the same way.
+- **`react-dom/server` streams honour the consumer's backpressure.** `renderToPipeableStream`'s
+  `pipe()` stops writing when the destination's `write()` returns `false` and resumes on
+  `'drain'` (calling a destination's `flush()` after each chunk, as React does); a destination
+  that closes or errors early cancels the flush, and `abort()` tears the pipe down even while it
+  waits for `'drain'`. Rendering starts at the call, so `onShellReady` / `onShellError` /
+  `onAllReady` fire whether or not `pipe()` ran yet — React's documented pattern of calling
+  `pipe()` from inside `onShellReady` now works. `renderToStaticNodeStream` renders on the first
+  read and pushes the document in bounded chunks while the readable wants more. The streaming
+  renderer under `renderToReadableStream` is pull-gated: chunks after the shell are produced on
+  the consumer's demand instead of queueing the whole document; Suspense boundaries keep
+  rendering on their own, so `await stream.allReady` before reading still completes, and a
+  render with many boundaries streams faster (one batch per read instead of a race over every
+  pending boundary).
+- **`global-error.tsx` hydrates on the next-compat build and in a static export.** Both paths
+  emitted no global-error entry, so the global-error document was dead HTML: its `reset` did
+  nothing and no author handler ran. A next-compat `denext build` now bundles the entry
+  (react→denext rewritten, in the same pass as its routes, so it shares their runtime chunk) and
+  bundles `global-error.tsx` into its server bundle too, so `denext start` serves a hydrating
+  global-error document as the native build does. `denext export` bundles the same entry and
+  pre-renders global-error to `out/500.html`, wired to hydrate, for a static host's error page;
+  it renders with the `Internal Server Error` message a production server hands it.
+- **`defineLiveView` in `denext/live`: a Model–View–Update program held on the server, per
+  connection.** Render the component it returns from a Server Component: the page gets
+  `view(init(props))` as plain HTML (the first paint works with JavaScript disabled), and in the
+  browser the view mounts over the existing Live socket. The server keeps the model for that
+  connection, runs `update` and its effects for each event bound with `send(…)`, re-renders
+  through `renderToFlight` and sends the Flight diff, which the reconciler applies as minimal DOM
+  changes. `send(msg)` puts only a handler index on the page, so a client can fire only messages
+  the server rendered for it; event payloads pass a built-in shape check and the view's `events`
+  Standard Schema. The props are signed (`DENEXT_LIVE_VIEW_SECRET` across instances, else a
+  per-process key); `authorize(props, ctx)` runs at render, mount, resume and again after
+  `channelAuthTtlSeconds`. The Live hub's handshake, connection caps and frame-size cap apply,
+  plus new `live.limits`: `maxViewsPerConnection` (16), `maxViewBytesPerConnection` (1 MiB of
+  model and rendered tree), `viewResumeSeconds` (30) and `maxParkedViews` (1000). A dropped
+  connection's views wait `viewResumeSeconds` for the client to reconnect and resume the model;
+  otherwise the next mount runs `init` again. The island ships only in apps that define a live
+  view. See [Live views](https://denext.dev/docs/live-views).
+- **`denext/mvu`: Model–View–Update in the browser, with effects as data.**
+  `useMvu(init, update, subscriptions?)` returns `[model, dispatch]`; `update(msg, model)` returns
+  `[model, effects]`, where the effects (`fx.fetch`, `fx.delay`, `fx.task`, `fx.dispatch`) and
+  the subscriptions (`subs.interval`, `subs.channel`) are plain data the runtime runs. `MvuView`
+  renders a whole `defineMvu` program, and the same program runs on the server with
+  `defineLiveView`. See [Model–View–Update](https://denext.dev/docs/mvu).
+- **DevTools: an MVU tab with time travel.** In `denext dev` it lists each `useMvu` / `MvuView`
+  program's last 200 messages with the model each produced; clicking one puts that model on
+  screen.
+
+### Security
+
+- **SAML Single Logout on denextAuth's own endpoints.** A `saml()` provider with `sp.signingKey`
+  now ends sessions with its IdP, as `/auth/v1` did alone before: `signOut()` of a session it
+  started sends the browser on to the IdP's SingleLogoutService with a signed LogoutRequest for the
+  session's NameID and SessionIndex (`{ ok, url }` for a JSON caller), and the IdP's
+  LogoutResponse, answering exactly that request (the single-use transaction cookie), lands on the
+  sign-out target. An IdP-initiated LogoutRequest at the new `{basePath}/saml/:id/slo` (query or
+  XML signature, Destination, Issuer, freshness and replay checked by the `/auth/v1` code) ends the
+  sessions its NameID started — exactly the named SessionIndexes with a `sessionStore`, every
+  session of that user signed in before it with stateless cookies — and answers a signed
+  LogoutResponse. The SP metadata lists the SLO URL, and a session a `saml()` sign-in started
+  carries `session.saml` (`nameId`, `nameIdFormat`, `sessionIndex`). Before, an IdP's logout left
+  denextAuth's sessions running.
+- **The FIDO Metadata Service checks consult certificate revocation lists.** Every certificate
+  of the metadata BLOB's signing path and of an attestation's `x5c` path that names a CRL
+  distribution point is checked against its issuer's CRL — fetched with a timeout and a 4 MiB
+  cap, its signature, issuer and currency verified, cached until its `nextUpdate` — and refused
+  when listed. `passkeys.attestation.mds.revocation` sets what an unavailable CRL means:
+  `"require"` (fail closed; the default), `"best-effort"` (the default with an offline `blob`)
+  or `"off"`. Before, no CRL was fetched, so a revoked attestation or BLOB-signing certificate
+  still passed.
+
 ## [4.1.0] - 2026-10-15
 
 ### Breaking
@@ -15120,7 +15623,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.1.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.2.0...development
+[4.2.0]: https://jsr.io/@denext/denext@4.2.0
 [4.1.0]: https://jsr.io/@denext/denext@4.1.0
 [4.0.0]: https://jsr.io/@denext/denext@4.0.0
 [4.0.0-rc.2]: https://jsr.io/@denext/denext@4.0.0-rc.2

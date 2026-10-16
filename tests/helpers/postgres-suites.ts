@@ -9,10 +9,17 @@ import { postgresAuthAdapter } from "../../src/server/auth/postgres-adapter.ts";
 import { postgresSessionStore } from "../../src/server/auth/postgres-session-store.ts";
 import { postgresRateLimitStore } from "../../src/server/auth/postgres-rate-limit.ts";
 import { postgresCacheStore } from "../../src/server/postgres-cache.ts";
+import { postgresLiveViewStore } from "../../src/server/live-view-stores.ts";
+import { liveViewStoreContract } from "./live-view-store-contract.ts";
 import { migratePostgres, postgresMigrationStatus } from "../../src/server/postgres-migrate.ts";
 import type { PasskeyRecord } from "../../src/server/auth/adapter.ts";
 import type { CachedPage } from "../../src/server/cache.ts";
 import { adapterContract } from "./auth-adapter-contract.ts";
+import {
+  cacheStoreContract,
+  rateLimitStoreContract,
+  sessionStoreContract,
+} from "../../src/testing/store-contracts.ts";
 import { DELETED_USER_CASES } from "./deleted-user-tokens.ts";
 
 /** A fresh database for one case: a client, and the schema to keep its tables in. */
@@ -134,66 +141,6 @@ const PASSKEY_CASES: Record<string, Case> = {
   },
 };
 
-const SESSION_CASES: Record<string, Case> = {
-  "session store: create/get/update/delete/deleteByUser": async (db) => {
-    const store = postgresSessionStore({ ...db, sweepIntervalMs: 0 });
-    try {
-      const s = (id: string, expiresAt = at(3600)) => ({
-        user: { id },
-        provider: "credentials",
-        expiresAt,
-      });
-      await store.create("a", s("alice"));
-      await store.create("b", s("bob"));
-      assertEquals((await store.get("a"))?.user.id, "alice");
-      const later = at(7200);
-      assertEquals(await store.update!("a", s("alice", later)), true);
-      assertEquals((await store.get("a"))?.expiresAt, later);
-      assertEquals(await store.update!("nope", s("x")), false, "write-only-if-present");
-      await store.create("old", s("carol", at(-1)));
-      assertEquals(await store.get("old"), undefined, "expired is a miss");
-      assertEquals(await store.update!("old", s("carol")), false, "an expired row stays dead");
-      await store.deleteByUser("alice");
-      assertEquals(await store.get("a"), undefined);
-      await store.delete("b");
-      assertEquals(await store.get("b"), undefined);
-    } finally {
-      await store.close?.();
-    }
-  },
-};
-
-const RATE_LIMIT_CASES: Record<string, Case> = {
-  "rate-limit store: counts in a window, resets, decrements and starts over": async (db) => {
-    const store = postgresRateLimitStore({ ...db, sweepIntervalMs: 0 });
-    try {
-      assertEquals(await store.get("k"), undefined);
-      const first = await store.increment("k", 60_000);
-      assertEquals(first.count, 1);
-      assert(first.resetAt > Date.now());
-      const concurrent = await Promise.all([
-        store.increment("k", 60_000),
-        store.increment("k", 60_000),
-        store.increment("k", 60_000),
-      ]);
-      assertEquals(concurrent.map((w) => w.count).sort(), [2, 3, 4], "every failure counted");
-      assertEquals((await store.get("k"))?.count, 4);
-      assertEquals((await store.get("k"))?.resetAt, first.resetAt, "the window does not slide");
-      await store.decrement!("k");
-      assertEquals((await store.get("k"))?.count, 3);
-      await store.reset("k");
-      assertEquals(await store.get("k"), undefined);
-      // A window already closed starts over at 1 with a new reset time.
-      await store.increment("short", 1);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      assertEquals(await store.get("short"), undefined, "a closed window reads as none");
-      assertEquals((await store.increment("short", 60_000)).count, 1);
-    } finally {
-      await store.close();
-    }
-  },
-};
-
 const page = (path: string, tags: string[], extra: Partial<CachedPage> = {}): CachedPage => ({
   body: `<p>${path}</p>`,
   status: 200,
@@ -204,63 +151,6 @@ const page = (path: string, tags: string[], extra: Partial<CachedPage> = {}): Ca
 });
 
 const CACHE_CASES: Record<string, Case> = {
-  "cache: data round-trips (value, expiry, staleAt) and misses after expiry": async (db) => {
-    const store = postgresCacheStore(db);
-    try {
-      await store.setData("k", { value: { n: 1, s: "x" }, expiresAt: Infinity, tags: ["t"] });
-      assertEquals(await store.getData("k"), {
-        value: { n: 1, s: "x" },
-        expiresAt: Infinity,
-        tags: ["t"],
-      });
-      await store.setData("s", {
-        value: 2,
-        expiresAt: Date.now() + 60_000,
-        staleAt: 123,
-        tags: [],
-      });
-      assertEquals((await store.getData("s"))?.staleAt, 123);
-      await store.setData("old", { value: 3, expiresAt: Date.now() - 1, tags: [] });
-      assertEquals(await store.getData("old"), undefined);
-      assertEquals(await store.getData("missing"), undefined);
-    } finally {
-      await store.close();
-    }
-  },
-  "cache: pages round-trip with PPR extras; deleteByPath / deleteByTag": async (db) => {
-    const store = postgresCacheStore(db);
-    try {
-      await store.setPage("p1", page("/a", ["blog"], { csp: "x", holeIds: ["h1"] }));
-      await store.setPage("p2", page("/b", ["blog", "home"]));
-      await store.setData("d1", { value: 1, expiresAt: Infinity, tags: ["blog"] });
-      const read = await store.getPage("p1");
-      assertEquals([read?.path, read?.csp, read?.holeIds, read?.status], ["/a", "x", ["h1"], 200]);
-      await store.deleteByPath("/a");
-      assertEquals(await store.getPage("p1"), undefined);
-      assert(await store.getPage("p2"));
-      await store.deleteByTag("blog");
-      assertEquals(await store.getPage("p2"), undefined);
-      assertEquals(await store.getData("d1"), undefined);
-    } finally {
-      await store.close();
-    }
-  },
-  "cache: expireByTag soft-expires in place; a retag drops the old tag": async (db) => {
-    const store = postgresCacheStore(db);
-    try {
-      await store.setData("d", { value: 1, expiresAt: Infinity, tags: ["a"] });
-      await store.setPage("p", page("/p", ["a"]));
-      const staleAt = Date.now() - 1;
-      await store.expireByTag!("a", { staleAt, expiresAt: Date.now() + 60_000 });
-      assertEquals((await store.getData("d"))?.staleAt, staleAt);
-      assertEquals((await store.getPage("p"))?.staleAt, staleAt);
-      await store.setData("d", { value: 2, expiresAt: Infinity, tags: ["b"] });
-      await store.deleteByTag("a");
-      assertEquals((await store.getData("d"))?.value, 2, "no longer tagged a");
-    } finally {
-      await store.close();
-    }
-  },
   "cache: the oldest-written rows go past the cap; expired rows are swept": async (db) => {
     const store = postgresCacheStore({
       ...db,
@@ -282,19 +172,6 @@ const CACHE_CASES: Record<string, Case> = {
       await store.setData("x", { value: 1, expiresAt: Date.now() - 1, tags: [] });
       await store.setData("y", { value: 1, expiresAt: Infinity, tags: [] }); // sweeps x
       assertEquals(await store.getData("x"), undefined);
-    } finally {
-      await store.close();
-    }
-  },
-  "cache: sweepPages keeps one prefix and reports how many went": async (db) => {
-    const store = postgresCacheStore(db);
-    try {
-      await store.setPage("v2:new:/a", page("/a", ["t"]));
-      await store.setPage("v2:old:/a", page("/a", ["t"]));
-      await store.setPage("v1:/b", page("/b", []));
-      assertEquals(await store.sweepPages!("v2:new:"), 2);
-      assert(await store.getPage("v2:new:/a"));
-      assertEquals(await store.sweepPages!("v2:new:"), 0);
     } finally {
       await store.close();
     }
@@ -381,8 +258,28 @@ export async function postgresSuites(
     await adapterContract(t, async () => postgresAuthAdapter(await fresh()));
   });
   await runCases(t, fresh, PASSKEY_CASES);
-  await runCases(t, fresh, SESSION_CASES);
-  await runCases(t, fresh, RATE_LIMIT_CASES);
+  // The exported store contracts (denext/testing), as every store runs them.
+  await t.step("SessionStore contract", async (t) => {
+    await sessionStoreContract(
+      t,
+      async () => postgresSessionStore({ ...await fresh(), sweepIntervalMs: 0 }),
+    );
+  });
+  await t.step("RateLimitStore contract", async (t) => {
+    await rateLimitStoreContract(
+      t,
+      async () => postgresRateLimitStore({ ...await fresh(), sweepIntervalMs: 0 }),
+    );
+  });
+  await t.step("CacheStore contract", async (t) => {
+    await cacheStoreContract(t, async () => postgresCacheStore(await fresh()));
+  });
+  await t.step("LiveViewStore contract", async (t) => {
+    await liveViewStoreContract(
+      t,
+      async () => postgresLiveViewStore({ ...await fresh(), sweepIntervalMs: 0 }),
+    );
+  });
   await runCases(t, fresh, CACHE_CASES);
   await runCases(t, fresh, MIGRATION_CASES);
   for (const [name, run] of Object.entries(DELETED_USER_CASES)) {

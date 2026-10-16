@@ -315,8 +315,10 @@ describe("scheduleReminder", () => {
         <code>error.tsx</code> boundary caught and rendered at 200 (the <code>no-caught-error</code>
         {" "}
         check, with the error's message and digest), a streamed Suspense hole included; it reads the
-        error in process, so nothing is added to the response. <code>denext doctor</code>{" "}
-        runs the same probe.
+        error in process, so nothing is added to the response. A streamed Suspense hole left on its
+        fallback by an error nothing inside it caught fails the <code>no-stuck-hole</code> check.
+        {" "}
+        <code>denext doctor</code> runs the same probe.
       </p>
       <Code lang="ts">
         {`import { formatReport, probeApp } from "denext/testing";
@@ -436,6 +438,19 @@ Deno.test("the counter hydrates and increments", async () => {
         <code>start --port</code>. In CI, Chromium needs <code>--no-sandbox</code> on most runners:
         {" "}
         <code>launch({"{"} args: ["--no-sandbox"] {"}"})</code>.
+      </p>
+      <h2>Store contracts</h2>
+      <p>
+        A <code>CacheStore</code>, <code>SessionStore</code> or <code>RateLimitStore</code>{" "}
+        of your own proves itself with the suites denext's in-memory, SQLite, Postgres, Redis and
+        Deno KV stores pass: <code>cacheStoreContract</code>, <code>sessionStoreContract</code> and
+        {" "}
+        <code>rateLimitStoreContract</code> from{" "}
+        <code>denext/testing</code>. Each case runs as a step on a fresh store from your factory;
+        see{" "}
+        <a href="/docs/multi-instance#your-own-store">
+          Multi-instance › Your own store
+        </a>.
       </p>
     </DocsShell>
   );

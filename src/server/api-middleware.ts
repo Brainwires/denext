@@ -56,18 +56,23 @@ export interface RequireSessionOptions {
 export function requireSession(
   options: RequireSessionOptions = {},
 ): ApiMiddleware<object, { session: AuthSession }> {
-  return async () => {
+  const unauthorized = options.message ?? "Unauthorized";
+  const forbidden = options.forbiddenMessage ?? "Forbidden";
+  const mw: ApiMiddleware<object, { session: AuthSession }> = async () => {
     const session = await updateAuthSession();
-    if (!session) {
-      throw new ApiError(401, "unauthorized", { message: options.message ?? "Unauthorized" });
-    }
+    if (!session) throw new ApiError(401, "unauthorized", { message: unauthorized });
     if (!hasRole(session, options.role)) {
-      throw new ApiError(403, "forbidden", {
-        message: options.forbiddenMessage ?? "Forbidden",
-      });
+      throw new ApiError(403, "forbidden", { message: forbidden });
     }
     return { session };
   };
+  // Documented for `@denext/openapi`: the 401 always, the 403 only when a role is required.
+  return tagMiddlewareDocs(mw, {
+    errors: {
+      unauthorized: { status: 401, message: unauthorized },
+      ...(options.role === undefined ? {} : { forbidden: { status: 403, message: forbidden } }),
+    },
+  });
 }
 
 /** Options for {@link rateLimit}. */
@@ -115,7 +120,8 @@ export interface ApiRateLimitOptions {
  */
 export function rateLimit(options: ApiRateLimitOptions): ApiMiddleware<object> {
   const store = options.store ?? inMemoryRateLimitStore();
-  return async (input) => {
+  const message = options.message ?? "Too Many Requests";
+  const mw: ApiMiddleware<object> = async (input) => {
     const key = options.key
       ? options.key(input)
       : defaultKey(input, trustsForwardedHeaders(options.trustForwardedHeaders));
@@ -124,11 +130,20 @@ export function rateLimit(options: ApiRateLimitOptions): ApiMiddleware<object> {
     if (window.count <= options.max) return;
     const retryAfter = Math.max(1, Math.ceil((window.resetAt - Date.now()) / 1000));
     throw new ApiError(429, "rate_limited", {
-      message: options.message ?? "Too Many Requests",
+      message,
       data: { retryAfter },
       headers: { "retry-after": String(retryAfter) },
     });
   };
+  return tagMiddlewareDocs(mw, {
+    errors: {
+      rate_limited: {
+        status: 429,
+        message,
+        headers: { "retry-after": "Seconds until the window resets" },
+      },
+    },
+  });
 }
 
 /**

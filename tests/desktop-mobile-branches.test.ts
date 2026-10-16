@@ -408,7 +408,7 @@ Deno.test("showContextMenu: desktop → the native menu at the anchor; falls bac
     assertEquals(rt.calls[0].args, {
       items: [
         { id: "open", label: "Open — in a tab", enabled: true },
-        { id: "del", label: "Delete", enabled: false },
+        { id: "del", label: "Delete", enabled: false, destructive: true },
         { label: "Move to", children: [{ id: "inbox", label: "Inbox", enabled: false }] },
       ],
       x: 10,

@@ -76,7 +76,7 @@ export function consoleCaptureScript(devLogPath: string): string {
   var MAX_STR = 2000;
   var DEV_LOG = ${JSON.stringify(devLogPath)};
   var LEVELS = ["log", "info", "warn", "error", "debug"];
-  var IMPORT_ERR = /Importing a module script failed|Failed to fetch dynamically imported module|error loading dynamically imported module|Failed to load module script|does not provide an export named|doesn't provide an export named|Importing binding name|import not found|Cannot find module|does not resolve to a valid URL|Failed to resolve module specifier|disallowed MIME type|MIME type/i;
+  var IMPORT_ERR = /Importing a module script failed|Failed to fetch dynamically imported module|error loading dynamically imported module|Failed to load module script|does not provide an export named|doesn't provide an export named|Importing binding name|import not found|Cannot find module|does not resolve to a valid URL|conflicting star exports|ambiguous indirect export|Failed to resolve module specifier|disallowed MIME type|MIME type/i;
   var entries = [];
   var seq = 0;
   var subs = [];
@@ -347,24 +347,60 @@ export function consoleCaptureScript(devLogPath: string): string {
     }
     return best;
   }
-  function importMapKeys() {
-    var keys = [];
+  // The page's import maps, parsed once per walk: { imports, scopes } with every key and
+  // address resolved against the document (an inline map's base URL).
+  var maps = [];
+  function readImportMaps() {
+    var out = [];
     try {
-      var maps = document.querySelectorAll("script[type=importmap]");
-      for (var i = 0; i < maps.length; i++) {
-        var m = JSON.parse(maps[i].textContent || "{}");
-        if (m.imports) keys = keys.concat(Object.keys(m.imports));
-        if (m.scopes) for (var sc in m.scopes) keys = keys.concat(Object.keys(m.scopes[sc] || {}));
+      var els = document.querySelectorAll("script[type=importmap]");
+      for (var i = 0; i < els.length; i++) {
+        var m = JSON.parse(els[i].textContent || "{}");
+        var scopes = [];
+        if (m.scopes) {
+          for (var sc in m.scopes) {
+            var su = absUrl(sc, location.href);
+            if (su && m.scopes[sc]) scopes.push({ prefix: su, table: m.scopes[sc] });
+          }
+        }
+        // the most specific scope first, as the spec resolves
+        scopes.sort(function (a, b) { return b.prefix.length - a.prefix.length; });
+        out.push({ imports: m.imports || {}, scopes: scopes });
       }
     } catch (_) {}
-    return keys;
+    return out;
   }
-  function mapped(spec, keys) {
-    for (var i = 0; i < keys.length; i++) {
-      var k = keys[i];
-      if (k === spec || (k.charAt(k.length - 1) === "/" && spec.indexOf(k) === 0)) return true;
+  function absUrl(u, base) {
+    try { return new URL(u, base).href; } catch (_) { return ""; }
+  }
+  // One specifier map's answer: an exact key, else the longest "prefix/" key. "" for none.
+  function matchIn(table, spec) {
+    var v = table[spec];
+    if (typeof v === "string") return absUrl(v, location.href);
+    var best = "";
+    for (var k in table) {
+      if (k.charAt(k.length - 1) === "/" && spec.indexOf(k) === 0 && k.length > best.length &&
+        typeof table[k] === "string") best = k;
     }
-    return false;
+    if (!best) return "";
+    var to = absUrl(table[best], location.href);
+    return to ? absUrl(spec.slice(best.length), to) : "";
+  }
+  // Where the import maps send a bare specifier imported by importer: the scopes that
+  // contain the importer (most specific first), then the top-level imports. "" when unmapped.
+  function resolveBare(spec, importer) {
+    for (var i = 0; i < maps.length; i++) {
+      var sc = maps[i].scopes;
+      for (var j = 0; j < sc.length; j++) {
+        var pre = sc[j].prefix;
+        if (importer !== pre && !(pre.charAt(pre.length - 1) === "/" && importer.indexOf(pre) === 0)) continue;
+        var r = matchIn(sc[j].table, spec);
+        if (r) return r;
+      }
+      var top = matchIn(maps[i].imports, spec);
+      if (top) return top;
+    }
+    return "";
   }
   function isBare(spec) {
     return !/^(\\.{0,2}\\/|[a-zA-Z][a-zA-Z0-9+.-]*:)/.test(spec);
@@ -416,7 +452,7 @@ export function consoleCaptureScript(devLogPath: string): string {
       return e && e.name === "SyntaxError" ? String(e.message || e) : "";
     }
   }
-  function checkModule(item, keys) {
+  function checkModule(item) {
     var url = item.url;
     return window.fetch(url, { cache: "no-store", credentials: "same-origin" }).then(function (res) {
       var ct = (res.headers && res.headers.get && res.headers.get("content-type")) || "";
@@ -431,14 +467,19 @@ export function consoleCaptureScript(devLogPath: string): string {
         var specs = importsOf(text);
         for (var i = 0; i < specs.length; i++) {
           var spec = specs[i].spec;
-          if (isBare(spec)) {
-            if (!specs[i].dynamic && !mapped(spec, keys)) {
-              return { reason: "imports the bare specifier " + JSON.stringify(spec) + ", which no import map resolves" };
-            }
-            continue;
-          }
           var abs;
-          try { abs = new URL(spec, url).href; } catch (_) { continue; }
+          if (isBare(spec)) {
+            // an import-mapped bare specifier is followed to the module the map names
+            abs = resolveBare(spec, url);
+            if (!abs) {
+              if (!specs[i].dynamic) {
+                return { reason: "imports the bare specifier " + JSON.stringify(spec) + ", which no import map resolves" };
+              }
+              continue;
+            }
+          } else {
+            try { abs = new URL(spec, url).href; } catch (_) { continue; }
+          }
           if (sameOrigin(abs)) deps.push({ url: abs, dynamic: specs[i].dynamic });
         }
         var syn = syntaxError(text);
@@ -462,6 +503,7 @@ export function consoleCaptureScript(devLogPath: string): string {
   var REGEX_AFTER = { "return": 1, "typeof": 1, "instanceof": 1, "in": 1, "of": 1, "new": 1, "delete": 1,
     "void": 1, "throw": 1, "case": 1, "do": 1, "else": 1, "yield": 1, "await": 1 };
   var KEEP_PUNCT = "{}()[];,*.";
+  var NS = "*"; // the binding name of a module namespace (import * as ns / export * as ns)
   var mods = {};     // url -> { own, stars, imports, esm, opaque } for each module the walk analyzed
   var linkSeen = {}; // importer + target + name already reported
   function idChar(c) {
@@ -578,7 +620,10 @@ export function consoleCaptureScript(devLogPath: string): string {
   function linkInfo(text) {
     var t = tokenize(text);
     if (!t) return null;
-    var info = { own: Object.create(null), stars: [], imports: [], esm: false, opaque: false };
+    // via: an exported name that is another module's binding (export { a } from, or an
+    // imported binding exported again) — { spec, name }, resolved to a url by recordLinks.
+    var info = { own: Object.create(null), via: Object.create(null), stars: [], imports: [], esm: false, opaque: false };
+    var locals = Object.create(null); // local name -> { spec, name } of an imported binding
     for (var i = 0, depth = 0; i < t.length; i++) {
       var x = t[i];
       if (x.k === "p") {
@@ -592,14 +637,18 @@ export function consoleCaptureScript(devLogPath: string): string {
       if (x.v === "import") {
         if (is(y, "(") || is(y, ".")) continue; // import(…), import.meta
         info.esm = true;
-        var wanted = [];
-        if (y.k === "n") { wanted.push("default"); j++; if (is(t[j], ",")) j++; }
-        if (is(t[j], "*")) j += 3; // * as ns: nothing to check
+        var wanted = [], bound = [];
+        if (y.k === "n") { wanted.push("default"); bound.push([y.v, "default"]); j++; if (is(t[j], ",")) j++; }
+        if (is(t[j], "*")) { if (t[j + 2]) bound.push([t[j + 2].v, NS]); j += 3; } // * as ns: nothing to check
         else if (is(t[j], "{")) {
           if ((j = nameList(t, j, pairs)) < 0) continue;
-          for (p = 0; p < pairs.length; p++) wanted.push(pairs[p][0]);
+          for (p = 0; p < pairs.length; p++) { wanted.push(pairs[p][0]); bound.push([pairs[p][1], pairs[p][0]]); }
         }
-        if ((spec = fromSpec(t, j)) !== null) { info.imports.push({ spec: spec, names: wanted }); i = j + 1; }
+        if ((spec = fromSpec(t, j)) !== null) {
+          info.imports.push({ spec: spec, names: wanted });
+          for (p = 0; p < bound.length; p++) locals[bound[p][0]] = { spec: spec, name: bound[p][1] };
+          i = j + 1;
+        }
         continue;
       }
       info.esm = true;
@@ -608,7 +657,7 @@ export function consoleCaptureScript(devLogPath: string): string {
         var ns = isN(t[j + 1], "as") ? t[j + 2] : null;
         j += ns ? 3 : 1;
         if ((spec = fromSpec(t, j)) === null) { info.opaque = true; continue; }
-        if (ns) info.own[ns.v] = true; else info.stars.push(spec);
+        if (ns) { info.own[ns.v] = true; info.via[ns.v] = { spec: spec, name: NS }; } else info.stars.push(spec);
         i = j + 1;
         continue;
       }
@@ -616,8 +665,16 @@ export function consoleCaptureScript(devLogPath: string): string {
         if ((j = nameList(t, j, pairs)) < 0) { info.opaque = true; continue; }
         var reexported = [];
         for (p = 0; p < pairs.length; p++) { info.own[pairs[p][1]] = true; reexported.push(pairs[p][0]); }
-        if ((spec = fromSpec(t, j)) !== null) { info.imports.push({ spec: spec, names: reexported }); i = j + 1; }
-        else i = j - 1;
+        if ((spec = fromSpec(t, j)) !== null) {
+          info.imports.push({ spec: spec, names: reexported });
+          for (p = 0; p < pairs.length; p++) info.via[pairs[p][1]] = { spec: spec, name: pairs[p][0] };
+          i = j + 1;
+        } else {
+          for (p = 0; p < pairs.length; p++) {
+            if (pairs[p][0] in locals) info.via[pairs[p][1]] = locals[pairs[p][0]];
+          }
+          i = j - 1;
+        }
         continue;
       }
       if (isN(y, "async")) y = t[++j];
@@ -636,14 +693,15 @@ export function consoleCaptureScript(devLogPath: string): string {
     return info;
   }
   function linkTarget(spec, base) {
-    if (isBare(spec)) return "";
-    try { var u = new URL(spec, base).href; return sameOrigin(u) ? u : ""; } catch (_) { return ""; }
+    var u = isBare(spec) ? resolveBare(spec, base) : absUrl(spec, base);
+    return u && sameOrigin(u) ? u : "";
   }
   function recordLinks(url, text) {
     var info = linkInfo(text);
     if (!info) return;
     for (var i = 0; i < info.imports.length; i++) info.imports[i].url = linkTarget(info.imports[i].spec, url);
     for (var s = 0; s < info.stars.length; s++) info.stars[s] = linkTarget(info.stars[s], url);
+    for (var v in info.via) info.via[v] = { url: linkTarget(info.via[v].spec, url), name: info.via[v].name };
     mods[url] = info;
   }
   // A module's export names: its own, plus (default aside) those of every module its
@@ -692,7 +750,45 @@ export function consoleCaptureScript(devLogPath: string): string {
     }
     return best;
   }
-  // Every analyzed import edge whose name the target does not export (each reported once).
+  // Which binding an export name of a module resolves to, as "url\\nname" — following
+  // export { a } from, imported bindings exported again and export * (the spec's
+  // ResolveExport). "" when not found, null when a module on the way can't be trusted, and
+  // { a, b } when two export * sources give different bindings (an ambiguous export).
+  function originOf(url, name, seen) {
+    var key = url + "\\n" + name;
+    if (seen[key]) return "";
+    seen[key] = true;
+    var m = mods[url];
+    if (!m || m.opaque) return null;
+    if (name in m.own) {
+      var v = m.via[name];
+      if (!v) return key;
+      if (!v.url) return null;
+      if (v.name === NS) return v.url + "\\n" + NS;
+      var r = originOf(v.url, v.name, seen);
+      return r === "" ? null : r;
+    }
+    if (name === "default") return "";
+    var found = "";
+    for (var s = 0; s < m.stars.length; s++) {
+      if (!m.stars[s]) return null;
+      var o = originOf(m.stars[s], name, seen);
+      if (o === null || typeof o === "object") return o;
+      if (!o) continue;
+      if (found && found !== o) return { a: found.split("\\n")[0], b: o.split("\\n")[0] };
+      found = o;
+    }
+    return found;
+  }
+  // An imported name the target exports only through export * from two sources that give
+  // different bindings: the browser refuses the import (a SyntaxError).
+  function ambiguity(im, name) {
+    if (name === "default" || name in mods[im.url].own) return null;
+    var o = originOf(im.url, name, {});
+    return o && typeof o === "object" ? o : null;
+  }
+  // Every analyzed import edge whose name the target does not export, or exports
+  // ambiguously (each reported once).
   function linkCheck() {
     exportCache = {};
     for (var u in mods) {
@@ -703,7 +799,16 @@ export function consoleCaptureScript(devLogPath: string): string {
         if (!ex) continue;
         for (var k = 0; k < im.names.length; k++) {
           var name = im.names[k], key = u + "\\n" + im.url + "\\n" + name;
-          if (name in ex || linkSeen[key]) continue;
+          if (linkSeen[key]) continue;
+          if (name in ex) {
+            var amb = ambiguity(im, name);
+            if (!amb) continue;
+            linkSeen[key] = true;
+            diag.failures.push({ url: im.url, from: u, ambiguous: name, sources: [amb.a, amb.b],
+              reason: "exports " + JSON.stringify(name) + " ambiguously: export * from " + amb.a +
+                " and from " + amb.b + " both provide it" });
+            continue;
+          }
           linkSeen[key] = true;
           var hint = closestExport(name, ex);
           diag.failures.push({ url: im.url, from: u, missing: name, hint: hint,
@@ -717,18 +822,24 @@ export function consoleCaptureScript(devLogPath: string): string {
   // names only the binding; older Safari says nothing more than "Importing a module script failed".
   var LINK_ERR = /requested module ['"]([^'"]+)['"] (?:does not|doesn't) provide an export named:? ?['"]?([^'"\\s]+)/i;
   var LINK_ERR_NAME = /(?:Importing binding name|import not found:) ?['"]?([^'"\\s]+)/i;
+  // An ambiguous export: Chrome names the specifier and the name, Firefox only the name.
+  var AMBIG_ERR = /requested module ['"]([^'"]+)['"] contains conflicting star exports for name ['"]([^'"]+)/i;
+  var AMBIG_ERR_NAME = /ambiguous indirect export:? ?['"]?([^'"\\s]+)/i;
   function linkErrorIn(text, filename) {
-    var m = LINK_ERR.exec(text), spec = "", name;
+    var m = LINK_ERR.exec(text), spec = "", name, ambiguous = false;
     if (m) { spec = m[1]; name = m[2]; }
+    else if ((m = AMBIG_ERR.exec(text))) { spec = m[1]; name = m[2]; ambiguous = true; }
+    else if ((m = AMBIG_ERR_NAME.exec(text))) { name = m[1]; ambiguous = true; }
     else if ((m = LINK_ERR_NAME.exec(text))) name = m[1];
     else return null;
     var importer = filename && sameOrigin(filename) ? new URL(filename, location.href).href : "";
     var target = spec && (importer || !/^\\.{1,2}\\//.test(spec)) ? linkTarget(spec, importer || location.href) : "";
-    return { name: name, spec: spec, importer: importer, target: target };
+    return { name: name, spec: spec, importer: importer, target: target, ambiguous: ambiguous };
   }
   function linkErrorLine(le) {
     return "boot diagnosis: the browser reports that " + (le.importer || "a module") + " imports " +
-      JSON.stringify(le.name) + " from " + (le.target || le.spec || "a module") + ", which does not export it";
+      JSON.stringify(le.name) + " from " + (le.target || le.spec || "a module") +
+      (le.ambiguous ? ", which exports it ambiguously (two export * sources provide it)" : ", which does not export it");
   }
   // A browser link error that named no importer: the walked edge it must be, when exactly one fits.
   function placeLinkError(le) {
@@ -745,7 +856,8 @@ export function consoleCaptureScript(devLogPath: string): string {
     le.importer = found[0].from;
     le.target = le.target || found[0].url;
     for (var f = 0; f < diag.failures.length; f++) {
-      if (diag.failures[f].from === le.importer && diag.failures[f].missing === le.name) return;
+      var df = diag.failures[f];
+      if (df.from === le.importer && (df.missing === le.name || df.ambiguous === le.name)) return;
     }
     push("error", "diagnosis", linkErrorLine(le), "", le.importer);
   }
@@ -761,7 +873,7 @@ export function consoleCaptureScript(devLogPath: string): string {
       notify();
       return Promise.resolve(diag);
     }
-    var keys = importMapKeys();
+    maps = readImportMaps();
     var roots = named && named !== entry ? [named] : [];
     if (entry) roots.push(entry);
     why = why || "manual";
@@ -818,7 +930,7 @@ export function consoleCaptureScript(devLogPath: string): string {
         while (active < CONCURRENCY && queue.length) {
           (function (item) {
             active++;
-            checkModule(item, keys).then(function (r) {
+            checkModule(item).then(function (r) {
               active--; // counted in checked from here, so the cap check sees it once
               diag.checked++;
               if (r.reason) diag.failures.push({ url: item.url, from: item.from, reason: r.reason });
@@ -844,6 +956,12 @@ export function consoleCaptureScript(devLogPath: string): string {
   function report() {
     var f = diag.failures;
     for (var i = 0; i < f.length && i < 10; i++) {
+      if (f[i].ambiguous != null) {
+        push("error", "diagnosis", "boot diagnosis: " + f[i].from + " imports " + JSON.stringify(f[i].ambiguous) +
+          " from " + f[i].url + ", which exports it ambiguously — export * from " + f[i].sources[0] +
+          " and from " + f[i].sources[1] + " both provide it (export the one you mean by name)", "", f[i].from);
+        continue;
+      }
       if (f[i].missing != null) {
         push("error", "diagnosis", "boot diagnosis: " + f[i].from + " imports " + JSON.stringify(f[i].missing) +
           " from " + f[i].url + ", which does not export it" +

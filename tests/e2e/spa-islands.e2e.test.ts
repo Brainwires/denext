@@ -75,12 +75,24 @@ Deno.test({
     await t.step("client:interaction mounts on the first click on its placeholder", async () => {
       assertEquals(await page.evaluate(exists("panel")), false);
       await page.evaluate(`window.scrollTo(0, 0)`);
-      await page.evaluate(
-        `(() => { const b = document.querySelector('[data-testid="open"]');` +
-          ` b.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); b.click(); })()`,
-      );
+      // A real (trusted) click: pointerdown, mousedown, focus, pointerup, mouseup, click.
+      const open = await page.$('[data-testid="open"]');
+      assert(open);
+      await open.click();
       await pollFor(page, exists("panel"));
       assertEquals(await page.evaluate(exists("open")), false, "the placeholder is gone");
+    });
+
+    await t.step("the click that mounted it is replayed on the mounted component", async () => {
+      await pollFor(
+        page,
+        `document.querySelector('[data-testid="panel-btn"]').textContent === 'clicked 1'`,
+      );
+      assertEquals(
+        await page.evaluate(`document.activeElement?.dataset?.testid ?? null`),
+        "panel-btn",
+        "the focus moved to the element in the placeholder's position",
+      );
     });
 
     await t.step("no console errors", () => {

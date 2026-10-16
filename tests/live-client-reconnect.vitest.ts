@@ -7,50 +7,9 @@
 // (`vi.resetModules()`), which a plain `Deno.test` file cannot do.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FakeWebSocket } from "./helpers/fake-websocket.ts";
 
 type LiveClient = typeof import("../src/client/live-client.ts");
-
-/** A controllable stand-in for the browser WebSocket (no real connection). */
-class FakeWebSocket {
-  static CONNECTING = 0;
-  static OPEN = 1;
-  static CLOSING = 2;
-  static CLOSED = 3;
-  /** Every socket the transport opened, oldest first. */
-  static all: FakeWebSocket[] = [];
-
-  readyState = FakeWebSocket.CONNECTING;
-  sent: string[] = [];
-  onopen: (() => void) | null = null;
-  onmessage: ((ev: { data: unknown }) => void) | null = null;
-  onclose: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-
-  constructor(readonly url: string) {
-    FakeWebSocket.all.push(this);
-  }
-  send(data: string) {
-    this.sent.push(data);
-  }
-  close() {
-    this.readyState = FakeWebSocket.CLOSED;
-  }
-
-  /** The connection opens. */
-  open() {
-    this.readyState = FakeWebSocket.OPEN;
-    this.onopen?.();
-  }
-  /** The connection drops from the network side. */
-  drop() {
-    this.readyState = FakeWebSocket.CLOSED;
-    this.onclose?.();
-  }
-  /** The `type`s of the frames this socket sent. */
-  types(): string[] {
-    return this.sent.map((s) => (JSON.parse(s) as { type: string }).type);
-  }
-}
 
 const sockets = () => FakeWebSocket.all;
 const latest = () => FakeWebSocket.all.at(-1)!;

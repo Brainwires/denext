@@ -21,12 +21,14 @@ export type PullSubscribe<T> = (listener: (item: T) => void) => () => void;
  * @param cap The capability.
  * @param event The signal event.
  * @param parse Turns one raw item into the listeners' value (`undefined` drops it).
+ * @param method The method that takes the queue (default `take`).
  * @returns The subscribe function.
  */
 export function pullQueue<T>(
   cap: string,
   event: string,
   parse: (raw: unknown) => T | undefined,
+  method = "take",
 ): PullSubscribe<T> {
   const listeners = new Set<(item: T) => void>();
   let stop: (() => void) | undefined;
@@ -58,7 +60,7 @@ export function pullQueue<T>(
     try {
       do {
         again = false;
-        deliver(await desktopRpc<unknown>(cap, "take", {}).catch(() => []));
+        deliver(await desktopRpc<unknown>(cap, method, {}).catch(() => []));
       } while (again && listeners.size > 0);
     } finally {
       taking = false;

@@ -2286,12 +2286,24 @@
           "denextOnly": true
         },
         {
+          "name": "RenderStream",
+          "slug": "RenderStream",
+          "kind": "interface",
+          "signature": "interface RenderStream",
+          "doc": "A streaming render: the HTML byte stream plus React's allReady signal.",
+          "docFull": "A streaming render: the HTML byte stream plus React's `allReady` signal.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "renderToReadableStream",
           "slug": "renderToReadableStream",
           "kind": "function",
-          "signature": "renderToReadableStream(node: VNodeChildren, options?: StreamOptions): ReadableStream<Uint8Array>",
+          "signature": "renderToReadableStream(node: VNodeChildren, options?: StreamOptions): RenderStream",
           "doc": "Render a VNode tree to a streaming HTML ReadableStream<Uint8Array>, resolving Suspense boundaries progressively.",
-          "docFull": "Render a VNode tree to a streaming HTML `ReadableStream<Uint8Array>`,\nresolving Suspense boundaries progressively.",
+          "docFull": "Render a VNode tree to a streaming HTML `ReadableStream<Uint8Array>`,\nresolving Suspense boundaries progressively.\n\nThe stream is **pull-gated**: the shell is enqueued as the first chunk, and each later\nchunk (a batch of settled boundaries, then the tail) is produced only when the consumer\nasks for more (`desiredSize > 0`), so a slow consumer applies backpressure instead of the\nwhole document queueing in memory as encoded chunks. Boundary rendering is not gated —\nsee {@link RenderStream.allReady}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -2578,7 +2590,7 @@
           ],
           "returns": "The provider element wrapping children.",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "SessionProviderProps",
@@ -2700,7 +2712,7 @@
           ],
           "returns": "The credentials result, or the sign-in URL for the redirect flow.",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "SignInOptions",
@@ -2729,7 +2741,7 @@
           ],
           "returns": "A promise that settles once the navigation has been started.",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "SignOutOptions",
@@ -3931,7 +3943,7 @@
           "params": [],
           "returns": "The session state plus update().",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "useSessionStorage",
@@ -4188,7 +4200,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 4.1.0",
+          "signature": "VERSION: 4.2.0",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -4250,11 +4262,47 @@
           "kind": "function",
           "signature": "ViewTransition(props: object): VNode",
           "doc": "React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the first keeps name, the others get React's name_<i> suffix), and the hosts a component child renders. Text directly inside is not animated (it can't be named). The import-gated marking runtime finds these elements and applies real view-transition-name (an automatic one when name is unset) and view-transition-class (enter/exit/update/share, else default; \"none\" opts out):",
-          "docFull": "`React.ViewTransition` (experimental) — the client-driven view-transition wrapper. It is\ntransparent (no DOM node of its own) and carries its config by stamping the {@link DNX_VT_ATTR}\nattribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the\nFlight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the\nfirst keeps `name`, the others get React's `name_<i>` suffix), and the hosts a component child\nrenders. Text directly inside is not animated (it can't be named). The import-gated marking\nruntime finds these elements and applies real `view-transition-name` (an automatic one when\n`name` is unset) and `view-transition-class` (`enter`/`exit`/`update`/`share`, else `default`;\n`\"none\"` opts out):\n\n- **Same-page updates** (React's triggers): a commit made only of Transition work — a\n  `startTransition` update, a `useDeferredValue` catch-up, a Suspense reveal — runs inside\n  `document.startViewTransition` when a wrapped element enters, exits, is shared (a `name` that\n  leaves one place and enters another) or updates (its content mutated or its layout moved).\n  An urgent update never animates, and neither does a `useSyncExternalStore` change (React\n  renders a store change synchronously even inside `startTransition`).\n- **Soft navigations** commit inside `document.startViewTransition` (see `withViewTransition`\n  in `src/client/navigation.ts`), so a `name` shared across routes morphs one element into the\n  other; the route-level cross-fade applies regardless.\n\nWhere the browser lacks the View Transitions API the commit simply applies.",
+          "docFull": "`React.ViewTransition` (experimental) — the client-driven view-transition wrapper. It is\ntransparent (no DOM node of its own) and carries its config by stamping the {@link DNX_VT_ATTR}\nattribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the\nFlight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the\nfirst keeps `name`, the others get React's `name_<i>` suffix), and the hosts a component child\nrenders. Text directly inside is not animated (it can't be named). The import-gated marking\nruntime finds these elements and applies real `view-transition-name` (an automatic one when\n`name` is unset) and `view-transition-class` (`enter`/`exit`/`update`/`share`, else `default`;\n`\"none\"` opts out):\n\n- **Same-page updates** (React's triggers): a commit made only of Transition work — a\n  `startTransition` update, a `useDeferredValue` catch-up, a Suspense reveal — runs inside\n  `document.startViewTransition` when a wrapped element enters, exits, is shared (a `name` that\n  leaves one place and enters another) or updates (its content mutated or its layout moved).\n  An urgent update never animates, and neither does a `useSyncExternalStore` change (React\n  renders a store change synchronously even inside `startTransition`).\n- **Soft navigations** commit inside `document.startViewTransition` (see `withViewTransition`\n  in `src/client/navigation.ts`), so a `name` shared across routes morphs one element into the\n  other; the route-level cross-fade applies regardless.\n\nA hidden `<Activity>` going hidden in a Transition animates its boundaries as exits, and a\nboundary entirely outside the viewport (before and after) is not animated, as in React.\n\n`onEnter` / `onExit` / `onUpdate` / `onShare` run once the transition's pseudo-elements exist\n(`ready`), with the boundary's `ViewTransitionInstance` (`name`, and `group` / `imagePair` /\n`old` / `new` handles with `animate()` / `getAnimations()` / `getComputedStyle()` on its\n`::view-transition-*` pseudo-elements) and the transition types; a returned function runs\nwhen the transition finishes. `onShare` runs on the side that leaves. On a soft navigation a\nboundary that persists runs `onUpdate` when its content changed or its box moved. A `ref`\nreceives the same instance once the boundary's first host mounts. Callbacks and `ref` need a\nclient-rendered `<ViewTransition>` (a function can't cross from a Server Component).\n\nWhere the browser lacks the View Transitions API the commit simply applies.",
           "params": [],
           "returns": "",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "ViewTransitionCallback",
+          "slug": "ViewTransitionCallback",
+          "kind": "typeAlias",
+          "signature": "type ViewTransitionCallback = (instance: ViewTransitionInstance, types: string[]) => void | parenthesized",
+          "doc": "A <ViewTransition> onEnter / onExit / onUpdate / onShare callback (React's): called with the boundary's ViewTransitionInstance and the transition's types; a returned function runs when the transition finishes.",
+          "docFull": "A `<ViewTransition>` `onEnter` / `onExit` / `onUpdate` / `onShare` callback (React's): called with\nthe boundary's {@link ViewTransitionInstance} and the transition's types; a returned function\nruns when the transition finishes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ViewTransitionInstance",
+          "slug": "ViewTransitionInstance",
+          "kind": "interface",
+          "signature": "interface ViewTransitionInstance",
+          "doc": "What a <ViewTransition> callback receives (React's ViewTransitionInstance).",
+          "docFull": "What a `<ViewTransition>` callback receives (React's `ViewTransitionInstance`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ViewTransitionPseudoElement",
+          "slug": "ViewTransitionPseudoElement",
+          "kind": "interface",
+          "signature": "interface ViewTransitionPseudoElement",
+          "doc": "One ::view-transition-* pseudo-element of a boundary (React's ViewTransitionPseudoElement).",
+          "docFull": "One `::view-transition-*` pseudo-element of a boundary (React's `ViewTransitionPseudoElement`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "VirtualItem",
@@ -5530,6 +5578,18 @@
           "denextOnly": true
         },
         {
+          "name": "AuthSessionSaml",
+          "slug": "AuthSessionSaml",
+          "kind": "interface",
+          "signature": "interface AuthSessionSaml",
+          "doc": "The SAML subject of a session a saml() provider started (AuthSession.saml).",
+          "docFull": "The SAML subject of a session a `saml()` provider started ({@linkcode AuthSession.saml}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "AuthUser",
           "slug": "AuthUser",
           "kind": "interface",
@@ -6095,8 +6155,8 @@
           "slug": "ChannelEvent",
           "kind": "interface",
           "signature": "interface ChannelEvent",
-          "doc": "One transport event: a channel publish/revoke, or a cross-instance cache-tag invalidate.",
-          "docFull": "One transport event: a channel `publish`/`revoke`, or a cross-instance cache-tag `invalidate`.",
+          "doc": "One transport event: a channel publish/revoke, a cross-instance cache-tag invalidate, or an instance's presence snapshot of one usePresence room.",
+          "docFull": "One transport event: a channel `publish`/`revoke`, a cross-instance cache-tag `invalidate`, or\nan instance's `presence` snapshot of one `usePresence` room.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6423,8 +6483,8 @@
           "slug": "CorsConfig",
           "kind": "interface",
           "signature": "interface CorsConfig",
-          "doc": "Cross-origin access to the app's route handlers (route.ts, defineApi) and the native denextAuth endpoints — what a Capacitor shell (capacitor://localhost, https://localhost) or another front end on a different origin needs to call this server. Origins match EXACTLY (scheme + host + port, byte for byte); there are no wildcards, prefixes or suffixes, and \"null\" is refused.",
-          "docFull": "Cross-origin access to the app's route handlers (`route.ts`, `defineApi`) and the native\n`denextAuth` endpoints — what a Capacitor shell (`capacitor://localhost`,\n`https://localhost`) or another front end on a different origin needs to call this server.\nOrigins match EXACTLY (scheme + host + port, byte for byte); there are no wildcards,\nprefixes or suffixes, and `\"null\"` is refused.",
+          "doc": "Cross-origin access to the app's route handlers (route.ts, defineApi), the native denextAuth endpoints, pages, Server Actions, the API batch endpoint and the Live socket — the last three letting an allowed origin in only without cookies — what a Capacitor shell (capacitor://localhost, https://localhost) or another front end on a different origin needs to call this server. Origins match EXACTLY (scheme + host + port, byte for byte); there are no wildcards, prefixes or suffixes, and \"null\" is refused.",
+          "docFull": "Cross-origin access to the app's route handlers (`route.ts`, `defineApi`), the native\n`denextAuth` endpoints, pages, Server Actions, the API batch endpoint and the Live socket —\nthe last three letting an allowed origin in only without cookies — what a Capacitor shell (`capacitor://localhost`,\n`https://localhost`) or another front end on a different origin needs to call this server.\nOrigins match EXACTLY (scheme + host + port, byte for byte); there are no wildcards,\nprefixes or suffixes, and `\"null\"` is refused.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -6721,6 +6781,18 @@
           "denextOnly": true
         },
         {
+          "name": "DeferredValueSink",
+          "slug": "DeferredValueSink",
+          "kind": "interface",
+          "signature": "interface DeferredValueSink",
+          "doc": "Collects the deferred values a streamed soft-navigation payload sends after it.",
+          "docFull": "Collects the deferred values a streamed soft-navigation payload sends after it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "defineAction",
           "slug": "defineAction",
           "kind": "function",
@@ -6890,6 +6962,117 @@
           "signature": "interface DenextPlugin",
           "doc": "A denext plugin. Declared in denext.config.ts as plugins: [myPlugin()]; its setup runs once per process, before the first route scan.",
           "docFull": "A denext plugin. Declared in `denext.config.ts` as `plugins: [myPlugin()]`; its\n{@linkcode setup} runs once per process, before the first route scan.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "denoKvCacheStore",
+          "slug": "denoKvCacheStore",
+          "kind": "function",
+          "signature": "denoKvCacheStore(options?: DenoKvCacheStoreOptions): CacheStore & object",
+          "doc": "A CacheStore on Deno KV, shared by every isolate using the database.",
+          "docFull": "A {@link CacheStore} on Deno KV, shared by every isolate using the database.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "kv (an open Deno.Kv) or path (what to pass to Deno.openKv), a key prefix (default [\"denext\", \"cache\"]), the caps and the sweep interval."
+            }
+          ],
+          "returns": "A store for cache.store / setCacheStore; close() closes a database it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DenoKvCacheStoreOptions",
+          "slug": "DenoKvCacheStoreOptions",
+          "kind": "interface",
+          "signature": "interface DenoKvCacheStoreOptions",
+          "doc": "Options for denoKvCacheStore.",
+          "docFull": "Options for {@linkcode denoKvCacheStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DenoKvConnectionOptions",
+          "slug": "DenoKvConnectionOptions",
+          "kind": "interface",
+          "signature": "interface DenoKvConnectionOptions",
+          "doc": "Options shared by the Deno KV stores: a database of your own, or a path to open one.",
+          "docFull": "Options shared by the Deno KV stores: a database of your own, or a path to open one.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "denoKvRateLimitStore",
+          "slug": "denoKvRateLimitStore",
+          "kind": "function",
+          "signature": "denoKvRateLimitStore(options?: DenoKvRateLimitStoreOptions): RateLimitStore & object",
+          "doc": "A shared RateLimitStore on Deno KV.",
+          "docFull": "A shared {@linkcode RateLimitStore} on Deno KV.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "kv (an open Deno.Kv) or path (what to pass to Deno.openKv), and a key prefix (default [\"denext\", \"ratelimit\"])."
+            }
+          ],
+          "returns": "A store to pass as denextAuth({ rateLimit: { store } }); close() closes a database it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DenoKvRateLimitStoreOptions",
+          "slug": "DenoKvRateLimitStoreOptions",
+          "kind": "typeAlias",
+          "signature": "type DenoKvRateLimitStoreOptions = DenoKvConnectionOptions",
+          "doc": "Options for denoKvRateLimitStore.",
+          "docFull": "Options for {@linkcode denoKvRateLimitStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "denoKvSessionStore",
+          "slug": "denoKvSessionStore",
+          "kind": "function",
+          "signature": "denoKvSessionStore(options?: DenoKvSessionStoreOptions): SessionStore & object",
+          "doc": "A durable, shared SessionStore on Deno KV.",
+          "docFull": "A durable, shared {@linkcode SessionStore} on Deno KV.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "kv (an open Deno.Kv) or path (what to pass to Deno.openKv), and a key prefix (default [\"denext\", \"session\"])."
+            }
+          ],
+          "returns": "A store to pass as denextAuth({ sessionStore }); close() closes a database it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DenoKvSessionStoreOptions",
+          "slug": "DenoKvSessionStoreOptions",
+          "kind": "typeAlias",
+          "signature": "type DenoKvSessionStoreOptions = DenoKvConnectionOptions",
+          "doc": "Options for denoKvSessionStore.",
+          "docFull": "Options for {@linkcode denoKvSessionStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DenoKvUnsupportedError",
+          "slug": "DenoKvUnsupportedError",
+          "kind": "class",
+          "signature": "class DenoKvUnsupportedError",
+          "doc": "Thrown when this Deno has no Deno.openKv (outside Deno Deploy without --unstable-kv).",
+          "docFull": "Thrown when this Deno has no `Deno.openKv` (outside Deno Deploy without `--unstable-kv`).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7148,6 +7331,18 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopWindowsConfig",
+          "slug": "DesktopWindowsConfig",
+          "kind": "interface",
+          "signature": "interface DesktopWindowsConfig",
+          "doc": "DesktopConfig.windows: Windows launch settings of the packaged app.",
+          "docFull": "{@link DesktopConfig.windows}: Windows launch settings of the packaged app.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "detectLocale",
           "slug": "detectLocale",
           "kind": "function",
@@ -7230,6 +7425,27 @@
           "docFull": "Inputs to {@linkcode renderDocument} for assembling the full HTML page.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "documentsErrors",
+          "slug": "documentsErrors",
+          "kind": "function",
+          "signature": "documentsErrors<M>(mw: M, errors: Record<string, ErrorSpec>): M",
+          "doc": "Tag a middleware so applying it also DOCUMENTS the error responses it answers with: an endpoint built with createApi().use(documentsErrors(mw, { quota_exceeded: 402 })).define(...) lists them in its generated OpenAPI document (and its x-denext-errors) beside its own errors, with no repetition in the definition. A code the definition declares itself keeps its own spec. The first-party middleware (requireSession, requireBearer, rateLimit, csrf) document theirs already.",
+          "docFull": "Tag a middleware so applying it also DOCUMENTS the error responses it answers with: an endpoint\nbuilt with `createApi().use(documentsErrors(mw, { quota_exceeded: 402 })).define(...)` lists\nthem in its generated OpenAPI document (and its `x-denext-errors`) beside its own `errors`,\nwith no repetition in the definition. A code the definition declares itself keeps its own spec.\nThe first-party middleware (`requireSession`, `requireBearer`, `rateLimit`, `csrf`) document\ntheirs already.",
+          "params": [
+            {
+              "name": "mw",
+              "doc": "The middleware to tag."
+            },
+            {
+              "name": "errors",
+              "doc": "The codes it may fail with, each a status or { status, message?, headers? }."
+            }
+          ],
+          "returns": "The same middleware, tagged.",
           "examples": [],
           "denextOnly": true
         },
@@ -7393,8 +7609,8 @@
           "slug": "ErrorSpec",
           "kind": "typeAlias",
           "signature": "type ErrorSpec = number | object",
-          "doc": "How a declared error code maps to HTTP: a status, or a status with a default message.",
-          "docFull": "How a declared error code maps to HTTP: a status, or a status with a default message.",
+          "doc": "How a declared error code maps to HTTP: a status, or a status with a default message. The object form may also list the response headers the error carries (name → description, e.g. { \"retry-after\": \"Seconds until the window resets\" }) — documentation only, which @denext/openapi renders on that status's response; set the header itself with fail(code, { headers }).",
+          "docFull": "How a declared error code maps to HTTP: a status, or a status with a default message. The\nobject form may also list the response `headers` the error carries (name → description, e.g.\n`{ \"retry-after\": \"Seconds until the window resets\" }`) — documentation only, which\n`@denext/openapi` renders on that status's response; set the header itself with\n`fail(code, { headers })`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7850,6 +8066,18 @@
           "denextOnly": true
         },
         {
+          "name": "getLiveViewStore",
+          "slug": "getLiveViewStore",
+          "kind": "function",
+          "signature": "getLiveViewStore(): LiveViewStore",
+          "doc": "The installed store (the in-memory default until setLiveViewStore runs).",
+          "docFull": "The installed store (the in-memory default until {@linkcode setLiveViewStore} runs).",
+          "params": [],
+          "returns": "The store.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "getSession",
           "slug": "getSession",
           "kind": "function",
@@ -7866,7 +8094,7 @@
           "examples": [
             "```ts\nconst session = await getSession<{ userId: string }>({ secret: Deno.env.get(\"SESSION_SECRET\")! });\nif (!session.data) redirect(\"/login\");\n// after a successful login:\nawait session.set({ userId: user.id });\n```"
           ],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "github",
@@ -9275,6 +9503,66 @@
           "denextOnly": true
         },
         {
+          "name": "KvAtomicLike",
+          "slug": "KvAtomicLike",
+          "kind": "interface",
+          "signature": "interface KvAtomicLike",
+          "doc": "The atomic-operation subset the stores use.",
+          "docFull": "The atomic-operation subset the stores use.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "KvEntryLike",
+          "slug": "KvEntryLike",
+          "kind": "interface",
+          "signature": "interface KvEntryLike",
+          "doc": "An entry as KV returns it (versionstamp is null when the key is absent).",
+          "docFull": "An entry as KV returns it (`versionstamp` is `null` when the key is absent).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "KvKey",
+          "slug": "KvKey",
+          "kind": "typeAlias",
+          "signature": "type KvKey = typeOperator",
+          "doc": "A KV key.",
+          "docFull": "A KV key.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "KvKeyPart",
+          "slug": "KvKeyPart",
+          "kind": "typeAlias",
+          "signature": "type KvKeyPart = string | number | bigint | boolean | Uint8Array",
+          "doc": "One part of a KV key.",
+          "docFull": "One part of a KV key.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "KvLike",
+          "slug": "KvLike",
+          "kind": "interface",
+          "signature": "interface KvLike",
+          "doc": "The Deno.Kv subset the stores use.",
+          "docFull": "The `Deno.Kv` subset the stores use.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "LayoutModule",
           "slug": "LayoutModule",
           "kind": "interface",
@@ -9395,6 +9683,18 @@
           "signature": "interface LiveSubscriptionRequest",
           "doc": "A useLive data subscription presented to LiveConfig.canSubscribe.",
           "docFull": "A `useLive` data subscription presented to {@link LiveConfig.canSubscribe}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveViewStore",
+          "slug": "LiveViewStore",
+          "kind": "interface",
+          "signature": "interface LiveViewStore",
+          "doc": "Where parked live views wait between instances. Values are opaque sealed strings; a store only has to keep them for ttlSeconds and hand each back once.",
+          "docFull": "Where parked live views wait between instances. Values are opaque sealed strings; a store\nonly has to keep them for `ttlSeconds` and hand each back once.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -9639,6 +9939,35 @@
           "signature": "interface MdxConfig",
           "doc": "MDX compilation options (see DenextConfig.mdx). Each plugin list is a unified PluggableList: an array whose entries are either a plugin function or a [plugin, options] tuple. Typed loosely (unknown[]) so the public config surface doesn't depend on unified/@mdx-js types; the values are forwarded verbatim to MDX's compile.",
           "docFull": "MDX compilation options (see {@link DenextConfig.mdx}). Each plugin list is a\nunified `PluggableList`: an array whose entries are either a plugin function or a\n`[plugin, options]` tuple. Typed loosely (`unknown[]`) so the public config surface\ndoesn't depend on `unified`/`@mdx-js` types; the values are forwarded verbatim to\nMDX's `compile`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "memoryLiveViewStore",
+          "slug": "memoryLiveViewStore",
+          "kind": "function",
+          "signature": "memoryLiveViewStore(options?: MemoryLiveViewStoreOptions): LiveViewStore",
+          "doc": "The in-memory LiveViewStore (the default): one process, bounded, expiring.",
+          "docFull": "The in-memory {@linkcode LiveViewStore} (the default): one process, bounded, expiring.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The entry cap."
+            }
+          ],
+          "returns": "The store.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MemoryLiveViewStoreOptions",
+          "slug": "MemoryLiveViewStoreOptions",
+          "kind": "interface",
+          "signature": "interface MemoryLiveViewStoreOptions",
+          "doc": "Options for memoryLiveViewStore.",
+          "docFull": "Options for {@linkcode memoryLiveViewStore}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11151,6 +11480,35 @@
           "denextOnly": true
         },
         {
+          "name": "postgresLiveViewStore",
+          "slug": "postgresLiveViewStore",
+          "kind": "function",
+          "signature": "postgresLiveViewStore(options: PostgresLiveViewStoreOptions): LiveViewStore & object",
+          "doc": "A LiveViewStore on Postgres, shared by every replica.",
+          "docFull": "A {@linkcode LiveViewStore} on Postgres, shared by every replica.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "sql (a client) or url (opened with Deno.SQL), an optional schema, migrate, and the sweep interval."
+            }
+          ],
+          "returns": "A store for setLiveViewStore; its close() closes a client it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PostgresLiveViewStoreOptions",
+          "slug": "PostgresLiveViewStoreOptions",
+          "kind": "interface",
+          "signature": "interface PostgresLiveViewStoreOptions",
+          "doc": "Options for postgresLiveViewStore.",
+          "docFull": "Options for {@linkcode postgresLiveViewStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "PostgresMigrateOptions",
           "slug": "PostgresMigrateOptions",
           "kind": "interface",
@@ -11562,6 +11920,264 @@
           "denextOnly": false
         },
         {
+          "name": "redisCacheStore",
+          "slug": "redisCacheStore",
+          "kind": "function",
+          "signature": "redisCacheStore(options?: RedisCacheStoreOptions): CacheStore & object",
+          "doc": "A CacheStore on Redis, shared by every replica. Size-bounded: the oldest-written entries past maxDataEntries / maxPageEntries are evicted, and hard-expired ones are swept on a throttle.",
+          "docFull": "A {@link CacheStore} on Redis, shared by every replica. Size-bounded: the oldest-written\nentries past `maxDataEntries` / `maxPageEntries` are evicted, and hard-expired ones are swept\non a throttle.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "client (a redisClient) or url, a key prefix, the caps and the sweep interval."
+            }
+          ],
+          "returns": "A store for cache.store / setCacheStore; its close() closes a client it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisCacheStoreOptions",
+          "slug": "RedisCacheStoreOptions",
+          "kind": "interface",
+          "signature": "interface RedisCacheStoreOptions",
+          "doc": "Options for redisCacheStore.",
+          "docFull": "Options for {@linkcode redisCacheStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "redisChannelTransport",
+          "slug": "redisChannelTransport-fn",
+          "kind": "function",
+          "signature": "redisChannelTransport(options?: RedisChannelTransportOptions): RedisChannelTransport",
+          "doc": "Carry Live channel events between replicas through Redis pub/sub.",
+          "docFull": "Carry Live channel events between replicas through Redis pub/sub.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The Redis URL, the shared channel name and a resync callback."
+            }
+          ],
+          "returns": "A transport for setChannelTransport; close() it on shutdown.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisChannelTransport",
+          "slug": "RedisChannelTransport-iface",
+          "kind": "interface",
+          "signature": "interface RedisChannelTransport",
+          "doc": "A ChannelTransport with its connections' lifecycle.",
+          "docFull": "A {@linkcode ChannelTransport} with its connections' lifecycle.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisChannelTransportOptions",
+          "slug": "RedisChannelTransportOptions",
+          "kind": "interface",
+          "signature": "interface RedisChannelTransportOptions",
+          "doc": "Options for redisChannelTransport.",
+          "docFull": "Options for {@linkcode redisChannelTransport}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "redisClient",
+          "slug": "redisClient-fn",
+          "kind": "function",
+          "signature": "redisClient(options?: string | RedisClientOptions): RedisClient",
+          "doc": "Open a Redis client (lazily: the first command connects).",
+          "docFull": "Open a Redis client (lazily: the first command connects).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "A redis:// / rediss:// URL, or RedisClientOptions. With neither, REDIS_URL or redis://127.0.0.1:6379."
+            }
+          ],
+          "returns": "The client; close() it when done (a server closes the stores' own clients on drain).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisClient",
+          "slug": "RedisClient-iface",
+          "kind": "interface",
+          "signature": "interface RedisClient",
+          "doc": "A Redis connection shared by its callers (see the module docs).",
+          "docFull": "A Redis connection shared by its callers (see the module docs).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisClientOptions",
+          "slug": "RedisClientOptions",
+          "kind": "interface",
+          "signature": "interface RedisClientOptions",
+          "doc": "Options for redisClient.",
+          "docFull": "Options for {@linkcode redisClient}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisCommand",
+          "slug": "RedisCommand",
+          "kind": "typeAlias",
+          "signature": "type RedisCommand = typeOperator",
+          "doc": "One command: its name and arguments (numbers are sent as their decimal text).",
+          "docFull": "One command: its name and arguments (numbers are sent as their decimal text).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisConnectionError",
+          "slug": "RedisConnectionError",
+          "kind": "class",
+          "signature": "class RedisConnectionError",
+          "doc": "The connection failed or dropped; the command's effect on the server is unknown.",
+          "docFull": "The connection failed or dropped; the command's effect on the server is unknown.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisConnectionOptions",
+          "slug": "RedisConnectionOptions",
+          "kind": "interface",
+          "signature": "interface RedisConnectionOptions",
+          "doc": "Options shared by the Redis stores: a client of your own, or a URL to open one.",
+          "docFull": "Options shared by the Redis stores: a client of your own, or a URL to open one.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisError",
+          "slug": "RedisError",
+          "kind": "class",
+          "signature": "class RedisError",
+          "doc": "An error reply from the server (-ERR …, -WRONGTYPE …, -NOAUTH …).",
+          "docFull": "An error reply from the server (`-ERR …`, `-WRONGTYPE …`, `-NOAUTH …`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "redisLiveViewStore",
+          "slug": "redisLiveViewStore",
+          "kind": "function",
+          "signature": "redisLiveViewStore(options?: RedisLiveViewStoreOptions): LiveViewStore & object",
+          "doc": "A LiveViewStore on Redis (6.2+, or Valkey), shared by every replica.",
+          "docFull": "A {@linkcode LiveViewStore} on Redis (6.2+, or Valkey), shared by every replica.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "client (a redisClient) or url, and a key prefix (default denext:liveview:)."
+            }
+          ],
+          "returns": "A store for setLiveViewStore; its close() closes a client it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisLiveViewStoreOptions",
+          "slug": "RedisLiveViewStoreOptions",
+          "kind": "typeAlias",
+          "signature": "type RedisLiveViewStoreOptions = RedisConnectionOptions",
+          "doc": "Options for redisLiveViewStore.",
+          "docFull": "Options for {@linkcode redisLiveViewStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "redisRateLimitStore",
+          "slug": "redisRateLimitStore",
+          "kind": "function",
+          "signature": "redisRateLimitStore(options?: RedisRateLimitStoreOptions): RateLimitStore & object",
+          "doc": "A shared RateLimitStore on Redis.",
+          "docFull": "A shared {@linkcode RateLimitStore} on Redis.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "client (a redisClient) or url, and a key prefix (default denext:ratelimit:)."
+            }
+          ],
+          "returns": "A store to pass as denextAuth({ rateLimit: { store } }); close() closes a client it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisRateLimitStoreOptions",
+          "slug": "RedisRateLimitStoreOptions",
+          "kind": "typeAlias",
+          "signature": "type RedisRateLimitStoreOptions = RedisConnectionOptions",
+          "doc": "Options for redisRateLimitStore.",
+          "docFull": "Options for {@linkcode redisRateLimitStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisReply",
+          "slug": "RedisReply",
+          "kind": "typeAlias",
+          "signature": "type RedisReply = string | number | null | RedisReply[]",
+          "doc": "A RESP2 reply: a simple or bulk string, an integer, a nil, or an array of replies.",
+          "docFull": "A RESP2 reply: a simple or bulk string, an integer, a nil, or an array of replies.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "redisSessionStore",
+          "slug": "redisSessionStore",
+          "kind": "function",
+          "signature": "redisSessionStore(options?: RedisSessionStoreOptions): SessionStore & object",
+          "doc": "A durable, shared SessionStore on Redis.",
+          "docFull": "A durable, shared {@linkcode SessionStore} on Redis.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "client (a redisClient) or url, and a key prefix (default denext:session:)."
+            }
+          ],
+          "returns": "A store to pass as denextAuth({ sessionStore }); its close() closes a client it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisSessionStoreOptions",
+          "slug": "RedisSessionStoreOptions",
+          "kind": "typeAlias",
+          "signature": "type RedisSessionStoreOptions = RedisConnectionOptions",
+          "doc": "Options for redisSessionStore.",
+          "docFull": "Options for {@linkcode redisSessionStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "refresh",
           "slug": "refresh",
           "kind": "function",
@@ -11646,6 +12262,23 @@
             {
               "name": "profiles",
               "doc": "A map of profile name to { stale, revalidate, expire } seconds."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "registerCronSchedules",
+          "slug": "registerCronSchedules",
+          "kind": "function",
+          "signature": "registerCronSchedules(entries: typeOperator): void",
+          "doc": "Register schedules with Deno.cron NOW, from an entrypoint's top level — before the server boots and discovers jobs/. Deno Deploy records the crons an app registers while its entrypoint loads, so the entry denext deploy writes for it calls this with the build's schedules; the boot's scheduler then skips them. A run that fires before the boot has discovered its job waits for that (up to a minute). A no-op where Deno.cron is absent (the server's own scheduler covers the schedules there).",
+          "docFull": "Register schedules with `Deno.cron` NOW, from an entrypoint's top level — before the server\nboots and discovers `jobs/`. Deno Deploy records the crons an app registers while its\nentrypoint loads, so the entry `denext deploy` writes for it calls this with the build's\nschedules; the boot's scheduler then skips them. A run that fires before the boot has\ndiscovered its job waits for that (up to a minute). A no-op where `Deno.cron` is absent (the\nserver's own scheduler covers the schedules there).",
+          "params": [
+            {
+              "name": "entries",
+              "doc": "The (cron, job) pairs, as scheduledJobs and each job's schedule give them."
             }
           ],
           "returns": "",
@@ -12180,6 +12813,30 @@
           "signature": "type ResetPasswordResult = object | object",
           "doc": "What resetPassword reports.",
           "docFull": "What {@linkcode resetPassword} reports.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ResolveAliasConfig",
+          "slug": "ResolveAliasConfig",
+          "kind": "typeAlias",
+          "signature": "type ResolveAliasConfig = Readonly<Record<string, string | ResolveAliasRule>>",
+          "doc": "DenextConfig.resolveAlias: import specifier → alias.",
+          "docFull": "{@link DenextConfig.resolveAlias}: import specifier → alias.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ResolveAliasRule",
+          "slug": "ResolveAliasRule",
+          "kind": "interface",
+          "signature": "interface ResolveAliasRule",
+          "doc": "An alias in its object form (DenextConfig.resolveAlias).",
+          "docFull": "An alias in its object form ({@link DenextConfig.resolveAlias}).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -13402,6 +14059,23 @@
             {
               "name": "t",
               "doc": "The transport."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "setLiveViewStore",
+          "slug": "setLiveViewStore",
+          "kind": "function",
+          "signature": "setLiveViewStore(store: LiveViewStore | null): void",
+          "doc": "Install the store parked live views are written to (the default is memoryLiveViewStore, per process). Call it once at startup, before the first socket connects; every instance of the app must share the store and DENEXT_LIVE_VIEW_SECRET.",
+          "docFull": "Install the store parked live views are written to (the default is\n{@linkcode memoryLiveViewStore}, per process). Call it once at startup, before the first\nsocket connects; every instance of the app must share the store and `DENEXT_LIVE_VIEW_SECRET`.",
+          "params": [
+            {
+              "name": "store",
+              "doc": "The store, or null to go back to the in-memory default."
             }
           ],
           "returns": "",
@@ -16347,6 +17021,18 @@
           "denextOnly": true
         },
         {
+          "name": "NativeMfaEnrollment",
+          "slug": "NativeMfaEnrollment",
+          "kind": "interface",
+          "signature": "interface NativeMfaEnrollment",
+          "doc": "A first factor being enrolled to finish a pending sign-in (NativeSession.enrollMfa).",
+          "docFull": "A first factor being enrolled to finish a pending sign-in ({@link NativeSession.enrollMfa}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "nativeSession",
           "slug": "nativeSession-fn",
           "kind": "function",
@@ -16938,7 +17624,7 @@
           ],
           "returns": "The provider element wrapping children.",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "SessionProviderProps",
@@ -17024,7 +17710,7 @@
           ],
           "returns": "The credentials result, or the sign-in URL for the redirect flow.",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "SignInOptions",
@@ -17070,7 +17756,7 @@
           ],
           "returns": "A promise that settles once the navigation has been started.",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "SignOutOptions",
@@ -17640,7 +18326,7 @@
           "params": [],
           "returns": "The session state plus update().",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "useShellHandoff",
@@ -18342,6 +19028,27 @@
           "denextOnly": false
         },
         {
+          "name": "cacheStoreContract",
+          "slug": "cacheStoreContract",
+          "kind": "function",
+          "signature": "cacheStoreContract(t: ContractContext, make: StoreFactory<CacheStore>): Promise<void>",
+          "doc": "The CacheStore contract: data and page round-trips, hard expiry, overwrites, large values, deleteByPath, deleteByTag (and that a rewrite drops a tag), and expireByTag / sweepPages when the store implements them.",
+          "docFull": "The `CacheStore` contract: data and page round-trips, hard expiry, overwrites, large values,\n`deleteByPath`, `deleteByTag` (and that a rewrite drops a tag), and `expireByTag` /\n`sweepPages` when the store implements them.",
+          "params": [
+            {
+              "name": "t",
+              "doc": "Where the cases run (a Deno.TestContext)."
+            },
+            {
+              "name": "make",
+              "doc": "A fresh, empty store per case."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "Component",
           "slug": "Component",
           "kind": "typeAlias",
@@ -18360,6 +19067,18 @@
           "signature": "interface ConformanceReport",
           "doc": "The full report from probeApp.",
           "docFull": "The full report from {@linkcode probeApp}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ContractContext",
+          "slug": "ContractContext",
+          "kind": "interface",
+          "signature": "interface ContractContext",
+          "doc": "Where the cases run: Deno.TestContext fits, or any { step } that runs a named case.",
+          "docFull": "Where the cases run: `Deno.TestContext` fits, or any `{ step }` that runs a named case.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -18562,6 +19281,27 @@
           "denextOnly": true
         },
         {
+          "name": "rateLimitStoreContract",
+          "slug": "rateLimitStoreContract",
+          "kind": "function",
+          "signature": "rateLimitStoreContract(t: ContractContext, make: StoreFactory<RateLimitStore>): Promise<void>",
+          "doc": "The RateLimitStore contract: a fixed window that opens on the first failure, counts every concurrent failure, closes on time, and reset / decrement (when implemented).",
+          "docFull": "The `RateLimitStore` contract: a fixed window that opens on the first failure, counts every\nconcurrent failure, closes on time, and `reset` / `decrement` (when implemented).",
+          "params": [
+            {
+              "name": "t",
+              "doc": "Where the cases run (a Deno.TestContext)."
+            },
+            {
+              "name": "make",
+              "doc": "A fresh, empty store per case."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "RedirectHop",
           "slug": "RedirectHop",
           "kind": "interface",
@@ -18621,6 +19361,51 @@
           "signature": "interface RouteProbe",
           "doc": "The result of probing one concrete route path.",
           "docFull": "The result of probing one concrete route path.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "sessionStoreContract",
+          "slug": "sessionStoreContract",
+          "kind": "function",
+          "signature": "sessionStoreContract(t: ContractContext, make: StoreFactory<SessionStore>): Promise<void>",
+          "doc": "The SessionStore contract: round-trips, expiry, overwrite, write-only-if-present update (a revoked or expired session is never resurrected), delete and deleteByUser.",
+          "docFull": "The `SessionStore` contract: round-trips, expiry, overwrite, write-only-if-present\n`update` (a revoked or expired session is never resurrected), `delete` and `deleteByUser`.",
+          "params": [
+            {
+              "name": "t",
+              "doc": "Where the cases run (a Deno.TestContext)."
+            },
+            {
+              "name": "make",
+              "doc": "A fresh, empty store per case."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "StoreContractError",
+          "slug": "StoreContractError",
+          "kind": "class",
+          "signature": "class StoreContractError",
+          "doc": "A contract case that failed; its message names what the store got wrong.",
+          "docFull": "A contract case that failed; its message names what the store got wrong.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "StoreFactory",
+          "slug": "StoreFactory",
+          "kind": "typeAlias",
+          "signature": "type StoreFactory<S> = () => S | Promise<S>",
+          "doc": "Makes a fresh, empty store for one case.",
+          "docFull": "Makes a fresh, empty store for one case.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -18878,6 +19663,25 @@
           "denextOnly": true
         },
         {
+          "name": "defineLiveView",
+          "slug": "defineLiveView",
+          "kind": "function",
+          "signature": "defineLiveView<Model, Msg, Props>(config: LiveViewConfig<Model, Msg, Props>): LiveViewComponent<Props>",
+          "doc": "Define a server-held live view: a Model–View–Update program whose model lives on the server, one instance per Live connection. Render the returned component from a Server Component; the first paint is plain HTML (no JavaScript needed), and in the browser the view mounts over the Live socket — events bound with send(…) run update on the server and come back as DOM patches.",
+          "docFull": "Define a server-held live view: a Model–View–Update program whose model lives on the server,\none instance per Live connection. Render the returned component from a Server Component; the\nfirst paint is plain HTML (no JavaScript needed), and in the browser the view mounts over the\nLive socket — events bound with `send(…)` run `update` on the server and come back as DOM\npatches.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The program (init / update / view / subscriptions), its id, an optional authorize and an optional events payload schema."
+            }
+          ],
+          "returns": "A Server Component taking the props init receives.",
+          "examples": [
+            "```tsx\nexport const Counter = defineLiveView({\n  id: \"counter\",\n  init: (props: { start: number }) => [{ n: props.start }],\n  update: (_msg: { type: \"inc\" }, m) => [{ n: m.n + 1 }],\n  view: (m, send) => <button type=\"button\" onClick={send({ type: \"inc\" })}>{m.n}</button>,\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "Live",
           "slug": "Live",
           "kind": "function",
@@ -18956,6 +19760,66 @@
           "signature": "interface LiveSubscriptionError",
           "doc": "Why a subscription is not (or no longer) delivering.",
           "docFull": "Why a subscription is not (or no longer) delivering.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveViewComponent",
+          "slug": "LiveViewComponent",
+          "kind": "interface",
+          "signature": "interface LiveViewComponent<Props>",
+          "doc": "The component defineLiveView returns.",
+          "docFull": "The component {@link defineLiveView} returns.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveViewConfig",
+          "slug": "LiveViewConfig",
+          "kind": "interface",
+          "signature": "interface LiveViewConfig<Model, Msg, Props>",
+          "doc": "What defineLiveView takes: a program, its id, and its gates.",
+          "docFull": "What {@link defineLiveView} takes: a program, its id, and its gates.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveViewContext",
+          "slug": "LiveViewContext",
+          "kind": "interface",
+          "signature": "interface LiveViewContext",
+          "doc": "The connection a live view runs for (null for the server render of the page).",
+          "docFull": "The connection a live view runs for (`null` for the server render of the page).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveViewIsland",
+          "slug": "LiveViewIsland",
+          "kind": "variable",
+          "signature": "LiveViewIsland: (props: LiveViewIslandProps) => VNode",
+          "doc": "The live-view island. Rendered by defineLiveView's component, registered by the generated Flight entry; not something to render by hand.",
+          "docFull": "The live-view island. Rendered by `defineLiveView`'s component, registered by the generated\nFlight entry; not something to render by hand.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveViewIslandProps",
+          "slug": "LiveViewIslandProps",
+          "kind": "interface",
+          "signature": "interface LiveViewIslandProps",
+          "doc": "The island's props (written by defineLiveView's server render).",
+          "docFull": "The island's props (written by `defineLiveView`'s server render).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -21117,8 +21981,8 @@
           "slug": "writeLaufeyLaunchConfig",
           "kind": "function",
           "signature": "writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string): Promise<string | null>",
-          "doc": "Write the packaged app's laufey-launch.json from desktop.app, desktop.inspectable and (on Linux) desktop.linux.requireSandbox in the project's denext.config.ts (the bridge pinned to the app origin, desktopBridgeOrigins) (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS call it BEFORE code-signing: the file lives inside the sealed bundle.",
-          "docFull": "Write the packaged app's `laufey-launch.json` from `desktop.app`, `desktop.inspectable` and (on\nLinux) `desktop.linux.requireSandbox` in the project's `denext.config.ts` (the bridge pinned to\nthe app origin, {@linkcode\ndesktopBridgeOrigins}) (resolved beside `entryUrl`'s directory, like `desktopPackageFlags`).\nOn macOS call it BEFORE code-signing: the file lives inside the sealed bundle.",
+          "doc": "Write the packaged app's laufey-launch.json from desktop.app, desktop.inspectable, (on Linux) desktop.linux.requireSandbox and (on Windows) desktop.windows.proxy in the project's denext.config.ts (the bridge pinned to the app origin, desktopBridgeOrigins) (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS it also lists desktop.macos.userActivityTypes as the bundle's NSUserActivityTypes. On macOS call it BEFORE code-signing: both files live inside the sealed bundle.",
+          "docFull": "Write the packaged app's `laufey-launch.json` from `desktop.app`, `desktop.inspectable`, (on\nLinux) `desktop.linux.requireSandbox` and (on Windows) `desktop.windows.proxy` in the project's\n`denext.config.ts` (the bridge pinned to the app origin, {@linkcode desktopBridgeOrigins})\n(resolved beside `entryUrl`'s directory, like `desktopPackageFlags`). On macOS it also lists\n`desktop.macos.userActivityTypes` as the bundle's `NSUserActivityTypes`. On macOS call it BEFORE\ncode-signing: both files live inside the sealed bundle.",
           "params": [
             {
               "name": "entryUrl",
@@ -22471,6 +23335,25 @@
           "denextOnly": true
         },
         {
+          "name": "shareFromWindow",
+          "slug": "shareFromWindow",
+          "kind": "function",
+          "signature": "shareFromWindow(data: WindowShareData): Promise<WindowShareResult>",
+          "doc": "Show the OS share sheet over the window: macOS NSSharingServicePicker (anchored at x / y), Windows DataTransferManager (files go as their paths in the text). Linux has none (outcome \"not_supported\"). Needs denext's pinned runtime, 2.9.7-denext.20 or later (share in windowCapabilities); elsewhere it rejects unsupported. A file the app may not read rejects forbidden. share() in denext/mobile uses it for text and URLs, and falls back to the web where it can't.",
+          "docFull": "Show the OS share sheet over the window: macOS `NSSharingServicePicker` (anchored at `x` / `y`),\nWindows `DataTransferManager` (files go as their paths in the text). Linux has none (`outcome`\n`\"not_supported\"`). Needs denext's pinned runtime, 2.9.7-denext.20 or later (`share` in\n{@linkcode windowCapabilities}); elsewhere it rejects `unsupported`. A file the app may not read\nrejects `forbidden`. `share()` in `denext/mobile` uses it for text and URLs, and falls back to\nthe web where it can't.",
+          "params": [
+            {
+              "name": "data",
+              "doc": "What to share."
+            }
+          ],
+          "returns": "How the sheet ended.",
+          "examples": [
+            "```ts\nimport { shareFromWindow } from \"denext/desktop/window\";\n\nconst { outcome } = await shareFromWindow({\n  title: \"Q3 report\",\n  files: [{ directory: \"documents\", path: \"reports/q3.pdf\" }],\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "showWindow",
           "slug": "showWindow",
           "kind": "function",
@@ -22638,6 +23521,30 @@
           "denextOnly": true
         },
         {
+          "name": "WindowShareData",
+          "slug": "WindowShareData",
+          "kind": "interface",
+          "signature": "interface WindowShareData",
+          "doc": "What shareFromWindow shares: at least one of text, url or files.",
+          "docFull": "What {@linkcode shareFromWindow} shares: at least one of `text`, `url` or `files`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WindowShareResult",
+          "slug": "WindowShareResult",
+          "kind": "interface",
+          "signature": "interface WindowShareResult",
+          "doc": "How a share sheet ended: \"completed\" (a target was chosen; target names it where the OS says), \"shown\" (the sheet opened and this OS reports nothing more: Windows), \"cancelled\", \"not_supported\" (Linux has no share sheet) or \"failed\" (reason).",
+          "docFull": "How a share sheet ended: `\"completed\"` (a target was chosen; `target` names it where the OS\nsays), `\"shown\"` (the sheet opened and this OS reports nothing more: Windows), `\"cancelled\"`,\n`\"not_supported\"` (Linux has no share sheet) or `\"failed\"` (`reason`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "WindowState",
           "slug": "WindowState",
           "kind": "interface",
@@ -22764,6 +23671,30 @@
             }
           ],
           "returns": "A promise that settles once requested.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "clearUserActivity",
+          "slug": "clearUserActivity",
+          "kind": "function",
+          "signature": "clearUserActivity(): Promise<boolean>",
+          "doc": "End the current user activity (the user left what it described).",
+          "docFull": "End the current user activity (the user left what it described).",
+          "params": [],
+          "returns": "Whether there was one the OS ended (false off macOS).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ContinuedUserActivity",
+          "slug": "ContinuedUserActivity",
+          "kind": "interface",
+          "signature": "interface ContinuedUserActivity",
+          "doc": "An activity the user continued (onUserActivityContinued). Untrusted input.",
+          "docFull": "An activity the user continued ({@linkcode onUserActivityContinued}). Untrusted input.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -22898,6 +23829,23 @@
           "denextOnly": true
         },
         {
+          "name": "onUserActivityContinued",
+          "slug": "onUserActivityContinued",
+          "kind": "function",
+          "signature": "onUserActivityContinued(handler: (activity: ContinuedUserActivity) => void): () => void",
+          "doc": "Call handler with each user activity the user continues: Handoff from another device, or a Spotlight result (macOS, runtime 2.9.7-denext.20). The one that launched the app is delivered to the first handler. Treat its fields as untrusted input, as a deep link's.",
+          "docFull": "Call `handler` with each user activity the user continues: Handoff from another device, or a\nSpotlight result (macOS, runtime 2.9.7-denext.20). The one that launched the app is delivered to\nthe first handler. Treat its fields as untrusted input, as a deep link's.",
+          "params": [
+            {
+              "name": "handler",
+              "doc": "Called with each activity."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "PlatformUnknown",
           "slug": "PlatformUnknown",
           "kind": "typeAlias",
@@ -23010,6 +23958,25 @@
           "denextOnly": true
         },
         {
+          "name": "setUserActivity",
+          "slug": "setUserActivity",
+          "kind": "function",
+          "signature": "setUserActivity(activity: UserActivity): Promise<boolean>",
+          "doc": "Make activity the app's current user activity, for Handoff (the user's other devices offer to continue it) and Spotlight (searchable: true indexes it). macOS only, under denext's pinned runtime 2.9.7-denext.20 or later; elsewhere (Windows, Linux, an older runtime) it resolves false and nothing happens.",
+          "docFull": "Make `activity` the app's current user activity, for Handoff (the user's other devices offer to\ncontinue it) and Spotlight (`searchable: true` indexes it). macOS only, under denext's pinned\nruntime 2.9.7-denext.20 or later; elsewhere (Windows, Linux, an older runtime) it resolves\n`false` and nothing happens.",
+          "params": [
+            {
+              "name": "activity",
+              "doc": "The activity."
+            }
+          ],
+          "returns": "Whether the OS took it. It rejects validation for a malformed activity.",
+          "examples": [
+            "```ts\nimport { setUserActivity } from \"denext/desktop/app\";\n\nawait setUserActivity({\n  type: \"com.example.notes.editing\",\n  title: note.title,\n  url: `https://notes.example.com/n/${note.id}`,\n  userInfo: { noteId: note.id },\n  searchable: true,\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "shortcutCapabilities",
           "slug": "shortcutCapabilities-fn",
           "kind": "function",
@@ -23095,6 +24062,18 @@
             }
           ],
           "returns": "Whether it was registered.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UserActivity",
+          "slug": "UserActivity",
+          "kind": "interface",
+          "signature": "interface UserActivity",
+          "doc": "An activity the app is engaged in (setUserActivity): what Handoff offers the user's other devices and what Spotlight indexes (macOS NSUserActivity).",
+          "docFull": "An activity the app is engaged in ({@linkcode setUserActivity}): what Handoff offers the user's\nother devices and what Spotlight indexes (macOS `NSUserActivity`).",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         }
@@ -24120,7 +25099,7 @@
           "kind": "function",
           "signature": "deliveredNotifications(): Promise<DeliveredNotification[]>",
           "doc": "The notifications the app has in the notification centre: local ones and remote pushes alike, most platforms newest first as the OS reports them. Group summaries (Android) are not listed.",
-          "docFull": "The notifications the app has in the notification centre: local ones and remote pushes alike,\nmost platforms newest first as the OS reports them. Group summaries (Android) are not listed.\n\n- iOS / Android: everything the OS shows for the app (needs `denext mobile add\n  local-notifications` or `push`, generation 3 of denext's `DenextSettings` plugin; it rejects in\n  a binary built before, until the command is re-run and a new binary shipped).\n- Deno Desktop (`notifications` capability): the notifications denext posted during this run\n  whose time has come and that were not removed through denext. The runtime cannot list the\n  OS's notification centre, so one the user dismissed is still listed, and one from an earlier\n  run is not.\n- Web: the open notifications `scheduleNotification` showed from this page, plus the service\n  worker registration's (a web push's thread is its `data.threadId`).",
+          "docFull": "The notifications the app has in the notification centre: local ones and remote pushes alike,\nmost platforms newest first as the OS reports them. Group summaries (Android) are not listed.\n\n- iOS / Android: everything the OS shows for the app (needs `denext mobile add\n  local-notifications` or `push`, generation 3 of denext's `DenextSettings` plugin; it rejects in\n  a binary built before, until the command is re-run and a new binary shipped).\n- Deno Desktop (`notifications` capability): on macOS and Windows the app's notifications the\n  OS's notification centre still shows (runtime 2.9.7-denext.20), local ones the app scheduled\n  through denext. On Linux, whose notification servers keep no list, the ones denext posted\n  during this run whose time has come and that were not removed through denext: one the user\n  dismissed is still listed, and one from an earlier run is not.\n- Web: the open notifications `scheduleNotification` showed from this page, plus the service\n  worker registration's (a web push's thread is its `data.threadId`).",
           "params": [],
           "returns": "The delivered notifications.",
           "examples": [
@@ -27811,7 +28790,7 @@
           "kind": "function",
           "signature": "share(opts: ShareOptions): Promise<ShareResult>",
           "doc": "Open the share sheet.",
-          "docFull": "Open the share sheet.\n\n- Inside the native shell with `@capacitor/share` installed (`denext mobile add share`),\n  the OS share sheet.\n- Otherwise `navigator.share` where the browser has it (and `canShare` accepts the data).\n- Otherwise the text and URL are copied to the clipboard (joined by a space), and the\n  result is `\"copied\"` so the UI can say so.\n\nA dismissed sheet resolves `\"cancelled\"` rather than rejecting.",
+          "docFull": "Open the share sheet.\n\n- Inside the native shell with `@capacitor/share` installed (`denext mobile add share`),\n  the OS share sheet.\n- In a Deno Desktop window under denext's pinned runtime (2.9.7-denext.20 or later), the OS\n  share sheet over the window for a `text` or `url`: macOS `NSSharingServicePicker`, Windows\n  `DataTransferManager` (it reports no more than that the sheet was shown: `\"shared\"`). Linux has\n  none, so the paths below run. To share files, use `shareFromWindow` from\n  `denext/desktop/window`.\n- Otherwise `navigator.share` where the browser has it (and `canShare` accepts the data).\n- Otherwise the text and URL are copied to the clipboard (joined by a space), and the\n  result is `\"copied\"` so the UI can say so.\n\nA dismissed sheet resolves `\"cancelled\"` rather than rejecting.",
           "params": [
             {
               "name": "opts",
@@ -27890,7 +28869,7 @@
           "kind": "function",
           "signature": "showContextMenu(items: typeOperator, options?: ContextMenuOptions): Promise<string | null>",
           "doc": "Open a context menu and resolve the chosen item's id, or null if it was dismissed.",
-          "docFull": "Open a context menu and resolve the chosen item's `id`, or `null` if it was dismissed.\n\n- Inside the native shell with the `DenextContextMenu` plugin (`denext mobile add\n  context-menu`), the OS menu: on iOS a `UIMenu` at `(x, y)` (the edit-menu presentation,\n  iOS 16+; an action sheet on iOS 15) with SF Symbol `systemIcon`s, subtitles, destructive\n  and disabled items and submenus; on Android a Material `PopupMenu` anchored at `(x, y)`\n  (submenus as labelled groups, destructive items in the error color). For the long-press\n  menu that lifts the pressed element (`UIContextMenuInteraction` with its preview), bind the\n  element with {@linkcode useContextMenu} instead.\n- Inside a Deno Desktop window with the `contextMenu` capability (`denext desktop add\n  context-menu`) and denext's pinned runtime, the OS's own menu at `(x, y)`: submenus,\n  disabled items, subtitles appended to the label, and `null` when the user dismisses it\n  (`destructive`, `icon` and `systemIcon` are not drawn there; a `title` is a disabled first\n  item). Without the capability, or under the stock runtime, the in-page popover below.\n- Otherwise (the web, and SSR-safe) an accessible in-DOM popover: `role=\"menu\"`\n  with a `role=\"menuitem\"` per item (a submenu is a `role=\"group\"` labelled by its item),\n  opened at `(x, y)` or under `anchor`. It is keyboard navigable (Up/Down to move,\n  Enter/Space to choose, Escape to dismiss), dismisses on an outside pointer press, respects\n  `disabled` (shown, not selectable) and `destructive`, and removes every node and listener it\n  added when it resolves.\n\nEvery path renders **every** item, so no menu action is silently dropped. Aborting\n`options.signal` closes the in-page popover and the shell's native menu (the plugin's\ngeneration-2 `dismiss`), which then resolve `null`.",
+          "docFull": "Open a context menu and resolve the chosen item's `id`, or `null` if it was dismissed.\n\n- Inside the native shell with the `DenextContextMenu` plugin (`denext mobile add\n  context-menu`), the OS menu: on iOS a `UIMenu` at `(x, y)` (the edit-menu presentation,\n  iOS 16+; an action sheet on iOS 15) with SF Symbol `systemIcon`s, subtitles, destructive\n  and disabled items and submenus; on Android a Material `PopupMenu` anchored at `(x, y)`\n  (submenus as labelled groups, destructive items in the error color). For the long-press\n  menu that lifts the pressed element (`UIContextMenuInteraction` with its preview), bind the\n  element with {@linkcode useContextMenu} instead.\n- Inside a Deno Desktop window with the `contextMenu` capability (`denext desktop add\n  context-menu`) and denext's pinned runtime, the OS's own menu at `(x, y)`: submenus,\n  disabled items, subtitles appended to the label, `destructive` items in red (macOS, Linux and\n  the CEF backend; runtime 2.9.7-denext.20), an `iconPng` next to the label where the backend\n  draws icons, and `null` when the user dismisses it (`icon` and `systemIcon` are not drawn there;\n  a `title` is a disabled first item). Without the capability, or under the stock runtime, the\n  in-page popover below.\n- Otherwise (the web, and SSR-safe) an accessible in-DOM popover: `role=\"menu\"`\n  with a `role=\"menuitem\"` per item (a submenu is a `role=\"group\"` labelled by its item),\n  opened at `(x, y)` or under `anchor`. It is keyboard navigable (Up/Down to move,\n  Enter/Space to choose, Escape to dismiss), dismisses on an outside pointer press, respects\n  `disabled` (shown, not selectable) and `destructive`, and removes every node and listener it\n  added when it resolves.\n\nEvery path renders **every** item, so no menu action is silently dropped. Aborting\n`options.signal` closes the in-page popover and the shell's native menu (the plugin's\ngeneration-2 `dismiss`), which then resolve `null`.",
           "params": [
             {
               "name": "items",
@@ -30263,6 +31242,379 @@
       ]
     },
     {
+      "module": "denext/mvu",
+      "symbols": [
+        {
+          "name": "ChannelLike",
+          "slug": "ChannelLike",
+          "kind": "interface",
+          "signature": "interface ChannelLike",
+          "doc": "A channel reference as createChannel exports it (server) or its browser stub.",
+          "docFull": "A channel reference as `createChannel` exports it (server) or its browser stub.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ChannelSubscription",
+          "slug": "ChannelSubscription",
+          "kind": "interface",
+          "signature": "interface ChannelSubscription<Msg>",
+          "doc": "Turn each payload a createChannel channel publishes for key into a message.",
+          "docFull": "Turn each payload a `createChannel` channel publishes for `key` into a message.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "defineMvu",
+          "slug": "defineMvu",
+          "kind": "function",
+          "signature": "defineMvu<Model, Msg, Props>(program: MvuProgram<Model, Msg, Props>): MvuProgram<Model, Msg, Props>",
+          "doc": "Identity, for inference: write the program once and run it with useMvu / MvuView in the browser or defineLiveView on the server.",
+          "docFull": "Identity, for inference: write the program once and run it with `useMvu` / `MvuView` in the\nbrowser or `defineLiveView` on the server.",
+          "params": [
+            {
+              "name": "program",
+              "doc": "The program."
+            }
+          ],
+          "returns": "The same program.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DelayEffect",
+          "slug": "DelayEffect",
+          "kind": "interface",
+          "signature": "interface DelayEffect<Msg>",
+          "doc": "Dispatch msg after ms milliseconds (cancelled when the program stops).",
+          "docFull": "Dispatch `msg` after `ms` milliseconds (cancelled when the program stops).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DispatchEffect",
+          "slug": "DispatchEffect",
+          "kind": "interface",
+          "signature": "interface DispatchEffect<Msg>",
+          "doc": "Dispatch msg right after the current update (a follow-up message).",
+          "docFull": "Dispatch `msg` right after the current update (a follow-up message).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Effect",
+          "slug": "Effect",
+          "kind": "typeAlias",
+          "signature": "type Effect<Msg> = FetchEffect<Msg> | DelayEffect<Msg> | TaskEffect<Msg> | DispatchEffect<Msg>",
+          "doc": "Work an update asks the runtime to do. Plain data: compare it in tests.",
+          "docFull": "Work an update asks the runtime to do. Plain data: compare it in tests.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EffectConstructors",
+          "slug": "EffectConstructors",
+          "kind": "interface",
+          "signature": "interface EffectConstructors",
+          "doc": "The effect constructors (fx). Each returns plain data the runtime runs after the update.",
+          "docFull": "The effect constructors ({@link fx}). Each returns plain data the runtime runs after the update.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EventBinding",
+          "slug": "EventBinding",
+          "kind": "typeAlias",
+          "signature": "type EventBinding = (event: Event) => void",
+          "doc": "What send(…) returns: an event handler for any on* prop.",
+          "docFull": "What `send(…)` returns: an event handler for any `on*` prop.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "eventPayload",
+          "slug": "eventPayload-fn",
+          "kind": "function",
+          "signature": "eventPayload(event: unknown): EventPayload",
+          "doc": "The EventPayload of a DOM event: a form control target's value / checked (an input, a select, a textarea), a keyboard event's key, and a submit's text fields. A submit is preventDefaulted (the program handles it).",
+          "docFull": "The {@link EventPayload} of a DOM event: a form control target's `value` / `checked` (an\ninput, a select, a textarea), a keyboard event's `key`, and a submit's text fields. A `submit` is `preventDefault`ed (the program handles it).",
+          "params": [
+            {
+              "name": "event",
+              "doc": "The DOM event (anything else yields {})."
+            }
+          ],
+          "returns": "The payload.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "EventPayload",
+          "slug": "EventPayload-iface",
+          "kind": "interface",
+          "signature": "interface EventPayload",
+          "doc": "The parts of a DOM event a message can be built from (and the server validates).",
+          "docFull": "The parts of a DOM event a message can be built from (and the server validates).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FetchEffect",
+          "slug": "FetchEffect",
+          "kind": "interface",
+          "signature": "interface FetchEffect<Msg>",
+          "doc": "Fetch url and turn the response into a message.",
+          "docFull": "Fetch `url` and turn the response into a message.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "fx",
+          "slug": "fx",
+          "kind": "variable",
+          "signature": "fx: EffectConstructors",
+          "doc": "Effect constructors. Each returns plain data; the runtime runs it after the update.",
+          "docFull": "Effect constructors. Each returns plain data; the runtime runs it after the update.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "IntervalSubscription",
+          "slug": "IntervalSubscription",
+          "kind": "interface",
+          "signature": "interface IntervalSubscription<Msg>",
+          "doc": "Dispatch msg every ms milliseconds while the subscription is active.",
+          "docFull": "Dispatch `msg` every `ms` milliseconds while the subscription is active.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MsgSource",
+          "slug": "MsgSource",
+          "kind": "typeAlias",
+          "signature": "type MsgSource<Msg> = Msg | parenthesized",
+          "doc": "A message, or a function building one from the event (null dispatches nothing).",
+          "docFull": "A message, or a function building one from the event (`null` dispatches nothing).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MvuProgram",
+          "slug": "MvuProgram",
+          "kind": "interface",
+          "signature": "interface MvuProgram<Model, Msg, Props>",
+          "doc": "A whole program: runs in the browser with useMvu / MvuView, or on the server as a live view.",
+          "docFull": "A whole program: runs in the browser with `useMvu` / `MvuView`, or on the server as a live view.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MvuView",
+          "slug": "MvuView",
+          "kind": "function",
+          "signature": "MvuView<Model, Msg, Props>(props: MvuViewProps<Model, Msg, Props>): VNode",
+          "doc": "Render a whole program in the browser: useMvu over its init / update / subscriptions, and its view with a send that dispatches locally. The server twin is defineLiveView.",
+          "docFull": "Render a whole program in the browser: `useMvu` over its `init` / `update` / `subscriptions`,\nand its `view` with a `send` that dispatches locally. The server twin is `defineLiveView`.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The program and its init props."
+            }
+          ],
+          "returns": "The program's view.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MvuViewProps",
+          "slug": "MvuViewProps",
+          "kind": "interface",
+          "signature": "interface MvuViewProps<Model, Msg, Props>",
+          "doc": "Props for MvuView.",
+          "docFull": "Props for {@link MvuView}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Next",
+          "slug": "Next",
+          "kind": "typeAlias",
+          "signature": "type Next<Model, Msg> = typeOperator",
+          "doc": "What an update (or init) returns: the next model, and the effects to run.",
+          "docFull": "What an `update` (or `init`) returns: the next model, and the effects to run.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Send",
+          "slug": "Send",
+          "kind": "typeAlias",
+          "signature": "type Send<Msg> = (msg: MsgSource<Msg>) => EventBinding",
+          "doc": "Bind a message to an event: onClick={send({ type: \"inc\" })}, or with the event's payload onInput={send((e) => ({ type: \"typed\", text: e.value ?? \"\" }))}.",
+          "docFull": "Bind a message to an event: `onClick={send({ type: \"inc\" })}`, or with the event's payload\n`onInput={send((e) => ({ type: \"typed\", text: e.value ?? \"\" }))}`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "subs",
+          "slug": "subs",
+          "kind": "variable",
+          "signature": "subs: SubscriptionConstructors",
+          "doc": "Subscription constructors.",
+          "docFull": "Subscription constructors.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Subscription",
+          "slug": "Subscription",
+          "kind": "typeAlias",
+          "signature": "type Subscription<Msg> = IntervalSubscription<Msg> | ChannelSubscription<Msg>",
+          "doc": "A source of messages the runtime keeps open while the model asks for it.",
+          "docFull": "A source of messages the runtime keeps open while the model asks for it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SubscriptionConstructors",
+          "slug": "SubscriptionConstructors",
+          "kind": "interface",
+          "signature": "interface SubscriptionConstructors",
+          "doc": "The subscription constructors (subs).",
+          "docFull": "The subscription constructors ({@link subs}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Subscriptions",
+          "slug": "Subscriptions",
+          "kind": "typeAlias",
+          "signature": "type Subscriptions<Model, Msg> = (model: Model) => ReadonlyArray<Subscription<Msg> | null | false | undefined>",
+          "doc": "The model's active subscriptions; falsy entries are skipped (cond && subs.interval(…)).",
+          "docFull": "The model's active subscriptions; falsy entries are skipped (`cond && subs.interval(…)`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TaskEffect",
+          "slug": "TaskEffect",
+          "kind": "interface",
+          "signature": "interface TaskEffect<Msg>",
+          "doc": "Run an async function and turn its result into a message.",
+          "docFull": "Run an async function and turn its result into a message.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Update",
+          "slug": "Update",
+          "kind": "typeAlias",
+          "signature": "type Update<Model, Msg> = (msg: Msg, model: Model) => Next<Model, Msg>",
+          "doc": "The update function: a message and the current model in, the next model and effects out.",
+          "docFull": "The update function: a message and the current model in, the next model and effects out.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useMvu",
+          "slug": "useMvu",
+          "kind": "function",
+          "signature": "useMvu<Model, Msg>(init: () => Next<Model, Msg>, update: Update<Model, Msg>, subscriptions?: Subscriptions<Model, Msg>, options?: UseMvuOptions): typeOperator",
+          "doc": "Run a Model–View–Update program in a component. init runs once (on the server too, for the first HTML); its effects, every later update's effects and the subscriptions run in the browser only, and stop when the component unmounts.",
+          "docFull": "Run a Model–View–Update program in a component. `init` runs once (on the server too, for\nthe first HTML); its effects, every later update's effects and the subscriptions run in the\nbrowser only, and stop when the component unmounts.",
+          "params": [
+            {
+              "name": "init",
+              "doc": "The first model, and the effects to run once mounted: () => [model, effects?]."
+            },
+            {
+              "name": "update",
+              "doc": "(msg, model) => [model, effects?]. The latest one passed is used."
+            },
+            {
+              "name": "subscriptions",
+              "doc": "(model) => [...] — the subscriptions to keep open for this model."
+            },
+            {
+              "name": "options",
+              "doc": "A name for the DevTools MVU tab."
+            }
+          ],
+          "returns": "The current model and a stable dispatch.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UseMvuOptions",
+          "slug": "UseMvuOptions",
+          "kind": "interface",
+          "signature": "interface UseMvuOptions",
+          "doc": "Options for useMvu.",
+          "docFull": "Options for {@link useMvu}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "View",
+          "slug": "View",
+          "kind": "typeAlias",
+          "signature": "type View<Model, Msg> = (model: Model, send: Send<Msg>) => VNodeChildren",
+          "doc": "Render the model; bind events with send.",
+          "docFull": "Render the model; bind events with `send`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        }
+      ]
+    },
+    {
       "module": "denext/feature",
       "symbols": [
         {
@@ -30278,6 +31630,35 @@
               "doc": "The flag name, matching a key in features in denext.config.ts."
             }
           ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        }
+      ]
+    },
+    {
+      "module": "denext/platform",
+      "symbols": [
+        {
+          "name": "platform",
+          "slug": "platform-var",
+          "kind": "variable",
+          "signature": "platform: Platform",
+          "doc": "The target this build is for. Folded to a string literal at build time in the app's own modules (and platform === \"…\" to a boolean), so other targets' branches are removed.",
+          "docFull": "The target this build is for. Folded to a string literal at build time in the app's own\nmodules (and `platform === \"…\"` to a boolean), so other targets' branches are removed.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Platform",
+          "slug": "Platform-type",
+          "kind": "typeAlias",
+          "signature": "type Platform = web | ios | android | macos | windows | linux",
+          "doc": "A build target: the web, a phone OS, or a desktop OS.",
+          "docFull": "A build target: the web, a phone OS, or a desktop OS.",
+          "params": [],
           "returns": "",
           "examples": [],
           "denextOnly": true
@@ -31131,6 +32512,234 @@
           "signature": "interface DenextPlugin",
           "doc": "A denext plugin. Declared in denext.config.ts as plugins: [myPlugin()]; its setup runs once per process, before the first route scan.",
           "docFull": "A denext plugin. Declared in `denext.config.ts` as `plugins: [myPlugin()]`; its\n{@linkcode setup} runs once per process, before the first route scan.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DEPLOY_MANIFEST_FILE",
+          "slug": "DEPLOY_MANIFEST_FILE",
+          "kind": "variable",
+          "signature": "DEPLOY_MANIFEST_FILE: deploy-manifest.json",
+          "doc": "The manifest's file name, under the build directory (.denext/deploy-manifest.json).",
+          "docFull": "The manifest's file name, under the build directory (`.denext/deploy-manifest.json`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DEPLOY_MANIFEST_VERSION",
+          "slug": "DEPLOY_MANIFEST_VERSION",
+          "kind": "variable",
+          "signature": "DEPLOY_MANIFEST_VERSION: 1",
+          "doc": "The manifest format version DeployManifest.version carries.",
+          "docFull": "The manifest format version {@linkcode DeployManifest.version} carries.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployAdapter",
+          "slug": "DeployAdapter",
+          "kind": "interface",
+          "signature": "interface DeployAdapter",
+          "doc": "A deploy adapter: prepare writes a target's files from the manifest, and the optional deploy pushes them with the target's own CLI. Declare one in denext.config.ts as deploy: { adapter: fly({ app: \"my-app\" }) }, or contribute one from a plugin with addDeployAdapter.",
+          "docFull": "A deploy adapter: {@linkcode prepare} writes a target's files from the manifest, and the\noptional {@linkcode deploy} pushes them with the target's own CLI. Declare one in\n`denext.config.ts` as `deploy: { adapter: fly({ app: \"my-app\" }) }`, or contribute one from a\nplugin with `addDeployAdapter`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployAssetGroup",
+          "slug": "DeployAssetGroup",
+          "kind": "interface",
+          "signature": "interface DeployAssetGroup",
+          "doc": "One directory of files the server serves as they are, with the Cache-Control it sends.",
+          "docFull": "One directory of files the server serves as they are, with the `Cache-Control` it sends.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployCache",
+          "slug": "DeployCache",
+          "kind": "interface",
+          "signature": "interface DeployCache",
+          "doc": "The data / page (ISR) cache store the config chooses.",
+          "docFull": "The data / page (ISR) cache store the config chooses.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployCompile",
+          "slug": "DeployCompile",
+          "kind": "interface",
+          "signature": "interface DeployCompile",
+          "doc": "What denext build --compile produced.",
+          "docFull": "What `denext build --compile` produced.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployContext",
+          "slug": "DeployContext",
+          "kind": "interface",
+          "signature": "interface DeployContext",
+          "doc": "What an adapter's prepare and deploy receive.",
+          "docFull": "What an adapter's `prepare` and `deploy` receive.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployEnvVar",
+          "slug": "DeployEnvVar",
+          "kind": "interface",
+          "signature": "interface DeployEnvVar",
+          "doc": "An environment variable the app reads.",
+          "docFull": "An environment variable the app reads.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployImages",
+          "slug": "DeployImages",
+          "kind": "interface",
+          "signature": "interface DeployImages",
+          "doc": "The built-in image optimizer.",
+          "docFull": "The built-in image optimizer.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployJob",
+          "slug": "DeployJob",
+          "kind": "interface",
+          "signature": "interface DeployJob",
+          "doc": "A job under jobs/.",
+          "docFull": "A job under `jobs/`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployManifest",
+          "slug": "DeployManifest",
+          "kind": "interface",
+          "signature": "interface DeployManifest",
+          "doc": "The deploy manifest denext build writes to .denext/deploy-manifest.json.",
+          "docFull": "The deploy manifest `denext build` writes to `.denext/deploy-manifest.json`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployPermissions",
+          "slug": "DeployPermissions",
+          "kind": "interface",
+          "signature": "interface DeployPermissions",
+          "doc": "The Deno permissions the production server runs with.",
+          "docFull": "The Deno permissions the production server runs with.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployRoute",
+          "slug": "DeployRoute",
+          "kind": "interface",
+          "signature": "interface DeployRoute",
+          "doc": "One route of the app, classified for a host.",
+          "docFull": "One route of the app, classified for a host.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployRouteKind",
+          "slug": "DeployRouteKind",
+          "kind": "typeAlias",
+          "signature": "type DeployRouteKind = static | isr | dynamic | route-handler | middleware",
+          "doc": "How a route is served, as a host needs to know it: - \"static\" — rendered once (at build or on the first request) and the same for everyone: denext export writes it, and a CDN may cache it until the next deploy. - \"isr\" — cached and re-rendered in the background every DeployRoute.revalidate seconds (export const revalidate = N): needs the server. - \"dynamic\" — rendered per request (dynamic = \"force-dynamic\", a request API such as cookies(), or a dynamic segment with no generateStaticParams): needs the server. - \"route-handler\" — a route.ts (or a metadata route such as sitemap.ts): needs the server. - \"middleware\" — the root middleware.ts / proxy.ts: runs before every matched request.",
+          "docFull": "How a route is served, as a host needs to know it:\n- `\"static\"` — rendered once (at build or on the first request) and the same for everyone:\n  `denext export` writes it, and a CDN may cache it until the next deploy.\n- `\"isr\"` — cached and re-rendered in the background every {@linkcode DeployRoute.revalidate}\n  seconds (`export const revalidate = N`): needs the server.\n- `\"dynamic\"` — rendered per request (`dynamic = \"force-dynamic\"`, a request API such as\n  `cookies()`, or a dynamic segment with no `generateStaticParams`): needs the server.\n- `\"route-handler\"` — a `route.ts` (or a metadata route such as `sitemap.ts`): needs the server.\n- `\"middleware\"` — the root `middleware.ts` / `proxy.ts`: runs before every matched request.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployRunOptions",
+          "slug": "DeployRunOptions",
+          "kind": "interface",
+          "signature": "interface DeployRunOptions",
+          "doc": "Options for DeployContext.run.",
+          "docFull": "Options for {@linkcode DeployContext.run}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeploySchedule",
+          "slug": "DeploySchedule",
+          "kind": "interface",
+          "signature": "interface DeploySchedule",
+          "doc": "One scheduled run: a job and the cron expression (UTC, POSIX weekdays) that fires it.",
+          "docFull": "One scheduled run: a job and the cron expression (UTC, POSIX weekdays) that fires it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployServer",
+          "slug": "DeployServer",
+          "kind": "interface",
+          "signature": "interface DeployServer",
+          "doc": "How the production server is started.",
+          "docFull": "How the production server is started.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployService",
+          "slug": "DeployService",
+          "kind": "interface",
+          "signature": "interface DeployService",
+          "doc": "A supervised service under services/, started with the server.",
+          "docFull": "A supervised service under `services/`, started with the server.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployWriteOptions",
+          "slug": "DeployWriteOptions",
+          "kind": "interface",
+          "signature": "interface DeployWriteOptions",
+          "doc": "Where DeployContext.writeFile writes.",
+          "docFull": "Where {@linkcode DeployContext.writeFile} writes.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -31997,6 +33606,397 @@
           "signature": "interface VitePluginLike",
           "doc": "The slice of a Vite plugin viteEmitterPlugin runs.",
           "docFull": "The slice of a Vite plugin {@linkcode viteEmitterPlugin} runs.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        }
+      ]
+    },
+    {
+      "module": "denext/ui-kit",
+      "symbols": [
+        {
+          "name": "BadgeTone",
+          "slug": "BadgeTone",
+          "kind": "typeAlias",
+          "signature": "type BadgeTone = ok | todo | warn | fail | info",
+          "doc": "How a Badge reads. The CSS colours each one; a badge with no tone stays grey.",
+          "docFull": "How a {@linkcode Badge} reads. The CSS colours each one; a badge with no tone stays grey.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Control",
+          "slug": "Control",
+          "kind": "function",
+          "signature": "Control(attrs: ControlAttrs): VNode",
+          "doc": "One control. Every widget in render.ts bottoms out here, so escaping, the disabled flag and the element vocabulary are decided exactly once.",
+          "docFull": "One control. Every widget in `render.ts` bottoms out here, so escaping, the disabled flag and\nthe element vocabulary are decided exactly once.",
+          "params": [
+            {
+              "name": "attrs",
+              "doc": "The control description."
+            }
+          ],
+          "returns": "The control element.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ControlAttrs",
+          "slug": "ControlAttrs",
+          "kind": "interface",
+          "signature": "interface ControlAttrs",
+          "doc": "One <input>, <select> or <textarea>.",
+          "docFull": "One `<input>`, `<select>` or `<textarea>`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "decode",
+          "slug": "decode",
+          "kind": "function",
+          "signature": "decode(spec: WidgetSpec, entries: typeOperator, prefix?: string): unknown",
+          "doc": "Parse a posted body back into the config value its widget stands for.",
+          "docFull": "Parse a posted body back into the config value its widget stands for.\n\nType driven throughout: numbers are parsed (and range-checked), toggles become booleans, chip\nand list rows are reassembled by index, map rows by their `~key` field, and a union by the\nbranch its discriminator names. A field nothing posted stays `undefined`, which the config\nwriter reads as \"leave this key alone\".",
+          "params": [
+            {
+              "name": "spec",
+              "doc": "The widget the fields were rendered from."
+            },
+            {
+              "name": "entries",
+              "doc": "The posted fields."
+            },
+            {
+              "name": "prefix",
+              "doc": "The prefix the form was rendered with."
+            }
+          ],
+          "returns": "The config value.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "encode",
+          "slug": "encode",
+          "kind": "function",
+          "signature": "encode(spec: WidgetSpec, value: unknown, prefix?: string): FormEntry[]",
+          "doc": "Render a config value as the flat fields its widget posts.",
+          "docFull": "Render a config value as the flat fields its widget posts.",
+          "params": [
+            {
+              "name": "spec",
+              "doc": "The widget the value is edited with."
+            },
+            {
+              "name": "value",
+              "doc": "The config value (undefined renders no fields at all)."
+            },
+            {
+              "name": "prefix",
+              "doc": "An optional prefix shared by every name in the form."
+            }
+          ],
+          "returns": "The fields, in render order.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "Field",
+          "slug": "Field",
+          "kind": "function",
+          "signature": "Field(props: FieldProps): VNode",
+          "doc": "A control wrapped in its label, help text and validation message.",
+          "docFull": "A control wrapped in its label, help text and validation message.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The field description; children is the control (or group of controls)."
+            }
+          ],
+          "returns": "The field element.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FieldProps",
+          "slug": "FieldProps",
+          "kind": "interface",
+          "signature": "interface FieldProps",
+          "doc": "The label, help text and validation message around one control (Field).",
+          "docFull": "The label, help text and validation message around one control ({@linkcode Field}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FormEntry",
+          "slug": "FormEntry",
+          "kind": "interface",
+          "signature": "interface FormEntry",
+          "doc": "One posted field.",
+          "docFull": "One posted field.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FormField",
+          "slug": "FormField",
+          "kind": "function",
+          "signature": "FormField(props: FormFieldProps): VNode",
+          "doc": "A widget and everything under it, with the CSRF field the row buttons need: the form body of a form that edits one key.",
+          "docFull": "A widget and everything under it, with the CSRF field the row buttons need: the form body of\na form that edits one key.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The widget, its value and the render context."
+            }
+          ],
+          "returns": "The field elements.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FormFieldProps",
+          "slug": "FormFieldProps",
+          "kind": "interface",
+          "signature": "interface FormFieldProps",
+          "doc": "FormField's props: one widget, the value it holds, and the render context.",
+          "docFull": "{@linkcode FormField}'s props: one widget, the value it holds, and the render context.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FormFields",
+          "slug": "FormFields",
+          "kind": "function",
+          "signature": "FormFields(props: FormFieldsProps): VNode",
+          "doc": "Several widgets as one form body, behind a single CSRF field.",
+          "docFull": "Several widgets as one form body, behind a single CSRF field.\n\nThe config editor puts a view's plain scalars in one form with one Save, so their widgets are\nrendered together. Emitting the token once is the point: rendering each field separately would\nrepeat a hidden `_csrf` for every control in the form.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The widgets and the render context."
+            }
+          ],
+          "returns": "The field elements.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FormFieldsProps",
+          "slug": "FormFieldsProps",
+          "kind": "interface",
+          "signature": "interface FormFieldsProps",
+          "doc": "FormFields's props: the widgets in render order, and the render context.",
+          "docFull": "{@linkcode FormFields}'s props: the widgets in render order, and the render context.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "OpButton",
+          "slug": "OpButton",
+          "kind": "function",
+          "signature": "OpButton(props: OpButtonOptions): VNode",
+          "doc": "A real submit button carrying one list operation — the whole list editor works with JavaScript disabled, and ui.js upgrades the same submit to a fragment swap.",
+          "docFull": "A real submit button carrying one list operation — the whole list editor works with\nJavaScript disabled, and `ui.js` upgrades the same submit to a fragment swap.\n\nThe operation, the row and the list travel in the button's single `value` (a button can only\npost one name/value pair); `parseOp` in `value.ts` reads them back.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The button description."
+            }
+          ],
+          "returns": "The button element.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "OpButtonOptions",
+          "slug": "OpButtonOptions",
+          "kind": "interface",
+          "signature": "interface OpButtonOptions",
+          "doc": "One row-operation button (↑, ↓, ✕, + Add).",
+          "docFull": "One row-operation button (`↑`, `↓`, `✕`, `+ Add`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RawHtml",
+          "slug": "RawHtml",
+          "kind": "interface",
+          "signature": "interface RawHtml",
+          "doc": "A pre-escaped HTML fragment: Raw inserts it into a component tree verbatim.",
+          "docFull": "A pre-escaped HTML fragment: {@linkcode Raw} inserts it into a component tree verbatim.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RenderContext",
+          "slug": "RenderContext",
+          "kind": "interface",
+          "signature": "interface RenderContext",
+          "doc": "What the renderer is told beyond the spec and the value.",
+          "docFull": "What the renderer is told beyond the spec and the value.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "renderView",
+          "slug": "renderView",
+          "kind": "function",
+          "signature": "renderView(node: VNodeChildren): RawHtml",
+          "doc": "Render a component view to a pre-escaped fragment — synchronously, with no hydration markers and no client code. The result nests inside another tree through Raw without being escaped a second time. A throwing component throws out of this call (the UI server answers 500), and so does an async component: a view must be synchronous.",
+          "docFull": "Render a component view to a pre-escaped fragment — synchronously, with no hydration markers\nand no client code. The result nests inside another tree through {@linkcode Raw} without\nbeing escaped a second time. A throwing component throws out of this call (the UI server\nanswers `500`), and so does an async component: a view must be synchronous.\n\nAlways render UI views through this function (or `renderPage`), never the renderer directly —\nit is what removes {@linkcode Raw}'s wrapper.",
+          "params": [
+            {
+              "name": "node",
+              "doc": "The view's element tree."
+            }
+          ],
+          "returns": "The rendered markup as a fragment.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SchemaNode",
+          "slug": "SchemaNode",
+          "kind": "interface",
+          "signature": "interface SchemaNode",
+          "doc": "The subset of JSON Schema the config schema actually uses, plus denext's x-denext hints.",
+          "docFull": "The subset of JSON Schema the config schema actually uses, plus denext's `x-denext` hints.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "Widget",
+          "slug": "Widget",
+          "kind": "function",
+          "signature": "Widget(props: WidgetProps): VNode",
+          "doc": "One widget and everything under it, dispatched to its kind's component — the recursive half of the form, without the CSRF field (FormField adds it).",
+          "docFull": "One widget and everything under it, dispatched to its kind's component — the recursive half of\nthe form, without the CSRF field ({@linkcode FormField} adds it).",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The widget, the value it holds and the render context."
+            }
+          ],
+          "returns": "The widget's elements.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WidgetBranch",
+          "slug": "WidgetBranch",
+          "kind": "interface",
+          "signature": "interface WidgetBranch",
+          "doc": "One alternative shape of a union field, behind the discriminator picker.",
+          "docFull": "One alternative shape of a union field, behind the discriminator picker.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WidgetField",
+          "slug": "WidgetField",
+          "kind": "interface",
+          "signature": "interface WidgetField",
+          "doc": "One field of a multi-widget form: its widget, and the value to render it holding.",
+          "docFull": "One field of a multi-widget form: its widget, and the value to render it holding.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "widgetFor",
+          "slug": "widgetFor",
+          "kind": "function",
+          "signature": "widgetFor(node: SchemaNode, path: typeOperator, required: boolean): WidgetSpec",
+          "doc": "The widget for one schema node — the first matching rule of the table above wins.",
+          "docFull": "The widget for one schema node — the first matching rule of the table above wins.\n\nRecursive: a group carries its children, a list its row template, a union its branches, so one\ncall at a top-level config key yields the whole sub-form.",
+          "params": [
+            {
+              "name": "node",
+              "doc": "The schema node (already OVERRIDES-patched by resolveAt)."
+            },
+            {
+              "name": "path",
+              "doc": "Its path segments (array indices as numeric segments)."
+            },
+            {
+              "name": "required",
+              "doc": "Whether the field is required (an optional enum gains \"— unset —\")."
+            }
+          ],
+          "returns": "The widget to render.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WidgetKind",
+          "slug": "WidgetKind",
+          "kind": "typeAlias",
+          "signature": "type WidgetKind = text | textarea | number | toggle | select | segmented | multi-select | chips | list-of-forms | map | union | group | code",
+          "doc": "Every control the config editor can render.",
+          "docFull": "Every control the config editor can render.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WidgetOption",
+          "slug": "WidgetOption",
+          "kind": "interface",
+          "signature": "interface WidgetOption",
+          "doc": "One choice of a select, segmented control or checkbox group.",
+          "docFull": "One choice of a select, segmented control or checkbox group.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WidgetProps",
+          "slug": "WidgetProps",
+          "kind": "typeAlias",
+          "signature": "type WidgetProps = object",
+          "doc": "What every widget component is handed (Widget's props).",
+          "docFull": "What every widget component is handed ({@linkcode Widget}'s props).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WidgetSpec",
+          "slug": "WidgetSpec",
+          "kind": "interface",
+          "signature": "interface WidgetSpec",
+          "doc": "A resolved widget: what to render at one path, and everything the renderer needs.",
+          "docFull": "A resolved widget: what to render at one path, and everything the renderer needs.",
           "params": [],
           "returns": "",
           "examples": [],

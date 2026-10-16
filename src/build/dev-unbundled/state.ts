@@ -8,6 +8,7 @@ import type { ImportAliases, Platform, PlatformResolution } from "../platform-ex
 import { join } from "@std/path";
 import type * as esbuild from "../esbuild/mod.ts";
 import type { ServerModuleRef } from "../client-imports.ts";
+import type { ResolveAliasConfig } from "../../server/config.ts";
 
 /** Dev URL prefixes (see the `dev-unbundled.ts` module header). */
 export const DEP_PREFIX = "/_denext/@dep/";
@@ -37,12 +38,16 @@ export const DEP_ENTRYPOINTS: Record<string, string> = {
   // `feature()` calls are folded at build, but the IMPORT stays in the module (and nothing is
   // folded without `features`), so a "use client" file importing it needs the dep.
   "denext_feature": "src/feature.ts",
+  // `platform` reads are folded per request, but the IMPORT stays in the module.
+  "denext_platform": "src/platform.ts",
   // `denext/result` — Result values + exhaustive match, imported from "use client" modules too.
   "denext_result": "src/result.ts",
   // The Capacitor-shell client runtime — imported only from "use client" modules.
   "denext_mobile": "src/mobile/mod.ts",
   // VirtualMasonry — a client-only subpath of its own (VirtualList users bundle none of it).
   "denext_virtual-masonry": "src/virtual-masonry.ts",
+  // `denext/mvu` — useMvu / MvuView; shares the one hooks instance.
+  "denext_mvu": "src/mvu.ts",
   // SPA mode's `client:*` deferred mounts: the island rewrite's import (spa-islands.ts).
   "denext_spa-island": "src/spa-island.ts",
 };
@@ -58,9 +63,11 @@ export const DENEXT_RUNTIME_FILE: Record<string, string> = {
   "denext/client-runtime": "client-runtime.js",
   "denext/devtools": "devtools.js",
   "denext/feature": "feature.js",
+  "denext/platform": "platform.js",
   "denext/result": "result.js",
   "denext/mobile": "mobile.js",
   "denext/virtual-masonry": "virtual-masonry.js",
+  "denext/mvu": "mvu.js",
   "denext/spa-island": "spa-island.js",
 };
 
@@ -157,6 +164,11 @@ export interface UnbundledDevOptions {
    * the DCE, only the value parity). Empty/absent → nothing folded.
    */
   features?: Record<string, boolean>;
+  /**
+   * `resolveAlias` (the app config): applied ahead of every resolver in the dependency bundles
+   * (the npm bundle, React Native mode's), as in a build.
+   */
+  resolveAlias?: ResolveAliasConfig;
   /** The project's `instrumentation-client` module (absolute path), imported first by every entry. */
   instrumentationClient?: string | null;
   /** The app's `momentumSafeScroll`; `false` seeds the runtime opt-out into every entry. */

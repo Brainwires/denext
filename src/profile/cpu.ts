@@ -125,12 +125,31 @@ function foldFrames(
 }
 
 /**
+ * A row filter for {@linkcode aggregateSelfTime}: keeps the functions whose name or source URL
+ * contains `pattern` (case-insensitive) — a component (`TodoList`), a module (`cart.tsx`) or a
+ * package (`node_modules/zod`).
+ *
+ * @param pattern The text to look for.
+ * @returns The predicate.
+ */
+export function frameFilter(pattern: string): (frame: CpuFrame) => boolean {
+  const needle = pattern.toLowerCase();
+  return (f) => f.name.toLowerCase().includes(needle) || f.url.toLowerCase().includes(needle);
+}
+
+/**
  * Aggregate a raw CDP CPU profile into per-function self-time, descending.
  *
  * @param profile The `Profiler.stop` payload.
  * @param topN Max rows to return (default 20).
+ * @param keep Keep only the rows it accepts (before the `topN` cut); totals and shares stay
+ *   those of the whole profile.
  */
-export function aggregateSelfTime(profile: RawCpuProfile, topN = 20): CpuProfileResult {
+export function aggregateSelfTime(
+  profile: RawCpuProfile,
+  topN = 20,
+  keep?: (frame: CpuFrame) => boolean,
+): CpuProfileResult {
   const byId = new Map<number, ProfileNode>();
   for (const n of profile.nodes) byId.set(n.id, n);
 
@@ -145,5 +164,6 @@ export function aggregateSelfTime(profile: RawCpuProfile, topN = 20): CpuProfile
   const totalMs = totalMicros / 1000;
   rows.sort((a, b) => b.selfMs - a.selfMs);
   for (const r of rows) r.pct = totalMs > 0 ? (r.selfMs / totalMs) * 100 : 0;
-  return { topSelfTime: rows.slice(0, topN), totalMs, sampleCount };
+  const kept = keep ? rows.filter(keep) : rows;
+  return { topSelfTime: kept.slice(0, topN), totalMs, sampleCount };
 }

@@ -32,6 +32,34 @@ Loaders and actions, `meta`, `links`, `ErrorBoundary` (with `useRouteError` /
 props contract (`loaderData` / `actionData` / `params` / `matches` as component
 props) all work, and so do the client data APIs below.
 
+## Route types
+
+React Router's route typegen runs too: every scan (`denext dev`, `build`, `start`) writes a
+`+types/<route>.ts` module per route under `.react-router/types/`, laid out as
+`react-router typegen` lays it out, and `denext typegen` writes them on demand (before a
+`deno check` in CI, say). A route module imports its `Route` namespace as in React Router:
+
+```ts
+import type { Route } from "./+types/team";
+
+export function loader({ params }: Route.LoaderArgs) {
+  return { id: params.id }; // params.id: string, from the route's pattern
+}
+export default function Team({ loaderData }: Route.ComponentProps) {
+  return <h1>{loaderData.id}</h1>;
+}
+```
+
+`./+types/team` resolves through `compilerOptions.rootDirs: [".", "./.react-router/types"]`
+(with Deno's `sloppy-imports` for the extensionless specifier), which `denext migrate` writes.
+The namespace has React Router's names (`LoaderArgs`, `ClientLoaderArgs`, `ActionArgs`,
+`ClientActionArgs`, `ComponentProps`, `ErrorBoundaryProps`, `HydrateFallbackProps`,
+`MetaArgs` / `MetaFunction`, `LinksFunction`, `HeadersFunction`), typed from the route module:
+`params` from the full URL pattern (a layout's descendants' params optional), `loaderData` and
+`actionData` from what `loader` / `clientLoader` / `action` / `clientAction` return (unwrapped
+from `data()`), `matches` from the route's ancestors. The files import nothing but the route
+modules, so they check against the `react-router` the import map points at.
+
 ## Client data APIs
 
 A route module's browser half runs as in React Router v7:
@@ -57,9 +85,6 @@ A route module's browser half runs as in React Router v7:
 - **`serverLoader()` on a navigation** resolves the data the navigation already fetched:
   denext renders the target route on the server, so its server `loader` runs with that render
   instead of on demand, and the route renders before its `clientLoader` settles.
-- **Route typegen** (`import type { Route } from "./+types/…"`) is type-only and
-  erases at runtime, so the app runs without it; generate the `+types` with React
-  Router's own `typegen` if you type-check against them.
 - **`app/routes.ts` must resolve in the app's active config.** The plugin evaluates
   `app/routes.ts` with a plain dynamic `import()`, so its `@react-router/dev/routes`
   import (which `denext migrate` aliases in the app's `deno.json`) resolves under the

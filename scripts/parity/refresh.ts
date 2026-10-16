@@ -1,6 +1,10 @@
 // Refresh / drift tool for the React/ReactDOM/Next parity baseline.
 //
 //   deno task parity:refresh   # install latest, extract real surface, WRITE baseline
+//   deno task parity:refresh --pinned
+//                              # the same, but every package the baseline already records
+//                              # installs at that version — only a package new to the
+//                              # catalog comes in at latest (to add one without moving the rest)
 //   deno task parity:drift     # install latest, compare to committed baseline, print
 //                              # what changed upstream — never writes, never fails CI
 //
@@ -10,7 +14,7 @@
 // the only part that touches npm/network; it installs into a throwaway temp dir (via
 // Deno's `--node-modules-dir=auto`) so the repo root stays clean.
 
-import { REAL_PACKAGES } from "./spec.ts";
+import { REAL_PACKAGE_TAGS, REAL_PACKAGES } from "./spec.ts";
 import type { Baseline, Surface } from "./types.ts";
 import { fromFileUrl } from "@std/path";
 
@@ -21,8 +25,11 @@ const RUNNER = fromFileUrl(new URL("./_real-runner.ts", import.meta.url));
 /** Install the real packages into `dir` and extract their surface in a child deno. */
 async function captureReal(
   dir: string,
+  pinned: Record<string, string> = {},
 ): Promise<{ versions: Record<string, string>; surfaces: Surface[] }> {
-  const deps = Object.fromEntries(REAL_PACKAGES.map((p) => [p, "latest"]));
+  const deps = Object.fromEntries(
+    REAL_PACKAGES.map((p) => [p, pinned[p] ?? REAL_PACKAGE_TAGS[p] ?? "latest"]),
+  );
   // typescript is the extractor's own dependency; pin a major so resolution is stable.
   deps["typescript"] = "^5";
   await Deno.writeTextFile(
@@ -131,10 +138,13 @@ function diffLine(sign: string, names: string[]): string[] {
 
 async function main() {
   const drift = Deno.args.includes("--latest");
+  const pinned = !drift && Deno.args.includes("--pinned")
+    ? (JSON.parse(await Deno.readTextFile(BASELINE)) as Baseline).versions
+    : {};
   const dir = await Deno.makeTempDir({ prefix: "denext_parity_" });
   try {
-    console.error(`installing ${REAL_PACKAGES.join(", ")} (latest) into ${dir} …`);
-    const captured = await captureReal(dir);
+    console.error(`installing ${REAL_PACKAGES.join(", ")} into ${dir} …`);
+    const captured = await captureReal(dir, pinned);
 
     if (drift) {
       const oldB = JSON.parse(await Deno.readTextFile(BASELINE)) as Baseline;

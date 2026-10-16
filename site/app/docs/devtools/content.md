@@ -23,15 +23,15 @@ no reference to the panel, the inspector or the metadata registry at all.
 > the default `img-src 'self' data:` allows.
 
 It mounts on **every** dev path — the native App Router, the Flight/streaming
-path, the Next.js drop-in and [SPA mode](/docs/spa). The three tabs that read the
-dev server (Network, Cache, Routes) are App-Router-only, and say so in place
+path, the Next.js drop-in and [SPA mode](/docs/spa). The tabs that read the
+dev server (Network, Cache, Routes, Live views, Live) are App-Router-only, and say so in place
 rather than showing an empty table.
 
-## The seven tabs
+## The ten tabs
 
 The header is a scrollable `role="tablist"`: **Components**, **Render modes**,
-**Profiler**, **Network**, **Cache**, **Routes**, **Console**. `Alt+1`…`Alt+7`
-jump straight to one. The panel is `min(620px, 94vw)` wide and half the viewport
+**Profiler**, **Network**, **Cache**, **Routes**, **Console**, **MVU**, **Live views**,
+**Live**. `Alt+1`…`Alt+9` jump straight to one (`Ctrl+Shift+]` reaches the tenth). The panel is `min(620px, 94vw)` wide and half the viewport
 tall; the `⤢` button at the right of the header (beside `×`, both 44 px touch
 targets) switches it to the full viewport, inside the safe-area insets, and `⤡`
 back. The size is remembered per tab in `localStorage`. Below 420 px the
@@ -138,20 +138,23 @@ chosen:
 | a custom hook declared in the same module          | the hook's own cells, breadcrumbed: `useAuth › user · useAuth › useState` |
 | a custom hook imported by a relative path          | the same breadcrumb, read from the module that declares the hook          |
 | a composite (`useTransition`, `useActionState`, …) | its first cell is named; its internal extra cells carry the hook alone    |
+| a hook in a branch or after an early `return`      | named whether or not it ran this render                                   |
+| a package's custom hook (`useQuery` from npm)      | `q · useQuery` on its first cell, `useQuery` on the rest it took          |
 
-The join is lockstep and checked: a table of how many cells each hook consumes
-(and with which kind tags) is walked against the component's live cells, and
-**any** divergence abandons naming for that whole component rather than pairing a
-name with the wrong cell. The pane then shows kind labels and says so:
+The join is checked: a table of how many cells each hook consumes (and with which
+kind tags) is aligned against the component's live cells. A call the metadata pass
+saw in a branch (`if`, `?:`, `&&` / `||` / `??`, `switch`, a loop) or after an early
+`return` may have taken its cells or none. A custom hook whose own calls are not
+known — a package's, one whose module registered no metadata, or one nested more
+than three custom hooks deep — took however many cells the calls around it leave.
+Every alignment that uses up exactly the live cells is found, and a cell is named
+only when they all agree on it: two unknown hooks in a row leave the cells they
+could share unnamed, never mislabelled. When no alignment fits (the metadata is
+out of date), the pane shows kind labels and says so:
 
 ```text
-names unavailable (conditional hooks?)
+names unavailable (hook metadata out of date)
 ```
-
-That is what you see for a conditionally-called hook, a chain of custom hooks
-nested more than three deep, or a custom hook whose declaring module registered no
-metadata — there is no way to know how many cells an unknown hook took, so every
-later name would be a guess.
 
 A custom hook does not have to live in the component's module. When a component
 calls a hook it bound through a **static relative import** — `import { useAuth }
@@ -168,13 +171,13 @@ declares only hooks (a `useCart.ts` with no component) still emits its metadata,
 there is something to join against.
 
 In the default dev loop an import-map alias (`@/lib/auth`) resolves exactly as the dev server
-resolves the import, and a barrel that re-exports a hook by name
-(`export { useAuth } from "./auth"`) sends the lookup on to the declaring module — one hop; a
-barrel of a barrel stops. Naming still stops at a hook imported by a bare specifier (a package,
-`npm:`, `jsr:`), a URL, through a namespace import (`import * as auth`, then
-`auth.useAuth()`) or a barrel's `export *`, and at an import-map alias in SPA mode. An importee
-that has not registered yet — one behind a dynamic `import()` — is the same clean miss, never a
-wrong name.
+resolves the import, a namespace import's member call (`import * as auth`, then
+`auth.useAuth()`) looks in the namespace's module, and a barrel sends the lookup on to the
+declaring module whether it re-exports the hook by name (`export { useAuth } from "./auth"`) or
+with `export * from "./auth"` — up to three barrels deep. A hook imported by a bare specifier (a
+package, `npm:`, `jsr:`), a URL, or an import-map alias in SPA mode is not expanded: it is the
+unknown hook above, labelled by its call. So is an importee that has not registered yet — one
+behind a dynamic `import()` — never a wrong name.
 
 #### Debug values
 
@@ -260,6 +263,15 @@ Click **● Record**, interact, then **■ Stop** (**Clear** discards a recordin
 - A **ranked list** (top 25 by self time) with _why each rendered_ —
   `props: a,b · hooks: 0 · ctx: Theme` — so the commit's most expensive
   components and the reason they ran are one glance apart.
+- A **component filter** (the box beside the buttons; any case, part of a name):
+  the ranked list keeps only matching components, the flamegraph dims the rest,
+  and the commit strip dims every commit in which no matching component rendered.
+- **Compare.** **Pin as baseline** on a commit, then step to another: a
+  _Compare_ list shows each component's self time and render count in both,
+  largest change first (`List  2.0 → 4.0ms · renders 1 → 1  +2.0ms`).
+  **Export** saves the recording as JSON; **Import…** loads one as the baseline,
+  compared with every commit of the current recording — a before/after across a
+  code change. The filter applies to the comparison too.
 
 For whole-app CPU and heap profiling outside the browser, see
 [`denext profile`](/docs/profile).
@@ -340,7 +352,10 @@ Firefox do for a dynamic import). It fetches each same-origin module (6 at a
 time) along static imports, at most 400, and reports every one that answers
 non-2xx, is served as something other than JavaScript (HTML from a fallback
 page, say), imports a bare specifier no import map resolves, or does not parse
-(only where the page's CSP allows `eval`). When that static graph loads, a deep
+(only where the page's CSP allows `eval`). A bare specifier the page's import map
+resolves (an exact key, a `"pkg/"` prefix, or a `scopes` entry that contains the
+importer) is followed to the module it maps to, so that module and its imports are
+checked too. When that static graph loads, a deep
 pass follows what it skipped — string-literal dynamic `import()`s, `new URL("./worker.ts",
 import.meta.url)` and `import.meta.resolve()` script modules, and static imports
 past the cap — up to 2000 modules, logging progress as it goes. It also catches
@@ -350,12 +365,18 @@ skipped) for the names it imports — named, default, and `export { a } from`
 re-exports — and the names it exports, `export { a as b }`, `export default` and
 `export *` chains included (cycle-safe). A name the target does not export is
 logged as `<importer> imports "<name>" from <target>, which does not export it`,
-with the closest export as a hint ("did you mean …?"). That covers a renamed
+with the closest export as a hint ("did you mean …?"). A name the target gets only
+through `export *` from two modules that give different bindings is an ambiguous
+export, which browsers refuse: it is logged as `<importer> imports "<name>" from
+<target>, which exports it ambiguously — export * from <a> and from <b> both provide
+it` (the same binding reached by two paths, or one the target exports itself, is
+not ambiguous). That covers a renamed
 export, a missing re-export and a default import of an npm bundle that has none
 (a CommonJS / ES module interop mismatch); a module it can't analyze confidently
 (CommonJS-looking, a destructuring export) is skipped rather than guessed at. When
 the browser names the failure itself (Chrome: "does not provide an export named
-'X'"), that is shown at once with the importer, and the walk starts there. Each
+'X'" or "contains conflicting star exports for name 'X'"; Firefox: "ambiguous
+indirect export"), that is shown at once with the importer, and the walk starts there. Each
 other failure is logged with the module's URL, the reason and the module that
 imported it;
 progress shows at the top of the tab, and **diagnose boot** runs it on demand. If
@@ -370,6 +391,41 @@ leaving a page that never settles.
 Entries are also forwarded, batched, to the dev server's event log
 (`/_denext/dev-log`), so [`denext_dev_logs`](#mcp-inspect-the-live-page) reads
 the page's console — App Router and SPA dev alike.
+
+### MVU
+
+Every [`denext/mvu`](/docs/mvu) program running on the page (`useMvu`, `MvuView`), named by
+`useMvu(…, { name })` or `MvuView`'s `name`: its recorded steps (the last 200 messages, each
+with the model it produced) and the model of the step on screen. Click a step to travel there:
+its model replaces the program's, and the component re-renders. A message dispatched after
+that continues from the step on screen and drops the steps after it. Effects and
+subscriptions keep running while you travel. Server-held [live views](/docs/live-views) are
+not listed here: their model is on the server, and the Live views tab shows it.
+
+### Live views
+
+The server-held [live views](/docs/live-views) (`defineLiveView`) running on the dev server,
+read from `/_denext/dev-live-views` once a second while the tab is open: each instance with
+its view id, whether it is **attached** to a socket or **parked** waiting for a reconnect, its
+render revision, the size of its model, and the model itself; then the recent batches of
+messages their `update` ran, newest first (the last 100).
+
+### Live
+
+What the dev server's Live hub holds, read from `/_denext/dev-live` once a second while the
+tab is open: each open socket with its page and everything it subscribes to — `<Live>`
+boundaries and the cache tags each watches, `useLive` / `defineSubscription` data
+subscriptions (the action and its tags, never its arguments), `useApi({ tags })` watches,
+channel keys, presence rooms and mounted live views — then the recent channel pushes the hub
+fanned out (channel, key, subscribers on this instance, the payload) and the recent cache
+entries written (`unstable_cache` / `"use cache"` data and ISR pages, with their tags and
+size). The Cache tab keeps the counters and the invalidations.
+
+Both tabs are redacted at the source, like the [MCP bridge](#mcp-inspect-the-live-page): every
+string inside a model, a message or a channel payload arrives as `string(n)` — numbers,
+booleans, keys and the structure are kept, cut to four levels and twenty entries — and the
+records are kept only under `denext dev`, so a production server records nothing and the two
+tabs ship in no production bundle.
 
 ## Errors and the dev overlay
 
@@ -404,7 +460,7 @@ resets as soon as it skips a commit, and an unmounted component is forgotten.
 | Chord                           | Does                                                                                             |
 | ------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `Ctrl+Shift+D`                  | Toggle the panel — the only chord that works while it is closed                                  |
-| `Alt+1` … `Alt+7`               | Jump to a tab, in strip order (Components … Routes, Console)                                     |
+| `Alt+1` … `Alt+9`               | Jump to a tab, in strip order (Components … MVU, Live views)                                     |
 | `Ctrl+Shift+[` / `Ctrl+Shift+]` | Previous / next tab, wrapping at both ends (the shifted `{` / `}` a US layout produces work too) |
 | `Escape`                        | Cancel the element picker; with the picker off, close the panel                                  |
 
@@ -527,23 +583,25 @@ capped when it posted it says so, and so does one the tool's own `depth` /
 Three things can be missing, and each gets its own answer rather than one vague
 error:
 
-| Situation                      | What the tool says                                                                     |
-| ------------------------------ | -------------------------------------------------------------------------------------- |
-| No dev server                  | `no dev server running (denext task dev) for <dir>` — it looked for `.denext/dev.json` |
-| Dev server, but nothing pushed | `open the app in a browser — the DevTools sink has posted nothing yet`                 |
-| A tree, but no such component  | `no component named "X" in this snapshot. Components present: …`                       |
+| Situation                     | What the tool says                                                                      |
+| ----------------------------- | --------------------------------------------------------------------------------------- |
+| No dev server                 | `no dev server running (denext task dev) for <dir>` — it looked for `.denext/dev.json`  |
+| Dev server, but no page open  | `open the app in a browser, then call this again — no page has posted a component tree` |
+| A tree, but no such component | `no component named "X" in this snapshot. Components present: …`                        |
 
 So both preconditions hold at once: the tools need **`denext task dev` running AND
 the app open in a browser**. You do not have to open the panel — an agent
 inspecting a page the developer never opened the panel on is the normal case.
 
-**The sink arms lazily.** A page that nobody is inspecting walks no fibers and
-posts nothing; the first `denext_component_tree` / `denext_why_render` /
-`denext_hook_state` call arms the dev server, and the page picks that up on its
-next settled commit. So the **first** call on a fresh session may answer
-`the DevTools sink has posted nothing yet` — call it again after the page's next
-commit, or start the server with `DENEXT_DEV_INSPECT=1` to arm it from the very
-beginning. Arming is sticky for the dev server's lifetime.
+**A read asks the page for a fresh tree.** A page that nobody is inspecting walks no fibers and
+posts nothing. When `denext_component_tree` / `denext_why_render` / `denext_hook_state` finds no
+tree younger than a second, the dev server sends every page connected to its reload stream an
+`inspect` frame; the page's DevTools sink arms (if it was not) and posts its tree at once, and the
+tool, which waits up to 3 s for it, answers with that tree. So the first call on a fresh session
+has a tree too, as long as a page is open. With no page connected the tool answers at once.
+`DENEXT_DEV_INSPECT=1` still arms the pages from the start, so they post on every commit.
+The App Router and SPA dev servers both serve the bridge (`/_denext/dev-inspect`), behind the
+same Host / Origin gate as every other `/_denext/*` endpoint.
 
 What gets pushed is deliberately bounded and inert:
 
@@ -631,7 +689,7 @@ function and type is listed in the [API reference](/docs/api).
 - **A `useDebugValue` label rides the row of the cell before the call.** It takes
   no cell of its own, so a component with no hook cells shows none, and a call
   placed between two hooks reads under the earlier one.
-- **Network, Cache, Routes and the MCP bridge need the App Router dev server.**
+- **Network, Cache, Routes, Live views, Live and the MCP bridge need the App Router dev server.**
   SPA dev serves only the dev log (`denext_dev_logs` works there): those tabs
   render `… is not available in SPA dev (App Router only)`, and the Source row
   falls back to a `vscode://` link. Components, Render modes, the Profiler and

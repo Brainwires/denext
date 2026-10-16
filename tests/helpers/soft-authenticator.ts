@@ -12,7 +12,8 @@ function head(major: number, n: number): number[] {
   return [(major << 5) | 26, (n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff];
 }
 
-function cbor(value: Cbor): Uint8Array {
+/** Encode a value as CBOR (the subset WebAuthn uses). */
+export function cbor(value: Cbor): Uint8Array {
   const out: number[] = [];
   const put = (v: Cbor): void => {
     if (typeof v === "number") out.push(...(v >= 0 ? head(0, v) : head(1, -1 - v)));

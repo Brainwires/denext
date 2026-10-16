@@ -102,7 +102,9 @@ export type OpenApiWarningCode =
   /** The route module failed to load; the route is skipped. */
   | "load-failed"
   /** Two routes describe the same path + method (an optional catch-all beside a static route); the later one is dropped. */
-  | "path-collision";
+  | "path-collision"
+  /** An {@link OpenApiSource} failed to describe its routes; they are left out. */
+  | "source-failed";
 
 /** One lint finding. */
 export interface OpenApiWarning {
@@ -153,6 +155,66 @@ export interface BuildOpenApiOptions {
   security?:
     | SecurityRequirement[]
     | ((route: ApiRoute) => SecurityRequirement[] | undefined);
+  /**
+   * Routes served by something other than the app's route modules (a plugin's request handler,
+   * such as `@denext/backend`'s auto-REST) to describe in the same document. Their paths join the
+   * app's after them (a path + method the app already describes is kept, with a
+   * `path-collision` warning); one that throws is left out with a `source-failed` warning.
+   */
+  sources?: readonly OpenApiSource[];
+}
+
+/** What an {@link OpenApiSource} contributes to the document. */
+export interface OpenApiContribution {
+  /** Path items, keyed by the public path (the app's `basePath` included). */
+  paths: Record<string, Record<string, OpenApiOperation>>;
+  /** Shared schemas its operations `$ref` (`#/components/schemas/<name>`). */
+  schemas?: Record<string, JsonSchema>;
+}
+
+/**
+ * A producer of operations for routes the app's route modules do not declare — a plugin's own
+ * endpoints. `@denext/backend` registers one for its auto-REST routes. A plugin registers its
+ * source with {@linkcode registerOpenApiSource} (or writes the same global slot, so it needs no
+ * dependency on this package); `openapi({ sources })` adds more.
+ */
+export interface OpenApiSource {
+  /** A unique name (`"@denext/backend rest"`); a later registration under it replaces the earlier. */
+  readonly name: string;
+  /**
+   * Describe the routes now (called on each document build, so a changed database catalog shows
+   * on the next request).
+   *
+   * @param context The app's `basePath` (to prefix onto the paths).
+   */
+  describe(context: { basePath: string }): Promise<OpenApiContribution> | OpenApiContribution;
+}
+
+/** The global slot plugins register their {@link OpenApiSource}s in (no import needed). */
+export const OPENAPI_SOURCES: unique symbol = Symbol.for("denext.openapi.sources") as never;
+
+/** The registry behind {@link OPENAPI_SOURCES}. */
+function registry(): Map<string, OpenApiSource> {
+  const slot = globalThis as unknown as Record<symbol, Map<string, OpenApiSource> | undefined>;
+  return slot[OPENAPI_SOURCES] ??= new Map();
+}
+
+/**
+ * Register a source of operations for the app's document (replacing one of the same name).
+ *
+ * @param source The source.
+ * @returns A function that unregisters it.
+ */
+export function registerOpenApiSource(source: OpenApiSource): () => void {
+  registry().set(source.name, source);
+  return () => {
+    if (registry().get(source.name) === source) registry().delete(source.name);
+  };
+}
+
+/** Every registered source, in registration order. */
+export function registeredOpenApiSources(): OpenApiSource[] {
+  return [...registry().values()];
 }
 
 /** What {@linkcode buildOpenApi} returns. */
@@ -190,6 +252,7 @@ export const API_ERROR_SCHEMA: JsonSchema = {
 export async function buildOpenApi(options: BuildOpenApiOptions): Promise<OpenApiBuild> {
   const warnings: OpenApiWarning[] = [];
   const paths: OpenApiDocument["paths"] = {};
+  const schemas: Record<string, JsonSchema> = {};
   const ids = new Set<string>();
   const routes = options.manifest.api.filter(options.include ?? (() => true));
   for (const route of routes) {
@@ -201,7 +264,68 @@ export async function buildOpenApi(options: BuildOpenApiOptions): Promise<OpenAp
       placeOperations({ route, method, handler, options, warnings, ids, paths });
     }
   }
-  return { document: assemble(paths, options), warnings };
+  await addSources(options.sources ?? [], options.basePath ?? "", paths, schemas, warnings);
+  return { document: assemble(paths, options, schemas), warnings };
+}
+
+/** Merge each source's operations and schemas in; a failing source becomes a warning. */
+async function addSources(
+  sources: readonly OpenApiSource[],
+  basePath: string,
+  paths: OpenApiDocument["paths"],
+  schemas: Record<string, JsonSchema>,
+  warnings: OpenApiWarning[],
+): Promise<void> {
+  for (const source of sources) {
+    const contribution = await describeSource(source, basePath.replace(/\/$/, ""), warnings);
+    if (!contribution) continue;
+    mergePaths(source.name, contribution.paths, paths, warnings);
+    for (const [name, schema] of Object.entries(contribution.schemas ?? {})) {
+      schemas[name] ??= schema;
+    }
+  }
+}
+
+/** A source's contribution, or `null` (with a `source-failed` warning) when it throws. */
+async function describeSource(
+  source: OpenApiSource,
+  basePath: string,
+  warnings: OpenApiWarning[],
+): Promise<OpenApiContribution | null> {
+  try {
+    return await source.describe({ basePath });
+  } catch (err) {
+    warnings.push({
+      code: "source-failed",
+      routePath: source.name,
+      message: `${source.name}: ${err instanceof Error ? err.message : String(err)}`,
+    });
+    return null;
+  }
+}
+
+/** Add a source's operations; a path + method already described keeps its operation. */
+function mergePaths(
+  name: string,
+  from: OpenApiContribution["paths"],
+  paths: OpenApiDocument["paths"],
+  warnings: OpenApiWarning[],
+): void {
+  for (const [path, item] of Object.entries(from)) {
+    const target = paths[path] ??= {};
+    for (const [method, op] of Object.entries(item)) {
+      if (!target[method]) {
+        target[method] = op;
+        continue;
+      }
+      warnings.push({
+        code: "path-collision",
+        routePath: path,
+        method: method.toUpperCase(),
+        message: `${path} is already described by an app route — ${name}'s is dropped`,
+      });
+    }
+  }
 }
 
 interface Placement {
@@ -260,14 +384,18 @@ async function loadRoute(
   }
 }
 
-function assemble(paths: OpenApiDocument["paths"], options: BuildOpenApiOptions): OpenApiDocument {
+function assemble(
+  paths: OpenApiDocument["paths"],
+  options: BuildOpenApiOptions,
+  schemas: Record<string, JsonSchema>,
+): OpenApiDocument {
   const sorted: OpenApiDocument["paths"] = {};
   for (const key of Object.keys(paths).sort()) sorted[key] = paths[key];
   const doc: OpenApiDocument = {
     openapi: "3.1.0",
     info: { title: "API", version: "0.0.0", ...options.info },
     paths: sorted,
-    components: { schemas: { ApiError: API_ERROR_SCHEMA } },
+    components: { schemas: { ...schemas, ApiError: API_ERROR_SCHEMA } },
   };
   if (options.servers?.length) doc.servers = options.servers;
   if (options.securitySchemes && Object.keys(options.securitySchemes).length) {
@@ -473,32 +601,70 @@ function errorCodes(def: ApiDefinition): Record<string, number> {
   return codes;
 }
 
-/** The success response plus one response per declared error status (codes as an enum). */
+/** One error status's documentation: its codes, their messages and the headers they carry. */
+interface StatusDocs {
+  codes: string[];
+  messages: string[];
+  headers: Record<string, string>;
+}
+
+/** A declared code's default message: the builtins' fixed ones, else its spec's `message`. */
+function messageOf(def: ApiDefinition, code: string): string | undefined {
+  if (code === "validation" && !(code in (def.errors ?? {}))) return "Validation failed";
+  if (code === "bad_request" && !(code in (def.errors ?? {}))) {
+    return "Malformed or non-JSON body";
+  }
+  const spec = def.errors?.[code];
+  return typeof spec === "object" ? spec.message : undefined;
+}
+
+/** The response headers a declared code documents (`{ status, headers }`), if any. */
+function headersOf(def: ApiDefinition, code: string): Record<string, string> {
+  const spec = def.errors?.[code] as { headers?: unknown } | number | undefined;
+  const headers = typeof spec === "object" ? spec.headers : undefined;
+  if (typeof headers !== "object" || headers === null) return {};
+  return Object.fromEntries(
+    Object.entries(headers).filter(([, d]) => typeof d === "string"),
+  ) as Record<string, string>;
+}
+
+/** Group a definition's error codes (the middleware's included) by status. */
+function errorsByStatus(def: ApiDefinition): [number, StatusDocs][] {
+  const byStatus = new Map<number, StatusDocs>();
+  for (const [code, status] of Object.entries(errorCodes(def))) {
+    const entry = byStatus.get(status) ?? { codes: [], messages: [], headers: {} };
+    entry.codes.push(code);
+    const message = messageOf(def, code);
+    if (message) entry.messages.push(message);
+    Object.assign(entry.headers, headersOf(def, code));
+    byStatus.set(status, entry);
+  }
+  return [...byStatus].sort(([a], [b]) => a - b);
+}
+
+/**
+ * The success response plus one response per declared error status (codes as an enum). The
+ * codes include the ones the endpoint's middleware documents (`requireSession`'s 401,
+ * `rateLimit`'s 429 with its `retry-after`, `csrf`'s 403, …), folded into the definition by
+ * `createApi().use()`, so those responses are described like the endpoint's own.
+ */
 function responses(def: ApiDefinition, response: JsonSchema | undefined): Record<string, unknown> {
   const out: Record<string, unknown> = {
     "200": response
       ? { description: "OK", content: { "application/json": { schema: response } } }
       : { description: "OK (a handler that returns nothing answers 204)" },
   };
-  const byStatus = new Map<number, { codes: string[]; messages: string[] }>();
-  const messageOf = (code: string): string | undefined => {
-    if (code === "validation" && !(code in (def.errors ?? {}))) return "Validation failed";
-    if (code === "bad_request" && !(code in (def.errors ?? {}))) {
-      return "Malformed or non-JSON body";
-    }
-    const spec = def.errors?.[code];
-    return typeof spec === "object" ? spec.message : undefined;
-  };
-  for (const [code, status] of Object.entries(errorCodes(def))) {
-    const entry = byStatus.get(status) ?? { codes: [], messages: [] };
-    entry.codes.push(code);
-    const message = messageOf(code);
-    if (message) entry.messages.push(message);
-    byStatus.set(status, entry);
-  }
-  for (const [status, { codes, messages }] of [...byStatus].sort(([a], [b]) => a - b)) {
+  for (const [status, { codes, messages, headers }] of errorsByStatus(def)) {
+    const names = Object.keys(headers).sort();
     out[String(status)] = {
       description: messages.length ? messages.join("; ") : codes.join(" | "),
+      ...(names.length
+        ? {
+          headers: Object.fromEntries(
+            names.map((name) => [name, { description: headers[name], schema: { type: "string" } }]),
+          ),
+        }
+        : {}),
       content: {
         "application/json": {
           schema: {
@@ -511,10 +677,10 @@ function responses(def: ApiDefinition, response: JsonSchema | undefined): Record
       },
     };
   }
-  // Everything the dispatch seam and middleware may answer with that the definition cannot
-  // name (401/429 from `requireSession`/`rateLimit`, 413, a redacted 500 `internal`, …).
+  // What the dispatch seam answers with that no definition or middleware names (a 413 over the
+  // body cap, a redacted 500 `internal`, an undocumented middleware's own refusal).
   out.default = {
-    description: "Any other error — middleware and framework responses (ApiError envelope)",
+    description: "Any other error — framework responses (ApiError envelope)",
     content: { "application/json": { schema: { $ref: "#/components/schemas/ApiError" } } },
   };
   return out;

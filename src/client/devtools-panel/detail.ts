@@ -115,7 +115,7 @@ function renderHooks(ctx: PanelCtx, sel: InspectNode, reason: RenderReason): voi
     return;
   }
   if (sel.hooksNamed === false) {
-    detailPane.append(el(doc, "div", S.empty, "names unavailable (conditional hooks?)"));
+    detailPane.append(el(doc, "div", S.empty, "names unavailable (hook metadata out of date)"));
   }
   for (const hk of sel.hooks) {
     const kStyle = reason?.hooks.includes(hk.index) === true ? S.kChanged : S.kHook;

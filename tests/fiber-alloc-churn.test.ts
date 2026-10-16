@@ -215,9 +215,11 @@ for (const pad of [0, 30]) {
   Deno.test(`${label}: a front insert of another type keeps every same-type sibling`, () => {
     const before = [...filler(3), ...filler(pad)];
     const after = [{ tag: "p" }, ...filler(3), ...filler(pad)];
+    // React's implicit index: each unkeyed child keeps the element of the same type in its own
+    // position; the one left over (the old first) is reused rather than remounted, at the end.
     assertEquals(
       reuseMap(before, after),
-      [-1, ...Array.from({ length: 3 + pad }, (_, i) => i)],
+      [-1, ...Array.from({ length: 2 + pad }, (_, i) => i + 1), 0],
     );
   });
 

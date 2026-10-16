@@ -35,9 +35,9 @@ const SECRET = "test-secret-value-at-least-32-chars-long";
 
 // ---- profile mappers --------------------------------------------------------
 
-Deno.test("google profile: maps OIDC claims; drops the email when email_verified is false", () => {
+Deno.test("google profile: maps OIDC claims; drops the email when email_verified is false", async () => {
   const p = google({ clientId: "id", clientSecret: "s" });
-  const verified = p.profile({
+  const verified = await p.profile({
     tokens: {},
     claims: { sub: "g1", name: "G", email: "g@x.test", email_verified: true, picture: "p.png" },
   });
@@ -48,19 +48,23 @@ Deno.test("google profile: maps OIDC claims; drops the email when email_verified
     emailVerified: true,
     image: "p.png",
   });
-  const unverified = p.profile({
+  const unverified = await p.profile({
     tokens: {},
     claims: { sub: "g2", email: "victim@x.test", email_verified: false },
   });
   assertEquals(unverified.email, undefined, "an unverified address is never exposed");
   assertEquals(unverified.emailVerified, false);
-  assertEquals(p.profile({ tokens: {} }).id, "", "no claims → empty id (rejected upstream)");
+  assertEquals(
+    (await p.profile({ tokens: {} })).id,
+    "",
+    "no claims → empty id (rejected upstream)",
+  );
 });
 
-Deno.test("github profile: only a verified email (primary preferred); name falls back to login", () => {
+Deno.test("github profile: only a verified email (primary preferred); name falls back to login", async () => {
   const p = github({ clientId: "id", clientSecret: "s" });
   const userinfo = { id: 7, login: "octo", avatar_url: "a.png", email: "chosen@x.test" };
-  const primary = p.profile({
+  const primary = await p.profile({
     tokens: {},
     userinfo,
     emails: [
@@ -75,7 +79,7 @@ Deno.test("github profile: only a verified email (primary preferred); name falls
     emailVerified: true,
     image: "a.png",
   });
-  const secondary = p.profile({
+  const secondary = await p.profile({
     tokens: {},
     userinfo: { ...userinfo, name: "Octo Cat" },
     emails: [{ email: "unv@x.test", verified: false, primary: true }, {
@@ -85,12 +89,12 @@ Deno.test("github profile: only a verified email (primary preferred); name falls
   });
   assertEquals(secondary.email, "ok@x.test", "a verified non-primary beats an unverified primary");
   assertEquals(secondary.name, "Octo Cat");
-  const none = p.profile({ tokens: {}, userinfo });
+  const none = await p.profile({ tokens: {}, userinfo });
   assertEquals(none.email, undefined, "userinfo.email alone (unverified) is never used");
   assertEquals(none.emailVerified, undefined);
 });
 
-Deno.test("oidc profile: merges userinfo + claims (claims win), honors email_verified, custom mapper", () => {
+Deno.test("oidc profile: merges userinfo + claims (claims win), honors email_verified, custom mapper", async () => {
   const base = {
     issuer: "https://idp.test",
     authorizationUrl: "https://idp.test/a",
@@ -101,7 +105,7 @@ Deno.test("oidc profile: merges userinfo + claims (claims win), honors email_ver
   };
   const p = oidc(base);
   assertEquals(p.id, "oidc");
-  const u = p.profile({
+  const u = await p.profile({
     tokens: {},
     userinfo: { sub: "ui", name: "From userinfo", email: "u@x.test" },
     claims: { sub: "cl", email_verified: true, picture: "c.png" },
@@ -113,7 +117,7 @@ Deno.test("oidc profile: merges userinfo + claims (claims win), honors email_ver
     emailVerified: true,
     image: "c.png",
   });
-  const dropped = p.profile({
+  const dropped = await p.profile({
     tokens: {},
     claims: { sub: "x", email: "e", email_verified: false },
   });
@@ -124,7 +128,7 @@ Deno.test("oidc profile: merges userinfo + claims (claims win), honors email_ver
     profile: ({ claims }) => ({ id: `corp:${claims?.sub}` }),
   });
   assertEquals(custom.id, "corp");
-  assertEquals(custom.profile({ tokens: {}, claims: { sub: "1" } }).id, "corp:1");
+  assertEquals((await custom.profile({ tokens: {}, claims: { sub: "1" } })).id, "corp:1");
 });
 
 Deno.test("credentials(): default and custom ids", () => {
@@ -398,17 +402,17 @@ Deno.test("preset endpoints: tenant / domain / realm land in the documented URLs
   assertEquals(slack(CRED).tokenUrl, "https://slack.com/api/openid.connect.token");
 });
 
-Deno.test("preset OIDC mapper: shared across the presets; an unverified email never surfaces", () => {
+Deno.test("preset OIDC mapper: shared across the presets; an unverified email never surfaces", async () => {
   for (const p of [slack(CRED), auth0({ ...CRED, domain: "acme.auth0.com" })]) {
     assertEquals(
-      p.profile({
+      await p.profile({
         tokens: {},
         claims: { sub: "u1", name: "U", email: "u@x.test", email_verified: true, picture: "p.png" },
       }),
       { id: "u1", name: "U", email: "u@x.test", emailVerified: true, image: "p.png" },
     );
     // The STRING "false" some IdPs ship must not read as "verified".
-    const dropped = p.profile({
+    const dropped = await p.profile({
       tokens: {},
       claims: { sub: "u2", email: "victim@x.test", email_verified: "false" },
     });
@@ -416,15 +420,15 @@ Deno.test("preset OIDC mapper: shared across the presets; an unverified email ne
     assertEquals(dropped.emailVerified, false);
     // No claim at all → no assertion either way (an adapter refuses to link on that).
     assertEquals(
-      p.profile({ tokens: {}, claims: { sub: "u3", email: "e@x.test" } }).emailVerified,
+      (await p.profile({ tokens: {}, claims: { sub: "u3", email: "e@x.test" } })).emailVerified,
       undefined,
     );
   }
 });
 
-Deno.test("discord profile: the `verified` flag gates the email; avatar becomes a CDN URL", () => {
+Deno.test("discord profile: the `verified` flag gates the email; avatar becomes a CDN URL", async () => {
   const p = discord(CRED);
-  const full = p.profile({
+  const full = await p.profile({
     tokens: {},
     userinfo: {
       id: "1234",
@@ -442,7 +446,7 @@ Deno.test("discord profile: the `verified` flag gates the email; avatar becomes 
     emailVerified: true,
     image: "https://cdn.discordapp.com/avatars/1234/abc123.png",
   });
-  const unverified = p.profile({
+  const unverified = await p.profile({
     tokens: {},
     userinfo: { id: "9", username: "u", email: "victim@x.test", verified: false },
   });
@@ -450,12 +454,12 @@ Deno.test("discord profile: the `verified` flag gates the email; avatar becomes 
   assertEquals(unverified.emailVerified, false);
   assertEquals(unverified.name, "u", "username is the fallback display name");
   assertEquals(unverified.image, undefined);
-  assertEquals(p.profile({ tokens: {}, userinfo: { id: "9" } }).emailVerified, undefined);
+  assertEquals((await p.profile({ tokens: {}, userinfo: { id: "9" } })).emailVerified, undefined);
 });
 
-Deno.test("facebook profile: Graph fields; the Graph API never asserts email verification", () => {
+Deno.test("facebook profile: Graph fields; the Graph API never asserts email verification", async () => {
   const p = facebook(CRED);
-  const mapped = p.profile({
+  const mapped = await p.profile({
     tokens: {},
     userinfo: {
       id: "42",
@@ -472,11 +476,11 @@ Deno.test("facebook profile: Graph fields; the Graph API never asserts email ver
   });
   assertEquals(mapped.emailVerified, undefined, "Graph makes no verification claim");
   // Phone-registered accounts (or a revoked permission) simply omit the email.
-  assertEquals(p.profile({ tokens: {}, userinfo: { id: "43" } }).email, undefined);
+  assertEquals((await p.profile({ tokens: {}, userinfo: { id: "43" } })).email, undefined);
   assertStringIncludes(p.userinfoUrl!, "fields=id,name,email,picture");
 });
 
-Deno.test("apple: openid name email over response_mode=form_post; the email only from the id_token", () => {
+Deno.test("apple: openid name email over response_mode=form_post; the email only from the id_token", async () => {
   const p = apple(CRED);
   assertEquals(p.scopes, ["openid", "name", "email"]);
   assertEquals(p.responseMode, "form_post");
@@ -487,7 +491,7 @@ Deno.test("apple: openid name email over response_mode=form_post; the email only
     name: { firstName: " Ada ", lastName: "L" },
     email: "evil@x.test",
   });
-  const mapped = p.profile({ tokens: {}, claims, callbackParams: { user } });
+  const mapped = await p.profile({ tokens: {}, claims, callbackParams: { user } });
   assertEquals(mapped, {
     id: "001.x",
     name: "Ada L",
@@ -496,8 +500,11 @@ Deno.test("apple: openid name email over response_mode=form_post; the email only
     image: undefined,
   });
   // Without a posted `user` (every sign-in after the first) there is just no name.
-  assertEquals(p.profile({ tokens: {}, claims }).name, undefined);
-  assertEquals(p.profile({ tokens: {}, claims, callbackParams: { user: "[1]" } }).name, undefined);
+  assertEquals((await p.profile({ tokens: {}, claims })).name, undefined);
+  assertEquals(
+    (await p.profile({ tokens: {}, claims, callbackParams: { user: "[1]" } })).name,
+    undefined,
+  );
 });
 
 Deno.test("microsoftEntra: an unsafe tenant segment is refused (the aliases are multi-tenant, see auth-entra-multitenant)", () => {

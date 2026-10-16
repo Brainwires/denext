@@ -21,7 +21,7 @@
  */
 
 import { ApiError } from "../api-error.ts";
-import { type ApiMiddleware, documentsSecurity } from "../define-api.ts";
+import { type ApiMiddleware, documentsErrors, documentsSecurity } from "../define-api.ts";
 import type { AdapterUser, ApiTokenRecord } from "./adapter.ts";
 import { isVerified } from "./adapter-link.ts";
 import { requireApiTokenAdapter, verifyApiToken } from "./api-token.ts";
@@ -204,5 +204,18 @@ export function requireBearer(
     if (!hasRole(session, options.role)) throw forbidden(options);
     return { token, user, session };
   };
+  // Documented for `@denext/openapi`: the 401 (with its challenge) always, the 403 when a scope
+  // or role is required.
+  const refusesScope = options.scope !== undefined || options.role !== undefined;
+  documentsErrors(middleware, {
+    unauthorized: {
+      status: 401,
+      message: options.message ?? UNAUTHORIZED,
+      headers: { "www-authenticate": "The bearer challenge (`Bearer`)" },
+    },
+    ...(refusesScope
+      ? { forbidden: { status: 403, message: options.forbiddenMessage ?? FORBIDDEN } }
+      : {}),
+  });
   return documentsSecurity(middleware, [{ bearerAuth: [] }]);
 }

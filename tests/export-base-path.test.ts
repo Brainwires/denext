@@ -153,18 +153,24 @@ Deno.test("staticExport under basePath: every asset, chunk and link resolves und
     });
     const { outDir } = await exportApp(dir);
     const html = await Deno.readTextFile(join(outDir, "index.html"));
-    assertStringIncludes(html, `src="/base/_denext/client/flight-boot.js"`);
+    assertStringIncludes(html, `src="/base/_denext/client/__denext_flight_boot__.js"`);
     assertStringIncludes(html, `href="/base/_denext/client/index.css"`);
     assertStringIncludes(html, `href="/base/about"`); // <Link> carries the base
     assertStringIncludes(html, `"basePath":"/base"`); // and so does the client's
     const about = await Deno.readTextFile(join(outDir, "about", "index.html"));
     assertStringIncludes(about, `href="/base/_denext/client/about.css"`);
-    assertStringIncludes(about, `src="/base/_denext/client/flight.js"`);
+    assertStringIncludes(about, `src="/base/_denext/client/__denext_flight__.js"`);
     const seen = await assertExportResolves(outDir, ["/base"], ["/base/", "/base/about/"]);
     // The pages' scripts and their chunks, the stylesheet, the link target and the image all
     // resolved — the deferred boot's on-demand import of flight.js included.
     for (
-      const part of ["flight-boot.js", "flight.js", "/base/about", "/base/logo.svg", "index.css"]
+      const part of [
+        "__denext_flight_boot__.js",
+        "__denext_flight__.js",
+        "/base/about",
+        "/base/logo.svg",
+        "index.css",
+      ]
     ) {
       assert([...seen].some((u) => u.includes(part)), `${part} was referenced and resolved`);
     }
@@ -182,7 +188,7 @@ Deno.test("staticExport with assetPrefix: asset URLs take the prefix, links the 
     });
     const { outDir } = await exportApp(dir);
     const html = await Deno.readTextFile(join(outDir, "index.html"));
-    assertStringIncludes(html, `src="/cdn/_denext/client/flight-boot.js"`);
+    assertStringIncludes(html, `src="/cdn/_denext/client/__denext_flight_boot__.js"`);
     assertStringIncludes(html, `href="/cdn/_denext/client/index.css"`);
     assertStringIncludes(html, `href="/base/about"`);
     // `/cdn` serves the same files (the CDN in front of `_denext/`); nothing else may hit it.

@@ -33,7 +33,7 @@ export default {
   cors: {
     origins: ["capacitor://localhost", "https://localhost", "myapp://app"],
     // methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],     (default)
-    // headers: ["authorization", "content-type", "x-denext-wire"],    (default)
+    // headers: ["authorization", "content-type", "x-denext-wire", + denext's own markers] (default)
     // exposeHeaders: [],
     // credentials: false,
     // maxAge: 600,
@@ -41,8 +41,11 @@ export default {
 };
 ```
 
-The policy covers every route handler (`route.ts`, `defineApi`) and the native `denextAuth`
-endpoints. The rules:
+The policy covers every route handler (`route.ts`, `defineApi`), the native `denextAuth`
+endpoints, pages, Server Actions, the `/_denext/api-batch` endpoint and the Live socket. The
+default `headers` are `authorization`, `content-type` and the markers denext's own client sends
+(`x-denext-wire`, `x-denext-action`, `x-denext-api-batch`, `x-denext-nav`, `x-denext-flight`,
+`x-denext-slot-state`, `x-denext-defer`, `x-denext-iso`). The rules:
 
 - **Exact origins.** An origin matches only when it is byte-identical to a configured one
   (scheme, host and port; the configured value is normalized once to the lower-case form a
@@ -54,10 +57,19 @@ endpoints. The rules:
 - **`Vary: Origin`** is on every answer a policy other than `["*"]` touches, allowed or not.
 - **Preflights are answered before middleware.** An `OPTIONS` with `Origin` and
   `Access-Control-Request-Method` for an API route is answered `204` under the route's
-  policy, so an auth guard in `middleware.ts` never refuses a preflight (which carries no
+  policy (for a page, a Server Action or the API batch, under the app policy), so an auth guard in `middleware.ts` never refuses a preflight (which carries no
   credentials). An allowed origin, method and header set gets the approval headers; anything
   else gets none, and the browser does not send the request. Without a policy, `OPTIONS`
   reaches the route's own `OPTIONS` export as before.
+- **Cookies keep the same-origin rule.** Server Actions, the API batch and the Live handshake
+  use the same-origin check as their CSRF defense: they run with the caller's cookies. An
+  allowed origin gets in there only when its request carries **no ambient credential** — no
+  `Cookie`, and no `Authorization` but an explicit `Bearer` token it set itself — so it acts
+  with exactly the credentials it presented (a native session's bearer token, or none). A
+  cookie-carrying cross-origin request is refused as before (`403`), unless its origin is in
+  `allowedOrigins` (the trust list for cookie-carrying callers). A page's `GET` is a read: it
+  carries the CORS headers for an allowed origin whatever it holds, so list only origins you
+  trust with what a page shows a signed-in user when `credentials` is on.
 - **Validated at boot.** A malformed origin, `"null"`, `"*"` with credentials or an
   out-of-range `maxAge` fails `denext dev` / `denext start` (and `createApp`) with the reason.
 
@@ -80,9 +92,14 @@ The native auth endpoints (`/auth/native/*`, `/auth/account/delete`) answer thei
 preflights under the app `cors` policy; they run after `middleware.ts`, so a middleware
 guard must let `OPTIONS` under `/auth` through (guards usually exempt `/auth` already).
 
-CORS applies to route handlers and the native auth endpoints. It does not apply to pages,
-Server Actions, the `/_denext/api-batch` endpoint (same-origin by design) or Live
-Server Components.
+Pages, Server Actions, the `/_denext/api-batch` endpoint and the Live socket run under the app
+policy (a route's own `export const cors` covers only its route handler). The Live socket is a
+WebSocket, which CORS doesn't cover: its handshake from an allowed origin is accepted only without
+a cookie, from an origin listed exactly (`["*"]` never opens it), and only when it names the app's
+own host — `canonicalOrigin`'s (read from `X-Forwarded-Host` only under `trustForwardedHeaders`),
+so set `canonicalOrigin` for a cross-origin Live client. Under `denext dev` the dev server's Host
+allowlist (loopback names and `allowedDevOrigins`, its DNS-rebinding defense) applies first, as it
+does to every dev endpoint.
 
 ## Native sessions
 
@@ -320,8 +337,29 @@ state, and nothing else:
 
 This mirrors `/auth/v1`, where GoTrue's `grant_type=id_token` issues an `aal1` session that the
 MFA verify calls raise; a native session has no lesser level, so the pending state is a token
-that is not a session at all. Under `mfa.required: "always"`, a user with no factor yet still
-gets `403 { "error": "mfa_required" }`: enrollment runs in the browser flow (`signIn`).
+that is not a session at all.
+
+Under `mfa.required: "always"`, a user with no factor yet gets the same pending result with
+`"mfa_enroll": true` and no factors (`error.mfa.enroll` on the client), and enrolls one to finish
+signing in:
+
+```ts
+const enrollment = await session.enrollMfa(error.mfa); // { factorId, secret, uri, mfa }
+showQrCode(enrollment.uri); // or the secret, for manual entry
+const { user, backupCodes } = await session.confirmMfaEnrollment(
+  enrollment.mfa,
+  await askForCode(),
+);
+showOnce(backupCodes);
+```
+
+On the wire: `POST /auth/native/mfa-enroll` `{ mfa_token }` answers
+`{ factor_id, secret, uri, mfa_token, expires_in }`, and `POST /auth/native/mfa-confirm`
+`{ mfa_token, code }` answers the tokens plus `backup_codes`. The web enrollment's rules hold:
+the pending token is the same single-use, five-minute, five-attempt state; only a **first**
+factor is enrolled this way (once the user has a verified one, both answer
+`409 already_enrolled` and the sign-in starts over to be finished with it); every confirm attempt
+spends the `rateLimit.mfa` budget; and a user banned or deleted in between never finishes.
 
 With Apple, pass the `authorizationCode` too. When `clientSecret` is configured (or an
 `apple()` web provider has one), the server exchanges the code at Apple's token endpoint and
@@ -405,9 +443,5 @@ The checks, in one place:
 
 ## Limitations
 
-- **Enrolling a second factor needs the browser flow.** A native `id_token` sign-in can finish an
-  enrolled factor, but under `mfa.required: "always"` a user with no factor yet gets
-  `403 mfa_required` and enrolls through `signIn`.
 - **Apple revocation needs the client secret JWT** (`native.apple.clientSecret`, or an
   `apple()` provider's) — minting it from your `.p8` key is yours to do.
-- **CORS does not cover pages, Server Actions, the API batch endpoint or Live.**

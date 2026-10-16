@@ -102,15 +102,15 @@ Deno.test("live: a null / non-object frame is ignored and a flood is throttled â
 
 // ---- Auth ----------------------------------------------------------------------------------
 
-Deno.test("providers: email_verified as the STRING 'false' is unverified (not `=== false` only)", () => {
+Deno.test("providers: email_verified as the STRING 'false' is unverified (not `=== false` only)", async () => {
   const g = google({ clientId: "id", clientSecret: "s" });
-  const stringFalse = g.profile({
+  const stringFalse = await g.profile({
     tokens: {},
     claims: { sub: "g3", email: "victim@x.test", email_verified: "false" },
   });
   assertEquals(stringFalse.email, undefined);
   assertEquals(stringFalse.emailVerified, false);
-  const stringTrue = g.profile({
+  const stringTrue = await g.profile({
     tokens: {},
     claims: { sub: "g4", email: "ok@x.test", email_verified: "true" },
   });
@@ -125,7 +125,7 @@ Deno.test("providers: email_verified as the STRING 'false' is unverified (not `=
     clientId: "c",
     clientSecret: "s",
   });
-  const viaUserinfo = o.profile({
+  const viaUserinfo = await o.profile({
     tokens: {},
     userinfo: { sub: "u1", email: "u@x.test", email_verified: "false" },
   });

@@ -11,7 +11,9 @@
  * @module
  */
 
-import type { PlatformResolution } from "./platform-extensions.ts";
+import { FLIGHT_BUNDLE_FILE } from "./build-pipeline/context.ts";
+import type { Platform, PlatformResolution } from "./platform-extensions.ts";
+import type { ResolveAliasConfig } from "../server/config.ts";
 import { join } from "@std/path";
 import { keyedBundleRef } from "./next-compat-loader.ts";
 import type * as esbuild from "./esbuild/mod.ts";
@@ -55,10 +57,10 @@ export type { BoundaryManifest, BoundaryRef } from "./module-graph.ts";
 // `AssetOptions` (and the `AssetLoader` it references) is defined in a module that isn't in
 // the doc-lint entry set. `MdxBuildOptions` rides along — the `mdxOptions` fields are public.
 export type { AssetLoader, AssetOptions, MdxBuildOptions } from "./next-compat.ts";
-// `Platform` is re-exported for the JSR docs only: `PlatformResolution` (an option type here)
-// names it, and a public type may not reference a private one.
+// `PlatformResolution` is re-exported for the JSR docs only (an option type here names it, and
+// a public type may not reference a private one); the `Platform` it names is `denext/platform`'s.
 // fallow-ignore-next-line unused-type
-export type { Platform, PlatformResolution } from "./platform-extensions.ts";
+export type { PlatformResolution } from "./platform-extensions.ts";
 
 /** A built next-compat page: paths to its server + client bundles. */
 export interface BuiltNextCompatPage {
@@ -157,6 +159,10 @@ export interface BuildNextCompatModulesOptions {
    * {@link BundleNextCompatModulesOptions.appPlatform}.
    */
   appPlatform?: PlatformResolution | null;
+  /** Forwarded to {@link BundleNextCompatModulesOptions.buildTarget}. */
+  buildTarget?: Platform;
+  /** Forwarded to {@link BundleNextCompatModulesOptions.resolveAlias}. */
+  resolveAlias?: ResolveAliasConfig;
 }
 
 /**
@@ -230,6 +236,8 @@ export async function buildNextCompatModules(
     useCache: options.useCache,
     cssImportMap: options.cssImportMap,
     appPlatform: options.appPlatform,
+    buildTarget: options.buildTarget,
+    resolveAlias: options.resolveAlias,
     assets: options.assets,
   });
 
@@ -349,6 +357,10 @@ export interface BuildNextCompatClientOptions {
    * {@link BundleNextCompatModulesOptions.appPlatform}.
    */
   appPlatform?: PlatformResolution | null;
+  /** Forwarded to {@link BundleNextCompatModulesOptions.buildTarget}. */
+  buildTarget?: Platform;
+  /** Forwarded to {@link BundleNextCompatModulesOptions.resolveAlias}. */
+  resolveAlias?: ResolveAliasConfig;
 }
 
 /**
@@ -390,6 +402,8 @@ export async function buildNextCompatClientEntries(
     domLists: options.domLists,
     cssImportMap: options.cssImportMap,
     appPlatform: options.appPlatform,
+    buildTarget: options.buildTarget,
+    resolveAlias: options.resolveAlias,
     // Actions first (stubbed, never instrumented), then the caller's plugins. Public type is
     // `unknown[]` (to not expose esbuild's types); the bundler expects real esbuild plugins,
     // which is what callers pass.
@@ -464,6 +478,11 @@ export interface BuildNextCompatFlightOptions {
    */
   usesLive?: boolean;
   /**
+   * Whether the app defines a live view (build-time `defineLiveView` scan): the generated Flight
+   * entry registers the live-view island. Defaults to `true` when unset.
+   */
+  usesLiveView?: boolean;
+  /**
    * How the generated Flight entry gets the class-component runtime (see
    * {@link ClassRuntimeMode}). Defaults to `"lazy"` (loaded on demand when the document says a
    * class rendered). See {@link generateFlightEntry}.
@@ -489,6 +508,10 @@ export interface BuildNextCompatFlightOptions {
    * {@link BundleNextCompatModulesOptions.appPlatform}.
    */
   appPlatform?: PlatformResolution | null;
+  /** Forwarded to {@link BundleNextCompatModulesOptions.buildTarget}. */
+  buildTarget?: Platform;
+  /** Forwarded to {@link BundleNextCompatModulesOptions.resolveAlias}. */
+  resolveAlias?: ResolveAliasConfig;
 }
 
 /**
@@ -530,7 +553,7 @@ export async function buildNextCompatFlightEntry(
   options: BuildNextCompatFlightOptions,
 ): Promise<void> {
   const { runtimeDir, entriesDir } = await prepareClientBuild(options);
-  const flightFile = options.flightFile ?? "flight.js";
+  const flightFile = options.flightFile ?? FLIGHT_BUNDLE_FILE;
   const flightId = flightFile.replace(/\.js$/, "");
   const entryPath = join(entriesDir, `${flightId}.tsx`);
   await Deno.writeTextFile(
@@ -546,6 +569,7 @@ export async function buildNextCompatFlightEntry(
       options.usesViewTransition ?? false,
       {},
       options.usesSingletons ?? true,
+      options.usesLiveView ?? true,
     ),
   );
   await bundleNextCompatModules({
@@ -564,6 +588,8 @@ export async function buildNextCompatFlightEntry(
     domLists: options.domLists,
     cssImportMap: options.cssImportMap,
     appPlatform: options.appPlatform,
+    buildTarget: options.buildTarget,
+    resolveAlias: options.resolveAlias,
     assets: options.assets,
     // Strip `"use server"` modules (reached transitively via islands) → stubs.
     extraPlugins: [serverStubPlugin(options.boundary.server, generateServerStub)],

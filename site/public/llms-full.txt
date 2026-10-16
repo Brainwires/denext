@@ -215,6 +215,35 @@ const { data } = useSubscription(orderStatus, { id }, { initial });
 const { data: event } = useChannel(orderEvents, `user:${userId}`);
 ```
 
+**Model–View–Update (Elm / Lustre style):** `denext/mvu` runs `update(msg, model) → [model,
+effects]` in a component, with effects and subscriptions as data the runtime executes; the same
+program held on the SERVER per Live connection is `defineLiveView` from `denext/live` (HTML first
+paint, events over the socket, DOM patches back).
+
+```tsx
+// app/counter.tsx — a server module; render <Counter start={1} /> from a Server Component
+import { defineLiveView } from "denext/live";
+import { fx, subs } from "denext/mvu";
+export const Counter = defineLiveView({
+  id: "counter", // stable, app-unique
+  init: (props: { start: number }) => [{ n: props.start, on: false }],
+  update: (msg: { type: "inc" } | { type: "toggle" }, m) =>
+    msg.type === "inc"
+      ? [{ ...m, n: m.n + 1 }, [fx.task(() => db.save(m.n + 1))]]
+      : [{ ...m, on: !m.on }],
+  subscriptions: (m) => [m.on && subs.interval(1000, { type: "inc" })],
+  view: (m, send) => <button type="button" onClick={send({ type: "inc" })}>{m.n}</button>,
+  authorize: async () => (await auth()) !== null, // render, mount, resume, then every TTL
+  // events: z.object({ value: z.string().max(200).optional() }) — validates send((p) => …) payloads
+});
+// In the browser instead: useMvu(() => [model], update, subscriptions) or <MvuView program={…} />.
+```
+
+`send(msg)` sends only a handler index (the message stays on the server); a reconnect within
+`live.limits.viewResumeSeconds` resumes the model, else `init` re-runs. Set
+`DENEXT_LIVE_VIEW_SECRET` on every instance. Docs: https://denext.dev/docs/live-views,
+https://denext.dev/docs/mvu
+
 **A typed Server Action (the mutation side, also type-checked):** `defineAction` validates
 `FormData` into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its `Out`
 flows into `useActionState`.
@@ -350,8 +379,8 @@ builds, then `deno compile`s the app (server modules, `.denext/`, `public/`, `jo
 import map. No `.env` file is embedded: the environment, `.env` files and relative data paths are
 read from the working directory, and state goes to `./.denext`. It bakes Docker's least-privilege
 `--allow-*` plus `compile.permissions: { write, run, ffi, sys }` (`"all"` opts in to
-`--allow-all`). The runtime is stock `denort`, so it has no `Deno.SQL`: use
-`fromPostgresJs(postgres(url))`. Docs: https://denext.dev/docs/deployment-targets
+`--allow-all`). The runtime is the toolchain's own `denort` (SHA-256-pinned beside the CLI), so
+`Deno.SQL` works in the binary. Docs: https://denext.dev/docs/deployment-targets
 
 **Code health and concurrency:** `denext create --fallow` (or `denext fallow init` in an existing
 app) adds the fallow gate denext itself uses — `fallow.toml` with the path-loaded files as entry
@@ -468,7 +497,9 @@ React Native. Import the plain module (`./BigButton`, `./BigButton.tsx`, or an a
 serves `web` unless a shell names its target (`mobile dev`, `desktop dev`). `denext export
 --platform <t>` (or `DENEXT_PLATFORM=<t>`), `denext mobile build` and `denext desktop build` /
 `package` build the others. `createOtaHandler({ platforms })` serves each target its own export;
-a shell refuses another target's UI (`platform_mismatch`). `.native` is opt-in (`platformExtensions: { native: true }`);
+a shell refuses another target's UI (`platform_mismatch`). A small branch: `import { platform } from "denext/platform"` (`"web" | "ios" | …`), folded to the
+target's name at build time on every path (`platform === "ios"` → `true` / `false`), so other
+targets' branches are dead-code-eliminated. `.native` is opt-in (`platformExtensions: { native: true }`);
 only the app's own modules take a variant; keep a plain file so type checking resolves.
 Docs: https://denext.dev/docs/platform-files
 
@@ -513,16 +544,26 @@ spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url })
 add it, else every call answers `unavailable`). Under the pinned runtime `notifications` are the OS's own: scheduled
 (repeating ones 16 occurrences ahead, topped up while the app runs), cancel / pending, category action
 buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped`;
-`requestPermission("notifications")` / `requestPushPermission()` report the OS setting. `context-menu`
-is the native menu (submenus, `null` on dismiss). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
-`onAppMenuItem(id => …)` with accelerators and roles, `createTray({ icon, tooltip, menu })`,
-`setBadge(n)`, `bounce()`; `setQuickActions` sets the macOS Dock menu. With no tray host (stock GNOME)
+`requestPermission("notifications")` / `requestPushPermission()` report the OS setting;
+`deliveredNotifications()` / `removeDeliveredNotifications()` read and clear the OS notification centre
+on macOS and Windows (on Linux, what denext posted this run). `context-menu`
+is the native menu (submenus, `destructive` items in red, an item's `iconPng`, `null` on dismiss).
+`share()` opens the OS share sheet over the window (macOS, Windows; `shareFromWindow({ files })` from
+`denext/desktop/window` shares picked / app-folder files). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
+`onAppMenuItem(id => …)` with accelerators, roles, PNG `icon`s and `destructive` items, `createTray({ icon, tooltip, menu })`,
+`setBadge(n)`, `bounce()`, Handoff / Spotlight on macOS (`setUserActivity({ type, title, url, userInfo,
+searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.userActivityTypes`);
+`setQuickActions` sets the macOS Dock menu. With no tray host (stock GNOME)
 `createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
 reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` (`"basic"` — obfuscated,
-not OS-protected — always on macOS CEF, Chromium's mock keychain) / `sandbox` / `fileChooser` from the
+not OS-protected — for an ad-hoc signed macOS CEF build; a team-signed one keeps its key in its own
+`"<app id> Safe Storage"` keychain item, `"os"`) / `sandbox` / `fileChooser` from the
 runtime's probe (`"unknown"` before the runtime that added each), and `denext desktop doctor [--linux]`
 lists what the session lacks, with fixes. `desktop.linux.requireSandbox: true` makes a Linux CEF app
-exit 78 instead of running without Chromium's sandbox (a tarball / AppImage on Ubuntu 23.10+). `registerShortcut(accel, fn)`
+exit 78 instead of running without Chromium's sandbox (a tarball / AppImage on Ubuntu 23.10+).
+`desktop.windows.proxy: "direct"` keeps a Windows CEF window off a slow WPAD / PAC lookup (`"system"`, the
+default, warms the resolver up at launch). A window hands at most 3 refused navigations a second to the
+browser. `registerShortcut(accel, fn)`
 needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`. DevTools are on in
 `desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`. `denext desktop run` / `dev` build the app into a temp dir with the
 packaging scripts' least-privilege flags and launch it (a bare `deno desktop` only compiles). An extension's
@@ -561,7 +602,7 @@ origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origi
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.19 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext pins runtime 2.9.7-denext.20 and needs at least 2.9.7-denext.14; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -736,7 +777,13 @@ Postgres (every replica sharing one database): `postgresClient(url)` from `denex
 tagged-template client on `Deno.SQL`, built into denext's managed Deno toolchain (on stock Deno:
 `fromPostgresJs(postgres(url))` with `npm:postgres`); `postgresAuthAdapter`, `postgresSessionStore`,
 `postgresRateLimitStore` and `postgresCacheStore` take `{ sql | url, schema? }` and create their
-tables by migration on first use (under the migration lock). Behind PgBouncer in transaction mode,
+tables by migration on first use (under the migration lock). The same cache / session / rate-limit
+stores ship on Redis 7+ (`redisCacheStore` / `redisSessionStore` / `redisRateLimitStore`, `{ client |
+url, prefix? }`, on denext's zero-npm RESP client `redisClient(url)`) and Deno KV (`denoKvCacheStore`
+/ `denoKvSessionStore` / `denoKvRateLimitStore`, `{ kv | path, prefix? }`); `cacheStoreContract` /
+`sessionStoreContract` / `rateLimitStoreContract` from `denext/testing` test your own. Live across
+replicas: `setChannelTransport(redisChannelTransport({ url }))` (channels, tag pushes and
+`usePresence` rooms over Redis pub/sub). Behind PgBouncer in transaction mode,
 pass `directUrl` too (`backend({ postgres })` reads `DATABASE_DIRECT_URL`): LISTEN, reserved
 connections and migrations take the direct connection (`withDirectConnection(pooled, direct)`).
 `DENEXT_BOOT_DDL=off` makes startup change no schema and fail with `BootSchemaError` while a
@@ -786,6 +833,18 @@ detected from the project (`--stack`: Postgres 17, MinIO with a bucket bootstrap
 driver is `s3()`, a one-shot `denext job migrate`, `.env.example` listing every secret;
 `--postgres`/`--no-postgres`, `--pgvector`, `--storage`, `--migrate`, `--expose-db`, `--dev`,
 `--dry-run`, `--force`). `denext routes [--json]` lists the app's pages and API routes.
+
+**Deploying (adapters):** `denext build` writes `.denext/deploy-manifest.json` (the typed
+`DeployManifest` from `denext/deploy` / `denext/plugin-kit`: routes as `static` / `isr` /
+`dynamic` / `route-handler` / `middleware`, assets + `Cache-Control`, the start command, jobs and
+schedules, services, env vars, permissions, images, `--compile` output). `deploy: { adapter:
+fly({ app }) }` in `denext.config.ts` runs that adapter's `prepare` after every build; presets from
+`denext/deploy`: `docker()`, `fly()`, `denoDeploy()` (a `denext.deploy.ts` entry: `Deno.cron` at
+top level via `registerCronSchedules`, cache on Deno KV), `genericHost()` (systemd + nginx/Caddy)
+and `staticHost()` (refuses, listing every route that needs a server). `denext deploy prepare
+[--preset <name>] [--dry-run]` writes the files; `denext deploy` also pushes (`FLY_API_TOKEN` /
+`DENO_DEPLOY_TOKEN` from the environment only). A plugin adds one with `addDeployAdapter`. Deno's
+`deno deploy` is `denext deno deploy`. Docs: https://denext.dev/docs/deploy#deploy-adapters
 
 **A scheduled / background job (cron):** put it in `jobs/<name>.ts`; schedule it in
 `denext.config.ts` (`scheduledJobs`) or per-job; run it on demand with `runJob(name)`
@@ -938,7 +997,8 @@ adds brotli; `false`, or `export const compress = false` in a route), `cors`, `c
 (opt-in: ISR pages answer `Cache-Control: public, s-maxage=…` for a CDN, never for a request
 with a cookie or `Authorization`, a negotiated locale or a `middleware.ts` match, unless
 `{ evenWithMiddleware: true }`), `compatibilityMode`,
-`optimizePackageImports`, `momentumSafeScroll`, `desktop`, `mobile`, `appLinks`;
+`optimizePackageImports`, `resolveAlias` (module aliases; `{ to, except: ["pkg"] }` keeps a package's own
+imports, as Metro's `resolveRequest`), `momentumSafeScroll`, `desktop`, `mobile`, `appLinks`;
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 Every key: https://denext.dev/docs/config
 
@@ -995,7 +1055,7 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   current config / `deno.json` / `deno.lock`; one notice). `task` is Deno's; background work is
   `denext job`. `info <module>` is
   Deno's info; `audit` runs denext's checks and `deno audit`. For Deno's meaning of a verb denext
-  keeps (`test`, `fmt`, `upgrade`, `desktop`, `create`, `init`, `completions`): `denext deno <verb>`.
+  keeps (`test`, `fmt`, `upgrade`, `desktop`, `deploy`, `create`, `init`, `completions`): `denext deno <verb>`.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
   (CI-enforced). esbuild is not an npm import either: denext vendors esbuild's JS API and runs the
   esbuild 0.25.5 binary its Deno toolchain ships (verified by SHA-256), else
@@ -1037,12 +1097,15 @@ denext ships tooling so agents get it right the first time:
   tree at a path: layouts, boundaries, server/client split), `denext_component_tree` /
   `denext_why_render` / `denext_hook_state` (the LIVE component tree from a running dev
   page — props, named hooks, why a component re-rendered; these need `denext task dev`
-  AND the app open in a browser, and each answer states how stale its snapshot is. The
-  page starts pushing only once one of them has been called, so the FIRST call may say
-  "posted nothing yet" — call it again after the page's next commit, or start dev with
-  `DENEXT_DEV_INSPECT=1`. String values arrive redacted as `string(n)`),
+  AND the app open in a browser, and each answer states how stale its snapshot is. Each call
+  asks the open pages for a fresh tree over the dev server's reload stream and waits for it, so
+  the first call has one too. String values arrive redacted as `string(n)`),
   `denext_migrations` / `denext_gen_types` (the project's migrations — list, up, down — and its
-  database types, run as CLI children), `denext_profile` (build
+  database types, run as CLI children), `denext_ui_overview` + one `denext_ui_<panel>` per
+  `denext ui` panel (config, plugins, generate, docker, dev, tasks, database, commands, …: its
+  JSON twin, through a `denext ui` child's own loopback / token / CSRF chain; a change goes out
+  only as a preview, `fields.op: "preview"`, or with `apply: true`; `denext mcp --ui-read-only`
+  refuses every change), `denext_profile` (build
   unminified, serve, and profile a route in headless Chromium — CPU self-time by
   function + heap growth + a leak check; pass `interact` to profile a re-render, `budget`
   to gate a regression), `denext_search_docs` (BM25
@@ -1246,7 +1309,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RegisteredRoutes` — Typed-routes registry (augmentation seam). denext build/dev emit .denext/routes.ts, which augments this interface with routes: Routes; import that file anywhere in your app and Link / Router.push narrow to real paths. Empty by default ⇒ Href is string (no enforcement until you opt in).
 - `type RegisteredSchema = conditional` — The registered app schema when .denext/api.ts is imported, else the open ApiSchema.
 - `interface RenderOptions` — Options for renderToString.
-- `renderToReadableStream(node: VNodeChildren, options?: StreamOptions): ReadableStream<Uint8Array>` — Render a VNode tree to a streaming HTML ReadableStream<Uint8Array>, resolving Suspense boundaries progressively.
+- `interface RenderStream` — A streaming render: the HTML byte stream plus React's allReady signal.
+- `renderToReadableStream(node: VNodeChildren, options?: StreamOptions): RenderStream` — Render a VNode tree to a streaming HTML ReadableStream<Uint8Array>, resolving Suspense boundaries progressively.
 - `renderToString(node: VNodeChildren, options?: RenderOptions): Promise<string>` — Render a VNode (or renderable child) to an HTML string. This is the primary SSR entry point.
 - `type RequestArgs<E> = conditional` — The trailing call args: the opts object is required only when it has a required key.
 - `type RequestOf<E> = parenthesized & parenthesized & parenthesized & object` — The options object for one endpoint: params/body/query are typed when the route declares them.
@@ -1382,12 +1446,15 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 4.1.0` — The denext framework version.
+- `VERSION: 4.2.0` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
 - `interface ViewToken<T>` — One row as onViewableItemsChanged reports it (React Native's ViewToken).
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **nearest host nodes** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker): a host child, every host in a Fragment or a list (the first keeps name, the others get React's name_<i> suffix), and the hosts a component child renders. Text directly inside is not animated (it can't be named). The import-gated marking runtime finds these elements and applies real view-transition-name (an automatic one when name is unset) and view-transition-class (enter/exit/update/share, else default; "none" opts out):
+- `type ViewTransitionCallback = (instance: ViewTransitionInstance, types: string[]) => void | parenthesized` — A <ViewTransition> onEnter / onExit / onUpdate / onShare callback (React's): called with the boundary's ViewTransitionInstance and the transition's types; a returned function runs when the transition finishes.
+- `interface ViewTransitionInstance` — What a <ViewTransition> callback receives (React's ViewTransitionInstance).
+- `interface ViewTransitionPseudoElement` — One ::view-transition-* pseudo-element of a boundary (React's ViewTransitionPseudoElement).
 - `interface VirtualItem` — One positioned row of UseVirtualListResult.items.
 - `VirtualList: (props: VirtualListProps<T>) => VNode` — A virtualized list: renders only the rows near the viewport, so 1M–10M rows scroll as fast as 100. Rows are measured as they render (estimatedItemSize is only a hint), rows keep their identity (and state) across data changes, and content changes above the viewport never move what you are looking at — including on iOS, where the list never writes the scroll offset during a fling. Past the browser's element-height limit the scroll space is scaled, and scrollToIndex still lands exactly.
 - `type VirtualListAlign = start | center | end | auto` — Where a row lands in the viewport when scrolled to ("auto": the least movement).
@@ -1489,6 +1556,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type AuthProvider = OAuthProvider | CredentialsProvider | EmailProvider | PhoneProvider | SamlProvider` — Any configured provider.
 - `interface AuthSession` — The signed (readable, tamper-evident) session payload. Never stores tokens/secrets.
 - `interface AuthSessionConfig` — Session lifetime + storage strategy.
+- `interface AuthSessionSaml` — The SAML subject of a session a saml() provider started (AuthSession.saml).
 - `interface AuthUser` — A normalized user profile — the non-sensitive identity denext stores in the session.
 - `type AwaitableCookieStore = CookieStore & PromiseLike<CookieStore>` — cookies()'s return: usable synchronously AND awaitable (await cookies(), Next 15).
 - `type AwaitableDraftMode = DraftMode & PromiseLike<DraftMode>` — draftMode()'s return: usable synchronously AND awaitable (await draftMode(), Next 15).
@@ -1531,7 +1599,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `class ChannelAccessError` — Why tapChannelAuthorized refused a subscriber.
 - `interface ChannelConfig<T>` — The definition passed to createChannel.
 - `interface ChannelContext` — The subscriber's identity handed to authorize (the Live connection context).
-- `interface ChannelEvent` — One transport event: a channel publish/revoke, or a cross-instance cache-tag invalidate.
+- `interface ChannelEvent` — One transport event: a channel publish/revoke, a cross-instance cache-tag invalidate, or an instance's presence snapshot of one usePresence room.
 - `type ChannelIdleReason = unsubscribe | disconnect` — Why a channel key lost its last local subscriber (see ChannelConfig.onIdle).
 - `type ChannelPublisher<T> = (ctx: ChannelPublisherContext<T>) => unknown` — A supervised per-key producer (ChannelConfig.publisher).
 - `interface ChannelPublisherContext<T>` — What a ChannelConfig.publisher receives.
@@ -1556,7 +1624,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CookieSetOptions` — Options accepted when setting a cookie.
 - `interface CookieStore` — A read/write view of the request/response cookies, shaped like Next.js's cookies(): get(name)?.value, getAll() as an array, has, set, delete, iteration.
 - `cors(config: CorsConfig): ApiMiddleware<object>` — An allowlist-driven CORS policy for the endpoints a chain defines — the same exact-origin, fail-closed rules as the app's cors config (origins, methods, headers, exposeHeaders, credentials, maxAge), scoped to one endpoint. The framework answers a preflight for the method the policy guards (204, before middleware.ts and before this chain runs) and decorates every response the endpoint produces, errors included, with the headers the request's origin is granted. It REPLACES the route's export const cors and the app's cors for that method. The policy is validated here, so a bad one fails at import.
-- `interface CorsConfig` — Cross-origin access to the app's route handlers (route.ts, defineApi) and the native denextAuth endpoints — what a Capacitor shell (capacitor://localhost, https://localhost) or another front end on a different origin needs to call this server. Origins match EXACTLY (scheme + host + port, byte for byte); there are no wildcards, prefixes or suffixes, and "null" is refused.
+- `interface CorsConfig` — Cross-origin access to the app's route handlers (route.ts, defineApi), the native denextAuth endpoints, pages, Server Actions, the API batch endpoint and the Live socket — the last three letting an allowed origin in only without cookies — what a Capacitor shell (capacitor://localhost, https://localhost) or another front end on a different origin needs to call this server. Origins match EXACTLY (scheme + host + port, byte for byte); there are no wildcards, prefixes or suffixes, and "null" is refused.
 - `interface CorsPolicy` — A validated, normalized CORS policy — what the request path consults.
 - `createApi(): ApiBuilder<Record<never, never>>` — Start a middleware chain for one or more endpoints: const authed = createApi().use(requireSession()); export const GET = authed.define(...).
 - `createApp(config: AppConfig): RequestHandler` — Build the core request handler from an AppConfig: routing, SSR/streaming, API routes, the image endpoint, static files, caching, and the optional request-logging/timeout wrappers. Most apps use serve instead; use createApp directly to embed denext in a custom server.
@@ -1577,6 +1645,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CustomProviderRecord` — One stored OAuth / OIDC identity provider (custom:<name>).
 - `interface DataEntry` — A cached data entry (the value returned by an unstable_cache loader).
 - `defaultLoader(filePath: unknown): Promise<unknown>` — Default module loader: dynamic import by absolute file path. A module is shared by every request, so it is loaded outside the request that first asks for it: its top-level code, and anything that code schedules, never runs as that request.
+- `interface DeferredValueSink` — Collects the deferred values a streamed soft-navigation payload sends after it.
 - `defineAction<Out, In>(config: object): TypedAction<ActionData<Out>>` — Define a typed Server Action. Put it in a "use server" module and pass it to useActionState; denext dispatches the form submission to the server, where this runs.
 - `defineApi<D, R>(def: D, handler: parenthesized & ApiErrGuard<D, R>): ApiRouteHandler<D, R>` — Define a schema-validated route handler with no middleware (createApi().define(def, handler)). Export it as the method: export const POST = defineApi(…).
 - `defineConfig(config: DenextConfig): DenextConfig` — Validating helper that gives a denext.config.ts full editor autocomplete and inline type-checking — the idiomatic way to author config (like Vite's defineConfig):
@@ -1588,6 +1657,14 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DenextCommand` — A project-local CLI verb declared in denext.config.ts under DenextConfig.commands — the zero-ceremony half of denext's CLI extension story: no plugin, no setup, just an object. It is structurally a CLI CommandSpec, so the same parser, --help renderer, and dispatcher run it, and a verb that outgrows the config can move into a plugin's addCommand unchanged.
 - `interface DenextConfig` — Project configuration exported from denext.config.{ts,js} (as default or named).
 - `interface DenextPlugin` — A denext plugin. Declared in denext.config.ts as plugins: [myPlugin()]; its setup runs once per process, before the first route scan.
+- `denoKvCacheStore(options?: DenoKvCacheStoreOptions): CacheStore & object` — A CacheStore on Deno KV, shared by every isolate using the database.
+- `interface DenoKvCacheStoreOptions` — Options for denoKvCacheStore.
+- `interface DenoKvConnectionOptions` — Options shared by the Deno KV stores: a database of your own, or a path to open one.
+- `denoKvRateLimitStore(options?: DenoKvRateLimitStoreOptions): RateLimitStore & object` — A shared RateLimitStore on Deno KV.
+- `type DenoKvRateLimitStoreOptions = DenoKvConnectionOptions` — Options for denoKvRateLimitStore.
+- `denoKvSessionStore(options?: DenoKvSessionStoreOptions): SessionStore & object` — A durable, shared SessionStore on Deno KV.
+- `type DenoKvSessionStoreOptions = DenoKvConnectionOptions` — Options for denoKvSessionStore.
+- `class DenoKvUnsupportedError` — Thrown when this Deno has no Deno.openKv (outside Deno Deploy without --unstable-kv).
 - `interface DesktopAppIcons` — DesktopConfig.app's icons: the app icon file per OS, relative to the project.
 - `interface DesktopCapabilitiesConfig` — desktop.capabilities: which native capabilities the page may reach, keyed by the name denext desktop add <name> writes. true enables a capability with its defaults; an object scopes it. Anything absent is denied. An unknown key is allowed (a newer desktop add) and the validator warns on it.
 - `interface DesktopConfig` — The desktop block of denext.config.ts: Deno Desktop native capabilities. The allowlist the desktop runtime's capability bridge serves (default deny), and the source the package scripts derive least-privilege --allow-* from. Written by denext desktop add <cap>. Distinct from SpaDesktopConfig (spa.desktop, packaging settings such as the icon); the two may be unified later. Docs: https://denext.dev/docs/desktop
@@ -1609,12 +1686,14 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopUiUpdateConfig` — DesktopUpdateConfig.ui: the signed UI overlay's feed.
 - `interface DesktopUpdateConfig` — DesktopConfig.update: full-app self-update.
 - `interface DesktopWindowConfig` — The initial window (DesktopConfig.window), applied when the runtime adopts it.
+- `interface DesktopWindowsConfig` — DesktopConfig.windows: Windows launch settings of the packaged app.
 - `detectLocale(request: Request, i18n: I18nConfig): string` — Pick the best supported locale for a request from the NEXT_LOCALE cookie (highest priority) then the Accept-Language header, falling back to the default locale. Matches on both exact tags and the primary subtag (fr-CA matches a supported fr).
 - `type Directive = client | server | null` — Which boundary a module declares, or null when it declares none.
 - `type DirectPairedClient = SqlClient & object` — A client paired with a direct connection by withDirectConnection.
 - `disableTotp(config: AuthConfig, userId: string): Promise<void>` — Remove a user's TOTP factors — and their backup codes when no other verified factor remains. A no-op for a user without one. Callers must have proved a fresh factor first — see the /mfa/disable endpoint.
 - `discord(options: OAuthClientOptions): OAuthProvider` — Discord (OAuth 2.0). Reads the profile from /users/@me; only an address Discord reports as verified reaches the session.
 - `interface DocumentOptions` — Inputs to renderDocument for assembling the full HTML page.
+- `documentsErrors<M>(mw: M, errors: Record<string, ErrorSpec>): M` — Tag a middleware so applying it also DOCUMENTS the error responses it answers with: an endpoint built with createApi().use(documentsErrors(mw, { quota_exceeded: 402 })).define(...) lists them in its generated OpenAPI document (and its x-denext-errors) beside its own errors, with no repetition in the definition. A code the definition declares itself keeps its own spec. The first-party middleware (requireSession, requireBearer, rateLimit, csrf) document theirs already.
 - `documentsSecurity<M>(mw: M, security: Record<string, string[]>[]): M` — Tag a middleware so applying it also DOCUMENTS its OpenAPI requirement: an endpoint built with createApi().use(documentsSecurity(mw, [{ bearerAuth: [] }])).define(...) is marked secured in the generated document with no security on the definition — one declaration both enforces (the middleware) and documents (this tag). A security on the definition still overrides it, and @denext/openapi must declare the scheme (securitySchemes) for the "Authorize" button.
 - `draftMode(): AwaitableDraftMode` — Read and control draft (preview) mode for the current request. Backed by an httpOnly cookie holding a **server-minted random token** — a forged cookie value cannot enable draft mode. Still gate enable() behind your own authorization in a route handler (defense in depth); only that authorized call mints a valid token.
 - `interface DraftMode` — Draft (preview) mode state and controls, returned by draftMode.
@@ -1626,7 +1705,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface EmittedAsset` — A generated file a build step publishes with PluginBuildContext.emitFile.
 - `enrollTotp(config: AuthConfig, session: AuthSession): Promise<EnrollTotpResult>` — Start a TOTP enrollment: mint a secret, store it as an **unverified** TOTP factor, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). Earlier unverified TOTP factors are replaced. While a verified TOTP factor exists another one is added only from a session that proved a second factor recently (hasFreshFactor), and a pending session adds none while any verified factor exists; otherwise the answer is already_enrolled — a first factor alone must never add a factor next to one.
 - `type EnrollTotpResult = parenthesized | object` — The outcome of enrollTotp: the fresh secret and its URI, or why none was minted — "already_enrolled" (a verified TOTP factor exists and this session did not just prove a second factor) or "reauth_required" (a complete session that didn't sign in recently).
-- `type ErrorSpec = number | object` — How a declared error code maps to HTTP: a status, or a status with a default message.
+- `type ErrorSpec = number | object` — How a declared error code maps to HTTP: a status, or a status with a default message. The object form may also list the response headers the error carries (name → description, e.g. { "retry-after": "Seconds until the window resets" }) — documentation only, which @denext/openapi renders on that status's response; set the header itself with fail(code, { headers }).
 - `interface ExperimentalConfig` — Next.js's experimental block, as a migrated next.config carries it into denext.config.ts. Each member is Next.js's own spelling of a top-level DenextConfig field, kept as an obsolete alias for migrated Next apps: honored (with a dev warning) when the top-level field is absent, and ignored when both are set. Next 16's experimental.cacheComponents is honored the same way (see resolveCacheComponents) but is not a typed member. denext's own former experimental.* keys (compiler, asyncContext, features, nodeResolve) were removed in 3.0; the config validator rejects them.
 - `facebook(options: OAuthClientOptions): OAuthProvider` — Facebook (OAuth 2.0, Graph API v19.0). The Graph /me response carries no verification flag, so the mapped user's emailVerified is always undefined, and Facebook may omit the email entirely (an account registered with a phone number, or a revoked permission).
 - `interface FcmConfig` — FCM HTTP v1 credentials.
@@ -1662,6 +1741,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `getCacheStats(): CacheStats` — A snapshot of cache activity: page (ISR) cache hit/miss/set counts and the recent revalidateTag/revalidatePath invalidations (with timing). The observable layer a cache glass-box / devtools reads — and usable for production monitoring.
 - `getCacheStore(): CacheStore` — The CacheStore currently backing the data + page cache.
 - `getJob(name: string): Job | undefined` — The registered job for name, or undefined.
+- `getLiveViewStore(): LiveViewStore` — The installed store (the in-memory default until setLiveViewStore runs).
 - `getSession<T>(options: SessionOptions): Promise<Session<T>>` — Read (and manage) the current request's session. The returned object exposes the verified data, plus set()/clear().
 - `github(options: OAuthClientOptions): OAuthProvider` — GitHub (OAuth 2.0). Reads the profile from the /user API.
 - `gitlab(options: GitLabOptions): OAuthProvider` — GitLab (OIDC, gitlab.com or self-managed). Claims come from the verified id_token.
@@ -1769,6 +1849,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type Key = string | number | bigint | null | undefined` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
 - `keycloak(options: KeycloakOptions): OAuthProvider` — Keycloak (OIDC). Endpoints follow the modern (Keycloak 17+) /realms/<realm> layout; a legacy instance served under /auth is configured with the generic oidc() provider.
 - `interface KeycloakOptions` — Options for keycloak.
+- `interface KvAtomicLike` — The atomic-operation subset the stores use.
+- `interface KvEntryLike` — An entry as KV returns it (versionstamp is null when the key is absent).
+- `type KvKey = typeOperator` — A KV key.
+- `type KvKeyPart = string | number | bigint | boolean | Uint8Array` — One part of a KV key.
+- `interface KvLike` — The Deno.Kv subset the stores use.
 - `interface LayoutModule` — Shape of a layout module.
 - `type LayoutProps<P, Slots> = object & mapped` — Props passed to a layout component. Slots names the layout's parallel-route slots (@sidebar → LayoutProps<RouteParams, "sidebar"> adds a sidebar prop).
 - `listApiTokens(config: AuthConfig, userId: string): Promise<ApiTokenRecord[]>` — A user's live API tokens (revoked and expired ones are already hidden by the adapter). The records carry tokenHash, never a usable token — redact it before sending a list to a client.
@@ -1778,6 +1863,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface LiveConnectionContext` — Identity/context passed to Live authorization hooks. The hooks run inside the viewer's own request context (the connection's replayed cookies), so getSession() / cookies() work inside them to derive the acting user.
 - `interface LiveLimits` — Resource limits for the Live WebSocket hub. Each has a safe built-in default.
 - `interface LiveSubscriptionRequest` — A useLive data subscription presented to LiveConfig.canSubscribe.
+- `interface LiveViewStore` — Where parked live views wait between instances. Values are opaque sealed strings; a store only has to keep them for ttlSeconds and hand each back once.
 - `loadEnv(opts?: LoadEnvOptions): Promise<Record<string, string>>` — Load .env files into Deno.env. Missing files are ignored. Returns the merged file values (before the existing-environment precedence is applied), so callers can inspect what the files declared.
 - `interface LoadEnvOptions` — Options for loadEnv.
 - `localeHref(locale: string, rest: string, i18n: I18nConfig): string` — Build the pathname that serves locale for a locale-free path rest — the inverse of peelLocale. With localePrefix: "as-needed" (default) the default locale is served unprefixed and every other locale is prefixed; with localePrefix: "always" the default locale is prefixed too. Used to generate hreflang alternates and locale-switch links.
@@ -1796,6 +1882,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `matchSegments(pattern: Segment[], pathname: string): RouteParams | null` — Attempt to match a request pathname against a parsed pattern. Returns extracted params on success, or null if the pattern doesn't match.
 - `type MaybePromise<T> = T | Promise<T>` — A value an adapter may return directly or as a promise.
 - `interface MdxConfig` — MDX compilation options (see DenextConfig.mdx). Each plugin list is a unified PluggableList: an array whose entries are either a plugin function or a [plugin, options] tuple. Typed loosely (unknown[]) so the public config surface doesn't depend on unified/@mdx-js types; the values are forwarded verbatim to MDX's compile.
+- `memoryLiveViewStore(options?: MemoryLiveViewStoreOptions): LiveViewStore` — The in-memory LiveViewStore (the default): one process, bounded, expiring.
+- `interface MemoryLiveViewStoreOptions` — Options for memoryLiveViewStore.
 - `type Messages = Record<string, string>` — A flat message catalog for one locale: message key → template string.
 - `interface Metadata` — Page metadata a page or layout module may export as metadata/generateMetadata.
 - `type MfaAttemptResult = object | object` — The outcome of spendMfaAttempt.
@@ -1909,6 +1997,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `postgresJobHistoryStore(options: PostgresJobHistoryStoreOptions): JobHistoryStore` — Job run history on Postgres — pass it as jobs: { history: { store } }.
 - `interface PostgresJobHistoryStoreOptions` — Options for postgresJobHistoryStore.
 - `interface PostgresJsLike` — The shape of an npm postgres (postgres.js) client that fromPostgresJs reads.
+- `postgresLiveViewStore(options: PostgresLiveViewStoreOptions): LiveViewStore & object` — A LiveViewStore on Postgres, shared by every replica.
+- `interface PostgresLiveViewStoreOptions` — Options for postgresLiveViewStore.
 - `interface PostgresMigrateOptions` — Options for migratePostgres and postgresMigrationStatus.
 - `postgresMigrationStatus(sql: SqlClient, options?: PostgresMigrateOptions): Promise<MigrationStatus>` — Which migrations are applied, which are pending, and which applied ones are no longer known. Read-only: it creates nothing, not even the tracking table.
 - `postgresRateLimitStore(options: PostgresRateLimitStoreOptions): RateLimitStore & object` — A shared RateLimitStore on Postgres.
@@ -1939,12 +2029,32 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `redirectResponse(location: string, status?: number): Response` — Return a client redirect response.
 - `interface RedirectRule` — A URL-path redirect rule (source → destination).
 - `enum RedirectType` — next/navigation's RedirectType — how a client-side (soft) navigation applies the redirect: push a new history entry or replace the current one. Server responses ignore it (they always issue an HTTP redirect).
+- `redisCacheStore(options?: RedisCacheStoreOptions): CacheStore & object` — A CacheStore on Redis, shared by every replica. Size-bounded: the oldest-written entries past maxDataEntries / maxPageEntries are evicted, and hard-expired ones are swept on a throttle.
+- `interface RedisCacheStoreOptions` — Options for redisCacheStore.
+- `redisChannelTransport(options?: RedisChannelTransportOptions): RedisChannelTransport` — Carry Live channel events between replicas through Redis pub/sub.
+- `interface RedisChannelTransport` — A ChannelTransport with its connections' lifecycle.
+- `interface RedisChannelTransportOptions` — Options for redisChannelTransport.
+- `redisClient(options?: string | RedisClientOptions): RedisClient` — Open a Redis client (lazily: the first command connects).
+- `interface RedisClient` — A Redis connection shared by its callers (see the module docs).
+- `interface RedisClientOptions` — Options for redisClient.
+- `type RedisCommand = typeOperator` — One command: its name and arguments (numbers are sent as their decimal text).
+- `class RedisConnectionError` — The connection failed or dropped; the command's effect on the server is unknown.
+- `interface RedisConnectionOptions` — Options shared by the Redis stores: a client of your own, or a URL to open one.
+- `class RedisError` — An error reply from the server (-ERR …, -WRONGTYPE …, -NOAUTH …).
+- `redisLiveViewStore(options?: RedisLiveViewStoreOptions): LiveViewStore & object` — A LiveViewStore on Redis (6.2+, or Valkey), shared by every replica.
+- `type RedisLiveViewStoreOptions = RedisConnectionOptions` — Options for redisLiveViewStore.
+- `redisRateLimitStore(options?: RedisRateLimitStoreOptions): RateLimitStore & object` — A shared RateLimitStore on Redis.
+- `type RedisRateLimitStoreOptions = RedisConnectionOptions` — Options for redisRateLimitStore.
+- `type RedisReply = string | number | null | RedisReply[]` — A RESP2 reply: a simple or bulk string, an integer, a nil, or an array of replies.
+- `redisSessionStore(options?: RedisSessionStoreOptions): SessionStore & object` — A durable, shared SessionStore on Redis.
+- `type RedisSessionStoreOptions = RedisConnectionOptions` — Options for redisSessionStore.
 - `refresh(): void` — Request a refresh of the **uncached** data on the current route from inside a Server Action (Next.js 16 refresh). It doesn't touch the cache — it flags the request so the action response tells the client router to re-fetch, keeping cached shells/static content fast while dynamic data (notification counts, live metrics) updates. A no-op outside a request context.
 - `type RefreshOutcome = refreshed | unchanged | failed | not_due | backoff` — How a refresh of one provider ended.
 - `refreshSsoMetadata(config?: AuthConfig, options?: RefreshSsoMetadataOptions): Promise<SsoMetadataRefreshSummary>` — Fetch the metadata of every stored SSO provider registered by metadata_url whose refresh is due (a day after the last fetch, or sooner by its cacheDuration / validUntil), one at a time — the same single-flight, backed-off fetch a sign-in uses, so a job and the sign-ins never fetch one URL twice in a window. Run it from a scheduled job: defineJob({ schedule: "0 * * * *", handler: () => refreshSsoMetadata() }).
 - `interface RefreshSsoMetadataOptions` — Options for refreshSsoMetadata.
 - `registerBootCheck(check: () => Promise<void>): void` — With boot-time DDL off, register a feature's schema check for the server's startup (verifyBootSchemas); a no-op with it on. Each check runs once.
 - `registerCacheLifeProfiles(profiles: Record<string, CacheLifeProfile>): void` — Register named cacheLife profiles (typically from denext.config). A custom profile whose name collides with a built-in overrides it. Idempotent-ish: a later call with the same name wins.
+- `registerCronSchedules(entries: typeOperator): void` — Register schedules with Deno.cron NOW, from an entrypoint's top level — before the server boots and discovers jobs/. Deno Deploy records the crons an app registers while its entrypoint loads, so the entry denext deploy writes for it calls this with the build's schedules; the boot's scheduler then skips them. A run that fires before the boot has discovered its job waits for that (up to a minute). A no-op where Deno.cron is absent (the server's own scheduler covers the schedules there).
 - `type RegisterFn = () => void | Promise<void>` — The register export: run once at server startup.
 - `registerFrameworkMigrations(key: string, set: SetSource): void` — Declare the migrations a feature applies for itself, so denext db push / migration up apply them out of band. Every Postgres store of denext declares its set when it is built (one per tracking table and schema); a function is resolved when the CLI reads the sets.
 - `registerHealthCheck(name: string, check: HealthCheck, options?: HealthCheckOptions): () => void` — Register a readiness check /_denext/health runs on every probe. While it fails the probe answers 503 with "status": "degraded" and checks: { [name]: "down" } (never the error itself — the probe is public). Registering a name again replaces the check.
@@ -1980,6 +2090,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `resetCacheStats(): void` — Reset the cache-activity counters (tests / a fresh monitoring window).
 - `resetPassword(config: AuthConfig, input: object): Promise<ResetPasswordResult>` — Redeem a password-reset token and set a new password: the configured hasher hashes it, adapter.setCredential stores it, every passkey of the user is removed, and every server-side session and bearer API token is revoked — a reset is how an owner takes an account back, so nothing a thief set up with a stolen session (a passkey registered from it included) survives it. Fires passwordReset (after sessionRevoked).
 - `type ResetPasswordResult = object | object` — What resetPassword reports.
+- `type ResolveAliasConfig = Readonly<Record<string, string | ResolveAliasRule>>` — DenextConfig.resolveAlias: import specifier → alias.
+- `interface ResolveAliasRule` — An alias in its object form (DenextConfig.resolveAlias).
 - `resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeProfile` — Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete CacheLifeProfile. An unknown name falls back to the default profile. Missing fields inherit from default.
 - `interface ResolvedBackoff` — A validated BackoffOptions: every field present.
 - `type ResolvedMetadata = Metadata` — The merged metadata of the segments ABOVE the current one (what parent resolves to).
@@ -2069,6 +2181,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SessionStore` — Where store-backed sessions live. Every method may be sync or async; get must return only an **unexpired** session (treat expiresAt in the past as a miss).
 - `setCacheStore(store: CacheStore): void` — Replace the CacheStore backing the data cache and page (ISR) cache. Use this to share cached data and rendered pages across instances — back it with a custom or shared store (Redis, etc.) so a render or data entry produced on one replica is served by another, and revalidateTag/revalidatePath invalidate every instance. Called explicitly, this overrides the smart default (resolveDefaultCacheStore).
 - `setChannelTransport(t: ChannelTransport): void` — Install the transport that carries channel events between instances (default: in-memory, single instance). The Live hub re-subscribes to the new transport.
+- `setLiveViewStore(store: LiveViewStore | null): void` — Install the store parked live views are written to (the default is memoryLiveViewStore, per process). Call it once at startup, before the first socket connects; every instance of the app must share the store and DENEXT_LIVE_VIEW_SECRET.
 - `setRequestTimeout(ms: number): void` — Give the current request a deadline of its own, replacing the app's requestTimeout (30 s by default) — for a surface with its own time budget: an Edge Function's timeoutMs, a large upload or download, a long statement. 0 removes the deadline (the work must then bound itself). Counted from the request's start; a no-op outside a request.
 - `type SetSource = FrameworkMigrationSet | parenthesized` — A migration set, or a function that produces it when the CLI asks (undefined: none).
 - `sidecarService(sidecar: SupervisableSidecar, options?: ServiceAdapterOptions): Service` — Supervise a Deno Desktop sidecar (app.sidecar(name) from runDesktop). The sidecar keeps its own restart-with-backoff; the supervisor steps in once that gives up (failed): it counts as a crash, so the strategy and intensity apply, and a restart starts it with a fresh attempt count.
@@ -2284,6 +2397,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ModuleEndpoints<M, P> = mapped` — Every exported HTTP-method handler of a route module, as { GET: InferEndpoint; … }. P is the pattern-derived params record (never for a static route).
 - `interface NativeIdTokenSignIn` — What a native id_token sign-in sends.
 - `interface NativeMfaChallenge` — A native sign-in that still owes a second factor: finish it with NativeSession.completeMfa. Single-use — every call answers a fresh one on the error it throws — and short-lived (five minutes from the id_token sign-in).
+- `interface NativeMfaEnrollment` — A first factor being enrolled to finish a pending sign-in (NativeSession.enrollMfa).
 - `nativeSession(options: NativeSessionOptions): NativeSession` — A native session against a remote denext server (denextAuth({ native })). Pass it as createApiClient({ base, auth: session }).
 - `interface NativeSession` — A native session: an auth provider for createApiClient, plus sign-in and sign-out.
 - `class NativeSessionError` — A failed native-session call.
@@ -2445,8 +2559,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/testing`
 
 - `act<T>(callback: () => T | Promise<T>): Promise<T>` — act(callback) — the React test helper. Runs callback, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work.
+- `cacheStoreContract(t: ContractContext, make: StoreFactory<CacheStore>): Promise<void>` — The CacheStore contract: data and page round-trips, hard expiry, overwrites, large values, deleteByPath, deleteByTag (and that a rewrite drops a tag), and expireByTag / sweepPages when the store implements them.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `interface ConformanceReport` — The full report from probeApp.
+- `interface ContractContext` — Where the cases run: Deno.TestContext fits, or any { step } that runs a named case.
 - `class CookieJar` — A cookie jar: stores cookies set by responses and replays them on later requests, honoring deletions (Max-Age=0 / a past Expires).
 - `createTestApp(projectDir: string): Promise<TestHandler>` — Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.
 - `createTestClient(handler: TestHandler, options?: TestClientOptions): TestClient` — Create a cookie-aware, no-JS test client over a request handler.
@@ -2461,11 +2577,15 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ProbeCheck` — One conformance check applied to a single rendered route.
 - `interface ProbeOptions` — Options for probeApp.
 - `interface Queries` — The query methods bound to a rendered container.
+- `rateLimitStoreContract(t: ContractContext, make: StoreFactory<RateLimitStore>): Promise<void>` — The RateLimitStore contract: a fixed window that opens on the first failure, counts every concurrent failure, closes on time, and reset / decrement (when implemented).
 - `interface RedirectHop` — One hop in a followed redirect chain.
 - `render(ui: VNode): Promise<RenderResult>` — Mount ui into a fresh in-memory DOM and return queries + interaction helpers. Effects run (wrapped in act), so await the call before asserting.
 - `interface RenderResult` — The handle returned by render.
 - `interface RoleOptions` — Options for Queries.getByRole.
 - `interface RouteProbe` — The result of probing one concrete route path.
+- `sessionStoreContract(t: ContractContext, make: StoreFactory<SessionStore>): Promise<void>` — The SessionStore contract: round-trips, expiry, overwrite, write-only-if-present update (a revoked or expired session is never resurrected), delete and deleteByUser.
+- `class StoreContractError` — A contract case that failed; its message names what the store got wrong.
+- `type StoreFactory<S> = () => S | Promise<S>` — Makes a fresh, empty store for one case.
 - `interface TestClient` — A cookie-aware, no-JS test driver over a request handler.
 - `interface TestClientOptions` — Options for createTestClient.
 - `interface TestElement` — The read-only shape of a rendered element that query helpers return.
@@ -2488,12 +2608,18 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 - `interface ChannelRef<T>` — A channel as the browser sees it: the id (and the phantom type).
 - `configureLive(opts: object): void` — Install the Flight parser and route-refresh used by the live transport, and wire <Live> boundary registration. Called once by the generated Flight client entry.
+- `defineLiveView<Model, Msg, Props>(config: LiveViewConfig<Model, Msg, Props>): LiveViewComponent<Props>` — Define a server-held live view: a Model–View–Update program whose model lives on the server, one instance per Live connection. Render the returned component from a Server Component; the first paint is plain HTML (no JavaScript needed), and in the browser the view mounts over the Live socket — events bound with send(…) run update on the server and come back as DOM patches.
 - `Live(props: LiveProps): VNode` — A real-time server-component boundary. See the module docs.
 - `interface LiveActionRef<A, R>` — A reference to a server function usable as a live query (a serverAction).
 - `interface LiveErrorInfo` — The structured part of a server error frame, handed to a data subscription's callback.
 - `interface LiveProps` — Props for Live.
 - `liveReadable<T>(action: T): T` — Mark a server action as readable over the Live data channel (useLive), and return it unchanged for chaining. Only actions marked here — or admitted by the Live hub's canSubscribe policy — may be run via a data-subscribe. Use it for read-only fetchers you intend to stream; never for mutations.
 - `interface LiveSubscriptionError` — Why a subscription is not (or no longer) delivering.
+- `interface LiveViewComponent<Props>` — The component defineLiveView returns.
+- `interface LiveViewConfig<Model, Msg, Props>` — What defineLiveView takes: a program, its id, and its gates.
+- `interface LiveViewContext` — The connection a live view runs for (null for the server render of the page).
+- `LiveViewIsland: (props: LiveViewIslandProps) => VNode` — The live-view island. Rendered by defineLiveView's component, registered by the generated Flight entry; not something to render by hand.
+- `interface LiveViewIslandProps` — The island's props (written by defineLiveView's server render).
 - `interface Presence<S>` — The presence of the current room, from usePresence.
 - `subscribeChannel(channelId: string, key: string, onValue: (value: unknown, seq: number) => void, onError: (info: LiveErrorInfo) => void, onReady?: () => void): () => void` — Receive a createChannel channel's pushes for key. Backs useChannel. Returns an unsubscribe. A refusal (denied / no-policy / …) arrives through onError and marks the subscription dead so a reconnect does not re-send it.
 - `subscribeLiveTags(tags: string[], onInvalidate: () => void, onError?: (info: LiveErrorInfo) => void): () => void` — Be told when any of tags is invalidated on the server (revalidateTag); backs useApi({ tags }). Returns an unsubscribe.
@@ -2638,7 +2764,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `syncDesktopAppConfig(entryUrl: string): Promise<DesktopAppSyncReport>` — syncDesktopAppConfigAt for the project that owns entryUrl (a script in its scripts/ folder): what the scaffolded scripts/package-*.ts call before deno desktop.
 - `V8_ENTITLEMENTS: Readonly<Record<string, boolean>>` — The entitlements the main executable is signed with by default: it hosts V8 (Deno). Deno signs its own release binary with these (cli/entitlements.plist in denoland/deno, applied by tools/release/promote_to_release.ts); its other two keys there, allow-dyld-environment-variables and disable-executable-page-protection, are left out: V8 needs neither, and both widen what can be injected into a signed app.
 - `interface WindowsTrustDeps` — Seams for the probes (tests stub them).
-- `writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string): Promise<string | null>` — Write the packaged app's laufey-launch.json from desktop.app, desktop.inspectable and (on Linux) desktop.linux.requireSandbox in the project's denext.config.ts (the bridge pinned to the app origin, desktopBridgeOrigins) (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS call it BEFORE code-signing: the file lives inside the sealed bundle.
+- `writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string): Promise<string | null>` — Write the packaged app's laufey-launch.json from desktop.app, desktop.inspectable, (on Linux) desktop.linux.requireSandbox and (on Windows) desktop.windows.proxy in the project's denext.config.ts (the bridge pinned to the app origin, desktopBridgeOrigins) (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS it also lists desktop.macos.userActivityTypes as the bundle's NSUserActivityTypes. On macOS call it BEFORE code-signing: both files live inside the sealed bundle.
 
 ### `denext/desktop/updater`
 
@@ -2740,6 +2866,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `setWindowResizable(resizable: boolean): Promise<void>` — Allow or forbid resizing by the user.
 - `setWindowSize(width: number, height: number): Promise<void>` — Resize the window's page area.
 - `setWindowTitle(title: string): Promise<void>` — Set the native window title.
+- `shareFromWindow(data: WindowShareData): Promise<WindowShareResult>` — Show the OS share sheet over the window: macOS NSSharingServicePicker (anchored at x / y), Windows DataTransferManager (files go as their paths in the text). Linux has none (outcome "not_supported"). Needs denext's pinned runtime, 2.9.7-denext.20 or later (share in windowCapabilities); elsewhere it rejects unsupported. A file the app may not read rejects forbidden. share() in denext/mobile uses it for text and URLs, and falls back to the web where it can't.
 - `showWindow(): Promise<void>` — Show the window. @returns Once shown.
 - `startFileDrag(items: typeOperator, options?: object): Promise<DragOutResult>` — Drag files out of the window to another app or the desktop, as a copy. Call it while the mouse button is held: from the page's dragstart (call event.preventDefault() there) or a pointerdown followed by a move. Needs denext's pinned runtime (fileDragOut in windowCapabilities).
 - `type TitleBarButton = close | minimize | maximize | appmenu | menu | icon` — A window button, as GTK's decoration layout names them.
@@ -2753,6 +2880,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `windowCapabilities(): Promise<WindowCapabilities>` — What this OS and backend support.
 - `interface WindowCapabilities` — What this OS and backend support (Deno.desktop.windowCapabilities() plus closeGuard). A call for a feature reported false changes nothing (or rejects unsupported).
 - `interface WindowScreen` — A display.
+- `interface WindowShareData` — What shareFromWindow shares: at least one of text, url or files.
+- `interface WindowShareResult` — How a share sheet ended: "completed" (a target was chosen; target names it where the OS says), "shown" (the sheet opened and this OS reports nothing more: Windows), "cancelled", "not_supported" (Linux has no share sheet) or "failed" (reason).
 - `interface WindowState` — The window's state (getWindowState).
 
 ### `denext/desktop/app`
@@ -2766,6 +2895,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface AppSubmenu` — A submenu.
 - `interface AppTray` — A tray icon the page created.
 - `bounce(options?: object): Promise<void>` — Ask for the user's attention: bounce the Dock icon (macOS), flash the taskbar button (Windows), or mark the window urgent (Linux). Nothing happens while the app is focused.
+- `clearUserActivity(): Promise<boolean>` — End the current user activity (the user left what it described).
+- `interface ContinuedUserActivity` — An activity the user continued (onUserActivityContinued). Untrusted input.
 - `createTray(options: TrayOptions): Promise<AppTray>` — Add an icon to the system tray (the macOS menu bar's status items, the Windows notification area, Linux's AppIndicator area).
 - `interface DesktopBridgeError` — A failed desktop bridge call. Narrow with isDesktopBridgeError.
 - `type DesktopErrorCode = unavailable | forbidden | validation | timeout | too_large | bridge_error | parenthesized` — Why a desktop call failed:
@@ -2775,6 +2906,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `listShortcuts(): Promise<string[]>` — The shortcuts this app holds, canonical, in registration order.
 - `onAppCapabilitiesChanged(handler: (capabilities: AppCapabilities) => void): () => void` — Call handler with fresh appCapabilities whenever the runtime says what the session provides may have changed (runtime 2.9.7-denext.10 and later, Linux: a tray host started or went away, as when the GNOME AppIndicator extension is enabled while the app runs). Create the tray icon again when tray turns true. Older runtimes never call it.
 - `onAppMenuItem(handler: (id: string) => void): () => void` — Call handler with the id of each application-menu item the user chooses (by click or accelerator).
+- `onUserActivityContinued(handler: (activity: ContinuedUserActivity) => void): () => void` — Call handler with each user activity the user continues: Handoff from another device, or a Spotlight result (macOS, runtime 2.9.7-denext.20). The one that launched the app is delivered to the first handler. Treat its fields as untrusted input, as a deep link's.
 - `type PlatformUnknown = unknown` — A session fact the runtime could not report (a runtime before 2.9.7-denext.10, or no answer).
 - `interface RegisteredShortcut` — A registered shortcut (registerShortcut).
 - `registerShortcut(accelerator: string, handler: () => void): Promise<RegisteredShortcut>` — Bind a key combination system-wide: handler runs whichever app has the keyboard focus. Needs denext desktop add global-shortcuts and denext's pinned runtime.
@@ -2782,6 +2914,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `setAppMenu(menu: typeOperator): Promise<void>` — Replace the application menu: the macOS menu bar, the window's menu bar on Windows and Linux. Chosen items reach onAppMenuItem; roles are handled by the OS.
 - `setBadge(badge: string | number | null): Promise<void>` — Show a badge: on the Dock icon on macOS, and as a "(N) " prefix of the window titles on Windows. On Linux a count shows on the app's launcher where a dock reads launcher badges (runtime 2.9.7-denext.11: Ubuntu's dock, Dash to Dock, Plasma's task manager), else as the same title prefix; appCapabilities().badgeShows says which. null, "" or 0 removes it.
 - `setLaunchAtLogin(enabled: boolean): Promise<LaunchAtLoginState>` — Start the app when the user logs in (or stop): a macOS login item, a Windows Run value, a Linux XDG autostart entry. Turn it on only when the user asks.
+- `setUserActivity(activity: UserActivity): Promise<boolean>` — Make activity the app's current user activity, for Handoff (the user's other devices offer to continue it) and Spotlight (searchable: true indexes it). macOS only, under denext's pinned runtime 2.9.7-denext.20 or later; elsewhere (Windows, Linux, an older runtime) it resolves false and nothing happens.
 - `shortcutCapabilities(): Promise<ShortcutCapabilities>` — What global shortcuts can do on this OS and runtime.
 - `interface ShortcutCapabilities` — What global shortcuts can do here (shortcutCapabilities).
 - `interface TrayBounds` — Where a tray icon is on screen.
@@ -2789,6 +2922,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface TrayOptions` — The settings of a tray icon (createTray).
 - `unregisterAllShortcuts(): Promise<void>` — Release every shortcut this app registered.
 - `unregisterShortcut(accelerator: string): Promise<boolean>` — Release a shortcut this app registered (any spelling of it).
+- `interface UserActivity` — An activity the app is engaged in (setUserActivity): what Handoff offers the user's other devices and what Spotlight indexes (macOS NSUserActivity).
 
 ### `denext/desktop/clerk`
 
@@ -3298,9 +3432,45 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface VirtualMasonryHandle` — The imperative handle of a VirtualMasonry.
 - `interface VirtualMasonryProps<T>` — Props of VirtualMasonry.
 
+### `denext/mvu`
+
+- `interface ChannelLike` — A channel reference as createChannel exports it (server) or its browser stub.
+- `interface ChannelSubscription<Msg>` — Turn each payload a createChannel channel publishes for key into a message.
+- `defineMvu<Model, Msg, Props>(program: MvuProgram<Model, Msg, Props>): MvuProgram<Model, Msg, Props>` — Identity, for inference: write the program once and run it with useMvu / MvuView in the browser or defineLiveView on the server.
+- `interface DelayEffect<Msg>` — Dispatch msg after ms milliseconds (cancelled when the program stops).
+- `interface DispatchEffect<Msg>` — Dispatch msg right after the current update (a follow-up message).
+- `type Effect<Msg> = FetchEffect<Msg> | DelayEffect<Msg> | TaskEffect<Msg> | DispatchEffect<Msg>` — Work an update asks the runtime to do. Plain data: compare it in tests.
+- `interface EffectConstructors` — The effect constructors (fx). Each returns plain data the runtime runs after the update.
+- `type EventBinding = (event: Event) => void` — What send(…) returns: an event handler for any on* prop.
+- `eventPayload(event: unknown): EventPayload` — The EventPayload of a DOM event: a form control target's value / checked (an input, a select, a textarea), a keyboard event's key, and a submit's text fields. A submit is preventDefaulted (the program handles it).
+- `interface EventPayload` — The parts of a DOM event a message can be built from (and the server validates).
+- `interface FetchEffect<Msg>` — Fetch url and turn the response into a message.
+- `fx: EffectConstructors` — Effect constructors. Each returns plain data; the runtime runs it after the update.
+- `interface IntervalSubscription<Msg>` — Dispatch msg every ms milliseconds while the subscription is active.
+- `type MsgSource<Msg> = Msg | parenthesized` — A message, or a function building one from the event (null dispatches nothing).
+- `interface MvuProgram<Model, Msg, Props>` — A whole program: runs in the browser with useMvu / MvuView, or on the server as a live view.
+- `MvuView<Model, Msg, Props>(props: MvuViewProps<Model, Msg, Props>): VNode` — Render a whole program in the browser: useMvu over its init / update / subscriptions, and its view with a send that dispatches locally. The server twin is defineLiveView.
+- `interface MvuViewProps<Model, Msg, Props>` — Props for MvuView.
+- `type Next<Model, Msg> = typeOperator` — What an update (or init) returns: the next model, and the effects to run.
+- `type Send<Msg> = (msg: MsgSource<Msg>) => EventBinding` — Bind a message to an event: onClick={send({ type: "inc" })}, or with the event's payload onInput={send((e) => ({ type: "typed", text: e.value ?? "" }))}.
+- `subs: SubscriptionConstructors` — Subscription constructors.
+- `type Subscription<Msg> = IntervalSubscription<Msg> | ChannelSubscription<Msg>` — A source of messages the runtime keeps open while the model asks for it.
+- `interface SubscriptionConstructors` — The subscription constructors (subs).
+- `type Subscriptions<Model, Msg> = (model: Model) => ReadonlyArray<Subscription<Msg> | null | false | undefined>` — The model's active subscriptions; falsy entries are skipped (cond && subs.interval(…)).
+- `interface TaskEffect<Msg>` — Run an async function and turn its result into a message.
+- `type Update<Model, Msg> = (msg: Msg, model: Model) => Next<Model, Msg>` — The update function: a message and the current model in, the next model and effects out.
+- `useMvu<Model, Msg>(init: () => Next<Model, Msg>, update: Update<Model, Msg>, subscriptions?: Subscriptions<Model, Msg>, options?: UseMvuOptions): typeOperator` — Run a Model–View–Update program in a component. init runs once (on the server too, for the first HTML); its effects, every later update's effects and the subscriptions run in the browser only, and stop when the component unmounts.
+- `interface UseMvuOptions` — Options for useMvu.
+- `type View<Model, Msg> = (model: Model, send: Send<Msg>) => VNodeChildren` — Render the model; bind events with send.
+
 ### `denext/feature`
 
 - `feature(name: string): boolean` — Whether the feature flag name is enabled. A feature("KEY") call with a **string literal** argument is folded to a boolean literal at build time (for a KEY listed in features) so the branch is dead-code eliminated; otherwise it reads the build-seeded flag map at runtime, defaulting to false for any unset flag.
+
+### `denext/platform`
+
+- `platform: Platform` — The target this build is for. Folded to a string literal at build time in the app's own modules (and platform === "…" to a boolean), so other targets' branches are removed.
+- `type Platform = web | ios | android | macos | windows | linux` — A build target: the web, a phone OS, or a desktop OS.
 
 ### `denext/result`
 
@@ -3372,6 +3542,25 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `createNextCompatServerLoader(base: ModuleLoader, opts: NextCompatServerLoaderOptions): ModuleLoader` — Wrap a base ModuleLoader so route source modules that have a react→denext rewritten server bundle load from that bundle instead of source (a keyed ref resolves to the module's namespace inside the single server bundle).
 - `interface DenextConfig` — Project configuration exported from denext.config.{ts,js} (as default or named).
 - `interface DenextPlugin` — A denext plugin. Declared in denext.config.ts as plugins: [myPlugin()]; its setup runs once per process, before the first route scan.
+- `DEPLOY_MANIFEST_FILE: deploy-manifest.json` — The manifest's file name, under the build directory (.denext/deploy-manifest.json).
+- `DEPLOY_MANIFEST_VERSION: 1` — The manifest format version DeployManifest.version carries.
+- `interface DeployAdapter` — A deploy adapter: prepare writes a target's files from the manifest, and the optional deploy pushes them with the target's own CLI. Declare one in denext.config.ts as deploy: { adapter: fly({ app: "my-app" }) }, or contribute one from a plugin with addDeployAdapter.
+- `interface DeployAssetGroup` — One directory of files the server serves as they are, with the Cache-Control it sends.
+- `interface DeployCache` — The data / page (ISR) cache store the config chooses.
+- `interface DeployCompile` — What denext build --compile produced.
+- `interface DeployContext` — What an adapter's prepare and deploy receive.
+- `interface DeployEnvVar` — An environment variable the app reads.
+- `interface DeployImages` — The built-in image optimizer.
+- `interface DeployJob` — A job under jobs/.
+- `interface DeployManifest` — The deploy manifest denext build writes to .denext/deploy-manifest.json.
+- `interface DeployPermissions` — The Deno permissions the production server runs with.
+- `interface DeployRoute` — One route of the app, classified for a host.
+- `type DeployRouteKind = static | isr | dynamic | route-handler | middleware` — How a route is served, as a host needs to know it: - "static" — rendered once (at build or on the first request) and the same for everyone: denext export writes it, and a CDN may cache it until the next deploy. - "isr" — cached and re-rendered in the background every DeployRoute.revalidate seconds (export const revalidate = N): needs the server. - "dynamic" — rendered per request (dynamic = "force-dynamic", a request API such as cookies(), or a dynamic segment with no generateStaticParams): needs the server. - "route-handler" — a route.ts (or a metadata route such as sitemap.ts): needs the server. - "middleware" — the root middleware.ts / proxy.ts: runs before every matched request.
+- `interface DeployRunOptions` — Options for DeployContext.run.
+- `interface DeploySchedule` — One scheduled run: a job and the cron expression (UTC, POSIX weekdays) that fires it.
+- `interface DeployServer` — How the production server is started.
+- `interface DeployService` — A supervised service under services/, started with the server.
+- `interface DeployWriteOptions` — Where DeployContext.writeFile writes.
 - `edgeFunctionSource(name: string): string` — An Edge Function in Supabase's shape, for backend({ functions }) from @denext/backend: what denext generate function <name> and denext functions new <name> write.
 - `interface EmittedAsset` — A generated file a build step publishes with PluginBuildContext.emitFile.
 - `enableFastRefresh(): void` — Install the family-identity check and hook-signature guard into the reconciler. Idempotent; called once by the dev route entry before its first render. A no-op in production (this module is never imported there).
@@ -3438,6 +3627,35 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `viteEmitterPlugin(vitePlugin: VitePluginLike): ViteEmitterDenextPlugin` — Wrap a Vite plugin whose generateBundle emits files (this.emitFile({ type: "asset", fileName, source })) as a denext plugin: the hook runs as a build step at denext build and denext export, and each file it emits is published at the site root.
 - `interface ViteEmitterSetupContext` — The setup context viteEmitterPlugin's plugin uses (a subset of PluginContext).
 - `interface VitePluginLike` — The slice of a Vite plugin viteEmitterPlugin runs.
+
+### `denext/ui-kit`
+
+- `type BadgeTone = ok | todo | warn | fail | info` — How a Badge reads. The CSS colours each one; a badge with no tone stays grey.
+- `Control(attrs: ControlAttrs): VNode` — One control. Every widget in render.ts bottoms out here, so escaping, the disabled flag and the element vocabulary are decided exactly once.
+- `interface ControlAttrs` — One <input>, <select> or <textarea>.
+- `decode(spec: WidgetSpec, entries: typeOperator, prefix?: string): unknown` — Parse a posted body back into the config value its widget stands for.
+- `encode(spec: WidgetSpec, value: unknown, prefix?: string): FormEntry[]` — Render a config value as the flat fields its widget posts.
+- `Field(props: FieldProps): VNode` — A control wrapped in its label, help text and validation message.
+- `interface FieldProps` — The label, help text and validation message around one control (Field).
+- `interface FormEntry` — One posted field.
+- `FormField(props: FormFieldProps): VNode` — A widget and everything under it, with the CSRF field the row buttons need: the form body of a form that edits one key.
+- `interface FormFieldProps` — FormField's props: one widget, the value it holds, and the render context.
+- `FormFields(props: FormFieldsProps): VNode` — Several widgets as one form body, behind a single CSRF field.
+- `interface FormFieldsProps` — FormFields's props: the widgets in render order, and the render context.
+- `OpButton(props: OpButtonOptions): VNode` — A real submit button carrying one list operation — the whole list editor works with JavaScript disabled, and ui.js upgrades the same submit to a fragment swap.
+- `interface OpButtonOptions` — One row-operation button (↑, ↓, ✕, + Add).
+- `interface RawHtml` — A pre-escaped HTML fragment: Raw inserts it into a component tree verbatim.
+- `interface RenderContext` — What the renderer is told beyond the spec and the value.
+- `renderView(node: VNodeChildren): RawHtml` — Render a component view to a pre-escaped fragment — synchronously, with no hydration markers and no client code. The result nests inside another tree through Raw without being escaped a second time. A throwing component throws out of this call (the UI server answers 500), and so does an async component: a view must be synchronous.
+- `interface SchemaNode` — The subset of JSON Schema the config schema actually uses, plus denext's x-denext hints.
+- `Widget(props: WidgetProps): VNode` — One widget and everything under it, dispatched to its kind's component — the recursive half of the form, without the CSRF field (FormField adds it).
+- `interface WidgetBranch` — One alternative shape of a union field, behind the discriminator picker.
+- `interface WidgetField` — One field of a multi-widget form: its widget, and the value to render it holding.
+- `widgetFor(node: SchemaNode, path: typeOperator, required: boolean): WidgetSpec` — The widget for one schema node — the first matching rule of the table above wins.
+- `type WidgetKind = text | textarea | number | toggle | select | segmented | multi-select | chips | list-of-forms | map | union | group | code` — Every control the config editor can render.
+- `interface WidgetOption` — One choice of a select, segmented control or checkbox group.
+- `type WidgetProps = object` — What every widget component is handed (Widget's props).
+- `interface WidgetSpec` — A resolved widget: what to render at one path, and everything the renderer needs.
 
 ### `denext/expo/apple-authentication`
 

@@ -504,6 +504,45 @@ an object with `properties`, one nested deeper than six levels or larger than 40
 property name that is not a plain identifier (the form writes option names into the factory
 call).
 
+### Rendering the same form yourself — `denext/ui-kit`
+
+The options form above is built from a handful of components, and they are exported for a
+plugin that renders a form of its own: a project verb that serves a settings page, a docs page
+that shows the form a schema produces. `@denext/denext/ui-kit` has the schema-driven half —
+`widgetFor` (a JSON Schema node to a widget), `FormField` (one widget with the form's CSRF field),
+`FormFields` (several behind one), `Widget` (a widget alone), `encode` / `decode` (a value to the
+posted fields and back) — and the primitives every widget bottoms out in: `Control` (an
+`<input>`, `<select>` or `<textarea>`), `Field` (a control with its label, help text and
+validation message) and `OpButton` (a list's row-operation submit). Each is a component built with
+`h()`; `renderView` renders a tree to its escaped HTML.
+
+```ts
+import { h } from "@denext/denext/jsx-runtime";
+import { Control, Field, FormField, renderView, widgetFor } from "@denext/denext/ui-kit";
+
+const spec = widgetFor(
+  { type: "string", description: "Where the app lives." },
+  ["basePath"],
+  false,
+);
+const form = renderView(h(
+  "form",
+  { method: "post" },
+  h(FormField, { spec, value: "/app", ctx: { csrf } }),
+  h(
+    Field,
+    { id: "note", label: "Note" },
+    h(Control, { tag: "textarea", name: "note", id: "note" }),
+  ),
+  h("button", { type: "submit" }, "Save"),
+));
+```
+
+The markup is plain server-rendered HTML with real submit buttons: it works with JavaScript
+disabled, needs no inline script, and every text child and attribute value is escaped. Posting it
+back, `decode(spec, entries)` returns the value the widget stands for. The components are covered
+by semver like the rest of the public surface; the `denext ui` panels themselves are not.
+
 ## Complete examples
 
 The walk-throughs below are the ones worth **reading as models** of a seam — the
@@ -531,5 +570,7 @@ The walk-throughs below are the ones worth **reading as models** of a seam — t
 - **[`@denext/react-router`](https://github.com/Brainwires/denext/tree/main/packages/react-router)** — a full React Router v7 framework
   router through the **route-synthesizer** seam alone: it reads the app's `app/routes.ts`,
   generates denext route wrappers under `.denext/react-router/`, and adds them to the
-  manifest — the core App Router renders them, so the plugin ships no render path. The model
-  for adapting a foreign routing convention onto denext's own pipeline.
+  manifest — the core App Router renders them, so the plugin ships no render path. It also
+  writes React Router's route types (`+types/<route>.ts` under `.react-router/types/`) and adds
+  `denext typegen` (**CLI verb**). The model for adapting a foreign routing convention onto
+  denext's own pipeline.

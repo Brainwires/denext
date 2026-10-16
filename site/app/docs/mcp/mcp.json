@@ -434,7 +434,7 @@
     },
     {
       "name": "denext_component_tree",
-      "description": "Show the LIVE component tree of a running dev page — every component with its source location, badges and render count, as the in-page DevTools last pushed it. Use it to see what actually mounted. Requires `denext task dev` to be running AND the app open in a browser (the tree is pushed from the page, so it is a snapshot, and the answer says how old it is). The page starts pushing only once one of these tools has been called, so the FIRST call on a page may answer 'posted nothing yet' — call it again after the page's next commit.",
+      "description": "Show the LIVE component tree of a running dev page — every component with its source location, badges and render count, as the in-page DevTools last pushed it. Use it to see what actually mounted. Requires `denext task dev` to be running AND the app open in a browser (the tree comes from the page, so it is a snapshot, and the answer says how old it is). Each call asks the open pages for a fresh tree over the dev server's reload stream and waits for it.",
       "params": [
         {
           "name": "url",
@@ -470,7 +470,7 @@
     },
     {
       "name": "denext_why_render",
-      "description": "Explain why a component in a running dev page last re-rendered — which props, hooks and contexts changed, and how many renders it has done. Use it to chase a re-render loop or a missing memo. Requires `denext task dev` to be running AND the app open in a browser (the tree is pushed from the page, so it is a snapshot, and the answer says how old it is). The page starts pushing only once one of these tools has been called, so the FIRST call on a page may answer 'posted nothing yet' — call it again after the page's next commit.",
+      "description": "Explain why a component in a running dev page last re-rendered — which props, hooks and contexts changed, and how many renders it has done. Use it to chase a re-render loop or a missing memo. Requires `denext task dev` to be running AND the app open in a browser (the tree comes from the page, so it is a snapshot, and the answer says how old it is). Each call asks the open pages for a fresh tree over the dev server's reload stream and waits for it.",
       "params": [
         {
           "name": "component",
@@ -494,7 +494,7 @@
     },
     {
       "name": "denext_hook_state",
-      "description": "Read a component's live hook cells in a running dev page — each cell's name, the hook that produced it, its current value and its deps. Use it to see the state a component actually holds. Requires `denext task dev` to be running AND the app open in a browser (the tree is pushed from the page, so it is a snapshot, and the answer says how old it is). The page starts pushing only once one of these tools has been called, so the FIRST call on a page may answer 'posted nothing yet' — call it again after the page's next commit.",
+      "description": "Read a component's live hook cells in a running dev page — each cell's name, the hook that produced it, its current value and its deps. Use it to see the state a component actually holds. Requires `denext task dev` to be running AND the app open in a browser (the tree comes from the page, so it is a snapshot, and the answer says how old it is). Each call asks the open pages for a fresh tree over the dev server's reload stream and waits for it.",
       "params": [
         {
           "name": "component",
@@ -584,6 +584,546 @@
           "name": "dbUrl",
           "type": "string",
           "description": "Another database: a postgres:// URL or sqlite:<path> (default: the project's)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_ui_overview",
+      "description": "denext ui — the project's overview (name, pinned denext, dev server, read-only) and every path the UI serves; each panel has its own denext_ui_* tool.",
+      "params": [
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_ui_setup",
+      "description": "denext ui — Check what this project needs to run, and write the missing pieces. Calls the panel's JSON twin (/api/setup…) through the running UI's own security chain. GET reads it (and lists what its forms take); a change is sent as a preview (fields.op = \"preview\") or with apply: true.",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "description": "The page (without /api): the panel's root (default) or a page under it",
+          "required": false
+        },
+        {
+          "name": "method",
+          "type": "string",
+          "description": "Default GET",
+          "required": false
+        },
+        {
+          "name": "query",
+          "type": "object",
+          "description": "Query parameters (a GET's filters, a page's state)",
+          "required": false
+        },
+        {
+          "name": "fields",
+          "type": "object",
+          "description": "The form fields a POST / DELETE sends, as the panel's form names them (`op: \"preview\"` asks a panel that offers one for the change without making it)",
+          "required": false
+        },
+        {
+          "name": "apply",
+          "type": "boolean",
+          "description": "Required to send a change that is not a preview",
+          "required": false
+        },
+        {
+          "name": "timeoutMs",
+          "type": "number",
+          "description": "A streamed run's limit (default 120000)",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_ui_config",
+      "description": "denext ui — Edit denext.config.ts through schema-driven widgets, one view per subject. Calls the panel's JSON twin (/api/config…) through the running UI's own security chain. GET reads it (and lists what its forms take); a change is sent as a preview (fields.op = \"preview\") or with apply: true.",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "description": "The page (without /api): the panel's root (default) or a page under it",
+          "required": false
+        },
+        {
+          "name": "method",
+          "type": "string",
+          "description": "Default GET",
+          "required": false
+        },
+        {
+          "name": "query",
+          "type": "object",
+          "description": "Query parameters (a GET's filters, a page's state)",
+          "required": false
+        },
+        {
+          "name": "fields",
+          "type": "object",
+          "description": "The form fields a POST / DELETE sends, as the panel's form names them (`op: \"preview\"` asks a panel that offers one for the change without making it)",
+          "required": false
+        },
+        {
+          "name": "apply",
+          "type": "boolean",
+          "description": "Required to send a change that is not a preview",
+          "required": false
+        },
+        {
+          "name": "timeoutMs",
+          "type": "number",
+          "description": "A streamed run's limit (default 120000)",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_ui_plugins",
+      "description": "denext ui — Browse the catalog; add or remove plugins. Calls the panel's JSON twin (/api/plugins…) through the running UI's own security chain. GET reads it (and lists what its forms take); a change is sent as a preview (fields.op = \"preview\") or with apply: true.",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "description": "The page (without /api): the panel's root (default) or a page under it",
+          "required": false
+        },
+        {
+          "name": "method",
+          "type": "string",
+          "description": "Default GET",
+          "required": false
+        },
+        {
+          "name": "query",
+          "type": "object",
+          "description": "Query parameters (a GET's filters, a page's state)",
+          "required": false
+        },
+        {
+          "name": "fields",
+          "type": "object",
+          "description": "The form fields a POST / DELETE sends, as the panel's form names them (`op: \"preview\"` asks a panel that offers one for the change without making it)",
+          "required": false
+        },
+        {
+          "name": "apply",
+          "type": "boolean",
+          "description": "Required to send a change that is not a preview",
+          "required": false
+        },
+        {
+          "name": "timeoutMs",
+          "type": "number",
+          "description": "A streamed run's limit (default 120000)",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_ui_generate",
+      "description": "denext ui — Scaffold pages, routes, layouts, components, actions. Calls the panel's JSON twin (/api/generate…) through the running UI's own security chain. GET reads it (and lists what its forms take); a change is sent as a preview (fields.op = \"preview\") or with apply: true.",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "description": "The page (without /api): the panel's root (default) or a page under it",
+          "required": false
+        },
+        {
+          "name": "method",
+          "type": "string",
+          "description": "Default GET",
+          "required": false
+        },
+        {
+          "name": "query",
+          "type": "object",
+          "description": "Query parameters (a GET's filters, a page's state)",
+          "required": false
+        },
+        {
+          "name": "fields",
+          "type": "object",
+          "description": "The form fields a POST / DELETE sends, as the panel's form names them (`op: \"preview\"` asks a panel that offers one for the change without making it)",
+          "required": false
+        },
+        {
+          "name": "apply",
+          "type": "boolean",
+          "description": "Required to send a change that is not a preview",
+          "required": false
+        },
+        {
+          "name": "timeoutMs",
+          "type": "number",
+          "description": "A streamed run's limit (default 120000)",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_ui_docker",
+      "description": "denext ui — Edit docker-compose.yml in place, or regenerate the Docker files with a diff. Calls the panel's JSON twin (/api/docker…) through the running UI's own security chain. GET reads it (and lists what its forms take); a change is sent as a preview (fields.op = \"preview\") or with apply: true.",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "description": "The page (without /api): the panel's root (default) or a page under it",
+          "required": false
+        },
+        {
+          "name": "method",
+          "type": "string",
+          "description": "Default GET",
+          "required": false
+        },
+        {
+          "name": "query",
+          "type": "object",
+          "description": "Query parameters (a GET's filters, a page's state)",
+          "required": false
+        },
+        {
+          "name": "fields",
+          "type": "object",
+          "description": "The form fields a POST / DELETE sends, as the panel's form names them (`op: \"preview\"` asks a panel that offers one for the change without making it)",
+          "required": false
+        },
+        {
+          "name": "apply",
+          "type": "boolean",
+          "description": "Required to send a change that is not a preview",
+          "required": false
+        },
+        {
+          "name": "timeoutMs",
+          "type": "number",
+          "description": "A streamed run's limit (default 120000)",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_ui_desktop",
+      "description": "denext ui — Set up code signing for a packaged desktop build. Calls the panel's JSON twin (/api/desktop…) through the running UI's own security chain. GET reads it (and lists what its forms take); a change is sent as a preview (fields.op = \"preview\") or with apply: true.",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "description": "The page (without /api): the panel's root (default) or a page under it",
+          "required": false
+        },
+        {
+          "name": "method",
+          "type": "string",
+          "description": "Default GET",
+          "required": false
+        },
+        {
+          "name": "query",
+          "type": "object",
+          "description": "Query parameters (a GET's filters, a page's state)",
+          "required": false
+        },
+        {
+          "name": "fields",
+          "type": "object",
+          "description": "The form fields a POST / DELETE sends, as the panel's form names them (`op: \"preview\"` asks a panel that offers one for the change without making it)",
+          "required": false
+        },
+        {
+          "name": "apply",
+          "type": "boolean",
+          "description": "Required to send a change that is not a preview",
+          "required": false
+        },
+        {
+          "name": "timeoutMs",
+          "type": "number",
+          "description": "A streamed run's limit (default 120000)",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_ui_dev",
+      "description": "denext ui — Start and stop the project's dev server, and watch its output. Calls the panel's JSON twin (/api/dev…) through the running UI's own security chain. GET reads it (and lists what its forms take); a change is sent as a preview (fields.op = \"preview\") or with apply: true.",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "description": "The page (without /api): the panel's root (default) or a page under it",
+          "required": false
+        },
+        {
+          "name": "method",
+          "type": "string",
+          "description": "Default GET",
+          "required": false
+        },
+        {
+          "name": "query",
+          "type": "object",
+          "description": "Query parameters (a GET's filters, a page's state)",
+          "required": false
+        },
+        {
+          "name": "fields",
+          "type": "object",
+          "description": "The form fields a POST / DELETE sends, as the panel's form names them (`op: \"preview\"` asks a panel that offers one for the change without making it)",
+          "required": false
+        },
+        {
+          "name": "apply",
+          "type": "boolean",
+          "description": "Required to send a change that is not a preview",
+          "required": false
+        },
+        {
+          "name": "timeoutMs",
+          "type": "number",
+          "description": "A streamed run's limit (default 120000)",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_ui_tasks",
+      "description": "denext ui — Run the scripts your deno.json declares, streaming their output. Calls the panel's JSON twin (/api/tasks…) through the running UI's own security chain. GET reads it (and lists what its forms take); a change is sent as a preview (fields.op = \"preview\") or with apply: true.",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "description": "The page (without /api): the panel's root (default) or a page under it",
+          "required": false
+        },
+        {
+          "name": "method",
+          "type": "string",
+          "description": "Default GET",
+          "required": false
+        },
+        {
+          "name": "query",
+          "type": "object",
+          "description": "Query parameters (a GET's filters, a page's state)",
+          "required": false
+        },
+        {
+          "name": "fields",
+          "type": "object",
+          "description": "The form fields a POST / DELETE sends, as the panel's form names them (`op: \"preview\"` asks a panel that offers one for the change without making it)",
+          "required": false
+        },
+        {
+          "name": "apply",
+          "type": "boolean",
+          "description": "Required to send a change that is not a preview",
+          "required": false
+        },
+        {
+          "name": "timeoutMs",
+          "type": "number",
+          "description": "A streamed run's limit (default 120000)",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_ui_services",
+      "description": "denext ui — The supervised services/ tree: running, restarting or failed, with restart counts. Calls the panel's JSON twin (/api/services…) through the running UI's own security chain. GET reads it (and lists what its forms take); a change is sent as a preview (fields.op = \"preview\") or with apply: true.",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "description": "The page (without /api): the panel's root (default) or a page under it",
+          "required": false
+        },
+        {
+          "name": "method",
+          "type": "string",
+          "description": "Default GET",
+          "required": false
+        },
+        {
+          "name": "query",
+          "type": "object",
+          "description": "Query parameters (a GET's filters, a page's state)",
+          "required": false
+        },
+        {
+          "name": "fields",
+          "type": "object",
+          "description": "The form fields a POST / DELETE sends, as the panel's form names them (`op: \"preview\"` asks a panel that offers one for the change without making it)",
+          "required": false
+        },
+        {
+          "name": "apply",
+          "type": "boolean",
+          "description": "Required to send a change that is not a preview",
+          "required": false
+        },
+        {
+          "name": "timeoutMs",
+          "type": "number",
+          "description": "A streamed run's limit (default 120000)",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_ui_database",
+      "description": "denext ui — Browse and edit the Postgres tables, run SQL, and manage policies, migrations, storage, auth users and logs. Calls the panel's JSON twin (/api/database…) through the running UI's own security chain. GET reads it (and lists what its forms take); a change is sent as a preview (fields.op = \"preview\") or with apply: true.",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "description": "The page (without /api): the panel's root (default) or a page under it",
+          "required": false
+        },
+        {
+          "name": "method",
+          "type": "string",
+          "description": "Default GET",
+          "required": false
+        },
+        {
+          "name": "query",
+          "type": "object",
+          "description": "Query parameters (a GET's filters, a page's state)",
+          "required": false
+        },
+        {
+          "name": "fields",
+          "type": "object",
+          "description": "The form fields a POST / DELETE sends, as the panel's form names them (`op: \"preview\"` asks a panel that offers one for the change without making it)",
+          "required": false
+        },
+        {
+          "name": "apply",
+          "type": "boolean",
+          "description": "Required to send a change that is not a preview",
+          "required": false
+        },
+        {
+          "name": "timeoutMs",
+          "type": "number",
+          "description": "A streamed run's limit (default 120000)",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_ui_commands",
+      "description": "denext ui — Run this project's own denext verbs. Calls the panel's JSON twin (/api/commands…) through the running UI's own security chain. GET reads it (and lists what its forms take); a change is sent as a preview (fields.op = \"preview\") or with apply: true.",
+      "params": [
+        {
+          "name": "path",
+          "type": "string",
+          "description": "The page (without /api): the panel's root (default) or a page under it",
+          "required": false
+        },
+        {
+          "name": "method",
+          "type": "string",
+          "description": "Default GET",
+          "required": false
+        },
+        {
+          "name": "query",
+          "type": "object",
+          "description": "Query parameters (a GET's filters, a page's state)",
+          "required": false
+        },
+        {
+          "name": "fields",
+          "type": "object",
+          "description": "The form fields a POST / DELETE sends, as the panel's form names them (`op: \"preview\"` asks a panel that offers one for the change without making it)",
+          "required": false
+        },
+        {
+          "name": "apply",
+          "type": "boolean",
+          "description": "Required to send a change that is not a preview",
+          "required": false
+        },
+        {
+          "name": "timeoutMs",
+          "type": "number",
+          "description": "A streamed run's limit (default 120000)",
+          "required": false
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "description": "Project directory (default: .)",
           "required": false
         }
       ]

@@ -1,12 +1,13 @@
 /**
- * The share sheet for `denext/mobile`: the native `Share` plugin in the shell, else the Web
- * Share API, else a copy to the clipboard.
+ * The share sheet for `denext/mobile`: the native `Share` plugin in the shell, the OS share sheet
+ * in a Deno Desktop window (macOS, Windows), else the Web Share API, else a copy to the clipboard.
  *
  * @module
  */
 
 import { nativePlugin } from "./plugin.ts";
 import { writeClipboard } from "./clipboard.ts";
+import { onDesktop, viaDesktop } from "./desktop-branch.ts";
 
 /** What {@linkcode share} shares. At least one of `text` or `url` (or `title`) is needed. */
 export interface ShareOptions {
@@ -67,6 +68,11 @@ async function settle(run: () => Promise<unknown>): Promise<ShareResult> {
  *
  * - Inside the native shell with `@capacitor/share` installed (`denext mobile add share`),
  *   the OS share sheet.
+ * - In a Deno Desktop window under denext's pinned runtime (2.9.7-denext.20 or later), the OS
+ *   share sheet over the window for a `text` or `url`: macOS `NSSharingServicePicker`, Windows
+ *   `DataTransferManager` (it reports no more than that the sheet was shown: `"shared"`). Linux has
+ *   none, so the paths below run. To share files, use `shareFromWindow` from
+ *   `denext/desktop/window`.
  * - Otherwise `navigator.share` where the browser has it (and `canShare` accepts the data).
  * - Otherwise the text and URL are copied to the clipboard (joined by a space), and the
  *   result is `"copied"` so the UI can say so.
@@ -97,6 +103,10 @@ export async function share(opts: ShareOptions): Promise<ShareResult> {
   }
   const plugin = nativePlugin<SharePlugin>("Share", ["share"]);
   if (plugin) return await settle(() => plugin.share(data));
+  if (onDesktop() && (data.text || data.url)) {
+    const desktop = await viaDesktop("window", (d) => d.desktopShare(data));
+    if (desktop?.value) return desktop.value;
+  }
   const nav = (globalThis as { navigator?: ShareNavigator }).navigator;
   if (typeof nav?.share === "function" && nav.canShare?.(data) !== false) {
     return await settle(() => nav.share!(data));

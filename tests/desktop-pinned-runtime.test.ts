@@ -1508,6 +1508,136 @@ Deno.test("desktop:pin-runtime: the CLI archives are hashed and attested like th
   }
 });
 
+/** {@linkcode releaseWithCli} plus the fork's denort archives (the manifest's `denort` section). */
+function releaseWithDenort() {
+  const r = releaseWithCli();
+  const sha = (n: number) => (0xd00 + n).toString(16).padStart(64, "0");
+  const targets: Record<string, Record<string, unknown>> = {};
+  const sums: string[] = [];
+  let n = 1;
+  for (const t of ["x86_64-pc-windows-msvc", "aarch64-apple-darwin"]) {
+    const file = `deno-denort-2.9.7-denext.1-${t}.zip`;
+    targets[t] = {
+      binary: t.includes("windows") ? "denort.exe" : "denort",
+      file,
+      url: `https://github.com/Brainwires/deno/releases/download/${TAG}/${file}`,
+      sha256: sha(n),
+      size: 3000 + n,
+      format: "zip",
+    };
+    sums.push(`${sha(n++)}  ${file}`);
+  }
+  const manifest = { ...r.manifest, denort: { version: "2.9.7-denext.1", targets } };
+  return { manifest, sums: r.sums + sums.join("\n") + "\n" };
+}
+
+Deno.test("toolchainPinFromRelease: the denort archives, keyed like the CLI's", () => {
+  const { manifest, sums } = releaseWithDenort();
+  const pin = toolchainPinFromRelease(TAG, manifest, sums)!;
+  assertEquals(Object.keys(pin.denort ?? {}), ["darwin-aarch64", "windows-x86_64"]);
+  assertEquals(
+    pin.denort!["windows-x86_64"].file,
+    "deno-denort-2.9.7-denext.1-x86_64-pc-windows-msvc.zip",
+  );
+  assertEquals(pin.denort!["darwin-aarch64"].sha256, (0xd02).toString(16).padStart(64, "0"));
+  // The runtime pin ignores the denort archives; a release without them pins none.
+  assertEquals(Object.keys(pinFromRelease(TAG, manifest, sums).targets).length, 2);
+  const cliOnly = releaseWithCli();
+  assertEquals(toolchainPinFromRelease(TAG, cliOnly.manifest, cliOnly.sums)!.denort, undefined);
+});
+
+Deno.test("toolchainPinFromRelease refuses an inconsistent denort section", () => {
+  // deno-lint-ignore no-explicit-any
+  type R = { manifest: any; sums: string };
+  const mac = (r: R) => r.manifest.denort.targets["aarch64-apple-darwin"];
+  const cases: Array<[string, (r: R) => void]> = [
+    [
+      "!= SHA256SUMS",
+      (r) => (r.sums = r.sums.replace(/^[0-9a-f]{64}( {2}deno-denort-)/m, "f".repeat(64) + "$1")),
+    ],
+    ["SHA256SUMS only", (r) => delete r.manifest.denort],
+    [
+      "denort section but no cli section",
+      (r) => {
+        delete r.manifest.cli;
+        r.sums = r.sums.split("\n").filter((l) => !l.includes("deno-cli-")).join("\n");
+      },
+    ],
+    [
+      "SHA256SUMS only",
+      (r) => (r.sums += `${"e".repeat(64)}  deno-denort-2.9.7-denext.1-x86_64-apple-darwin.zip\n`),
+    ],
+    ["expected https://github.com", (r) => (mac(r).url = "https://evil.example/x")],
+    ["binary denort.exe, expected denort", (r) => (mac(r).binary = "denort.exe")],
+    ["unknown target", (r) => (r.manifest.denort.targets["riscv64gc-unknown-linux-gnu"] = {})],
+    ["denort version", (r) => (r.manifest.denort.version = "2.9.7-denext.2")],
+    ["denort section lists no archives", (r) => {
+      r.manifest.denort.targets = {};
+      r.sums = r.sums.split("\n").filter((l) => !l.includes("deno-denort-")).join("\n");
+    }],
+  ];
+  for (const [msg, mutate] of cases) {
+    const r = releaseWithDenort() as R;
+    mutate(r);
+    const err = (() => {
+      try {
+        toolchainPinFromRelease(TAG, r.manifest, r.sums);
+      } catch (e) {
+        return e;
+      }
+    })();
+    assert(err instanceof Error, msg);
+    assertStringIncludes(err.message, msg);
+  }
+});
+
+Deno.test("desktop:pin-runtime: the denort archives are hashed and attested too", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const bytes = new TextEncoder().encode("denort archive");
+    const file = "deno-denort-2.9.7-denext.1-x86_64-unknown-linux-gnu.zip";
+    await Deno.writeFile(join(dir, file), bytes);
+    const pin: PinFile = {
+      schema: 1,
+      version: "2.9.7-denext.1",
+      tag: TAG,
+      repository: "https://github.com/Brainwires/deno",
+      deno: "2.9.7",
+      denoSha: "",
+      laufeySha: "",
+      laufeyApiVersion: null,
+      targets: {},
+    };
+    const artifact = {
+      file,
+      url: `https://example.invalid/${file}`,
+      sha256: await sha256Hex(bytes),
+      size: bytes.length,
+      format: "zip" as const,
+    };
+    const cli = {
+      schema: 1 as const,
+      version: "2.9.7-denext.1",
+      tag: TAG,
+      repository: "https://github.com/Brainwires/deno",
+      deno: "2.9.7",
+      targets: {},
+      denort: { "linux-x86_64": artifact },
+    };
+    const runs: string[][] = [];
+    await attestPin(pin, { archives: dir, cli, run: (a) => (runs.push(a), Promise.resolve(0)) });
+    assertEquals(runs.length, 1);
+    assertStringIncludes(runs[0][2], file);
+    const bad = { ...cli, denort: { "linux-x86_64": { ...artifact, sha256: "0".repeat(64) } } };
+    const err = await assertRejects(() =>
+      attestPin(pin, { archives: dir, cli: bad, run: () => Promise.resolve(0) })
+    );
+    assertStringIncludes((err as Error).message, "!= pinned");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("the checked-in toolchain pin: the runtime pin's release, every target, a zip each", async () => {
   const { DENO_TOOLCHAIN: tc } = await import("../src/build/deno-toolchain.ts");
   const { DESKTOP_RUNTIME_PIN: rt } = await import("../src/build/desktop-runtime.ts");

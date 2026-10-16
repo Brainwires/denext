@@ -129,6 +129,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     crawledBoundary: null,
     serverModules: new Map(),
     usesLive: false,
+    usesLiveView: false,
     classRuntime,
     usesActivity,
     usesViewTransition,

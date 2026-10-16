@@ -1,6 +1,7 @@
-// CORS for route handlers (`route.ts`, `defineApi`) and the native `denextAuth` endpoints —
-// what a Capacitor shell (`capacitor://localhost`, `https://localhost`) or a front end on
-// another origin needs to call this server.
+// CORS for route handlers (`route.ts`, `defineApi`), the native `denextAuth` endpoints, pages,
+// Server Actions, the API batch endpoint and the Live socket — what a Capacitor shell
+// (`capacitor://localhost`, `https://localhost`) or a front end on another origin needs to call
+// this server.
 //
 // The rules, all fail-closed:
 // - **Exact origins.** A request's `Origin` is allowed only when it is byte-identical to a
@@ -17,6 +18,12 @@
 //   routes a policy covers: an allowed origin + method + header set gets the approval headers,
 //   anything else gets none (the browser then refuses to send the request).
 //
+// - **Cookies keep the same-origin rule.** The endpoints whose same-origin check is the CSRF
+//   defense — Server Actions, the API batch and the Live handshake — let an allowed origin in
+//   only when the request carries no ambient credential ({@link corsCredentialless}: no
+//   `Cookie`, and no `Authorization` other than an explicit `Bearer`). A cookie-carrying
+//   cross-origin request still needs the same-origin / `allowedOrigins` check it always did.
+//
 // A route narrows or lifts the app policy with `export const cors = { … } | false` (a
 // complete policy that REPLACES the app's, or `false` for none), and one endpoint does the same
 // with the `cors({ … })` API middleware (`createApi().use(cors({ … }))`), which wins over both
@@ -30,8 +37,22 @@ export const CORS_POLICY: unique symbol = Symbol.for("denext.api.cors") as never
 
 /** The methods a preflight approves when the config says nothing. */
 const DEFAULT_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
-/** The request headers a preflight approves when the config says nothing. */
-const DEFAULT_HEADERS = ["authorization", "content-type", "x-denext-wire"];
+/**
+ * The request headers a preflight approves when the config says nothing: the usual two, and the
+ * markers denext's own client sends (Server Actions, the API batch, soft navigation, Flight).
+ */
+const DEFAULT_HEADERS = [
+  "authorization",
+  "content-type",
+  "x-denext-wire",
+  "x-denext-action",
+  "x-denext-api-batch",
+  "x-denext-nav",
+  "x-denext-flight",
+  "x-denext-slot-state",
+  "x-denext-defer",
+  "x-denext-iso",
+];
 /** The preflight cache lifetime (seconds) when the config says nothing. */
 const DEFAULT_MAX_AGE = 600;
 /** The longest preflight cache lifetime accepted (a day — browsers cap lower anyway). */
@@ -225,6 +246,24 @@ function cacheRoutePolicy(own: CorsConfig): CorsPolicy | null {
 export function corsOriginAllowed(policy: CorsPolicy, origin: string | null): boolean {
   if (origin === null || origin === "" || origin === "null") return false;
   return policy.any || policy.origins.has(origin);
+}
+
+/**
+ * Whether a cross-origin request may skip a same-origin (CSRF) gate under `policy`: its exact
+ * `Origin` is allowed, and it carries no ambient credential — no `Cookie`, and no
+ * `Authorization` but an explicit `Bearer` token the caller set itself. Whatever such a request
+ * does, it does with credentials it presented, so a forged one from another page gains nothing.
+ * A cookie-carrying request keeps the same-origin rule.
+ *
+ * @param request The request.
+ * @param policy The effective policy (`null` → never).
+ * @returns `true` when the request may proceed without the same-origin check.
+ */
+export function corsCredentialless(request: Request, policy: CorsPolicy | null): boolean {
+  if (!policy || !corsOriginAllowed(policy, request.headers.get("origin"))) return false;
+  if (request.headers.has("cookie")) return false;
+  const authorization = request.headers.get("authorization");
+  return authorization === null || /^bearer\s/i.test(authorization);
 }
 
 /**

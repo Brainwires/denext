@@ -46,12 +46,15 @@ const ENTRIES: { module: string; file: string }[] = [
   { module: "denext/updates", file: `${ROOT}src/updates/mod.ts` },
   { module: "denext/navigation", file: `${ROOT}src/navigation/mod.ts` },
   { module: "denext/virtual-masonry", file: `${ROOT}src/virtual-masonry.ts` },
+  { module: "denext/mvu", file: `${ROOT}src/mvu.ts` },
   { module: "denext/feature", file: `${ROOT}src/feature.ts` },
+  { module: "denext/platform", file: `${ROOT}src/platform.ts` },
   { module: "denext/result", file: `${ROOT}src/result.ts` },
   { module: "denext/jsx-directives", file: `${ROOT}src/jsx-directives.ts` },
   { module: "denext/cli/command", file: `${ROOT}src/cli/command.ts` },
   { module: "denext/plugin-kit", file: `${ROOT}src/plugin/kit.ts` },
   { module: "denext/plugin-kit/vite-emitter", file: `${ROOT}src/plugin/vite-emitter.ts` },
+  { module: "denext/ui-kit", file: `${ROOT}src/ui/kit.ts` },
   ...(await expoEntries()),
 ];
 

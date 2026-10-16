@@ -7,6 +7,7 @@ import { safeCallback } from "./root-callbacks.ts";
 import { type Cursor, type Fiber, Placement } from "./fiber.ts";
 import { doc } from "./state.ts";
 import { TEXT_TYPE } from "../vnode-utils.ts";
+import { getSingletonSupport } from "./singleton-support.ts";
 
 // Hydration state: a live cursor over server-rendered DOM during the first hydrateRoot
 // render. `hydrationStack` mirrors the recursive reconciler's per-host child cursors;
@@ -62,18 +63,23 @@ function warnHydrationMismatch(detail: string): void {
 
 export function claimHost(wip: Fiber): void {
   const tag = wip.vnode.type as string;
-  const existing = hydrationCursor
+  // A client root layout's head tag, which the server hoisted into the page's head: claimed
+  // there by match (null: none, so it mounts fresh), never from the container's cursor.
+  const hoisted = getSingletonSupport()?.claimHoisted(wip);
+  const existing = hoisted !== undefined
+    ? hoisted
+    : hydrationCursor
     ? (hydrationCursor.parent.childNodes[hydrationCursor.index] ?? null)
     : null;
   const matches = existing !== null && existing.nodeType === 1 &&
     (existing as Element).tagName.toLowerCase() === tag.toLowerCase();
   if (matches) {
     wip.stateNode = existing as Element;
-    hydrationCursor!.index++;
+    if (hoisted === undefined) hydrationCursor!.index++;
     hydrationStack.push(hydrationCursor);
     hydrationCursor = { parent: existing as Element, index: 0 };
   } else {
-    if (hydrationCursor) {
+    if (hydrationCursor && hoisted === undefined) {
       reportHydrationMismatch(
         wip,
         `expected <${tag.toLowerCase()}>, but the server rendered ${describeNode(existing)}`,

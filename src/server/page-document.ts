@@ -2,6 +2,7 @@
 // / document options every response shares, the HTML response helper, metadata
 // augmentation, and the Cache-Components (PPR) shell-resume streams.
 
+import { NavDeferredValues, wantsNavDeferred } from "./nav-deferred.ts";
 import type { RouteManifest } from "../router/manifest.ts";
 import type { PageMatch } from "../router/match.ts";
 import { markClassRendered } from "../runtime/render-scope.ts";
@@ -59,6 +60,8 @@ export interface PageRequest {
    * Suspense hole, rendering after the response left) is reported with, as it happens.
    */
   boundaryReportSource?: RequestErrorContext["renderSource"];
+  /** A browser soft navigation's deferred values, streamed after its payload (nav-deferred.ts). */
+  navValues?: NavDeferredValues;
 }
 
 /** The per-navigation data the client hydrates / soft-navigates with. */
@@ -103,6 +106,7 @@ export function documentOptions(pr: PageRequest) {
 export function renderOptions(pr: PageRequest) {
   return {
     flight: pr.useFlight,
+    deferValues: navValuesOf(pr),
     messages: pr.messages,
     signal: pr.state.ctx.signal,
     onCaughtError: (e: unknown) => {
@@ -110,7 +114,28 @@ export function renderOptions(pr: PageRequest) {
       if (source === undefined) pr.boundaryErrors.push(e);
       else void reportBoundaryError(pr, e, source);
     },
+    onHoleError: holeErrorReporter(pr),
   };
+}
+
+/**
+ * Reports an error a streamed Suspense hole threw that nothing inside it caught: the hole
+ * keeps its fallback in a 200 response that already left, so `onRequestError` (and through
+ * it `denext doctor` / `probeApp`) is the only place it can surface.
+ */
+function holeErrorReporter(pr: PageRequest): (error: unknown) => void {
+  return (error) => void reportBoundaryError(pr, error, renderSourceOf(pr));
+}
+
+/**
+ * The deferred values a browser soft navigation of a Flight route streams after its payload
+ * (made once per request), unless streaming is off.
+ */
+function navValuesOf(pr: PageRequest): NavDeferredValues | undefined {
+  if (pr.navValues) return pr.navValues;
+  const streams = pr.soft && pr.useFlight && pr.state.app.config.streaming !== false &&
+    wantsNavDeferred(pr.state.request);
+  return streams ? (pr.navValues = new NavDeferredValues()) : undefined;
 }
 
 /** A finalized HTML document response. */
@@ -317,6 +342,7 @@ async function resumeHtmlShell(
     ...doc,
     holes,
     signal: pr.state.ctx.signal,
+    onHoleError: holeErrorReporter(pr),
   });
   return { stream, metadata, viewport };
 }
@@ -359,6 +385,7 @@ async function resumeFlightShell(
     viewport,
     ...doc,
     signal: pr.state.ctx.signal,
+    onHoleError: holeErrorReporter(pr),
   });
   return { stream, metadata, viewport };
 }

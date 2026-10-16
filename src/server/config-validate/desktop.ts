@@ -278,13 +278,14 @@ function isEntitlementValue(v: unknown): boolean {
 function validateDesktopMacos(macos: unknown, fail: Fail): void {
   if (macos === undefined) return;
   if (!isPlainObject(macos)) {
-    fail("desktop.macos", "must be { provisioningProfile?, entitlements? }");
+    fail("desktop.macos", "must be { provisioningProfile?, entitlements?, userActivityTypes? }");
   }
   const m = macos as Record<string, unknown>;
   const profile = m.provisioningProfile;
   if (profile !== undefined && (typeof profile !== "string" || profile.trim() === "")) {
     fail("desktop.macos.provisioningProfile", "must be a .provisionprofile file path");
   }
+  validateUserActivityTypes(m.userActivityTypes, fail);
   const ents = m.entitlements;
   if (ents === undefined) return;
   if (!isPlainObject(ents)) {
@@ -297,6 +298,31 @@ function validateDesktopMacos(macos: unknown, fail: Fail): void {
         "must be a string, a number, a boolean or an array of strings",
       );
     }
+  }
+}
+
+/** `desktop.macos.userActivityTypes`: reverse-DNS activity types. */
+function validateUserActivityTypes(types: unknown, fail: Fail): void {
+  if (types === undefined) return;
+  const ok = Array.isArray(types) &&
+    types.every((t) =>
+      typeof t === "string" && t.length <= 256 && /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(t)
+    );
+  if (!ok) {
+    fail(
+      "desktop.macos.userActivityTypes",
+      'must be an array of reverse-DNS names ("com.example.app.editing")',
+    );
+  }
+}
+
+/** `desktop.windows`: `{ proxy?: "system" | "direct" }`. */
+function validateDesktopWindows(windows: unknown, fail: Fail): void {
+  if (windows === undefined) return;
+  if (!isPlainObject(windows)) fail("desktop.windows", "must be { proxy? }");
+  const proxy = (windows as Record<string, unknown>).proxy;
+  if (proxy !== undefined && proxy !== "system" && proxy !== "direct") {
+    fail("desktop.windows.proxy", 'must be "system" or "direct"');
   }
 }
 
@@ -331,6 +357,7 @@ export function validateDesktop(
   validateDesktopInstallers((desktop as { installers?: unknown }).installers, fail);
   validateDesktopMacos((desktop as { macos?: unknown }).macos, fail);
   validateDesktopLinux((desktop as { linux?: unknown }).linux, fail);
+  validateDesktopWindows((desktop as { windows?: unknown }).windows, fail);
   validateDenoFlags((desktop as { denoFlags?: unknown }).denoFlags, fail);
   validateDesktopSidecars((desktop as { sidecars?: unknown }).sidecars, spaProxy, fail);
   const caps = (desktop as { capabilities?: unknown }).capabilities;

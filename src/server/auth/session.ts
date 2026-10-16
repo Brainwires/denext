@@ -38,7 +38,8 @@ import { randomToken } from "./oauth.ts";
 import { cookieSessionOptions, resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { sessionExpired, type SessionStore } from "./session-store.ts";
 import { ssoSessionAllowed } from "./sso-user.ts";
-import type { AuthConfig, AuthSession, AuthUser } from "./types.ts";
+import { recordSamlSession } from "./saml-sessions.ts";
+import type { AuthConfig, AuthSession, AuthSessionSaml, AuthUser } from "./types.ts";
 
 /** What the signed cookie carries: the payload (stateless) or a store id. */
 type CookieData = AuthSession | { sid: string };
@@ -251,6 +252,8 @@ export interface IssueAuthSessionOptions {
    * window for the second.
    */
   lifetime?: number;
+  /** The SAML subject, for a session a `saml()` provider started (Single Logout). */
+  saml?: AuthSessionSaml;
 }
 
 /**
@@ -280,6 +283,8 @@ function sealOwnedFields(result: AuthSession, minted: AuthSession): AuthSession 
   };
   if (pending) sealed.mfaPending = true;
   if (minted.amr) sealed.amr = [...minted.amr];
+  if (minted.saml) sealed.saml = { ...minted.saml };
+  else delete sealed.saml;
   return sealed;
 }
 
@@ -318,6 +323,7 @@ export async function buildSessionPayload(
   };
   if (issue.mfaPending) payload.mfaPending = true;
   if (issue.amr?.length) payload.amr = [...issue.amr];
+  if (issue.saml) payload.saml = { ...issue.saml };
   if (config.callbacks?.session) {
     payload = sealOwnedFields(await config.callbacks.session(payload), payload);
     // The callback may shorten the expiry, never lift it past the absolute ceiling.
@@ -352,6 +358,7 @@ export async function issueAuthSession(
   const sid = randomToken();
   await options.sessionStore.create(sid, payload);
   await session.set({ sid });
+  await recordSamlSession(options, payload, sid);
   return { ...payload, sessionId: sid };
 }
 
@@ -510,6 +517,33 @@ export async function refreshLiveSession(
     }
   }
   return await refreshIfStale(config, session, nowMs);
+}
+
+/**
+ * Rewrite the current session's payload in place — same expiry, same store id — for a caller
+ * that changed its data (the `next-auth` shim's sealed token). Like a slide, a store-backed
+ * record is rewritten only if it still exists ({@link SessionStore.update}), so a session revoked
+ * in flight is never brought back. Call it only where the response is still open.
+ *
+ * @param config The app's auth config.
+ * @param session The session as read, with its new data.
+ * @returns `true` when it was written; `false` for a store record that is gone (or a store
+ *   without `update`).
+ */
+export async function replaceAuthSession(
+  config: AuthConfig,
+  session: AuthSession,
+): Promise<boolean> {
+  const options = resolveAuthOptions(config);
+  const { sessionId, ...payload } = session;
+  const cookie = await getSession<CookieData>(sessionOptions(config));
+  if (!options.sessionStore) {
+    await cookie.set(payload);
+    return true;
+  }
+  if (!sessionId || !(await rewriteStored(options, sessionId, payload))) return false;
+  await cookie.set({ sid: sessionId });
+  return true;
 }
 
 /**

@@ -41,7 +41,12 @@ export type {
 } from "../jsx/render-to-flight.ts";
 export { renderToFlight } from "../jsx/render-to-flight.ts";
 export { renderToHtmlFlight, serializeFlight } from "../jsx/render-to-html-flight.ts";
-export type { HtmlFlight, HtmlFlightOptions, IslandPayload } from "../jsx/render-to-html-flight.ts";
+export type {
+  DeferredValueSink,
+  HtmlFlight,
+  HtmlFlightOptions,
+  IslandPayload,
+} from "../jsx/render-to-html-flight.ts";
 export type { HydrationStrategy } from "../runtime/lazy-directive.ts";
 export { renderToFlightStream } from "../jsx/render-to-flight-stream.ts";
 export type { FlightStreamOptions } from "../jsx/render-to-flight-stream.ts";
@@ -93,7 +98,13 @@ export type {
 export type { ApiDispatchOptions } from "./api.ts";
 // Schema-validated route handlers (`defineApi`, the route twin of `defineAction`) and the
 // first-party middleware for `createApi().use(...)`.
-export { apiDefinitionOf, createApi, defineApi, documentsSecurity } from "./define-api.ts";
+export {
+  apiDefinitionOf,
+  createApi,
+  defineApi,
+  documentsErrors,
+  documentsSecurity,
+} from "./define-api.ts";
 export type {
   ApiBuilder,
   ApiDefinition,
@@ -144,6 +155,14 @@ export type {
   ChannelTapHandlers,
   ChannelTransport,
 } from "../runtime/channel.ts";
+// The shared store parked live views (`defineLiveView`) resume from on any instance.
+export { getLiveViewStore, memoryLiveViewStore, setLiveViewStore } from "./live-view-store.ts";
+export type { LiveViewStore, MemoryLiveViewStoreOptions } from "./live-view-store.ts";
+export { postgresLiveViewStore, redisLiveViewStore } from "./live-view-stores.ts";
+export type {
+  PostgresLiveViewStoreOptions,
+  RedisLiveViewStoreOptions,
+} from "./live-view-stores.ts";
 // The authorized server-side subscriber a protocol bridge (GraphQL subscriptions) hands a viewer.
 export { ChannelAccessError, tapChannelAuthorized } from "./channel-subscriber.ts";
 export type { AuthorizedTapOptions } from "./channel-subscriber.ts";
@@ -291,6 +310,7 @@ export {
   type DesktopUiUpdateConfig,
   type DesktopUpdateConfig,
   type DesktopWindowConfig,
+  type DesktopWindowsConfig,
   type ExperimentalConfig,
   type HeaderRule,
   type HstsConfig,
@@ -310,6 +330,8 @@ export {
   type ReactNativeConfig,
   type RedirectRule,
   type RemotePattern,
+  type ResolveAliasConfig,
+  type ResolveAliasRule,
   type ResolvedRules,
   type RewriteRule,
   safeRedirectLocation,
@@ -385,7 +407,15 @@ export type {
 export type { RenderScope } from "../runtime/render-scope.ts";
 // Scheduled/background jobs: define one in `jobs/<name>.ts`, schedule it via `scheduledJobs`
 // in denext.config.ts or a per-job `schedule`, and/or run it on demand (`runJob` / `denext job`).
-export { defineJob, getJob, isJob, jobNames, registerJob, runJob } from "./jobs.ts";
+export {
+  defineJob,
+  getJob,
+  isJob,
+  jobNames,
+  registerCronSchedules,
+  registerJob,
+  runJob,
+} from "./jobs.ts";
 export type { Job, JobBackoff, JobContext, JobDefinition, JobRetry, JobRunRecord } from "./jobs.ts";
 export { sqliteJobHistoryStore } from "./job-history.ts";
 
@@ -545,6 +575,29 @@ export type {
 } from "./postgres-migrate.ts";
 export { postgresCacheStore } from "./postgres-cache.ts";
 export type { PostgresCacheStoreOptions } from "./postgres-cache.ts";
+export { redisCacheStore } from "./redis-cache.ts";
+export type { RedisCacheStoreOptions } from "./redis-cache.ts";
+export { redisClient, RedisConnectionError, RedisError } from "./redis.ts";
+export { redisChannelTransport } from "./redis-pubsub.ts";
+export type { RedisChannelTransport, RedisChannelTransportOptions } from "./redis-pubsub.ts";
+export type {
+  RedisClient,
+  RedisClientOptions,
+  RedisCommand,
+  RedisConnectionOptions,
+  RedisReply,
+} from "./redis.ts";
+export { denoKvCacheStore } from "./deno-kv-cache.ts";
+export type { DenoKvCacheStoreOptions } from "./deno-kv-cache.ts";
+export { DenoKvUnsupportedError } from "./deno-kv.ts";
+export type {
+  DenoKvConnectionOptions,
+  KvAtomicLike,
+  KvEntryLike,
+  KvKey,
+  KvKeyPart,
+  KvLike,
+} from "./deno-kv.ts";
 
 // Server Actions — runtime registration + secure same-origin dispatch.
 export { isServerAction, serverAction } from "../runtime/server-action.ts";
@@ -586,285 +639,9 @@ export {
 
 // First-party auth: OAuth 2.0 / OIDC (+ Credentials) on signed-cookie sessions.
 // `denextAuth(config)` is a plugin (add to `plugins` in denext.config); it
-// auto-mounts `/auth/*`. Read the session anywhere with `auth()`.
-export {
-  activeAuthConfig,
-  auth,
-  denextAuth,
-  pendingMfaSession,
-  requireAuth,
-  revokeAllSessions,
-  revokeSession,
-  updateAuthSession,
-} from "./auth/mod.ts";
-export type { RequireAuthOptions } from "./auth/mod.ts";
-export { nativeBearerToken } from "./auth/native.ts";
-export {
-  apple,
-  auth0,
-  credentials,
-  discord,
-  emailOtp,
-  facebook,
-  github,
-  gitlab,
-  google,
-  keycloak,
-  magicLink,
-  microsoftEntra,
-  oidc,
-  okta,
-  phoneOtp,
-  saml,
-  slack,
-} from "./auth/providers.ts";
-export type {
-  Auth0Options,
-  CredentialsOptions,
-  EmailProviderOptions,
-  GitLabOptions,
-  KeycloakOptions,
-  MagicLinkOptions,
-  MicrosoftEntraOptions,
-  OAuthClientOptions,
-  OidcOptions,
-  OktaOptions,
-  PhoneProviderOptions,
-  SamlProviderOptions,
-} from "./auth/providers.ts";
-// A zero-npm SMTP client for `sendVerificationRequest` (TLS required; STARTTLS or SMTPS).
-export { SmtpError, smtpMailer, SmtpMessageError } from "./auth/smtp.ts";
-export type { MailMessage, SmtpContent, SmtpMailer, SmtpMailerOptions } from "./auth/smtp.ts";
-// Password hashing for the Credentials provider (salted scrypt via node:crypto).
-export { hashPassword, verifyPassword } from "./auth/password.ts";
-export type { HashPasswordOptions } from "./auth/password.ts";
-// The hashing seam: swap scrypt for Argon2id/bcrypt without touching the auth flow.
-export { scryptHasher } from "./auth/hasher.ts";
-export type { Hasher } from "./auth/hasher.ts";
-// The persistence port: users, linked accounts, credentials, tokens, MFA factors.
-export type {
-  AdapterAccount,
-  AdapterAccountRef,
-  AdapterUser,
-  ApiTokenRecord,
-  AuthAdapter,
-  MaybePromise,
-  MfaFactorRecord,
-  MfaRecord,
-  NativeGrantRecord,
-  NativeSessionRecord,
-  PasskeyChallengeRecord,
-  PasskeyRecord,
-  SsoAttributeMapping,
-  SsoAttributeMappingKey,
-  SsoProviderRecord,
-  SsoProviderWrite,
-  SsoSessionRecord,
-  VerificationPurpose,
-  VerificationTokenRecord,
-  VerificationTokenRef,
-} from "./auth/adapter.ts";
-export type {
-  CustomProviderAdapter,
-  CustomProviderRecord,
-  OAuthAuthorizationExpect,
-  OAuthAuthorizationPatch,
-  OAuthAuthorizationRecord,
-  OAuthClientRecord,
-  OAuthConsentRecord,
-  OAuthServerAdapter,
-  OAuthSessionLink,
-  Web3NonceAdapter,
-} from "./auth/adapter-oauth-server.ts";
-// Brute-force protection for the credentials endpoint (`AuthConfig.rateLimit`).
-export { inMemoryRateLimitStore } from "./auth/rate-limit.ts";
-export type {
-  InMemoryRateLimitStoreOptions,
-  RateLimitOptions,
-  RateLimitStore,
-  RateLimitWindow,
-} from "./auth/rate-limit.ts";
-// Opt-in revocable sessions (`AuthConfig.sessionStore`): in-memory or node:sqlite.
-export { inMemorySessionStore } from "./auth/session-store.ts";
-export { inMemoryAuthAdapter } from "./auth/memory-adapter.ts";
-export type { InMemoryAuthAdapterOptions } from "./auth/memory-adapter.ts";
-export { sqliteAuthAdapter } from "./auth/sqlite-adapter.ts";
-export type { SqliteAuthAdapterOptions } from "./auth/sqlite-adapter.ts";
-export { requireBearer } from "./auth/bearer.ts";
-export type { BearerContext, RequireBearerOptions } from "./auth/bearer.ts";
-export { issueApiToken, listApiTokens, revokeApiToken, verifyApiToken } from "./auth/api-token.ts";
-export type { IssueApiTokenOptions, IssuedApiToken } from "./auth/api-token.ts";
-// Supabase-compatible keys and access tokens (`backend({ supabase })` from @denext/backend).
-export {
-  apiKeyRole,
-  canSign,
-  generateSupabaseKeys,
-  installedSupabaseKeys,
-  installSupabaseKeys,
-  looksLikeJwt,
-  opaqueKeyRole,
-  resolveSupabaseKeys,
-  signSupabaseJwt,
-  SUPABASE_KEY_ENV,
-  supabaseJwks,
-  SupabaseKeyError,
-  verifySupabaseJwt,
-} from "./auth/gotrue/keys.ts";
-export type {
-  GeneratedSupabaseKeys,
-  SupabaseJwtClaims,
-  SupabaseKeyErrorCode,
-  SupabaseKeys,
-  SupabaseKeysConfig,
-  SupabaseRole,
-  SupabaseSigningKey,
-  VerifySupabaseJwtOptions,
-} from "./auth/gotrue/keys.ts";
-export { jwtBearerOf, sessionFromClaims, verifyAccessToken } from "./auth/gotrue/access.ts";
-export { bearerTokenOf } from "./auth/bearer-header.ts";
-// The GoTrue-compatible `/auth/v1` API (`backend({ supabase })` mounts it).
-export { handleGoTrueRequest, installGoTrue } from "./auth/gotrue/handler.ts";
-export type { GoTrueHandlerOptions } from "./auth/gotrue/handler.ts";
-export { refreshSsoMetadata } from "./auth/gotrue/sso-refresh.ts";
-export type {
-  RefreshSsoMetadataOptions,
-  SsoMetadataRefreshSummary,
-} from "./auth/gotrue/sso-refresh.ts";
-export type { RefreshOutcome } from "./auth/gotrue/sso-metadata.ts";
-export { goTrueSmtpFromEnv } from "./auth/gotrue/smtp-mail.ts";
-export type { GoTrueMailKind, GoTrueSmtpOptions } from "./auth/gotrue/smtp-mail.ts";
-export { GoTrueError } from "./auth/gotrue/errors.ts";
-export type { GoTrueErrorCode } from "./auth/gotrue/errors.ts";
-export type {
-  GoTrueAccessTokenHookInput,
-  GoTrueCaptchaOptions,
-  GoTrueHooks,
-  GoTrueOAuthServerOptions,
-  GoTrueOptions,
-  GoTrueSamlOptions,
-  GoTrueSamlProvider,
-  GoTrueSendEmailPayload,
-  GoTrueSmsMessage,
-  GoTrueWeb3Options,
-} from "./auth/gotrue/options.ts";
-export type { InMemorySessionStoreOptions, SessionStore } from "./auth/session-store.ts";
-export { sqliteSessionStore } from "./auth/sqlite-session-store.ts";
-export type { SqliteSessionStoreOptions } from "./auth/sqlite-session-store.ts";
-// Postgres: the auth adapter, session and rate-limit stores shared by every replica — on the
-// runtime's Deno.SQL, or any SqlClient (`fromPostgresJs` for the npm postgres package).
-export { postgresAuthAdapter } from "./auth/postgres-adapter.ts";
-export type { PostgresAuthAdapterOptions } from "./auth/postgres-adapter.ts";
-export type { PostgresAuthStoreOptions } from "./auth/postgres-schema.ts";
-export { postgresSessionStore } from "./auth/postgres-session-store.ts";
-export type { PostgresSessionStoreOptions } from "./auth/postgres-session-store.ts";
-export { postgresRateLimitStore } from "./auth/postgres-rate-limit.ts";
-export type { PostgresRateLimitStoreOptions } from "./auth/postgres-rate-limit.ts";
-// SAML 2.0 Service Provider primitives (IdP metadata, AuthnRequest, Response verification).
-export {
-  buildAuthnRequest,
-  buildLogoutRequest,
-  buildLogoutResponse,
-  inMemorySamlReplayCache,
-  parseIdpMetadata,
-  peekLogoutMessage,
-  SamlError,
-  spMetadataXml,
-  verifyLogoutRequest,
-  verifyLogoutResponse,
-  verifySamlResponse,
-} from "./auth/saml/mod.ts";
-export type {
-  BuildAuthnRequestOptions,
-  BuildLogoutRequestOptions,
-  BuildLogoutResponseOptions,
-  ParsedIdpMetadata,
-  PeekedLogoutMessage,
-  SamlBindingInput,
-  SamlErrorCode,
-  SamlIdpConfig,
-  SamlPrivateKey,
-  SamlReplayCache,
-  SamlSpConfig,
-  VerifiedLogoutRequest,
-  VerifiedLogoutResponse,
-  VerifiedSamlAssertion,
-  VerifyLogoutOptions,
-  VerifySamlResponseOptions,
-} from "./auth/saml/mod.ts";
-// Email verification + password reset — what `{basePath}/verify` and `/reset` run, callable
-// from your own Server Actions too.
-export {
-  requestEmailVerification,
-  requestPasswordReset,
-  resetPassword,
-  verifyEmail,
-} from "./auth/email.ts";
-export type { EmailRequestResult, ResetPasswordResult, VerifyEmailResult } from "./auth/email.ts";
-// The TOTP second factor: the flows behind `{basePath}/mfa*` and their RFC 6238 primitives.
-export {
-  confirmTotp,
-  disableTotp,
-  enrollTotp,
-  mfaStatus,
-  spendMfaAttempt,
-  verifySecondFactor,
-} from "./auth/mfa.ts";
-export type {
-  ConfirmTotpResult,
-  EnrollTotpResult,
-  MfaAttemptResult,
-  MfaMethod,
-  MfaStatus,
-  SecondFactorResult,
-  TotpEnrollment,
-} from "./auth/mfa.ts";
-export { generateTotpSecret, totpAuthUri, totpQrSvg, verifyTotp } from "./auth/totp.ts";
-export type {
-  TotpAuthUriOptions,
-  TotpQrSvgOptions,
-  TotpVerifyOptions,
-  TotpVerifyResult,
-} from "./auth/totp.ts";
-// `denext auth reseal`: move TOTP factors off a retired `secret` (also callable from a job).
-export { resealTotpFactors } from "./auth/reseal.ts";
-export type { ResealOptions, ResealReport } from "./auth/reseal.ts";
-// Passkeys (WebAuthn): the account-settings helpers behind `{basePath}/passkeys`.
-export { deletePasskey, listPasskeys } from "./auth/passkeys.ts";
-export type { PasskeySummary } from "./auth/passkeys.ts";
-export { backupCodeMatcher, generateBackupCodes } from "./auth/backup-codes.ts";
-export type { BackupCodes } from "./auth/backup-codes.ts";
-export type {
-  AccountDeletedPayload,
-  ApiTokenRevokedReason,
-  AuthCallbacks,
-  AuthConfig,
-  AuthCookieConfig,
-  AuthEmailConfig,
-  AuthEvents,
-  AuthLogger,
-  AuthMfaConfig,
-  AuthNativeConfig,
-  AuthorizedCallbackInput,
-  AuthPasskeyConfig,
-  AuthPasskeyMdsConfig,
-  AuthProvider,
-  AuthSession,
-  AuthSessionConfig,
-  AuthUser,
-  CredentialsProvider,
-  EmailProvider,
-  NativeAppleConfig,
-  NativeIdTokenProviderConfig,
-  OAuthProvider,
-  PhoneProvider,
-  ProfileInput,
-  SamlProvider,
-  SamlProviderSp,
-  SendVerificationRequest,
-  SignInFailedReason,
-  TenantIssuer,
-  VerificationRequestParams,
-} from "./auth/types.ts";
+// auto-mounts `/auth/*`. Read the session anywhere with `auth()`. The same surface is the
+// standalone `denext/auth` entry point.
+export * from "./auth/public.ts";
 
 // Metadata file conventions (sitemap.ts / robots.ts / manifest.ts / favicon.ico).
 export {

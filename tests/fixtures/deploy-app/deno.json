@@ -1,0 +1,11 @@
+{
+  "name": "@example/deploy-app",
+  "imports": {
+    "denext": "jsr:@denext/denext@^4.1.0",
+    "denext/server": "jsr:@denext/denext@^4.1.0/server"
+  },
+  "tasks": {
+    "build": "deno run -A jsr:@denext/denext@^4.1.0/cli build .",
+    "start": "deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.1.0/cli start ."
+  }
+}

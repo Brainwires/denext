@@ -20,6 +20,13 @@ export interface SingletonSupport {
   commit(fiber: Fiber): void;
   /** Unmount: take back what this layout set; the element stays. */
   release(fiber: Fiber): void;
+  /** Placement: an adopted `<head>`'s hoisted tags go into the page's head (beside its own). */
+  place(fiber: Fiber): void;
+  /**
+   * Hydration: for a head tag of an adopted `<head>` (`<title>` / `<meta>` / `<link>`), the
+   * page's element it adopts (null: none, it mounts fresh); undefined for any other host.
+   */
+  claimHoisted(wip: Fiber): Element | null | undefined;
 }
 
 let support: SingletonSupport | null = null;

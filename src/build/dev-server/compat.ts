@@ -4,6 +4,7 @@
 // files resolve unlike web's (a shell's `?__denext_platform=ios` session) gets a build of its
 // own, kept beside web's.
 
+import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
 import { type Platform, platformResolution } from "../platform-extensions.ts";
 import { fromFileUrl, join } from "@std/path";
 import { resolveCacheComponents } from "../../server/config.ts";
@@ -61,6 +62,9 @@ function compatBuildOptions(
     cssImportMap,
     // The target's platform files (`.web.tsx`, `.ios.tsx`, …), server and client bundles alike.
     appPlatform: platformResolution(st.paths.config, platform),
+    // `platform` (denext/platform) folded to the request's target, server and client bundles.
+    buildTarget: platform,
+    resolveAlias: st.paths.config?.resolveAlias,
     assets: compatAssets(st.paths.projectDir, join(outDir, "client")),
   };
 }
@@ -131,7 +135,7 @@ function storeCompatOutput(
   platform: Platform,
 ): void {
   const base = name.slice(0, -3);
-  if (base === "flight") {
+  if (name === FLIGHT_BUNDLE_FILE) {
     if (platform === "web") st.flightBundle = code;
     else st.bundleCache.set(bundleKey(FLIGHT_KEY, platform), code);
     return;
@@ -215,7 +219,7 @@ async function buildCompat(
       ...opts,
       clientDir: clientOut,
       boundary: boundary.manifest,
-      flightFile: "flight.js",
+      flightFile: FLIGHT_BUNDLE_FILE,
       dev: true,
       instrumentationClient: st.paths.instrumentationClientPath,
     });

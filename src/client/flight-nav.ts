@@ -34,7 +34,7 @@ const globalWin = globalThis as { __dnxRootless?: boolean };
 export function setFlightParser(
   parse: (flight: unknown) => VNodeChild | Promise<VNodeChild>,
 ): void {
-  setFlightNavigator(async (body, url, href, options) => {
+  setFlightNavigator(async (body, url, href, options, res) => {
     // No root to render into (and not a root-less page this runtime can mount one for): hard
     // navigate rather than leave the user on the old route.
     if (!retainedRoot && !canMountRootless()) {
@@ -44,9 +44,23 @@ export function setFlightParser(
     // Parse first (the parser may load this route's island chunks — async), then commit the
     // DOM synchronously inside the view transition: an async transition callback is aborted by
     // the browser when it outlives the transition ("invalid state").
-    const prepared = await prepareFlightNav(parse, body, href);
+    const stream = res ? await openStream(res, parse) : undefined;
+    if (stream === null) return void (location.href = href);
+    const prepared = await prepareFlightNav(parse, stream?.body ?? body, href, stream?.fill);
     if (prepared) withViewTransition(() => commitFlightNav(prepared, url, href, options));
   });
+}
+
+/**
+ * A response that streams its deferred values: commit at its payload line, each value resolving
+ * its `<Await>` as it arrives (flight-nav-stream.ts, loaded only for one). Null when it fails.
+ */
+function openStream(
+  res: Response,
+  parse: (flight: unknown) => VNodeChild | Promise<VNodeChild>,
+): Promise<{ body: string; fill(flight: unknown): unknown } | null> {
+  return import("./flight-nav-stream.ts").then((m) => m.openNavStream(res, parse))
+    .catch(() => null);
 }
 
 /** A parsed soft-navigation Flight payload, ready to commit. */
@@ -65,10 +79,11 @@ async function prepareFlightNav(
   parse: (flight: unknown) => VNodeChild | Promise<VNodeChild>,
   body: string,
   href: string,
+  fill?: (flight: unknown) => unknown,
 ): Promise<PreparedFlightNav | null> {
   try {
     const payload = JSON.parse(body) as FlightNavPayload;
-    const tree = await parse(payload.flight) as VNode;
+    const tree = await parse(fill ? fill(payload.flight) : payload.flight) as VNode;
     return { payload, tree };
   } catch {
     location.href = href; // malformed payload / reconstruction failure: hard navigate

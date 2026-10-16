@@ -92,7 +92,8 @@ Each line: what to set → where it is documented. Config keys go in
   [Databases](/docs/database)
 - Deno Deploy has **no persistent disk**: the cache is per-isolate memory, job
   history is a fragment that resets, and a SQLite file does not survive. Inject
-  a shared `CacheStore` / `SessionStore` / `AuthAdapter` there. →
+  a shared `CacheStore` / `SessionStore` / `AuthAdapter` there (the
+  `denoKv*` stores use the project's KV database). →
   [Multi-instance](/docs/multi-instance)
 
 **Limits**

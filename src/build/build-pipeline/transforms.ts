@@ -12,6 +12,7 @@ import { type AppCss, buildAppCss } from "../css.ts";
 import { routeNeedsHydration } from "../hydration.ts";
 import { clientGraphModules, routeEntryFiles } from "../module-graph.ts";
 import { stylesheetImportMap } from "../platform-imports.ts";
+import type { Platform } from "../platform-extensions.ts";
 import { compileQrlModules } from "../qrl-transform.ts";
 import { tailwindPaths } from "../tailwind.ts";
 import { type BuildContext, log } from "./context.ts";
@@ -121,11 +122,13 @@ function warnClobbered(asyncContextMap: RewriteMap, compilerMap: RewriteMap, qrl
  *
  * @param ctx The project and its config.
  * @param outDir Where the transformed modules are written (default: the build's output dir).
+ * @param platform The build target `platform` (denext/platform) folds to (default `web`).
  * @returns Each transformed module's file URL → its transformed file's URL.
  */
 export async function clientTransforms(
   ctx: Pick<BuildContext, "projectDir" | "paths" | "manifest" | "flightRoutes">,
   outDir: string = ctx.paths.outDir,
+  platform: Platform = "web",
 ): Promise<Record<string, string>> {
   const { projectDir, paths } = ctx;
   const sources = componentSourcesOnce(projectDir);
@@ -148,18 +151,17 @@ export async function clientTransforms(
   }
   warnClobbered(asyncContextMap, compilerMap, qrlMap);
   const merged = { ...compilerMap, ...qrlMap, ...asyncContextMap };
-  // Feature-flag fold runs LAST, over each module's already-transformed source (so it never
-  // clobbers auto-memo/qrl/async-context), replacing `feature("KEY")` with the configured
-  // literal so `deno bundle` dead-code-eliminates the untaken branch.
-  const features = featureFlags(paths.config);
-  if (Object.keys(features).length > 0) {
-    const featureMap = await compileFeatureModules(await clientModules(), merged, {
-      outDir,
-      features,
-    });
-    const folded = Object.keys(featureMap).length;
-    if (folded > 0) log(`features: folded feature() flags in ${folded} module(s)`);
-    Object.assign(merged, featureMap);
-  }
+  // The build-constant fold runs LAST, over each module's already-transformed source (so it
+  // never clobbers auto-memo/qrl/async-context), replacing `feature("KEY")` with the configured
+  // literal and `platform` (denext/platform) with the target, so `deno bundle`
+  // dead-code-eliminates the untaken branches.
+  const featureMap = await compileFeatureModules(await clientModules(), merged, {
+    outDir,
+    features: featureFlags(paths.config),
+    platform,
+  });
+  const folded = Object.keys(featureMap).length;
+  if (folded > 0) log(`build constants: folded feature() / platform in ${folded} module(s)`);
+  Object.assign(merged, featureMap);
   return merged;
 }

@@ -254,8 +254,11 @@ published as `2.9.7-denext.N` with SHA-256 sums and build attestations. Between 
 review what Deno's main branch has gained and take the fixes that matter: `2.9.7-denext.16` took the
 read-permission check for a compiled program's dynamic import, two Node-API fixes, coverage runs
 skipping V8's code cache, the HTTP connection-pool fix and the `rand` security update, and
-`2.9.7-denext.19` (the build denext pins today) took deno_core's fix for an intermittent crash at
-exit. Each new Deno
+`2.9.7-denext.19` took deno_core's fix for an intermittent crash at exit. From `2.9.7-denext.20`
+(the build denext pins today) each release also ships its own `denort` per platform (the
+standalone runtime `deno compile` builds onto), pinned and verified beside the CLI, so a binary
+from `denext build --compile` (or the toolchain's own `deno compile`) carries the same patches,
+`Deno.SQL` included. Each new Deno
 release is adopted by rebasing the patches onto it and cutting a new `-denext.N`. Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
 

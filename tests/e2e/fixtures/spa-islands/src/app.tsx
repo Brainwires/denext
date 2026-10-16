@@ -17,7 +17,11 @@ export function App() {
       <Wide client:media="(min-width: 1px)" />
       <Panel
         client:interaction
-        client:placeholder={<button type="button" data-testid="open">Open panel</button>}
+        client:placeholder={
+          <section>
+            Panel <button type="button" data-testid="open">Open panel</button>
+          </section>
+        }
         title="settings"
       />
       <div style={{ height: "3000px" }} data-testid="spacer" />

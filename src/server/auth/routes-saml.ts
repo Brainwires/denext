@@ -63,14 +63,20 @@ async function refuse(
   return redirect(safeRedirectLocation(`${page}?error=${encodeURIComponent(reason)}`));
 }
 
-/** The metadata URL — the default SP entity id. */
-function metadataUrl(ctx: AuthRouteContext, provider: SamlProvider): string {
+/** An absolute URL under `{basePath}/saml/:id/`. */
+function samlUrl(ctx: AuthRouteContext, provider: SamlProvider, leaf: string): string {
   return absoluteUrl(
     ctx.request,
-    `${ctx.options.prefix}saml/${encodeURIComponent(provider.id)}/metadata`,
+    `${ctx.options.prefix}saml/${encodeURIComponent(provider.id)}/${leaf}`,
     { canonicalOrigin: ctx.config.canonicalOrigin },
   );
 }
+
+/**
+ * The marker a Single Logout transaction carries in `verifier` (a sign-in's is empty), so the
+ * ACS never accepts one.
+ */
+export const SLO_TX = "saml-slo";
 
 /** A key's certificate is required, and must hold the key's public half (checked once). */
 async function checkPair(
@@ -85,17 +91,25 @@ async function checkPair(
   await checkKeyPair(key, certificate);
 }
 
-/** This service provider as `provider`'s IdP sees it. */
-async function spFor(ctx: AuthRouteContext, provider: SamlProvider): Promise<SamlSpConfig> {
+/**
+ * This service provider as `provider`'s IdP sees it. With a signing key it also has a
+ * SingleLogoutService (`{basePath}/saml/:id/slo`), published in its metadata.
+ *
+ * @param ctx The route context.
+ * @param provider The SAML provider.
+ * @returns The SP configuration.
+ */
+export async function spFor(ctx: AuthRouteContext, provider: SamlProvider): Promise<SamlSpConfig> {
   const options = provider.sp ?? {};
   const sp: SamlSpConfig = {
-    entityId: options.entityId ?? metadataUrl(ctx, provider),
+    entityId: options.entityId ?? samlUrl(ctx, provider, "metadata"),
     acsUrl: callbackUri(ctx, provider.id),
   };
   if (options.signingKey) {
     await checkPair(provider, options.signingKey, options.signingCertificate, "signing");
     sp.signingKey = options.signingKey;
     sp.signingCertificate = options.signingCertificate;
+    sp.sloUrl = samlUrl(ctx, provider, "slo");
   }
   if (options.encryptionKey) {
     await checkPair(provider, options.encryptionKey, options.encryptionCertificate, "encryption");
@@ -108,8 +122,12 @@ async function spFor(ctx: AuthRouteContext, provider: SamlProvider): Promise<Sam
 /**
  * The provider in the shape the shared SSO rules take: config-declared (so an address off its
  * domains is left unbound rather than refused), its metadata parsed, fresh and HTTPS-only.
+ *
+ * @param ctx The route context.
+ * @param provider The SAML provider.
+ * @returns The SSO provider.
  */
-function ssoProviderOf(ctx: AuthRouteContext, provider: SamlProvider): SsoProvider {
+export function ssoProviderOf(ctx: AuthRouteContext, provider: SamlProvider): SsoProvider {
   const sso = fromConfig(provider);
   assertMetadataFresh({ config: ctx.config }, provider.id, sso.idp);
   assertIdpEndpoints({ config: ctx.config }, sso.idp);
@@ -161,8 +179,13 @@ export async function startSamlSignIn(
   }
 }
 
-/** The posted form, or `null` for anything but a bounded urlencoded body. */
-async function readForm(ctx: AuthRouteContext): Promise<URLSearchParams | null> {
+/**
+ * The posted form, or `null` for anything but a bounded urlencoded body.
+ *
+ * @param ctx The route context.
+ * @returns The form, or `null`.
+ */
+export async function readForm(ctx: AuthRouteContext): Promise<URLSearchParams | null> {
   const type = (ctx.request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
   if (type !== "application/x-www-form-urlencoded") return null;
   const bytes = await readCappedBody(ctx.request, FORM_LIMIT).catch(() => STALLED);
@@ -219,8 +242,8 @@ export async function handleSamlAcs(
   const relay = form?.get("RelayState");
   const samlResponse = form?.get("SAMLResponse");
   if (
-    !form || !tx || tx.provider !== provider.id || !tx.nonce || !relay || tx.state !== relay ||
-    !samlResponse || !ctx.options.adapter
+    !form || !tx || tx.provider !== provider.id || tx.verifier === SLO_TX || !tx.nonce ||
+    !relay || tx.state !== relay || !samlResponse || !ctx.options.adapter
   ) {
     return await refuse(ctx, provider.id, "invalid_state");
   }
@@ -251,6 +274,11 @@ export async function handleSamlAcs(
     returnTo: tx.returnTo,
     amr: ["sso/saml"],
     json: false,
+    saml: {
+      nameId: assertion.nameId,
+      ...(assertion.nameIdFormat !== undefined && { nameIdFormat: assertion.nameIdFormat }),
+      ...(assertion.sessionIndex !== undefined && { sessionIndex: assertion.sessionIndex }),
+    },
   });
 }
 

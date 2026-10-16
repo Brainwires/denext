@@ -29,10 +29,9 @@ smaller bundles and first-class streaming.
 - _One surface consequence:_ `renderToString`/`renderToStaticMarkup` render the
   **synchronously-renderable** subset over the same walker (Suspense → fallback, as React
   does); a component that genuinely awaits throws a guided error. The **Node-stream** APIs
-  (`renderToPipeableStream`/`renderToStaticNodeStream`) are a thin adapter over the Web
-  renderer and buffer rather than apply `Writable` backpressure — denext targets the Web
-  stream. Backpressure is on the
-  [roadmap](https://github.com/Brainwires/denext/blob/main/ROADMAP.md).
+  (`renderToPipeableStream`/`renderToStaticNodeStream`) are an adapter over the Web
+  renderer and honour the destination's backpressure (`write()` returning `false`, `'drain'`)
+  as React does: the renderer flushes on demand while Suspense boundaries keep rendering.
 
 ## Concurrency: fiber-based, time-sliced, and interruptible
 

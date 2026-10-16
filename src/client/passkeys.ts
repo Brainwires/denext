@@ -29,6 +29,19 @@ export type PasskeyClientError =
 export interface PasskeyCallOptions {
   /** The auth endpoint prefix, when the app configured `denextAuth({ basePath })`. Default `"/auth"`. */
   basePath?: string;
+  /**
+   * The auth server's origin, when it is not this page's (`https://auth.example.com`): the calls
+   * go there with credentials. The server must list this page's origin in
+   * `passkeys.corsOrigins`. Default: this page's origin.
+   */
+  origin?: string;
+}
+
+/** The endpoint prefix and the credentials mode for one call. */
+function endpoint(options: PasskeyCallOptions): { base: string; credentials: RequestCredentials } {
+  const path = options.basePath ?? DEFAULT_BASE_PATH;
+  if (!options.origin) return { base: path, credentials: "same-origin" };
+  return { base: new URL(options.origin).origin + path, credentials: "include" };
 }
 
 /** What {@linkcode registerPasskey} resolves to. */
@@ -144,11 +157,15 @@ function credentialJSON(credential: PublicKeyCredential): Record<string, unknown
 }
 
 /** POST JSON to an auth endpoint; `null` on a network failure. */
-async function post(url: string, body: unknown): Promise<Response | null> {
+async function post(
+  url: string,
+  body: unknown,
+  credentials: RequestCredentials,
+): Promise<Response | null> {
   try {
     return await fetch(url, {
       method: "POST",
-      credentials: "same-origin",
+      credentials,
       headers: {
         "content-type": "application/json",
         accept: "application/json",
@@ -179,11 +196,11 @@ async function errorOf(res: Response | null): Promise<PasskeyClientError> {
  * carries back), or the typed refusal.
  */
 async function ceremonyOptions(
-  base: string,
+  at: { base: string; credentials: RequestCredentials },
   path: string,
 ): Promise<{ json: unknown; ceremonyId: unknown } | { ok: false; error: PasskeyClientError }> {
   if (!passkeysSupported()) return { ok: false, error: "unsupported" };
-  const res = await post(`${base}${path}`, {});
+  const res = await post(`${at.base}${path}`, {}, at.credentials);
   if (!res?.ok) return { ok: false, error: await errorOf(res) };
   const { ceremonyId, ...json } = await res.json() as Record<string, unknown>;
   return { json, ceremonyId };
@@ -218,19 +235,19 @@ async function ceremony<T>(
 export async function registerPasskey(
   options: PasskeyCallOptions & { name?: string } = {},
 ): Promise<RegisterPasskeyResult> {
-  const base = options.basePath ?? DEFAULT_BASE_PATH;
-  const fetched = await ceremonyOptions(base, "/passkey/register/options");
+  const at = endpoint(options);
+  const fetched = await ceremonyOptions(at, "/passkey/register/options");
   if (!("json" in fetched)) return fetched;
   const publicKey = creationOptions(fetched.json);
   const created = await ceremony(() =>
     navigator.credentials.create({ publicKey }) as Promise<PublicKeyCredential | null>
   );
   if (created === "cancelled" || created === "exists") return { ok: false, error: created };
-  const res = await post(`${base}/passkey/register`, {
+  const res = await post(`${at.base}/passkey/register`, {
     credential: credentialJSON(created),
     ceremonyId: fetched.ceremonyId,
     name: options.name,
-  });
+  }, at.credentials);
   if (!res?.ok) return { ok: false, error: await errorOf(res) };
   return { ok: true, passkey: (await res.json()).passkey };
 }
@@ -248,19 +265,19 @@ export async function registerPasskey(
 export async function signInWithPasskey(
   options: PasskeySignInOptions = {},
 ): Promise<PasskeySignInResult> {
-  const base = options.basePath ?? DEFAULT_BASE_PATH;
-  const fetched = await ceremonyOptions(base, "/passkey/authenticate/options");
+  const at = endpoint(options);
+  const fetched = await ceremonyOptions(at, "/passkey/authenticate/options");
   if (!("json" in fetched)) return fetched;
   const publicKey = requestOptions(fetched.json);
   const asserted = await ceremony(() =>
     navigator.credentials.get({ publicKey }) as Promise<PublicKeyCredential | null>
   );
   if (asserted === "cancelled" || asserted === "exists") return { ok: false, error: asserted };
-  const res = await post(`${base}/passkey/authenticate`, {
+  const res = await post(`${at.base}/passkey/authenticate`, {
     credential: credentialJSON(asserted),
     ceremonyId: fetched.ceremonyId,
     callbackUrl: options.callbackUrl,
-  });
+  }, at.credentials);
   if (!res?.ok) return { ok: false, error: await errorOf(res) };
   const body = await res.json() as { mfa?: "required"; url?: string };
   if (body.mfa === "required") return { ok: true, mfa: "required" };

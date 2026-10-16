@@ -9,6 +9,7 @@ import {
   abortJobRuns,
   collectSchedules,
   isJob,
+  markJobsDiscovered,
   registerJob,
   scheduleJobs,
   setJobRecorder,
@@ -69,6 +70,8 @@ export async function bootScheduledJobs(
   // runs belong in the history too. Installing costs nothing — the handle opens on the first run.
   const stopRecording = startRunHistory(config, outDir ?? join(projectDir, ".denext"));
   const names = await discoverJobs(join(projectDir, "jobs"));
+  markJobsDiscovered(); // a cron the entrypoint registered early (registerCronSchedules) may run
+
   const entries = collectSchedules(config?.scheduledJobs);
   if (names.length === 0 && entries.length === 0) return stopRecording;
   const dispose = scheduleJobs(entries);

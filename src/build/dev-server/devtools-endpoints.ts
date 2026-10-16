@@ -1,4 +1,4 @@
-// The two DevTools data endpoints the panel's Cache and Routes tabs read.
+// The DevTools data endpoints the panel's Cache, Routes, Live views and Live tabs read.
 //
 // Both are served from inside `gatedDevEndpoint` (./handler.ts), so they inherit the gate
 // EVERY `/_denext/*` endpoint passes first — a cross-origin page, or a foreign Host, gets
@@ -23,9 +23,12 @@
 // file add/remove. So polling either one costs nothing but the JSON.
 
 import { getCacheStats } from "../../server/cache.ts";
+import { inspectLiveConnections, inspectLiveViews } from "../../server/live.ts";
+import { liveRecords, viewMessageRecords } from "../../server/live-devtools.ts";
 import { routeMapData } from "../../mcp/inspect.ts";
 import { getManifest } from "./manifest.ts";
 import {
+  type DevInspectState,
   type DevState,
   INSPECT_TTL_MS,
   type InspectSnapshotEntry,
@@ -33,6 +36,8 @@ import {
 } from "./state.ts";
 import { parseSnapshot } from "./devtools-snapshot.ts";
 import type { InspectSnapshot } from "../../client/devtools-inspect-sink.ts";
+import { sseSend } from "../sse.ts";
+import { readCapped } from "../../utils/read-capped.ts";
 
 /** Both payloads are live snapshots — never let a proxy or the browser keep one. */
 const NO_STORE = { "cache-control": "no-store" };
@@ -53,6 +58,34 @@ const MAX_PROBE_PATH = 1024;
  */
 export function devCacheResponse(_st: DevState): Response {
   return Response.json(getCacheStats(), { headers: NO_STORE });
+}
+
+/**
+ * The Live views tab's feed: every server-held live view on this instance (attached or parked)
+ * with its model redacted, and the recent batches of messages their `update` ran.
+ *
+ * @param _st The dev-server state (unused — the hub is process-global).
+ * @returns `{ views, messages }` as JSON.
+ */
+export function devLiveViewsResponse(_st: DevState): Response {
+  return Response.json(
+    { views: inspectLiveViews(), messages: viewMessageRecords() },
+    { headers: NO_STORE },
+  );
+}
+
+/**
+ * The Live tab's feed: each Live connection and what it subscribes to, the recent channel
+ * pushes (payloads redacted) and the recent cache entries written.
+ *
+ * @param _st The dev-server state (unused — the hub and the cache are process-global).
+ * @returns `{ connections, channelPushes, cacheEntries }` as JSON.
+ */
+export function devLiveResponse(_st: DevState): Response {
+  return Response.json(
+    { connections: inspectLiveConnections(), ...liveRecords() },
+    { headers: NO_STORE },
+  );
 }
 
 /**
@@ -95,26 +128,6 @@ export async function devRoutesResponse(st: DevState, url: URL): Promise<Respons
  */
 const MAX_SNAPSHOT_BYTES = 256 * 1024;
 
-/** A JSON body read, capped: the text, or null when it ran past `max` bytes. */
-async function readCapped(request: Request, max: number): Promise<string | null> {
-  const reader = request.body?.getReader();
-  if (!reader) return "";
-  const decoder = new TextDecoder();
-  let text = "";
-  let size = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > max) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    text += decoder.decode(value, { stream: true });
-  }
-  return text + decoder.decode();
-}
-
 /**
  * The media type of a `content-type` header — lower-cased, without its parameters.
  * Matched EXACTLY against `application/json`: a substring test would accept
@@ -128,7 +141,7 @@ function mediaType(header: string | null): string {
 }
 
 /** Store `snapshot` as its URL's latest, evicting the oldest URL past the LRU's size. */
-function storeSnapshot(st: DevState, snapshot: InspectSnapshot): void {
+function storeSnapshot(st: DevInspectState, snapshot: InspectSnapshot): void {
   st.devInspect.delete(snapshot.url); // re-insert so Map order stays write-recency order
   st.devInspect.set(snapshot.url, { snapshot, receivedAt: Date.now() });
   while (st.devInspect.size > MAX_INSPECT_URLS) {
@@ -147,11 +160,11 @@ function storeSnapshot(st: DevState, snapshot: InspectSnapshot): void {
  * never be taught to log server errors by posting junk. What IS stored is rebuilt field by
  * field by {@link parseSnapshot}, never the posted object.
  *
- * @param st The dev-server state (its {@link DevState.devInspect} LRU is written).
+ * @param st The dev-server state (its {@link DevInspectState.devInspect} LRU is written).
  * @param request The POST request.
  * @returns 204 on accept-or-drop, 415/413 when the request itself is refused.
  */
-export async function devInspectSink(st: DevState, request: Request): Promise<Response> {
+export async function devInspectSink(st: DevInspectState, request: Request): Promise<Response> {
   if (mediaType(request.headers.get("content-type")) !== "application/json") {
     return new Response("expected application/json", { status: 415, headers: NO_STORE });
   }
@@ -164,19 +177,22 @@ export async function devInspectSink(st: DevState, request: Request): Promise<Re
     return new Response("snapshot too large", { status: 413, headers: NO_STORE });
   }
   const snapshot = parseSnapshot(body);
-  if (snapshot) storeSnapshot(st, snapshot);
+  if (snapshot) {
+    storeSnapshot(st, snapshot);
+    for (const wake of [...st.devInspectWaiters]) wake();
+  }
   return new Response(null, { status: 204, headers: NO_STORE });
 }
 
 /** Drop every snapshot older than the TTL — a dev page's state is not kept forever. */
-function evictStale(st: DevState, now: number): void {
+function evictStale(st: DevInspectState, now: number): void {
   for (const [url, entry] of [...st.devInspect]) {
     if (now - entry.receivedAt > INSPECT_TTL_MS) st.devInspect.delete(url);
   }
 }
 
 /** The stored entry for `want` (exact URL, else the newest with that path), or the newest. */
-function pickEntry(st: DevState, want: string | null): InspectSnapshotEntry | undefined {
+function pickEntry(st: DevInspectState, want: string | null): InspectSnapshotEntry | undefined {
   evictStale(st, Date.now());
   if (want === null) {
     let newest: InspectSnapshotEntry | undefined;
@@ -218,6 +234,53 @@ function readScope(url: URL, request?: Request): string | null {
   }
 }
 
+/** The reload-stream frame that asks every open page to post its tree now. */
+const INSPECT_PULL_FRAME = "inspect";
+
+/** A snapshot younger than this is fresh enough: a pull does not ask for another. */
+const PULL_FRESH_MS = 1000;
+
+/** How long a pull waits for a page to answer before reading what the server has. */
+const PULL_WAIT_MS = 3000;
+
+/**
+ * The on-demand pull behind `?pull=1`: when the selected snapshot is missing or older than
+ * {@link PULL_FRESH_MS} and a page is connected to the reload stream, send every page the
+ * {@link INSPECT_PULL_FRAME} frame (the page posts its tree at once, arming itself if it was
+ * not) and wait up to {@link PULL_WAIT_MS} for a post to arrive. With no page connected there
+ * is nobody to ask, and the read answers at once.
+ *
+ * @param st The dev-server state.
+ * @param scope The read's selection ({@link readScope}).
+ * @param waitMs How long to wait for a page to answer.
+ */
+async function pullSnapshot(
+  st: DevInspectState,
+  scope: string | null,
+  waitMs = PULL_WAIT_MS,
+): Promise<void> {
+  const current = pickEntry(st, scope);
+  if (current && Date.now() - current.receivedAt < PULL_FRESH_MS) return;
+  if (st.reloadClients.size === 0) return;
+  const asked = Date.now();
+  const arrived = new Promise<void>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+    const done = () => {
+      clearTimeout(timer);
+      st.devInspectWaiters.delete(wake);
+      resolve();
+    };
+    const wake = () => {
+      const entry = pickEntry(st, scope);
+      if (entry && entry.receivedAt >= asked) done();
+    };
+    timer = setTimeout(done, waitMs);
+    st.devInspectWaiters.add(wake);
+  });
+  sseSend(st.reloadClients, INSPECT_PULL_FRAME);
+  await arrived;
+}
+
 /**
  * `GET /_denext/dev-inspect` — read back the latest snapshot the page posted, for the MCP
  * component/why-render/hook tools.
@@ -225,6 +288,8 @@ function readScope(url: URL, request?: Request): string | null {
  * `?probe=1` is the page's lazy-arming probe: it answers `{ armed }` and reads nothing.
  * Any OTHER GET is a real read, and arms the sink for the dev server's lifetime — that is
  * what tells pages to start walking their fiber trees at all (see `installInspectSink`).
+ * `?pull=1` (the MCP tools) first asks the open pages for a fresh tree over the reload stream
+ * and waits briefly for it ({@link pullSnapshot}), so the first read gets a tree too.
  *
  * Selection is {@link readScope}'s; `ageMs` is measured on the SERVER clock, so a skewed
  * page clock cannot make a stale tree look fresh, and a snapshot older than
@@ -233,16 +298,26 @@ function readScope(url: URL, request?: Request): string | null {
  * @param st The dev-server state.
  * @param url The request URL (its `url` / `probe` parameters).
  * @param request The request, when the caller has one (read for `Referer` scoping).
- * @returns `{ snapshot, ageMs }`, `{ armed }` for a probe, or a 404 `{ reason: "no_snapshot" }`.
+ * @returns `{ snapshot, ageMs }`, `{ armed }` for a probe, or a 404 `{ reason: "no_snapshot" }`
+ *   (with `pages`: how many pages are connected to the reload stream).
  */
-export function devInspectRead(st: DevState, url: URL, request?: Request): Response {
+export async function devInspectRead(
+  st: DevInspectState,
+  url: URL,
+  request?: Request,
+): Promise<Response> {
   if (url.searchParams.has("probe")) {
     return Response.json({ armed: st.devInspectArmed }, { headers: NO_STORE });
   }
   st.devInspectArmed = true; // a reader exists: pages may start snapshotting
-  const entry = pickEntry(st, readScope(url, request));
+  const scope = readScope(url, request);
+  if (url.searchParams.has("pull")) await pullSnapshot(st, scope);
+  const entry = pickEntry(st, scope);
   if (!entry) {
-    return Response.json({ reason: "no_snapshot" }, { status: 404, headers: NO_STORE });
+    return Response.json(
+      { reason: "no_snapshot", pages: st.reloadClients.size },
+      { status: 404, headers: NO_STORE },
+    );
   }
   return Response.json({
     snapshot: entry.snapshot,

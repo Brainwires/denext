@@ -96,7 +96,7 @@ Deno.test({
 
     await t.step("before any interaction only the deferred boot is loaded", async () => {
       await new Promise((r) => setTimeout(r, 500)); // an eager runtime import would land by now
-      assertEquals(await scriptsLoaded(page), ["/docs/_denext/client/flight-boot.js"]);
+      assertEquals(await scriptsLoaded(page), ["/docs/_denext/client/__denext_flight_boot__.js"]);
       assertEquals(
         await page.evaluate(`document.getElementById("toggle").textContent`),
         "details 0",
@@ -109,7 +109,7 @@ Deno.test({
       await button.click();
       await pollFor(page, `document.getElementById("toggle").textContent === "details 1"`, 15000);
       const scripts = await scriptsLoaded(page);
-      assert(scripts.includes("/docs/_denext/client/flight.js"), scripts.join(", "));
+      assert(scripts.includes("/docs/_denext/client/__denext_flight__.js"), scripts.join(", "));
       assert(scripts.some((s) => /\/chunk-[A-Z0-9]+\.js$/.test(s)), scripts.join(", "));
       // A second click is an ordinary one on the now-live island.
       await button.click();

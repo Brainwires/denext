@@ -48,10 +48,10 @@ import {
   Row,
   Table,
 } from "../components.ts";
-import { Raw, renderView } from "../view.ts";
+import { renderView } from "../view.ts";
 import { matchesTerms, matchNote } from "../filter.ts";
 import { parseJsonDocument } from "../child-json.ts";
-import { field, opButton } from "../form/control.ts";
+import { Field, OpButton } from "../form/control.ts";
 import { applyListOp, OP_FIELD, parseOp } from "../form/value.ts";
 import { broadcast, exitLine, sseProcess } from "../events.ts";
 import { cliInvocation, runDeno, type RunDenoOptions } from "../proc.ts";
@@ -418,9 +418,7 @@ function FlagControl({ info, flag, view }: VerbProps & { readonly flag: FlagSpec
       placeholder: flag.default === undefined ? undefined : String(flag.default),
       disabled: view.readOnly,
     });
-  return h(Raw, {
-    html: field({ id, label: flagLabel(flag), help: flag.help, body: renderView(body) }),
-  });
+  return h(Field, { id, label: flagLabel(flag), help: flag.help }, body);
 }
 
 /** Props of a variadic positional's row editor. */
@@ -449,13 +447,11 @@ function PositionalRows({ list, id, rows, off }: RowsProps): VNode {
         ariaLabel: `${list} ${at + 1}`,
         disabled: off,
       }),
-      h(Raw, {
-        html: opButton({ op: "remove", at, list, label: "✕", title: "Remove", disabled: off }),
-      }),
+      h(OpButton, { op: "remove", at, list, label: "✕", title: "Remove", disabled: off }),
     )
   );
-  const add = opButton({ op: "add", at: rows.length, list, label: "+ Add", title: "Add" });
-  return h("div", null, lines, off ? null : h(Raw, { html: add }));
+  const add = h(OpButton, { op: "add", at: rows.length, list, label: "+ Add", title: "Add" });
+  return h("div", null, lines, off ? null : add);
 }
 
 /** One declared positional: a text input, or a row editor when it soaks up the rest. */
@@ -480,7 +476,7 @@ function PositionalControl(
     });
   const label = spec.variadic ? `${spec.name}…` : spec.name;
   const badges = spec.required ? [{ text: "required" }] : [];
-  return h(Raw, { html: field({ id, label, help: spec.help, badges, body: renderView(body) }) });
+  return h(Field, { id, label, help: spec.help, badges }, body);
 }
 
 /**

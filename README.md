@@ -345,9 +345,10 @@ downloaded and SHA-256-verified on first need. Four ways to get it:
    `DENEXT_NO_TOOLCHAIN=1` both; an existing `deno` is never replaced). On Windows,
    `irm https://denext.dev/install.ps1 | iex` in PowerShell does the same per-user, no admin
    (`%USERPROFILE%\.denext\bin`, added to your user `Path`; uninstall with
-   `& ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -Uninstall`). Each release
-   also carries a Homebrew formula, a Scoop manifest and a winget manifest set beside the
-   archives.
+   `& ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -Uninstall`; Windows on Arm
+   gets a native Arm64 binary). Package managers: `brew install brainwires/denext/denext`
+   (Homebrew, macOS and Linux), `scoop bucket add denext https://github.com/Brainwires/scoop-denext`
+   then `scoop install denext/denext` (Scoop), `winget install Brainwires.denext` (winget).
 2. `deno install -A -g -n denext jsr:@denext/denext/cli` — a launcher through your Deno (then
    `denext toolchain install` fetches the toolchain and caches every verb for offline use).
 3. `deno task compile` from a checkout.

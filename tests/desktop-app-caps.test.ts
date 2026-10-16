@@ -1342,6 +1342,7 @@ Deno.test("app: no window, dock or api — capabilities fall back and dock calls
     accelerators: false,
     icons: false,
     tooltips: false,
+    destructive: false,
     tray: true,
     trayReason: null,
     trayHost: "unknown",

@@ -15,7 +15,8 @@
 import type { AuthAdapter } from "./adapter.ts";
 import type { Hasher } from "./hasher.ts";
 import { scryptHasher } from "./hasher.ts";
-import type { SessionOptions } from "../session.ts";
+import { isProductionEnv, type SessionOptions } from "../session.ts";
+import { currentContext } from "../request-context.ts";
 import type { SessionStore } from "./session-store.ts";
 import type {
   AuthConfig,
@@ -114,6 +115,11 @@ export interface ResolvedAuthOptions {
   email: Required<AuthEmailConfig>;
   /** Second-factor policy, every default applied and every count clamped. */
   mfa: Required<AuthMfaConfig>;
+  /**
+   * The config's own `trustForwardedHeaders`, when it sets one (else the app-level setting
+   * decides) — how the `ip` every auth event carries is read.
+   */
+  trustForwardedHeaders?: boolean;
 }
 
 /**
@@ -133,11 +139,40 @@ export function cookieSessionOptions(
   return {
     secret: config.secret,
     cookieName: cookie.name,
-    hostPrefix: cookie.hostPrefix,
+    hostPrefix: cookie.hostPrefix && !plainHttpCookies(config),
     sameSite: cookie.sameSite,
     path: cookie.path,
     maxAge,
   };
+}
+
+/** A loopback host name: `localhost` (and `*.localhost`), `127.0.0.0/8`, `[::1]`. */
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "localhost" || host.endsWith(".localhost") ||
+    /^127(?:\.\d{1,3}){3}$/.test(host) ||
+    host === "[::1]" || host === "::1";
+}
+
+/**
+ * Whether this request's auth cookies go without the `__Host-` prefix. A browser refuses a
+ * `__Host-` cookie over plain http, even on `localhost`, so `denext dev` on
+ * `http://localhost` could never hold a session. Over http — no `https:` `canonicalOrigin`,
+ * neither the URL nor `x-forwarded-proto` says https — the names are plain on a loopback host,
+ * and on any host outside production. Production over http on another host keeps `__Host-`
+ * (which the browser refuses, as before): a session cookie there would travel in clear text.
+ * Outside a request (nothing to read the transport from) the prefix stays.
+ *
+ * @param config The auth config (its `canonicalOrigin`).
+ * @returns `true` to name the cookies without `__Host-`.
+ */
+export function plainHttpCookies(config: AuthConfig): boolean {
+  const request = currentContext()?.request;
+  if (!request || config.canonicalOrigin?.startsWith("https:")) return false;
+  const url = new URL(request.url);
+  const forwarded = request.headers.get("x-forwarded-proto")?.split(",")[0].trim().toLowerCase();
+  if (url.protocol === "https:" || forwarded === "https") return false;
+  return isLoopbackHost(url.hostname) || !isProductionEnv();
 }
 
 /** Resolved options per config object — the plugin hands the same `config` to every request. */
@@ -174,6 +209,7 @@ export function resolveAuthOptions(config: AuthConfig): ResolvedAuthOptions {
     adapter: config.adapter,
     email: resolveEmail(config.email ?? {}, basePath),
     mfa: resolveMfa(config.mfa ?? {}, config.canonicalOrigin),
+    trustForwardedHeaders: config.trustForwardedHeaders,
   };
   resolved.set(config, options);
   return options;

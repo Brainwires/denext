@@ -51,7 +51,7 @@ Deno.test("staticExport renders a client-boundary page via Flight", async () => 
     // The Flight bundle exists; the island's code is in a code-split chunk (loaded on
     // demand), and no client file carries server code.
     const clientDir = join(result.outDir, "_denext", "client");
-    const flightJs = await Deno.readTextFile(join(clientDir, "flight.js"));
+    const flightJs = await Deno.readTextFile(join(clientDir, "__denext_flight__.js"));
     assert(flightJs.length > 0, "flight.js emitted");
     let clientJs = "";
     for await (const e of Deno.readDir(clientDir)) {

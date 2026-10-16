@@ -77,6 +77,10 @@ export interface CertOptions {
   notAfter?: number;
   /** An extra critical extension OID this validator doesn't know. */
   unknownCritical?: string;
+  /** CRL distribution point URIs. */
+  crlUrls?: string[];
+  /** The serial number (1–127; default: the next one). */
+  serial?: number;
 }
 
 /** The optional extensions of {@linkcode makeCert}. */
@@ -96,10 +100,23 @@ function extensionsFor(o: CertOptions): Uint8Array[] {
     out.push(extension("2.5.29.17", false, der(0x30, ...o.dns.map((d) => der(0x82, utf8(d))))));
   }
   if (o.unknownCritical) out.push(extension(o.unknownCritical, true, der(0x05, [])));
+  if (o.crlUrls) {
+    // SEQUENCE OF DistributionPoint { [0] distributionPoint { [0] fullName { [6] URI } } }
+    const points = o.crlUrls.map((u) => der(0x30, der(0xa0, der(0xa0, der(0x86, utf8(u))))));
+    out.push(extension("2.5.29.31", false, der(0x30, ...points)));
+  }
   return out;
 }
 
 let serial = 1;
+
+/**
+ * The fixed clock the FIDO metadata tests run on (passed as every `now`): noon UTC, so a BLOB's
+ * day-granular `nextUpdate` is never within hours of it. The wall clock made the rollback test
+ * fail between 23:00 and 24:00 UTC, when `day(now + 5 days)` + the grace day fell before the
+ * test's own `now + 5 days + 1 h`.
+ */
+export const TEST_NOW: number = Date.UTC(2026, 5, 15, 12);
 
 /**
  * A DER certificate, really signed by its issuer's key (ECDSA P-256 / SHA-256).
@@ -108,20 +125,20 @@ let serial = 1;
  * @returns The DER.
  */
 export async function makeCert(o: CertOptions): Promise<Uint8Array> {
-  const now = Date.now();
+  const now = TEST_NOW;
   const issuer = o.issuer ?? { cn: o.subject, key: o.key };
   const algId = der(0x30, derOid("1.2.840.10045.4.3.2"));
   const extensions = extensionsFor(o);
   const tbs = der(
     0x30,
     der(0xa0, der(0x02, [2])),
-    der(0x02, [serial++ & 0x7f]),
+    der(0x02, [o.serial ?? (serial++ & 0x7f)]),
     algId,
     nameOf(issuer.cn),
     der(
       0x30,
-      utcTime(o.notBefore ?? now - 365 * 86_400_000),
-      utcTime(o.notAfter ?? now + 365 * 86_400_000),
+      utcTime(o.notBefore ?? now - 3650 * 86_400_000),
+      utcTime(o.notAfter ?? now + 3650 * 86_400_000),
     ),
     nameOf(o.subject),
     o.key.spki,
@@ -211,3 +228,43 @@ export async function signBlob(
 
 /** `YYYY-MM-DD` of an epoch-ms time. */
 export const day = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+
+/** What a test CRL says. */
+export interface CrlOptions {
+  /** The issuer's CN and signing key. */
+  issuer: { cn: string; key: TestKeyPair };
+  /** The revoked serial numbers. */
+  revoked?: number[];
+  /** `thisUpdate` / `nextUpdate`, epoch ms (default: a day before / a week after TEST_NOW). */
+  thisUpdate?: number;
+  /** `null` leaves `nextUpdate` out. */
+  nextUpdate?: number | null;
+  /** A critical CRL extension OID this reader doesn't know (a delta CRL indicator, say). */
+  unknownCritical?: string;
+}
+
+/**
+ * A DER CRL (RFC 5280 §5), really signed by its issuer's key.
+ *
+ * @param o What it says.
+ * @returns The DER.
+ */
+export async function makeCrl(o: CrlOptions): Promise<Uint8Array> {
+  const algId = der(0x30, derOid("1.2.840.10045.4.3.2"));
+  const at = utcTime(TEST_NOW - 86_400_000);
+  const entries = (o.revoked ?? []).map((s) => der(0x30, der(0x02, [s]), at));
+  const tbs = der(
+    0x30,
+    der(0x02, [1]),
+    algId,
+    nameOf(o.issuer.cn),
+    utcTime(o.thisUpdate ?? TEST_NOW - 86_400_000),
+    ...(o.nextUpdate === null ? [] : [utcTime(o.nextUpdate ?? TEST_NOW + 7 * 86_400_000)]),
+    ...(entries.length ? [der(0x30, ...entries)] : []),
+    ...(o.unknownCritical
+      ? [der(0xa0, der(0x30, extension(o.unknownCritical, true, der(0x02, [1]))))]
+      : []),
+  );
+  const signature = await signDer(o.issuer.key.privateKey, tbs);
+  return der(0x30, tbs, algId, der(0x03, [0, ...signature]));
+}

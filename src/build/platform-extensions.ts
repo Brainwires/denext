@@ -39,9 +39,11 @@ import { getCookies } from "@std/http/cookie";
 import { parse as parseJsonc } from "@std/jsonc";
 import { basename, dirname, join, relative, resolve, SEPARATOR as SEP, toFileUrl } from "@std/path";
 import type { DenextConfig } from "../server/config.ts";
+import { readTsPathAliases } from "./tsconfig-paths.ts";
 
-/** A build target. */
-export type Platform = "web" | "ios" | "android" | "macos" | "windows" | "linux";
+/** A build target (the type `denext/platform`'s constant has). */
+export type { Platform } from "../platform.ts";
+import type { Platform } from "../platform.ts";
 
 /** Every build target, in the order the docs and `doctor` list them. */
 export const PLATFORMS: readonly Platform[] = [
@@ -536,11 +538,22 @@ function localAliases(imports: unknown, base: URL): Array<[string, string]> {
 
 /**
  * The project's local import-map aliases ({@linkcode ImportAliases}): `deno.json(c)`'s `imports`,
- * or the local import map file its `importMap` names. Empty when there is none.
+ * or the local import map file its `importMap` names, then its tsconfig / jsconfig `paths`
+ * (../tsconfig-paths.ts) for the keys the import map does not have. Empty when there is none.
  *
  * @param projectDir The project root.
  */
 export async function readImportAliases(projectDir: string): Promise<ImportAliases> {
+  const aliases = await importMapAliases(projectDir);
+  const keys = new Set(aliases.map(([key]) => key));
+  for (const [key, target] of await readTsPathAliases(projectDir)) {
+    if (!keys.has(key)) aliases.push([key, toFileUrl(target).href]);
+  }
+  return aliases.sort(([a], [b]) => b.length - a.length || a.localeCompare(b));
+}
+
+/** The local aliases of the project's import map (`deno.json(c)`'s `imports` or `importMap`). */
+async function importMapAliases(projectDir: string): Promise<Array<[string, string]>> {
   for (const name of ["deno.json", "deno.jsonc"]) {
     const path = join(resolve(projectDir), name);
     let config: unknown;
@@ -551,20 +564,17 @@ export async function readImportAliases(projectDir: string): Promise<ImportAlias
     }
     const configUrl = toFileUrl(path);
     const named = (config as { importMap?: unknown } | null)?.importMap;
-    let aliases: Array<[string, string]>;
-    if (typeof named === "string") {
-      const mapUrl = new URL(named, configUrl);
-      if (mapUrl.protocol !== "file:") return [];
-      try {
-        const map = parseJsonc(await Deno.readTextFile(mapUrl)) as { imports?: unknown } | null;
-        aliases = localAliases(map?.imports, mapUrl);
-      } catch {
-        return [];
-      }
-    } else {
-      aliases = localAliases((config as { imports?: unknown } | null)?.imports, configUrl);
+    if (typeof named !== "string") {
+      return localAliases((config as { imports?: unknown } | null)?.imports, configUrl);
     }
-    return aliases.sort(([a], [b]) => b.length - a.length || a.localeCompare(b));
+    const mapUrl = new URL(named, configUrl);
+    if (mapUrl.protocol !== "file:") return [];
+    try {
+      const map = parseJsonc(await Deno.readTextFile(mapUrl)) as { imports?: unknown } | null;
+      return localAliases(map?.imports, mapUrl);
+    } catch {
+      return [];
+    }
   }
   return [];
 }

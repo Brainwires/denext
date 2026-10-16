@@ -48,6 +48,7 @@ import { relative, resolve, toFileUrl } from "@std/path";
 import { createTestClient, type TestHandler } from "./client.ts";
 import { errorDigest } from "../runtime/error-boundary.ts";
 import type { RequestErrorContext } from "../server/instrumentation.ts";
+import { SWAP_RUNTIME_BODY } from "../server/swap-runtime.ts";
 
 /** One conformance check applied to a single rendered route. */
 export interface ProbeCheck {
@@ -373,6 +374,38 @@ function boundaryCheck(errors: readonly unknown[]): ProbeCheck {
   };
 }
 
+/**
+ * The streamed Suspense holes a document left on their fallback: every `data-dnx-b`
+ * placeholder of a streamed document (one carrying the swap runtime) that no
+ * `<template data-dnx-r>` fills. A hole whose render threw with nothing inside it to catch
+ * streams no template, so its fallback is what the user keeps seeing — in a 200 page.
+ */
+export function stuckHoles(html: string): string[] {
+  if (!html.includes(SWAP_RUNTIME_BODY)) return [];
+  const filled = new Set([...html.matchAll(/<template data-dnx-r="([^"]+)"/g)].map((m) => m[1]));
+  const placeholders = [...html.matchAll(/<div data-dnx-b="([^"]+)"/g)].map((m) => m[1]);
+  return [...new Set(placeholders)].filter((id) => !filled.has(id));
+}
+
+/**
+ * The render-error check for a rendered page. A streamed hole stuck on its fallback fails
+ * `no-stuck-hole` (with the errors the server reported, usually the hole's own throw);
+ * otherwise any reported error is one an `error.tsx` boundary caught (`no-caught-error`).
+ */
+function renderErrorCheck(html: string, errors: readonly unknown[]): ProbeCheck {
+  const stuck = stuckHoles(html);
+  if (stuck.length === 0) return boundaryCheck(errors);
+  const cause = errors.length > 0
+    ? `: ${errors.map(describeCaught).join("; ")}`
+    : " (no error was reported: the stream was aborted or timed out)";
+  return {
+    name: "no-stuck-hole",
+    pass: false,
+    detail: `streamed Suspense hole${stuck.length > 1 ? "s" : ""} ${stuck.join(", ")} ` +
+      `kept the fallback${cause}`,
+  };
+}
+
 /** Request one concrete path and run the applicable conformance checks. */
 async function probePath(
   client: ReturnType<typeof createTestClient>,
@@ -404,7 +437,10 @@ async function probePath(
   const isHtmlDoc = res.status === 200 &&
     (res.headers.get("content-type") ?? "").includes("text/html");
   if (isHtmlDoc) {
-    checks.push(...checkDocument(res.text), boundaryCheck(renderErrors.get(path) ?? []));
+    checks.push(
+      ...checkDocument(res.text),
+      renderErrorCheck(res.text, renderErrors.get(path) ?? []),
+    );
   }
 
   return {

@@ -83,12 +83,16 @@ function Install-Denext {
     return
   }
 
-  # Only an x86_64 Windows binary is published; Windows on Arm runs it under x64 emulation.
-  $target = 'x86_64-pc-windows-msvc'
-  if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') {
-    Write-Host 'denext: no Arm64 build is published; installing the x64 binary (runs under emulation)'
-  } elseif ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
-    throw "denext: no prebuilt binary for $($env:PROCESSOR_ARCHITECTURE). Use the CLI from JSR: deno install -A -g -n denext jsr:@denext/denext/cli"
+  # The binaries for this machine, best first. Windows on Arm gets the native Arm64 build; a
+  # release from before it was published (DENEXT_VERSION=v4.1.0, say) has none, and the x64
+  # binary, which Windows on Arm runs under emulation, is the fallback.
+  $arch = Get-NativeArchitecture
+  $targets = switch ($arch) {
+    'ARM64' { @('aarch64-pc-windows-msvc', 'x86_64-pc-windows-msvc') }
+    'AMD64' { @('x86_64-pc-windows-msvc') }
+    default {
+      throw "denext: no prebuilt binary for $arch. Use the CLI from JSR: deno install -A -g -n denext jsr:@denext/denext/cli"
+    }
   }
 
   $version = $env:DENEXT_VERSION
@@ -100,18 +104,22 @@ function Install-Denext {
   }
   if (-not $version) { throw 'denext: could not determine the latest release; set DENEXT_VERSION.' }
 
-  $asset = "denext-$target.zip"
   $tmp = Join-Path ([IO.Path]::GetTempPath()) ("denext-install-" + [Guid]::NewGuid())
   New-Item -ItemType Directory -Path $tmp | Out-Null
   try {
-    $zip = Join-Path $tmp $asset
-    if ($env:DENEXT_ARTIFACTS) {
-      Write-Host "denext: installing $asset from $($env:DENEXT_ARTIFACTS)"
-      Copy-Item -LiteralPath (Join-Path $env:DENEXT_ARTIFACTS $asset) -Destination $zip
-    } else {
-      Write-Host "denext: downloading $version for $target"
-      Invoke-WebRequest -UseBasicParsing "$downloadBase/$version/$asset" -OutFile $zip
+    $fetched = $false
+    foreach ($target in $targets) {
+      $asset = "denext-$target.zip"
+      $zip = Join-Path $tmp $asset
+      if (Get-ReleaseAsset $downloadBase $version $asset $target $zip) {
+        $fetched = $true
+        break
+      }
+      if ($target -ne $targets[-1]) {
+        Write-Host "denext: $version has no $target build; installing the x64 binary (runs under emulation)"
+      }
     }
+    if (-not $fetched) { throw "denext: $version has no $asset" }
 
     # A binary that will run with your permissions is never installed unverified. A missing
     # checksum is as fatal as a wrong one - whoever can swap the archive can drop the checksum
@@ -148,14 +156,55 @@ function Install-Denext {
     Write-Host "denext: added $bin to your user Path (open a new terminal to pick it up)"
   }
 
-  Install-DenoToolchain $exe
+  Install-DenoToolchain $exe $target
+}
+
+# The machine's own CPU architecture (AMD64, ARM64, x86 ...). A 32-bit PowerShell on 64-bit Windows
+# sees x86 in PROCESSOR_ARCHITECTURE and the real one in PROCESSOR_ARCHITEW6432; an x64 PowerShell
+# running under emulation on Windows on Arm sees AMD64, so that answer is checked against the
+# machine-wide value in the registry, which names the native one.
+function Get-NativeArchitecture {
+  $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else {
+    $env:PROCESSOR_ARCHITECTURE
+  }
+  if ($arch -eq 'AMD64') {
+    try {
+      $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
+      $native = (Get-ItemProperty -ErrorAction Stop -Path $key).PROCESSOR_ARCHITECTURE
+      if ($native -eq 'ARM64') { $arch = $native }
+    } catch {
+      # No readable machine value: keep the process's answer.
+    }
+  }
+  return "$arch".ToUpperInvariant()
+}
+
+# Fetch the release asset $asset into $zip (from DENEXT_ARTIFACTS when set). Returns $false when
+# the release has no such asset (an HTTP 404, or no such local file); any other failure throws.
+function Get-ReleaseAsset([string]$base, [string]$version, [string]$asset, [string]$target, [string]$zip) {
+  if ($env:DENEXT_ARTIFACTS) {
+    $local = Join-Path $env:DENEXT_ARTIFACTS $asset
+    if (-not (Test-Path -LiteralPath $local -PathType Leaf)) { return $false }
+    Write-Host "denext: installing $asset from $($env:DENEXT_ARTIFACTS)"
+    Copy-Item -LiteralPath $local -Destination $zip
+    return $true
+  }
+  Write-Host "denext: downloading $version for $target"
+  try {
+    Invoke-WebRequest -UseBasicParsing "$base/$version/$asset" -OutFile $zip
+    return $true
+  } catch {
+    $response = $_.Exception.PSObject.Properties['Response']
+    if ($response -and $response.Value -and [int]$response.Value.StatusCode -eq 404) { return $false }
+    throw
+  }
 }
 
 # Install denext's Deno toolchain through the new binary, and - when this machine has no `deno` -
 # link `deno` to it. Never fatal: a failure is one warning, and the binary downloads the toolchain
 # on the first command that needs it. An existing `deno` is never replaced: the link is made only
 # when Path has none, and `toolchain link` itself refuses to overwrite a file it did not create.
-function Install-DenoToolchain([string]$exe) {
+function Install-DenoToolchain([string]$exe, [string]$target) {
   if ($env:DENEXT_NO_TOOLCHAIN -eq '1') { return }
   if (-not (Test-ToolchainVerb $exe)) {
     Write-Host ("denext: $(& $exe --version) predates denext's Deno toolchain (denext 4.0); " +
@@ -164,6 +213,13 @@ function Install-DenoToolchain([string]$exe) {
   }
   Write-Host "denext: installing denext's Deno toolchain"
   if ((Invoke-Denext $exe @('toolchain', 'install')) -ne 0) {
+    # The toolchain is built for x64 Windows only so far: the Arm64 binary runs every verb that
+    # needs Deno on the deno on your Path instead.
+    if ($target -like 'aarch64-*') {
+      Write-Host ("denext: denext's Deno toolchain has no Windows on Arm build yet; denext runs " +
+        'the deno on your Path (install it with: irm https://deno.land/install.ps1 | iex)')
+      return
+    }
     Write-Warning ('denext: the Deno toolchain could not be installed now; it downloads on the ' +
       'first command that needs it (or run `denext toolchain install`).')
     return
@@ -293,13 +349,31 @@ function Uninstall-DenextFiles([string]$root) {
     Select-Object -Unique
   foreach ($rel in $files) {
     $path = Join-Path $root $rel
-    if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
+    if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-SettlingFile $path }
   }
   if (Test-Path -LiteralPath $manifest -PathType Leaf) { Remove-Item -LiteralPath $manifest -Force }
   foreach ($dir in @((Join-Path $root 'bin'), $root)) {
     if ((Test-Path -LiteralPath $dir -PathType Container) -and
       -not (Get-ChildItem -LiteralPath $dir -Force | Select-Object -First 1)) {
       Remove-Item -LiteralPath $dir -Force
+    }
+  }
+}
+
+# Delete $path, retrying for up to five seconds while Windows holds it. Uninstall runs denext.exe
+# (`toolchain unlink`) just before it deletes it, and the file can stay held for a moment after that
+# process has exited - an antivirus scan of the freshly run binary ("being used by another
+# process"), the image of a process still tearing down ("Access ... is denied"). A hold that
+# outlasts the retries (denext still running, a real permission problem) still fails the uninstall.
+function Remove-SettlingFile([string]$path) {
+  for ($attempt = 1; ; $attempt++) {
+    try {
+      Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+      return
+    } catch {
+      $held = $_.Exception -is [IO.IOException] -or $_.Exception -is [UnauthorizedAccessException]
+      if ($attempt -ge 20 -or -not $held) { throw }
+      Start-Sleep -Milliseconds 250
     }
   }
 }

@@ -95,6 +95,9 @@ Deno.test("the read-only set is exactly the values denext cannot serialise", () 
     "cache.store.sweepPages",
     // A project command's handler (its `flags`/`positionals` are typed lists).
     "commands[].run",
+    // A deploy adapter's functions (its `name` is a text field).
+    "deploy.adapter.deploy",
+    "deploy.adapter.prepare",
     // A message catalogue: `Record<string, unknown>` — a map whose values are opaque.
     "i18n.messages",
     // A job-history store: an object of methods, as opaque as `cache.store`.
@@ -165,6 +168,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     asyncContext: "toggle",
     features: "map",
     optimizePackageImports: "union", // `string[] | false`: a chips branch + a `false` branch
+    resolveAlias: "map",
     momentumSafeScroll: "toggle",
     lists: "segmented",
     platformExtensions: "union", // `boolean | PlatformExtensionsConfig`: a toggle + an options group
@@ -172,6 +176,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     mobile: "group",
     desktop: "group",
     compile: "group", // `denext build --compile`: embedded paths + extra baked permissions
+    deploy: "group", // the deploy adapter (a preset from denext/deploy)
     experimental: "group",
     classComponents: "toggle",
     compatibilityMode: "segmented",

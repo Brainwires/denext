@@ -1,8 +1,9 @@
 /**
  * The `window` capability: the page's control over its own Deno Desktop window — state
  * (maximize / minimize / fullscreen), size and size limits, the displays, the title bar and
- * backdrop, a cancelable close, quitting, and files dragged in and out. The page side is
- * `denext/desktop/window`.
+ * backdrop, a cancelable close, quitting, files dragged in and out, and the OS share sheet over the
+ * window (`share`, runtime 2.9.7-denext.20). The page side is `denext/desktop/window` (and
+ * `denext/mobile`'s `share`).
  *
  * It is not a `desktop.capabilities` key: `runDesktop` registers it whenever it adopted a window,
  * like the deep-link capabilities. Every method feature-detects its `Deno.BrowserWindow` /
@@ -54,6 +55,12 @@ const MAX_FILES_PER_DROP = 1024;
 const MAX_DRAG_FILES = 4096;
 /** The largest drag icon accepted, as base64 characters. */
 const MAX_ICON_CHARS = 2 * 1024 * 1024;
+/** The most files one share carries. */
+const MAX_SHARE_FILES = 64;
+/** The longest title / text / URL a share carries. */
+const MAX_SHARE_TEXT = 64 * 1024;
+/** How a share sheet can end (`BrowserWindow.share`, runtime 2.9.7-denext.20). */
+const SHARE_OUTCOMES = new Set(["completed", "shown", "cancelled", "not_supported", "failed"]);
 
 /** The window state events the runtime fires (each becomes a `state` signal). */
 const STATE_EVENTS = [
@@ -102,6 +109,14 @@ interface BrowserWindowLike {
   setBackgroundMaterial?(material: string): boolean;
   setVibrancy?(material: string | null): boolean;
   startDrag?(item: { files: string[]; icon?: Uint8Array }): Promise<string>;
+  share?(data: {
+    title?: string;
+    text?: string;
+    url?: string;
+    files?: string[];
+    x?: number;
+    y?: number;
+  }): Promise<{ outcome?: unknown; target?: unknown; reason?: unknown }>;
 }
 
 /** One file of a drop, as the page takes it. */
@@ -295,6 +310,8 @@ async function capabilitiesOf(
     fileDrop: false,
     fileDropEnterPaths: false,
     fileDragOut: has("startDrag"),
+    // The share sheet (runtime 2.9.7-denext.20): macOS and Windows; Linux answers not_supported.
+    share: has("share") && Deno.build.os !== "linux",
     fileDialogs: false,
     fileDialogFilesAndDirectories: false,
     fileDialogModal: false,
@@ -568,6 +585,102 @@ async function startDrag(s: WindowState, args: unknown): Promise<{ result: strin
   return { result: result === "dropped" || result === "cancelled" ? result : "failed" };
 }
 
+/** An optional share string, bounded. */
+function shareText(value: unknown, name: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.length > MAX_SHARE_TEXT) {
+    throw invalid(`${name} must be a string up to ${MAX_SHARE_TEXT} characters`);
+  }
+  return value;
+}
+
+/** What the share sheet gets (`BrowserWindow.share`'s argument). */
+interface ShareSheetData {
+  title?: string;
+  text?: string;
+  url?: string;
+  files?: string[];
+  x?: number;
+  y?: number;
+}
+
+/** The title / text / url of a share, checked (the url http(s) only). */
+function shareTexts(a: Record<string, unknown>): ShareSheetData {
+  const data: ShareSheetData = {};
+  for (const key of ["title", "text", "url"] as const) {
+    const value = shareText(a[key], key);
+    if (value !== undefined) data[key] = value;
+  }
+  if (data.url !== undefined && !/^https?:\/\//i.test(data.url)) {
+    throw invalid("url must be an http(s) URL");
+  }
+  return data;
+}
+
+/** The files of a share as absolute paths, resolved like a drag-out's (empty when none). */
+async function shareFiles(s: WindowState, raw: unknown): Promise<string[]> {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw) || raw.length > MAX_SHARE_FILES) {
+    throw invalid(`files must be an array of at most ${MAX_SHARE_FILES} files`);
+  }
+  const files: string[] = [];
+  for (const item of raw) files.push(await dragPath(s, item));
+  return files;
+}
+
+/** The share sheet's arguments as the runtime takes them. */
+async function shareData(s: WindowState, args: unknown): Promise<ShareSheetData> {
+  const a = argsOf(args);
+  const data = shareTexts(a);
+  const files = await shareFiles(s, a.files);
+  if (files.length > 0) data.files = files;
+  if (data.text === undefined && data.url === undefined && files.length === 0) {
+    throw invalid("share needs text, a url or files");
+  }
+  if (a.x !== undefined) data.x = num(a.x, "x");
+  if (a.y !== undefined) data.y = num(a.y, "y");
+  return data;
+}
+
+/**
+ * `share`: the OS share sheet over the window (macOS `NSSharingServicePicker`, Windows
+ * `DataTransferManager`). Files are picked handles or files in the app's folders, never a raw
+ * path. Resolves how it ended; a file the app may not read is `forbidden`.
+ */
+async function share(
+  s: WindowState,
+  args: unknown,
+): Promise<{ outcome: string; target?: string; reason?: string }> {
+  const data = await shareData(s, args);
+  try {
+    return shareResult(await call(s, "share", "show the share sheet", data));
+  } catch (err) {
+    throw shareError(err);
+  }
+}
+
+/** The runtime's answer, whitelisted and bounded (an unknown outcome is `failed`). */
+function shareResult(raw: unknown): { outcome: string; target?: string; reason?: string } {
+  const r = argsOf(raw);
+  const outcome = typeof r.outcome === "string" && SHARE_OUTCOMES.has(r.outcome)
+    ? r.outcome
+    : "failed";
+  return {
+    outcome,
+    ...(typeof r.target === "string" ? { target: r.target.slice(0, 256) } : {}),
+    ...(typeof r.reason === "string" ? { reason: r.reason.slice(0, 1024) } : {}),
+  };
+}
+
+/** A runtime rejection as the page sees it: an unreadable file is `forbidden`. */
+function shareError(err: unknown): unknown {
+  if (err instanceof Deno.errors.NotCapable) {
+    return new DesktopCapError("forbidden", "the app may not read a shared file", { status: 403 });
+  }
+  if (err instanceof TypeError) return invalid(`share: ${err.message}`);
+  return err;
+}
+
 /** The methods that read the window and change its state, size and position. */
 function windowStateMethods(s: WindowState): DesktopCapability["methods"] {
   const { win, api } = s;
@@ -707,6 +820,10 @@ function windowCloseAndDragMethods(s: WindowState): DesktopCapability["methods"]
     startDrag: {
       timeoutMs: false, // the drag lasts as long as the user holds the button
       handler: (args) => startDrag(s, args),
+    },
+    share: {
+      timeoutMs: false, // the sheet stays up while the user picks a target
+      handler: (args) => share(s, args),
     },
   };
 }

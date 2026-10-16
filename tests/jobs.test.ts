@@ -8,6 +8,8 @@ import {
   isJob,
   jobNames,
   type JobRunRecord,
+  markJobsDiscovered,
+  registerCronSchedules,
   registerJob,
   runJob,
   scheduleJobs,
@@ -102,6 +104,38 @@ Deno.test("scheduleJobs uses Deno.cron when available and hands it the schedule"
     assertEquals(ran, 1, "the returned promise resolves once the job ran");
     dispose();
   });
+});
+
+Deno.test("registerCronSchedules registers at once, and the boot's scheduler skips those names", async () => {
+  reset();
+  let ran = 0;
+  await withFakeDenoCron(async (calls) => {
+    // The Deno Deploy entry registers before the server has discovered jobs/.
+    registerCronSchedules([{ cron: "0 4 * * *", job: "early-registered" }]);
+    assertEquals(calls.length, 1);
+    assertEquals(calls[0].schedule, "0 4 * * *");
+    // A run that fires before discovery waits for it, then runs the job.
+    const result = calls[0].handler() as Promise<unknown>;
+    registerJob("early-registered", defineJob({ handler: () => ++ran }));
+    markJobsDiscovered();
+    await result;
+    assertEquals(ran, 1);
+    // The boot then schedules the same pairing: no second Deno.cron (which would throw there).
+    scheduleJobs([{ cron: "0 4 * * *", job: "early-registered" }]);
+    assertEquals(calls.length, 1);
+    // A second pre-registration of the pairing is a no-op too; a bad cron is skipped.
+    registerCronSchedules([
+      { cron: "0 4 * * *", job: "early-registered" },
+      { cron: "bogus", job: "early-registered" },
+    ]);
+    assertEquals(calls.length, 1);
+  });
+});
+
+Deno.test("registerCronSchedules is a no-op without Deno.cron", () => {
+  const denoAny = Deno as { cron?: unknown };
+  if ("cron" in denoAny) return; // a runtime with Deno.cron: the fake-cron test covers it
+  registerCronSchedules([{ cron: "0 5 * * *", job: "never" }]);
 });
 
 Deno.test("scheduleJobs hands Deno.cron the POSIX weekday respelled in names", async () => {

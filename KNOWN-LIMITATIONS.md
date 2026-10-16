@@ -35,7 +35,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 - **Built for five targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64).
   Elsewhere, and offline on first use, commands run on stock Deno, without `Deno.SQL` or
-  Vitest/Jest compatibility in `deno test`.
+  Vitest/Jest compatibility in `deno test`. That includes Windows on Arm: the `denext` binary
+  is built for it, but its Deno verbs run on the `deno` on your `Path` (the x64 binary, which
+  runs under emulation, gets the x64 toolchain).
 - **A CLI installed from JSR caches its verbs after the install, not during it.** `deno install
   -g jsr:@denext/denext/cli` caches the entrypoint; each verb's modules are cached by the CLI's
   first online run (in the background) or by `denext toolchain install`. A verb used offline
@@ -53,7 +55,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   component's mount and split its code instead (no server HTML to keep inert): only for a
   component imported by name, not a member tag or a module-level `hydrate` default; a component
   also used without a directive stays in the main bundle; `client:interaction` needs a
-  `client:placeholder` to interact with.
+  `client:placeholder` to interact with, and replays the triggering gesture on the element at the
+  same position in the component's DOM (its first element when the placeholder's shape differs).
 - **`use cache` can't read request data** (`cookies()`/`headers()`/`connection()`): read it
   outside and pass the value in.
 - **A streamed hole can't emit inline `<style>`/`<script>`** (the head and its CSP hashes have
@@ -63,24 +66,34 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Typed API, Live and GraphQL
 
-- **Live is single-instance without a `ChannelTransport`** (`broadcastChannelTransport()` or your
-  own Redis/NATS one makes publishes and tag invalidations cross-instance).
+- **Live is single-instance without a `ChannelTransport`** (`redisChannelTransport()`,
+  `broadcastChannelTransport()` on Deno Deploy, or your own makes publishes, tag invalidations
+  and `usePresence` rooms cross-instance).
+- **Live views resume across instances only through a shared view store and from a
+  serializable model:** without `setLiveViewStore(redisLiveViewStore() | postgresLiveViewStore())`
+  a reconnect that lands on another instance, or any reconnect after
+  `live.limits.viewResumeSeconds`, re-runs `init`; a model the wire codec cannot encode (a
+  function, a class instance) stays in its process. A view resumed elsewhere carries on from the
+  model as last stored, while the parked copy runs on where it was until its window ends. With
+  JavaScript disabled only the first render works.
 - **Channels carry state, not a log:** no replay on reconnect, at-most-once, latest-wins, 16 ms
   coalescing, `seq` ordered per instance. Re-authorization is lazy (`authTtlSeconds`;
   `channel.revoke(key)` is immediate). The production handshake requires a browser `Origin`.
 - **Only GET/HEAD calls batch; `useApi({ suspense: true })` seeds hydration on Flight routes
   only** (elsewhere it fetches on mount).
-- **`@denext/openapi` describes only what a validator can export** (else `{}` / `unknown`);
-  middleware responses appear only as `default`; `scalar` / `swagger` load from a CDN.
-- **`@denext/graphql`: with Yoga `batching` the cost budget is per operation.** A schema object
-  imported into `denext.config.ts` needs a restart after an edit (a module-path `schema` reloads).
+- **`@denext/openapi` describes only what a validator can export** (else `{}` / `unknown`); a
+  custom middleware's responses appear only as `default` until it is tagged with
+  `documentsErrors`; `scalar` loads from a CDN (`swagger` is vendored).
+- **`@denext/graphql` reloads a schema object only when it can trace it:** one built in
+  `denext.config.ts` itself, or imported through an alias rather than a relative import, needs a
+  dev-server restart after an edit (a module-path `schema` always reloads).
 
 ### First-party auth (`denextAuth`)
 
 - **Mail delivery is best-effort:** emailed tokens go to `sendVerificationRequest` (`smtpMailer()`
   or your own) after the response, so delivery can be cut short where the platform freezes the
   isolate.
-- **`sqliteAuthAdapter` is single-node and additive-only** (no renames or drops).
+- **`sqliteAuthAdapter` is single-node.**
 - **Without an adapter, a stateless cookie session can't be ended early:** the user's
   `sessionsValidAfter` (set by `revokeAllSessions`, a password reset or change, a ban, a deletion
   and the pre-account-hijacking eviction) lives on the stored user, so with no adapter there is
@@ -94,20 +107,38 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   zero remaining; rate limiters count per node without a shared
   `rateLimit.store`, and every per-IP budget (the captcha budget included) is skipped for a
   loopback/private peer with no trusted proxy hop unless `rateLimitLocalAddresses` is set.
-- **The passkey endpoints are same-origin only:** an extra `passkeys.origins` entry (another web
-  origin, an Android `apk-key-hash`) needs that origin to serve the auth routes itself.
-- **Passkeys verify `none` and `packed` attestation only** (with `attestation.mds`, another
-  format registers only as unattested), and ES256 / RS256 / Ed25519 keys only. The Metadata
-  Service checks fetch no certificate revocation lists.
+- **An Android `apk-key-hash` passkey origin can't call the passkey endpoints:** a native app has
+  no web origin for `passkeys.corsOrigins`, so it needs endpoints of its own.
+- **Passkeys verify `none`, `packed`, `tpm`, `android-key`, `apple` and `fido-u2f`
+  attestation** (`android-safetynet` and `compound` register only as unattested, under
+  `attestation.mds.allowUnattested`), and ES256 / RS256 / Ed25519 credential keys only. The
+  Metadata Service checks use CRLs, not OCSP.
 - **Fixed profiles:** TOTP is SHA-1 / 6 digits / 30 s (what every authenticator supports); an
   email local part must be ASCII.
-- **Native sessions:** under `mfa.required: "always"` a user with no factor yet can't enroll from
-  a native `id_token` sign-in (`403 mfa_required`; the browser flow enrolls); Apple token
-  revocation needs `native.apple.clientSecret`.
-- **`cors` covers route handlers and the native auth endpoints only**, not pages, Server Actions,
-  the batch endpoint or Live; middleware must let `OPTIONS` under `/auth` through.
-- **SAML Single Logout is `/auth/v1`'s only:** a `saml()` provider on denext's own endpoints
-  signs in, and its session ends with `signOut()`, not with an IdP's LogoutRequest.
+- **Native sessions:** Apple token revocation needs `native.apple.clientSecret`.
+- **`cors` lets a cross-origin caller into Server Actions, the API batch and Live only without
+  cookies** (those keep the same-origin rule, or `allowedOrigins`), and a cross-origin Live socket
+  needs `canonicalOrigin`; middleware must let `OPTIONS` under `/auth` through.
+- **SAML Single Logout with stateless sessions ends every session of the user:** a cookie session
+  has no id, so an IdP's LogoutRequest naming one SessionIndex ends all of that user's sessions
+  signed in before it (a `sessionStore` ends exactly the named one).
+
+### `next-auth` (Auth.js v5) compat
+
+- **Providers:** GitHub, Google, Apple, Discord, Microsoft Entra ID, GitLab, X (Twitter),
+  LinkedIn, Facebook, Slack, Twitch, Spotify, Okta, Auth0, Keycloak, Cognito, Zoom, Notion,
+  Credentials, Resend, Nodemailer / Email, and custom OAuth / OIDC objects. Auth.js's other
+  `next-auth/providers/*` modules are not shipped; write one as a custom provider object.
+  WebAuthn (`next-auth/providers/passkey`) is not mapped — denext's own `passkeys` are.
+- **Adapters:** an Auth.js adapter (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …) backs
+  users, accounts, verification tokens and database sessions. Roles, bans and
+  `sessionsValidAfter` need its two optional extension methods (`getUserExtension` /
+  `updateUserExtension`, an extension table); without them those fields are dropped with a
+  warning and `revokeAllSessions()` can't end its database sessions. Password hashes are not
+  stored through it, and database sessions don't slide. With an adapter, a Credentials `authorize()` must return a user of the
+  adapter's users table (by `id`), as with Auth.js; a user it doesn't know is refused.
+- **v4 APIs** (`next-auth/next`, `getServerSession`, `next-auth/middleware`'s `withAuth`) are
+  not shipped.
 
 ### Backend (`@denext/backend`)
 
@@ -124,9 +155,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `db()` and realtime throw `code: "unsupported"`.
 - **Auto-REST speaks PostgREST 12's wire format but is not PostgREST:** a request takes at most 64
   filters, 256 select items and 8 levels of embedding, and runs under a 5-second
-  `statement_timeout`. The routes are not in the `@denext/openapi` document (`GET /rest/v1` serves
-  PostgREST's own Swagger 2.0 one), and their request budget (`rest.rateLimit`) counts per
-  process unless it is given a shared `store`.
+  `statement_timeout`. The `@denext/openapi` document lists the default schema's routes only (a
+  second schema is described by `GET /rest/v1` with its `Accept-Profile`), and their request
+  budget (`rest.rateLimit`) counts per process unless it is given a shared `store`.
 - **Realtime re-reads every change as each subscriber.** With the default LISTEN/NOTIFY source the
   trigger sends only the key, so every change costs a re-read per identity and filter; many
   concurrent writers serialize on commit (the logical-replication source
@@ -149,22 +180,18 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   verb (`dev`, `build`, `export`, `start`, …), on denext's Deno toolchain (downloaded on first
   need; no Deno install required). Offline on first use, with no toolchain cached, it needs a
   `deno` on PATH. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
-- **A `denext build --compile` binary runs on Deno's stock `denort` 2.9.7**, not denext's
-  toolchain build, so it has no `Deno.SQL` (Postgres goes through `fromPostgresJs(postgres(url))`;
-  `db migrate` on a plain Postgres `DATABASE_URL` needs `@denext/backend` with that client), and it
-  prints Deno's one-line `request.signal` legacy-abort notice on the first request (`deno compile`
-  does not carry `--unstable-no-legacy-abort`). A SPA has no server to compile. `dev`, `build` and
-  `export` stay on the CLI. next-compat builds and the Pages Router are untested in a binary.
+- **`denext build --compile` compiles a server only:** a SPA has no server to compile, and `dev`,
+  `build` and `export` stay on the CLI. next-compat builds and the Pages Router are untested in a
+  binary. The binary prints Deno's one-line `request.signal` legacy-abort notice on the first
+  request: a compiled binary does not take `--unstable-no-legacy-abort`, the toolchain's `denort`
+  included (it is cosmetic: denext handles both abort behaviours).
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
   `allowedDevOrigins`; no wildcards), the CVE-2025-48068 defence.
-- **`denext doctor` / `probeApp` don't see a streamed Suspense hole whose error nothing inside it
-  catches:** the hole keeps its fallback in a 200 page. Put an `error.tsx` inside the hole, or
-  assert on the route's content yourself.
-- **DevTools hook names are all-or-nothing per component** (a conditional hook, or one imported
-  by a bare / `npm:` / `jsr:` / URL specifier, a namespace import or `export *`, aborts naming).
-  The bundled App Router path names route files only. Network, Cache, Routes and the MCP snapshot
+- **DevTools can't expand a package's custom hook** (one imported by a bare / `npm:` / `jsr:` /
+  URL specifier): its cells are labelled with the call, and cells two such hooks in a row could
+  share stay unnamed. The bundled App Router path names route files only. Network, Cache, Routes and the MCP snapshot
   need the App Router dev server. React DevTools' hooks view and Profiler read React internals,
   so they don't work; use denext's panel.
 - **The first-party Markdown renderer escapes raw HTML** (it is not passed through). Use an `.mdx`
@@ -180,10 +207,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **`getLoadContext` values read from the Express request are `TODO` stubs** after migration, and
   `cspNonce` is `undefined` (denext's CSP is hash-based). The synthesized `ServerBuild` is flat.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
-- **`@denext/react-router` generates no route types.** `import type { Route } from
-  "./+types/…"` is type-only, so it erases and the app runs, but denext writes no `+types`
-  modules for a type check to resolve. (How `serverLoader()` behaves on a client navigation is a
-  deliberate difference: [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md).)
 - **Prisma auto-migration rewrites runtime source only** (seed and test tooling keep the native
   client); non-SQLite datasources need their own driver adapter.
 
@@ -294,19 +317,14 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   untrusted: the runtime drops clicks it never posted (each carries a MAC from a per-install key,
   `<app data dir>/laufey-notification-key`), but any process of the same user can read that key.
   A notification's tag is at most 256 bytes, its data 4 KiB and an action id 1 KiB (UTF-8): a
-  larger click is dropped, so denext refuses to post one. The runtime cannot list delivered
-  notifications, so `deliveredNotifications()` there lists only what denext posted during this run
-  and has not removed (a notification the user dismissed is still listed, one from an earlier run
-  is not), and `threadId` does not group them in the OS. [Details](https://denext.dev/docs/desktop#desktop-notifications).
+  larger click is dropped, so denext refuses to post one. Linux notification servers keep no list
+  of an app's notifications, so `deliveredNotifications()` there lists only what denext posted
+  during this run and has not removed (a notification the user dismissed is still listed, one from
+  an earlier run is not); on every OS `threadId` does not group them in the OS. [Details](https://denext.dev/docs/desktop#desktop-notifications).
 - **Linux sessions differ:** with no tray host `createTray` rejects `unsupported`; with a locked
   keyring no one can unlock, CEF stores cookies obfuscated, not OS-protected
   (`cookieEncryption: "basic"`). `denext desktop doctor --linux` lists what is missing
   ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
-- **CEF cookies on macOS are only obfuscated, not protected by the OS.** CEF runs with
-  Chromium's mock keychain, whose key is a constant, so the cookie store on disk is encrypted with
-  a key every copy of Chromium knows (`cookieEncryption: "basic"`, always): any process that can
-  read the app's data directory can read its cookies. The macOS WebView backend (WKWebView) keeps
-  cookies in WebKit's own store; Windows CEF uses DPAPI (`"os"`).
 - **A Linux CEF app run from a tarball or AppImage on Ubuntu 23.10+ has no Chromium sandbox**
   (AppArmor restricts user namespaces, and only the `.deb` / `.rpm` install the setuid
   `chrome-sandbox`): `appCapabilities().sandbox` reads `"off"`. Set
@@ -322,10 +340,6 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
   needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
   doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).
-- **A CEF window on Windows can wait for slow proxy auto-detection.** On a network where WPAD / PAC
-  discovery is slow, Chromium waits for the proxy configuration before it applies its loopback
-  bypass, so the page's Live WebSocket (through the runtime's loopback relay) can take 10 s or more
-  to connect at startup. The webview backend and macOS / Linux are unaffected.
 - **CEF on Linux has no spellcheck unless the app ships its dictionaries** (runtime
   2.9.7-denext.11): the runtime makes no network requests of its own, so it no longer downloads
   Hunspell dictionaries from Google. Put the `.bdic` files in `<data dir>/CEF/Dictionaries` to
@@ -373,7 +387,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   macOS notifications, the update signer match with real identities, Mica, real HiDPI displays):
   no CI runner has the hardware or identities, so they are checked before each final release
   ([checklist](https://denext.dev/docs/contributing#manual-desktop-checks-before-a-final-release)).
-- **No share sheet, Handoff, Spotlight or Touch Bar.** `react-native-windows` / `-macos` native
+- **No Touch Bar.** `react-native-windows` / `-macos` native
   modules don't run (write a desktop extension); their extra components are DOM stand-ins.
 - **`denext desktop dev` runs under the `deno` CLI only;** with `--lan` the per-launch token is
   not injected, so token-gated features are refused.

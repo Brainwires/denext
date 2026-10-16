@@ -35,6 +35,7 @@ import { base64UrlEncode, randomToken } from "./oauth.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { type ResolvedMds, resolveMds } from "./fido-mds.ts";
 import type { AuthConfig, AuthPasskeyConfig } from "./types.ts";
+import { type CorsPolicy, normalizeCorsOrigin, resolveCors } from "../cors.ts";
 import { PASSKEY_ALGORITHMS, type PasskeyAlgorithm, WebAuthnError } from "./webauthn.ts";
 
 /** The adapter methods passkeys need, all present. */
@@ -86,6 +87,11 @@ export interface ResolvedPasskeys {
   algorithms: readonly PasskeyAlgorithm[];
   /** The FIDO Metadata Service policy, or `null` when attestation isn't checked. */
   mds: ResolvedMds | null;
+  /**
+   * The credentialed CORS policy for the origins allowed to call the passkey endpoints from
+   * another origin (`passkeys.corsOrigins`), or `null` (same-origin only).
+   */
+  cors: CorsPolicy | null;
 }
 
 /** The longest WebAuthn `user.id` (§5.4.3): 64 bytes. */
@@ -155,6 +161,7 @@ function resolve(config: AuthConfig, options: AuthPasskeyConfig): ResolvedPasske
     );
   }
   const timeout = options.timeout ?? 300;
+  const cors = resolvePasskeyCors(options.corsOrigins, origins);
   return {
     rpId,
     rpName: options.rpName?.trim() || rpId,
@@ -163,7 +170,36 @@ function resolve(config: AuthConfig, options: AuthPasskeyConfig): ResolvedPasske
     timeout: Number.isFinite(timeout) ? Math.min(900, Math.max(30, Math.floor(timeout))) : 300,
     algorithms: PASSKEY_ALGORITHMS,
     mds: resolveMds(options.attestation?.mds),
+    cors,
   };
+}
+
+/**
+ * The credentialed CORS policy for `passkeys.corsOrigins`: each entry an exact web origin that
+ * is also one of the ceremony `origins` (its page runs the ceremony, so `clientDataJSON.origin`
+ * names it). Throws at config time otherwise.
+ */
+function resolvePasskeyCors(
+  corsOrigins: readonly string[] | undefined,
+  origins: readonly string[],
+): CorsPolicy | null {
+  if (!corsOrigins?.length) return null;
+  const normalized = corsOrigins.map((o) => normalizeCorsOrigin(o));
+  const bad = normalized.filter((o) =>
+    !(o.startsWith("https://") || o.startsWith("http://")) || !origins.includes(o)
+  );
+  if (bad.length) {
+    throw new Error(
+      `denextAuth: every \`passkeys.corsOrigins\` entry must be a web origin also listed in ` +
+        `\`passkeys.origins\` (where its page runs the ceremony) — got ${JSON.stringify(bad)}.`,
+    );
+  }
+  return resolveCors({
+    origins: normalized,
+    credentials: true,
+    methods: ["GET", "POST", "DELETE"],
+    headers: ["content-type", "x-denext-auth"],
+  });
 }
 
 /** A ceremony a challenge belongs to. */
@@ -177,6 +213,12 @@ export interface ChallengeData {
   userId?: string;
   /** The SHA-256 (hex) of the ceremony id the options response handed out. */
   binding: string;
+  /**
+   * The `passkeys.corsOrigins` entry that started the ceremony, for one started cross-origin
+   * (absent for a same-origin one): only a request from that origin, carrying a client data
+   * `origin` equal to it, completes it.
+   */
+  origin?: string;
 }
 
 /**

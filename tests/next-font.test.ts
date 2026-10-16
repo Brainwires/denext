@@ -307,9 +307,9 @@ Deno.test("fallbackOverrides: unknown family → null; a face can be forced", ()
   );
 });
 
-Deno.test("localFont accepts Next's adjustFontFallback option (type-level parity, no face emitted)", () => {
+Deno.test("localFont with a font file it can't find emits no fallback face", () => {
   resetFonts();
   const f = localFont({ src: "/fonts/X.woff2", adjustFontFallback: "Arial" });
   assert(f.className.startsWith("__font_"));
-  assert(!collectedFontFaces().join("\n").includes("Fallback"), "no metrics for a local file");
+  assert(!collectedFontFaces().join("\n").includes("Fallback"), "no file → no metrics");
 });

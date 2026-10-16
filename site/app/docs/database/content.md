@@ -75,6 +75,12 @@ for await (const e of kv.list({ prefix: ["notes"] })) notes.push(e.value);
 Run with `--unstable-kv` (add it to your `deno task` definitions; the framework
 itself does not need it).
 
+The framework's shared stores also run on KV — `denoKvCacheStore()`,
+`denoKvSessionStore()` and `denoKvRateLimitStore()` from `denext/server` (on Deno
+Deploy, the project's database with no options). Redis has the same three
+(`redisCacheStore()`, `redisSessionStore()`, `redisRateLimitStore()`), on
+denext's own zero-npm client. → [Multi-instance › Redis and Deno KV](/docs/multi-instance#redis-and-deno-kv)
+
 ## Postgres
 
 For a horizontally scaled app, every replica needs the same database. denext's own Postgres

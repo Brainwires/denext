@@ -22,6 +22,7 @@ import { registerRouteSynthesizer } from "../router/manifest.ts";
 import { OTA_MANIFEST_PATH, OTA_PLATFORM_PATH } from "../mobile/ota-manifest.ts";
 import { DESKTOP_PRELOAD_FILE } from "../desktop/preload.ts";
 import type { CommandSpec } from "../cli/command.ts";
+import type { DeployAdapter } from "../deploy/adapter.ts";
 import { isReservedDenoVerb, reservedVerbError } from "../cli/deno-verbs.ts";
 import { dirname, globToRegExp, isAbsolute, join, SEPARATOR, SEPARATOR_PATTERN } from "@std/path";
 
@@ -162,6 +163,12 @@ export interface PluginContext {
    */
   addCommand(command: CommandSpec): void;
   /**
+   * Contribute a deploy adapter (see `denext/deploy`): `denext build` runs its `prepare` after
+   * the build, with the deploy manifest, when `denext.config.ts` names no `deploy.adapter` of its
+   * own, and `denext deploy` uses it. The first one a plugin contributes wins.
+   */
+  addDeployAdapter(adapter: DeployAdapter): void;
+  /**
    * Register a disposer to run when the server drains — the symmetric shutdown
    * for anything {@linkcode DenextPlugin.setup} opened (a file watcher, a
    * connection, a timer). Disposers run most-recently-registered first. Per-plugin
@@ -191,6 +198,7 @@ const buildSteps: PluginBuildStep[] = [];
 /** Prepare steps with their watch globs (see {@linkcode PluginContext.addPrepareStep}). */
 const prepareSteps: Array<{ step: PluginPrepareStep; watch: readonly string[] }> = [];
 const pluginCommands: CommandSpec[] = [];
+const deployAdapters: DeployAdapter[] = [];
 const teardowns: PluginTeardown[] = [];
 // Disposers that unregister the route synthesizers this layer added, so
 // `resetPlugins()` clears plugin-registered synthesizers (their registry is
@@ -255,6 +263,7 @@ export async function applyPlugins(base: ApplyPluginsBase): Promise<void> {
         }
         if (startedUnder === generation) pluginCommands.push({ ...command, source: "plugin" });
       },
+      addDeployAdapter: (adapter) => deployAdapters.push(adapter),
       addTeardown: (teardown) => teardowns.push(teardown),
     };
     await plugin.setup(context);
@@ -502,6 +511,11 @@ export async function runMatchingPrepareSteps(
   return ran;
 }
 
+/** Every plugin-contributed deploy adapter, in registration order. */
+export function getPluginDeployAdapters(): readonly DeployAdapter[] {
+  return deployAdapters;
+}
+
 /** Every plugin-contributed CLI command (for the CLI to merge into its registry). */
 export function getPluginCommands(): readonly CommandSpec[] {
   return pluginCommands;
@@ -541,6 +555,7 @@ export function resetPlugins(): void {
   buildSteps.length = 0;
   prepareSteps.length = 0;
   pluginCommands.length = 0;
+  deployAdapters.length = 0;
   teardowns.length = 0;
   for (const dispose of synthDisposers) dispose();
   synthDisposers.length = 0;

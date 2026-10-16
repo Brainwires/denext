@@ -75,6 +75,9 @@ Deno.test("migrate: an RR7 framework app takes the plugin path (sources untouche
     assertStringIncludes(imp["@react-router/node"], "/remix/server");
     // The RR server adapters are dropped as npm deps (their behavior is denext's).
     assert(!("@react-router/serve" in imp));
+    // Route typegen: `./+types/<route>` resolves into `.react-router/types`, as RR's tsconfig has it.
+    assertEquals(deno.compilerOptions.rootDirs, [".", "./.react-router/types"]);
+    assertStringIncludes(await Deno.readTextFile(join(tmp, ".gitignore")), ".react-router/");
   } finally {
     await Deno.remove(tmp, { recursive: true });
   }

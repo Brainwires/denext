@@ -46,6 +46,7 @@ import { servicesPanel } from "./features/services.ts";
 import { setupPanel } from "./features/setup.ts";
 import { commandsPanel } from "./features/commands.ts";
 import { DATABASE_PATHS, databasePanel } from "./features/database.ts";
+import { UI_PANELS } from "./panels.ts";
 
 /** One feature panel: its HTML path, the methods it answers, and its module's handler. */
 interface FeatureRoute {
@@ -148,21 +149,10 @@ export const DASHBOARD_ROUTES: Record<string, UiRoute> = buildDashboardRoutes();
 
 // ── `/` ──────────────────────────────────────────────────────────────────────
 
-/** What each card on the overview says. */
-const CARD_LEAD: Record<string, string> = {
-  "/config": "Edit denext.config.ts through schema-driven widgets, one view per subject.",
-  "/plugins": "Browse the catalog; add or remove plugins.",
-  "/generate": "Scaffold pages, routes, layouts, components, actions.",
-  "/docker": "Edit docker-compose.yml in place, or regenerate the Docker files with a diff.",
-  "/desktop": "Set up code signing for a packaged desktop build.",
-  "/dev": "Start and stop the project's dev server, and watch its output.",
-  "/tasks": "Run the scripts your deno.json declares, streaming their output.",
-  "/services": "The supervised services/ tree: running, restarting or failed, with restart counts.",
-  "/setup": "Check what this project needs to run, and write the missing pieces.",
-  "/commands": "Run this project's own denext verbs.",
-  "/database":
-    "Browse and edit the Postgres tables, run SQL, and manage policies, migrations, storage, auth users and logs.",
-};
+/** What each card on the overview says (the panels' own leads, ./panels.ts). */
+const CARD_LEAD: Record<string, string> = Object.fromEntries(
+  UI_PANELS.map((panel) => [panel.path, panel.lead]),
+);
 
 /** What the overview says under `--offline`. */
 const OFFLINE_OVERVIEW = "Offline mode — nothing the UI starts reaches the network: denext " +

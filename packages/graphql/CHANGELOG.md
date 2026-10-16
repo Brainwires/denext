@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.0
+
+### Added
+
+- **`maxCost` budgets a whole batch.** With Yoga `batching` on, a plugin hook sums the estimated
+  cost of every operation in the batch when the request is parsed (variables at their values;
+  an operation that does not parse, or a persisted-document id, adds nothing there) and refuses
+  a batch over the budget with `400` and `extensions.code: "BATCH_TOO_EXPENSIVE"` before any
+  operation runs. Each operation is still checked on its own at execute time.
+- **A schema object reloads in `denext dev`.** A `GraphQLSchema` or factory imported into
+  `denext.config.ts` is traced to the project module that exports it — the config's static
+  relative imports followed breadth-first, each module read from Deno's cache by its plain URL
+  and its exports compared by identity — and that module is re-imported through the dev loader
+  after an edit under `watch` (default: its directory). One that cannot be traced logs a dev
+  notice and needs a restart, as before.
+
 ## 0.4.0
 
 Requires the denext release after 4.0.0 (`tapChannelAuthorized` in `@denext/denext/plugin-kit`).

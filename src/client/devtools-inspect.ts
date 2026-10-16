@@ -205,13 +205,15 @@ export interface InspectHook {
    * The variable the hook call was bound to (`count`), breadcrumbed through custom-hook
    * expansions (`useAuth › count`) — a hook declared in the same module or bound by a static
    * relative import, up to three levels deep. Present only when the dev metadata
-   * resolved (see {@link InspectNode.hooksNamed}) and the call was bound to something.
+   * resolved (see {@link InspectNode.hooksNamed}), this cell's call is knowable, and the call
+   * was bound to something.
    */
   name?: string;
   /**
    * The hook that produced this cell (`useState`), breadcrumbed likewise
-   * (`useAuth › useState`). Present only when the dev metadata resolved. A composite's
-   * extra cells (e.g. the memo behind `useTransition`) carry the hook without a name.
+   * (`useAuth › useState`). Present only when the dev metadata resolved and this cell's call
+   * is knowable. A composite's extra cells (e.g. the memo behind `useTransition`) carry the
+   * hook without a name, as do the cells an opaque custom hook (a package's) took.
    */
   hook?: string;
   /**
@@ -275,8 +277,10 @@ export interface InspectNode {
   source?: SourceLocation;
   /**
    * Whether the hook `name`/`hook` labels resolved against the build-time metadata.
-   * `false` means metadata existed but did not line up with the live cells (a
-   * conditional hook, or an opaque custom hook) — the panel then shows kind labels and
+   * `true` names every cell whose call is knowable: a conditional hook that did not run is
+   * skipped, and an opaque custom hook takes the cells the calls around it leave (a cell two
+   * readings disagree on stays unnamed). `false` means metadata existed but no reading of it
+   * lines up with the live cells (it is out of date) — the panel then shows kind labels and
    * says so. Absent when the component carries no metadata at all.
    */
   hooksNamed?: boolean;
@@ -309,7 +313,11 @@ function isEditableCell(cell: HookCell, kind: number, value: SerializedValue): b
 }
 
 /** One live hook cell as an {@link InspectHook}, with its name when the metadata resolved. */
-function serializeHookCell(cell: HookCell, index: number, named?: ResolvedHookName): InspectHook {
+function serializeHookCell(
+  cell: HookCell,
+  index: number,
+  named?: ResolvedHookName,
+): InspectHook {
   const kind = cell.kind ?? 0;
   const value = serializeValue(cell.value);
   const hook: InspectHook = {
@@ -327,7 +335,10 @@ function serializeHookCell(cell: HookCell, index: number, named?: ResolvedHookNa
   return hook;
 }
 
-function serializeHooks(fiber: Fiber, names?: ResolvedHookName[]): InspectHook[] {
+function serializeHooks(
+  fiber: Fiber,
+  names?: ReadonlyArray<ResolvedHookName | undefined>,
+): InspectHook[] {
   const cells = fiber.hooks;
   if (!cells || cells.length === 0) return [];
   const rows = cells.map((cell, i) => serializeHookCell(cell, i, names?.[i]));
@@ -373,7 +384,7 @@ function attachDebugValues(entries: DebugValueEntry[], rows: InspectHook[]): voi
  * when metadata exists but doesn't line up with the live cells, and `undefined` when the
  * component carries no metadata (an uninstrumented module / a production-shaped bundle).
  */
-function hookNamesFor(fiber: Fiber): ResolvedHookName[] | null | undefined {
+function hookNamesFor(fiber: Fiber): Array<ResolvedHookName | undefined> | null | undefined {
   const type = fiber.vnode.type;
   const fam = familyIdOf(type);
   const meta = componentMetaOf(type);

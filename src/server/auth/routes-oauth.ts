@@ -618,7 +618,7 @@ export async function fetchOAuthProfile(
     ? await fetchUserEmails(provider, tokens.access_token, doFetch)
     : undefined;
   const input = { tokens, userinfo, claims, emails };
-  const profile = provider.profile(
+  const profile = await provider.profile(
     params.callbackParams ? { ...input, callbackParams: params.callbackParams } : input,
   );
   return { profile, tokens };

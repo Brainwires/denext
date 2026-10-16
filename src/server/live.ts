@@ -35,9 +35,19 @@ import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import { getSubscriptionDef, type SubscriptionDef } from "../runtime/server-action.ts";
 import { type ChannelHub, type ChannelSub, createChannelHub } from "./live-channels.ts";
 import {
+  createLiveViewHub,
+  type ViewHub,
+  type ViewInstance,
+  type ViewSummary,
+} from "./live-views.ts";
+import { getLiveViewStore } from "./live-view-store.ts";
+import {
   broadcastInvalidation,
+  type ChannelEvent,
+  channelInstanceId,
   type ChannelTransport,
   isForeignEvent,
+  publishChannelEvent,
   setChannelAuthTtl,
   setChannelPayloadCap,
   watchChannelTransport,
@@ -57,6 +67,7 @@ import {
   setClientAddr,
 } from "./remote-addr.ts";
 import { inRootContext } from "./root-context.ts";
+import { PRESENCE_HEARTBEAT_MS, RemotePresence } from "./live-presence.ts";
 import { defaultSupervisionLog, nextRestart, RestartWindow } from "../runtime/restart.ts";
 import {
   LIVE_REF_ID,
@@ -133,6 +144,10 @@ interface Conn {
   recoverChannels?: Set<string>;
   /** Presence rooms this connection is in → this peer's state in each. */
   presenceRooms: Map<string, unknown>;
+  /** Server-held live views (`defineLiveView`), keyed by client view id. */
+  views: Map<string, ViewInstance>;
+  /** View ids whose frame was shed (the whole tree is re-sent by drain recovery). */
+  recoverViews?: Set<string>;
   /** A re-render is in flight; further invalidations set `dirty` to re-run once. */
   busy: boolean;
   dirty: Set<string> | null;
@@ -188,6 +203,10 @@ const DEFAULT_LIMITS: Required<LiveLimits> = {
   idleTimeoutSeconds: 120,
   maxConcurrentRenders: 40,
   renderTimeoutSeconds: 30,
+  maxViewsPerConnection: 16,
+  maxViewBytesPerConnection: 1024 * 1024,
+  viewResumeSeconds: 30,
+  maxParkedViews: 1000,
 };
 let limits: Required<LiveLimits> = DEFAULT_LIMITS;
 
@@ -313,9 +332,11 @@ export function sanitizeLimits(overrides?: LiveLimits): Required<LiveLimits> {
 
 /** Tear down the hub (tests / shutdown): clear the cache hook and drop connections. */
 export function uninstallLiveHub(): void {
+  stopPresence();
   setLiveInvalidateHook(null);
   unbindChannelTransport();
   channelHub.dispose();
+  viewHub.dispose();
   appHandler = null;
   policy = {};
   trustForwardedHeaders = false;
@@ -329,6 +350,7 @@ export function uninstallLiveHub(): void {
       conn.recoverTimer = null;
     }
     clearDataSubRestarts(conn);
+    viewHub.discard(conn); // stopped, not parked: nothing outlives the hub
     try {
       conn.socket.close();
     } catch { /* already closing */ }
@@ -596,6 +618,7 @@ function attachConnection(
     tagSubs: new Map(),
     channelSubs: new Map(),
     presenceRooms: new Map(),
+    views: new Map(),
     busy: false,
     dirty: null,
     msgWindowStart: 0,
@@ -640,6 +663,7 @@ function dropConnection(conn: Conn): void {
     else connectionsPerIp.delete(bucket);
   }
   channelHub.drop(conn);
+  viewHub.drop(conn); // parked: a reconnect within viewResumeSeconds resumes the model
   if (conn.recoverTimer != null) {
     clearTimeout(conn.recoverTimer);
     conn.recoverTimer = null;
@@ -651,6 +675,7 @@ function dropConnection(conn: Conn): void {
     members.delete(conn);
     if (members.size === 0) rooms.delete(room);
     else broadcastRoom(room);
+    announceRoom(room);
   }
   conn.presenceRooms.clear();
 }
@@ -678,23 +703,31 @@ function admitMessage(conn: Conn): boolean {
 }
 
 /** Parse and apply a client message. Oversized or malformed input is ignored. */
-function handleClientMessage(conn: Conn, raw: string): void {
+/** A client frame within the size cap that parses to an object with a `type`; else `null`. */
+function parseClientFrame(conn: Conn, raw: string): LiveClientMessage | null {
   // Inbound size cap (DoS guard) — refuse before parsing / storing.
   // `length` is UTF-16 units — a cheap pre-check; the byte count (what the wire carried) is
   // what the cap is about, so measure it when the string could still fit.
   if (raw.length > limits.maxMessageBytes || utf8Bytes(raw) > limits.maxMessageBytes) {
     sendError(conn, "limit", "message too large");
-    return;
+    return null;
   }
   let msg: LiveClientMessage;
   try {
     msg = JSON.parse(raw) as LiveClientMessage;
   } catch {
-    return;
+    return null;
   }
   // `null` / a primitive / an array parse fine but are not frames — `msg.type` on `null`
   // would throw inside the socket handler.
-  if (!msg || typeof msg !== "object" || typeof msg.type !== "string") return;
+  return msg && typeof msg === "object" && typeof msg.type === "string" ? msg : null;
+}
+
+function handleClientMessage(conn: Conn, raw: string): void {
+  const msg = parseClientFrame(conn, raw);
+  if (!msg) return;
+  const viewFrame = VIEW_FRAMES[msg.type];
+  if (viewFrame) return viewFrame(conn, msg as unknown as Record<string, unknown>);
   switch (msg.type) {
     case "subscribe":
       return handleSubscribe(conn, msg);
@@ -725,6 +758,14 @@ function handleClientMessage(conn: Conn, raw: string): void {
       // "pong" needs no action; the client answering keeps the connection live.
   }
 }
+
+/** The live-view frames (`defineLiveView`), routed to the view hub. */
+const VIEW_FRAMES: Record<string, (conn: Conn, msg: Record<string, unknown>) => void> = {
+  "view-mount": (conn, msg) => guarded(viewHub.mount(conn, msg)),
+  "view-event": (conn, msg) => viewHub.event(conn, msg),
+  "view-unmount": (conn, msg) => viewHub.unmount(conn, msg.vid),
+  "view-resync": (conn, msg) => viewHub.resync(conn, msg.vid),
+};
 
 /**
  * Run an async message handler detached from the socket callback, but never unobserved: a
@@ -767,6 +808,7 @@ function handlePresenceLeave(
   members.delete(conn);
   if (members.size === 0) rooms.delete(msg.room);
   else broadcastRoom(msg.room);
+  announceRoom(msg.room);
 }
 
 /** Authorize + register a `useLive` data subscription (subscribing runs the action). */
@@ -851,6 +893,7 @@ async function handlePresence(
   if (!members) rooms.set(room, members = new Set());
   members.add(conn);
   broadcastRoom(room);
+  announceRoom(room);
 }
 
 /** A NEW data-subscription id would push `conn` past its cap. */
@@ -882,6 +925,71 @@ function refuseRoomJoin(conn: Conn, room: string): boolean {
   return reason != null;
 }
 
+/** This instance's peers in a room. */
+function localPeers(room: string): LivePeer[] {
+  const peers: LivePeer[] = [];
+  for (const c of rooms.get(room) ?? []) {
+    peers.push({ id: c.peerId, state: c.presenceRooms.get(room) });
+  }
+  return peers;
+}
+
+/** The other instances' peers, per room (from their `presence` snapshots). */
+const remotePresence = new RemotePresence();
+let presenceSeq = 0;
+let presenceHeartbeat: ReturnType<typeof setInterval> | null = null;
+
+/** Publish this instance's peers in `room` to the other instances (`[]` once it has none). */
+function announceRoom(room: string): void {
+  publishChannelEvent({
+    kind: "presence",
+    channelId: "",
+    key: room,
+    encoded: JSON.stringify(localPeers(room)),
+    seq: ++presenceSeq,
+    instance: channelInstanceId(),
+  });
+}
+
+/** Another instance's snapshot of a room: merge it, and answer a newcomer with ours. */
+function onRemotePresence(ev: ChannelEvent): void {
+  const applied = remotePresence.apply(ev, limits.maxPeersPerRoom);
+  if (!applied) return;
+  startPresenceHeartbeat(); // there are other instances: keep them current, prune the dead
+  if (!rooms.has(applied.room)) return;
+  broadcastRoom(applied.room);
+  if (applied.newcomer) announceRoom(applied.room);
+}
+
+/** Republish our rooms and drop dead instances' peers — only once another instance exists. */
+function startPresenceHeartbeat(): void {
+  if (presenceHeartbeat !== null) return;
+  presenceHeartbeat = inRootContext(() =>
+    setInterval(() => {
+      for (const room of rooms.keys()) announceRoom(room);
+      for (const room of remotePresence.prune()) if (rooms.has(room)) broadcastRoom(room);
+    }, PRESENCE_HEARTBEAT_MS)
+  );
+  Deno.unrefTimer(presenceHeartbeat as unknown as number);
+}
+
+/** Leave every room on the other instances, stop the heartbeat, forget their peers. */
+function stopPresence(): void {
+  for (const room of rooms.keys()) {
+    publishChannelEvent({
+      kind: "presence",
+      channelId: "",
+      key: room,
+      encoded: "[]",
+      seq: ++presenceSeq,
+      instance: channelInstanceId(),
+    });
+  }
+  if (presenceHeartbeat !== null) clearInterval(presenceHeartbeat);
+  presenceHeartbeat = null;
+  remotePresence.clear();
+}
+
 /**
  * Broadcast a room's current membership to every peer in it. The peer list is serialized
  * ONCE and spliced into each member's frame (only `selfId` differs), so a room of N peers
@@ -890,8 +998,7 @@ function refuseRoomJoin(conn: Conn, room: string): boolean {
 function broadcastRoom(room: string): void {
   const members = rooms.get(room);
   if (!members) return;
-  const peers: LivePeer[] = [];
-  for (const c of members) peers.push({ id: c.peerId, state: c.presenceRooms.get(room) });
+  const peers = [...localPeers(room), ...remotePresence.peers(room)];
   const peersJson = JSON.stringify(peers);
   const roomJson = JSON.stringify(room);
   // Each recipient learns its own peer id so the client can split self vs. others.
@@ -1318,7 +1425,8 @@ function sendFrame(conn: Conn, text: string, msg: LiveServerMessage): void {
   if (s.bufferedAmount > MAX_BUFFERED) {
     // Shed rather than unbounded-buffer — but a shed *stateful* frame would leave the
     // client stale forever, so remember it and replay it once the socket drains.
-    noteShed(conn, msg);
+    if (msg.type === "view-patch" || msg.type === "view-render") noteShedView(conn, msg.vid);
+    else noteShed(conn, msg);
     return;
   }
   try {
@@ -1348,6 +1456,14 @@ function noteShed(conn: Conn, msg: LiveServerMessage): void {
   }
 }
 
+/** A live view's frame was shed: its whole tree is re-sent once the socket drains. */
+function noteShedView(conn: Conn, vid: string): void {
+  (conn.recoverViews ??= new Set()).add(vid);
+  if (conn.recoverTimer == null) {
+    conn.recoverTimer = setTimeout(() => drainRecover(conn), RECOVER_POLL_MS);
+  }
+}
+
 /**
  * Replay shed stateful frames once the socket has drained. Polled, because Deno's
  * `WebSocket` has no drain event: while still back-pressured it reschedules; on a closed
@@ -1361,6 +1477,7 @@ function drainRecover(conn: Conn): void {
     conn.recoverBoundaries = false;
     conn.recoverSubs = undefined;
     conn.recoverTags = undefined;
+    conn.recoverViews = undefined;
     return;
   }
   if (s.bufferedAmount > MAX_BUFFERED) {
@@ -1388,6 +1505,7 @@ function drainRecover(conn: Conn): void {
     }
   }
   channelHub.replayPending(conn); // channel frames: the LAST held value per sub, no recompute
+  viewHub.replayPending(conn); // live views: the whole current tree, once
 }
 
 // ── Channels (`createChannel` → `useChannel`) ────────────────────────────────
@@ -1409,6 +1527,84 @@ const channelHub: ChannelHub<Conn> = createChannelHub<Conn>({
   },
 });
 
+// ── Live views (`defineLiveView`) ────────────────────────────────────────────
+
+const viewHub: ViewHub<Conn> = createLiveViewHub<Conn>({
+  limits: () => limits,
+  sendFrame,
+  sendError,
+  withConnContext,
+  connContext,
+  isConnected: (conn) => connections.has(conn),
+  render: (conn, fn) =>
+    withRenderSlot(() => withDeadline(renderDeadlineMs(), () => withConnContext(conn, fn))),
+  backPressured: (conn) => conn.socket.bufferedAmount > MAX_BUFFERED,
+  store: getLiveViewStore,
+  armRecover: (conn) => {
+    if (conn.recoverTimer == null) {
+      conn.recoverTimer = setTimeout(() => drainRecover(conn), RECOVER_POLL_MS);
+    }
+  },
+});
+
+/**
+ * Every running live view on this instance — attached or parked — with its model redacted
+ * (the DevTools' Live views tab, under `denext dev`).
+ *
+ * @returns One summary per instance.
+ */
+export function inspectLiveViews(): ViewSummary[] {
+  return viewHub.inspect();
+}
+
+/** One Live connection as the DevTools' Live tab lists it. */
+export interface LiveConnectionSummary {
+  /** The peer id. */
+  peer: string;
+  /** The page path it was opened from. */
+  path: string;
+  /** `<Live>` boundaries and the cache tags each watches. */
+  boundaries: Array<{ id: string; tags: string[] }>;
+  /** `useLive` / `defineSubscription` data subscriptions (the action, never its arguments). */
+  data: Array<{ id: string; action: string; tags: string[] }>;
+  /** `useApi({ tags })` tag watches. */
+  tags: Array<{ id: string; tags: string[] }>;
+  /** Channel subscriptions. */
+  channels: Array<{ id: string; channel: string; key: string }>;
+  /** Presence rooms joined. */
+  rooms: string[];
+  /** Live views mounted. */
+  views: number;
+}
+
+/**
+ * Every Live connection on this instance and what it subscribes to (the DevTools' Live tab,
+ * under `denext dev`). Arguments, payloads and cookies are never included.
+ *
+ * @returns One summary per connection.
+ */
+export function inspectLiveConnections(): LiveConnectionSummary[] {
+  return [...connections].map((c) => ({
+    peer: c.peerId,
+    path: pathOf(c.url),
+    boundaries: c.boundaries.map((b) => ({ id: b.id, tags: [...b.tags] })),
+    data: [...c.dataSubs].map(([id, sub]) => ({ id, action: sub.actionId, tags: [...sub.tags] })),
+    tags: [...c.tagSubs].map(([id, tags]) => ({ id, tags: [...tags] })),
+    channels: [...c.channelSubs].map(([id, sub]) => ({ id, channel: sub.channelId, key: sub.key })),
+    rooms: [...c.presenceRooms.keys()],
+    views: c.views.size,
+  }));
+}
+
+/** A connection URL's path (no query: it may carry tokens). */
+function pathOf(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return "";
+  }
+}
+
 /** The transport subscription delivering channel events to this hub (re-bound on transport change). */
 let stopChannelTransport: (() => void) | null = null;
 let stopWatchingTransport: (() => void) | null = null;
@@ -1423,6 +1619,10 @@ function bindChannelTransport(): void {
       // LOCAL fan-out only, and only for FOREIGN events — our own loopback already fanned out.
       if (ev.kind === "invalidate") {
         if (isForeignEvent(ev)) onTagInvalidated(ev.tags ?? []);
+        return;
+      }
+      if (ev.kind === "presence") {
+        if (isForeignEvent(ev)) onRemotePresence(ev);
         return;
       }
       channelHub.deliver(ev);
@@ -1489,6 +1689,7 @@ export const __backpressureTestSeam = {
       tagSubs: new Map(),
       channelSubs: new Map(),
       presenceRooms: new Map(),
+      views: new Map(),
       busy: false,
       dirty: null,
       msgWindowStart: 0,

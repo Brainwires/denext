@@ -41,6 +41,7 @@ function setup(
     modules?: Record<string, FakeModule>;
     scripts?: Any[];
     session?: Map<string, string>;
+    importMap?: Record<string, unknown>;
   } = {},
 ) {
   const calls: { level: string; args: unknown[] }[] = [];
@@ -80,7 +81,10 @@ function setup(
     },
   };
   const doc: Any = {
-    querySelectorAll: (sel: string) => sel.includes("importmap") ? [] : (opts.scripts ?? []),
+    querySelectorAll: (sel: string) =>
+      sel.includes("importmap")
+        ? (opts.importMap ? [{ textContent: JSON.stringify(opts.importMap) }] : [])
+        : (opts.scripts ?? []),
   };
   const location = { href: `${ORIGIN}/`, origin: ORIGIN, pathname: "/" };
   new Function("window", "document", "location", consoleCaptureScript("/_denext/dev-log"))(
@@ -464,10 +468,14 @@ Deno.test("boot diagnosis: the deep pass stops at its cap and says so", async ()
 // ── The link check: an imported name the target does not export ─────────────────────────────
 
 /** A graph of `/_denext/<name>` modules (the entry is `entry.js`), and a walk over it. */
-async function linkWalk(files: Record<string, string>) {
+async function linkWalk(files: Record<string, string>, importMap?: Record<string, unknown>) {
   const modules: Record<string, FakeModule> = {};
   for (const [name, body] of Object.entries(files)) modules[`${ORIGIN}/_denext/${name}`] = { body };
-  const h = setup({ modules, scripts: [fakeScript({ type: "module", src: "/_denext/entry.js" })] });
+  const h = setup({
+    modules,
+    scripts: [fakeScript({ type: "module", src: "/_denext/entry.js" })],
+    importMap,
+  });
   const d = await h.store.diagnose("test");
   const missing = d.failures
     .filter((f: Any) => f.missing != null)
@@ -673,6 +681,158 @@ Deno.test("link check: a link error without an importer is placed on the walked 
     }, ` +
       `which does not export it`,
   );
+});
+
+// ── Import-mapped bare specifiers and ambiguous export * ─────────────────────────────────────
+
+Deno.test("boot diagnosis: an import-mapped bare specifier is followed to the module it maps to", async () => {
+  const { d, fetched } = await linkWalk({
+    "entry.js": `import { render } from "ui";
+import "ui/extra.js";
+`,
+    "vendor/ui.js": `import "./broken.js";
+export function render() {}
+`,
+    "vendor/ui/extra.js": `export {};
+`,
+  }, { imports: { "ui": "/_denext/vendor/ui.js", "ui/": "/_denext/vendor/ui/" } });
+  assert(fetched.includes(at("vendor/ui.js")), "the exact mapping is walked");
+  assert(fetched.includes(at("vendor/ui/extra.js")), "the prefix mapping is walked");
+  assertEquals(d.failures.map((f: Any) => [f.url, f.from, f.reason]), [[
+    at("vendor/broken.js"),
+    at("vendor/ui.js"),
+    "HTTP 404",
+  ]]);
+});
+
+Deno.test("link check: an import-mapped import is checked against the mapped module's exports", async () => {
+  const { missing } = await linkWalk({
+    "entry.js": `import { render, renderr } from "ui";
+`,
+    "vendor/ui.js": `export function render() {}
+`,
+  }, { imports: { "ui": "/_denext/vendor/ui.js" } });
+  assertEquals(missing, [["/_denext/entry.js", "renderr", "/_denext/vendor/ui.js", "render"]]);
+});
+
+Deno.test("boot diagnosis: an import map scope wins for the modules inside it", async () => {
+  const { missing, fetched } = await linkWalk({
+    "entry.js": `import { one } from "dep";
+import "./vendor/lib.js";
+`,
+    "vendor/lib.js": `import { two } from "dep";
+`,
+    "dep1.js": `export const one = 1;
+`,
+    "dep2.js": `export const two = 2;
+`,
+  }, {
+    imports: { "dep": "/_denext/dep1.js" },
+    scopes: { "/_denext/vendor/": { "dep": "/_denext/dep2.js" } },
+  });
+  assert(fetched.includes(at("dep2.js")), "the scoped mapping is walked");
+  assertEquals(missing, []);
+});
+
+Deno.test("link check: a name two export * sources both provide is reported as ambiguous", async () => {
+  const { d, store } = await linkWalk({
+    "entry.js": `import { Button, Icon } from "./index.js";
+`,
+    "index.js": `export * from "./a.js";
+export * from "./b.js";
+`,
+    "a.js": `export function Button() {}
+export const Icon = 1;
+`,
+    "b.js": `export function Button() {}
+`,
+  });
+  assertEquals(d.failures.map((f: Any) => [f.from, f.ambiguous, f.url, f.sources]), [[
+    at("entry.js"),
+    "Button",
+    at("index.js"),
+    [at("a.js"), at("b.js")],
+  ]]);
+  const line = store.entries.find((e: Any) => e.source === "diagnosis" && e.level === "error");
+  assertEquals(
+    line.message,
+    `boot diagnosis: ${at("entry.js")} imports "Button" from ${at("index.js")}, which exports ` +
+      `it ambiguously — export * from ${at("a.js")} and from ${at("b.js")} both provide it ` +
+      `(export the one you mean by name)`,
+  );
+});
+
+Deno.test("link check: the same binding through two export * paths is not ambiguous", async () => {
+  const { d } = await linkWalk({
+    "entry.js": `import { x, y, z, own, ns } from "./index.js";
+`,
+    "index.js": `export * from "./a.js";
+export * from "./b.js";
+export const own = 0;
+`,
+    // x: a diamond onto one module; y: re-exported by name on one side, by * on the other;
+    // z: an imported binding exported again; own: the module's own export shadows both stars.
+    "a.js": `export * from "./c.js";
+export { y } from "./c.js";
+export const own = 1;
+` +
+      `export * as ns from "./c.js";
+`,
+    "b.js": `export * from "./c.js";
+import { z } from "./c.js";
+export { z };
+` +
+      `export const own = 2;
+export * as ns from "./c.js";
+`,
+    "c.js": `export const x = 1, y = 2, z = 3;
+`,
+  });
+  assertEquals(d.failures, []);
+});
+
+Deno.test("link check: an ambiguous export behind another export * is still reported", async () => {
+  const { d } = await linkWalk({
+    "entry.js": `import { dup } from "./outer.js";
+`,
+    "outer.js": `export * from "./index.js";
+`,
+    "index.js": `export * from "./a.js";
+export * from "./b.js";
+`,
+    "a.js": `export const dup = 1;
+`,
+    "b.js": `export const dup = 2;
+`,
+  });
+  assertEquals(d.failures.map((f: Any) => f.ambiguous), ["dup"]);
+});
+
+Deno.test("link check: the browser's conflicting-star-exports message is surfaced", () => {
+  const { store, fire } = setup({
+    modules: {
+      [at("entry.js")]: {
+        body: `export {};
+`,
+      },
+    },
+    scripts: [fakeScript({ type: "module", src: "/_denext/entry.js" })],
+  });
+  const err = new SyntaxError(
+    "The requested module './index.js' contains conflicting star exports for name 'Button'",
+  );
+  fire("error", { error: err, message: err.message, filename: at("page.js") });
+  assertEquals(store.linkError.ambiguous, true);
+  assertEquals(store.linkError.target, at("index.js"));
+  const said = store.entries.find((e: Any) => e.message.includes("the browser reports"));
+  assertStringIncludes(
+    said.message,
+    `imports "Button" from ${at("index.js")}, which exports it ambiguously`,
+  );
+  // Firefox names only the binding.
+  const ff = setup({ scripts: [fakeScript({ type: "module", src: "/_denext/entry.js" })] });
+  ff.fire("unhandledrejection", { reason: new SyntaxError("ambiguous indirect export: Button") });
+  assertEquals([ff.store.linkError.name, ff.store.linkError.ambiguous], ["Button", true]);
 });
 
 // ── The reload loop ──────────────────────────────────────────────────────────────────────────

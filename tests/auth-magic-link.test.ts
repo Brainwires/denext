@@ -346,6 +346,7 @@ Deno.test("magic link: the emailed link signs in once and lands on callbackUrl; 
   assertEquals(h.sent.length, 1);
   const mail = h.sent[0];
   assertEquals(mail.purpose, "magic");
+  assertEquals(mail.provider, "email", "the issuing provider, for a per-provider sender");
   const link = new URL(mail.url);
   assertEquals(link.origin + link.pathname, `${ORIGIN}/auth/callback/email`);
   assertEquals(link.searchParams.get("token"), mail.token);
@@ -406,6 +407,7 @@ Deno.test("one-time code: mailed as `token` (never in `url`); a right code works
   await send(h, "otp@x.test");
   const mail = h.sent[0];
   assertEquals(mail.purpose, "otp");
+  assertEquals(mail.provider, "email-otp");
   assertMatch(mail.token, /^\d{6}$/);
   assertEquals(mail.url, `${ORIGIN}/check-email?email=otp%40x.test`);
 

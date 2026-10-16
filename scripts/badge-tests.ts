@@ -34,20 +34,47 @@ function countIn(path: string, source: string): number {
 /** Whether `path` is a test file the badge counts. */
 const isTestFile = (path: string) => /\.(?:test|vitest)\.ts$/.test(path);
 
-/** Run git in the repo and return stdout (throws on failure). */
-async function git(args: string[]): Promise<string> {
-  const out = await new Deno.Command("git", { args, cwd: REPO_ROOT, stdout: "piped" }).output();
+/** Run git in the repo, `stdin` piped in, and return stdout (throws on failure). */
+async function git(args: string[], stdin?: string): Promise<Uint8Array> {
+  const child = new Deno.Command("git", {
+    args,
+    cwd: REPO_ROOT,
+    stdin: stdin === undefined ? "null" : "piped",
+    stdout: "piped",
+  }).spawn();
+  if (stdin !== undefined) {
+    const w = child.stdin.getWriter();
+    await w.write(new TextEncoder().encode(stdin));
+    await w.close();
+  }
+  const out = await child.output();
   if (!out.success) throw new Error(`git ${args.join(" ")} failed`);
-  return new TextDecoder().decode(out.stdout);
+  return out.stdout;
 }
 
-/** Count the tests in the staged (index) copies of tests/**\/*.{test,vitest}.ts. */
+/**
+ * Count the tests in the staged (index) copies of tests/**\/*.{test,vitest}.ts. Every blob is
+ * read through ONE `git cat-file --batch` (a `git show` per file cost a process each — over a
+ * thousand on every commit).
+ */
 async function countStagedTests(): Promise<number> {
-  const files = (await git(["ls-files", "-z", "--", "tests"])).split("\0")
-    .filter(isTestFile);
+  const entries = new TextDecoder().decode(await git(["ls-files", "-s", "-z", "--", "tests"]))
+    .split("\0").filter(Boolean).map((line) => {
+      // `<mode> <object> <stage>\t<path>`
+      const tab = line.indexOf("\t");
+      const [, object, stage] = line.slice(0, tab).split(" ");
+      return { object, stage, path: line.slice(tab + 1) };
+    }).filter((e) => e.stage === "0" && isTestFile(e.path));
+  const out = await git(["cat-file", "--batch"], entries.map((e) => e.object + "\n").join(""));
+  const decoder = new TextDecoder();
   let total = 0;
-  for (const f of files) {
-    total += countIn(f, await git(["show", `:${f}`]));
+  let at = 0;
+  for (const e of entries) {
+    // `<object> blob <size>\n<content>\n` per object, in request order.
+    const nl = out.indexOf(10, at);
+    const size = Number(decoder.decode(out.subarray(at, nl)).split(" ")[2]);
+    total += countIn(e.path, decoder.decode(out.subarray(nl + 1, nl + 1 + size)));
+    at = nl + 1 + size + 1;
   }
   return total;
 }

@@ -46,6 +46,8 @@ export const NAV: {
       { slug: "jobs", label: "Scheduled jobs" },
       { slug: "services", label: "Supervised services" },
       { slug: "live", label: "Live components" },
+      { slug: "live-views", label: "Live views" },
+      { slug: "mvu", label: "Model–View–Update" },
       { slug: "islands", label: "Islands & hydration" },
       { slug: "resumability", label: "Resumability" },
       { slug: "htmx", label: "htmx" },

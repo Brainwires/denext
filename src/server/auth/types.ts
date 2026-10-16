@@ -98,6 +98,22 @@ export interface AuthSession {
    * (e.g. `["pwd"]`, `["pwd", "otp"]`). Absent on a v1 payload; readers treat that as `[]`.
    */
   amr?: string[];
+  /**
+   * For a session a `saml()` provider's sign-in started: the assertion's NameID (with its Format
+   * and the AuthnStatement's SessionIndex, when given) — what SAML Single Logout names the
+   * session by. Set by the framework; a `callbacks.session` result can't change it.
+   */
+  saml?: AuthSessionSaml;
+}
+
+/** The SAML subject of a session a `saml()` provider started ({@linkcode AuthSession.saml}). */
+export interface AuthSessionSaml {
+  /** The Subject's NameID. */
+  nameId: string;
+  /** The NameID's Format, when the assertion gave one. */
+  nameIdFormat?: string;
+  /** The AuthnStatement's SessionIndex, when the assertion gave one. */
+  sessionIndex?: string;
 }
 
 /** Raw inputs a provider maps into an {@link AuthUser}. */
@@ -154,9 +170,16 @@ export interface OAuthProvider {
   /** OAuth client secret. */
   clientSecret: string;
   /** Map the token/userinfo/claims result to a normalized {@link AuthUser}. */
-  profile: (input: ProfileInput) => AuthUser;
+  profile: (input: ProfileInput) => AuthUser | Promise<AuthUser>;
   /** Extra authorization-request query params (e.g. `{ access_type: "offline" }`). */
   authorizationParams?: Record<string, string>;
+  /**
+   * How the client authenticates at the token endpoint (RFC 6749 §2.3.1).
+   * `"client_secret_post"` (the default) sends `client_id` / `client_secret` in the form body;
+   * `"client_secret_basic"` sends them as an HTTP Basic `Authorization` header instead, which
+   * some providers (X, Zoom, Notion) require.
+   */
+  tokenEndpointAuthMethod?: "client_secret_post" | "client_secret_basic";
   /**
    * How the provider returns the authorization response (OAuth 2.0 Multiple Response Type
    * Encoding Practices §2.1). `"query"` (the default) redirects back with `?code=…&state=…`,
@@ -169,7 +192,8 @@ export interface OAuthProvider {
   responseMode?: "query" | "form_post";
   /**
    * Hosts `safeFetch` may reach for this provider (token/userinfo/jwks). Derived
-   * from the configured endpoints when omitted.
+   * from the configured endpoints when omitted. A `*.domain` entry admits that domain's
+   * subdomains (not the apex), for an endpoint discovery finds on a per-tenant subdomain.
    */
   allowedHosts?: string[];
   /**
@@ -490,11 +514,21 @@ export interface AuthEvents {
     provider: string;
     /** True when this sign-in created the adapter user record. */
     isNewUser?: boolean;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /** A session was cleared through `/signout`. */
   signOut?: (payload: {
     /** The session that ended, or `null` when there was none. */
     session: AuthSession | null;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /** A sign-in attempt was refused (bad credentials, a denied callback, a bad state). */
   signInFailed?: (payload: {
@@ -515,7 +549,8 @@ export interface AuthEvents {
      * The client bucket the limiter keyed on — present on the rate-limited routes (the
      * credentials POST, the sign-in start, the email link / code redeem and the MFA
      * steps). IPv4 as seen; an IPv6 client appears as its /64 prefix, which is what the
-     * limiter actually counts.
+     * limiter actually counts. On every other refusal it is the client address, as on every
+     * other event.
      */
     ip?: string;
   }) => Promise<void> | void;
@@ -534,6 +569,11 @@ export interface AuthEvents {
     scopes?: string[];
     /** When it expires, epoch seconds; absent for a token that never does. */
     expiresAt?: number;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /**
    * A bearer API token was revoked: by `revokeApiToken` / `DELETE {basePath}/tokens/:id`
@@ -548,6 +588,11 @@ export interface AuthEvents {
     userId?: string;
     /** Why. */
     reason: ApiTokenRevokedReason;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /** A server-side session was revoked (one device, or everywhere). */
   sessionRevoked?: (payload: {
@@ -555,11 +600,21 @@ export interface AuthEvents {
     sessionId?: string;
     /** The user id, when every session of a user was revoked. */
     userId?: string;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /** An adapter user record was created. */
   createUser?: (payload: {
     /** The new record. */
     user: AdapterUser;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /** A provider account was linked to an existing user. */
   linkAccount?: (payload: {
@@ -573,6 +628,11 @@ export interface AuthEvents {
      * handler genuinely needs the tokens.
      */
     account: Pick<AdapterAccount, "userId" | "provider" | "providerAccountId" | "type">;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /**
    * A verification token was delivered through `sendVerificationRequest` / `hooks.sendEmail` (an
@@ -589,6 +649,11 @@ export interface AuthEvents {
     purpose: VerificationPurpose;
     /** When the token expires, epoch seconds. */
     expiresAt: number;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /**
    * A user proved control of their address: by redeeming an email-verification token, or
@@ -599,6 +664,11 @@ export interface AuthEvents {
   emailVerified?: (payload: {
     /** The user record, with `emailVerified` set. */
     user: AdapterUser;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /**
    * A user proved control of their phone number by a first `phoneOtp()` sign-in into an
@@ -609,6 +679,11 @@ export interface AuthEvents {
   phoneVerified?: (payload: {
     /** The user record, with `phoneVerified` set. */
     user: AdapterUser;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /**
    * An anonymous user became permanent: a complete anonymous session redeemed an email link /
@@ -620,6 +695,11 @@ export interface AuthEvents {
     user: AdapterUser;
     /** The provider whose proof converted it. */
     provider: string;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
   /**
    * A user set a new password by redeeming a password-reset token. Their server-side
@@ -628,6 +708,11 @@ export interface AuthEvents {
   passwordReset?: (payload: {
     /** The user whose password changed. */
     user: AdapterUser;
+    /**
+     * The client address of the request that caused it — the socket peer, or a trusted
+     * proxy's last `x-forwarded-for` hop, as `clientIp()` reads it. Absent outside a request.
+     */
+    ip?: string;
   }) => Promise<void> | void;
 }
 
@@ -642,7 +727,9 @@ export interface AuthCookieConfig {
   /**
    * Origin-lock the cookie with the `__Host-` name prefix (Secure + `Path=/` + no
    * `Domain`). **On by default**, and leaving it on is strongly recommended: it is what
-   * stops a sibling subdomain reading or shadowing the cookie.
+   * stops a sibling subdomain reading or shadowing the cookie. Over plain http on a loopback
+   * host, or outside production, the prefix is left off for that request (a browser refuses
+   * `__Host-` over http, even on `localhost`).
    */
   hostPrefix?: boolean;
   /** Cookie `SameSite` (default `"Lax"` — the OAuth callback is a top-level GET). */
@@ -694,6 +781,12 @@ export interface VerificationRequestParams {
   purpose: "email" | "reset" | "magic" | "otp";
   /** Expiry, epoch seconds. */
   expiresAt: number;
+  /**
+   * The email provider that issued it (a magic link's or a one-time code's `id`), so an app
+   * with several can send each one's mail its own way; absent for a password reset or an
+   * address verification.
+   */
+  provider?: string;
 }
 
 /**
@@ -789,6 +882,16 @@ export interface AuthPasskeyConfig {
    */
   origins?: string[];
   /**
+   * The web origins allowed to call the passkey endpoints from another origin — a front end
+   * served apart from the auth server (`["https://www.example.com"]` for an auth server at
+   * `https://auth.example.com`). Each must also be in {@linkcode origins} (its page runs the
+   * ceremony). The endpoints then answer their preflights and send credentialed CORS headers to
+   * exactly these origins, and a ceremony started from one completes only from that origin, with
+   * client data naming it — on top of the per-tab ceremony id. Default: none (same-origin only).
+   * Pass `origin` to the `denext/client` passkey calls on that front end.
+   */
+  corsOrigins?: string[];
+  /**
    * `"required"` (the default) asks the authenticator to verify the user (biometric, PIN) and
    * refuses an assertion without the UV flag — such a sign-in is two factors in one, so it
    * also satisfies a pending second factor. `"preferred"` accepts a presence-only assertion,
@@ -798,8 +901,9 @@ export interface AuthPasskeyConfig {
   /** How long a ceremony's challenge lives, in seconds. Default `300`; clamped to `30..900`. */
   timeout?: number;
   /**
-   * Attestation policy for new passkeys. Off by default: any `none` or `packed` attestation
-   * registers, and a certificate in it is not chained to anything.
+   * Attestation policy for new passkeys. Off by default: any supported attestation (`none`,
+   * `packed`, `tpm`, `android-key`, `apple`, `fido-u2f`) registers once its statement verifies,
+   * and a certificate in it is not chained to anything.
    */
   attestation?: {
     /**
@@ -824,6 +928,14 @@ export interface AuthPasskeyMdsConfig {
    * outbound network. Verified exactly like a fetched one; when set, `url` is never fetched.
    */
   blob?: string | (() => string | Promise<string>);
+  /**
+   * What a certificate revocation list that can't be fetched or used means, for a certificate
+   * of the BLOB's or an attestation's path that names CRL distribution points: `"require"`
+   * refuses the path (fail closed), `"best-effort"` goes on without it (a CRL that lists the
+   * certificate still refuses it), `"off"` fetches no CRL. Default `"require"`, or
+   * `"best-effort"` when {@linkcode blob} supplies the BLOB (a server without outbound network).
+   */
+  revocation?: "require" | "best-effort" | "off";
   /** The fetch timeout, ms. Default `15000`. */
   timeoutMs?: number;
   /** The largest BLOB accepted, bytes. Default 32 MiB. */

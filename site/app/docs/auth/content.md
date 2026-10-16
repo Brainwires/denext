@@ -23,8 +23,9 @@ Three facts shape everything below:
   accounts, credentials, API tokens and MFA factors live. Passing one never by itself
   makes sessions stateful — those are two different decisions.
 
-Everything comes from `denext/server` (the client half from `denext` or
-`denext/client`). There is no `denext/auth` subpath.
+The server half is the `denext/auth` entry point (`import { auth, denextAuth, github } from
+"denext/auth"`); `denext/server` re-exports every one of those names, so either import works.
+The client half comes from `denext` or `denext/client`.
 
 On top of sign-in, the plugin runs the account flows an app would otherwise hand-roll:
 [password sign-in with no `authorize`](#password-sign-in-without-an-authorize),
@@ -154,6 +155,8 @@ Every path is relative to `basePath` (default `/auth`).
 | `/native/:provider`        | POST        | `apple` / `google`: verify a native sign-in sheet's `id_token` and answer the native session tokens.                                                                          |
 | `/native/mfa`              | POST        | `{ mfa_token, code[, factor_id, challenge_id] }`: finish a native `id_token` sign-in that owes a second factor.                                                               |
 | `/native/mfa-challenge`    | POST        | `{ mfa_token, factor_id }`: text a code to a verified phone factor for that pending native sign-in.                                                                           |
+| `/native/mfa-enroll`       | POST        | `{ mfa_token }` (a sign-in answered with `mfa_enroll: true`): start a first TOTP factor — `{ factor_id, secret, uri, mfa_token }`.                                            |
+| `/native/mfa-confirm`      | POST        | `{ mfa_token, code }`: confirm that factor and finish the sign-in — the native tokens plus `backup_codes`.                                                                    |
 | `/saml/:provider/metadata` | GET         | A [`saml()`](#saml-providers) provider's SP metadata, to give its identity provider.                                                                                          |
 | `/account/delete`          | POST        | Delete the signed-in user (cookie, same-origin; or a native bearer). Needs a recent sign-in, else `403 reauth_required`. Revokes Sign in with Apple tokens.                   |
 
@@ -342,11 +345,12 @@ denextAuth({
 });
 ```
 
-| Endpoint                            | What it does                                                                     |
-| ----------------------------------- | -------------------------------------------------------------------------------- |
-| `GET {basePath}/signin/acme`        | Sends the browser to the IdP with an AuthnRequest (signed with `sp.signingKey`). |
-| `POST {basePath}/callback/acme`     | The Assertion Consumer Service: the IdP posts its Response here.                 |
-| `GET {basePath}/saml/acme/metadata` | This SP's metadata (also the default entity id) — give it to the IdP.            |
+| Endpoint                               | What it does                                                                     |
+| -------------------------------------- | -------------------------------------------------------------------------------- |
+| `GET {basePath}/signin/acme`           | Sends the browser to the IdP with an AuthnRequest (signed with `sp.signingKey`). |
+| `POST {basePath}/callback/acme`        | The Assertion Consumer Service: the IdP posts its Response here.                 |
+| `GET {basePath}/saml/acme/metadata`    | This SP's metadata (also the default entity id) — give it to the IdP.            |
+| `GET \| POST {basePath}/saml/acme/slo` | Single Logout (with `sp.signingKey`): the IdP's LogoutRequest or LogoutResponse. |
 
 `signIn("acme")` from `denext/client` starts it like any provider. Only SP-initiated logins are
 accepted: the AuthnRequest's ID and a fresh RelayState ride the signed, single-use transaction
@@ -372,7 +376,30 @@ its SSO rules:
   trust model under [Threat notes](#threat-notes).
 - A user with a second factor gets the pending step-up, like any other sign-in.
 
-Single Logout is `/auth/v1`'s only; a `saml()` sign-in ends with `signOut()` like any session.
+**Single Logout** is on when the provider has `sp.signingKey` (+ `sp.signingCertificate`); the SP
+metadata then lists `{basePath}/saml/acme/slo` (HTTP-Redirect and HTTP-POST) as its
+SingleLogoutService. The session a `saml()` sign-in starts carries the assertion's NameID and
+SessionIndex (`session.saml`), and:
+
+- **SP-initiated.** `signOut()` (`POST {basePath}/signout`) ends the session at once, as always,
+  then sends the browser on to the IdP's SingleLogoutService with a LogoutRequest signed over the
+  HTTP-Redirect binding (RSA-SHA256) — a `303`, or `{ ok: true, url }` for a JSON caller. Its ID
+  and a fresh RelayState ride the signed, single-use transaction cookie, and the IdP's
+  LogoutResponse must answer exactly that request; it lands on the sign-out target
+  (`callbackUrl`, else `pages.afterSignOut`), with `?error=saml_logout_failed` when the IdP
+  reports a partial logout or the response can't be verified. An IdP without a SingleLogoutService
+  just signs out locally.
+- **IdP-initiated.** A LogoutRequest at `{basePath}/saml/acme/slo` (a query signature, or an
+  enveloped XML signature over HTTP-POST) must be signed by the provider's IdP, name this SP's SLO
+  URL as its Destination, be fresh, and be new (its ID is claimed in the shared replay cache). It
+  ends the sessions its NameID started: with a `sessionStore` (and an adapter with the SSO session
+  group, as the shipped ones have) exactly those its SessionIndexes name, each recorded at sign-in;
+  with stateless cookie sessions, which have no id to end one by, every session of that user signed
+  in before now (`sessionsValidAfter`). The caller's own cookie is cleared when it is one of them,
+  and the answer is a LogoutResponse signed over HTTP-Redirect to the IdP (`200` when it has no
+  SingleLogoutService).
+
+The messages are checked by the same code as `/auth/v1`'s [Single Logout](#saml-single-sign-on).
 
 ## OIDC discovery and key caching
 
@@ -628,11 +655,17 @@ hold two working reset links), `auth_credentials`, `auth_api_tokens` (unique on 
 `auth_sso_sessions`, `auth_saml_message_ids`) — plus the `/auth/v1` OAuth-server, stored-provider
 and Web3 nonce tables.
 
-Schema policy: `CREATE TABLE IF NOT EXISTS` on every open, then every declared column a
-table is missing is added with `ALTER TABLE … ADD COLUMN`, decided by
-`PRAGMA table_info`. There is no migration framework, no column is ever dropped or
-retyped, and a denext upgrade never rewrites your rows — schema changes are additive by
-construction.
+Schema policy: every open first applies the versioned migrations the release lists that the
+file has not recorded in `auth_schema_migrations` — the renames and drops an additive change
+can't make. They run once each, in version order, inside one `BEGIN IMMEDIATE` transaction:
+SQLite's write lock, so a second process opening the same file waits (`busy_timeout`) and then
+finds them recorded; the recorded versions are read again inside the lock, and a failure rolls
+the whole batch back for the next open to retry. Each migration is written against the shape it
+finds, so on a fresh file it changes nothing and is simply recorded. Then `CREATE TABLE IF NOT
+EXISTS`, and every declared column a table is missing is added with `ALTER TABLE … ADD COLUMN`,
+decided by `PRAGMA table_info`. No column is retyped, and only a listed migration renames or
+drops one. A file that records a migration this release doesn't know (opened by a newer denext)
+is reported once on stderr.
 
 A unique index cannot be created over a table that already violates it — an `auth_users`
 populated before 2.5 may hold two rows whose emails differ only in case. That failure is
@@ -1481,17 +1514,39 @@ denextAuth({
 | `rpId`             | `canonicalOrigin`'s host | The RP ID credentials are scoped to — the host, or a registrable suffix of it to span subdomains              |
 | `rpName`           | the RP ID                | The name an authenticator may show                                                                            |
 | `origins`          | `[canonicalOrigin]`      | Origins a ceremony may come from, matched exactly; each must be `https:` (or `http://localhost`) on the RP ID |
+| `corsOrigins`      | none                     | Web origins (also in `origins`) allowed to call the passkey endpoints from another origin, with credentials   |
 | `userVerification` | `"required"`             | `"preferred"` accepts a presence-only assertion — one factor instead of two                                   |
 | `timeout`          | `300`                    | Seconds a ceremony's challenge lives (`30–900`)                                                               |
 
 `origins` lists what `clientDataJSON.origin` may say; it does not open the endpoints to other
-origins. Every `/passkey/*` row is same-origin gated (`403` otherwise), so each listed origin
-must serve the auth routes itself — an app answering on
-several hosts under one RP ID (no `canonicalOrigin`, so the request's `Host` decides; with one,
-only that origin is same-origin). A page on another origin can't run a ceremony against these
-endpoints, and neither can a native Android app (`android:apk-key-hash:…` is accepted in the
-signed client data, but the routes need a same-origin browser request) — such a client needs
-endpoints of your own.
+origins. Every `/passkey/*` row is same-origin gated (`403` otherwise) unless the caller is one of
+`corsOrigins`. A native Android app (`android:apk-key-hash:…` is accepted in the signed client
+data) has no web origin, so it can't call the routes cross-origin — such a client needs endpoints
+of your own.
+
+**A front end on another origin.** With the auth server at `https://auth.example.com` and the
+pages at `https://www.example.com` (one RP ID, `example.com`):
+
+```ts
+passkeys: {
+  rpId: "example.com",
+  origins: ["https://auth.example.com", "https://www.example.com"],
+  corsOrigins: ["https://www.example.com"], // each must also be in `origins`
+},
+```
+
+The passkey endpoints then answer their preflights (before `middleware.ts`) and send credentialed
+CORS headers (`Access-Control-Allow-Origin` echoing exactly that origin,
+`Access-Control-Allow-Credentials: true`, `Vary: Origin`) to the listed origins only; any other
+origin is still `403`. Each ceremony is bound to the origin that started it: the options request's
+exact `Origin` is stored with the challenge, and the verifying request must come from that same
+origin with client data naming it — so a ceremony started on `www` can't be finished same-origin,
+from another listed origin, or with client data from another accepted origin, and a same-origin
+ceremony can't be finished cross-origin. The per-tab `ceremonyId` is required as before. On that
+front end, pass the server's origin to the client calls — `signInWithPasskey({ origin:
+"https://auth.example.com" })`, `registerPasskey({ origin: … })` — which then send credentials
+(`credentials: "include"`); the session cookie is the auth server's, so the two origins must be
+same-site for the browser to send it.
 
 It needs an adapter with the passkey group (both shipped adapters have it), and a relying
 party that doesn't come from the request: with neither `rpId` nor `canonicalOrigin`,
@@ -1520,10 +1575,11 @@ or the authenticator holds one it was told to exclude), `"rate_limited"`, `"netw
 **What the server checks** (WebAuthn Level 3): the client data's type, challenge, origin
 and `crossOrigin` (a call from a cross-origin iframe is refused); the authenticator data's
 RP ID hash, User Present, User Verified under `"required"`, and the backup flags; the
-credential's algorithm — ES256, RS256 or Ed25519, nothing else; the attestation statement,
-`none` or `packed` (self, or an `x5c` leaf whose signature and certificate profile are
-checked — chained to the authenticator vendor's root only with
-[`attestation.mds`](#attestation-the-fido-metadata-service)); and each assertion's
+credential's algorithm — ES256, RS256 or Ed25519, nothing else; the attestation statement —
+`none`, `packed` (self, or an `x5c` leaf whose signature and certificate profile are checked),
+`tpm`, `android-key`, `apple` or `fido-u2f`, each by its WebAuthn Level 3 §8 procedure (below),
+a certificate chained to the authenticator vendor's root only with
+[`attestation.mds`](#attestation-the-fido-metadata-service); and each assertion's
 signature, its backup-eligibility flag against the stored record, and the signature counter.
 A counter that doesn't increase means a cloned authenticator: the sign-in is refused and
 `signInFailed` fires. A counter that stays at `0` — a synced passkey keeps none — is fine.
@@ -1554,10 +1610,26 @@ For a settings page, `listPasskeys(authConfig, userId)` answers `{ id, name, cre
 lastUsedAt, backedUp, transports }[]` and `deletePasskey(authConfig, { userId, id })` removes
 one — gate that yourself, as `DELETE {basePath}/passkeys/:id` does with the recent-sign-in rule.
 
+**Attestation formats.** A registration's statement is verified whatever its format; one that
+fails is refused (`400 { code: "attestation" }`):
+
+| `fmt`         | What is checked (WebAuthn L3)                                                                                                                                                                                                                                                                                                                                       | Type             |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| `none`        | The statement is empty (§8.7)                                                                                                                                                                                                                                                                                                                                       | `none`           |
+| `packed`      | Self: the credential key signs. `x5c`: the leaf signs, and its §8.2.1 profile (v3, subject C/O/OU/CN, not a CA, a matching AAGUID extension)                                                                                                                                                                                                                        | `self` / `basic` |
+| `tpm`         | `ver` 2.0; `pubArea` is the credential key; `certInfo` is a TPM-generated certify statement whose `extraData` hashes this ceremony and whose name is `pubArea`'s; the AIK signs `certInfo`; the AIK certificate's §8.3.1 profile (v3, empty subject, TPM manufacturer / model / version in its SAN, `tcg-kp-AIKCertificate`, not a CA, a matching AAGUID extension) | `attca`          |
+| `android-key` | The leaf signs and its key is the credential key; its key description's challenge is this ceremony's, no `allApplications`, `origin` generated, `purpose` sign (over the software- and TEE-enforced lists together)                                                                                                                                                 | `basic`          |
+| `apple`       | The certificate's nonce extension holds this ceremony's hash, and its key is the credential key                                                                                                                                                                                                                                                                     | `anonca`         |
+| `fido-u2f`    | One P-256 certificate signs the U2F registration data; the credential key is P-256                                                                                                                                                                                                                                                                                  | `basic`          |
+
+A statement signature may use ES256 / ES384 / ES512, RS256 / RS384 / RS512 / RS1, PS256 / PS384 /
+PS512 or EdDSA. Another format (`android-safetynet`, `compound`) is refused — or, under
+`attestation.mds.allowUnattested`, registers as unattested.
+
 ### Attestation: the FIDO Metadata Service
 
-By default any `none` or `packed` attestation registers: a certificate in it is checked for
-its profile but not chained to anything, so it proves no authenticator model. An app that must
+By default every supported attestation registers: a certificate in it is checked for its
+profile and statement but not chained to anything, so it proves no authenticator model. An app that must
 know which authenticators its users hold — security keys of certified models, nothing reported
 compromised — turns on the FIDO Metadata Service (MDS3) checks:
 
@@ -1577,16 +1649,17 @@ denextAuth({
 With `mds` set, registration options ask for `attestation: "direct"`, and each new passkey is
 held to the metadata after the WebAuthn checks:
 
-- **A certificate attestation** (`packed` with `x5c`) must come from an AAGUID the metadata
-  lists, and its `x5c` chain must validate to that entry's `attestationRootCertificates`
+- **A certificate attestation** (`packed` with `x5c`, `tpm`, `android-key`, `apple`,
+  `fido-u2f`) must come from an AAGUID the metadata lists, and its `x5c` chain must validate to that entry's `attestationRootCertificates`
   (signatures, validity, `cA`, `pathLenConstraint`, `keyUsage`, no unknown critical extension).
   An AAGUID with no entry is refused unless `allowUnknownAuthenticators: true` (its chain is
   then not checked).
 - **`none` and self attestation** prove no model, so they are refused unless
   `allowUnattested: true`. Most phone and password-manager passkeys attest `none`; leave it off
   only when every user registers a certified security key. A format denext doesn't verify
-  (`tpm`, `android-key`, `apple`, `fido-u2f` — `"direct"` brings them) counts as unattested: it
-  registers under `allowUnattested`, and is refused otherwise.
+  (`android-safetynet`, `compound`) counts as unattested: it registers under `allowUnattested`,
+  and is refused otherwise. Apple's anonymous attestation and U2F keys carry an all-zero AAGUID,
+  which no metadata entry has: they register only with `allowUnknownAuthenticators`.
 - **A compromised model is refused** whatever the attestation: an entry whose latest status
   report is `USER_VERIFICATION_BYPASS`, `ATTESTATION_KEY_COMPROMISE`,
   `USER_KEY_REMOTE_COMPROMISE`, `USER_KEY_PHYSICAL_COMPROMISE` or `REVOKED`, or that was ever
@@ -1607,17 +1680,37 @@ one more day, then registrations are refused (`400 { code: "attestation" }`; `re
 answers `invalid`) until a refresh succeeds — retried at most every five minutes. Sign-ins never
 consult the metadata.
 
-| Key                          | Default                         | What it sets                                           |
-| ---------------------------- | ------------------------------- | ------------------------------------------------------ |
-| `url`                        | `https://mds.fidoalliance.org/` | Where the BLOB is fetched (`https:` only)              |
-| `blob`                       | —                               | The BLOB itself, or a loader; `url` is then unused     |
-| `timeoutMs`                  | `15000`                         | The fetch timeout                                      |
-| `maxBytes`                   | 32 MiB                          | The largest BLOB accepted                              |
-| `allowUnattested`            | `false`                         | Accept `none` / self attestation                       |
-| `allowUnknownAuthenticators` | `false`                         | Accept a certificate attestation the BLOB doesn't list |
+| Key                          | Default                                   | What it sets                                           |
+| ---------------------------- | ----------------------------------------- | ------------------------------------------------------ |
+| `url`                        | `https://mds.fidoalliance.org/`           | Where the BLOB is fetched (`https:` only)              |
+| `blob`                       | —                                         | The BLOB itself, or a loader; `url` is then unused     |
+| `timeoutMs`                  | `15000`                                   | The fetch timeout                                      |
+| `maxBytes`                   | 32 MiB                                    | The largest BLOB accepted                              |
+| `allowUnattested`            | `false`                                   | Accept `none` / self attestation                       |
+| `allowUnknownAuthenticators` | `false`                                   | Accept a certificate attestation the BLOB doesn't list |
+| `revocation`                 | `"require"` (`"best-effort"` with `blob`) | What a CRL that can't be had means (below)             |
 
-Certificate revocation lists (of the BLOB's chain and of attestation chains) are not fetched;
-the pinned root expires on 2029-03-18, and a denext release before then pins its successor.
+**Revocation.** Every certificate of the BLOB's signing path, and of an attestation's `x5c`
+path to its metadata roots, that names CRL distribution points is checked against its issuer's
+certificate revocation list (RFC 5280 §5); a certificate the CRL lists is refused (for the BLOB,
+the refresh fails and the held BLOB serves out its grace day). The fetch is bounded: `http:` /
+`https:` distribution points only (a CRL is signed, so plain HTTP can't forge one), at most four
+per certificate, one fetch per URL at a time, a timeout of `timeoutMs` capped at 10 s, and a
+4 MiB body cap. A CRL is used only when its signature verifies with the issuer's key, it names
+the certificate's issuer, it is current (`thisUpdate` ≤ now ≤ `nextUpdate`; one without
+`nextUpdate` is refused) and it has no critical extension the reader doesn't know (a delta,
+indirect or reason-partitioned CRL is not used). A usable CRL is cached per URL until its
+`nextUpdate` (64 at most); a failed fetch is not retried for five minutes. `revocation` decides
+what happens when no usable CRL can be had for a certificate that names one:
+
+- `"require"` — the path is refused (fail closed). The default when the BLOB is fetched.
+- `"best-effort"` — the check is skipped and a warning logged once per URL; a usable CRL that
+  lists the certificate still refuses it. The default when `blob` supplies the BLOB, since a
+  server without outbound network can't reach a CRL either.
+- `"off"` — no CRL is fetched.
+
+A certificate without a distribution point has nothing to check; OCSP is not used. The pinned
+root expires on 2029-03-18, and a denext release before then pins its successor.
 
 ## Roles and authorization
 
@@ -1687,6 +1780,11 @@ awaited, so an audit row is written before the response is built.
 | `apiTokenIssued`        | `{ userId, tokenId, name?, scopes?, expiresAt? }` | A bearer API token was minted (`issueApiToken`, `POST /tokens`)       |
 | `apiTokenRevoked`       | `{ tokenId, userId?, reason }`                    | A bearer API token was revoked — `reason` says how (below)            |
 
+Every payload also carries `ip`: the client address of the request that caused the event, read
+the way `clientIp()` reads it — the socket peer, or with `trustForwardedHeaders`
+(on `denextAuth`, else the app's) the proxy's last `x-forwarded-for` hop, never a hop the client
+wrote. An event raised outside a request (a job calling `revokeAllSessions`) has no `ip`.
+
 `signInFailed.reason` is the closed `SignInFailedReason` union, so a `switch` over it can be
 exhaustive: `"invalid_credentials"` (a wrong password, or a wrong, spent or expired email link or
 code), `"invalid_mfa_code"` (a wrong TOTP or backup code, or passkey, at the step-up),
@@ -1716,12 +1814,11 @@ SQLite adapters delete API tokens 30 days after they were revoked or expired.
 that succeeded. A sign-in that stops at a second factor fires `signIn` only when the
 step-up completes.
 
-Two payload fields the event has always declared are now actually populated. `ip` carries
-the client bucket the limiter counted the attempt against — present on the rate-limited
-routes (the credentials POST, the sign-in start, the email link and code redeem, and the
+On `signInFailed` from a rate-limited route, `ip` is instead the client bucket the limiter
+counted the attempt against — the rate-limited routes (the credentials POST, the sign-in start, the email link and code redeem, and the
 second-factor steps), IPv4 as seen and an IPv6 client as
 its **/64 prefix**, which is what the limiter itself counts — so "one address, many
-failures" is visible to an alerting pipeline. And `signIn` carries `isNewUser: true` when
+failures" is visible to an alerting pipeline. `signIn` carries `isNewUser: true` when
 that sign-in created the adapter's user record (always `false` without an adapter, which
 creates nothing).
 
@@ -1792,6 +1889,14 @@ top-level GET) and `path` to `"/"`, which `__Host-` forces anyway. `Secure` is p
 even behind a proxy that omits `x-forwarded-proto`, and on any `SameSite=None` cookie. A
 `responseMode: "form_post"` provider's transaction cookie is always `SameSite=None`, whatever
 `cookies.transaction.sameSite` says — its callback is a cross-site POST.
+
+The prefix follows the transport. A browser refuses a `__Host-` cookie over plain http, even on
+`localhost`, so a request over http (no `https:` `canonicalOrigin`, and neither the URL nor
+`x-forwarded-proto` says https) gets plain names (`denext_auth`, `denext_auth_tx`) on a loopback
+host (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`) and, outside production, on any host —
+which is what lets `denext dev` on `http://localhost` hold a session. Production over http on
+another host keeps `__Host-`, which the browser refuses: a session never travels in clear text
+there. Over https, and whenever `canonicalOrigin` is `https:`, the names are always `__Host-`.
 
 > [!WARNING]
 > Changing a cookie name — or turning `hostPrefix` off — renames the cookie, which logs
@@ -2020,8 +2125,11 @@ tokens: `{ mfa_required: true, mfa_token, expires_in, factors }`, finished at `P
 {basePath}/native/mfa` with a TOTP, backup or SMS code (`nativeSession()`'s `completeMfa`; `POST
 {basePath}/native/mfa-challenge` texts a phone factor first). The `mfa_token` is single-use, lives
 five minutes, and is not a credential for anything else. Under `mfa.required: "always"` a user with
-no factor yet can't enroll from a native `id_token` sign-in (`403 mfa_required`); the browser flow
-enrolls.
+no factor yet gets the same pending result with `mfa_enroll: true`, and finishes it by enrolling a
+first factor: `POST {basePath}/native/mfa-enroll` (`{ factor_id, secret, uri, mfa_token }`), then
+`POST {basePath}/native/mfa-confirm` with a code (the tokens plus `backup_codes`) —
+`nativeSession()`'s `enrollMfa` and `confirmMfaEnrollment`, under the web enrollment's rules
+(first factor only, the MFA budget, single-use tokens).
 
 The whole flow — CORS for the app's origin, the client helper `nativeSession()`,
 `createApiClient({ base, auth })`, the id_token checks, the second factor and deletion — is on
@@ -2091,6 +2199,98 @@ navigation that never reaches it.
 A network failure, a non-JSON body or an error status from the session endpoint all read
 as "signed out" rather than throwing into the tree, so the UI degrades to the logged-out
 view instead of unmounting behind an error boundary.
+
+## `next-auth` (Auth.js v5) apps
+
+A Next.js app written for Auth.js v5 runs on denext with its source unchanged. `denext migrate`
+aliases `next-auth`, `next-auth/react`, `next-auth/jwt` and `next-auth/providers/*` to denext's
+compat modules, which map Auth.js onto `denextAuth`:
+
+```ts
+// auth.ts — as written for Next.js
+import NextAuth from "next-auth";
+import GitHub from "next-auth/providers/github";
+import Credentials from "next-auth/providers/credentials";
+
+export const { handlers, auth, signIn, signOut } = NextAuth({
+  providers: [GitHub, Credentials({ authorize: async (c) => await checkPassword(c) })],
+  callbacks: {
+    jwt: ({ token, user }) => (user ? { ...token, role: user.role } : token),
+    session: ({ session, token }) => ({ ...session, role: token.role }),
+  },
+});
+
+// app/api/auth/[...nextauth]/route.ts
+import { handlers } from "@/auth";
+export const { GET, POST } = handlers;
+
+// middleware.ts
+export { auth as middleware } from "@/auth";
+```
+
+`auth()` reads the session in a Server Component, a route handler or a Server Action;
+`auth(handler)` wraps a route handler or middleware (`request.auth`); `export { auth as middleware }`
+runs `callbacks.authorized`. `next-auth/react` gives the client `SessionProvider`, `useSession`,
+`signIn`, `signOut`, `getSession`, `getCsrfToken` and `getProviders`, and `next-auth/jwt` gives
+`getToken`, `encode` and `decode`.
+
+`NextAuth` also takes a lazy config, `NextAuth(async (req) => config)`: it runs on every request,
+with the `NextRequest` in the route handlers and middleware and `undefined` in `auth()`,
+`signIn()` and `signOut()`, as in Auth.js. Concurrent requests each read their own config.
+
+On a next-compat build the aliases need no import map: `next-auth/react` (in the app or in a
+library under `node_modules`) bundles from denext's runtime, and `next-auth`, `next-auth/jwt` and
+the providers resolve to the shim, so an installed `next-auth` package is never loaded.
+
+| Auth.js                                                                                                                | On denext                                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GitHub`, `Google`, `Apple`, `Discord`, `MicrosoftEntraID`, `GitLab`, `Facebook`, `Slack`, `Okta`, `Auth0`, `Keycloak` | denext's presets; `clientId` / `clientSecret` (and an `issuer`) default to `AUTH_<ID>_ID` / `_SECRET` / `_ISSUER`; `authorization.params`, `profile()` and `allowDangerousEmailAccountLinking` apply          |
+| `Twitter`, `LinkedIn`, `Twitch`, `Spotify`, `Cognito`, `Zoom`, `Notion`                                                | the same, from endpoint data the shim carries (X, Zoom and Notion send the client credentials as HTTP Basic)                                                                                                  |
+| A custom provider object (`{ id, type: "oauth" \| "oidc", authorization, … }`)                                         | `oauthPreset()` / `oidc()`                                                                                                                                                                                    |
+| `Credentials`                                                                                                          | `credentials()`, plus its rate limits                                                                                                                                                                         |
+| `Resend`, `Nodemailer`, `Email`                                                                                        | `magicLink()`; Resend's HTTP API (`AUTH_RESEND_KEY`) or `smtpMailer()` sends the link                                                                                                                         |
+| `session.strategy: "jwt"`                                                                                              | denext's signed cookie, the `jwt` callback's token sealed inside it (AES-256-GCM, a key derived from `AUTH_SECRET`)                                                                                           |
+| `session.strategy: "database"`                                                                                         | `session.strategy: "database"` on the adapter's `Session` rows                                                                                                                                                |
+| `adapter` (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …)                                                         | bridged onto denext's adapter port: users, accounts, sessions, verification tokens; roles, bans and `sessionsValidAfter` through its optional `getUserExtension` / `updateUserExtension` (an extension table) |
+| `callbacks.signIn` / `jwt` / `session` / `redirect` / `authorized`                                                     | run with Auth.js's arguments (`account` carries the provider tokens, `profile` the raw profile)                                                                                                               |
+| `events.signIn` / `signOut` / `createUser` / `linkAccount` / `updateUser` / `session`                                  | fired from denext's events (the first four with `ip`); `session` on every read, `updateUser` when the adapter updates a user                                                                                  |
+| `pages`                                                                                                                | `pages`: the built-in GET pages under `/api/auth` redirect to `signIn` / `signOut` / `error` / `verifyRequest` (same-origin only), and `newUser` receives a first sign-in; without them, plain built-in pages |
+| `AUTH_SECRET`, `AUTH_URL`                                                                                              | `secret`, `canonicalOrigin` (+ `basePath` from its path)                                                                                                                                                      |
+
+An Auth.js adapter's schema has no column for denext's roles, bans or `sessionsValidAfter`. Give
+it two more methods over a table of your own, keyed by user id, and `requireAuth({ role })`, a
+ban and `revokeAllSessions()` work through it, its database sessions included (times are epoch
+seconds; `null` clears a field):
+
+```ts
+import type { AdapterUserExtension } from "next-auth";
+const adapter = {
+  ...PrismaAdapter(prisma),
+  getUserExtension: (userId: string) => prisma.userExtension.findUnique({ where: { userId } }),
+  updateUserExtension: (userId: string, patch: AdapterUserExtension) =>
+    prisma.userExtension.upsert({ where: { userId }, create: { userId, ...patch }, update: patch }),
+};
+```
+
+denext keeps its own defaults where they are stricter, and nothing is relaxed for parity:
+
+- **CSRF.** Every state-changing POST (`signin`, `signout`, the credentials callback, `session`
+  updates) needs Auth.js's double-submit `csrfToken` **and** passes denext's same-origin check.
+  The CSRF cookie is a signed `__Host-` cookie.
+- **OAuth.** Every flow uses `state` and PKCE, plus `nonce` for OIDC, whatever a provider's
+  `checks` say. The `redirect_uri` comes from `AUTH_URL`, never the `Host` header, so production
+  needs `AUTH_URL`.
+- **Redirects.** A `callbackUrl` / `redirectTo` goes through the `redirect` callback, then is kept
+  to a same-origin path. A callback that returns another origin lands on `/`.
+- **Cookies.** The session is `__Host-denext_auth` (`Secure`, `httpOnly`, `SameSite=Lax`), with
+  no `cookies` override. Over plain http on a loopback host, or outside production, the names
+  drop the `__Host-` prefix, which a browser refuses there (as `denextAuth`'s do; see
+  [Base path and cookies](#base-path-and-cookies)), much as Auth.js drops `__Secure-`. A session also ends 30 days after sign-in at the latest
+  (`session.maxLifetime`), however often it slides.
+- **Email links** open a confirmation page by default; `Resend({ confirm: false })` signs in on
+  the GET, as Auth.js does.
+
+The full list is in [Differences](/docs/differences) and [Limitations](/docs/limitations).
 
 ## Password hashing
 
@@ -2795,10 +2995,9 @@ in its test mode (`+clerk_test` addresses verify with `424242`).
 What the first-party auth layer still does not do — the full ledger is
 [Known limitations](/docs/limitations):
 
-- **No next-auth compatibility shim.** Every emailed token goes through your
+- **Emailed tokens are delivered after the response.** Every one goes through your
   `sendVerificationRequest` (`smtpMailer()` or your own), handed over after the response, so
-  delivery is best-effort where the platform freezes the isolate; a `next-auth` shim is on the
-  roadmap.
+  delivery is best-effort where the platform freezes the isolate.
 - **Passkeys: two attestation formats, three algorithms.** Only `none` and `packed` statements
   are verified — `tpm`, `android-key`, `apple` and `fido-u2f` are refused, or with
   [`attestation.mds`](#attestation-the-fido-metadata-service) and `allowUnattested` registered

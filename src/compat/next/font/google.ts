@@ -12,8 +12,8 @@
  * @module
  */
 
-import { addFontFace, addStylesheet, fontClassName, type FontResult } from "./registry.ts";
-import { fallbackFontFace } from "./fallback.ts";
+import { addStylesheet, type FontResult } from "./registry.ts";
+import { fallbackFontFace, registerFontClass } from "./fallback.ts";
 
 export type { FontResult } from "./registry.ts";
 
@@ -79,21 +79,13 @@ export function googleFont(family: string, options: GoogleFontOptions = {}): Fon
   const signature = `${family}:${JSON.stringify(options)}`;
   // The metric-matched fallback face comes right after the web font in the stack, before the
   // caller's own fallbacks / the generic family (Next's order).
-  const adjusted = options.adjustFontFallback === false ? null : fallbackFontFace(family);
-  if (adjusted) addFontFace(adjusted.css);
-  const stack = [
-    `'${family}'`,
-    ...(adjusted ? [`'${adjusted.family}'`] : []),
-    ...(options.fallback ?? ["sans-serif"]),
-  ].join(", ");
-  const className = fontClassName(family, signature);
-  addFontFace(`.${className}{font-family:${stack};}`);
-
-  let variable = "";
-  if (options.variable) {
-    variable = `${className}_var`;
-    addFontFace(`.${variable}{${options.variable}:${stack};}`);
-  }
+  const { className, variable, stack } = registerFontClass({
+    family,
+    signature,
+    fallbackFace: options.adjustFontFallback === false ? null : fallbackFontFace(family),
+    fallback: options.fallback ?? ["sans-serif"],
+    variable: options.variable,
+  });
 
   const style: FontResult["style"] = { fontFamily: stack };
   const weights = ([] as string[]).concat(options.weight ?? []);

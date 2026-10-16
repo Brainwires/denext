@@ -15,7 +15,15 @@
 // the elements for a morph; `enter`/`exit`/`update`/`share` become `view-transition-class` on the
 // old vs. new side.
 
-import { DNX_VT_ATTR, type ViewTransitionMarker } from "../../runtime/react-extras.ts";
+import {
+  DNX_VT_ATTR,
+  DNX_VT_EVENTS,
+  type ViewTransitionCallback,
+  type ViewTransitionInstance,
+  type ViewTransitionMarker,
+  type ViewTransitionPseudoElement,
+} from "../../runtime/react-extras.ts";
+import { fiberForNode } from "../dom-fiber-map.ts";
 import { activeRoots, currentDocument, rootHandleOf } from "./state.ts";
 import { anyRootHasLane, scheduleSyncFlush, settleTransitions } from "./scheduler.ts";
 import { reportUncaught } from "./root-callbacks.ts";
@@ -54,7 +62,7 @@ function collectMarked(root: Element, out: Element[]): void {
   if (typeof root.getAttribute === "function" && root.getAttribute(DNX_VT_ATTR) != null) {
     out.push(root);
   }
-  const kids = root.children;
+  const kids = root.childNodes; // (text nodes have none, nor a getAttribute)
   for (let i = 0; i < kids.length; i++) collectMarked(kids[i] as Element, out);
 }
 
@@ -120,16 +128,16 @@ function writeStyle(
 }
 
 /** Visit every marked element across all active roots' live DOM. */
-function eachMarked(visit: (marker: ViewTransitionMarker, el: Element) => void): void {
+function eachMarked(visit: (b: Boundary) => void): void {
   for (const handle of activeRoots) {
     const out: Element[] = [];
     collectMarked(handle.container, out);
     for (const el of out) {
       const m = markerOf(el);
-      if (m) visit(m, el);
+      if (m) visit({ el, m, ev: eventsOf(fiberForNode(el)) });
     }
     // A component carrying the config (the server couldn't expand it) marks no DOM node itself.
-    componentBoundaries(handle.current, (b) => out.includes(b.el) || visit(b.m, b.el));
+    componentBoundaries(handle.current, (b) => out.includes(b.el) || visit(b));
   }
 }
 
@@ -149,10 +157,13 @@ function componentBoundaries(f: Fiber | null, visit: (b: Boundary) => void): voi
  */
 function begin(types: readonly string[]): ActiveViewTransition {
   const marked = new Map<Element, string | null>();
-  eachMarked((m, el) => {
+  const outgoing: Boundary[] = [];
+  eachMarked((b) => {
+    outgoing.push(b);
+    const m = b.m;
     stamp(
       marked,
-      el,
+      b.el,
       ident(m.name),
       joinClasses(
         resolveClass(m.exit, types),
@@ -161,14 +172,20 @@ function begin(types: readonly string[]): ActiveViewTransition {
       ),
     );
   });
+  const ev = events(types);
+  const before = snapshotUpdates(outgoing);
   return {
     // The new side carries `enter`/`update`/`share` classes (`::view-transition-new(name)`). A
     // reused element (a morph in place) is re-stamped from its original, so the incoming class wins.
     markIncoming() {
-      eachMarked((m, el) => {
+      const incoming: Boundary[] = [];
+      eachMarked((b) => incoming.push(b));
+      navUpdates(incoming, before, ev);
+      for (const b of incoming) {
+        const m = b.m;
         stamp(
           marked,
-          el,
+          b.el,
           ident(m.name),
           joinClasses(
             resolveClass(m.enter, types),
@@ -176,9 +193,12 @@ function begin(types: readonly string[]): ActiveViewTransition {
             resolveClass(m.share, types),
           ),
         );
-      });
+      }
+      navEvents(outgoing, incoming, ev);
     },
+    ready: ev.fire,
     clear() {
+      ev.cleanup();
       for (const [el, original] of marked) {
         if (original == null) el.removeAttribute("style");
         else el.setAttribute("style", original);
@@ -186,6 +206,69 @@ function begin(types: readonly string[]): ActiveViewTransition {
       marked.clear();
     },
   };
+}
+
+/**
+ * A soft navigation's callbacks: a boundary only on the old side exits, one only on the new side
+ * enters, and a name on both sides (on different elements) is shared — `onShare` runs on the side
+ * that leaves, as in React. Only the top-most boundary of a subtree that comes or goes runs one.
+ */
+function navEvents(outgoing: Boundary[], incoming: Boundary[], ev: Events): void {
+  const kept = new Set(incoming.map((b) => b.el));
+  const gone = outgoing.filter((b) => !kept.has(b.el));
+  const was = new Set(outgoing.map((b) => b.el));
+  const came = incoming.filter((b) => !was.has(b.el));
+  const names = (bs: Boundary[]) => new Set(bs.map((b) => explicitName(b.m)).filter(Boolean));
+  const cameNames = names(came);
+  const goneNames = names(gone);
+  for (const b of topMost(gone)) {
+    const name = explicitName(b.m);
+    ev.add(b, name && cameNames.has(name) ? "onShare" : "onExit");
+  }
+  for (const b of topMost(came)) {
+    const name = explicitName(b.m);
+    if (!name || !goneNames.has(name)) ev.add(b, "onEnter");
+  }
+}
+
+/** A persisting boundary's state before a soft navigation's commit (see {@link navUpdates}). */
+interface NavBefore {
+  html: string;
+  box: string | null;
+  view: boolean;
+}
+
+/**
+ * Snapshot the outgoing boundaries that have an `onUpdate` (only those: the markup is the measure),
+ * after their stamps, so the comparison sees just the commit's own changes.
+ */
+function snapshotUpdates(outgoing: Boundary[]): Map<Element, NavBefore> {
+  const out = new Map<Element, NavBefore>();
+  for (const b of outgoing) {
+    if (typeof b.ev?.onUpdate !== "function") continue;
+    out.set(b.el, { html: b.el.outerHTML, box: boxOf(b.el), view: inView(b.el) });
+  }
+  return out;
+}
+
+/**
+ * A soft navigation's `onUpdate`: a boundary that persists (the same element on both sides) runs it
+ * when the commit changed its content or moved its box, and it was or is in the viewport — React's
+ * update trigger, measured on the DOM since the navigation's commit has no fiber flags to read.
+ */
+function navUpdates(incoming: Boundary[], before: Map<Element, NavBefore>, ev: Events): void {
+  for (const b of incoming) {
+    const was = before.get(b.el);
+    if (!was || !(was.view || inView(b.el))) continue;
+    if (was.html !== b.el.outerHTML || (was.box !== null && was.box !== boxOf(b.el))) {
+      ev.add(b, "onUpdate");
+    }
+  }
+}
+
+/** The boundaries not inside another one of the list (DOM containment). */
+function topMost(bs: Boundary[]): Boundary[] {
+  return bs.filter((b) => !bs.some((o) => o.el !== b.el && o.el.contains?.(b.el)));
 }
 
 // ---- Same-page transitions (React 19.2's `<ViewTransition>` triggers) ----------------------
@@ -208,10 +291,15 @@ function begin(types: readonly string[]): ActiveViewTransition {
 // transition finishes. When no mutation lands outside a boundary, the root's own cross-fade is
 // cancelled (`view-transition-name: none` on the document element), as React does.
 
-/** One affected `<ViewTransition>` boundary: its host element and parsed config. */
+/** A boundary's `on*` callbacks (one object per `<ViewTransition>` render, see DNX_VT_EVENTS). */
+type VTEvents = Partial<Record<VTEvent, ViewTransitionCallback>>;
+type VTEvent = "onEnter" | "onExit" | "onUpdate" | "onShare";
+
+/** One affected `<ViewTransition>` boundary: its host element, parsed config and callbacks. */
 interface Boundary {
   el: Element;
   m: ViewTransitionMarker;
+  ev?: VTEvents;
 }
 
 /** The boundaries a Transition commit affects, gathered before mutation. */
@@ -231,6 +319,13 @@ interface Plan {
 
 const MUTATION = Placement | Update | ChildDeletion | ChildrenChanged;
 const CHILD_LIST = ChildDeletion | ChildrenChanged;
+
+/** A fiber's `<ViewTransition>` callbacks, when its boundary has any. */
+function eventsOf(f: Fiber | null | undefined): VTEvents | undefined {
+  return (f?.vnode.props as Record<PropertyKey, unknown> | null)?.[DNX_VT_EVENTS] as
+    | VTEvents
+    | undefined;
+}
 
 /** A fiber's raw `<ViewTransition>` config (a host's attribute, or a component's carried prop). */
 function rawMarker(f: Fiber): ViewTransitionMarker | null {
@@ -262,11 +357,13 @@ function nearestHosts(f: Fiber | null, out: Element[]): Element[] {
 function boundariesOfFiber(f: Fiber): Boundary[] | null {
   const m = rawMarker(f);
   if (m === null) return null;
-  if (f.tag === "host") return [{ el: f.stateNode as Element, m }];
+  const ev = eventsOf(f);
+  if (f.tag === "host") return [{ el: f.stateNode as Element, m, ev }];
   const name = explicitName(m);
   return nearestHosts(f.child, []).map((el, i) => ({
     el,
     m: i === 0 || !name ? m : { ...m, name: `${name}_${i}` },
+    ev,
   }));
 }
 
@@ -334,7 +431,7 @@ function scan(f: Fiber, plan: Plan, insideVT: boolean, changed: boolean): void {
 function scanChild(c: Fiber, plan: Plan, insideVT: boolean, changed: boolean): void {
   if (hasBit(c, HiddenBit)) return;
   if (c.alternate === null) return scanFresh(c, plan, insideVT);
-  if (c.tag === "activity" && scanActivity(c, plan)) return;
+  if (c.tag === "activity" && scanActivity(c, plan, insideVT)) return;
   const flags = c.flags | c.subtreeFlags;
   const m = classify(c, plan, flags, insideVT, changed);
   // Below a boundary only its own nested boundaries' changes matter; below a changed parent
@@ -365,11 +462,20 @@ function scanFresh(c: Fiber, plan: Plan, insideVT: boolean): void {
   if (!insideVT && !allTopMarked(c)) plan.rootAffected = true;
 }
 
-/** An `<Activity>`: true when handled — hidden content is skipped, a revealed one's boundaries enter. */
-function scanActivity(c: Fiber, plan: Plan): boolean {
-  if (hasBit(c, OffscreenBit)) return true;
-  if (!hasBit(c.alternate!, OffscreenBit)) return false;
-  for (let k = c.child; k !== null; k = k.sibling) boundariesIn(k, plan.enters, plan.enterNamed);
+/**
+ * An `<Activity>`: true when handled. One going hidden is an exit of its content's boundaries (as
+ * React animates it), one revealed an enter; hidden content is otherwise skipped. Unwrapped
+ * content coming or going changes the root.
+ */
+function scanActivity(c: Fiber, plan: Plan, insideVT: boolean): boolean {
+  const hiding = hasBit(c, OffscreenBit);
+  const wasHidden = hasBit(c.alternate!, OffscreenBit);
+  if (hiding === wasHidden) return hiding;
+  const [top, named] = hiding ? [plan.exits, plan.exitNamed] : [plan.enters, plan.enterNamed];
+  for (let k = (hiding ? c.alternate! : c).child; k !== null; k = k.sibling) {
+    boundariesIn(k, top, named);
+    if (!insideVT && !allTopMarked(k)) plan.rootAffected = true;
+  }
   return true;
 }
 
@@ -475,10 +581,35 @@ function setProp(st: CSSStyleDeclaration, prop: string, value: string | null): v
   else st.removeProperty(prop);
 }
 
+/** `el`'s layout box (null where the DOM has no layout). */
+function rectOf(el: Element): DOMRect | null {
+  return typeof el.getBoundingClientRect === "function" ? el.getBoundingClientRect() : null;
+}
+
 /** A layout box to compare across the commit (null where the DOM has no layout). */
 function boxOf(el: Element): string | null {
-  const r = typeof el.getBoundingClientRect === "function" ? el.getBoundingClientRect() : null;
+  const r = rectOf(el);
   return r ? `${r.left},${r.top},${r.width},${r.height}` : null;
+}
+
+/** The viewport's size (null where there is none to measure). */
+function viewportOf(el: Element): { w: number; h: number } | null {
+  const win = (el.ownerDocument?.defaultView ?? globalThis) as {
+    innerWidth?: number;
+    innerHeight?: number;
+  };
+  const { innerWidth: w, innerHeight: h } = win;
+  return typeof w === "number" && typeof h === "number" ? { w, h } : null;
+}
+
+/**
+ * Whether `el` is within the viewport (React's `wasInstanceInViewport`: a box touching it counts,
+ * occluded or not). Where the DOM has no layout, everything is.
+ */
+function inView(el: Element): boolean {
+  const r = rectOf(el);
+  const v = viewportOf(el);
+  return !r || !v || (r.bottom >= 0 && r.right >= 0 && r.top <= v.h && r.left <= v.w);
 }
 
 /** The document type the runtime drives (the View Transitions API is optional). */
@@ -500,7 +631,8 @@ function flush(): void {
 /** The elements a same-page transition stamped (cleared when it finishes). */
 interface Stamps {
   els: Element[];
-  set(b: Boundary, cls: string | null, name?: string): void;
+  /** Name `b` with `cls`; false (nothing stamped) when its class is `"none"`. */
+  set(b: Boundary, cls: string | null, name?: string): boolean;
 }
 
 function stamps(): Stamps {
@@ -508,68 +640,205 @@ function stamps(): Stamps {
   return {
     els,
     set(b, cls, name = nameOf(b)) {
-      if (cls === "none") return;
+      if (cls === "none") return false;
       setVT(b.el, name, joinClasses(cls ?? undefined) ?? null);
       els.push(b.el);
+      return true;
     },
   };
 }
 
-/** `event`'s class for `b`, or `share`'s when a same-named boundary is on the other side. */
-function pairedClass(
-  b: Boundary,
-  event: "enter" | "exit",
-  other: Map<string, Boundary>,
-  types: readonly string[],
-): string | null {
+/** One transition's queued `on*` callbacks: run once its pseudo-elements exist, cleaned up after. */
+interface Events {
+  /** Queue `b`'s `kind` callback (once per `<ViewTransition>` per kind). */
+  add(b: Boundary, kind: VTEvent): void;
+  /** Run the queued callbacks (the transition is `ready`). */
+  fire(): void;
+  /** Run the cleanups they returned (the transition finished). */
+  cleanup(): void;
+}
+
+function events(types: readonly string[]): Events {
+  const queued: Array<[ViewTransitionCallback, string]> = [];
+  const seen = new Set<unknown>();
+  const cleanups: Array<() => void> = [];
+  let fired = false;
+  return {
+    add(b, kind) {
+      // Once per `<ViewTransition>` (its hosts share one `ev`), however many hosts it marks.
+      const cb = b.ev?.[kind];
+      if (typeof cb !== "function" || seen.has(b.ev)) return;
+      seen.add(b.ev);
+      queued.push([cb, nameOf(b)]);
+    },
+    fire() {
+      if (fired) return;
+      fired = true;
+      for (const [cb, name] of queued) {
+        try {
+          const done = cb(instanceFor(name), types.slice());
+          if (typeof done === "function") cleanups.push(done);
+        } catch (err) {
+          reportCallbackError(err);
+        }
+      }
+    },
+    cleanup() {
+      for (const done of cleanups.splice(0)) {
+        try {
+          done();
+        } catch (err) {
+          reportCallbackError(err);
+        }
+      }
+    },
+  };
+}
+
+/** A throwing callback is reported (the global error handler), never stopping the others. */
+function reportCallbackError(err: unknown): void {
+  const report = (globalThis as { reportError?: (e: unknown) => void }).reportError;
+  if (typeof report === "function") report(err);
+  else console.error(err);
+}
+
+/**
+ * React's `ViewTransitionInstance`: the boundary's name and its `::view-transition-*`
+ * pseudo-elements, each animated / inspected through the document element.
+ */
+function instanceFor(name: string): ViewTransitionInstance {
+  const doc = currentDocument() as Document;
+  const pseudo = (kind: string): ViewTransitionPseudoElement => {
+    const scope = doc.documentElement;
+    const selector = `::view-transition-${kind}(${name})`;
+    return {
+      animate: (keyframes, options) =>
+        scope.animate(keyframes, {
+          ...(typeof options === "number" ? { duration: options } : options),
+          pseudoElement: selector,
+        }),
+      getAnimations: () =>
+        scope.getAnimations({ subtree: true }).filter((a) => {
+          const e = a.effect as { target?: Element | null; pseudoElement?: string | null } | null;
+          return e?.target === scope && e.pseudoElement === selector;
+        }),
+      getComputedStyle: () =>
+        (doc.defaultView ?? (globalThis as unknown as Window)).getComputedStyle(scope, selector),
+    };
+  };
+  return {
+    name,
+    group: pseudo("group"),
+    imagePair: pseudo("image-pair"),
+    old: pseudo("old"),
+    new: pseudo("new"),
+  };
+}
+
+/** Whether `b`'s name pairs it with a boundary on the other side (a `share`). */
+function paired(b: Boundary, other: Map<string, Boundary>): boolean {
   const name = explicitName(b.m);
-  return classFor(b.m, name && other.has(name) ? "share" : event, types);
+  return !!name && other.has(name);
+}
+
+/** Drop the boundaries outside the viewport: React doesn't animate them (nor pair them). */
+function visibleOnly(bs: Boundary[], named: Map<string, Boundary>): Boundary[] {
+  for (const [name, b] of named) if (!inView(b.el)) named.delete(name);
+  return bs.filter((b) => inView(b.el));
+}
+
+/** A persisting boundary's box before the commit, and whether it was in the viewport. */
+interface Before {
+  box: string | null;
+  view: boolean;
 }
 
 /**
  * Name the OUTGOING side before the old-state capture: exits (or a pair's old half — a nested
- * named boundary only when paired), then updates and layout candidates. Returns the candidates'
- * boxes, compared after the commit.
+ * named boundary only when paired), then updates and layout candidates. A boundary outside the
+ * viewport doesn't exit (nor pair). Returns the candidates' boxes, compared after the commit.
  */
 function stampOutgoing(
   plan: Plan,
   types: readonly string[],
   out: Stamps,
-): Map<Element, string | null> {
-  for (const b of plan.exits) out.set(b, pairedClass(b, "exit", plan.enterNamed, types));
+  ev: Events,
+): Map<Element, Before> {
+  plan.exits = visibleOnly(plan.exits, plan.exitNamed);
+  for (const b of plan.exits) stampSide(b, paired(b, plan.enterNamed), "exit", types, out, ev);
   for (const [name, b] of plan.exitNamed) {
     if (plan.enterNamed.has(name) && !plan.exits.includes(b)) {
-      out.set(b, classFor(b.m, "share", types));
+      stampSide(b, true, "exit", types, out, ev);
     }
   }
-  const before = new Map<Element, string | null>();
+  const before = new Map<Element, Before>();
   for (const b of plan.updates.concat(plan.layout)) {
     out.set(b, classFor(b.m, "update", types));
-    before.set(b.el, boxOf(b.el));
+    before.set(b.el, { box: boxOf(b.el), view: inView(b.el) });
   }
   return before;
 }
 
-/** Name the INCOMING side after the commit: enters (or a pair's new half), updates, moved candidates. */
+/**
+ * Stamp one side of an enter / exit: `share` when paired (its callback runs on the side that
+ * leaves only, as React's), else the event's own class and callback.
+ */
+function stampSide(
+  b: Boundary,
+  share: boolean,
+  event: "enter" | "exit",
+  types: readonly string[],
+  out: Stamps,
+  ev: Events,
+): void {
+  if (!out.set(b, classFor(b.m, share ? "share" : event, types))) return;
+  if (!share) ev.add(b, event === "enter" ? "onEnter" : "onExit");
+  else if (event === "exit") ev.add(b, "onShare");
+}
+
+/**
+ * Name the INCOMING side after the commit: enters (or a pair's new half), updates, moved
+ * candidates. One outside the viewport doesn't enter; an update outside it before and after is
+ * skipped (React cancels it the same way).
+ */
 function stampIncoming(
   plan: Plan,
   types: readonly string[],
   out: Stamps,
-  before: Map<Element, string | null>,
+  before: Map<Element, Before>,
   root: Element | null,
+  ev: Events,
 ): void {
-  for (const b of plan.enters) out.set(b, pairedClass(b, "enter", plan.exitNamed, types));
+  for (const b of visibleOnly(plan.enters, plan.enterNamed)) {
+    stampSide(b, paired(b, plan.exitNamed), "enter", types, out, ev);
+  }
   for (const [name, b] of plan.enterNamed) {
     if (plan.exitNamed.has(name) && !plan.enters.includes(b)) {
-      out.set(b, classFor(b.m, "share", types));
+      stampSide(b, true, "enter", types, out, ev);
     }
   }
-  for (const b of plan.updates) out.set(b, classFor(b.m, "update", types));
-  for (const b of plan.layout) {
-    const was = before.get(b.el);
-    if (was != null && was !== boxOf(b.el)) out.set(b, classFor(b.m, "update", types));
-    else cancelUnmoved(b, root);
+  for (const b of plan.updates) {
+    stampUpdate(b, before.get(b.el)?.view === true || inView(b.el), types, out, root, ev);
   }
+  for (const b of plan.layout) stampUpdate(b, moved(before.get(b.el), b.el), types, out, root, ev);
+}
+
+/** A layout candidate moved, and was or is in the viewport. */
+function moved(was: Before | undefined, el: Element): boolean {
+  return was?.box != null && was.box !== boxOf(el) && (was.view || inView(el));
+}
+
+/** Animate `b` as an update (its `onUpdate` runs), or cancel it. */
+function stampUpdate(
+  b: Boundary,
+  animate: boolean,
+  types: readonly string[],
+  out: Stamps,
+  root: Element | null,
+  ev: Events,
+): void {
+  if (!animate) cancelUnmoved(b, root);
+  else if (out.set(b, classFor(b.m, "update", types))) ev.add(b, "onUpdate");
 }
 
 /**
@@ -629,11 +898,15 @@ function deferCommit(wipRoot: Fiber, run: () => void): () => void {
   return commitNow;
 }
 
-/** Start the view transition; without one (it threw), apply + finish right away. */
+/**
+ * Start the view transition; without one (it threw), apply + finish right away. `ready` runs once
+ * its pseudo-elements exist — or the browser skipped it, as React runs its callbacks either way.
+ */
 function startTransition(
   doc: VTDocument,
   types: string[],
   update: () => void,
+  ready: () => void,
   done: () => void,
 ): void {
   let tx: ReturnType<NonNullable<VTDocument["startViewTransition"]>> | undefined;
@@ -647,30 +920,39 @@ function startTransition(
     done();
     return;
   }
-  tx.ready?.catch(() => {}); // a skipped transition is not an error
+  (tx.ready ?? Promise.resolve()).then(ready, ready); // a skipped transition is not an error
   tx.updateCallbackDone?.catch((err) => console.error("denext: a transition commit failed", err));
   (tx.finished ?? Promise.resolve()).then(done, done);
 }
 
 /**
  * Run a Transition commit inside `document.startViewTransition` (see the section comment): name
- * the outgoing side now, apply the commit + name the incoming side in the update callback, and
- * clear every stamp (and the root's cancelled cross-fade) when the transition finishes.
+ * the outgoing side now, apply the commit + name the incoming side in the update callback, run
+ * the boundaries' `on*` callbacks once it is ready, and clear every stamp (and the root's
+ * cancelled cross-fade) and run the callbacks' cleanups when the transition finishes.
  */
 function animateCommit(doc: VTDocument, wipRoot: Fiber, plan: Plan, run: () => void): void {
   const types = takeTransitionTypes();
   const out = stamps();
-  const before = stampOutgoing(plan, types, out);
+  const ev = events(types);
+  const before = stampOutgoing(plan, types, out, ev);
   const root = doc.documentElement as HTMLElement | null;
   const restoreRoot = cancelRootCrossFade(root, plan);
   const commitNow = deferCommit(wipRoot, run);
-  startTransition(doc, types, () => {
-    commitNow();
-    stampIncoming(plan, types, out, before, root);
-  }, () => {
-    for (const el of out.els) setVT(el, null, null);
-    restoreRoot();
-  });
+  startTransition(
+    doc,
+    types,
+    () => {
+      commitNow();
+      stampIncoming(plan, types, out, before, root, ev);
+    },
+    ev.fire,
+    () => {
+      ev.cleanup();
+      for (const el of out.els) setVT(el, null, null);
+      restoreRoot();
+    },
+  );
 }
 
 /** Named boundaries mounted by a commit, for the dev duplicate-name check after it lands. */
@@ -723,5 +1005,10 @@ function commit(wipRoot: Fiber, eligible: boolean, run: () => void): void {
  * dev server and tests install it directly. Idempotent.
  */
 export function installViewTransitionSupport(): void {
-  setViewTransitionSupport({ begin, commit, flush });
+  setViewTransitionSupport({
+    begin,
+    commit,
+    flush,
+    instance: (el) => instanceFor(nameOf({ el, m: markerOf(el) ?? {} })),
+  });
 }

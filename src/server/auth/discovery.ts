@@ -399,7 +399,7 @@ function endpointUrl(
   if (url.protocol !== "https:" && !rules.allowInsecure) {
     throw new DiscoveryError("insecure_endpoint", `auth: discovery \`${field}\` is not https`);
   }
-  if (!rules.allowedHosts.has(url.host)) {
+  if (!hostPermitted(url, rules.allowedHosts)) {
     throw new DiscoveryError(
       "foreign_endpoint",
       `auth: discovery \`${field}\` points at ${url.host}, which is neither the issuer's host ` +
@@ -407,6 +407,21 @@ function endpointUrl(
     );
   }
   return url.href;
+}
+
+/**
+ * Whether `url`'s host is allowed: listed exactly, or under a `*.domain` entry (a subdomain, not
+ * the apex) — the convention `safeFetch`'s `allowedHosts` follows, so a provider whose discovered
+ * endpoints live on a per-tenant subdomain (Cognito's hosted UI) can name the domain once.
+ */
+function hostPermitted(url: URL, allowed: Set<string>): boolean {
+  if (allowed.has(url.host)) return true;
+  for (const entry of allowed) {
+    if (!entry.startsWith("*.")) continue;
+    const apex = entry.slice(2);
+    if (url.host !== apex && url.host.endsWith(`.${apex}`)) return true;
+  }
+  return false;
 }
 
 /** A one-line description of a thrown value, for the developer-facing message. */

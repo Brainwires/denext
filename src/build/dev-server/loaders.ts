@@ -54,8 +54,10 @@ export function createDevLoader(
     const platform = opts.platform ?? renderPlatform();
     if (await isCompat()) return (await compatLoader(platform))(filePath);
     const redirects = await devPlatformRedirects(st, platform);
+    // A shell's render (`platform` other than `web`) folds `denext/platform` in its copies.
     if (
-      !st.useCacheEnabled && Object.keys(redirects).length === 0 && !st.devCopies.anyEdited
+      !st.useCacheEnabled && Object.keys(redirects).length === 0 && !st.devCopies.anyEdited &&
+      platform === "web"
     ) return base(filePath);
     let current = st.ucLoads.get(platform);
     if (current?.gen !== st.generation) {
@@ -69,6 +71,7 @@ export function createDevLoader(
         redirects,
         useCache: st.useCacheEnabled,
         dev: st.devCopies,
+        platform,
       });
       current = { gen: st.generation, load, tag };
       st.ucLoads.set(platform, current);

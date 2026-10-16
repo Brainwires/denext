@@ -28,9 +28,16 @@ export interface HookDevMeta {
    * by a static relative import (`import { useAuth } from "./auth.ts"`). `hook` is then the
    * name that module exports it under (`"default"` for a default import), so
    * `"<from>#<hook>"` is the importee's own registry key. Absent for a primitive, a
-   * same-module hook, and a hook from a bare/`npm:`/`jsr:`/URL or namespace import.
+   * same-module hook, and a hook from a bare/`npm:`/`jsr:`/URL import. A namespace import's
+   * member call (`hooks.useAuth()`) records the namespace's module.
    */
   from?: string;
+  /**
+   * The call may not run on every render: it sits in a branch (`if`, `?:`, `&&` / `||` / `??`,
+   * `switch`, a loop) or after an early `return`. Naming then tries the render both with and
+   * without it.
+   */
+  cond?: true;
 }
 
 /** The dev metadata of one component (or `use*` custom hook) declaration. */
@@ -46,9 +53,15 @@ export interface ComponentDevMeta {
   /**
    * For a barrel's named re-export (`export { useAuth } from "./auth.ts"`): the declaring
    * module's registry key (`"<fileUrl>#useAuth"`). Such a record makes no calls of its own; a
-   * custom-hook expansion follows it one hop.
+   * custom-hook expansion follows it (up to three re-export hops).
    */
   aliasOf?: string;
+  /**
+   * For a module's `export * from "…"` lines (the record keyed `"<fileUrl>#*"`): the absolute
+   * URL of each module it re-exports everything from, so a hook imported through such a barrel
+   * is looked up in them.
+   */
+  reExportsAll?: string[];
 }
 
 /** Family id (`<fileUrl>#<Name>`) → the declaration's dev metadata. */
@@ -111,8 +124,8 @@ export function clearComponentMeta(): void {
  *
  * A hook that is absent from the table is a custom hook: the runtime expands it when its
  * declaring module registered metadata — the calling module itself, or the one a static
- * relative import names (`HookDevMeta.from`) — and otherwise gives up on naming that
- * component (there is no way to know how many cells an opaque hook consumed).
+ * relative import names (`HookDevMeta.from`) — and otherwise treats it as opaque: it took
+ * an unknown number of cells, which the alignment works out from the hooks around it.
  */
 export const HOOK_CELL_KINDS: Record<string, readonly number[]> = {
   // Primitives — `hooks-dispatcher.ts:251-401`, one cell tagged with its own `HK_*`.
@@ -156,17 +169,7 @@ export interface ResolvedHookName {
   name: string;
 }
 
-/** The cursor a naming walk carries: the cells to match and what has been named so far. */
-interface NameWalk {
-  /** The component's live hook cells (only their `kind` tag is read). */
-  cells: ReadonlyArray<{ kind?: number }>;
-  /** One entry per consumed cell, in cell order. */
-  out: ResolvedHookName[];
-  /** How many cells have been consumed. */
-  i: number;
-}
-
-/** One declaration being walked: its hook calls, where it lives, and its breadcrumb. */
+/** The breadcrumb prefix a level's hooks are named under, and where they resolve. */
 interface HookLevel {
   /** The declaration's hook calls, in source order. */
   hooks: HookDevMeta[];
@@ -193,33 +196,8 @@ const MODULE_PROBES = [
   "/index.js",
 ];
 
-/**
- * Consume the cells one hook call takes, checking each against the expected kind.
- *
- * @param w The walk cursor.
- * @param entry The hook call from the metadata.
- * @param kinds The cell kinds the hook consumes ({@link HOOK_CELL_KINDS}).
- * @param prefix The breadcrumb prefix of the enclosing expansion (`""` at the top).
- * @returns Whether every cell matched (a mismatch aborts the whole component).
- */
-function takeCells(
-  w: NameWalk,
-  entry: HookDevMeta,
-  kinds: readonly number[],
-  prefix: string,
-): boolean {
-  for (let k = 0; k < kinds.length; k++) {
-    if (w.cells[w.i]?.kind !== kinds[k]) return false;
-    // Only the call's FIRST cell carries the binding name; a composite's remaining cells
-    // are internal to it and read as the hook alone.
-    w.out.push({
-      hook: prefix + entry.hook,
-      name: k === 0 && entry.name ? prefix + entry.name : "",
-    });
-    w.i++;
-  }
-  return true;
-}
+/** How many re-export hops (`export { x } from`, `export * from`) a lookup follows. */
+const MAX_REEXPORT_HOPS = 3;
 
 /**
  * Every module URL a static relative import may name: the specifier as written, its
@@ -232,94 +210,192 @@ function moduleCandidates(base: string): string[] {
   return [base, ...typescript, ...MODULE_PROBES.slice(1).map((probe) => base + probe)];
 }
 
+/** A registry hit and the module it was declared in. */
+interface Found {
+  meta: ComponentDevMeta;
+  moduleUrl: string;
+}
+
+/** The first of a module URL's spellings ({@link moduleCandidates}) that `find` resolves. */
+function firstCandidate(base: string, find: (url: string) => Found | undefined): Found | undefined {
+  for (const url of moduleCandidates(base)) {
+    const hit = find(url);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/**
+ * The declaration `name` resolves to in `moduleUrl`: its own record, else through a barrel's
+ * named re-export (`aliasOf`) or its `export *` lines (the `#*` record), up to
+ * {@link MAX_REEXPORT_HOPS} hops. `export *` never re-exports `default`.
+ */
+function lookupHook(moduleUrl: string, name: string, hops: number): Found | undefined {
+  const meta = metaById.get(`${moduleUrl}#${name}`);
+  if (meta && !meta.aliasOf) return { meta, moduleUrl };
+  if (hops >= MAX_REEXPORT_HOPS) return undefined;
+  return meta?.aliasOf ? viaAlias(meta.aliasOf, hops) : viaStars(moduleUrl, name, hops);
+}
+
+/** A named re-export's target (`"<url>#<name>"`), looked up one hop further. */
+function viaAlias(aliasOf: string, hops: number): Found | undefined {
+  const hash = aliasOf.lastIndexOf("#");
+  const target = aliasOf.slice(hash + 1);
+  return firstCandidate(aliasOf.slice(0, hash), (u) => lookupHook(u, target, hops + 1));
+}
+
+/** `name` in the modules a barrel's `export *` lines name, one hop further (never `default`). */
+function viaStars(moduleUrl: string, name: string, hops: number): Found | undefined {
+  if (name === "default") return undefined;
+  for (const star of metaById.get(`${moduleUrl}#*`)?.reExportsAll ?? []) {
+    const hit = firstCandidate(star, (u) => lookupHook(u, name, hops + 1));
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 /**
  * The level a custom-hook call expands into: the hook's registered metadata, looked up in
  * the module that declares it (`from`, else the calling module), breadcrumbed under the
- * hook's declared name. Undefined when that module registered nothing for it — an
- * uninstrumented or not-yet-evaluated importee, a re-export, an opaque package hook.
+ * hook's declared name. Undefined when no module registered it — an uninstrumented or
+ * not-yet-evaluated importee, or a package hook — which leaves the call opaque.
  */
 function expandCustomHook(entry: HookDevMeta, level: HookLevel): HookLevel | undefined {
-  const base = entry.from ?? level.moduleUrl;
-  for (const moduleUrl of entry.from ? moduleCandidates(base) : [base]) {
-    const found = followAlias(metaById.get(`${moduleUrl}#${entry.hook}`), moduleUrl);
-    if (!found) continue;
-    // The declared name reads better than the imported one for a default import (`default`).
-    const label = found.meta.name || entry.hook;
-    return {
-      hooks: found.meta.hooks,
-      moduleUrl: found.moduleUrl,
-      prefix: level.prefix + label + CRUMB,
-    };
-  }
-  return undefined;
+  const find = (url: string) => lookupHook(url, entry.hook, 0);
+  const found = entry.from ? firstCandidate(entry.from, find) : find(level.moduleUrl);
+  if (!found) return undefined;
+  // The declared name reads better than the imported one for a default import (`default`).
+  const label = found.meta.name || entry.hook;
+  return {
+    hooks: found.meta.hooks,
+    moduleUrl: found.moduleUrl,
+    prefix: level.prefix + label + CRUMB,
+  };
 }
 
 /**
- * A registry hit, following a barrel's re-export alias one hop to the declaring module (whose
- * URL may still need the extension / `index` probe). A second alias is not followed.
+ * One hook call as the alignment sees it: a known hook's exact cells, a custom hook expanded
+ * into its own calls, or an opaque hook that took an unknown number of cells. A `cond` step
+ * may also have taken none (it did not run this render).
  */
-function followAlias(
-  meta: ComponentDevMeta | undefined,
-  moduleUrl: string,
-): { meta: ComponentDevMeta; moduleUrl: string } | undefined {
-  if (!meta?.aliasOf) return meta && { meta, moduleUrl };
-  const hash = meta.aliasOf.lastIndexOf("#");
-  const name = meta.aliasOf.slice(hash + 1);
-  for (const candidate of moduleCandidates(meta.aliasOf.slice(0, hash))) {
-    const hit = metaById.get(`${candidate}#${name}`);
-    if (hit && !hit.aliasOf) return { meta: hit, moduleUrl: candidate };
-  }
-  return undefined;
+type Step =
+  | { kind: "cells"; cells: readonly number[]; hook: string; name: string; cond: boolean }
+  | { kind: "group"; steps: Step[]; cond: boolean }
+  | { kind: "opaque"; hook: string; name: string };
+
+/** A declaration's hook calls as {@link Step}s, custom hooks expanded up to the depth cap. */
+function stepsOf(level: HookLevel, depth: number): Step[] {
+  return level.hooks.map((entry): Step => {
+    const cond = entry.cond === true;
+    const hook = level.prefix + entry.hook;
+    const name = entry.name ? level.prefix + entry.name : "";
+    const cells = HOOK_CELL_KINDS[entry.hook];
+    if (cells) return { kind: "cells", cells, hook, name, cond };
+    const nested = depth < MAX_HOOK_DEPTH ? expandCustomHook(entry, level) : undefined;
+    return nested
+      ? { kind: "group", steps: stepsOf(nested, depth + 1), cond }
+      : { kind: "opaque", hook, name };
+  });
 }
 
-/**
- * Walk one declaration's hook calls in lockstep with the live cells, expanding a custom
- * hook — declared in the same module or imported by a static relative import — into its
- * own calls (breadcrumbed).
- *
- * @param w The walk cursor.
- * @param level The declaration being walked.
- * @param depth How many expansions deep this level is.
- * @returns Whether the level matched the cells.
- */
-function walkHookMeta(w: NameWalk, level: HookLevel, depth: number): boolean {
-  for (const entry of level.hooks) {
-    const kinds = HOOK_CELL_KINDS[entry.hook];
-    if (kinds) {
-      if (!takeCells(w, entry, kinds, level.prefix)) return false;
-      continue;
+/** How much work one alignment may do before naming gives up (a pathological component). */
+const ALIGN_BUDGET = 20_000;
+
+/** A cell two complete alignments label differently: it stays unnamed. */
+const DISAGREE: ResolvedHookName = { hook: "", name: "" };
+
+/** The state of one alignment search over a component's cells. */
+interface Align {
+  /** The component's live hook cells (only their `kind` tag is read). */
+  cells: ReadonlyArray<{ kind?: number }>;
+  /** The labels of the alignment being built, by cell index. */
+  path: ResolvedHookName[];
+  /** Every complete alignment's labels merged: a cell they disagree on is {@link DISAGREE}. */
+  agreed: ResolvedHookName[] | null;
+  /** Steps left before the search gives up. */
+  budget: number;
+}
+
+/** Where an alignment continues once a step has consumed its cells (the next cell index). */
+type Next = (i: number) => void;
+
+/** Label `n` cells from `i` as one hook call (only the first carries the bound name). */
+function labelCells(a: Align, i: number, n: number, hook: string, name: string): void {
+  for (let k = 0; k < n; k++) a.path[i + k] = { hook, name: k === 0 ? name : "" };
+}
+
+/** Whether a known hook's cells line up with the live ones at `i`. */
+function cellsFit(a: Align, i: number, kinds: readonly number[]): boolean {
+  if (i + kinds.length > a.cells.length) return false;
+  return kinds.every((kind, k) => a.cells[i + k]?.kind === kind);
+}
+
+/** Try one step at cell `i`, then the rest through `next`: every way the step can fit. */
+function alignStep(a: Align, step: Step, i: number, next: Next): void {
+  if (step.kind === "opaque") {
+    for (let n = 0; i + n <= a.cells.length && a.budget > 0; n++) {
+      labelCells(a, i, n, step.hook, step.name);
+      next(i + n);
     }
-    // A custom hook: expand it when its declaring module registered it, else stop — an
-    // opaque hook consumed an unknown number of cells, so every later name would be a guess.
-    if (depth >= MAX_HOOK_DEPTH) return false;
-    const nested = expandCustomHook(entry, level);
-    if (!nested || !walkHookMeta(w, nested, depth + 1)) return false;
+    return;
   }
-  return true;
+  if (step.cond) next(i); // the call did not run this render
+  if (step.kind === "group") return alignSteps(a, step.steps, 0, i, next);
+  if (!cellsFit(a, i, step.cells)) return;
+  labelCells(a, i, step.cells.length, step.hook, step.name);
+  next(i + step.cells.length);
+}
+
+/** Align `steps[si..]` from cell `i`, handing each way they fit to `done`. */
+function alignSteps(a: Align, steps: Step[], si: number, i: number, done: Next): void {
+  if (--a.budget < 0) return;
+  if (si === steps.length) return done(i);
+  alignStep(a, steps[si], i, (j) => alignSteps(a, steps, si + 1, j, done));
+}
+
+/** Fold one complete alignment into the agreed labels. */
+function agree(a: Align): void {
+  if (!a.agreed) {
+    a.agreed = a.path.slice(0, a.cells.length);
+    return;
+  }
+  for (let i = 0; i < a.agreed.length; i++) {
+    const was = a.agreed[i], now = a.path[i];
+    if (was !== DISAGREE && (was.hook !== now.hook || was.name !== now.name)) {
+      a.agreed[i] = DISAGREE;
+    }
+  }
 }
 
 /**
  * Join a component's build-time hook metadata to its live hook cells.
  *
- * The walk is correct by construction: each recorded call consumes exactly the cells
- * {@link HOOK_CELL_KINDS} says it does, and the tags are compared as it goes. ANY
- * divergence — a conditional hook, a stale module registration, an opaque custom hook,
- * or leftover cells — abandons naming for the whole component rather than pairing a
- * name with the wrong cell.
+ * Each recorded call consumes the cells {@link HOOK_CELL_KINDS} says it does (their kind tags
+ * are compared), a conditional call may also consume none, a custom hook expands into its
+ * own calls, and an opaque one (a package hook, an uninstrumented module) consumes however
+ * many cells the calls around it leave. Every alignment that uses up exactly the live cells
+ * is found; a cell they all label the same is named, one they disagree on is left unnamed.
+ * No alignment at all (stale metadata, a skipped hook the build pass could not see as
+ * conditional) names nothing.
  *
  * @param familyId The component's Fast Refresh family id (`"<fileUrl>#<Name>"`).
  * @param meta The component's registered metadata.
  * @param cells Its live hook cells (only `kind` is read).
- * @returns One entry per cell, or `null` when the metadata does not line up.
+ * @returns One entry per cell (`undefined` where the name is not knowable), or `null` when
+ *   the metadata does not line up with the cells.
  */
 export function resolveHookNames(
   familyId: string,
   meta: ComponentDevMeta,
   cells: ReadonlyArray<{ kind?: number }>,
-): ResolvedHookName[] | null {
+): Array<ResolvedHookName | undefined> | null {
   const hash = familyId.lastIndexOf("#");
   const moduleUrl = hash >= 0 ? familyId.slice(0, hash) : familyId;
-  const w: NameWalk = { cells, out: [], i: 0 };
-  if (!walkHookMeta(w, { hooks: meta.hooks, moduleUrl, prefix: "" }, 0)) return null;
-  return w.i === cells.length ? w.out : null; // leftover cells ⇒ metadata is stale
+  const steps = stepsOf({ hooks: meta.hooks, moduleUrl, prefix: "" }, 0);
+  const a: Align = { cells, path: [], agreed: null, budget: ALIGN_BUDGET };
+  alignSteps(a, steps, 0, 0, (i) => {
+    if (i === cells.length) agree(a);
+  });
+  if (a.budget < 0 || !a.agreed) return null; // too many ways to tell, or none at all
+  return a.agreed.map((n) => (n === DISAGREE ? undefined : n));
 }

@@ -4,8 +4,10 @@ slug: platform-files
 lead: Give a module a file per platform where it needs one — BigButton.ios.tsx, BigButton.desktop.tsx, BigButton.web.tsx — and each target's build picks its own, as React Native's platform extensions do.
 ---
 
-Most of an app is the same everywhere, and code that differs a little branches at runtime with
-[`runtimePlatform()`](/docs/mobile#the-denextmobile-runtime). When a component differs a lot,
+Most of an app is the same everywhere, and code that differs a little branches on the
+[`platform` constant](#the-platform-constant), which each target's build folds so the other
+branches are removed (or at runtime with
+[`runtimePlatform()`](/docs/mobile#the-denextmobile-runtime)). When a component differs a lot,
 give it a file per platform instead:
 
 ```
@@ -48,6 +50,33 @@ WebView shells share.
 
 Both spellings of an import resolve: the extensionless one (`./BigButton`) and the Deno one with
 the plain file's extension (`./BigButton.tsx`).
+
+## The `platform` constant
+
+For a branch too small for its own file, import the target as a constant:
+
+```tsx
+import { platform } from "denext/platform";
+
+export function ShareButton() {
+  if (platform === "ios") return <IosShareSheet />;
+  return <WebShare label={platform === "web" ? "Copy link" : "Share"} />;
+}
+```
+
+`platform` is `"web"`, `"ios"`, `"android"`, `"macos"`, `"windows"` or `"linux"` (its type,
+`Platform`, is exported too). Each target's build folds every read of it in the app's own modules
+to that target's name, and each comparison with a string literal (`===`, `!==`, `==`, `!=`) to
+`true` or `false`, so the bundler removes the other targets' branches and any module only they
+import. The fold runs on every build path: the App Router (native and next-compat), SPA mode,
+React Native mode, and `denext dev`, where each request gets the target its page names. The
+server render of a `denext export --platform` and of a shell's dev session reads the same value,
+so it hydrates without a mismatch.
+
+The fold sees `import { platform }` (renamed or not) and `import * as p` with `p.platform`. A
+read it cannot see, from a package that imports `denext/platform`, gets the value the esbuild
+paths define for the target, else `"web"`. Where code must ask the running shell rather than the
+build, use [`runtimePlatform()`](/docs/mobile#the-denextmobile-runtime).
 
 ## One export per target
 
@@ -214,4 +243,9 @@ code through a third module instead.
 An import through the app's import map takes a variant like a relative one: the alias resolves
 first (`@/components/BigButton`, or an exact key like `#button`, from `deno.json` or the import
 map file it names), then the target's file for the module it names. The server render and the
-client bundle apply the same rule. A tsconfig `paths` alias is not followed: `denext migrate` converts `paths` to the import map.
+client bundle apply the same rule. A tsconfig / jsconfig `paths` alias (`"@/*": ["./src/*"]`,
+following `extends` and a monorepo root's config) takes a variant the same way wherever denext
+resolves it: the esbuild paths (SPA mode, React Native mode, the next-compat App Router) and
+`denext dev`. An import-map entry wins over a `paths` pattern with the same key. Deno itself does
+not read `paths`, so the native App Router path needs the alias in the import map:
+`denext migrate` converts `paths` to it.

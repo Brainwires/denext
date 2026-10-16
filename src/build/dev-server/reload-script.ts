@@ -181,6 +181,11 @@ export const DEV_RELOAD_SCRIPT = consoleCaptureScript(DEV_LOG_PATH) + `
         location.reload();
       }
       else if (e.data.indexOf("update:") === 0) { hideOverlay(); update(e.data.slice(7)); }
+      else if (e.data === "inspect") {
+        // An MCP read asked for this page's component tree now (the DevTools sink posts it).
+        var pull = window.__denextInspectPull;
+        if (typeof pull === "function") pull();
+      }
       else if (e.data.indexOf("error:") === 0) {
         try {
           var p = JSON.parse(e.data.slice(6));

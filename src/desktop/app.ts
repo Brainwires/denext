@@ -1,13 +1,16 @@
 /**
  * The app's own chrome and system integration in a Deno Desktop window (`denext/desktop/app`):
  * the application menu with keyboard accelerators, tray icons with their menus, the Dock /
- * taskbar badge and attention request, system-wide keyboard shortcuts, and starting the app at
- * login.
+ * taskbar badge and attention request, system-wide keyboard shortcuts, starting the app at
+ * login, and Handoff / Spotlight user activities (macOS).
  *
  * - The menu, tray, badge and attention calls go to the runtime's `app` capability, which
  *   `runDesktop` registers for every app (no `denext desktop add`). They work under the stock
  *   runtime too; denext's pinned runtime adds accelerators on every OS and menu icons / tooltips
  *   (see {@linkcode appCapabilities}).
+ * - {@linkcode setUserActivity} / {@linkcode onUserActivityContinued} (Handoff and Spotlight) go to
+ *   the same capability and need denext's pinned runtime 2.9.7-denext.20 or later on macOS;
+ *   elsewhere `setUserActivity` resolves `false`.
  * - {@linkcode registerShortcut} needs `denext desktop add global-shortcuts`, and
  *   {@linkcode setLaunchAtLogin} `denext desktop add launch-at-login`; both need denext's pinned
  *   runtime (elsewhere they reject `unavailable`).
@@ -89,8 +92,14 @@ export interface AppMenuAction {
   readonly checked?: boolean;
   /** Shown on hover (macOS, Linux). */
   readonly tooltip?: string;
-  /** A PNG (base64) next to the label, where the backend draws icons. */
+  /** A PNG (base64) next to the label, where the backend draws icons (`appCapabilities().icons`). */
   readonly icon?: string;
+  /**
+   * An action that deletes or discards: drawn in red on macOS, Linux (WebKitGTK) and the CEF
+   * backend's menus, as a normal item in Windows' menus (`appCapabilities().destructive`; runtime
+   * 2.9.7-denext.20).
+   */
+  readonly destructive?: boolean;
 }
 
 /** A submenu. */
@@ -136,6 +145,8 @@ export interface AppCapabilities {
   readonly icons: boolean;
   /** Menu item tooltips are shown. */
   readonly tooltips: boolean;
+  /** Destructive menu items are drawn as such (red; runtime 2.9.7-denext.20). */
+  readonly destructive: boolean;
   /** {@linkcode createTray} works. */
   readonly tray: boolean;
   /** Why {@linkcode createTray} does not work here (`null` when it does): the runtime's reason. */
@@ -151,9 +162,11 @@ export interface AppCapabilities {
   readonly sessionType: "wayland" | "x11" | "tty" | PlatformUnknown | null;
   /**
    * CEF's cookie store: `"os"` (encrypted with a key the OS keeps: Windows' DPAPI, the Linux
-   * keyring) or `"basic"` (obfuscated with a fixed key, not protected by the OS): always on macOS,
-   * where CEF runs with Chromium's mock keychain and its constant key, and on Linux when the login
-   * keyring was locked with no one to unlock it. `null` on the WebView backends.
+   * keyring, and from runtime 2.9.7-denext.20 a team-signed macOS app's own
+   * `"<app id> Safe Storage"` keychain item) or `"basic"` (obfuscated with a fixed key, not
+   * protected by the OS): an ad-hoc signed or unsigned macOS build, where CEF runs with Chromium's
+   * mock keychain and its constant key, and Linux when the login keyring was locked with no one to
+   * unlock it. `null` on the WebView backends.
    */
   readonly cookieEncryption: "os" | "basic" | PlatformUnknown | null;
   /** {@linkcode setBadge} works. */
@@ -206,6 +219,7 @@ function menuWire(menu: readonly AppMenuItem[]): unknown[] {
       ...(entry.accelerator !== undefined ? { accelerator: entry.accelerator } : {}),
       ...(entry.tooltip !== undefined ? { tooltip: entry.tooltip } : {}),
       ...(entry.icon !== undefined ? { icon: entry.icon } : {}),
+      ...(entry.destructive ? { destructive: true } : {}),
     };
   });
 }
@@ -249,6 +263,7 @@ export async function appCapabilities(): Promise<AppCapabilities> {
     accelerators: flag("accelerators"),
     icons: flag("icons"),
     tooltips: flag("tooltips"),
+    destructive: flag("destructive"),
     tray: flag("tray"),
     trayReason: typeof reason === "string" && reason !== ""
       ? reason
@@ -627,4 +642,111 @@ export async function getLaunchAtLogin(): Promise<LaunchAtLoginState> {
  */
 export async function setLaunchAtLogin(enabled: boolean): Promise<LaunchAtLoginState> {
   return loginState(await desktopRpc<{ state?: unknown }>("launchAtLogin", "set", { enabled }));
+}
+
+/**
+ * An activity the app is engaged in ({@linkcode setUserActivity}): what Handoff offers the user's
+ * other devices and what Spotlight indexes (macOS `NSUserActivity`).
+ */
+export interface UserActivity {
+  /**
+   * Reverse-DNS (`"com.example.notes.editing"`). To be continued (on another device, or from a
+   * Spotlight result), it must be listed in `desktop.macos.userActivityTypes`, which the package
+   * script writes to the bundle's `NSUserActivityTypes`.
+   */
+  readonly type: string;
+  /** The title Handoff and Spotlight show. */
+  readonly title?: string;
+  /** An http(s) URL a device without the app opens in a browser. */
+  readonly url?: string;
+  /** String values the app needs to continue the activity (all are delivered). */
+  readonly userInfo?: Readonly<Record<string, string>>;
+  /** Spotlight keywords. */
+  readonly keywords?: readonly string[];
+  /** Offered to the user's other devices (default `true`). */
+  readonly handoff?: boolean;
+  /** Indexed by Spotlight (default `false`). */
+  readonly searchable?: boolean;
+}
+
+/** An activity the user continued ({@linkcode onUserActivityContinued}). Untrusted input. */
+export interface ContinuedUserActivity {
+  /** Its type (one of `desktop.macos.userActivityTypes`). */
+  readonly type: string;
+  /** Its title (`""` when it had none). */
+  readonly title: string;
+  /** Its URL, or `null`. */
+  readonly url: string | null;
+  /** Its string values. */
+  readonly userInfo: Readonly<Record<string, string>>;
+}
+
+/**
+ * Make `activity` the app's current user activity, for Handoff (the user's other devices offer to
+ * continue it) and Spotlight (`searchable: true` indexes it). macOS only, under denext's pinned
+ * runtime 2.9.7-denext.20 or later; elsewhere (Windows, Linux, an older runtime) it resolves
+ * `false` and nothing happens.
+ *
+ * @param activity The activity.
+ * @returns Whether the OS took it. It rejects `validation` for a malformed activity.
+ * @example
+ * ```ts
+ * import { setUserActivity } from "denext/desktop/app";
+ *
+ * await setUserActivity({
+ *   type: "com.example.notes.editing",
+ *   title: note.title,
+ *   url: `https://notes.example.com/n/${note.id}`,
+ *   userInfo: { noteId: note.id },
+ *   searchable: true,
+ * });
+ * ```
+ */
+export async function setUserActivity(activity: UserActivity): Promise<boolean> {
+  const out = await desktopRpc<{ applied?: unknown }>("app", "setUserActivity", { activity });
+  return out?.applied === true;
+}
+
+/**
+ * End the current user activity (the user left what it described).
+ *
+ * @returns Whether there was one the OS ended (`false` off macOS).
+ */
+export async function clearUserActivity(): Promise<boolean> {
+  const out = await desktopRpc<{ applied?: unknown }>("app", "clearUserActivity", {});
+  return out?.applied === true;
+}
+
+/** The string values of a continued activity's `userInfo` (anything else is dropped). */
+function stringValues(raw: unknown): Record<string, string> {
+  if (typeof raw !== "object" || raw === null) return {};
+  return Object.fromEntries(Object.entries(raw).filter(([, v]) => typeof v === "string"));
+}
+
+/** One continued activity, checked. */
+function parseActivity(raw: unknown): ContinuedUserActivity | undefined {
+  const a = (raw ?? {}) as Record<string, unknown>;
+  if (typeof a.type !== "string" || a.type === "") return undefined;
+  return {
+    type: a.type,
+    title: typeof a.title === "string" ? a.title : "",
+    url: typeof a.url === "string" ? a.url : null,
+    userInfo: stringValues(a.userInfo),
+  };
+}
+
+const continued = pullQueue("app", "activity", parseActivity, "takeActivities");
+
+/**
+ * Call `handler` with each user activity the user continues: Handoff from another device, or a
+ * Spotlight result (macOS, runtime 2.9.7-denext.20). The one that launched the app is delivered to
+ * the first handler. Treat its fields as untrusted input, as a deep link's.
+ *
+ * @param handler Called with each activity.
+ * @returns A function that unsubscribes.
+ */
+export function onUserActivityContinued(
+  handler: (activity: ContinuedUserActivity) => void,
+): () => void {
+  return continued(handler);
 }

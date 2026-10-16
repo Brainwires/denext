@@ -5,20 +5,8 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.1.0**; 4.x patch and minor releases are cut from
+> The current release is denext **4.2.0**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
-
-## 4.1.0: Limitations that can be lifted
-
-Entries in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) that aren't forced by an OS, a browser
-or an upstream. Each one's limitation entry is deleted when it ships.
-
-- **Deno Desktop (runtime work):** CEF on macOS keeps cookies under a real Keychain key in a
-  signed app, not Chromium's mock keychain; a share sheet (macOS `NSSharingServicePicker`,
-  Windows `DataTransferManager`); Spotlight indexing and Handoff on macOS; icons and the
-  destructive style in native context menus; `deliveredNotifications()` reads the OS's list on
-  macOS and Windows; the CEF window on Windows bypasses proxy auto-detection for its loopback
-  relay.
 
 ## Deno toolchain
 
@@ -71,39 +59,8 @@ or an upstream. Each one's limitation entry is deleted when it ships.
   0.88 once that is final (`REACT_NATIVE_PIN` in `scripts/parity/native/spec.ts`, the lists'
   `PINS`, `REACT_NATIVE_VERSION` in `src/react-native/platform.ts`), then refresh the baselines.
   Against `0.88.0-rc.4` the core and lists diffs already report no gaps.
-- **A build-time `platform` constant** (`import { platform } from "denext/platform"`, folded to
-  the target's name like `feature()`, so `if (platform === "ios")` is dead-code-eliminated per
-  export). Platform-specific files cover the per-target code today, and `runtimePlatform()` the
-  runtime branch; the constant needs a fold pass on every build path.
-- **Platform files through tsconfig `paths`:** an import through a tsconfig `paths` alias does
-  not take a variant (only `deno.json` and import-map aliases do); `denext migrate` converts
-  `paths` to the import map.
-- **Importer-sensitive aliases in config,** so uniwind works without the `denext patch` recipe.
 - **`denext profile --android`** over remote CDP; a Skia (CanvasKit) recipe; Tamagui / Unistyles
   verification.
-
-## Auth
-
-- **A `next-auth` compat shim,** so a drop-in Next app that imports `next-auth` runs.
-- **A standalone `denext/auth` subpath** (the surface lives in `denext/server` today).
-- **`ip` on every auth event** (only `signInFailed` carries it today).
-
-## React, Remix and SPA surface
-
-- **`<ViewTransition>` callbacks and the rest of its surface:** `onEnter` / `onExit` /
-  `onUpdate` / `onShare`, an `<Activity>` going hidden animated as an exit, and an update
-  skipped when the boundary is off-screen.
-- **A hidden `<Activity>` holds class lifecycles and refs too:** a class component inside one
-  still runs `componentDidMount`, and a hidden subtree's refs stay attached (function
-  components' effects already wait until it is shown).
-- **A soft navigation streams `defer()` data per boundary,** as a document load does; today a
-  client navigation's Flight payload waits for every deferred value.
-- **A root layout rendered by client code hoists its `<head>` tags:** its
-  `<title>` / `<meta>` / `<link>` are created again in the page container on hydration (the
-  server hoisted them into the document head, and dev warns of the mismatch). Until then, put
-  them in `metadata` or a Server Component layout.
-- **SPA `client:interaction` replays the triggering event** on the mounted component, as a
-  Flight island does; today the first interaction only mounts it.
 
 ## Server, ops and API surface
 
@@ -112,38 +69,12 @@ Each is documented as a manual recipe today (the
 [multi-instance](https://denext.dev/docs/multi-instance) and
 [route handler recipes](https://denext.dev/docs/route-handler-recipes) pages).
 
-- **Shipped shared stores:** first-party Redis and Deno KV `CacheStore`, `SessionStore` and
-  `RateLimitStore`, plus an exported adapter contract suite (`cacheStoreContract` from
-  `denext/testing`) so a community adapter can prove itself.
-- **`global-error.tsx` hydration on the next-compat and static-export paths** (it hydrates on
-  the native build and dev; elsewhere `reset` is inert).
-- **`next/font/local` metric-matched fallback faces:** parse the local font's metrics (today
-  `adjustFontFallback` on a local font emits no fallback face).
-- **Node-stream `Writable` backpressure** for `renderToPipeableStream` /
-  `renderToStaticNodeStream` (they buffer): make the core renderer pull-gated and resolve the
-  `await allReady`-then-read deadlock the eager drain avoids. SSR-hot-path risk for a narrow
-  payoff; `renderToReadableStream` is the primary path.
-- **Deploy adapter API and presets:** a typed build manifest and a pluggable adapter seam
-  (static export, Deno Deploy, Node, Docker; a documented seam for Workers / Vercel), on the
-  plugin `addBuildStep` seam.
 - **Generated clients in other languages** from the OpenAPI / GraphQL documents (TypeScript is
   served by `denext openapi types`).
-- **CLI distribution:** publish the Homebrew / Scoop / winget manifests each release generates
-  to a tap, a bucket and winget-pkgs; a Windows Arm64 `denext` binary.
 
 ## `denext ui` and DevTools
 
-- **Boot diagnosis, the last gaps:** follow import-map-resolved bare specifiers in the walk (so
-  their link edges are checked too), and flag a name two `export *` sources both provide (an
-  ambiguous export, a SyntaxError in browsers).
-- **Agent control of `denext ui`:** an MCP front end over the UI's operations (every panel
-  already answers a JSON twin).
-- **Export the UI's form components** (`FormField`, `Control`, `Field`, `OpButton`, `Widget`)
-  and retire the form renderer's remaining string API.
 - **Per-element `__source`** for a true JSX owner stack (the panel shows the render-parent chain).
-- **Profiler export / compare** across commits, plus component filters.
-- **A Live / channel and state inspector tab** (subscriptions, channel pushes, cache entries).
-- **On-demand snapshot pull** over the reload stream, so the MCP tools get a fresh tree.
 
 ## Router plugins
 

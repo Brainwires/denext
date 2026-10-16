@@ -7,13 +7,27 @@ import { prodMinify } from "../minify.ts";
 import { setSelfHostedFonts } from "../../compat/next/font/registry.ts";
 import { tagClientModules } from "../../runtime/client-reference.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
-import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
+import {
+  assertNoReservedRouteIds,
+  FLIGHT_BUNDLE_FILE,
+  GLOBAL_ERROR_BUNDLE_FILE,
+} from "../build-pipeline/context.ts";
 import { clientTransforms } from "../build-pipeline/transforms.ts";
-import { bundleFlightEntry, bundleRoute, routeSourceFiles, writeBundleOutput } from "../bundle.ts";
+import {
+  bundleFlightEntry,
+  bundleGlobalError,
+  bundleRoute,
+  routeSourceFiles,
+  writeBundleOutput,
+} from "../bundle.ts";
 import { buildAppCss, extractRouteCss, primeCssGraph } from "../css.ts";
 import { routeNeedsHydration } from "../hydration.ts";
 import { type BoundaryManifest, computeBoundaryRoutes, routeEntryFiles } from "../module-graph.ts";
-import { buildNextCompatFlightEntry, buildNextCompatModules } from "../next-compat-build.ts";
+import {
+  buildNextCompatClientEntries,
+  buildNextCompatFlightEntry,
+  buildNextCompatModules,
+} from "../next-compat-build.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import { boundaryRefLoader, createNextCompatServerLoader } from "../next-compat-loader.ts";
 import { routeId } from "../paths.ts";
@@ -22,8 +36,11 @@ import {
   appBoundaryManifest,
   collectPageFontEntries,
   compatBuildOptions,
+  compatGlobalErrorEntry,
   compatModuleList,
+  finishCompatGlobalErrorEntry,
 } from "../pipeline-shared.ts";
+import { CLIENT_PREFIX } from "../prod-server/assets.ts";
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "../self-host-fonts.ts";
 import { writeFlightBoot } from "../flight-boot.ts";
 import { exportBuildDir, exportClientResolution, type ExportContext } from "./context.ts";
@@ -140,7 +157,13 @@ export async function setupCompat(ctx: ExportContext): Promise<void> {
   const boundary = ctx.flightRoutes.size > 0 ? await boundaryManifest(ctx) : null;
   const moduleMap = await buildNextCompatModules({
     ...exportCompatOptions(ctx),
-    modules: compatModuleList(ctx.manifest.pages, boundary, ctx.manifest.api),
+    modules: compatModuleList(
+      ctx.manifest.pages,
+      boundary,
+      ctx.manifest.api,
+      null,
+      ctx.manifest.rootGlobalError,
+    ),
   });
   // Route the render loader through the compat bundles, and point boundary refs at their
   // compat bundles so Flight island/action identity holds across the rewrite.
@@ -155,13 +178,14 @@ export async function setupCompat(ctx: ExportContext): Promise<void> {
  */
 export async function exportClientTransforms(ctx: ExportContext): Promise<void> {
   if (ctx.compat) return;
-  ctx.transforms = await clientTransforms(ctx, exportBuildDir(ctx.paths));
+  ctx.transforms = await clientTransforms(ctx, exportBuildDir(ctx.paths), ctx.platform);
 }
 
 /** Client bundles (minified): a whole-tree bundle per isomorphic (non-Flight, non-static) route. */
 export async function bundleExportRoutes(ctx: ExportContext): Promise<void> {
   for (const route of ctx.manifest.pages) {
     if (ctx.flightRoutes.has(route.routePath) || ctx.staticRoutes.has(route.routePath)) continue;
+    assertNoReservedRouteIds([route.routePath], routeId);
     // A whole-route bundle stubs the actions it imports, as the Flight bundle does.
     const server = (await boundaryManifest(ctx)).server;
     const bundle = await bundleRoute(route, {
@@ -175,6 +199,38 @@ export async function bundleExportRoutes(ctx: ExportContext): Promise<void> {
     });
     await writeBundleOutput(ctx.clientOut, bundle, `${routeId(route.routePath)}.js`);
   }
+}
+
+/**
+ * The `global-error.tsx` hydration bundle, as `denext build` emits it: the native entry through
+ * `deno bundle`, or in next-compat mode the react→denext-rewritten one. The export pre-renders
+ * the global-error document (`writeGlobalErrorPage`) to load it, so its `reset` and any author
+ * interactivity work on a static host too.
+ */
+export async function bundleExportGlobalError(ctx: ExportContext): Promise<void> {
+  const file = ctx.manifest.rootGlobalError;
+  if (!file) return;
+  const server = (await boundaryManifest(ctx)).server;
+  const instrumentationClient = ctx.paths.instrumentationClientPath;
+  if (ctx.compat) {
+    await buildNextCompatClientEntries({
+      ...exportCompatOptions(ctx),
+      clientDir: ctx.clientOut,
+      server,
+      entries: [compatGlobalErrorEntry(file, instrumentationClient)],
+    });
+    await finishCompatGlobalErrorEntry(ctx.clientOut);
+  } else {
+    const bundle = await bundleGlobalError(file, {
+      configPath: ctx.paths.configPath,
+      momentumSafeScroll: momentumSafeScrollEnabled(ctx.paths.config),
+      minify: prodMinify(),
+      ...exportClientResolution(ctx, server),
+      instrumentationClient,
+    });
+    await writeBundleOutput(ctx.clientOut, bundle, GLOBAL_ERROR_BUNDLE_FILE);
+  }
+  ctx.globalErrorEntry = `${ctx.assetBase}${CLIENT_PREFIX}${GLOBAL_ERROR_BUNDLE_FILE}`;
 }
 
 /**

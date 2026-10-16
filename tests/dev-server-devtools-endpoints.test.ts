@@ -15,16 +15,38 @@ import { resolveProject } from "../src/build/paths.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { createDevHandler } from "../src/build/dev-server/handler.ts";
 import { createDevState } from "../src/build/dev-server/state.ts";
-import { DEV_CACHE_PATH, DEV_ROUTES_PATH } from "../src/build/dev-server/state.ts";
+import {
+  DEV_CACHE_PATH,
+  DEV_LIVE_PATH,
+  DEV_LIVE_VIEWS_PATH,
+  DEV_ROUTES_PATH,
+} from "../src/build/dev-server/state.ts";
 import { formatRouteMap, routeMapData } from "../src/mcp/inspect.ts";
 import { defaultLoader } from "../src/server/mod.ts";
-import { resetCacheStats, revalidatePath, revalidateTag } from "../src/server/cache.ts";
+import {
+  resetCacheStats,
+  revalidatePath,
+  revalidateTag,
+  unstable_cache,
+} from "../src/server/cache.ts";
 import { FakeDocument, type FakeElement } from "./helpers/dom.ts";
 import { initialState } from "../src/client/devtools-panel.ts";
 import type { PanelCtx } from "../src/client/devtools-panel/ctx.ts";
 import { buildStyles } from "../src/client/devtools-panel/styles.ts";
 import { refreshCacheTab, renderCacheTab } from "../src/client/devtools-panel/cache.ts";
 import { refreshRoutesTab, renderRoutesTab } from "../src/client/devtools-panel/routes.ts";
+import {
+  refreshLiveViewsTab,
+  renderLiveViewsTab,
+} from "../src/client/devtools-panel/live-views.ts";
+import { refreshLiveTab, renderLiveTab } from "../src/client/devtools-panel/live.ts";
+import {
+  liveRecords,
+  recordChannelPush,
+  recordViewMessages,
+  redactValue,
+  resetLiveDevtools,
+} from "../src/server/live-devtools.ts";
 
 // deno-lint-ignore no-explicit-any
 const asAny = (v: unknown): any => v;
@@ -197,14 +219,21 @@ Deno.test({
 });
 
 Deno.test({
-  name: "dev-cache + dev-routes: a cross-origin Sec-Fetch-Site is refused (403)",
+  name: "dev-cache + dev-routes + dev-live(-views): a cross-origin Sec-Fetch-Site is refused (403)",
   sanitizeOps: false,
   sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
     const handle = await devHandler(dir);
-    for (const path of [DEV_CACHE_PATH, `${DEV_ROUTES_PATH}?path=/`]) {
+    for (
+      const path of [
+        DEV_CACHE_PATH,
+        `${DEV_ROUTES_PATH}?path=/`,
+        DEV_LIVE_VIEWS_PATH,
+        DEV_LIVE_PATH,
+      ]
+    ) {
       for (const site of ["cross-site", "same-site", "none"]) {
         const res = await handle(
           new Request(`http://localhost${path}`, { headers: { "sec-fetch-site": site } }),
@@ -417,3 +446,166 @@ function fileButtons(pane: FakeElement): FakeElement[] {
   walk(pane as unknown as { childNodes: unknown[] });
   return out;
 }
+
+// ---- The Live views and Live tabs -------------------------------------------------------------
+
+Deno.test({
+  name: "dev-live-views + dev-live: what the hub holds, recorded only under the dev handler",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  resetLiveDevtools();
+  // Before a dev handler exists nothing is recorded: production keeps no record.
+  const cached = unstable_cache(() => Promise.resolve({ secret: "hunter2" }), ["dl-a"], {
+    tags: ["orders"],
+  });
+  await cached();
+  recordChannelPush({ kind: "publish", channelId: "chat", key: "room1", encoded: "{}" }, 1);
+  assertEquals(liveRecords(), { channelPushes: [], cacheEntries: [] });
+
+  const dir = await tempApp();
+  try {
+    const handle = await devHandler(dir);
+    const cachedAgain = unstable_cache(() => Promise.resolve({ secret: "hunter2" }), ["dl-b"], {
+      tags: ["orders"],
+    });
+    await cachedAgain();
+    recordChannelPush({
+      kind: "publish",
+      channelId: "chat",
+      key: "room1",
+      encoded: JSON.stringify({ text: "hello there", n: 3 }),
+    }, 2);
+    recordViewMessages("counter", "iid-1", [{ type: "set", to: "private words" }]);
+
+    const views = await handle(new Request(`http://localhost${DEV_LIVE_VIEWS_PATH}`));
+    assertEquals(views.status, 200);
+    assertEquals(views.headers.get("cache-control"), "no-store");
+    const v = await views.json();
+    assertEquals(v.views, []); // no socket open in this test
+    assertEquals(v.messages.length, 1);
+    assertEquals(v.messages[0].view, "counter");
+    assertEquals(v.messages[0].msgs, [{ type: "string(3)", to: "string(13)" }]);
+
+    const live = await handle(new Request(`http://localhost${DEV_LIVE_PATH}`));
+    const body = await live.text();
+    const l = JSON.parse(body);
+    assertEquals(l.connections, []);
+    assertEquals(l.channelPushes.length, 1);
+    assertEquals(l.channelPushes[0].payload, { text: "string(11)", n: 3 });
+    assertEquals(l.channelPushes[0].subscribers, 2);
+    const entry = l.cacheEntries.find((e: { tags: string[] }) => e.tags.includes("orders"));
+    assertEquals(entry.kind, "data");
+    assert(entry.bytes > 0);
+    assert(!body.includes("hello there") && !body.includes("hunter2"), "values are redacted");
+    await settled(join(dir, ".denext", "api.ts"));
+  } finally {
+    resetLiveDevtools();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("redactValue: structure kept, every string reduced to its length, size capped", () => {
+  assertEquals(
+    redactValue({ name: "Ada", n: 1, ok: true, at: new Date(0), tags: ["a", "bb"], nil: null }),
+    { name: "string(3)", n: 1, ok: true, at: "Date", tags: ["string(1)", "string(2)"], nil: null },
+  );
+  assertEquals(redactValue({ a: { b: { c: { d: { e: 1 } } } } }), { a: { b: { c: { d: "…" } } } });
+  const long = redactValue(Array.from({ length: 25 }, (_, i) => i)) as unknown[];
+  assertEquals(long.length, 21);
+  assertEquals(long.at(-1), "… 5 more");
+  assertEquals(redactValue(() => 1), "function");
+});
+
+Deno.test("Live views pane: each view with its state and model, the newest message first", async () => {
+  const { ctx, detailPane } = dataTabCtx();
+  const now = Date.now();
+  await withJson({
+    views: [
+      {
+        view: "counter",
+        iid: "abcdef0123",
+        state: "attached",
+        rev: 4,
+        modelBytes: 12,
+        model: { n: 2 },
+      },
+      {
+        view: "todo",
+        iid: "9876543210",
+        state: "parked",
+        rev: 1,
+        modelBytes: 40,
+        model: { items: [] },
+      },
+    ],
+    messages: [
+      { at: now - 120_000, view: "counter", iid: "abcdef0123", msgs: [{ type: "string(3)" }] },
+      { at: now - 2000, view: "todo", iid: "9876543210", msgs: [{ type: "string(4)" }] },
+    ],
+  }, async () => {
+    refreshLiveViewsTab(ctx);
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  renderLiveViewsTab(ctx);
+  const text = detailPane.textContent;
+  assertStringIncludes(text, "Server-held views · 2");
+  assertStringIncludes(text, "attached");
+  assertStringIncludes(text, "parked");
+  assertStringIncludes(text, '{"n":2}');
+  assertStringIncludes(text, "rev 4");
+  assert(text.indexOf("2s ago") < text.indexOf("2m ago"), "the newest message is listed first");
+});
+
+Deno.test("Live pane: connections and their subscriptions, pushes and cache entries", async () => {
+  const { ctx, detailPane } = dataTabCtx();
+  await withJson({
+    connections: [{
+      peer: "peer-1234567",
+      path: "/orders",
+      boundaries: [{ id: "L1", tags: ["orders"] }],
+      data: [{ id: "d1", action: "listOrders", tags: ["orders"] }],
+      tags: [],
+      channels: [{ id: "c1", channel: "chat", key: "room1" }],
+      rooms: ["doc"],
+      views: 1,
+    }],
+    channelPushes: [{
+      at: Date.now(),
+      kind: "publish",
+      channel: "chat",
+      key: "room1",
+      subscribers: 2,
+      payload: { text: "string(5)" },
+    }],
+    cacheEntries: [{ at: Date.now(), kind: "page", key: "/orders", tags: ["orders"], bytes: 900 }],
+  }, async () => {
+    refreshLiveTab(ctx);
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  renderLiveTab(ctx);
+  const text = detailPane.textContent;
+  assertStringIncludes(text, "Connections · 1");
+  assertStringIncludes(text, "<Live> L1 ← orders");
+  assertStringIncludes(text, "data listOrders ← orders");
+  assertStringIncludes(text, "channel chat / room1");
+  assertStringIncludes(text, "presence doc");
+  assertStringIncludes(text, '{"text":"string(5)"}');
+  assertStringIncludes(text, "orders · 900 B");
+});
+
+Deno.test("Live and Live views panes: the endpoint's absence is named", async () => {
+  const { ctx, detailPane } = dataTabCtx();
+  const real = globalThis.fetch;
+  globalThis.fetch = () => Promise.resolve(new Response("no", { status: 404 }));
+  try {
+    refreshLiveTab(ctx);
+    refreshLiveViewsTab(ctx);
+    await new Promise((r) => setTimeout(r, 0));
+  } finally {
+    globalThis.fetch = real;
+  }
+  renderLiveTab(ctx);
+  renderLiveViewsTab(ctx);
+  assertStringIncludes(detailPane.textContent, "Live views is not available in SPA dev");
+});

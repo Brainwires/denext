@@ -32,7 +32,8 @@ import { bootServices } from "../../server/service-loader.ts";
 import { installLiveHub } from "../../server/live.ts";
 import { resolveLimitPolicy } from "../../server/remote-addr.ts";
 import { runtimeStateDir } from "../../server/standalone.ts";
-import { sameOriginUpgrade } from "../../server/origin-check.ts";
+import { liveOriginAllowed } from "../../server/origin-check.ts";
+import { resolveCors } from "../../server/cors.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../../server/middleware.ts";
 import { defaultLoader } from "../../server/mod.ts";
 import type { ModuleLoader } from "../../server/types.ts";
@@ -226,6 +227,7 @@ function prodAppConfig(
   },
 ): AppConfig {
   const { middlewareRunner, instrumentation, rules } = boot;
+  const config = paths.config ?? {};
   return {
     getManifest: () => manifest,
     load,
@@ -240,8 +242,8 @@ function prodAppConfig(
     onRequestError: instrumentation.onRequestError,
     onRequest: instrumentation.onRequest,
     i18n: paths.i18n ?? undefined,
-    basePath: paths.config?.basePath,
-    trailingSlash: paths.config?.trailingSlash,
+    basePath: config.basePath,
+    trailingSlash: config.trailingSlash,
     redirects: rules.redirects,
     rewrites: rules.rewrites,
     headerRules: rules.headers,
@@ -254,14 +256,14 @@ function prodAppConfig(
     flightClients: boundary.client,
     flightServers: boundary.server,
     cacheComponents: resolveCacheComponents(paths.config),
-    csp: paths.config?.csp,
+    csp: config.csp,
     streaming: resolveStreaming(paths.config),
-    hsts: paths.config?.hsts,
+    hsts: config.hsts,
     publicEnvKeys: info.publicEnvKeys,
-    apiBatch: paths.config?.apiBatch,
-    apiMaxBodyBytes: paths.config?.apiMaxBodyBytes,
-    cors: paths.config?.cors,
-    appLinks: paths.config?.appLinks,
+    apiBatch: config.apiBatch,
+    apiMaxBodyBytes: config.apiMaxBodyBytes,
+    cors: config.cors,
+    appLinks: config.appLinks,
     // canonicalOrigin / trustForwardedHeaders / requestTimeout / maxConcurrency /
     // slotBackstop / actionMaxBodyBytes / cacheKeyParams — config, else their env vars.
     ...resolveServerOptions(paths.config),
@@ -278,11 +280,19 @@ function installProdLiveHub(
   appConfig: AppConfig,
 ): void {
   // Strict same-origin for the Live handshake; a Deno Desktop window's own
-  // `desktop.app.origin` (exactly) counts as same-origin.
+  // `desktop.app.origin` (exactly) counts as same-origin, and a `cors`-allowed origin may open a
+  // socket that carries no cookie (nothing ambient for another page to borrow).
   const desktopAppOrigin = configuredDesktopAppOrigin(paths.config);
+  const cors = resolveCors(paths.config?.cors);
   installLiveHub({
     appHandler,
-    originAllowed: (req) => sameOriginUpgrade(req, desktopAppOrigin),
+    originAllowed: (req) =>
+      liveOriginAllowed(req, {
+        desktopAppOrigin,
+        cors,
+        canonicalOrigin: appConfig.canonicalOrigin,
+        trustForwardedHeaders: appConfig.trustForwardedHeaders,
+      }),
     config: resolveLive(paths.config),
     trustForwardedHeaders: appConfig.trustForwardedHeaders,
     limitPolicy: resolveLimitPolicy(appConfig),

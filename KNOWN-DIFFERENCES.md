@@ -328,11 +328,86 @@ Where `@denext/backend` deliberately departs from Supabase. See
   password.** Supabase keeps a password set by an earlier unconfirmed sign-up; denext keeps only
   the one the account's own sign-up confirmation proves.
 
+## `next-auth` (Auth.js v5)
+
+The `next-auth` shim maps Auth.js onto `denextAuth`, which keeps its own, stricter defaults. Each
+place it behaves differently from Auth.js:
+
+- **CSRF is checked twice.** A `signin`, `signout`, credentials-callback or `session` POST needs
+  Auth.js's double-submit `csrfToken` and must also pass denext's same-origin check (an `Origin`
+  or `Referer` matching `AUTH_URL`, or the `Host` without one). A cross-origin POST carrying a
+  valid token is refused (`403`); Auth.js accepts it.
+- **`AUTH_URL` is required in production.** denext never derives the OAuth `redirect_uri` or its
+  origin checks from the `Host` header, so `trustHost` / `AUTH_TRUST_HOST` don't stand in for
+  it. Without `AUTH_URL` (or `NEXTAUTH_URL`) `NextAuth()` throws when serving in production.
+- **Over plain http the cookies lose their `__Host-` prefix** on a loopback host, and on any host
+  outside production, as `denextAuth`'s do (a browser refuses a `__Host-` cookie over http, even
+  on `localhost`). Auth.js drops its `__Secure-` prefix on any http origin; denext keeps
+  `__Host-` (so no session) for production http on another host, and over https.
+- **`AUTH_SECRET` must be at least 32 characters in production** (`npx auth secret` makes 44).
+- **Redirects stay on the origin.** The `redirect` callback runs, but whatever it returns is
+  kept to a same-origin path: a callback that allows another origin lands on `/` instead.
+- **Every OAuth flow uses `state` and PKCE** (and `nonce` for OIDC); a provider's `checks` are
+  ignored.
+- **Per-call `authorizationParams` can't set the flow's own parameters.** `signIn("google", {},
+  { prompt: "login" })` adds `prompt` to the authorization URL, but `state`, `nonce`,
+  `code_challenge` / `code_challenge_method`, `redirect_uri`, `client_id`, `response_type`,
+  `response_mode` and `request` / `request_uri` are dropped (Auth.js passes them through).
+- **The session cookie is denext's** (`__Host-denext_auth`, signed, `SameSite=Lax`; unprefixed
+  `denext_auth` over plain http, see below), not `authjs.session-token`; `cookies` and `useSecureCookies` are ignored. A token is sealed with
+  AES-256-GCM inside it, in denext's own format: `next-auth/jwt`'s `encode` / `decode` don't read
+  an Auth.js JWE (and `jwt.encode` / `jwt.decode` overrides are ignored). The cookie is not
+  chunked, so a token near 4 KB fails to set.
+- **Sessions have an absolute lifetime:** `session.maxLifetime`, 30 days after sign-in by default,
+  however often `updateAge` slides them. Auth.js extends an active session forever.
+- **Credentials sign-ins are rate limited** (per address and identifier) and answered with one
+  generic refusal; Auth.js has no limits. A thrown `CredentialsSignin` subclass's `code` is not
+  passed through: the error is always `CredentialsSignin` with `code=credentials`.
+- **`callbacks.signIn` returning a URL refuses the sign-in** and lands on the sign-in page with
+  `error=AccessDenied` (or `CredentialsSignin`), instead of redirecting to that URL.
+- **An email link opens a confirmation page by default**, so a mail scanner can't spend it;
+  `Resend({ confirm: false })` / `Nodemailer({ confirm: false })` signs in on the GET as Auth.js
+  does. `callbacks.signIn` runs once, when the link is redeemed (not at the send with
+  `email.verificationRequest`).
+- **Account linking follows denext's rules:** an OAuth account is linked to an existing user by
+  email only when both addresses are verified, unless the provider sets
+  `allowDangerousEmailAccountLinking`.
+- **The `session` endpoint and `auth()` also run `callbacks.jwt`** on every read, as Auth.js does;
+  a changed token is written back only where the response is still open (the `session` endpoint,
+  middleware, `auth(handler)` and `unstable_update()`), never from a plain `auth()` call.
+- **GitLab, Slack, LinkedIn, Twitch, Okta, Auth0, Keycloak and Cognito sign in with OpenID
+  Connect**, so a `profile()` override receives the id_token claims (`sub`, `email`,
+  `email_verified`, `picture`, …), not GitLab's `/api/v4/user` body. The account id is the same
+  (GitLab's user id). An address links to an existing user only when the claims mark it
+  verified; X shares no address, and Facebook, Spotify, Zoom and Notion addresses are never
+  treated as verified.
+- **Okta, Auth0, Keycloak and Cognito need an https `issuer`** (or `AUTH_<ID>_ISSUER`) when
+  `NextAuth()` runs, not at the first sign-in. A Cognito pool's endpoints may live on its
+  `*.auth.<region>.amazoncognito.com` domain; a custom domain is listed in the provider's
+  `allowedHosts` (a denext option), since a discovered endpoint on any other host is refused.
+- **A custom page must be on the app's origin.** `GET /api/auth/signin`, `/signout`, `/error`
+  and `/verify-request` redirect to `pages.signIn` / `signOut` / `error` / `verifyRequest` with
+  Auth.js's query (`callbackUrl` and `error`), but a page on another origin is not followed (the
+  built-in page answers instead), and the forwarded `callbackUrl` is the same-origin one the
+  `redirect` callback allowed, not the raw query value.
+- **Notion's `redirectUri` is ignored:** the callback URL is denext's (`AUTH_URL` + the base path).
+- **A lazy config (`NextAuth((req) => config)`) gets the request without its body**, so the
+  handler that runs next can still read it. Each config object it returns is translated once;
+  the ones it builds share one in-memory rate-limit budget, so a config made per request can't
+  reset the credentials limits.
+- **`session.user` includes `id`** (the token's `sub`, or the user's id).
+- **The built-in pages are plain HTML** (no `theme`), and their `?error=` codes are Auth.js's.
+
 ## Security posture — safe defaults
 
 Deliberate **safe defaults** that differ from Next's, each with a one-line
 opt-in — documented, not surprises. Full checklist in [the deployment guide](https://denext.dev/docs/deploy).
 
+- **`denextAuth`'s cookies follow the transport.** They are `__Host-` (with `Secure`) over https.
+  Over plain http, where a browser refuses `__Host-` even on `localhost`, they are plain
+  (`denext_auth`, `denext_auth_tx`) on a loopback host and, outside production, on any host — so
+  `denext dev` on `http://localhost` holds a session. Production over http on another host keeps
+  `__Host-` and so gets no session: a session cookie never travels in clear text there.
 - **Strict CSP by default** blocks external `<script>`/stylesheet/`<img>` until
   opted in per route (`csp: "strict" | "off" | {…}`; a route's `csp` export
   overrides). Applies to buffered **and** streamed/PPR responses.

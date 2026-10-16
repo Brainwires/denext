@@ -242,7 +242,8 @@ function entryFor(pkg: PackageSource): CatalogEntry {
 export function buildCatalog(packages: readonly PackageSource[]): string {
   const plugins = packages.map(entryFor).sort((a, b) => a.name.localeCompare(b.name));
   const catalog: PluginCatalog = { generatedBy: "scripts/gen-plugin-catalog.ts", plugins };
-  return JSON.stringify(catalog, null, 2) + "\n";
+  // Minified: it ships in the JSR package, which has a size cap (deno fmt skips it).
+  return JSON.stringify(catalog) + "\n";
 }
 
 /** The root-export module of a package (`exports["."]`, or the string form). */

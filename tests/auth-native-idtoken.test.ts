@@ -326,15 +326,16 @@ Deno.test("linking: a verified local account links; an unverified one is refused
   assertEquals((await refused.json()).error, "account_not_linked");
 });
 
-Deno.test('under mfa.required: "always" a user with no factor yet is sent to the browser flow (mfa_required)', async () => {
+Deno.test('under mfa.required: "always" a user with no factor yet gets a pending enrollment, no tokens', async () => {
   const h = await setup({}, { mfa: { required: "always" } });
   const n = await nonce(h);
   const res = await post(h, "/native/google", {
     id_token: await sign(h.key, googleClaims({ nonce: n })),
     nonce: n,
   });
-  assertEquals(res.status, 403);
-  assertEquals((await res.json()).error, "mfa_required");
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals([body.mfa_required, body.mfa_enroll, body.access_token], [true, true, undefined]);
 });
 
 // ---- Apple code exchange ---------------------------------------------------------------------

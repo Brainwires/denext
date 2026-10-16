@@ -59,6 +59,27 @@ import type { AuthConfig, AuthSession, OAuthProvider } from "./types.ts";
 // import). `auth()` reads it so a Server Component / middleware needs no handle.
 let activeConfig: AuthConfig | null = null;
 
+/** The request-context memo key of a config bound to one request ({@linkcode bindAuthConfig}). */
+const REQUEST_CONFIG = Symbol.for("denext.auth.request-config");
+
+/**
+ * Make `config` the one `auth()` and the guards read for the rest of the current request,
+ * whatever `denextAuth()` last activated for the process — for a compat layer whose config is
+ * built per request (Auth.js's lazy `NextAuth((req) => config)`), so two concurrent requests
+ * never read each other's. Outside a request it does nothing.
+ *
+ * @param config A config `denextAuth()` has validated.
+ */
+export function bindAuthConfig(config: AuthConfig): void {
+  currentContext()?.memo.set(REQUEST_CONFIG, new Map([["config", config]]));
+}
+
+/** The config this request reads: the one bound to it, else the process's active one. */
+function currentConfig(): AuthConfig | null {
+  const bound = currentContext()?.memo.get(REQUEST_CONFIG)?.get("config");
+  return (bound as AuthConfig | undefined) ?? activeConfig;
+}
+
 /**
  * The auth config `denextAuth()` was built with — the one `auth()` and the auth endpoints use.
  * Server code that needs the config itself (`requireBearer`, `issueApiToken`,
@@ -68,13 +89,14 @@ let activeConfig: AuthConfig | null = null;
  * @throws {Error} When no `denextAuth()` plugin has been created in this process.
  */
 export function activeAuthConfig(): AuthConfig {
-  if (activeConfig === null) {
+  const config = currentConfig();
+  if (config === null) {
     throw new Error(
       "activeAuthConfig: no denextAuth() plugin has been created — add it to plugins in " +
         "denext.config.ts, or pass the auth config explicitly",
     );
   }
-  return activeConfig;
+  return config;
 }
 
 /**
@@ -84,7 +106,7 @@ export function activeAuthConfig(): AuthConfig {
  * @returns The active config, or `null`.
  */
 export function peekActiveAuthConfig(): AuthConfig | null {
-  return activeConfig;
+  return currentConfig();
 }
 
 let warnedNoOrigin = false;
@@ -327,7 +349,8 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
 function requireSessionStore(
   fn: string,
 ): { options: ResolvedAuthOptions; store: SessionStore } {
-  const options = activeConfig ? resolveAuthOptions(activeConfig) : undefined;
+  const config = currentConfig();
+  const options = config ? resolveAuthOptions(config) : undefined;
   if (!options?.sessionStore) {
     throw new Error(
       `${fn}: no \`sessionStore\` is configured — sessions are stateless signed cookies, ` +
@@ -364,7 +387,8 @@ export async function revokeSession(sessionId: string): Promise<void> {
  * @param userId The user whose sessions end.
  */
 export async function revokeAllSessions(userId: string): Promise<void> {
-  const options = activeConfig ? resolveAuthOptions(activeConfig) : undefined;
+  const config = currentConfig();
+  const options = config ? resolveAuthOptions(config) : undefined;
   if (!options?.adapter && !options?.sessionStore) {
     throw new Error(
       "revokeAllSessions: no `adapter` or `sessionStore` is configured — stateless cookie " +
@@ -385,7 +409,8 @@ export async function revokeAllSessions(userId: string): Promise<void> {
  * everything else goes through {@link auth}, which hides it.
  */
 function currentSession(): Promise<AuthSession | null> {
-  if (!activeConfig) return Promise.resolve(null);
+  const config = currentConfig();
+  if (!config) return Promise.resolve(null);
   // A native app authenticates with `Authorization: Bearer nat_…` instead of the cookie. A
   // presented native token decides alone — an invalid one is signed out, never "fall back to
   // the cookie" — while any other Authorization (an API token) leaves the cookie path as is.
@@ -395,17 +420,16 @@ function currentSession(): Promise<AuthSession | null> {
   // empty under `force-static` — a user's page can't be cached and served to the next visitor.
   const header = currentContext() ? headers().get("authorization") : null;
   const bearer = nativeBearerOf(header);
-  if (bearer !== undefined) return verifyNativeAccessToken(activeConfig, bearer);
+  if (bearer !== undefined) return verifyNativeAccessToken(config, bearer);
   // A Supabase access token (`backend({ supabase })`) is a session the same way; an `anon` /
   // `service_role` key in the header is not a user, and leaves the cookie to decide.
   const jwt = jwtBearerOf(header);
   if (jwt !== undefined) {
-    const config = activeConfig;
     return sessionFromJwtBearer(config, jwt).then((session) =>
       session === undefined ? readAuthSession(config) : session
     );
   }
-  return readAuthSession(activeConfig);
+  return readAuthSession(config);
 }
 
 /**
@@ -445,8 +469,9 @@ export async function auth(): Promise<AuthSession | null> {
  */
 export async function pendingMfaSession(): Promise<AuthSession | null> {
   const session = await currentSession();
-  if (!session?.mfaPending || !activeConfig) return null;
-  return await pendingSessionLive(activeConfig, session) ? session : null;
+  const config = currentConfig();
+  if (!session?.mfaPending || !config) return null;
+  return await pendingSessionLive(config, session) ? session : null;
 }
 
 /**
@@ -457,7 +482,8 @@ export async function pendingMfaSession(): Promise<AuthSession | null> {
 function refreshActiveSession(session: AuthSession): Promise<AuthSession | null> {
   // A native (bearer) session has no cookie to slide; its app refreshes its own token.
   if (session.nativeSessionId) return Promise.resolve(session);
-  return activeConfig ? refreshLiveSession(activeConfig, session) : Promise.resolve(session);
+  const config = currentConfig();
+  return config ? refreshLiveSession(config, session) : Promise.resolve(session);
 }
 
 /**
@@ -545,7 +571,7 @@ export async function requireAuth(
   // A half-authenticated session goes to the MFA page (falling back to sign-in), so the
   // user can finish the second factor instead of being bounced into a fresh login.
   if (session.mfaPending) {
-    return refuse(request, options.signInPath ?? activeConfig?.pages?.mfa);
+    return refuse(request, options.signInPath ?? currentConfig()?.pages?.mfa);
   }
   if (!hasRole(session, options.role)) return refuse(request, options.signInPath, "forbidden");
   const decision = await applyAuthorized(session, request);
@@ -568,12 +594,13 @@ async function applyAuthorized(
   session: AuthSession,
   request: Request,
 ): Promise<boolean | Response> {
-  const authorized = activeConfig?.callbacks?.authorized;
+  const config = currentConfig();
+  const authorized = config?.callbacks?.authorized;
   if (!authorized) return true;
   try {
     return await authorized({ session, request });
   } catch (error) {
-    if (activeConfig) resolveAuthOptions(activeConfig).logger.error("authorized threw", error);
+    if (config) resolveAuthOptions(config).logger.error("authorized threw", error);
     return false;
   }
 }
@@ -581,7 +608,7 @@ async function applyAuthorized(
 /** The refusal every guard shares: a 302 back to the sign-in page, carrying `callbackUrl`. */
 function refuse(request: Request, signInPath?: string, error?: string): Response {
   const url = new URL(request.url);
-  const signIn = signInPath ?? activeConfig?.pages?.signIn ?? "/";
+  const signIn = signInPath ?? currentConfig()?.pages?.signIn ?? "/";
   const reason = error ? `error=${encodeURIComponent(error)}&` : "";
   const target = safeRedirectLocation(
     `${signIn}?${reason}callbackUrl=${encodeURIComponent(url.pathname + url.search)}`,

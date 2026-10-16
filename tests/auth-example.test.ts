@@ -60,7 +60,9 @@ async function appWithAuth(): Promise<TestHandler> {
   };
 }
 
-const AUTH_COOKIE = "__Host-denext_auth";
+// The test client talks plain http to `localhost`: the cookie is unprefixed there (a browser
+// refuses `__Host-` over http), as under `denext dev`.
+const AUTH_COOKIE = "denext_auth";
 type AuthJson = { error?: string; user?: { email: string } };
 const login = (email: string, password: string) => ({
   json: { email, password },
@@ -118,7 +120,7 @@ async function signInOpensDashboard({ client }: Ctx) {
   assertEquals((res.json() as AuthJson).user?.email, "ada@denext.dev");
   assert(
     client.cookies.get(AUTH_COOKIE),
-    "the __Host- session cookie is in the jar",
+    "the session cookie is in the jar",
   );
   const dash = await client.get("/dashboard");
   assertEquals(dash.status, 200);

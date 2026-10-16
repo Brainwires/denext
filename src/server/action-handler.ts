@@ -4,6 +4,9 @@
 // - Same-origin only: every action request is verified against Origin (falling
 //   back to Referer). When neither is present the request is rejected. This is
 //   the primary CSRF defense, because actions run with the visitor's cookies.
+//   The one exception is a request from an origin the app's `cors` allows that
+//   carries no ambient credential (no cookie; `corsCredentialless`): it has no
+//   visitor's cookies to abuse.
 // - POST only: actions can never be triggered by a GET (no <img>/link CSRF).
 // - Bounded dispatch: only ids explicitly registered via `serverAction` resolve;
 //   the id is a Map key, never a path or eval target.
@@ -14,6 +17,7 @@
 
 import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
 import { verifyOrigin } from "./origin-check.ts";
+import { corsCredentialless, type CorsPolicy } from "./cors.ts";
 import { prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import { ACTION_PREFIX, decodeActionArgs, getServerAction } from "../runtime/server-action.ts";
 import {
@@ -59,6 +63,11 @@ export interface ActionHandlerOptions {
    */
   desktopAppOrigin?: string;
   /**
+   * The app's `cors` policy: an allowed origin may call without the same-origin check when it
+   * carries no cookie ({@linkcode corsCredentialless}).
+   */
+  cors?: CorsPolicy | null;
+  /**
    * Dev: the registry scope the request's action runs from (its platform target), resolved
    * once the request passed the origin and size checks. Unset: the global registry.
    */
@@ -88,13 +97,21 @@ export function isActionRequest(request: Request, pathname: string): boolean {
   return request.method === "POST" && pathname.startsWith(ACTION_PREFIX);
 }
 
+/**
+ * The CSRF gate: the app's own origin (or an allowed one) — or a cookie-less call from a
+ * `cors`-allowed origin, which has no visitor's credentials to forge.
+ */
+function callerAllowed(request: Request, options: ActionHandlerOptions): boolean {
+  return verifyOrigin(request, options) || corsCredentialless(request, options.cors ?? null);
+}
+
 /** Handle a Server Action POST. Runs inside the per-request async context. */
 export async function handleAction(
   request: Request,
   options: ActionHandlerOptions = {},
 ): Promise<Response> {
   // 1. CSRF: enforce same-origin before doing anything else.
-  if (!verifyOrigin(request, options)) {
+  if (!callerAllowed(request, options)) {
     return jsonResponse({ error: "forbidden" }, 403);
   }
 

@@ -258,6 +258,38 @@ Deno.test("discovery: an endpoint on a foreign host is refused unless allow-list
   assertEquals(allowed.tokenUrl, "https://evil.test/token");
 });
 
+Deno.test("discovery: a `*.domain` allowedHosts entry admits its subdomains, never the apex", async () => {
+  const issuer = freshIssuer();
+  const idp = await makeIdp(issuer);
+  const provider = discoveryProvider(issuer, { allowedHosts: ["*.auth.test"] });
+  idp.patchDocument({ authorization_endpoint: "https://pool.auth.test/oauth2/authorize" });
+  const sub = await resolveProviderEndpoints(provider, { fetchImpl: idpFetch(idp) });
+  assertEquals(sub.authorizationUrl, "https://pool.auth.test/oauth2/authorize");
+
+  const apex = freshIssuer();
+  const apexIdp = await makeIdp(apex);
+  apexIdp.patchDocument({ authorization_endpoint: "https://auth.test/oauth2/authorize" });
+  const refused = await assertRejects(
+    () =>
+      resolveProviderEndpoints(discoveryProvider(apex, { allowedHosts: ["*.auth.test"] }), {
+        fetchImpl: idpFetch(apexIdp),
+      }),
+    DiscoveryError,
+  );
+  assertEquals((refused as DiscoveryError).code, "foreign_endpoint");
+
+  const lookalike = freshIssuer();
+  const lookIdp = await makeIdp(lookalike);
+  lookIdp.patchDocument({ authorization_endpoint: "https://evilauth.test/oauth2/authorize" });
+  await assertRejects(
+    () =>
+      resolveProviderEndpoints(discoveryProvider(lookalike, { allowedHosts: ["*.auth.test"] }), {
+        fetchImpl: idpFetch(lookIdp),
+      }),
+    DiscoveryError,
+  );
+});
+
 Deno.test("discovery: a non-https endpoint, an endpoint with credentials, and a missing one are refused", async () => {
   const insecure = freshIssuer();
   const a = await makeIdp(insecure);

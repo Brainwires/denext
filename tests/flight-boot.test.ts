@@ -84,7 +84,7 @@ function runBoot(root: El, opts: { mediaMatches?: boolean } = {}) {
     IntersectionObserver,
     matchMedia,
   };
-  const source = generateFlightBoot().replace(`import("./flight.js")`, "__load()");
+  const source = generateFlightBoot().replace(`import("./__denext_flight__.js")`, "__load()");
   const load = () => {
     loads.push(1);
     return { then: (f: (m: unknown) => unknown) => loaded.then(() => f({ ready: loaded })) };
@@ -133,7 +133,7 @@ function page(strategy: string, extra?: (body: El) => void) {
 Deno.test("flight boot: the source has no static import and loads flight.js relative to itself", () => {
   const source = generateFlightBoot();
   assert(!/^\s*import\s/m.test(source), source);
-  assertStringIncludes(source, `import("./flight.js")`);
+  assertStringIncludes(source, `import("./__denext_flight__.js")`);
   assert(!source.includes("//"), "comments are stripped");
   assert(source.length < 3_000, `${source.length} B`);
 });

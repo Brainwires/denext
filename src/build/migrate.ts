@@ -15,6 +15,7 @@
 
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
+import { resolveTsPaths, tsPathAliases } from "./tsconfig-paths.ts";
 import { mfs } from "./migrate-io.ts";
 import {
   type MappedViteEmitter,
@@ -111,6 +112,7 @@ const DENEXT_OWNED = new Set([
   "react-is",
   "next",
   "next-intl",
+  "next-auth",
   "better-sqlite3",
   // denext provides no-op shims for these (aliased below) — never npm-pin them, or the
   // pin overwrites the alias and the throwing real package resurfaces on the native path.
@@ -135,6 +137,9 @@ function catalogSpec(name: string): string {
  * denext's barrel surface, so an older 0.x line boots against a barrel it no longer matches.
  */
 export const PAGES_ROUTER_SPEC: string = catalogSpec("@denext/pages-router");
+/** Where `@denext/react-router` writes React Router's route types (its `TYPES_DIR`). */
+const RR_TYPES_DIR = ".react-router/types";
+
 /** The `@denext/react-router` package the RR7 framework-mode plugin path pins. */
 const REACT_ROUTER_SPEC = catalogSpec("@denext/react-router");
 /**
@@ -255,6 +260,7 @@ async function buildAppRouterImports(
     "denext": R.base,
     "denext/jsx-runtime": jsr("jsx-runtime"),
     "denext/server": jsr("server"),
+    "denext/auth": jsr("auth"),
     "denext/client": jsr("client"),
   };
   if (opts.remix) {
@@ -289,6 +295,7 @@ async function buildAppRouterImports(
     const target = R.prefix(prefix);
     if (/^(?:file|https?):/.test(target)) imports[prefix] = target;
   }
+  await addNextAuthAliases(imports, R, deps);
   addServerClientStubs(imports, deps, jsr);
   // `/mdx` provides the type-only `mdx/types` module; MDX apps often import it at value syntax.
   if ("@types/mdx" in deps) imports["mdx/types"] = jsr("empty");
@@ -297,6 +304,23 @@ async function buildAppRouterImports(
   addMissing(imports, await collectTsPathAliases(dir));
   addMissing(imports, frameworkDepsFor(R, deps));
   return imports;
+}
+
+/**
+ * `next-auth` (Auth.js v5) and every `next-auth/*` subpath → denext's shim, mapped onto
+ * `denextAuth`, when the app depends on `next-auth` — exact entries, plus the prefix when it is a
+ * URL (see the `next/*` ones above).
+ */
+async function addNextAuthAliases(
+  imports: Record<string, string>,
+  R: DenextResolver,
+  deps: Record<string, string>,
+): Promise<void> {
+  if (!("next-auth" in deps)) return;
+  imports["next-auth"] = R.sub("next-auth");
+  for (const spec of await frameworkSubpaths(["next-auth/"])) imports[spec] = R.sub(spec);
+  const target = R.prefix("next-auth/");
+  if (/^(?:file|https?):/.test(target)) imports["next-auth/"] = target;
 }
 
 /** Add each `[key, value]` to `imports` only when the key isn't already mapped. */
@@ -513,59 +537,6 @@ async function readJson(path: string): Promise<Record<string, unknown> | null> {
 }
 
 /**
- * Resolve the effective `compilerOptions.paths` (+ `baseUrl`) for the tsconfig/jsconfig at
- * `dir`, following `extends` and — when neither this file nor its extends-chain declares
- * paths — walking up parent directories (monorepos commonly put `paths` in a root tsconfig
- * the app tsconfig doesn't even extend). Returns the paths and the ABSOLUTE base dir they
- * resolve against (the defining file's dir + its `baseUrl`), or null when none are found.
- */
-async function resolveTsPaths(
-  dir: string,
-): Promise<{ paths: Record<string, string[]>; baseDir: string } | null> {
-  // Read a config file following its `extends` chain; paths/baseUrl are taken from the
-  // nearest file in the chain that declares them, resolved against THAT file's directory.
-  const readChain = async (
-    file: string,
-    seen = new Set<string>(),
-  ): Promise<{ paths: Record<string, string[]>; baseDir: string } | null> => {
-    if (seen.has(file)) return null;
-    seen.add(file);
-    const cfg = await readJson(file);
-    if (!cfg) return null;
-    const co = cfg.compilerOptions as
-      | { paths?: Record<string, string[]>; baseUrl?: string }
-      | undefined;
-    if (co?.paths && Object.keys(co.paths).length) {
-      return {
-        paths: co.paths,
-        baseDir: resolve(dirname(file), co.baseUrl ?? "."),
-      };
-    }
-    if (typeof cfg.extends === "string") {
-      const ext = cfg.extends.startsWith(".") ? resolve(dirname(file), cfg.extends) : null; // package-name extends (e.g. @tsconfig/*) aren't followed
-      if (ext) {
-        const withExt = ext.endsWith(".json") ? ext : ext + ".json";
-        return await readChain(withExt, seen);
-      }
-    }
-    return null;
-  };
-
-  let cur = dir;
-  for (let i = 0; i < 6; i++) {
-    const ts = await firstExisting(cur, ["tsconfig.json", "jsconfig.json"]);
-    if (ts) {
-      const r = await readChain(join(cur, ts));
-      if (r) return r;
-    }
-    const parent = dirname(cur);
-    if (parent === cur) break;
-    cur = parent;
-  }
-  return null;
-}
-
-/**
  * tsconfig/jsconfig `paths` → deno.json import entries, as `[key, value]` pairs with the
  * value made RELATIVE to `appDir` (so a monorepo-root tsconfig's `./packages/x/src` becomes
  * `../packages/x/src` for an app in a subdir). A `foo/*` key/target keeps a trailing `/`
@@ -574,23 +545,15 @@ async function resolveTsPaths(
 async function collectTsPathAliases(
   appDir: string,
 ): Promise<Array<[string, string]>> {
-  const resolved = await resolveTsPaths(appDir);
+  const resolved = await resolveTsPaths(appDir, (p) => mfs.readTextFile(p));
   if (!resolved) return [];
-  const out: Array<[string, string]> = [];
-  for (const [k, arr] of Object.entries(resolved.paths)) {
-    if (!arr?.length) continue;
-    const isPrefix = k.endsWith("/*"); // "@x/*" is a prefix map; "@x" an exact map
-    const key = isPrefix ? k.slice(0, -1) : k; // "@x/*" → "@x/"
-    const rawTarget = arr[0].endsWith("/*") ? arr[0].slice(0, -2) : arr[0];
-    // Absolute target (against the defining tsconfig's baseDir), then relative to appDir.
-    const abs = resolve(resolved.baseDir, rawTarget);
+  return tsPathAliases(resolved).map(([key, abs]) => {
     let val = relative(appDir, abs).replace(/\\/g, "/"); // Deno uses forward slashes
     if (!val.startsWith(".")) val = "./" + val;
-    // A prefix map's target must keep a trailing slash (`resolve` strips it).
-    if (isPrefix && !val.endsWith("/")) val += "/";
-    out.push([key, val]);
-  }
-  return out;
+    // A prefix map's target must keep a trailing slash (`relative` strips it).
+    if (key.endsWith("/") && !val.endsWith("/")) val += "/";
+    return [key, val];
+  });
 }
 
 /** The framework's exported subpaths under any of `prefixes` (e.g. `next/link`, `next/image`). */
@@ -843,6 +806,7 @@ async function writeAppRouterDenoJson(
   prismaWiring: PrismaWiring | null,
   written: string[],
   cap?: CapacitorPlan,
+  rr?: boolean,
 ): Promise<boolean> {
   const denoJson = {
     tasks: appRouterTasks(R, prismaWiring, cap),
@@ -862,13 +826,20 @@ async function writeAppRouterDenoJson(
       // deep in node_modules. Skip declaration-file checking (as Next.js/CRA do) so `deno check`
       // validates YOUR code, not the libraries' bundled types — your `.tsx` is still checked.
       skipLibCheck: true,
+      // React Router's route typegen (`@denext/react-router`): `./+types/<route>` resolves
+      // into `.react-router/types`, where the plugin writes them, as React Router's tsconfig does.
+      ...(rr ? { rootDirs: [".", `./${RR_TYPES_DIR}`] } : {}),
     },
     imports,
   };
   const denoJsonExists = await writeDenoJsonUnlessAuthored(dir, denoJson, written);
   // Ignore denext's generated build artifacts (`.denext/` build cache, `out/` export), and
   // with a Capacitor target the native build outputs.
-  await ensureGitignore(dir, [".denext/", "out/", ...(cap ? cap.ignores : [])], written);
+  await ensureGitignore(
+    dir,
+    [".denext/", "out/", ...(rr ? [".react-router/"] : []), ...(cap ? cap.ignores : [])],
+    written,
+  );
   // Turn on the Deno LSP so editors resolve the `denext` import map like `deno` does.
   await ensureVscodeDeno(dir, written);
   return denoJsonExists;
@@ -1619,7 +1590,15 @@ async function migrateReactRouterProject(
 
   const written: string[] = [];
   const prismaWiring = await applyPrismaImports(dir, deps, imports, R);
-  const denoJsonExists = await writeAppRouterDenoJson(dir, R, imports, prismaWiring, written);
+  const denoJsonExists = await writeAppRouterDenoJson(
+    dir,
+    R,
+    imports,
+    prismaWiring,
+    written,
+    undefined,
+    true,
+  );
 
   const configPath = join(dir, "denext.config.ts");
   const hasEffect = "effect" in deps;

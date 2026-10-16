@@ -99,6 +99,7 @@ export { collapseHeadTags, escapeHtml, renderToString } from "./src/jsx/render-t
 export type { HeadCollector, HeadTag, RenderOptions } from "./src/jsx/render-to-string.ts";
 
 export { renderToReadableStream } from "./src/jsx/render-to-stream.ts";
+export type { RenderStream } from "./src/jsx/render-to-stream.ts";
 export type { StreamOptions } from "./src/jsx/render-to-stream.ts";
 
 export { createResource, Suspense, SuspenseList, use } from "./src/runtime/suspense.ts";
@@ -279,6 +280,11 @@ export { StrictMode } from "./src/runtime/strict-mode.ts";
 // `React.cache` / `Activity` / `ViewTransition` and Next's `unstable_rethrow`, on the root so
 // an app written against `denext` never needs the `react` / `next/*` aliases for them.
 export { Activity, cache, ViewTransition } from "./src/runtime/react-extras.ts";
+export type {
+  ViewTransitionCallback,
+  ViewTransitionInstance,
+  ViewTransitionPseudoElement,
+} from "./src/runtime/react-extras.ts";
 export { unstable_rethrow } from "./src/runtime/error-boundary.ts";
 /** `React.createElement` — denext's hyperscript (`h`) under React's name. */
 export { h as createElement } from "./src/jsx/jsx-runtime.ts";
@@ -483,4 +489,4 @@ export type {
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "4.1.0";
+export const VERSION = "4.2.0";

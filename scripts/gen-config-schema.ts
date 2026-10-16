@@ -48,6 +48,8 @@ const CONFIG_TYPE_SOURCES = [
   fromFileUrl(new URL("../src/plugin/mod.ts", import.meta.url)),
   // `commands[].flags` / `commands[].positionals` (`FlagSpec` / `PositionalSpec`).
   fromFileUrl(new URL("../src/cli/command.ts", import.meta.url)),
+  // `deploy` (`DeployConfig` / `DeployAdapter`).
+  fromFileUrl(new URL("../src/deploy/adapter.ts", import.meta.url)),
 ];
 /** Output: the import-free runtime key list. */
 export const KEYS_OUT = `${ROOT}src/server/config-keys.generated.ts`;
@@ -74,7 +76,8 @@ export function renderSchema(table: SymbolTable): string {
     ...(root.required ? { required: root.required } : {}),
     additionalProperties: false,
   };
-  return JSON.stringify(schema, null, 2) + "\n";
+  // Minified: it ships in the JSR package (the config editor imports it), which has a size cap.
+  return JSON.stringify(schema) + "\n";
 }
 
 /** The import-free TS module exporting the key lists (unformatted source text). */
@@ -138,11 +141,8 @@ export async function generate(): Promise<{ keysModule: string; schema: string }
     propertyNames(table, "DenextConfig"),
     propertyNames(table, "ExperimentalConfig"),
   );
-  const [keysModule, schema] = await Promise.all([
-    formatWith(keys, "ts"),
-    formatWith(renderSchema(table), "json"),
-  ]);
-  return { keysModule, schema };
+  // The schema stays minified (`deno fmt` skips it: deno.json `fmt.exclude`).
+  return { keysModule: await formatWith(keys, "ts"), schema: renderSchema(table) };
 }
 
 if (import.meta.main) {

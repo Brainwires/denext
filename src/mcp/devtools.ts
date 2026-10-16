@@ -52,11 +52,10 @@ export function missText(reason: DevInspectMiss, dir: string): string {
     return `no dev server running (\`denext task dev\`) for ${dir} — the DevTools bridge reads ` +
       "the component tree from a RUNNING dev server (it looked for .denext/dev.json).";
   }
-  return "open the app in a browser, then CALL THIS AGAIN — the DevTools sink has posted " +
-    "nothing yet. The dev server is running, but the tree is pushed from the page, and the " +
-    "page only starts pushing once a read like this one has happened (it arms on the first " +
-    "call). So: load a route in a browser, interact with it (or reload), and ask again. " +
-    "`DENEXT_DEV_INSPECT=1 denext task dev` arms it from the start.";
+  return "open the app in a browser, then call this again — no page has posted a component " +
+    "tree. The dev server is running and asked every open page for its tree, but none " +
+    "answered: the tree comes from a page loaded in a browser (with the dev overlay, so not " +
+    "a production build), and none is open.";
 }
 
 /** `snapshot N.Ns old · <url>`, plus a refresh hint once the tree is stale. */
@@ -340,7 +339,7 @@ export function hookStateText(
       return `${head}\n  ${what}`;
     }
     const note = node.hooksNamed === false
-      ? "\n  names unavailable (conditional hooks?) — showing kind labels"
+      ? "\n  names unavailable (hook metadata out of date) — showing kind labels"
       : "";
     return `${head}${note}\n${cells.map(hookLine).join("\n")}`;
   });
@@ -391,10 +390,9 @@ const PAGE_ARGS = {
 
 /** How every bridge tool's description ends — every precondition, stated every time. */
 const NEEDS =
-  "Requires `denext task dev` to be running AND the app open in a browser (the tree is " +
-  "pushed from the page, so it is a snapshot, and the answer says how old it is). The page " +
-  "starts pushing only once one of these tools has been called, so the FIRST call on a page may " +
-  "answer 'posted nothing yet' — call it again after the page's next commit.";
+  "Requires `denext task dev` to be running AND the app open in a browser (the tree comes " +
+  "from the page, so it is a snapshot, and the answer says how old it is). Each call asks the " +
+  "open pages for a fresh tree over the dev server's reload stream and waits for it.";
 
 /**
  * The three DevTools bridge tools, registered in the MCP tool table. Each resolves the

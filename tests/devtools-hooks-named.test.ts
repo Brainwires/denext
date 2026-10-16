@@ -234,27 +234,114 @@ Deno.test("named hooks: an extensionless import resolves to the importee's real 
   });
 });
 
-Deno.test("named hooks: a bare-specifier custom hook stops naming for the component", () => {
+Deno.test("named hooks: a bare-specifier custom hook takes the cells its neighbours leave", () => {
   withDev(() => {
     // `useApiLike` came from a package (no `from`), and this module declares no such hook:
-    // how many cells it took is unknowable, so every later name would be a guess.
+    // it is opaque, but the `useState` after it must be the last cell, so it took two.
     meta("Destructured", DESTRUCTURED_META);
     const node = renderNode("Destructured", Destructured);
-    assertEquals(node.hooksNamed, false);
-    assertEquals(node.hooks.map((hk) => hk.name), [undefined, undefined, undefined]);
+    assertEquals(node.hooksNamed, true);
+    assertEquals(node.hooks.map((hk) => hk.name), ["data", undefined, "label"]);
+    assertEquals(node.hooks.map((hk) => hk.hook), ["useApiLike", "useApiLike", "useState"]);
     assertEquals(node.hooks.map((hk) => hk.kind), ["state", "effect", "state"]);
   });
 });
 
-Deno.test("named hooks: an importee that has not registered yet leaves kind labels, no throw", () => {
+Deno.test("named hooks: an importee that has not registered yet is opaque, no throw", () => {
   withDev(() => {
     // The component's metadata points at `lib/auth.ts`, whose footer has not run (a
-    // dynamic-import ordering, or a module the transform left uninstrumented): a clean miss.
+    // dynamic-import ordering, or a module the transform left uninstrumented).
     meta("Destructured", importedMeta("useAuth", AUTH));
     const node = renderNode("Destructured", Destructured);
-    assertEquals(node.hooksNamed, false);
-    assertEquals(node.hooks.map((hk) => hk.kind), ["state", "effect", "state"]);
-    assert(node.hooks.every((hk) => hk.name === undefined && hk.hook === undefined));
+    assertEquals(node.hooksNamed, true);
+    assertEquals(node.hooks.map((hk) => hk.name), ["session", undefined, "label"]);
+    assertEquals(node.hooks.map((hk) => hk.hook), ["useAuth", "useAuth", "useState"]);
+  });
+});
+
+Deno.test("named hooks: cells two opaque hooks could share stay unnamed, the rest are named", () => {
+  withDev(() => {
+    // Named's cells are state, ref, memo, effect. `useOne` / `useTwo` are opaque: the state
+    // and the effect around them are certain, but how the ref and memo split is not.
+    meta("Named", [
+      { hook: "useState", name: "count", line: 11 },
+      { hook: "useOne", name: "one", line: 12 },
+      { hook: "useTwo", name: "two", line: 13 },
+      { hook: "useEffect", name: "", line: 14 },
+    ]);
+    const node = renderNode("Named", Named);
+    assertEquals(node.hooksNamed, true);
+    assertEquals(node.hooks.map((hk) => hk.name), ["count", undefined, undefined, undefined]);
+    assertEquals(node.hooks.map((hk) => hk.hook), ["useState", undefined, undefined, "useEffect"]);
+  });
+});
+
+Deno.test("named hooks: an opaque hook may have taken no cells at all", () => {
+  withDev(() => {
+    // A package hook that only reads context: the four recorded primitives fill every cell.
+    meta("Named", [
+      NAMED_META[0],
+      { hook: "useThemeLike", name: "theme", line: 12 },
+      ...NAMED_META.slice(1),
+    ]);
+    const node = renderNode("Named", Named);
+    assertEquals(node.hooks.map((hk) => hk.name), ["count", "boxRef", "total", undefined]);
+  });
+});
+
+// A component whose middle hook runs only when `flag` is set — the build pass marks it `cond`.
+let flag = true;
+function Conditional(): VNode {
+  const [count] = useState(0);
+  // deno-lint-ignore denext/rules-of-hooks -- the conditional call is what is under test
+  if (flag) useRef(null);
+  const total = useMemo(() => count + 1, [count]);
+  return h("div", null, String(total));
+}
+
+const CONDITIONAL_META: ComponentDevMeta["hooks"] = [
+  { hook: "useState", name: "count", line: 2 },
+  { hook: "useRef", name: "", line: 3, cond: true },
+  { hook: "useMemo", name: "total", line: 4 },
+];
+
+Deno.test("named hooks: a conditional hook is named whether or not it ran", () => {
+  withDev(() => {
+    meta("Conditional", CONDITIONAL_META);
+    flag = true;
+    const ran = renderNode("Conditional", Conditional);
+    assertEquals(ran.hooksNamed, true);
+    assertEquals(ran.hooks.map((hk) => hk.hook), ["useState", "useRef", "useMemo"]);
+    assertEquals(ran.hooks.map((hk) => hk.name), ["count", undefined, "total"]);
+    // The same body rendered with the branch not taken (its own component: the tree keeps
+    // the first root mounted).
+    flag = false;
+    meta("Skipped", CONDITIONAL_META);
+    const skipped = renderNode("Skipped", function Skipped() {
+      return Conditional();
+    });
+    assertEquals(skipped.hooksNamed, true);
+    assertEquals(skipped.hooks.map((hk) => hk.hook), ["useState", "useMemo"]);
+    assertEquals(skipped.hooks.map((hk) => hk.name), ["count", "total"]);
+    flag = true;
+  });
+});
+
+Deno.test("named hooks: a hook found through a barrel's export * lines", () => {
+  withDev(() => {
+    const barrel = "file:///app/lib/index.ts";
+    meta("Destructured", importedMeta("useAuth", barrel));
+    // index.ts: `export * from "./cart"; export * from "./auth"` (the second has it).
+    registerComponentMeta(`${barrel}#*`, {
+      name: "*",
+      line: 0,
+      column: 0,
+      hooks: [],
+      reExportsAll: ["file:///app/lib/cart", "file:///app/lib/auth"],
+    });
+    metaAt("file:///app/lib/cart.ts", "useCart", [{ hook: "useRef", name: "x", line: 1 }]);
+    metaAt(AUTH, "useAuth", AUTH_HOOKS);
+    assertEquals(renderNode("Destructured", Destructured).hooks[0].name, "useAuth › user");
   });
 });
 
@@ -296,7 +383,8 @@ Deno.test("named hooks: custom-hook expansion is capped at three levels", () => 
     assertEquals(ok.hooks[0].name, "useA › useB › useC › x");
     assertEquals(ok.hooks[0].hook, "useA › useB › useC › useState");
 
-    // One level deeper (A → B → C → D → useState) is past the cap: naming gives up.
+    // One level deeper (A → B → C → D → useState) is past the cap: useD is not expanded,
+    // it is opaque — and the only cell left is its.
     clearComponentMeta();
     meta("OneCell", [{ hook: "useA", name: "a", line: 2 }]);
     meta("useA", [{ hook: "useB", name: "b", line: 3 }]);
@@ -304,7 +392,9 @@ Deno.test("named hooks: custom-hook expansion is capped at three levels", () => 
     meta("useC", [{ hook: "useD", name: "d", line: 5 }]);
     meta("useD", [{ hook: "useState", name: "x", line: 6 }]);
     const deep = renderNode("OneCell", OneCell);
-    assertEquals(deep.hooksNamed, false);
+    assertEquals(deep.hooksNamed, true);
+    assertEquals(deep.hooks[0].hook, "useA › useB › useC › useD");
+    assertEquals(deep.hooks[0].name, "useA › useB › useC › d");
   });
 });
 
@@ -326,7 +416,7 @@ Deno.test("named hooks: the three-level cap spans modules, each resolving in its
     // A fourth expansion (useC → useD back in the component's module) is past the cap.
     metaAt(C, "useC", [{ hook: "useD", name: "d", line: 5, from: MODULE }]);
     meta("useD", [{ hook: "useState", name: "x", line: 6 }]);
-    assertEquals(renderNode("OneCell", OneCell).hooksNamed, false);
+    assertEquals(renderNode("OneCell", OneCell).hooks[0].hook, "useA › useB › useC › useD");
   });
 });
 
@@ -570,12 +660,22 @@ Deno.test("named hooks: a hook re-exported through a barrel breadcrumbs from its
     registerComponentMeta(`${barrel}#useAuth`, alias(`${AUTH}#useAuth`));
     metaAt(AUTH, "useAuth", AUTH_HOOKS);
     assertEquals(renderNode("Destructured", Destructured).hooks[0].name, "useAuth › user");
-    // One hop only: a barrel that re-exports another barrel's re-export stays opaque.
+    // A barrel of a barrel is followed too (up to three hops).
     clearComponentMeta();
     meta("Destructured", importedMeta("useAuth", barrel));
     registerComponentMeta(`${barrel}#useAuth`, alias("file:///app/lib/inner.ts#useAuth"));
     registerComponentMeta("file:///app/lib/inner.ts#useAuth", alias(`${AUTH}#useAuth`));
     metaAt(AUTH, "useAuth", AUTH_HOOKS);
-    assertEquals(renderNode("Destructured", Destructured).hooksNamed, false);
+    assertEquals(renderNode("Destructured", Destructured).hooks[0].name, "useAuth › user");
+    // Four hops is past the cap: the hook is opaque (named by its call, not expanded).
+    clearComponentMeta();
+    const hop = (n: number) => `file:///app/lib/hop${n}.ts`;
+    meta("Destructured", importedMeta("useAuth", barrel));
+    registerComponentMeta(`${barrel}#useAuth`, alias(`${hop(1)}#useAuth`));
+    for (let n = 1; n < 4; n++) {
+      registerComponentMeta(`${hop(n)}#useAuth`, alias(`${hop(n + 1)}#useAuth`));
+    }
+    metaAt(hop(4), "useAuth", AUTH_HOOKS);
+    assertEquals(renderNode("Destructured", Destructured).hooks[0].name, "session");
   });
 });

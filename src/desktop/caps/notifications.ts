@@ -19,6 +19,12 @@
  * notifications' data, so nothing else is stored). A repeating notification of an app that is not
  * launched again stops after those occurrences.
  *
+ * The delivered list: from runtime 2.9.7-denext.20 the OS's own notification centre on macOS and
+ * Windows (`getDelivered` / `removeDelivered`, `capabilities().delivered`), so a notification the
+ * user dismissed is gone from it and one from an earlier run is listed. Elsewhere (Linux, whose
+ * notification servers keep no list, and older runtimes) it is the log of what this capability
+ * posted during this run.
+ *
  * Clicks are PULLED, like deep links: each click is queued and a payload-free `tap` signal goes
  * down the event stream; the page takes the queue (`take`), so a click is seen once, never again
  * after a reload.
@@ -571,18 +577,25 @@ async function scheduledOf(n: DesktopNotificationsApi): Promise<DesktopScheduled
 
 /** The app notifications `pending` lists: one per id, soonest first, web ones left out. */
 function pendingList(list: DesktopScheduledNotification[]) {
+  return firstPerId(list.sort((a, b) => atOf(a) - atOf(b))).map(({ e, found }) => ({
+    id: found.meta.id,
+    title: e.title ?? "",
+    body: e.body ?? "",
+    extra: found.data,
+  }));
+}
+
+/** The app's (not the web) notifications of `list` with their meta: the first entry per id. */
+function firstPerId(list: DesktopScheduledNotification[]) {
   const seen = new Set<number>();
-  const out: Array<{ id: number; title: string; body: string; extra: unknown }> = [];
-  for (const e of list.sort((a, b) => atOf(a) - atOf(b))) {
+  const out: Array<
+    { e: DesktopScheduledNotification; found: NonNullable<ReturnType<typeof metaOf>> }
+  > = [];
+  for (const e of list) {
     const found = webKeyOf(e.data, e.tag) === undefined ? metaOf(e.data, e.tag) : undefined;
     if (!found || seen.has(found.meta.id)) continue;
     seen.add(found.meta.id);
-    out.push({
-      id: found.meta.id,
-      title: e.title ?? "",
-      body: e.body ?? "",
-      extra: found.data,
-    });
+    out.push({ e, found });
   }
   return out;
 }
@@ -851,24 +864,60 @@ function schedulingMethods(s: NotificationsState): DesktopCapability["methods"] 
   };
 }
 
+/** The runtime's delivered list when it reads the OS's (2.9.7-denext.20: macOS, Windows). */
+function osDelivered(n: DesktopNotificationsApi): DesktopNotificationsApi | undefined {
+  if (typeof n.getDelivered !== "function" || typeof n.removeDelivered !== "function") {
+    return undefined;
+  }
+  return (n.capabilities?.() ?? {}).delivered === true ? n : undefined;
+}
+
+/** The app's notifications in the OS's list: one per id, newest first, web ones left out. */
+function deliveredList(list: DesktopScheduledNotification[]) {
+  const ours = list.filter((e) => typeof e.tag === "string" && e.tag.startsWith(TAG_PREFIX));
+  return firstPerId(ours.reverse()).map(({ e, found }) => ({
+    id: String(found.meta.id),
+    ...(found.meta.th !== undefined ? { threadId: found.meta.th } : {}),
+    title: e.title ?? found.meta.t ?? "",
+    data: found.data,
+  }));
+}
+
+/** Remove the delivered notifications of `ids` from the OS's list (the runtime reads it). */
+async function removeOsDelivered(
+  s: NotificationsState,
+  n: DesktopNotificationsApi,
+  ids: number[],
+): Promise<void> {
+  const tags = (await n.getDelivered!()).map((e) => e.tag).filter((tag) =>
+    typeof tag === "string" && ids.some((id) => ownsTag(tag, id))
+  );
+  if (tags.length > 0) n.removeDelivered!(tags);
+  for (const id of ids) s.log.takeDelivered(id);
+}
+
 /** The delivered list, the categories, the permission and the clicks of the app's notifications. */
 function deliveryMethods(s: NotificationsState): DesktopCapability["methods"] {
   return {
-    // The notifications posted this run whose time has come (the runtime lists none).
+    // The OS's list where the runtime reads it; else the ones posted this run whose time has come.
     delivered: {
-      handler: () => {
-        nativeApi(s.api());
-        return s.log.delivered();
+      handler: async () => {
+        const n = nativeApi(s.api());
+        const os = osDelivered(n);
+        return os ? deliveredList(await os.getDelivered!()) : s.log.delivered();
       },
     },
     removeDelivered: {
-      handler: (args) => {
-        const ids = idsOf(args);
+      handler: async (args) => {
+        const ids = idsOf(args).map((id) => notificationId("removeDelivered", id));
         const n = nativeApi(s.api());
+        const os = osDelivered(n);
+        if (os) {
+          await removeOsDelivered(s, os, ids);
+          return null;
+        }
         for (const id of ids) {
-          for (const tag of s.log.takeDelivered(notificationId("removeDelivered", id))) {
-            n.cancel(tag);
-          }
+          for (const tag of s.log.takeDelivered(id)) n.cancel(tag);
         }
         return null;
       },

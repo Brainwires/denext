@@ -29,7 +29,7 @@ and `denext build` writes `openapi.json` into the output directory.
 denext plugin add @denext/openapi
 ```
 
-Or by hand: add `"@denext/openapi": "jsr:@denext/openapi@^0.4.0"` to `deno.json`'s
+Or by hand: add `"@denext/openapi": "jsr:@denext/openapi@^0.5.0"` to `deno.json`'s
 `imports` and the plugin to `denext.config.ts` as above.
 
 ## What gets described
@@ -49,13 +49,29 @@ export const POST = defineApi({
 - `params` → path parameters (typed from the schema's properties; `[...rest]` is one
   `/`-joined parameter), `query` → one query parameter per property.
 - A declared `params`, `query` or `body` schema adds the `400` validation response (a
-  `body` also adds `bad_request` for a malformed one); every operation gets a `default`
-  response for what the definition cannot name (middleware 401/429, 413, a redacted 500).
+  `body` also adds `bad_request` for a malformed one).
+- The endpoint's middleware adds the responses it answers with: `requireSession()`'s 401 (and
+  403 with a `role`), `requireBearer()`'s 401 with its `www-authenticate` header (and 403 with a
+  `scope` or `role`), `rateLimit()`'s 429 with `retry-after`, `csrf()`'s 403 — and your own,
+  tagged with `documentsErrors(mw, { quota_exceeded: 402 })` from `denext/server` (an error spec
+  may list the `headers` it carries: `{ status, message?, headers? }`). A `default` response
+  covers what only the framework answers (a 413 over the body cap, a redacted 500).
   Every error response uses the
   shared `ApiError` envelope schema (`components.schemas.ApiError`) with the status's
   codes as an enum, so a generated client can narrow on `error.code`.
 - A plain handler (no `defineApi`) is still listed by path and method, with a lint
   warning.
+
+### Routes from plugins
+
+A plugin that serves routes of its own registers an `OpenApiSource` (`registerOpenApiSource`, or
+the `Symbol.for("denext.openapi.sources")` map, so it needs no dependency on this package), and
+the document lists its operations beside the route handlers. `@denext/backend`'s auto-REST does:
+every relation and function of the default schema the `anon` and `authenticated` roles can use,
+under `/rest/v1`, rows typed as `rest.<table>` schemas (`rest: { openapi: false }` opts out).
+`openapi({ sources: [...] })` adds sources; `sources: false` leaves every registered one out. A
+path an app route already describes keeps the app's operation (`path-collision`); a source that
+throws is skipped with a `source-failed` warning.
 
 ### JSON Schema from your validator
 
@@ -82,13 +98,17 @@ JavaScript** and its stylesheet is served from your origin, so it works under a 
 For an interactive "try it" console:
 
 ```ts
+openapi({ ui: "swagger" }); // Swagger UI, vendored, served from your origin
 openapi({ ui: "scalar" }); // Scalar API Reference, from cdn.jsdelivr.net
-openapi({ ui: "swagger" }); // Swagger UI, from unpkg.com
 openapi({ ui: "scalar", cdn: "/vendor/scalar.js" }); // self-hosted
 ```
 
-Those load from a CDN by default — allow that host in your `csp`, or self-host the
-bundle and point `cdn` at it.
+`swagger` serves Swagger UI (swagger-ui-dist 5.32.15, Apache-2.0 — `vendor/swagger-ui/`, with
+its license and notice) from `<docs>/swagger-ui/`: no CDN, no inline script, and each file is
+checked against the SHA-256 recorded in `swagger-ui.ts` before it is served. Every docs page
+answers with its own strict `content-security-policy` (`'self'` only for `builtin` and
+`swagger`). Scalar still loads from a CDN — its page's CSP names that host — unless you
+self-host the bundle and point `cdn` at it.
 
 ## Authorization (the "Authorize" button)
 
@@ -224,7 +244,7 @@ const { document, warnings } = await buildOpenApi({
 | `docs`            | `/docs`           | Where the docs page is served; `false` disables it                        |
 | `expose`          | `"always"`        | `"always"` serves in every mode; `"dev"` serves only under `denext dev`   |
 | `ui`              | `"builtin"`       | `builtin` \| `scalar` \| `swagger`                                        |
-| `cdn`             | per renderer      | Scalar script URL / Swagger dist base URL                                 |
+| `cdn`             | per renderer      | Scalar script URL / a Swagger dist base URL instead of the vendored copy  |
 | `info`            | dir name, `0.0.0` | `title`, `version`, `description`                                         |
 | `servers`         | —                 | `servers` entries                                                         |
 | `securitySchemes` | —                 | `Record<string, OpenApiSecurityScheme>` → `components.securitySchemes`    |
@@ -234,6 +254,7 @@ const { document, warnings } = await buildOpenApi({
 | `tags`            | segment after api | `(route) => string[]`                                                     |
 | `authorize`       | open              | `(request) => boolean \| Promise<boolean>`; `false` → the app's own 404   |
 | `outFile`         | `openapi.json`    | The build-output file; `false` skips the build step                       |
+| `sources`         | registered ones   | More `OpenApiSource`s; `false` leaves out the registered ones too         |
 
 ## Endpoint details
 
@@ -246,11 +267,12 @@ const { document, warnings } = await buildOpenApi({
   status }` for every code a call may fail with, builtins included) and, when the definition
   sets `maxBodyBytes`, `x-denext-max-body-bytes`.
 - Lint codes: `opaque-schema`, `undescribed-route`, `missing-summary`, `catch-all-path`,
-  `load-failed`, `path-collision`.
+  `load-failed`, `path-collision`, `source-failed`.
 - Subpaths: `@denext/openapi/spec` (`buildOpenApi`, `diffSpecs`, `toJsonSchema`,
   `pathVariants`, `API_ERROR_SCHEMA`), `@denext/openapi/command` (`createOpenapiCommand`,
   `formatWarning`), `@denext/openapi/types` (`emitTypes`); the root also exports
-  `renderDocsHtml`, `renderSchema`, `DOCS_CSS`, `DOCS_CDN`.
+  `renderDocsHtml`, `renderSchema`, `docsCsp`, `DOCS_CSS`, `DOCS_CDN`, `SWAGGER_UI_ASSETS`,
+  `SWAGGER_UI_VERSION`, `readSwaggerAsset`.
 
 ## Security notes
 

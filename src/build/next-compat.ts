@@ -23,10 +23,14 @@
 import { domListsPlugin } from "./dom-lists.ts";
 import {
   missingVariantMessage,
+  type Platform,
   type PlatformResolution,
   platformVariantsOf,
   probePlatformSource,
 } from "./platform-extensions.ts";
+import { platformFoldPlugin } from "./platform-fold-plugin.ts";
+import { resolveAliasPlugins } from "./resolve-alias.ts";
+import type { ResolveAliasConfig } from "../server/config.ts";
 import { denoLoaderPlugins } from "./deno-loader-plugins.ts";
 import { loadDenextPatchSet, patchPlugin } from "./patches.ts";
 import {
@@ -172,6 +176,8 @@ export const NEXT_ALIASES: Record<string, string> = {
   // .wasm into the browser prebuild and broke it.
   "next/headers": "next-headers.js",
   "next/image": "next-image.js",
+  // Auth.js v5's client (`useSession`, `signIn`), for the app and for libraries that import it.
+  "next-auth/react": "next-auth-react.js",
   "next/og": "next-og.js",
   "next/cache": "next-cache.js",
   "next/server": "next-server.js",
@@ -185,6 +191,45 @@ const LIBRARY_ONLY_NEXT: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The `next-auth` (Auth.js v5) specifiers whose compat module is server-only (`NextAuth()`,
+ * `next-auth/jwt`, the providers): a bundle keeps them EXTERNAL to the framework source, for
+ * the app and for libraries alike, so neither ever loads the real `next-auth` package. The
+ * client module, `next-auth/react`, is a {@link NEXT_ALIASES} entry.
+ */
+export const NEXT_AUTH_SERVER_SPECIFIERS: ReadonlySet<string> = new Set([
+  "next-auth",
+  "next-auth/jwt",
+  "next-auth/providers",
+  ...[
+    "apple",
+    "auth0",
+    "cognito",
+    "credentials",
+    "discord",
+    "email",
+    "facebook",
+    "github",
+    "gitlab",
+    "google",
+    "keycloak",
+    "linkedin",
+    "microsoft-entra-id",
+    "nodemailer",
+    "notion",
+    "okta",
+    "resend",
+    "slack",
+    "spotify",
+    "twitch",
+    "twitter",
+    "zoom",
+  ].map((p) => `next-auth/providers/${p}`),
+]);
+
+/** The `next/*` / `next-auth/*` specifiers the compat bundles alias (an esbuild filter). */
+const NEXTISH_FILTER = /^next$|^next\/|^next-auth$|^next-auth\//;
+
+/**
  * The `next/*` alias key for an import specifier as libraries actually write it. Packages
  * built for Node ESM import `next/navigation.js`, `next/link.js`, `next/image.js` (fumadocs,
  * nuqs) — the `.js` is Node's explicit-extension convention, not a different module — so the
@@ -192,7 +237,7 @@ const LIBRARY_ONLY_NEXT: ReadonlySet<string> = new Set([
  * left alone (they resolve to the real package; most are pure helpers). Exported for testing.
  */
 export function normalizeNextSpecifier(spec: string): string {
-  return spec.replace(/^(next(?:\/[^/]+)*)\.(?:m|c)?js$/, "$1");
+  return spec.replace(/^((?:next|next-auth)(?:\/[^/]+)*)\.(?:m|c)?js$/, "$1");
 }
 
 /**
@@ -260,6 +305,8 @@ function coreRuntimeEntries(u: EntryUrl): Record<string, string> {
     "devtools": u("src/devtools.ts"),
     // `denext/feature` — the import survives the build-time fold of `feature()` calls.
     "feature": u("src/feature.ts"),
+    // `denext/platform` — the import survives the build-time fold of `platform` reads.
+    "platform": u("src/platform.ts"),
     // `denext/result` — Result values + exhaustive match, usable from "use client" modules.
     "result": u("src/result.ts"),
   };
@@ -276,6 +323,8 @@ function platformRuntimeEntries(u: EntryUrl): Record<string, string> {
     "navigation": u("src/navigation/mod.ts"),
     // `denext/virtual-masonry` — VirtualMasonry; shares the one hooks instance.
     "virtual-masonry": u("src/virtual-masonry.ts"),
+    // `denext/mvu` — useMvu / MvuView; shares the one hooks instance.
+    "mvu": u("src/mvu.ts"),
     // `denext/desktop/{client,window,app}` — the Deno Desktop page APIs (no hooks; prebuilt so
     // the unbundled dev loop can serve them like the other `denext/*` client modules).
     "desktop-client": u("src/desktop/client.ts"),
@@ -298,6 +347,8 @@ function compatRuntimeEntries(u: EntryUrl): Record<string, string> {
     "next-intl": u("src/compat/next-intl/index.ts"),
     "next-intl-navigation": u("src/compat/next-intl/navigation.ts"),
     "next-intl-routing": u("src/compat/next-intl/routing.ts"),
+    // `next-auth/react` (the Auth.js client) — its SessionProvider shares the one hooks instance.
+    "next-auth-react": u("src/compat/next-auth/react.ts"),
     // `next/head` for libraries (the app's own stays the Pages Router plugin's).
     "next-head": u("src/compat/next/head.ts"),
     // The empty module behind the runtime-free subpaths (`denext/client-only`,
@@ -731,12 +782,18 @@ async function denextExternalPlugin(): Promise<esbuild.Plugin> {
   // JSR URL). Export keys are "./" + spec. The deno loader resolves the external URL at bundle
   // time whether the framework is a local checkout or served from JSR.
   const specToUrl = new Map<string, string>();
-  for (const spec of [...Object.keys(REACT_ALIASES), ...Object.keys(NEXT_ALIASES)]) {
+  const specs = [
+    ...Object.keys(REACT_ALIASES),
+    ...Object.keys(NEXT_ALIASES),
+    ...NEXT_AUTH_SERVER_SPECIFIERS,
+  ];
+  for (const spec of specs) {
     const key = "./" + spec;
     const rel = exportsMap?.[key];
     if (rel) specToUrl.set(spec, frameworkFileUrl(rel));
   }
-  const filter = /^react$|^react\/|^react-dom$|^react-dom\/|^react-is$|^next$|^next\//;
+  const filter =
+    /^react$|^react\/|^react-dom$|^react-dom\/|^react-is$|^next$|^next\/|^next-auth$|^next-auth\//;
   return {
     name: "denext-external",
     setup(build) {
@@ -803,12 +860,14 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/client-runtime": "client-runtime.js",
   "denext/devtools": "devtools.js",
   "denext/feature": "feature.js",
+  "denext/platform": "platform.js",
   "denext/result": "result.js",
   "denext/mobile": "mobile.js",
   // `denext/mobile/clerk` shares the one `denext/mobile` instance (its auth-session state).
   "denext/mobile/clerk": "mobile-clerk.js",
   "denext/navigation": "navigation.js",
   "denext/virtual-masonry": "virtual-masonry.js",
+  "denext/mvu": "mvu.js",
   // The Deno Desktop page APIs (deep-link scheme ownership, the window, the app menu / tray).
   "denext/desktop/client": "desktop-client.js",
   "denext/desktop/window": "desktop-window.js",
@@ -860,12 +919,41 @@ function prefixedAliases(aliases: Readonly<Record<string, string>>): Record<stri
  */
 export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/server",
+  "denext/auth",
   "denext/server-only",
   "denext/remix/server",
   "denext/next-intl/server",
   "denext/next-intl/middleware",
+  // The `next-auth` shim's server modules (`NextAuth()`, `next-auth/jwt`, the providers).
+  "denext/next-auth",
+  "denext/next-auth/jwt",
+  "denext/next-auth/providers",
+  "denext/next-auth/providers/apple",
+  "denext/next-auth/providers/auth0",
+  "denext/next-auth/providers/cognito",
+  "denext/next-auth/providers/credentials",
+  "denext/next-auth/providers/discord",
+  "denext/next-auth/providers/email",
+  "denext/next-auth/providers/facebook",
+  "denext/next-auth/providers/github",
+  "denext/next-auth/providers/gitlab",
+  "denext/next-auth/providers/google",
+  "denext/next-auth/providers/keycloak",
+  "denext/next-auth/providers/linkedin",
+  "denext/next-auth/providers/microsoft-entra-id",
+  "denext/next-auth/providers/nodemailer",
+  "denext/next-auth/providers/notion",
+  "denext/next-auth/providers/okta",
+  "denext/next-auth/providers/resend",
+  "denext/next-auth/providers/slack",
+  "denext/next-auth/providers/spotify",
+  "denext/next-auth/providers/twitch",
+  "denext/next-auth/providers/twitter",
+  "denext/next-auth/providers/zoom",
   "denext/better-sqlite3",
   "denext/testing",
+  // The `denext ui` form components, rendered to HTML on the server (plugin pages, project verbs).
+  "denext/ui-kit",
   "denext/cli",
   "denext/cli/command",
   "denext/plugin-kit",
@@ -879,6 +967,8 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/desktop/updater",
   // `denext build --compile`'s entry: the compiled binary's server, jobs and migrations.
   "denext/standalone",
+  // Deploy adapters and presets: imported by denext.config.ts, run by `denext build` / `deploy`.
+  "denext/deploy",
   // The shims' compatibility manifest: metadata for tooling (`denext migrate`, the docs).
   "denext/expo/manifest",
 ]);
@@ -959,15 +1049,19 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
       });
       // next/* → denext compat modules (font/link/navigation/… — see NEXT_ALIASES),
       // so app code resolves them to denext instead of the real `next` npm package.
-      build.onResolve({ filter: /^next$|^next\// }, (args) => {
+      const serverOnly = serverOnlyExternalResolver();
+      build.onResolve({ filter: NEXTISH_FILTER }, (args) => {
         const spec = normalizeNextSpecifier(args.path);
+        // `next-auth`'s server modules (the app's own or a library's): the shim, external.
+        if (NEXT_AUTH_SERVER_SPECIFIERS.has(spec)) {
+          return serverOnly({ ...args, path: `denext/${spec}` });
+        }
         // The Pages Router API stand-ins are for LIBRARIES only: a Pages Router app's own
         // `next/router` is the @denext/pages-router plugin's (its import map, resolved below).
         if (LIBRARY_ONLY_NEXT.has(spec) && !inNodeModules(args.importer)) return null;
         const file = NEXT_ALIASES[spec];
         return file ? runtimeFile(file) : null;
       });
-      const serverOnly = serverOnlyExternalResolver();
       build.onResolve({ filter: /^denext$|^denext\// }, (args) => {
         if (DENEXT_SERVER_SUBPATHS.has(args.path)) return serverOnly(args);
         const file = Object.hasOwn(DENEXT_RUNTIME_FILES, args.path)
@@ -1428,6 +1522,16 @@ export interface BundleNextCompatModulesOptions {
    * resolve app imports like package subpaths.
    */
   appPlatform?: PlatformResolution | null;
+  /**
+   * The build target `platform` (denext/platform) is folded to in the app's own modules that
+   * import it (under {@link absWorkingDir}). Omit to leave the reads to the runtime value.
+   */
+  buildTarget?: Platform;
+  /**
+   * `resolveAlias` (the app config): aliases applied ahead of every other resolver (see
+   * `resolve-alias.ts`), for the app's imports and the packages'.
+   */
+  resolveAlias?: ResolveAliasConfig;
   /**
    * Parse every `.js` file with esbuild's `jsx` loader, for npm packages that ship JSX in
    * `.js` (common in React Native libraries, which Metro's Babel preset parses as JSX).
@@ -2506,7 +2610,11 @@ async function compatPlugins(
 ): Promise<esbuild.Plugin[]> {
   const deno = options.platform === "deno";
   let plugins: esbuild.Plugin[] = [
+    ...resolveAliasPlugins(options.absWorkingDir, options.resolveAlias),
     ...leadingPlugins(options),
+    ...(options.buildTarget && options.absWorkingDir
+      ? [platformFoldPlugin(options.absWorkingDir, options.buildTarget)]
+      : []),
     envPoisonPlugin(deno),
     ...(deno ? [frameworkUrlExternalPlugin()] : []),
     googleFontsPlugin(),

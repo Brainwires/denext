@@ -6,6 +6,7 @@
  * @module
  */
 
+import { samlLogoutUrl } from "./routes-saml-slo.ts";
 import {
   afterSignOut,
   type AuthRouteContext,
@@ -63,7 +64,9 @@ export function handleProviders(ctx: AuthRouteContext): Response {
  * `POST {basePath}/signout` — clears the session cookie (and the store record, when
  * server-side sessions are on). Same-origin only: a cross-origin POST is a CSRF logout.
  * Fires the `signOut` event with the session that ended (`null` when there was none) —
- * an audit hook sees the sign-out even though the cookie is already gone.
+ * an audit hook sees the sign-out even though the cookie is already gone. A session a `saml()`
+ * provider with Single Logout started then goes on to the IdP (`routes-saml-slo.ts`): a `303`
+ * there, or `{ ok: true, url }` for a JSON caller.
  *
  * @param ctx The route context.
  * @returns A JSON `{ ok }` for an API client, otherwise a redirect.
@@ -75,5 +78,8 @@ export async function handleSignout(ctx: AuthRouteContext): Promise<Response> {
   await clearAuthSession(ctx.config);
   await emitAuthEvent(ctx.options, "signOut", { session: ended });
   const back = afterSignOut(ctx.config, ctx.url.searchParams.get("callbackUrl"));
+  // A session a SAML provider with Single Logout started: on to the IdP to end its session too.
+  const idp = await samlLogoutUrl(ctx, ended, back);
+  if (idp) return wantsJson(ctx.request) ? json({ ok: true, url: idp }) : redirect(idp);
   return wantsJson(ctx.request) ? json({ ok: true }) : redirect(back);
 }

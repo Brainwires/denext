@@ -520,3 +520,21 @@ Deno.test("react-dom/static and next/head are aliased; next/head is library-only
   assertEquals(resolveReactFamilyFile("react-dom/static"), { file: "react-dom-server.js" });
   assertEquals(NEXT_ALIASES["next/head"], "next-head.js");
 });
+
+Deno.test("next-auth/react is a compat alias; next-auth's server modules stay external", async () => {
+  const {
+    NEXT_ALIASES,
+    NEXT_AUTH_SERVER_SPECIFIERS,
+    DENEXT_RUNTIME_FILES,
+    normalizeNextSpecifier,
+  } = await import("../src/build/next-compat.ts");
+  const { runtimeDepUrl } = await import("../src/build/dev-unbundled/resolve.ts");
+  assertEquals(NEXT_ALIASES["next-auth/react"], "next-auth-react.js");
+  assertEquals(DENEXT_RUNTIME_FILES["denext/next-auth/react"], "next-auth-react.js");
+  assertEquals(normalizeNextSpecifier("next-auth/react.js"), "next-auth/react");
+  for (const spec of ["next-auth", "next-auth/jwt", "next-auth/providers/github"]) {
+    assert(NEXT_AUTH_SERVER_SPECIFIERS.has(spec), spec);
+    assertEquals(runtimeDepUrl(spec), null, `${spec} is left to the server`);
+  }
+  assert(runtimeDepUrl("next-auth/react")!.endsWith("next-auth-react.js"));
+});

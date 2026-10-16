@@ -111,6 +111,8 @@ export type DesktopMenuItem =
       checked?: boolean;
       icon?: Uint8Array;
       tooltip?: string;
+      /** Drawn as a destructive action (red), where the backend does (2.9.7-denext.20). */
+      destructive?: boolean;
     };
   }
   | { submenu: { label: string; items: DesktopMenuItem[] } }
@@ -125,6 +127,8 @@ export interface DesktopMenuCapabilities {
   readonly contextClosed?: boolean;
   readonly icons?: boolean;
   readonly tooltips?: boolean;
+  /** Destructive items are drawn as such (runtime 2.9.7-denext.20). */
+  readonly destructive?: boolean;
 }
 
 /** A click on one of the app's notifications that no live `Notification` owns. */
@@ -164,6 +168,13 @@ export interface DesktopNotificationsApi {
     silent?: boolean;
   }): Promise<string>;
   getScheduled(): Promise<DesktopScheduledNotification[]>;
+  /**
+   * The notifications the OS notification centre still shows, oldest first (macOS, Windows;
+   * runtime 2.9.7-denext.20, `capabilities().delivered`).
+   */
+  getDelivered?(): Promise<DesktopScheduledNotification[]>;
+  /** Remove delivered notifications by tag (all the app's without tags). */
+  removeDelivered?(tags?: string | string[]): void;
   cancel(tag: string): void;
   requestPermission(options?: { provisional?: boolean }): Promise<string>;
 }
@@ -202,6 +213,21 @@ export interface DesktopAuthSessionApi {
   cancel?(): boolean;
 }
 
+/** An activity the user continued (`Deno.desktop.ContinuedUserActivity`). */
+export interface DesktopContinuedUserActivity {
+  readonly type?: unknown;
+  readonly title?: unknown;
+  readonly url?: unknown;
+  readonly userInfo?: unknown;
+}
+
+/** `Deno.desktop.userActivity`: Handoff and Spotlight (macOS; runtime 2.9.7-denext.20). */
+export interface DesktopUserActivityApi {
+  set(activity: Record<string, unknown>): boolean;
+  clear(): boolean;
+  onContinue(listener: (activity: DesktopContinuedUserActivity) => void): () => void;
+}
+
 /**
  * The slice of `Deno.desktop` (denext's pinned Deno Desktop runtime) the app events use. Every
  * member is optional: the stock runtime has no `Deno.desktop`, and an older pinned runtime lacks
@@ -221,6 +247,8 @@ export interface DesktopAppApi {
   };
   /** Scheduled notifications, capabilities and permission (runtime 2.9.7-denext.5 and later). */
   readonly notifications?: DesktopNotificationsApi;
+  /** Handoff and Spotlight (runtime 2.9.7-denext.20). */
+  readonly userActivity?: DesktopUserActivityApi;
   /** Notification clicks that arrived before the first listener (taken on first read). */
   readonly launchNotificationResponses?: readonly DesktopNotificationResponse[];
   /** What menus can do on this backend (runtime 2.9.7-denext.5 and later). */

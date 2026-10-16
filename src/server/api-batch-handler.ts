@@ -4,7 +4,8 @@
 // executes):
 //   1. not itself a batch item (no nested batches, no depth games)
 //   2. same-origin (`verifyOrigin` — the SAME CSRF gate as Server Actions: the batch replays
-//      the caller's cookies into every item)
+//      the caller's cookies into every item), or a `cors`-allowed origin carrying no cookie
+//      (`corsCredentialless`: nothing ambient to replay)
 //   3. the `x-denext-api-batch: 1` marker (a plain <form> cannot set a custom header → CORS
 //      preflight barrier on top of the origin check)
 //   4. `content-type: application/json`
@@ -23,6 +24,7 @@
 import type { RequestState } from "./pipeline-state.ts";
 import { finalize } from "./pipeline-state.ts";
 import { verifyOrigin } from "./origin-check.ts";
+import { corsCredentialless } from "./cors.ts";
 import { originOptions, reportRequestError } from "./app-config.ts";
 import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
 import { requestOrigin } from "./absolute-url.ts";
@@ -97,7 +99,9 @@ export async function handleApiBatch(
   if (request.headers.get(BATCH_ITEM_HEADER)) {
     return finalize(state, batchError(400, "nested batch"));
   }
-  if (!verifyOrigin(request, config)) return finalize(state, batchError(403, "forbidden"));
+  if (!verifyOrigin(request, config) && !corsCredentialless(request, state.app.cors ?? null)) {
+    return finalize(state, batchError(403, "forbidden"));
+  }
   if (request.headers.get(API_BATCH_HEADER) !== "1") {
     return finalize(state, batchError(400, "missing batch marker"));
   }

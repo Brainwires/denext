@@ -24,7 +24,7 @@ export default function GraphQL() {
         {`// deno.json
 {
   "imports": {
-    "@denext/graphql": "jsr:@denext/graphql@^0.4.0",
+    "@denext/graphql": "jsr:@denext/graphql@^0.5.0",
     "graphql": "npm:graphql@^16.9.0",
     "graphql-yoga": "npm:graphql-yoga@^5.10.0",
     "@pothos/core": "npm:@pothos/core@^4"
@@ -205,9 +205,12 @@ subscribe: (_root, { user }, ctx) => fromChannel(inbox, \`user:\${user}\`, { sig
         <code>.graphql</code>{" "}
         file in that module's directory loads the schema again for the next request — no restart.
         Subscriptions on the old schema complete (SSE and WebSocket alike), so clients resubscribe
-        against the new one. <code>watch</code> takes your own globs; a schema object imported into
-        {" "}
-        <code>denext.config.ts</code> still needs a restart.
+        against the new one. <code>watch</code>{" "}
+        takes your own globs. A schema object (or factory) imported into{" "}
+        <code>denext.config.ts</code>{" "}
+        reloads the same way: the plugin follows the config's relative imports to the module that
+        exports it and re-imports that module after an edit. One it cannot trace (built in the
+        config itself, or imported through an alias) needs a restart, and a dev notice says so.
       </p>
 
       <h2>CI</h2>
@@ -246,7 +249,9 @@ denext graphql diff schema.graphql        # exit 1 when the schema changed`}
           <code>limit</code>{" "}
           argument, counted at a variable's actual value — is over budget (<code>costOptions</code>
           {" "}
-          tunes the weights). With Yoga <code>batching</code> on, the budget is per operation.
+          tunes the weights). With Yoga <code>batching</code>{" "}
+          on, the budget covers the whole batch: the operations' costs are summed when the request
+          is parsed, and a batch over it is refused with <code>400</code> before any operation runs.
         </li>
         <li>
           GraphiQL is off in production; gate it yourself if you turn it on.

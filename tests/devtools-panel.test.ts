@@ -18,6 +18,8 @@ import {
   DEV_ROUTES_PATH,
   DEV_STATE_PATH,
   devFetch,
+  DEVTOOLS_LIVE_FEED,
+  DEVTOOLS_LIVE_VIEWS_FEED,
   OPEN_IN_EDITOR_PATH,
   openInEditor,
 } from "../src/client/devtools-panel/dev-api.ts";
@@ -26,6 +28,8 @@ import { refreshNetworkTab, renderNetworkTab } from "../src/client/devtools-pane
 import { refreshCacheTab, renderCacheTab } from "../src/client/devtools-panel/cache.ts";
 import { refreshRoutesTab, renderRoutesTab } from "../src/client/devtools-panel/routes.ts";
 import {
+  DEV_LIVE_PATH as SERVER_DEV_LIVE_PATH,
+  DEV_LIVE_VIEWS_PATH as SERVER_DEV_LIVE_VIEWS_PATH,
   DEV_STATE_PATH as SERVER_DEV_STATE_PATH,
   OPEN_IN_EDITOR_PATH as SERVER_OPEN_IN_EDITOR_PATH,
 } from "../src/build/dev-server/state.ts";
@@ -319,7 +323,7 @@ function findByName(
   return null;
 }
 
-// ---- Panel shell: the seven-tab IA, the keyboard map, highlight-updates, dev-api --------
+// ---- Panel shell: the eight-tab IA, the keyboard map, highlight-updates, dev-api --------
 
 /** The panel frame (the fixed, column-flex chrome the launcher opens). */
 function panelEl(body: FakeElement): FakeElement {
@@ -344,16 +348,27 @@ function Tiny(): VNode {
   return h("div", null, "tiny");
 }
 
-Deno.test("panel: the header is a seven-tab tablist with aria-selected tracking", () => {
+Deno.test("panel: the header is a ten-tab tablist with aria-selected tracking", () => {
   withPanel(Tiny, ({ body }) => {
     const tabs = tabButtons(body);
     assertEquals(
       tabs.map((t) => t.textContent),
-      ["Components", "Render modes", "Profiler", "Network", "Cache", "Routes", "Console"],
+      [
+        "Components",
+        "Render modes",
+        "Profiler",
+        "Network",
+        "Cache",
+        "Routes",
+        "Console",
+        "MVU",
+        "Live views",
+        "Live",
+      ],
     );
     assertEquals(
       tabs.map((t) => t.getAttribute("aria-selected")),
-      ["true", "false", "false", "false", "false", "false", "false"],
+      ["true", ...Array(9).fill("false")],
     );
     // The strip itself scrolls rather than squeezing the buttons on a narrow panel.
     const strip = queryAll(body, (e) => e.getAttribute("role") === "tablist")[0];
@@ -499,6 +514,8 @@ async function withFetch(stub: typeof fetch, fn: () => Promise<void>): Promise<v
 Deno.test("dev-api: the panel's path constants match the dev server's", () => {
   assertEquals(DEV_STATE_PATH, SERVER_DEV_STATE_PATH);
   assertEquals(OPEN_IN_EDITOR_PATH, SERVER_OPEN_IN_EDITOR_PATH);
+  assertEquals(DEVTOOLS_LIVE_VIEWS_FEED, SERVER_DEV_LIVE_VIEWS_PATH);
+  assertEquals(DEVTOOLS_LIVE_FEED, SERVER_DEV_LIVE_PATH);
   // Job 5 adds these two to the dev server; the panel fixes their spelling here.
   assertEquals(DEV_CACHE_PATH, "/_denext/dev-cache");
   assertEquals(DEV_ROUTES_PATH, "/_denext/dev-routes");

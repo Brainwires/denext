@@ -25,6 +25,11 @@
  * }
  * ```
  *
+ * `defineLiveView` keeps a whole Model–View–Update program on the server instead: the model
+ * lives per connection, the first paint is HTML, and each event bound with `send(…)` runs
+ * `update` on the server and comes back as a DOM patch (see `denext/mvu` for the same program
+ * in the browser).
+ *
  * `configureLive` is called by the generated Flight client entry, not by app code.
  *
  * @module
@@ -49,6 +54,14 @@ export type { LiveErrorInfo } from "./client/live-client.ts";
 // Mark a server action readable over the live data channel (`useLive`). See the
 // Live security model — data subscriptions are default-deny in production.
 export { liveReadable } from "./runtime/server-action.ts";
+
+// Server-held live views: a Model–View–Update program whose model lives on the server, per
+// connection; events bound with `send(…)` run `update` there and come back as DOM patches.
+export { defineLiveView } from "./runtime/live-view.ts";
+export type { LiveViewComponent, LiveViewConfig, LiveViewContext } from "./runtime/live-view.ts";
+// The framework island a live view renders through (registered by the generated Flight entry).
+export { LiveViewIsland } from "./client/live-view-island.ts";
+export type { LiveViewIslandProps } from "./client/live-view-island.ts";
 
 // Live-data hooks (real-time server data + presence over the same socket).
 export { useLive, useLiveOptimistic, usePresence } from "./client/live-data.ts";

@@ -58,8 +58,9 @@ export interface PlatformFacts {
   /** The Secret Service (the secure store's, and CEF's cookie key's, backing store). */
   readonly secretService: SecretServiceState | Unknown;
   /**
-   * CEF's cookie store: `"os"` (encrypted with an OS-held key) or `"basic"` (a fixed key: always
-   * on macOS, Chromium's mock keychain; on Linux when no keyring can be unlocked).
+   * CEF's cookie store: `"os"` (encrypted with an OS-held key; on macOS a team-signed app's own
+   * keychain item, runtime 2.9.7-denext.20) or `"basic"` (a fixed key: an ad-hoc signed macOS
+   * build, Chromium's mock keychain; on Linux when no keyring can be unlocked).
    */
   readonly cookieEncryption: "os" | "basic" | null | Unknown;
   /** How the badge shows (runtime 2.9.7-denext.11 and later). */

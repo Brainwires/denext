@@ -13,6 +13,7 @@ import "./commands/dashboard.ts";
 import "./commands/db-admin.ts";
 import "./commands/db.ts";
 import "./commands/deno-toolchain.ts";
+import "./commands/deploy.ts";
 import "./commands/deps.ts";
 import "./commands/desktop.ts";
 import "./commands/doctor.ts";

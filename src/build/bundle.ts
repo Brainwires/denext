@@ -26,6 +26,7 @@ import {
   type ServerModuleLeak,
 } from "./server-module-guard.ts";
 import { carryLinks } from "./config-links.ts";
+import { readTsPathAliases } from "./tsconfig-paths.ts";
 import { appDenextRootFor, foldAppDenext, JSR_DENEXT_ROOT } from "./app-framework-root.ts";
 
 /**
@@ -501,6 +502,15 @@ export function appImportsLive(rootDir: string, extraFiles: string[] = []): Prom
 }
 
 /**
+ * Whether any source file under `rootDir` defines a live view (`defineLiveView`) — the build-time
+ * signal that makes the Flight entry register the live-view island (see
+ * {@linkcode generateFlightEntry}'s `usesLiveView`).
+ */
+export function appUsesLiveView(rootDir: string, extraFiles: string[] = []): Promise<boolean> {
+  return scanAppSources(rootDir, (c) => c.includes("defineLiveView"), extraFiles);
+}
+
+/**
  * Whether any source file under `rootDir` (or in `extraFiles`, e.g. sibling workspace
  * modules) uses class components — the build-time PRELOAD HINT that makes the generated
  * entry install the class runtime eagerly instead of on demand (see
@@ -609,9 +619,11 @@ function flightRefreshBlock(
  * not runtime, because the Flight entry is app-wide: a soft navigation into a live route
  * reconstructs its tree through this same registry, so `Live` must already be registered
  * whenever any route uses it. `navigate` is imported only when `configureLive` (its sole
- * user here) is emitted.
+ * user here) is emitted. The live-view island (`defineLiveView`) is registered only when the
+ * app defines one (`usesLiveView`, a scan for `defineLiveView`), so `<Live>`-only apps bundle
+ * none of the view client.
  */
-function flightLiveBlock(usesLive: boolean) {
+function flightLiveBlock(usesLive: boolean, usesLiveView = false) {
   const clientImport =
     `import { flightClientIds, startClient, parseFlight, readStreamedFlight, setFlightParser, setResumabilityReboot } from "denext/client-runtime";${
       usesLive ? `\nimport { navigate } from "denext/client";` : ""
@@ -619,9 +631,15 @@ function flightLiveBlock(usesLive: boolean) {
   if (!usesLive) return { clientImport, liveImport: "", liveRegister: "", liveConfigure: "" };
   return {
     clientImport,
-    liveImport: `import { Live, configureLive } from "denext/live";\n`,
+    liveImport: usesLiveView
+      ? `import { Live, LiveViewIsland, configureLive } from "denext/live";\n`
+      : `import { Live, configureLive } from "denext/live";\n`,
     liveRegister:
-      `\n// The framework <Live> island resolves through the same registry.\nregistry.set("denext#Live", Live);\n`,
+      `\n// The framework <Live> island resolves through the same registry.\nregistry.set("denext#Live", Live);\n${
+        usesLiveView
+          ? `// So does the live-view island (the app defines a live view).\nregistry.set("denext#LiveView", LiveViewIsland);\n`
+          : ""
+      }`,
     liveConfigure:
       `// Live Server Components: parse pushed boundary payloads through the app registry,
 // and refresh the current route for coarse updates. No socket opens until a <Live>
@@ -857,6 +875,7 @@ export function generateFlightEntry(
   usesViewTransition = false,
   features: Record<string, boolean> = {},
   usesSingletons = true,
+  usesLiveView = true,
 ): string {
   const entries = [...boundary.client.entries()];
   // Islands are code-split: one dynamic `import()` per island module, run on demand for the
@@ -868,7 +887,10 @@ export function generateFlightEntry(
     )
     .join("\n");
   const { refreshImport, regFamily, enableRefresh } = flightRefreshBlock(dev, perModule);
-  const { clientImport, liveImport, liveRegister, liveConfigure } = flightLiveBlock(usesLive);
+  const { clientImport, liveImport, liveRegister, liveConfigure } = flightLiveBlock(
+    usesLive,
+    usesLiveView,
+  );
   const { classImport, classInstall, classBoot } = classSupportBlock(classRuntime);
   const { activityImport, activityInstall } = activitySupportBlock(usesActivity);
   const { vtImport, vtInstall } = viewTransitionSupportBlock(usesViewTransition);
@@ -984,6 +1006,12 @@ export interface BundleOptions {
    */
   usesLive?: boolean;
   /**
+   * Whether the app defines a live view (from an {@linkcode appUsesLiveView} scan). When false,
+   * the generated Flight entry does not register the live-view island, so its client code is
+   * tree-shaken out. Defaults to `true` when unset (dev and callers that don't scan).
+   */
+  usesLiveView?: boolean;
+  /**
    * How the generated entry gets the class-component runtime — see
    * {@linkcode ClassRuntimeMode}. Defaults to `"lazy"` (load on demand when the document
    * says a class rendered). Dev callers pass `"eager"` (unbundled, installs unconditionally).
@@ -1048,6 +1076,7 @@ export function bundleFlightEntry(
       opts.usesViewTransition ?? false,
       opts.features ?? {},
       opts.usesSingletons ?? true,
+      opts.usesLiveView ?? true,
     ),
     {
       configPath: opts.configPath,
@@ -1099,7 +1128,8 @@ export function entryCode(output: BundleOutput): string {
  */
 /**
  * A deno config's import-map entries that point at local files, for resolving alias imports
- * the way `denext migrate` emits them and the web stubs of native-only packages:
+ * the way `denext migrate` emits them and the web stubs of native-only packages (then the
+ * project's tsconfig `paths` for the keys the import map lacks):
  *
  * - `prefixes`: the PREFIX aliases (`"~/": "./src/"` → `["~/", absDir]`); a value may be an
  *   absolute `file://` URL or a `./` / `../` path (resolved against the config's directory);
@@ -1112,12 +1142,32 @@ export function entryCode(output: BundleOutput): string {
 export async function readLocalAliases(configPath: string): Promise<LocalAliases> {
   const out: LocalAliases = { prefixes: [], exact: new Map() };
   const baseDir = dirname(configPath);
+  const keys = new Set<string>();
   for (const [k, v] of Object.entries(await importMapOf(configPath))) {
     if (typeof v !== "string") continue;
+    keys.add(k);
     if (k.endsWith("/")) addPrefixAlias(out, k, v, baseDir);
     else if (isRelativePath(v)) out.exact.set(k, resolve(baseDir, v));
   }
+  await addTsPathAliases(out, configPath, keys);
   return out;
+}
+
+/**
+ * The project's tsconfig `paths`, for the keys its import map does not have. A config URL is the
+ * framework's own (an app with no deno.json): there is no project directory to read.
+ */
+async function addTsPathAliases(
+  out: LocalAliases,
+  configPath: string,
+  keys: ReadonlySet<string>,
+): Promise<void> {
+  if (/^[a-z][\w+.-]*:\/\//i.test(configPath)) return;
+  for (const [key, target] of await readTsPathAliases(dirname(configPath))) {
+    if (keys.has(key)) continue;
+    if (key.endsWith("/")) out.prefixes.push([key, target]);
+    else out.exact.set(key, target);
+  }
 }
 
 /** The local aliases of a deno config ({@linkcode readLocalAliases}). */

@@ -12,6 +12,7 @@ import { listBuiltFiles, runPluginBuildSteps } from "../plugin/mod.ts";
 import { setImageRuntimeConfig } from "../runtime/image.ts";
 import {
   bundleExportFlight,
+  bundleExportGlobalError,
   bundleExportRoutes,
   classifyRoutes,
   emitExportCss,
@@ -26,7 +27,7 @@ import type {
 } from "./export-pipeline/context.ts";
 import { setModuleGraphRedirects } from "./module-graph.ts";
 import { exportWithoutAppRouter, finishExport, prepareExport } from "./export-pipeline/prepare.ts";
-import { copyPublic, renderAllPages } from "./export-pipeline/render.ts";
+import { copyPublic, renderAllPages, writeGlobalErrorPage } from "./export-pipeline/render.ts";
 import { stopNextCompat } from "./next-compat.ts";
 import { resolveProject } from "./paths.ts";
 import { writeMobileExportExtras } from "./mobile-export-extras.ts";
@@ -45,9 +46,11 @@ async function renderExport(ctx: ExportContext): Promise<void> {
   await exportClientTransforms(ctx);
   await bundleExportRoutes(ctx);
   await bundleExportFlight(ctx);
+  await bundleExportGlobalError(ctx);
   await selfHostExportFonts(ctx);
-  // 2. Render every page (× each static param set).
+  // 2. Render every page (× each static param set), then the global-error document.
   await renderAllPages(ctx);
+  await writeGlobalErrorPage(ctx);
   // What the build wrote so far (pages, client chunks, fonts): no build step may replace it.
   const builtFiles = await listBuiltFiles(ctx.outDir);
   // 3. Copy public assets.

@@ -40,17 +40,16 @@ an inner one. The file conventions themselves are owned by
 ## `global-error.tsx`
 
 `global-error.tsx` replaces the root layout and renders its own document — it
-is the boundary for a failure that escapes every segment. It hydrates on the
-native `denext build` and `denext dev` paths, so `reset` and any author
-interactivity work like Next. `reset` recovers **softly**: it re-fetches the
-current route and swaps the document in place (no browser reload), falling back
-to a hard reload only if the re-fetch fails.
+is the boundary for a failure that escapes every segment. It hydrates on every
+path (`denext build` and `denext dev`, native and next-compat alike), so `reset`
+and any author interactivity work like Next. `reset` recovers **softly**: it
+re-fetches the current route and swaps the document in place (no browser
+reload), falling back to a hard reload only if the re-fetch fails.
 
-> [!WARNING]
-> `global-error.tsx` hydration is not wired on the next-compat and
-> static-export paths. Those two paths emit no entry, so there global-error
-> stays server-rendered only and its `reset` is inert. Wiring it is on the
-> [roadmap](https://github.com/Brainwires/denext/blob/main/ROADMAP.md).
+A static site has no server to render it on a failing request, so
+`denext export` pre-renders global-error to `out/500.html`, wired to the same
+hydration entry, for a host that serves a custom error page. It receives the
+error a production server hands it: the message `Internal Server Error`.
 
 ## `notFound()`, `forbidden()`, `unauthorized()`
 
@@ -144,6 +143,9 @@ runbook step.
 > `denext doctor` and `probeApp` fail a route whose `error.tsx` caught a server error and
 > rendered at status 200 (the `no-caught-error` check, with the error's message and digest).
 > They read it through their own `onRequestError` hook, so the response carries nothing more.
+> A streamed Suspense hole that threw with no `error.tsx` inside it keeps its fallback; the
+> server reports that error to `onRequestError` too, and the probes fail the route
+> (`no-stuck-hole`).
 
 ## In development
 

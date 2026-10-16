@@ -88,6 +88,11 @@ export function spaDevReloadScript(clientPrefix: string): string {
       else if (e.data === "reload") reload("the dev server rebuilt and ordered a reload");
       else if (e.data === "css") swapCss();
       else if (e.data.indexOf("update:") === 0) update(e.data.slice(7));
+      else if (e.data === "inspect") {
+        // An MCP read asked for this page's component tree now (the DevTools sink posts it).
+        var pull = window.__denextInspectPull;
+        if (typeof pull === "function") pull();
+      }
     };
   } catch (_) {}
 })();`;

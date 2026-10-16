@@ -138,15 +138,21 @@ export interface ChannelRef<T> {
   readonly __channel?: { payload: T };
 }
 
-/** One transport event: a channel `publish`/`revoke`, or a cross-instance cache-tag `invalidate`. */
+/**
+ * One transport event: a channel `publish`/`revoke`, a cross-instance cache-tag `invalidate`, or
+ * an instance's `presence` snapshot of one `usePresence` room.
+ */
 export interface ChannelEvent {
-  /** `publish`, `revoke`, or a cross-instance cache-tag `invalidate`. */
-  kind: "publish" | "revoke" | "invalidate";
-  /** The channel (empty on an `invalidate`, which is not channel-scoped). */
+  /** `publish`, `revoke`, a cross-instance cache-tag `invalidate`, or a room's `presence`. */
+  kind: "publish" | "revoke" | "invalidate" | "presence";
+  /** The channel (empty on an `invalidate` or `presence`, which are not channel-scoped). */
   channelId: string;
-  /** The key (empty on an `invalidate`). */
+  /** The key (empty on an `invalidate`; the room on a `presence`). */
   key: string;
-  /** The wire-encoded payload JSON (`publish`). */
+  /**
+   * The wire-encoded payload JSON (`publish`), or the JSON of the publishing instance's peers in
+   * the room (`presence`; `[]` once it has none).
+   */
   encoded?: string;
   /** `1` when `encoded` carries codec tags. */
   enc?: 1;
@@ -167,6 +173,26 @@ export interface ChannelEvent {
  */
 export function isForeignEvent(ev: ChannelEvent): boolean {
   return ev.instance !== INSTANCE;
+}
+
+/**
+ * This process's instance id, as its events carry it (the Live hub stamps its presence
+ * snapshots with it).
+ *
+ * @returns The id.
+ */
+export function channelInstanceId(): string {
+  return INSTANCE;
+}
+
+/**
+ * Publish an event on the installed transport, fire-and-forget (the Live hub's presence
+ * snapshots).
+ *
+ * @param ev The event.
+ */
+export function publishChannelEvent(ev: ChannelEvent): void {
+  void Promise.resolve(transport.publish(ev)).catch(() => {});
 }
 
 /** Carries {@link ChannelEvent}s to every hub that should deliver them (across instances). */

@@ -51,7 +51,7 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
     "name": "build",
     "summary": "Build for production",
     "usage":
-      "--compile builds, then embeds the build, public/, the server modules, jobs/, services/ and the\nmigrations into one executable that serves the app as `denext start` does (`./app`,\n`./app job <name>`, `./app db migrate`). It bakes the Docker image's least-privilege\n--allow-* plus denext.config's compile.permissions, and embeds no .env file: the binary\nreads its environment at run time. Docs: https://denext.dev/docs/deployment-targets",
+      "Writes .denext/deploy-manifest.json and runs denext.config's deploy.adapter (its\nprepare) after the build: https://denext.dev/docs/deploy#deploy-adapters\n\n--compile builds, then embeds the build, public/, the server modules, jobs/, services/ and the\nmigrations into one executable that serves the app as `denext start` does (`./app`,\n`./app job <name>`, `./app db migrate`). It bakes the Docker image's least-privilege\n--allow-* plus denext.config's compile.permissions, and embeds no .env file: the binary\nreads its environment at run time. Docs: https://denext.dev/docs/deployment-targets",
     "flags": [{
       "name": "raw",
       "type": "boolean",
@@ -118,6 +118,32 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
     "loadsModules": true,
     "envTier": "production",
   }, () => importCliModule("./commands/serve.ts").then((m) => m.startCommand as CommandSpec)],
+  [{
+    "name": "deploy",
+    "summary": "Prepare (and push) the app for a deploy target: docker, fly, deno-deploy, …",
+    "usage":
+      "Usage: denext deploy [prepare] [dir] [--preset <name>] [--dry-run] [--force]\n\n  prepare  Run the deploy adapter's prepare: write the target's files from the deploy\n           manifest (.denext/deploy-manifest.json) the last `denext build` wrote\n  (none)   prepare, then push with the target's CLI — fly (flyctl + FLY_API_TOKEN),\n           deno-deploy (deno deploy + DENO_DEPLOY_TOKEN), docker (docker build [+ push])\n\nThe adapter is denext.config's `deploy.adapter` (presets in denext/deploy), else one a\nplugin contributed, else --preset: docker | fly | deno-deploy | generic-host | static.\n`denext build` runs the configured adapter's prepare after every build. Credentials are\nread from the environment only, and nothing is pushed without `denext deploy`.\nDeno's own `deno deploy`: `denext deno deploy`. Docs: https://denext.dev/docs/deploy#deploy-adapters",
+    "flags": [{
+      "name": "preset",
+      "type": "string",
+      "valueName": "<name>",
+      "help": "Use this preset (default options) instead of the configured adapter",
+    }, {
+      "name": "dry-run",
+      "type": "boolean",
+      "help": "Say what would be written and run; do neither",
+    }, {
+      "name": "force",
+      "type": "boolean",
+      "help": "Also replace project files that were not generated (or were edited)",
+    }],
+    "positionals": [{ "name": "action", "help": "prepare (else: prepare, then push)" }, {
+      "name": "dir",
+      "help": "Project directory (default: .)",
+    }],
+    "loadsModules": true,
+    "envTier": "production",
+  }, () => importCliModule("./commands/deploy.ts").then((m) => m.deployCommand as CommandSpec)],
   [{
     "name": "job",
     "summary": "Run a background job by name, or list them (--list)",
@@ -433,6 +459,25 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
         "name": "minify",
         "type": "boolean",
         "help": "Profile a minified build (default: unminified)",
+      },
+      {
+        "name": "filter",
+        "type": "string",
+        "valueName": "<text>",
+        "help":
+          "Show only functions whose name or source contains this (a component, module, package)",
+      },
+      {
+        "name": "out",
+        "type": "string",
+        "valueName": "<file>",
+        "help": "Save the run as JSON (to --compare a later run against)",
+      },
+      {
+        "name": "compare",
+        "type": "string",
+        "valueName": "<file>",
+        "help": "Compare with a run saved by --out: CPU, heap and per-function deltas",
       },
     ],
     "positionals": [{ "name": "dir", "help": "Project directory (default: .)" }],
@@ -1842,19 +1887,27 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
     "name": "mcp",
     "summary": "Run the denext MCP server (stdio) so agents/IDEs can call denext's tooling",
     "usage":
-      "  denext mcp                     # speak MCP over stdio (configure as an MCP server)\n  denext mcp --disable rag,docs # expose fewer tools to trim the client's context\n  denext mcp init [dir] [--clients claude,vscode,cursor] [--disable <groups>] [--dry-run] [--force]\n\n  Tools: denext_check_snippet, denext_import_map, denext_generate, denext_doctor,\n  denext_codemod, denext_list_routes, denext_dev_logs, denext_render, denext_route_map,\n  denext_search_docs, denext_index_codebase, denext_query_codebase, denext_find_definition,\n  denext_find_references. Resources: denext://guide, denext://import-map.\n\n  --disable takes a comma-separated list of groups (authoring, project, inspect, profile, dev, devtools, docs, database, rag) and/or tool\n  names (with or without the denext_ prefix), e.g. --disable rag,docs or --disable render.\n\n  init  adds a `mcp` task to deno.json (the denext version the project pins, so the server\n        matches the framework) and registers it as the `denext` server in each client's\n        project-level config, beside any servers already there. --clients picks (or `all`):\n    claude  .mcp.json  (default)\n    vscode  .vscode/mcp.json  (default)\n    cursor  .cursor/mcp.json  (default)\n    gemini  .gemini/settings.json\n    codex   .codex/config.toml\n        --disable is baked into the task; --force rewrites an existing denext entry/task.",
+      "  denext mcp                     # speak MCP over stdio (configure as an MCP server)\n  denext mcp --disable rag,docs # expose fewer tools to trim the client's context\n  denext mcp init [dir] [--clients claude,vscode,cursor] [--disable <groups>] [--dry-run] [--force]\n\n  Tools: denext_check_snippet, denext_import_map, denext_generate, denext_doctor,\n  denext_codemod, denext_list_routes, denext_dev_logs, denext_render, denext_route_map,\n  denext_search_docs, denext_index_codebase, denext_query_codebase, denext_find_definition,\n  denext_find_references, and denext_ui_* (every denext ui panel, through the UI's own\n  loopback server: token handshake, CSRF, preview before apply; --ui-read-only refuses\n  every change). Resources: denext://guide, denext://import-map.\n\n  --disable takes a comma-separated list of groups (authoring, project, inspect, profile, dev, devtools, docs, database, ui, rag) and/or tool\n  names (with or without the denext_ prefix), e.g. --disable rag,docs or --disable render.\n\n  init  adds a `mcp` task to deno.json (the denext version the project pins, so the server\n        matches the framework) and registers it as the `denext` server in each client's\n        project-level config, beside any servers already there. --clients picks (or `all`):\n    claude  .mcp.json  (default)\n    vscode  .vscode/mcp.json  (default)\n    cursor  .cursor/mcp.json  (default)\n    gemini  .gemini/settings.json\n    codex   .codex/config.toml\n        --disable is baked into the task; --force rewrites an existing denext entry/task.",
     "flags": [{
       "name": "disable",
       "type": "string",
       "valueName": "<groups|tools>",
       "help":
-        "Comma-separated groups (authoring, project, inspect, profile, dev, devtools, docs, database, rag) and/or tool names to hide",
+        "Comma-separated groups (authoring, project, inspect, profile, dev, devtools, docs, database, ui, rag) and/or tool names to hide",
     }, {
       "name": "clients",
       "type": "string",
       "valueName": "<list>",
       "help":
         "init: clients to configure (claude, vscode, cursor, gemini, codex, all; default: claude,vscode,cursor)",
+    }, {
+      "name": "ui-read-only",
+      "type": "boolean",
+      "help": "Start the denext_ui_* tools' UI with --read-only: every change is refused",
+    }, {
+      "name": "ui-offline",
+      "type": "boolean",
+      "help": "Start the denext_ui_* tools' UI with --offline",
     }, {
       "name": "dry-run",
       "type": "boolean",

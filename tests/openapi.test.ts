@@ -461,7 +461,7 @@ Deno.test("diffSpecs: added / removed / changed operations and shared schemas", 
 
 // ── Docs renderers ───────────────────────────────────────────────────────────
 
-Deno.test("renderDocsHtml: builtin is script-free and escaped; scalar/swagger load the CDN", async () => {
+Deno.test("renderDocsHtml: builtin is script-free and escaped; scalar loads the CDN; swagger a given base", async () => {
   const { document } = await buildOpenApi({ manifest, load, info: { title: "<T&Cs>" } });
   const html = renderDocsHtml(document, {
     ui: "builtin",
@@ -486,7 +486,7 @@ Deno.test("renderDocsHtml: builtin is script-free and escaped; scalar/swagger lo
   );
   const swagger = renderDocsHtml(document, { ui: "swagger", specUrl: "/spec", cdn: "/vendor/sw/" });
   assertStringIncludes(swagger, 'src="/vendor/sw/swagger-ui-bundle.js"');
-  assertStringIncludes(swagger, 'url:"/spec"');
+  assertStringIncludes(swagger, 'data-url="/spec"');
 });
 
 // ── The plugin ───────────────────────────────────────────────────────────────

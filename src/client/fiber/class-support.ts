@@ -26,6 +26,8 @@ export interface ClassSupport {
   hasErrorLifecycle(type: unknown): boolean;
   captureSnapshot(inst: ReconcilerInstance): void;
   unmountClassInstance(inst: ReconcilerInstance): void;
+  /** A hidden boundary hides (`componentWillUnmount`) or shows again (`componentDidMount`) it. */
+  setClassVisible(inst: ReconcilerInstance, visible: boolean): void;
 }
 
 let support: ClassSupport | null = null;

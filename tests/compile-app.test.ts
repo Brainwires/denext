@@ -1,9 +1,10 @@
 // `denext build --compile`'s pure parts: the `--allow-*` it bakes, the files it never embeds and
 // the `compile` config's validation. tests/integration/compile-app.test.ts compiles and runs an app.
 
-import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { compileBuildFlags, neverEmbedded } from "../src/build/compile-app.ts";
+import { compileBuildFlags, denortBinary, neverEmbedded } from "../src/build/compile-app.ts";
+import type { DenoToolchainPin } from "../src/build/deno-toolchain.ts";
 import { runStandalone, standaloneArgv } from "../src/standalone/mod.ts";
 import { runtimeStateDir, standaloneState } from "../src/server/standalone.ts";
 import { removeTempDir } from "./helpers/temp.ts";
@@ -39,6 +40,42 @@ Deno.test("compileBuildFlags: compile.permissions is unioned per kind; * is the 
 
 Deno.test("compileBuildFlags: --allow-all only when the app opts in", () => {
   assertEquals(compileBuildFlags({ permissions: "all" }), ["--allow-all"]);
+});
+
+Deno.test("denortBinary: the pinned denort on the toolchain, nothing elsewhere", async () => {
+  const artifact = { file: "deno-denort-x.zip", url: "https://example.invalid/x", sha256: "0" };
+  const pin: DenoToolchainPin = {
+    schema: 1,
+    version: "2.9.7-denext.20",
+    targets: {},
+    denort: { "linux-x86_64": artifact, "darwin-aarch64": artifact },
+  };
+  const asked: string[] = [];
+  const deps = (toolchain: string | undefined, p: DenoToolchainPin = pin) => ({
+    toolchain: () => toolchain,
+    pin: () => p,
+    ensure: (o: { target: string }) => (asked.push(o.target), Promise.resolve({ denort: "/d" })),
+  });
+  assertEquals(await denortBinary("x86_64-unknown-linux-gnu", deps("2.9.7-denext.20")), "/d");
+  assertEquals(await denortBinary("aarch64-apple-darwin", deps("2.9.7-denext.20")), "/d");
+  assertEquals(asked, ["linux-x86_64", "darwin-aarch64"]);
+  // Off the toolchain, on another toolchain version, an unpinned target or a pin without denort:
+  // deno compile picks its own.
+  assertEquals(await denortBinary("x86_64-unknown-linux-gnu", deps(undefined)), undefined);
+  assertEquals(await denortBinary("x86_64-unknown-linux-gnu", deps("2.9.7-denext.19")), undefined);
+  assertEquals(await denortBinary("x86_64-pc-windows-msvc", deps("2.9.7-denext.20")), undefined);
+  const old = { ...pin, denort: undefined };
+  assertEquals(
+    await denortBinary("x86_64-unknown-linux-gnu", deps("2.9.7-denext.20", old)),
+    undefined,
+  );
+  assertEquals(asked.length, 2);
+  // A verification failure is not swallowed.
+  const failing = {
+    ...deps("2.9.7-denext.20"),
+    ensure: () => Promise.reject(new Error("SHA-256 mismatch")),
+  };
+  await assertRejects(() => denortBinary("x86_64-unknown-linux-gnu", failing), Error, "mismatch");
 });
 
 Deno.test("neverEmbedded: env files, SQLite databases and locks stay out of the binary", () => {

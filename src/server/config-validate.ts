@@ -18,10 +18,12 @@ import {
   validateMomentumSafeScroll,
   validatePlatformExtensions,
   validateReactNative,
+  validateResolveAlias,
 } from "./config-validate/mobile.ts";
 import {
   validateCommands,
   validateCompile,
+  validateDeploy,
   validateNestedRequired,
 } from "./config-validate/project.ts";
 import {
@@ -71,6 +73,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateMomentumSafeScroll(config.momentumSafeScroll, fail);
   validateLists(config.lists, fail);
   validatePlatformExtensions(config.platformExtensions, fail);
+  validateResolveAlias(config.resolveAlias, fail);
   validateMobile(config.mobile, fail);
   validateDesktop(config.desktop, config.spa?.proxy, fail);
   validateAllowedDevOrigins(config.allowedDevOrigins, fail);
@@ -83,5 +86,6 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateJobs(config.jobs, fail);
   validateCommands(config.commands, fail);
   validateCompile(config.compile, fail);
+  validateDeploy(config.deploy, fail);
   validateNestedRequired(config, fail);
 }

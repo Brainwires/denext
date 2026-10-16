@@ -10,7 +10,9 @@
  * @module
  */
 
+import type { FontFileMetrics } from "./font-file.ts";
 import { FONT_METRICS } from "./font-metrics.ts";
+import { addFontFace, fontClassName } from "./registry.ts";
 
 /** A local system face a fallback can be built on (Next's two choices). */
 export type FallbackFace = "Arial" | "Times New Roman";
@@ -105,7 +107,11 @@ export interface FallbackFontFace {
  */
 export function fallbackFontFace(family: string, face?: FallbackFace): FallbackFontFace | null {
   const o = fallbackOverrides(family, face);
-  if (!o) return null;
+  return o ? fallbackFace(family, o) : null;
+}
+
+/** The `"<family> Fallback"` `@font-face` carrying a set of overrides. */
+export function fallbackFace(family: string, o: FallbackOverrides): FallbackFontFace {
   const name = `${family} Fallback`;
   return {
     family: name,
@@ -113,4 +119,78 @@ export function fallbackFontFace(family: string, face?: FallbackFace): FallbackF
       `ascent-override:${o.ascentOverride};descent-override:${o.descentOverride};` +
       `line-gap-override:${o.lineGapOverride};size-adjust:${o.sizeAdjust};}`,
   };
+}
+
+/**
+ * The fallback faces' average widths as `next/font/local` measures them (fontkit over the
+ * system files, Next's `DEFAULT_SANS_SERIF_FONT` / `DEFAULT_SERIF_FONT`) — not Capsize's
+ * `xWidthAvg`, which the Google path uses.
+ */
+const LOCAL_FALLBACK_WIDTHS: Record<FallbackFace, { azAvgWidth: number; unitsPerEm: number }> = {
+  "Arial": { azAvgWidth: 934.5116279069767, unitsPerEm: 2048 },
+  "Times New Roman": { azAvgWidth: 854.3953488372093, unitsPerEm: 2048 },
+};
+
+/**
+ * The overrides for a local font file (Next's `getFallbackMetricsFromFontFile`): the same
+ * math as {@link fallbackOverrides}, against the fallback widths `next/font/local` uses.
+ *
+ * @param font The parsed font file's metrics.
+ * @param face The local face to adjust (`Arial` unless `Times New Roman` was asked for).
+ */
+export function localFallbackOverrides(
+  font: FontFileMetrics,
+  face: FallbackFace,
+): FallbackOverrides {
+  const fb = LOCAL_FALLBACK_WIDTHS[face];
+  const sizeAdjust = font.azAvgWidth
+    ? font.azAvgWidth / font.unitsPerEm / (fb.azAvgWidth / fb.unitsPerEm)
+    : 1;
+  const scale = font.unitsPerEm * sizeAdjust;
+  return {
+    fallbackFont: face,
+    sizeAdjust: pct(sizeAdjust),
+    ascentOverride: pct(font.ascent / scale),
+    descentOverride: pct(font.descent / scale),
+    lineGapOverride: pct(font.lineGap / scale),
+  };
+}
+
+/** What {@link registerFontClass} registers a loader's class from. */
+export interface FontClassSpec {
+  /** The web font's family (quoted into the stack). */
+  family: string;
+  /** The loader's option signature (keys the class name). */
+  signature: string;
+  /** A metric-matched fallback face to declare and splice in after the family, if any. */
+  fallbackFace: FallbackFontFace | null;
+  /** The caller's fallback families, after the fallback face. */
+  fallback: string[];
+  /** The CSS custom property to expose (`variable`), if any. */
+  variable?: string;
+}
+
+/**
+ * Register a font loader's class (and `variable` class): the stack is the family, then the
+ * metric-matched fallback face (Next's order), then the caller's fallbacks.
+ *
+ * @returns The class name, the `variable` class (`""` when none) and the font stack.
+ */
+export function registerFontClass(
+  spec: FontClassSpec,
+): { className: string; variable: string; stack: string } {
+  if (spec.fallbackFace) addFontFace(spec.fallbackFace.css);
+  const stack = [
+    `'${spec.family}'`,
+    ...(spec.fallbackFace ? [`'${spec.fallbackFace.family}'`] : []),
+    ...spec.fallback,
+  ].join(", ");
+  const className = fontClassName(spec.family, spec.signature);
+  addFontFace(`.${className}{font-family:${stack};}`);
+  let variable = "";
+  if (spec.variable) {
+    variable = `${className}_var`;
+    addFontFace(`.${variable}{${spec.variable}:${stack};}`);
+  }
+  return { className, variable, stack };
 }

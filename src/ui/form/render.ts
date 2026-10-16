@@ -2,9 +2,10 @@
 // `Control` primitive — arrays recursing into a typed sub-form per row, unions into the
 // selected branch, maps into key/value rows.
 //
-// Every widget kind is a component built with `h()`, and nested widgets compose as components
-// (no string round-trips inside the renderer); `renderWidget` renders the tree once, at the
-// boundary, back to the pre-escaped fragment its callers interpolate.
+// Every widget kind is a component built with `h()`, and nested widgets compose as components:
+// `Widget` renders one spec, `FormField` / `FormFields` add the form's one CSRF field. Panels (and
+// a plugin's own pages, through `denext/ui-kit`) place them in their own trees — there is no
+// string API to round-trip through.
 //
 // Everything here is plain server-rendered HTML with real submit buttons, so the editor works
 // with JavaScript disabled; `src/ui/client.ts` upgrades the same submits to a fragment swap. No
@@ -12,9 +13,7 @@
 
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../../jsx/types.ts";
-import type { RawHtml } from "../html.ts";
 import { UI_CSRF_FIELD } from "../security.ts";
-import { renderView } from "../view.ts";
 import type { BadgeTone } from "../components.ts";
 import { inlineMarkdown } from "../markdown.ts";
 import { Control, Field, OpButton } from "./control.ts";
@@ -54,8 +53,8 @@ export interface RenderContext {
   readonly bareAt?: string;
 }
 
-/** What every widget component is handed. */
-type WidgetProps = {
+/** What every widget component is handed ({@linkcode Widget}'s props). */
+export type WidgetProps = {
   /** The widget. */
   readonly spec: WidgetSpec;
   /** The current value at its path. */
@@ -613,21 +612,15 @@ function fieldsOf(spec: WidgetSpec, value: unknown, ctx: RenderContext): VNode[]
     .map((entry) => h(Widget, { key: entry.index, spec: entry.child, value: entry.held, ctx }));
 }
 
-/** One spec, dispatched to its kind's component (the recursive half, without the CSRF field). */
-function Widget(props: WidgetProps): VNode {
-  return h(WIDGETS[props.spec.kind], { spec: props.spec, value: props.value, ctx: props.ctx });
-}
-
 /**
- * Render a widget and everything under it, with the CSRF field the row buttons need.
+ * One widget and everything under it, dispatched to its kind's component — the recursive half of
+ * the form, without the CSRF field ({@linkcode FormField} adds it).
  *
- * @param spec The widget (from `widgetFor`).
- * @param value The current config value at that path.
- * @param ctx The CSRF token, the name prefix, read-only mode and any validation messages.
- * @returns The field markup.
+ * @param props The widget, the value it holds and the render context.
+ * @returns The widget's elements.
  */
-export function renderWidget(spec: WidgetSpec, value: unknown, ctx: RenderContext): RawHtml {
-  return renderWidgets([{ spec, value }], ctx);
+export function Widget(props: WidgetProps): VNode {
+  return h(WIDGETS[props.spec.kind], { spec: props.spec, value: props.value, ctx: props.ctx });
 }
 
 /** One field of a multi-widget form: its widget, and the value to render it holding. */
@@ -638,40 +631,70 @@ export interface WidgetField {
   readonly value: unknown;
 }
 
-/**
- * Render several widgets into one form body, behind a single CSRF field.
- *
- * The config editor puts a view's plain scalars in one form with one Save, so their widgets are
- * rendered together. Emitting the token once is the point: rendering each field separately would
- * repeat a hidden `_csrf` for every control in the form.
- *
- * @param fields The widgets and their values, in render order.
- * @param ctx The CSRF token, the name prefix, read-only mode and any validation messages.
- * @returns The field markup.
- */
-export function renderWidgets(fields: readonly WidgetField[], ctx: RenderContext): RawHtml {
-  const csrf = h(Control, {
+/** The form's one CSRF field (disabled with the form under `--read-only`). */
+function CsrfControl({ ctx }: { readonly ctx: RenderContext }): VNode {
+  return h(Control, {
     tag: "input",
     type: "hidden",
     name: UI_CSRF_FIELD,
     value: ctx.csrf,
     disabled: ctx.readOnly,
   });
-  return renderView(
-    h(
-      Fragment,
-      null,
-      csrf,
-      fields.map((field, index) =>
-        h(Widget, { key: index, spec: field.spec, value: field.value, ctx })
-      ),
+}
+
+/** {@linkcode FormField}'s props: one widget, the value it holds, and the render context. */
+export interface FormFieldProps {
+  /** The widget (from `widgetFor`). */
+  readonly spec: WidgetSpec;
+  /** The current value at that path. */
+  readonly value: unknown;
+  /** The CSRF token, the name prefix, read-only mode and any validation messages. */
+  readonly ctx: RenderContext;
+}
+
+/**
+ * A widget and everything under it, with the CSRF field the row buttons need: the form body of
+ * a form that edits one key.
+ *
+ * @param props The widget, its value and the render context.
+ * @returns The field elements.
+ */
+export function FormField(props: FormFieldProps): VNode {
+  return h(FormFields, { fields: [{ spec: props.spec, value: props.value }], ctx: props.ctx });
+}
+
+/** {@linkcode FormFields}'s props: the widgets in render order, and the render context. */
+export interface FormFieldsProps {
+  /** The widgets and their values, in render order. */
+  readonly fields: readonly WidgetField[];
+  /** The CSRF token, the name prefix, read-only mode and any validation messages. */
+  readonly ctx: RenderContext;
+}
+
+/**
+ * Several widgets as one form body, behind a single CSRF field.
+ *
+ * The config editor puts a view's plain scalars in one form with one Save, so their widgets are
+ * rendered together. Emitting the token once is the point: rendering each field separately would
+ * repeat a hidden `_csrf` for every control in the form.
+ *
+ * @param props The widgets and the render context.
+ * @returns The field elements.
+ */
+export function FormFields(props: FormFieldsProps): VNode {
+  return h(
+    Fragment,
+    null,
+    h(CsrfControl, { ctx: props.ctx }),
+    props.fields.map((field, index) =>
+      h(Widget, { key: index, spec: field.spec, value: field.value, ctx: props.ctx })
     ),
   );
 }
 
 /**
  * Parse one posted field back into the config value it stands for — the single-field inverse of
- * {@linkcode renderWidget}, for callers that walk a `FormData` key by key.
+ * {@linkcode Widget}, for callers that walk a `FormData` key by key.
  *
  * @param root The root config schema.
  * @param path The posted field name (`redirects[0].source`).

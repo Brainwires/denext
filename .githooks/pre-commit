@@ -98,8 +98,8 @@ else
 fi
 # Fallow keeps a base-tree cache per audited base commit in the temp dir and never removes it
 # (about 120 MB each; hundreds pile up across commits and worktrees). Drop the ones idle for
-# two hours or more — a running audit touches its own, so it is never removed under it.
-find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'fallow-audit-base-cache-*' -mmin +120 \
+# 30 minutes or more (disk is tight with parallel agents) — a running audit touches its own, so it is never removed under it.
+find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'fallow-audit-base-cache-*' -mmin +30 \
   -exec rm -rf {} + 2>/dev/null || true
 
 # A detached worktree (how parallel work is done here) has no upstream, so fallow's default

@@ -44,10 +44,10 @@ import {
   SourceBlock,
 } from "../components.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
-import { Raw, renderView } from "../view.ts";
+import { renderView } from "../view.ts";
 import { broadcast } from "../events.ts";
 import { StaleWriteError, writeFileAtomic } from "../security.ts";
-import { renderWidget } from "../form/render.ts";
+import { FormField } from "../form/render.ts";
 import { resolveAt, type SchemaNode } from "../form/schema.ts";
 import { widgetFor, type WidgetSpec } from "../form/widget.ts";
 import {
@@ -547,11 +547,10 @@ function OptionsView(
   },
 ): VNode {
   const spec = formSpec(target.schema, reading.codeKeys);
-  const form = renderWidget(spec, draft.value, {
-    csrf: ctx.csrf,
-    namePrefix: PREFIX,
-    readOnly: ctx.readOnly,
-    errors: draft.errors,
+  const form = h(FormField, {
+    spec,
+    value: draft.value,
+    ctx: { csrf: ctx.csrf, namePrefix: PREFIX, readOnly: ctx.readOnly, errors: draft.errors },
   });
   return h(
     Frame,
@@ -574,7 +573,7 @@ function OptionsView(
       // diff of nothing. `ui.js` finds the unnamed submit; with JavaScript off the button simply
       // works, which is why the server never renders it disabled.
       { method: "post", action: optionsHref(target.entry.name), "data-dirty-track": "1" },
-      h(Raw, { html: form }),
+      form,
       h(Hidden, { name: BASE_FIELD, value: target.base }),
       h("button", { type: "submit", disabled: ctx.readOnly }, "Preview"),
     ),

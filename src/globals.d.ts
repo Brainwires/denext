@@ -17,3 +17,10 @@ declare const __DENEXT_CLASS_COMPONENTS__: boolean;
  * `features` by the server (resolveProject) and the esbuild compat `define`.
  */
 declare const __DENEXT_FEATURES__: Record<string, boolean>;
+
+/**
+ * The build target `denext/platform`'s runtime fallback reads (`"ios"`, `"web"`, …) for a read
+ * the build-time fold did not replace. Seeded by the esbuild paths' `define` (and the native SPA
+ * entry); absent elsewhere, where the constant reads `"web"`.
+ */
+declare const __DENEXT_PLATFORM__: string | undefined;

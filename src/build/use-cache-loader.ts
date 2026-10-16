@@ -34,8 +34,10 @@ import {
   relativizeFileSpecifiers,
 } from "./swc-ast.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
+import { foldBuildConstants, PLATFORM_SPECIFIER } from "./feature-transform.ts";
 import {
   type ImportAliases,
+  type Platform,
   readImportAliases,
   resolvePlatformImport,
 } from "./platform-extensions.ts";
@@ -71,6 +73,13 @@ export interface UseCacheLoaderOptions {
    * `.denext` can move together — a `deno compile`d app embeds them under another root.
    */
   relocatable?: boolean;
+  /**
+   * The target a server render is for (`denext export --platform`, a shell's `denext dev`
+   * request): with a target other than `web` (the runtime value),
+   * a module that imports `denext/platform` loads as a copy with `platform` folded to it (and so
+   * does every module on the way to one), as the target's client is. Omit to leave it alone.
+   */
+  platform?: Platform;
 }
 
 /** A module file the compiler can copy (a stylesheet or JSON import is not one). */
@@ -235,6 +244,8 @@ interface ModuleNode {
   readonly imports: readonly LocalImport[];
   /** Whether it has a `"use cache"` directive to compile. */
   readonly useCache: boolean;
+  /** Whether it reads `platform` (denext/platform) and the compiler folds it. */
+  readonly foldsPlatform?: boolean;
 }
 
 /**
@@ -264,6 +275,12 @@ class UseCacheCompiler {
   #aliases: Promise<ImportAliases> | null = null;
 
   constructor(private opts: UseCacheLoaderOptions) {}
+
+  /** The target `platform` is folded to in the copies (none for `web`, the runtime value). */
+  #foldTarget(): Platform | undefined {
+    const target = this.opts.platform;
+    return target === undefined || target === "web" ? undefined : target;
+  }
 
   /** Whether `url` is a project module the compiler may copy. */
   #own(url: string): boolean {
@@ -322,7 +339,8 @@ class UseCacheCompiler {
     const aliases = await (this.#aliases ??= readImportAliases(this.opts.projectDir));
     const imports = await localImports(source, moduleUrl, aliases, this.opts.redirects ?? {});
     const useCache = this.opts.useCache !== false && source.includes("use cache");
-    return { source, imports, useCache };
+    const foldsPlatform = this.#foldTarget() !== undefined && source.includes(PLATFORM_SPECIFIER);
+    return { source, imports, useCache, foldsPlatform };
   }
 
   /** Every project module reachable from `entry` (itself included), parsed. */
@@ -354,7 +372,7 @@ class UseCacheCompiler {
   #decide(graph: Map<string, ModuleNode>): void {
     const open = [...graph].filter(([u]) => !this.#needs.has(u));
     for (const [u, n] of open) {
-      const direct = n.useCache || n.imports.some((i) => i.target !== i.url) ||
+      const direct = n.useCache || !!n.foldsPlatform || n.imports.some((i) => i.target !== i.url) ||
         !!this.opts.dev?.isEdited(u);
       this.#needs.set(u, n.source !== null && direct);
     }
@@ -399,9 +417,14 @@ class UseCacheCompiler {
     }
     const resolveSpecifier = (abs: string) => childMap.get(abs) ?? abs;
     const resolveBare = (spec: string) => bareMap.get(spec) ?? null;
+    // `platform` is folded first: the rewrite below may respell its `denext/platform` import.
+    const target = this.#foldTarget();
+    const folded = target === undefined
+      ? source
+      : (await foldBuildConstants(source, { platform: target })).code;
     const { code } = this.opts.useCache === false
-      ? await rewriteLocalImports(source, moduleUrl, resolveSpecifier, resolveBare)
-      : await transformUseCache(source, moduleUrl, {
+      ? await rewriteLocalImports(folded, moduleUrl, resolveSpecifier, resolveBare)
+      : await transformUseCache(folded, moduleUrl, {
         resolveSpecifier,
         resolveBare,
         alwaysRewriteImports: true,

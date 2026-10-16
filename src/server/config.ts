@@ -2,6 +2,7 @@
 // declarative redirects / rewrites / headers plus basePath / trailingSlash /
 // assetPrefix. Loaded once at startup (static config, like Next).
 
+import type { DeployConfig } from "../deploy/adapter.ts";
 import type { I18nConfig } from "./i18n.ts";
 import type { DenextPlugin } from "../plugin/mod.ts";
 import type { CspSetting } from "./segment-config.ts";
@@ -602,6 +603,20 @@ export interface PlatformExtensionsConfig {
   osFiles?: boolean;
 }
 
+/** {@link DenextConfig.resolveAlias}: import specifier → alias. */
+export type ResolveAliasConfig = Readonly<Record<string, string | ResolveAliasRule>>;
+
+/** An alias in its object form ({@link DenextConfig.resolveAlias}). */
+export interface ResolveAliasRule {
+  /** Where the import goes: a package, a package subpath, or a `./` file of the project. */
+  to: string;
+  /**
+   * Packages whose own files keep the original module when they import the key (a library
+   * that wraps the module it replaces).
+   */
+  except?: readonly string[];
+}
+
 /** React Native / Expo web build options ({@link DenextConfig.reactNative}). */
 export interface ReactNativeConfig {
   /**
@@ -722,8 +737,9 @@ export interface ApiBatchConfig {
 }
 
 /**
- * Cross-origin access to the app's route handlers (`route.ts`, `defineApi`) and the native
- * `denextAuth` endpoints — what a Capacitor shell (`capacitor://localhost`,
+ * Cross-origin access to the app's route handlers (`route.ts`, `defineApi`), the native
+ * `denextAuth` endpoints, pages, Server Actions, the API batch endpoint and the Live socket —
+ * the last three letting an allowed origin in only without cookies — what a Capacitor shell (`capacitor://localhost`,
  * `https://localhost`) or another front end on a different origin needs to call this server.
  * Origins match EXACTLY (scheme + host + port, byte for byte); there are no wildcards,
  * prefixes or suffixes, and `"null"` is refused.
@@ -741,7 +757,7 @@ export interface CorsConfig {
   methods?: string[];
   /**
    * The request headers a preflight may approve, case-insensitive (default
-   * `authorization`, `content-type`, `x-denext-wire`).
+   * `authorization`, `content-type` and the `x-denext-*` markers denext's own client sends).
    */
   headers?: string[];
   /** Response headers the caller's script may read beyond the safelisted ones (default none). */
@@ -1139,6 +1155,8 @@ export interface DesktopConfig {
   macos?: DesktopMacosConfig;
   /** Linux launch settings the package scripts write to the app's `laufey-launch.json`. */
   linux?: DesktopLinuxConfig;
+  /** Windows launch settings the package scripts write to the app's `laufey-launch.json`. */
+  windows?: DesktopWindowsConfig;
   /**
    * Extra `deno desktop` flags, passed before the entry by `denext desktop run` / `dev` and the
    * package scripts: for a project that needs them to build at all. npm resolution needs none:
@@ -1277,6 +1295,21 @@ export interface DesktopLinuxConfig {
   requireSandbox?: boolean;
 }
 
+/** {@link DesktopConfig.windows}: Windows launch settings of the packaged app. */
+export interface DesktopWindowsConfig {
+  /**
+   * How the CEF window reaches the network (runtime 2.9.7-denext.20): `"system"` (the default) uses
+   * the OS proxy configuration, WPAD and PAC files included, and the runtime starts resolving it as
+   * the window is created; `"direct"` uses no proxy at all, so a slow WPAD / PAC lookup never holds
+   * the page's requests (its Live WebSocket to the loopback relay included) at startup. Choose
+   * `"direct"` only for an app whose users never need a proxy. The package scripts write it to the
+   * Windows bundle's `laufey-launch.json` (`"proxy"`); `denext desktop run` / `dev` pass it as
+   * `LAUFEY_PROXY`. A proxy switch on the app's own command line wins. The WebView2 backend and
+   * macOS / Linux ignore it.
+   */
+  proxy?: "system" | "direct";
+}
+
 /** One entitlement's value in {@link DesktopMacosConfig.entitlements}. */
 export type DesktopEntitlementValue = string | number | boolean | string[];
 
@@ -1301,6 +1334,13 @@ export interface DesktopMacosConfig {
    * {@link provisioningProfile}.
    */
   entitlements?: Record<string, DesktopEntitlementValue>;
+  /**
+   * The user activity types the app continues (Handoff from another device, a Spotlight result):
+   * reverse-DNS names, written to the bundle's `NSUserActivityTypes` by the package script. A type
+   * `setUserActivity` (in `denext/desktop/app`) sets must be listed here for
+   * `onUserActivityContinued` to receive it.
+   */
+  userActivityTypes?: string[];
 }
 
 /** {@link DesktopConfig.app}'s `icons`: the app icon file per OS, relative to the project. */
@@ -1964,6 +2004,28 @@ export interface DenextConfig {
    */
   optimizePackageImports?: string[] | false;
   /**
+   * Module aliases for the esbuild bundles, optionally sensitive to the importing file, as
+   * Metro's `resolveRequest` and Vite's `resolve.alias` express them. A key is an import
+   * specifier, matched exactly; its value is where that import goes: a package or package
+   * subpath (`"uniwind/components/web"`), or a `./` file of the project. The object form's
+   * `except` lists packages whose OWN imports of the key keep the original module, the shape a
+   * library that wraps the module it replaces needs (uniwind's `react-native`).
+   *
+   * ```ts
+   * resolveAlias: {
+   *   "react-native": { to: "uniwind/components/web", except: ["uniwind"] },
+   *   "legacy-sdk": "./src/web/legacy-sdk.ts",
+   * }
+   * ```
+   *
+   * Applied ahead of every other resolver in SPA and React Native mode, the next-compat App
+   * Router's client and server bundles, and `denext dev`'s dependency bundles; the target is
+   * resolved through the same build, so its own resolution rules apply. The native App
+   * Router path (`deno bundle`) resolves through the import map instead: use `deno.json`
+   * `imports`, and `scopes` for an importer-sensitive entry.
+   */
+  resolveAlias?: ResolveAliasConfig;
+  /**
    * Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset —
    * default ON. In iOS WebKit (Safari, WKWebView, Capacitor) any programmatic scroll write
    * during a touch fling (`scrollBy`, `scrollTo`, assigning `scrollTop`) stops the fling dead,
@@ -2026,6 +2088,13 @@ export interface DenextConfig {
    * {@link https://denext.dev/docs/deployment-targets#a-single-binary-with-denext-build---compile}.
    */
   compile?: CompileConfig;
+  /**
+   * Deploy adapter: `denext build` runs its `prepare` with the typed deploy manifest
+   * (`.denext/deploy-manifest.json`) after every build, and `denext deploy` pushes with it. A
+   * preset from `denext/deploy` (`docker()`, `fly()`, `denoDeploy()`, `genericHost()`,
+   * `staticHost()`) or your own adapter. See {@link https://denext.dev/docs/deploy#deploy-adapters}.
+   */
+  deploy?: DeployConfig;
   /**
    * Build a React Native / Expo app's source for the web through `react-native-web` — SPA
    * mode only (`mode: "spa"`). `true` turns on the defaults; an object sets options.
@@ -2224,6 +2293,21 @@ export interface LiveLimits {
    * — there is no "disable" value (an invalid one falls back to 30s).
    */
   renderTimeoutSeconds?: number;
+  /** Max live views (`defineLiveView`) one connection may hold mounted (default 16). */
+  maxViewsPerConnection?: number;
+  /**
+   * Max bytes of server-held state per connection across its live views (default 1048576): each
+   * view's model (as JSON) plus its last rendered tree. An update or render past it ends that view
+   * with a `limit` error.
+   */
+  maxViewBytesPerConnection?: number;
+  /**
+   * Seconds a dropped connection's live views stay on the server for the client to resume after
+   * a reconnect (default 30). Past it, or on another instance, the next mount runs `init` again.
+   */
+  viewResumeSeconds?: number;
+  /** Max live views waiting to be resumed across the server (default 1000; the oldest go first). */
+  maxParkedViews?: number;
 }
 
 /**
