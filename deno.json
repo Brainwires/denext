@@ -305,6 +305,7 @@
     "denext/remix": "./src/compat/remix/mod.ts",
     "denext/remix/server": "./src/compat/remix/server.ts",
     "denext/live": "./src/live.ts",
+    "denext/gleam": "./src/gleam.ts",
     "denext/lazy": "./src/lazy.ts",
     "denext/platform": "./src/platform.ts",
     "denext/testing": "./src/testing/mod.ts",

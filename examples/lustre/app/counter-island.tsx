@@ -1,0 +1,11 @@
+"use client";
+// The Lustre counter as an island: the server renders its first view, the browser's Lustre adopts
+// that markup (same nodes, focus and typed text) and runs it. Props become its flags.
+import { lustreIsland } from "denext/gleam";
+import { lustre } from "../.denext/lustre.ts";
+import * as counter from "@gleam/app/counter.mjs";
+
+export const CounterIsland = lustreIsland(lustre, counter.app(), {
+  flags: (props: { start: number }) => props.start,
+  attributes: () => ({ class: "island" }),
+});

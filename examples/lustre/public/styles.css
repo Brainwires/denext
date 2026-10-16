@@ -1,0 +1,13 @@
+body {
+  font-family: system-ui, sans-serif;
+  margin: 2rem;
+}
+.counter {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.count {
+  min-width: 2ch;
+  text-align: center;
+}

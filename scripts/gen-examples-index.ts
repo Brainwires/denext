@@ -74,6 +74,7 @@ export const EXAMPLE_CATEGORY: Readonly<Record<string, string>> = {
   transitions: "rendering",
   concurrency: "rendering",
   live: "rendering",
+  lustre: "rendering",
   "content-collections": "rendering",
   "typed-api": "apis",
   openapi: "apis",

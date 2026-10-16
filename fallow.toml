@@ -61,6 +61,10 @@ ignoreDependencies = [
   "@prisma/adapter-better-sqlite3", # examples/prisma/deno.json: npm:@prisma/adapter-better-sqlite3
   "@capacitor/cli", # examples/native/deno.json: npm:@capacitor/cli@^7
   "tailwindcss", # examples/tailwind/styles/tailwind.css `@import "tailwindcss"` (Tailwind CLI)
+  # examples/lustre/deno.json: "@gleam/" maps the example's Gleam build (gleam/build/dev/javascript),
+  # which `gleam build` writes and git ignores; `@gleam/app` is the example's own Gleam package.
+  "@gleam/app",
+  "@gleam/lustre",
   # tests/e2e/fixtures/reanimated/package.json: installed into the e2e's temp copy of the fixture
   "react-native-reanimated",
   "react-native-gesture-handler",

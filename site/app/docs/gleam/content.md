@@ -126,7 +126,9 @@ that keeps its Gleam code elsewhere maps its own build directory:
 
 [Lustre](https://hexdocs.pm/lustre/) is Gleam's UI framework (the Elm
 architecture: `init`, `update`, `view`). denext runs a Lustre app three ways,
-from the same Gleam code:
+from the same Gleam code
+([`examples/lustre`](https://github.com/Brainwires/denext/tree/main/examples/lustre)
+shows all three on one page):
 
 | Helper (`denext/gleam`) | What runs where                                                                              |
 | ----------------------- | -------------------------------------------------------------------------------------------- |
