@@ -901,8 +901,9 @@ export interface AuthPasskeyConfig {
   /** How long a ceremony's challenge lives, in seconds. Default `300`; clamped to `30..900`. */
   timeout?: number;
   /**
-   * Attestation policy for new passkeys. Off by default: any `none` or `packed` attestation
-   * registers, and a certificate in it is not chained to anything.
+   * Attestation policy for new passkeys. Off by default: any supported attestation (`none`,
+   * `packed`, `tpm`, `android-key`, `apple`, `fido-u2f`) registers once its statement verifies,
+   * and a certificate in it is not chained to anything.
    */
   attestation?: {
     /**
@@ -927,6 +928,14 @@ export interface AuthPasskeyMdsConfig {
    * outbound network. Verified exactly like a fetched one; when set, `url` is never fetched.
    */
   blob?: string | (() => string | Promise<string>);
+  /**
+   * What a certificate revocation list that can't be fetched or used means, for a certificate
+   * of the BLOB's or an attestation's path that names CRL distribution points: `"require"`
+   * refuses the path (fail closed), `"best-effort"` goes on without it (a CRL that lists the
+   * certificate still refuses it), `"off"` fetches no CRL. Default `"require"`, or
+   * `"best-effort"` when {@linkcode blob} supplies the BLOB (a server without outbound network).
+   */
+  revocation?: "require" | "best-effort" | "off";
   /** The fetch timeout, ms. Default `15000`. */
   timeoutMs?: number;
   /** The largest BLOB accepted, bytes. Default 32 MiB. */

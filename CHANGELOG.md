@@ -300,6 +300,19 @@ and this project adheres to
   with no `Cookie` and no `Authorization` but an explicit `Bearer`, so it acts with the
   credentials it presented and nothing ambient. Before, `cors` covered route handlers and the
   native auth endpoints only.
+- **Passkeys verify `tpm`, `android-key`, `apple` and `fido-u2f` attestation.** Each statement
+  is checked as WebAuthn Level 3 §8 says: TPM (`ver` 2.0, `pubArea` is the credential key,
+  `certInfo` a TPM-generated certify statement whose `extraData` hashes this ceremony and whose
+  name is `pubArea`'s, the AIK signature, and the AIK certificate's §8.3.1 profile — empty
+  subject, the TPM manufacturer / model / version in its Subject Alternative Name,
+  `tcg-kp-AIKCertificate`, not a CA, a matching AAGUID extension), Android Key (the signature,
+  the leaf key is the credential key, the key description's challenge is this ceremony's, no
+  `allApplications`, generated in the keystore, signing only), Apple anonymous (the nonce
+  extension holds this ceremony's hash, the certificate key is the credential key) and FIDO U2F
+  (one P-256 certificate signing the U2F registration data). Statement signatures may use
+  ES256/384/512, RS256/384/512, RS1, PS256/384/512 or EdDSA. With `attestation.mds` their `x5c`
+  chains to the authenticator's metadata roots like `packed`'s. Tested against the W3C Level 3
+  §16 vectors and real registrations published with SimpleWebAuthn (MIT).
 
 ### Changed
 
@@ -432,6 +445,14 @@ and this project adheres to
   LogoutResponse. The SP metadata lists the SLO URL, and a session a `saml()` sign-in started
   carries `session.saml` (`nameId`, `nameIdFormat`, `sessionIndex`). Before, an IdP's logout left
   denextAuth's sessions running.
+- **The FIDO Metadata Service checks consult certificate revocation lists.** Every certificate
+  of the metadata BLOB's signing path and of an attestation's `x5c` path that names a CRL
+  distribution point is checked against its issuer's CRL — fetched with a timeout and a 4 MiB
+  cap, its signature, issuer and currency verified, cached until its `nextUpdate` — and refused
+  when listed. `passkeys.attestation.mds.revocation` sets what an unavailable CRL means:
+  `"require"` (fail closed; the default), `"best-effort"` (the default with an offline `blob`)
+  or `"off"`. Before, no CRL was fetched, so a revoked attestation or BLOB-signing certificate
+  still passed.
 
 ## [4.1.0] - 2026-10-15
 

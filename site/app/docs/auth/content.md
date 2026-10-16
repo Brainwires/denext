@@ -1575,10 +1575,11 @@ or the authenticator holds one it was told to exclude), `"rate_limited"`, `"netw
 **What the server checks** (WebAuthn Level 3): the client data's type, challenge, origin
 and `crossOrigin` (a call from a cross-origin iframe is refused); the authenticator data's
 RP ID hash, User Present, User Verified under `"required"`, and the backup flags; the
-credential's algorithm — ES256, RS256 or Ed25519, nothing else; the attestation statement,
-`none` or `packed` (self, or an `x5c` leaf whose signature and certificate profile are
-checked — chained to the authenticator vendor's root only with
-[`attestation.mds`](#attestation-the-fido-metadata-service)); and each assertion's
+credential's algorithm — ES256, RS256 or Ed25519, nothing else; the attestation statement —
+`none`, `packed` (self, or an `x5c` leaf whose signature and certificate profile are checked),
+`tpm`, `android-key`, `apple` or `fido-u2f`, each by its WebAuthn Level 3 §8 procedure (below),
+a certificate chained to the authenticator vendor's root only with
+[`attestation.mds`](#attestation-the-fido-metadata-service); and each assertion's
 signature, its backup-eligibility flag against the stored record, and the signature counter.
 A counter that doesn't increase means a cloned authenticator: the sign-in is refused and
 `signInFailed` fires. A counter that stays at `0` — a synced passkey keeps none — is fine.
@@ -1609,10 +1610,26 @@ For a settings page, `listPasskeys(authConfig, userId)` answers `{ id, name, cre
 lastUsedAt, backedUp, transports }[]` and `deletePasskey(authConfig, { userId, id })` removes
 one — gate that yourself, as `DELETE {basePath}/passkeys/:id` does with the recent-sign-in rule.
 
+**Attestation formats.** A registration's statement is verified whatever its format; one that
+fails is refused (`400 { code: "attestation" }`):
+
+| `fmt`         | What is checked (WebAuthn L3)                                                                                                                                                                                                                                                                                                                                       | Type             |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| `none`        | The statement is empty (§8.7)                                                                                                                                                                                                                                                                                                                                       | `none`           |
+| `packed`      | Self: the credential key signs. `x5c`: the leaf signs, and its §8.2.1 profile (v3, subject C/O/OU/CN, not a CA, a matching AAGUID extension)                                                                                                                                                                                                                        | `self` / `basic` |
+| `tpm`         | `ver` 2.0; `pubArea` is the credential key; `certInfo` is a TPM-generated certify statement whose `extraData` hashes this ceremony and whose name is `pubArea`'s; the AIK signs `certInfo`; the AIK certificate's §8.3.1 profile (v3, empty subject, TPM manufacturer / model / version in its SAN, `tcg-kp-AIKCertificate`, not a CA, a matching AAGUID extension) | `attca`          |
+| `android-key` | The leaf signs and its key is the credential key; its key description's challenge is this ceremony's, no `allApplications`, `origin` generated, `purpose` sign (over the software- and TEE-enforced lists together)                                                                                                                                                 | `basic`          |
+| `apple`       | The certificate's nonce extension holds this ceremony's hash, and its key is the credential key                                                                                                                                                                                                                                                                     | `anonca`         |
+| `fido-u2f`    | One P-256 certificate signs the U2F registration data; the credential key is P-256                                                                                                                                                                                                                                                                                  | `basic`          |
+
+A statement signature may use ES256 / ES384 / ES512, RS256 / RS384 / RS512 / RS1, PS256 / PS384 /
+PS512 or EdDSA. Another format (`android-safetynet`, `compound`) is refused — or, under
+`attestation.mds.allowUnattested`, registers as unattested.
+
 ### Attestation: the FIDO Metadata Service
 
-By default any `none` or `packed` attestation registers: a certificate in it is checked for
-its profile but not chained to anything, so it proves no authenticator model. An app that must
+By default every supported attestation registers: a certificate in it is checked for its
+profile and statement but not chained to anything, so it proves no authenticator model. An app that must
 know which authenticators its users hold — security keys of certified models, nothing reported
 compromised — turns on the FIDO Metadata Service (MDS3) checks:
 
@@ -1632,16 +1649,17 @@ denextAuth({
 With `mds` set, registration options ask for `attestation: "direct"`, and each new passkey is
 held to the metadata after the WebAuthn checks:
 
-- **A certificate attestation** (`packed` with `x5c`) must come from an AAGUID the metadata
-  lists, and its `x5c` chain must validate to that entry's `attestationRootCertificates`
+- **A certificate attestation** (`packed` with `x5c`, `tpm`, `android-key`, `apple`,
+  `fido-u2f`) must come from an AAGUID the metadata lists, and its `x5c` chain must validate to that entry's `attestationRootCertificates`
   (signatures, validity, `cA`, `pathLenConstraint`, `keyUsage`, no unknown critical extension).
   An AAGUID with no entry is refused unless `allowUnknownAuthenticators: true` (its chain is
   then not checked).
 - **`none` and self attestation** prove no model, so they are refused unless
   `allowUnattested: true`. Most phone and password-manager passkeys attest `none`; leave it off
   only when every user registers a certified security key. A format denext doesn't verify
-  (`tpm`, `android-key`, `apple`, `fido-u2f` — `"direct"` brings them) counts as unattested: it
-  registers under `allowUnattested`, and is refused otherwise.
+  (`android-safetynet`, `compound`) counts as unattested: it registers under `allowUnattested`,
+  and is refused otherwise. Apple's anonymous attestation and U2F keys carry an all-zero AAGUID,
+  which no metadata entry has: they register only with `allowUnknownAuthenticators`.
 - **A compromised model is refused** whatever the attestation: an entry whose latest status
   report is `USER_VERIFICATION_BYPASS`, `ATTESTATION_KEY_COMPROMISE`,
   `USER_KEY_REMOTE_COMPROMISE`, `USER_KEY_PHYSICAL_COMPROMISE` or `REVOKED`, or that was ever
@@ -1662,17 +1680,37 @@ one more day, then registrations are refused (`400 { code: "attestation" }`; `re
 answers `invalid`) until a refresh succeeds — retried at most every five minutes. Sign-ins never
 consult the metadata.
 
-| Key                          | Default                         | What it sets                                           |
-| ---------------------------- | ------------------------------- | ------------------------------------------------------ |
-| `url`                        | `https://mds.fidoalliance.org/` | Where the BLOB is fetched (`https:` only)              |
-| `blob`                       | —                               | The BLOB itself, or a loader; `url` is then unused     |
-| `timeoutMs`                  | `15000`                         | The fetch timeout                                      |
-| `maxBytes`                   | 32 MiB                          | The largest BLOB accepted                              |
-| `allowUnattested`            | `false`                         | Accept `none` / self attestation                       |
-| `allowUnknownAuthenticators` | `false`                         | Accept a certificate attestation the BLOB doesn't list |
+| Key                          | Default                                   | What it sets                                           |
+| ---------------------------- | ----------------------------------------- | ------------------------------------------------------ |
+| `url`                        | `https://mds.fidoalliance.org/`           | Where the BLOB is fetched (`https:` only)              |
+| `blob`                       | —                                         | The BLOB itself, or a loader; `url` is then unused     |
+| `timeoutMs`                  | `15000`                                   | The fetch timeout                                      |
+| `maxBytes`                   | 32 MiB                                    | The largest BLOB accepted                              |
+| `allowUnattested`            | `false`                                   | Accept `none` / self attestation                       |
+| `allowUnknownAuthenticators` | `false`                                   | Accept a certificate attestation the BLOB doesn't list |
+| `revocation`                 | `"require"` (`"best-effort"` with `blob`) | What a CRL that can't be had means (below)             |
 
-Certificate revocation lists (of the BLOB's chain and of attestation chains) are not fetched;
-the pinned root expires on 2029-03-18, and a denext release before then pins its successor.
+**Revocation.** Every certificate of the BLOB's signing path, and of an attestation's `x5c`
+path to its metadata roots, that names CRL distribution points is checked against its issuer's
+certificate revocation list (RFC 5280 §5); a certificate the CRL lists is refused (for the BLOB,
+the refresh fails and the held BLOB serves out its grace day). The fetch is bounded: `http:` /
+`https:` distribution points only (a CRL is signed, so plain HTTP can't forge one), at most four
+per certificate, one fetch per URL at a time, a timeout of `timeoutMs` capped at 10 s, and a
+4 MiB body cap. A CRL is used only when its signature verifies with the issuer's key, it names
+the certificate's issuer, it is current (`thisUpdate` ≤ now ≤ `nextUpdate`; one without
+`nextUpdate` is refused) and it has no critical extension the reader doesn't know (a delta,
+indirect or reason-partitioned CRL is not used). A usable CRL is cached per URL until its
+`nextUpdate` (64 at most); a failed fetch is not retried for five minutes. `revocation` decides
+what happens when no usable CRL can be had for a certificate that names one:
+
+- `"require"` — the path is refused (fail closed). The default when the BLOB is fetched.
+- `"best-effort"` — the check is skipped and a warning logged once per URL; a usable CRL that
+  lists the certificate still refuses it. The default when `blob` supplies the BLOB, since a
+  server without outbound network can't reach a CRL either.
+- `"off"` — no CRL is fetched.
+
+A certificate without a distribution point has nothing to check; OCSP is not used. The pinned
+root expires on 2029-03-18, and a denext release before then pins its successor.
 
 ## Roles and authorization
 

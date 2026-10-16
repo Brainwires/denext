@@ -12,9 +12,10 @@
  *   data's exact length (§6.5.1);
  * - the credential public key (COSE, RFC 9052/9053): ES256 (`-7`, P-256), RS256 (`-257`) and
  *   EdDSA (`-8`, Ed25519) — and nothing else;
- * - the attestation statement (§8): `none` (§8.7) and `packed` (§8.2) — self attestation, or
- *   an `x5c` leaf whose signature and §8.2.1 certificate requirements are checked (the chain
- *   to a trust anchor is evaluated only with `passkeys.attestation.mds`, one layer up; see
+ * - the attestation statement (§8): `none` (§8.7), `packed` (§8.2) — self attestation, or
+ *   an `x5c` leaf whose signature and §8.2.1 certificate requirements are checked — and `tpm`,
+ *   `android-key`, `fido-u2f` and `apple` ({@link ./webauthn-attestation.ts}); the chain to a
+ *   trust anchor is evaluated only with `passkeys.attestation.mds`, one layer up (see
  *   {@linkcode RegistrationResult});
  * - the assertion signature over `authenticatorData ‖ SHA-256(clientDataJSON)` (§7.2 step 20),
  *   the backup-eligibility flag against the stored record, and the signature counter (§6.1.1):
@@ -26,9 +27,29 @@
  * @module
  */
 
-import { timingSafeEqual } from "node:crypto";
 import { decodeCbor, decodeCborPrefix } from "./cbor.ts";
 import { base64UrlDecode, base64UrlEncode } from "./oauth.ts";
+import {
+  bytesEqual,
+  type Certificate,
+  check,
+  concat,
+  derAt,
+  derChildren,
+  derToRawEcdsa,
+  parseCertificate,
+  sha256,
+  WebAuthnError,
+} from "./webauthn-der.ts";
+
+import {
+  type AttestationType,
+  CERTIFIED_FORMATS,
+  checkAaguidExtension,
+  type VerifiedAttestation,
+} from "./webauthn-attestation.ts";
+
+export { derToRawEcdsa, hex, WebAuthnError, type WebAuthnErrorCode } from "./webauthn-der.ts";
 
 /** A COSE algorithm this relying party verifies: ES256, RS256 or EdDSA (Ed25519). */
 export type PasskeyAlgorithm = -7 | -257 | -8;
@@ -36,55 +57,7 @@ export type PasskeyAlgorithm = -7 | -257 | -8;
 /** The supported algorithms, in the preference order offered to the client. */
 export const PASSKEY_ALGORITHMS: readonly PasskeyAlgorithm[] = [-8, -7, -257];
 
-/** Why a ceremony was refused — stable codes for logs and `signInFailed`. */
-export type WebAuthnErrorCode =
-  | "malformed"
-  | "type"
-  | "challenge"
-  | "origin"
-  | "cross_origin"
-  | "rp_id"
-  | "user_presence"
-  | "user_verification"
-  | "backup_state"
-  | "algorithm"
-  | "attestation"
-  | "signature"
-  | "counter";
-
-/** A refused ceremony. `code` says which check failed; the message never echoes input. */
-export class WebAuthnError extends Error {
-  override name = "WebAuthnError";
-  /**
-   * @param code The check that failed.
-   * @param message A human-readable reason.
-   */
-  constructor(readonly code: WebAuthnErrorCode, message: string) {
-    super(message);
-  }
-}
-
-/** Throw a {@link WebAuthnError} unless `condition` holds. */
-function check(condition: unknown, code: WebAuthnErrorCode, message: string): asserts condition {
-  if (!condition) throw new WebAuthnError(code, message);
-}
-
 const encoder = new TextEncoder();
-
-/** SHA-256 of `bytes`. */
-async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource));
-}
-
-/** Constant-time equality of two byte strings (the length is not secret). */
-function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-/** Concatenate byte strings (small, fixed inputs: authenticator data and a hash). */
-function concat(...parts: Uint8Array[]): Uint8Array {
-  return Uint8Array.from(parts.flatMap((part) => [...part]));
-}
 
 // ---- client data (§5.8.1) ------------------------------------------------------
 
@@ -372,58 +345,6 @@ async function importCredentialKey(bytes: Uint8Array): Promise<CredentialKey> {
 }
 
 /**
- * An ECDSA signature as WebAuthn carries it — ASN.1 DER `SEQUENCE { r INTEGER, s INTEGER }`
- * (§6.5.5) — converted to the fixed-width `r ‖ s` WebCrypto verifies.
- *
- * @param der The DER signature.
- * @param size The scalar size in bytes (32 for P-256).
- * @returns The raw signature, or `null` when the DER is malformed.
- */
-export function derToRawEcdsa(der: Uint8Array, size = 32): Uint8Array | null {
-  const seq = shortTlv(der, 0, 0x30);
-  if (!seq || seq.end !== der.length) return null;
-  const r = derInteger(der, seq.start, seq.end, size);
-  const s = r && derInteger(der, r.end, seq.end, size);
-  if (!r || !s || s.end !== seq.end) return null;
-  const out = new Uint8Array(size * 2);
-  out.set(r.value, size - r.value.length);
-  out.set(s.value, size * 2 - s.value.length);
-  return out;
-}
-
-/** A short-form DER TLV of `tag` at `at` (r and s of P-256 never need a long-form length). */
-function shortTlv(
-  der: Uint8Array,
-  at: number,
-  tag: number,
-): { start: number; end: number } | null {
-  if (der[at] !== tag || at + 2 > der.length || der[at + 1] & 0x80) return null;
-  const start = at + 2;
-  const end = start + der[at + 1];
-  return end <= der.length ? { start, end } : null;
-}
-
-/**
- * A minimally encoded, positive DER INTEGER of at most `size` bytes at `at` (inside `limit`),
- * its leading sign byte dropped.
- */
-function derInteger(
-  der: Uint8Array,
-  at: number,
-  limit: number,
-  size: number,
-): { value: Uint8Array; end: number } | null {
-  const int = shortTlv(der, at, 0x02);
-  if (!int || int.end > limit || int.end === int.start) return null;
-  const bytes = der.subarray(int.start, int.end);
-  const padded = bytes.length > 1 && bytes[0] === 0;
-  // One leading zero only when the next byte's high bit is set; never a negative value.
-  if ((padded && (bytes[1] & 0x80) === 0) || bytes[0] & 0x80) return null;
-  const value = padded ? bytes.subarray(1) : bytes;
-  return value.length <= size ? { value, end: int.end } : null;
-}
-
-/**
  * Verify a WebAuthn signature with an imported key.
  *
  * @param key The algorithm and key.
@@ -469,8 +390,8 @@ export interface RegistrationExpectations extends Omit<ClientDataExpectations, "
   /** The algorithms offered in `pubKeyCredParams` (§7.1 step 17). Default: all supported. */
   algorithms?: readonly PasskeyAlgorithm[];
   /**
-   * Accept an attestation statement format this relying party can't verify (`tpm`,
-   * `android-key`, `apple`, `fido-u2f`, …) as no attestation (`fmt: "none"`) instead of refusing
+   * Accept an attestation statement format this relying party can't verify
+   * (`android-safetynet`, `compound`, …) as no attestation (`fmt: "none"`) instead of refusing
    * the registration — what a relying party that asks for `"direct"` attestation but accepts
    * unattested credentials needs. Default `false`.
    */
@@ -499,18 +420,22 @@ export interface RegistrationResult {
    * The attestation statement format — `"none"` also for a format accepted unverified under
    * {@linkcode RegistrationExpectations.acceptUnverifiedFormats}.
    */
-  fmt: "none" | "packed";
+  fmt: AttestationFormat;
   /**
-   * What the attestation established (§6.5.4): `"none"`, `"self"` (packed without `x5c`), or
-   * `"basic"` — an `x5c` leaf whose signature and certificate profile verified. This function
-   * does not chain the leaf to a trust anchor, so on its own `"basic"` is unverified attestation,
-   * never proof of a specific authenticator model; `passkeys.attestation.mds` chains it to the
-   * FIDO Metadata Service's roots one layer up ({@link ./fido-mds.ts}).
+   * What the attestation established (§6.5.4): `"none"`, `"self"` (packed without `x5c`),
+   * `"basic"` (packed / android-key / fido-u2f with a verified `x5c` leaf), `"attca"` (tpm) or
+   * `"anonca"` (apple). This function does not chain the leaf to a trust anchor, so on its own a
+   * certificate type is unverified attestation, never proof of a specific authenticator model;
+   * `passkeys.attestation.mds` chains it to the FIDO Metadata Service's roots one layer up
+   * ({@link ./fido-mds.ts}).
    */
-  attestationType: "none" | "self" | "basic";
-  /** The packed statement's `x5c` (DER, leaf first), for `"basic"` attestation. */
+  attestationType: AttestationType;
+  /** The statement's `x5c` (DER, leaf first), for a certificate attestation type. */
   attestationCertificates?: Uint8Array[];
 }
+
+/** The attestation statement formats this relying party verifies. */
+export type AttestationFormat = "none" | "packed" | "tpm" | "android-key" | "fido-u2f" | "apple";
 
 /** A CBOR map's string-keyed value. */
 function field(map: Map<number | string, unknown>, key: string): unknown {
@@ -581,11 +506,16 @@ export async function verifyRegistration(
   // Steps 19–21: the attestation statement.
   const attestation = await verifyAttestation(
     fmt,
-    attStmt as Map<number | string, unknown>,
-    authDataBytes,
-    clientDataHash,
+    {
+      stmt: attStmt as Map<number | string, unknown>,
+      authData: authDataBytes,
+      clientDataHash,
+      credentialPublicKey: attested.publicKey,
+      credentialId: attested.credentialId,
+      aaguid: attested.aaguid,
+      rpIdHash: authData.rpIdHash,
+    },
     credential,
-    attested.aaguid,
     expected.acceptUnverifiedFormats === true,
   );
   return {
@@ -597,41 +527,41 @@ export async function verifyRegistration(
     backupEligible: authData.flags.backupEligible,
     backedUp: authData.flags.backedUp,
     userVerified: authData.flags.userVerified,
-    fmt: fmt === "packed" ? "packed" : "none",
+    fmt: isVerifiedFormat(fmt) ? fmt : "none",
     attestationType: attestation.type,
     ...(attestation.x5c ? { attestationCertificates: attestation.x5c } : {}),
   };
 }
 
-/** What an attestation statement established, with the `x5c` chain of a `"basic"` one. */
-interface VerifiedAttestation {
-  type: RegistrationResult["attestationType"];
-  x5c?: Uint8Array[];
+/** Whether `fmt` is a format this relying party verifies. */
+function isVerifiedFormat(fmt: string): fmt is AttestationFormat {
+  return fmt === "none" || fmt === "packed" || Object.hasOwn(CERTIFIED_FORMATS, fmt);
 }
 
 /**
  * Verify the attestation statement (§7.1 step 21) for the formats denext supports.
  *
- * @returns The attestation type it established (and the `x5c` chain of a basic one).
+ * @returns The attestation type it established (and the `x5c` chain of a certificate one).
  */
 async function verifyAttestation(
   fmt: string,
-  stmt: Map<number | string, unknown>,
-  authData: Uint8Array,
-  clientDataHash: Uint8Array,
+  input: Parameters<(typeof CERTIFIED_FORMATS)[string]>[0],
   credential: CredentialKey,
-  aaguid: Uint8Array,
   acceptUnverifiedFormats: boolean,
 ): Promise<VerifiedAttestation> {
   // An unsupported format, accepted unverified: its statement proves nothing here.
-  if (fmt !== "none" && fmt !== "packed" && acceptUnverifiedFormats) return { type: "none" };
+  if (!isVerifiedFormat(fmt) && acceptUnverifiedFormats) return { type: "none" };
   if (fmt === "none") {
     // §8.7: the statement is the empty map.
-    check(stmt.size === 0, "attestation", "a none attestation statement must be empty");
+    check(input.stmt.size === 0, "attestation", "a none attestation statement must be empty");
     return { type: "none" };
   }
-  check(fmt === "packed", "attestation", "unsupported attestation format");
-  return await verifyPacked(stmt, concat(authData, clientDataHash), credential, aaguid);
+  if (fmt === "packed") {
+    const signed = concat(input.authData, input.clientDataHash);
+    return await verifyPacked(input.stmt, signed, credential, input.aaguid);
+  }
+  check(isVerifiedFormat(fmt), "attestation", "unsupported attestation format");
+  return await CERTIFIED_FORMATS[fmt](input);
 }
 
 /**
@@ -676,164 +606,11 @@ async function verifyPacked(
 
 // ---- a minimal X.509 reader (RFC 5280) for the packed leaf (§8.2.1) -------------------
 
-/** One DER TLV. */
-export interface Der {
-  tag: number;
-  /** The value bytes. */
-  value: Uint8Array;
-  /** The whole TLV, header included. */
-  raw: Uint8Array;
-}
-
-/**
- * Read the DER TLV at `at`.
- *
- * @param bytes The DER bytes.
- * @param at The offset of the tag byte.
- * @returns The TLV.
- * @throws {WebAuthnError} `attestation` on malformed DER.
- */
-export function derAt(bytes: Uint8Array, at: number): Der {
-  check(at + 2 <= bytes.length, "attestation", "truncated certificate");
-  const tag = bytes[at];
-  let len = bytes[at + 1];
-  let head = 2;
-  if (len & 0x80) {
-    const n = len & 0x7f;
-    check(n >= 1 && n <= 3 && at + 2 + n <= bytes.length, "attestation", "bad DER length");
-    len = 0;
-    for (let i = 0; i < n; i++) len = (len << 8) | bytes[at + 2 + i];
-    head += n;
-  }
-  check(at + head + len <= bytes.length, "attestation", "DER length exceeds the certificate");
-  return {
-    tag,
-    value: bytes.subarray(at + head, at + head + len),
-    raw: bytes.subarray(at, at + head + len),
-  };
-}
-
-/**
- * The TLVs inside a constructed DER value.
- *
- * @param value The constructed value's content bytes.
- * @returns Its children, in order.
- * @throws {WebAuthnError} `attestation` on malformed DER.
- */
-export function derChildren(value: Uint8Array): Der[] {
-  const out: Der[] = [];
-  for (let at = 0; at < value.length;) {
-    const child = derAt(value, at);
-    out.push(child);
-    at += child.raw.length;
-  }
-  return out;
-}
-
-/** What §8.2.1 asks of the attestation certificate. */
-interface Certificate {
-  /** The `version` field's value (2 means v3). */
-  version: number;
-  /** Subject attributes by OID (hex of the DER body). */
-  subject: Map<string, string>;
-  /** The SubjectPublicKeyInfo, DER. */
-  spki: Uint8Array;
-  /** Extensions by OID hex: criticality and the OCTET STRING's content. */
-  extensions: Map<string, CertificateExtension>;
-}
-
 const OID_C = "550406";
 const OID_O = "55040a";
 const OID_OU = "55040b";
 const OID_CN = "550403";
 const OID_BASIC_CONSTRAINTS = "551d13";
-/** `id-fido-gen-ce-aaguid`, 1.3.6.1.4.1.45724.1.1.4 (§8.2.1). */
-const OID_FIDO_AAGUID = "2b0601040182e51c010104";
-
-/**
- * Hex of a byte string.
- *
- * @param bytes The bytes.
- * @returns Lowercase hex.
- */
-export function hex(bytes: Uint8Array): string {
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/** The `version` of a tbsCertificate's parts (`[0] EXPLICIT INTEGER`, v1 when absent). */
-function certificateVersion(parts: Der[]): { version: number; next: number } {
-  if (parts[0]?.tag !== 0xa0) return { version: 0, next: 0 };
-  const v = derChildren(parts[0].value)[0];
-  check(v?.tag === 0x02 && v.value.length === 1, "attestation", "bad version");
-  return { version: v.value[0], next: 1 };
-}
-
-/** A Name's attributes by OID hex (RDNSequence of SETs of AttributeTypeAndValue). */
-function nameAttributes(name: Der): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const rdn of derChildren(name.value)) {
-    for (const atv of derChildren(rdn.value)) {
-      const [oid, value] = derChildren(atv.value);
-      if (oid?.tag === 0x06 && value) {
-        out.set(hex(oid.value), new TextDecoder().decode(value.value));
-      }
-    }
-  }
-  return out;
-}
-
-/** One certificate extension: its criticality and the extnValue OCTET STRING's content. */
-export interface CertificateExtension {
-  critical: boolean;
-  value: Uint8Array;
-}
-
-/**
- * The `[3] EXPLICIT Extensions` among a tbsCertificate's fields, by OID hex. A malformed
- * extension, or one that appears twice (RFC 5280 §4.2), fails the certificate.
- *
- * @param parts The tbsCertificate's fields.
- * @returns The extensions.
- * @throws {WebAuthnError} `attestation` on a malformed or repeated extension.
- */
-export function certificateExtensions(parts: Der[]): Map<string, CertificateExtension> {
-  const out = new Map<string, CertificateExtension>();
-  const wrapper = parts.find((p) => p.tag === 0xa3);
-  const [seq] = wrapper ? derChildren(wrapper.value) : [];
-  for (const ext of seq ? derChildren(seq.value) : []) {
-    // Extension ::= SEQUENCE { extnID OID, critical BOOLEAN DEFAULT FALSE, extnValue OCTET STRING }
-    const items = derChildren(ext.value);
-    const octets = items[items.length - 1];
-    check(items[0]?.tag === 0x06 && octets?.tag === 0x04, "attestation", "malformed extension");
-    const id = hex(items[0].value);
-    check(!out.has(id), "attestation", "a repeated certificate extension");
-    out.set(id, {
-      critical: items[1]?.tag === 0x01 && items[1].value[0] !== 0,
-      value: octets.value,
-    });
-  }
-  return out;
-}
-
-/** Parse the fields of a DER certificate that §8.2.1 checks. */
-function parseCertificate(der: Uint8Array): Certificate {
-  const cert = derAt(der, 0);
-  check(cert.tag === 0x30 && cert.raw.length === der.length, "attestation", "not a certificate");
-  const [tbs] = derChildren(cert.value);
-  check(tbs?.tag === 0x30, "attestation", "no tbsCertificate");
-  const parts = derChildren(tbs.value);
-  const { version, next } = certificateVersion(parts);
-  // serialNumber, signature, issuer, validity, subject, subjectPublicKeyInfo
-  const subject = parts[next + 4];
-  const spki = parts[next + 5];
-  check(subject?.tag === 0x30 && spki?.tag === 0x30, "attestation", "bad certificate body");
-  return {
-    version,
-    subject: nameAttributes(subject),
-    spki: spki.raw,
-    extensions: certificateExtensions(parts.slice(next + 6)),
-  };
-}
 
 /**
  * §8.2.1 "Certificate Requirements for Packed Attestation Statements": version 3; a subject
@@ -859,16 +636,7 @@ function checkPackedCertificate(cert: Certificate, aaguid: Uint8Array): void {
       "the attestation certificate is a CA",
     );
   }
-  const ext = cert.extensions.get(OID_FIDO_AAGUID);
-  if (ext) {
-    check(!ext.critical, "attestation", "the AAGUID extension must not be critical");
-    const inner = derAt(ext.value, 0);
-    check(
-      inner.tag === 0x04 && bytesEqual(inner.value, aaguid),
-      "attestation",
-      "the certificate's AAGUID differs from the authenticator data's",
-    );
-  }
+  checkAaguidExtension(cert, aaguid);
 }
 
 /** Import the leaf's public key for the attestation `alg`. */

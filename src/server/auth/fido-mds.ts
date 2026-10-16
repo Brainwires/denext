@@ -16,7 +16,8 @@
  * (retried at most every five minutes).
  *
  * **A registration** is checked after the WebAuthn verification ({@link ./webauthn.ts}):
- * - `packed` attestation with `x5c` (`"basic"`): the authenticator's AAGUID must have a
+ * - a certificate attestation (`packed` with `x5c`, `tpm`, `android-key`, `apple`, `fido-u2f`):
+ *   the authenticator's AAGUID must have a
  *   metadata entry (unless `allowUnknownAuthenticators`), and the `x5c` chain must validate to
  *   that entry's `attestationRootCertificates`.
  * - `none` or self attestation proves no model, so it is refused unless `allowUnattested` —
@@ -26,14 +27,32 @@
  *   `ATTESTATION_KEY_COMPROMISE`, `USER_KEY_REMOTE_COMPROMISE`, `USER_KEY_PHYSICAL_COMPROMISE`
  *   or `REVOKED` — and `REVOKED` / `ATTESTATION_KEY_COMPROMISE` anywhere in its history.
  *
- * Revocation lists (CRLs) of the BLOB's and the attestation's certificates are not fetched.
+ * **Revocation.** Every certificate of the BLOB's signing path and of an attestation's `x5c`
+ * path that names CRL distribution points is checked against its issuer's CRL ({@link ./crl.ts}:
+ * a bounded fetch, kept until the CRL's `nextUpdate`). `revocation` sets what a CRL that can't be
+ * had means: `"require"` refuses the path (the default, unless the BLOB is supplied as `blob`),
+ * `"best-effort"` goes on without it (the default with `blob`, which suits a server with no
+ * outbound network), `"off"` fetches none. A listed certificate is refused under both.
  *
  * @module
  */
 
 import { hex, type RegistrationResult, WebAuthnError } from "./webauthn.ts";
 import { base64UrlDecode } from "./oauth.ts";
-import { base64Der, dnsNames, verifyCertificateChain, verifyWithSpki } from "./x509-chain.ts";
+import {
+  base64Der,
+  dnsNames,
+  type RevocationCheck,
+  verifyCertificateChain,
+  verifyWithSpki,
+} from "./x509-chain.ts";
+import {
+  cappedBytes,
+  CrlCache,
+  distributionPoints,
+  RevocationError,
+  type RevocationMode,
+} from "./crl.ts";
 import type { AuthPasskeyMdsConfig } from "./types.ts";
 
 /** The MDS settings, defaults applied. `roots` is always the pinned FIDO root in production. */
@@ -44,9 +63,18 @@ export interface ResolvedMds {
   maxBytes: number;
   allowUnattested: boolean;
   allowUnknownAuthenticators: boolean;
+  /** What a CRL that can't be had means (see the module doc). */
+  revocation: RevocationMode;
   /** The BLOB's trust anchors (DER). */
   roots: readonly Uint8Array[];
+  /** Fetch for CRLs (tests inject one). Default: the global `fetch`. */
+  fetch?: typeof fetch;
 }
+
+/** The largest CRL accepted. */
+const CRL_MAX_BYTES = 4 * 1024 * 1024;
+/** The longest a CRL fetch may take. */
+const CRL_TIMEOUT_MS = 10_000;
 
 /** One authenticator's metadata entry, as the checks read it. */
 interface MdsEntry {
@@ -133,8 +161,44 @@ export function resolveMds(config: AuthPasskeyMdsConfig | undefined): ResolvedMd
     maxBytes: positive(config.maxBytes, 32 * 1024 * 1024),
     allowUnattested: config.allowUnattested === true,
     allowUnknownAuthenticators: config.allowUnknownAuthenticators === true,
+    revocation: revocationMode(config),
     roots: [base64Der(FIDO_MDS_ROOT)],
   };
+}
+
+/** `revocation`, validated; `"best-effort"` with an offline `blob`, else `"require"`. */
+function revocationMode(config: AuthPasskeyMdsConfig): RevocationMode {
+  const mode = config.revocation ?? (config.blob !== undefined ? "best-effort" : "require");
+  if (mode !== "require" && mode !== "best-effort" && mode !== "off") {
+    throw new Error(
+      'denextAuth: `passkeys.attestation.mds.revocation` must be "require", "best-effort" or "off"',
+    );
+  }
+  return mode;
+}
+
+const crlCaches = new WeakMap<ResolvedMds, CrlCache>();
+
+/** The revocation check for paths validated under `mds` (one CRL cache per configuration). */
+export function revocationCheckOf(mds: ResolvedMds): RevocationCheck {
+  let cache = crlCaches.get(mds);
+  if (!cache) {
+    cache = new CrlCache({
+      mode: mds.revocation,
+      timeoutMs: Math.min(mds.timeoutMs, CRL_TIMEOUT_MS),
+      maxBytes: CRL_MAX_BYTES,
+      ...(mds.fetch ? { fetch: mds.fetch } : {}),
+      warn: (message) => console.warn(message),
+    }, verifyWithSpki);
+    crlCaches.set(mds, cache);
+  }
+  const crls = cache;
+  return (cert, issuer, now) =>
+    crls.check(
+      { serial: cert.serial, issuer: cert.issuer, crlUrls: distributionPoints(cert.extensions) },
+      issuer.spki,
+      now,
+    );
 }
 
 // ---- the BLOB ------------------------------------------------------------------------
@@ -183,12 +247,13 @@ async function verifyJws(
   header: Record<string, unknown>,
   roots: readonly Uint8Array[],
   now: number,
+  revocation?: RevocationCheck,
 ): Promise<void> {
   const x5c = header.x5c;
   if (!Array.isArray(x5c) || x5c.length === 0 || typeof header.alg !== "string") {
     refuse("the metadata BLOB's header has no alg / x5c");
   }
-  const leaf = await verifyCertificateChain(x5c.map(base64Der), roots, now);
+  const leaf = await verifyCertificateChain(x5c.map(base64Der), roots, now, revocation);
   if (!dnsNames(leaf).includes(MDS_SIGNER_HOST)) {
     refuse("the metadata BLOB is not signed by the FIDO Metadata Service");
   }
@@ -204,6 +269,7 @@ async function verifyJws(
  * @param jwt The BLOB.
  * @param roots The trust anchors (DER) — the pinned FIDO root in production.
  * @param now The validation time, epoch ms.
+ * @param revocation Checks the signing path's certificates (see {@linkcode revocationCheckOf}).
  * @returns The verified BLOB.
  * @throws {WebAuthnError} `attestation` when it doesn't verify; a `CertificateChainError` when
  *   its chain doesn't.
@@ -212,12 +278,13 @@ export async function verifyMdsBlob(
   jwt: string,
   roots: readonly Uint8Array[],
   now: number,
+  revocation?: RevocationCheck,
 ): Promise<MdsBlob> {
   const parts = jwt.trim().split(".");
   if (parts.length !== 3 || parts.some((p) => !/^[A-Za-z0-9_-]+$/.test(p))) {
     refuse("the metadata BLOB is not a compact JWS");
   }
-  await verifyJws(parts, jsonPart(parts[0], "header"), roots, now);
+  await verifyJws(parts, jsonPart(parts[0], "header"), roots, now, revocation);
   const payload = jsonPart(parts[1], "payload");
   if (typeof payload.no !== "number" || !Number.isSafeInteger(payload.no)) {
     refuse("the metadata BLOB has no serial number");
@@ -231,25 +298,8 @@ export async function verifyMdsBlob(
 
 /** Read a response body, refusing more than `max` bytes. */
 async function cappedText(response: Response, max: number): Promise<string> {
-  const declared = Number(response.headers.get("content-length") ?? "0");
-  if (declared > max) {
-    await response.body?.cancel();
-    refuse("the metadata BLOB is too large");
-  }
-  const reader = response.body?.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (let step = await reader?.read(); step && !step.done; step = await reader!.read()) {
-    total += step.value.byteLength;
-    if (total > max) {
-      await reader!.cancel();
-      refuse("the metadata BLOB is too large");
-    }
-    chunks.push(step.value);
-  }
-  const out = new Uint8Array(total);
-  chunks.reduce((at, chunk) => (out.set(chunk, at), at + chunk.byteLength), 0);
-  return new TextDecoder().decode(out);
+  const bytes = await cappedBytes(response, max);
+  return bytes ? new TextDecoder().decode(bytes) : refuse("the metadata BLOB is too large");
 }
 
 /** The BLOB's text: the app's own copy, or one fetch (timeout + size cap). */
@@ -279,7 +329,12 @@ const caches = new WeakMap<ResolvedMds, MdsCache>();
 
 /** Fetch and verify a fresh BLOB; refuse a rollback or one already stale. */
 async function refresh(mds: ResolvedMds, held: MdsBlob | undefined, now: number): Promise<MdsBlob> {
-  const blob = await verifyMdsBlob(await blobText(mds), mds.roots, now);
+  const blob = await verifyMdsBlob(
+    await blobText(mds),
+    mds.roots,
+    now,
+    revocationCheckOf(mds),
+  );
   if (held && blob.no < held.no) refuse("the metadata BLOB is older than the one held");
   if (blob.nextUpdate + GRACE_MS <= now) refuse("the metadata BLOB is out of date");
   return blob;
@@ -350,7 +405,7 @@ function checkStatus(entry: MdsEntry): void {
   }
 }
 
-/** A certificate attestation: a known AAGUID whose roots the `x5c` chains to. */
+/** A certificate attestation: a known AAGUID whose roots the `x5c` chains (unrevoked) to. */
 async function checkCertified(
   mds: ResolvedMds,
   entry: MdsEntry | undefined,
@@ -363,8 +418,9 @@ async function checkCertified(
   }
   const roots = entry.attestationRootCertificates.map(base64Der);
   try {
-    await verifyCertificateChain(x5c, roots, now);
-  } catch {
+    await verifyCertificateChain(x5c, roots, now, revocationCheckOf(mds));
+  } catch (error) {
+    if (error instanceof RevocationError) refuse(`the attestation chain: ${error.message}`);
     refuse("the attestation does not chain to the authenticator's metadata roots");
   }
 }
@@ -382,7 +438,8 @@ export async function checkMdsAttestation(
   result: Pick<RegistrationResult, "aaguid" | "attestationType" | "attestationCertificates">,
   now = Date.now(),
 ): Promise<void> {
-  const certified = result.attestationType === "basic" && !!result.attestationCertificates;
+  const certified = result.attestationType !== "none" && result.attestationType !== "self" &&
+    !!result.attestationCertificates;
   if (!certified && !mds.allowUnattested) {
     refuse("an attestation certificate is required (passkeys.attestation.mds)");
   }
