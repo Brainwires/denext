@@ -280,6 +280,11 @@ export { StrictMode } from "./src/runtime/strict-mode.ts";
 // `React.cache` / `Activity` / `ViewTransition` and Next's `unstable_rethrow`, on the root so
 // an app written against `denext` never needs the `react` / `next/*` aliases for them.
 export { Activity, cache, ViewTransition } from "./src/runtime/react-extras.ts";
+export type {
+  ViewTransitionCallback,
+  ViewTransitionInstance,
+  ViewTransitionPseudoElement,
+} from "./src/runtime/react-extras.ts";
 export { unstable_rethrow } from "./src/runtime/error-boundary.ts";
 /** `React.createElement` — denext's hyperscript (`h`) under React's name. */
 export { h as createElement } from "./src/jsx/jsx-runtime.ts";

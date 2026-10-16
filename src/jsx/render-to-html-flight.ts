@@ -91,7 +91,7 @@ export interface DeferredValueSink {
    */
   hole(
     promise: PromiseLike<unknown>,
-    serialize: (value: unknown) => Promise<Serialized>,
+    serialize: (value: unknown) => Promise<FlightValue | symbol>,
   ): FlightValue;
 }
 

@@ -43,7 +43,8 @@ a helper of its own (not `cookies()` / `headers()` / `auth()` / `searchParams`) 
 what its route files say. Version 1 only ever gains fields; a breaking change bumps `version`.
 
 A **deploy adapter** turns the manifest into a target's files. Name one in `denext.config.ts`
-(add `"denext/deploy": "jsr:@denext/denext@^4/deploy"` to `deno.json`'s imports):
+(`denext create` maps `denext/deploy`; an older project adds
+`"denext/deploy": "jsr:@denext/denext@^4/deploy"` to `deno.json`'s imports):
 
 ```ts
 // denext.config.ts

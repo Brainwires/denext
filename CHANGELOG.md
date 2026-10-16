@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Added
 
+- **`ViewTransitionCallback`, `ViewTransitionInstance` and `ViewTransitionPseudoElement`
+  (`denext`) and `DeferredValueSink` (`denext/server`) are exported**: the types the public
+  `<ViewTransition>` props and the render options already referenced (`deno task doc-lint` is
+  clean again). `denext create` maps `denext/deploy` in the new app's `deno.json`.
 - **Deploy adapters and presets: `denext/deploy`, `denext deploy`.** `denext build` writes
   `.denext/deploy-manifest.json`, a typed, versioned build manifest (`DeployManifest`, exported
   from `denext/deploy` and `denext/plugin-kit`): every route classified as `static`, `isr`,

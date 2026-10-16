@@ -41,7 +41,12 @@ export type {
 } from "../jsx/render-to-flight.ts";
 export { renderToFlight } from "../jsx/render-to-flight.ts";
 export { renderToHtmlFlight, serializeFlight } from "../jsx/render-to-html-flight.ts";
-export type { HtmlFlight, HtmlFlightOptions, IslandPayload } from "../jsx/render-to-html-flight.ts";
+export type {
+  DeferredValueSink,
+  HtmlFlight,
+  HtmlFlightOptions,
+  IslandPayload,
+} from "../jsx/render-to-html-flight.ts";
 export type { HydrationStrategy } from "../runtime/lazy-directive.ts";
 export { renderToFlightStream } from "../jsx/render-to-flight-stream.ts";
 export type { FlightStreamOptions } from "../jsx/render-to-flight-stream.ts";

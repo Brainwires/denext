@@ -4269,6 +4269,42 @@
           "denextOnly": false
         },
         {
+          "name": "ViewTransitionCallback",
+          "slug": "ViewTransitionCallback",
+          "kind": "typeAlias",
+          "signature": "type ViewTransitionCallback = (instance: ViewTransitionInstance, types: string[]) => void | parenthesized",
+          "doc": "A <ViewTransition> onEnter / onExit / onUpdate / onShare callback (React's): called with the boundary's ViewTransitionInstance and the transition's types; a returned function runs when the transition finishes.",
+          "docFull": "A `<ViewTransition>` `onEnter` / `onExit` / `onUpdate` / `onShare` callback (React's): called with\nthe boundary's {@link ViewTransitionInstance} and the transition's types; a returned function\nruns when the transition finishes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ViewTransitionInstance",
+          "slug": "ViewTransitionInstance",
+          "kind": "interface",
+          "signature": "interface ViewTransitionInstance",
+          "doc": "What a <ViewTransition> callback receives (React's ViewTransitionInstance).",
+          "docFull": "What a `<ViewTransition>` callback receives (React's `ViewTransitionInstance`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ViewTransitionPseudoElement",
+          "slug": "ViewTransitionPseudoElement",
+          "kind": "interface",
+          "signature": "interface ViewTransitionPseudoElement",
+          "doc": "One ::view-transition-* pseudo-element of a boundary (React's ViewTransitionPseudoElement).",
+          "docFull": "One `::view-transition-*` pseudo-element of a boundary (React's `ViewTransitionPseudoElement`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "VirtualItem",
           "slug": "VirtualItem",
           "kind": "interface",
@@ -6727,6 +6763,18 @@
           "signature": "defaultLoader(filePath: unknown): Promise<unknown>",
           "doc": "Default module loader: dynamic import by absolute file path. A module is shared by every request, so it is loaded outside the request that first asks for it: its top-level code, and anything that code schedules, never runs as that request.",
           "docFull": "Default module loader: dynamic import by absolute file path. A module is shared by every\nrequest, so it is loaded outside the request that first asks for it: its top-level code, and\nanything that code schedules, never runs as that request.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeferredValueSink",
+          "slug": "DeferredValueSink",
+          "kind": "interface",
+          "signature": "interface DeferredValueSink",
+          "doc": "Collects the deferred values a streamed soft-navigation payload sends after it.",
+          "docFull": "Collects the deferred values a streamed soft-navigation payload sends after it.",
           "params": [],
           "returns": "",
           "examples": [],

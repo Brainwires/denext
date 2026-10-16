@@ -250,6 +250,8 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
     "denext/auth": `${dep}/auth`,
     "denext/client": `${dep}/client`,
     "denext/testing": `${dep}/testing`,
+    // Deploy adapters: `deploy: { adapter: fly({ app }) }` in denext.config.ts.
+    "denext/deploy": `${dep}/deploy`,
     // `denext generate test` writes tests against @std/assert.
     "@std/assert": "jsr:@std/assert@^1",
     // Native-target deps as bare, versioned specifiers (the lint plugin forbids

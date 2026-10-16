@@ -12,18 +12,18 @@ process is told to stop — and those are the columns below. The
 [deployment guide](/docs/deploy) has the full Docker, Deno Deploy and systemd
 recipes; this page is the map.
 
-| Target                                                                   | Runs                                       | Persistent disk                         | Notes                                                                       |
-| ------------------------------------------------------------------------ | ------------------------------------------ | --------------------------------------- | --------------------------------------------------------------------------- |
-| [Docker](#docker)                                                        | the image `denext generate docker` writes  | if you mount a volume on `/app/.denext` | the reference target; everything below that takes a container starts here   |
-| [Deno Deploy](#deno-deploy)                                              | `deno` on the platform's isolates          | **no**                                  | `Deno.cron` for jobs, `BroadcastChannel` for Live; memory cache per isolate |
-| [systemd / VPS](#systemd--vps)                                           | `deno run … jsr:@denext/denext/cli start`  | yes                                     | nginx/Caddy in front for TLS and the connection ceiling                     |
-| [Fly.io](#flyio)                                                         | the Docker image                           | a Fly volume, optional                  | `PORT` from `fly.toml`; health checks on `/_denext/health`                  |
-| [Railway](#railway)                                                      | the Docker image                           | a Railway volume, optional              | injects `PORT`; deploys on push                                             |
-| [Kubernetes](#kubernetes)                                                | the Docker image                           | a PVC, optional                         | probes, `terminationGracePeriodSeconds` vs the drain deadline               |
-| [Static hosts](#static-hosts)                                            | `denext export` output, no server          | n/a                                     | any CDN or object store; no SSR, no route handlers                          |
-| [Cloudflare Workers](#not-targets-cloudflare-workers-and-vercel)         | —                                          | —                                       | **not a target**: workerd is not Deno                                       |
-| [Vercel](#not-targets-cloudflare-workers-and-vercel)                     | —                                          | —                                       | **not a target**: no Deno runtime for the server build                      |
-| [`denext build --compile`](#a-single-binary-with-denext-build---compile) | one executable: `./app` (also `job`, `db`) | the working directory (`./.denext`)     | `deno compile` targets; Docker-baseline `--allow-*`; no `.env` embedded     |
+| Target                                                                   | Runs                                       | Persistent disk                                                        | Notes                                                                       |
+| ------------------------------------------------------------------------ | ------------------------------------------ | ---------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| [Docker](#docker)                                                        | the image `denext generate docker` writes  | if you mount a volume on a data dir (`/data`), never on `/app/.denext` | the reference target; everything below that takes a container starts here   |
+| [Deno Deploy](#deno-deploy)                                              | `deno` on the platform's isolates          | **no**                                                                 | `Deno.cron` for jobs, `BroadcastChannel` for Live; memory cache per isolate |
+| [systemd / VPS](#systemd--vps)                                           | `deno run … jsr:@denext/denext/cli start`  | yes                                                                    | nginx/Caddy in front for TLS and the connection ceiling                     |
+| [Fly.io](#flyio)                                                         | the Docker image                           | a Fly volume, optional                                                 | `PORT` from `fly.toml`; health checks on `/_denext/health`                  |
+| [Railway](#railway)                                                      | the Docker image                           | a Railway volume, optional                                             | injects `PORT`; deploys on push                                             |
+| [Kubernetes](#kubernetes)                                                | the Docker image                           | a PVC, optional                                                        | probes, `terminationGracePeriodSeconds` vs the drain deadline               |
+| [Static hosts](#static-hosts)                                            | `denext export` output, no server          | n/a                                                                    | any CDN or object store; no SSR, no route handlers                          |
+| [Cloudflare Workers](#not-targets-cloudflare-workers-and-vercel)         | —                                          | —                                                                      | **not a target**: workerd is not Deno                                       |
+| [Vercel](#not-targets-cloudflare-workers-and-vercel)                     | —                                          | —                                                                      | **not a target**: no Deno runtime for the server build                      |
+| [`denext build --compile`](#a-single-binary-with-denext-build---compile) | one executable: `./app` (also `job`, `db`) | the working directory (`./.denext`)                                    | `deno compile` targets; Docker-baseline `--allow-*`; no `.env` embedded     |
 
 ## Docker
 
@@ -37,11 +37,21 @@ denext generate docker --stack && cp .env.example .env && docker compose up -d -
 The generated image builds in the image, runs as the unprivileged `deno` user,
 starts with the least-privilege flags
 (`--allow-net --allow-read --allow-env --allow-write=.denext`) and declares a
-`HEALTHCHECK` on `/_denext/health`. Two things to decide: mount a volume on
-`/app/.denext` if you want the ISR cache and job history to outlive the
-container (they are regenerable — losing them costs a cold cache, not data), and
-put your app database (`app.db`, `auth.db`) on a volume too, because those are
-**not** regenerable. Every managed-container platform below starts from this
+`HEALTHCHECK` on `/_denext/health`.
+
+**Persistent state goes on a data volume, never on `/app/.denext`.** `/app/.denext` holds the
+build the image was made with (`manifest.json`, the client bundles, the server copies); a volume
+mounted there hides it. A Fly or Railway volume starts empty, so the server finds no build; a
+Docker named volume is filled from the first image and then keeps serving that old build after
+every redeploy. At run time `denext start` writes only three things there, all regenerable: the
+ISR / data cache (`cache.db`), the job history (`jobs.db`, when `jobs.history` is on) and the
+services snapshot (`services.json`). To keep the cache across containers, mount a volume on a
+separate directory such as `/data`, point `cache: { path: "/data/cache.db" }` at it in
+`denext.config.ts`, and add the directory to the `start` task's grant
+(`--allow-write=.denext,/data`). Put your app database (`app.db`, `auth.db`) there too: unlike the
+cache it is **not** regenerable. A shared job history needs `jobs.history: { store }` (e.g.
+`postgresJobHistoryStore`). A `build --compile` binary moves all of its state at once with
+`DENEXT_STATE_DIR=/data`; that variable applies only to a compiled app. Every managed-container platform below starts from this
 image. Full recipe: [Deployment › Docker](/docs/deploy#docker); the compose stack with a
 database, an object store and a migrations step:
 [Deployment › Self-hosted stack](/docs/deploy#self-hosted-stack-postgres-storage-migrations).
@@ -112,9 +122,10 @@ Fly's proxy sets `X-Forwarded-Proto`, so either pin `canonicalOrigin` (above,
 preferred) or set `DENEXT_TRUST_PROXY=1`. Secrets go through
 `fly secrets set SESSION_SECRET=…`. Fly sends `SIGTERM` and waits its
 `kill_timeout` (5 s by default) — raise it above `DENEXT_SHUTDOWN_DRAIN_MS` (10
-s default) or lower the drain, or a slow request is cut mid-flight. Attach a
-volume at `/app/.denext` only if you want a warm cache across deploys; a second
-machine is a second node (see [multi-instance](/docs/multi-instance)).
+s default) or lower the drain, or a slow request is cut mid-flight. For a warm
+cache across deploys, attach a Fly volume at a data directory such as `/data` (never at
+`/app/.denext`, which would hide the image's build; see [Docker](#docker)) and set
+`cache.path` there; a second machine is a second node (see [multi-instance](/docs/multi-instance)).
 
 ## Railway
 
@@ -123,8 +134,9 @@ reads automatically (`--port` would override it). Set `SESSION_SECRET`,
 `DENEXT_CANONICAL_ORIGIN` (your Railway domain or custom domain) and
 `DENEXT_LOG=json` as service variables; set the service's health check path to
 `/_denext/health`. Railway's proxy terminates TLS and forwards the scheme;
-`canonicalOrigin` makes that irrelevant. A volume mounted at `/app/.denext`
-keeps the cache warm; replicas beyond one are separate nodes.
+`canonicalOrigin` makes that irrelevant. A volume mounted at a data directory
+such as `/data` (with `cache.path` pointing there; never at `/app/.denext`, see
+[Docker](#docker)) keeps the cache warm; replicas beyond one are separate nodes.
 
 ## Kubernetes
 

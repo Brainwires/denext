@@ -70,24 +70,37 @@ async function fixtureManifest(): Promise<{ paths: ProjectPaths; manifest: Deplo
   return { paths, manifest: { ...manifest, denext: "4.1.0" } };
 }
 
+/**
+ * A written file's golden name: `<where>/<path with "/" as "~">.golden`, one level deep, so a path
+ * through a directory the repo ignores (`out/`) is still committed.
+ */
+function goldenName(key: string): string {
+  const [where, ...rest] = key.split("/");
+  return `${where}/${rest.join("~")}.golden`;
+}
+
 /** Compare (or, with DENEXT_UPDATE_GOLDEN=1, rewrite) every written file against the golden dir. */
 async function assertGolden(preset: string, files: Map<string, string>): Promise<void> {
   const dir = join(GOLDEN, preset);
   if (UPDATE) {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
     for (const [name, contents] of files) {
-      const target = join(dir, `${name}.golden`);
+      const target = join(dir, goldenName(name));
       await Deno.mkdir(join(target, ".."), { recursive: true });
       await Deno.writeTextFile(target, contents);
     }
   }
   const expected: string[] = [];
   for await (const e of walk(dir, { includeDirs: false, exts: [".golden"] })) {
-    expected.push(relative(dir, e.path).replaceAll("\\", "/").replace(/\.golden$/, ""));
+    expected.push(relative(dir, e.path).replaceAll("\\", "/"));
   }
-  assertEquals([...files.keys()].sort(), expected.sort(), `${preset}: the files it writes`);
+  assertEquals(
+    [...files.keys()].map(goldenName).sort(),
+    expected.sort(),
+    `${preset}: the files it writes`,
+  );
   for (const [name, contents] of files) {
-    assertEquals(contents, await Deno.readTextFile(join(dir, `${name}.golden`)), name);
+    assertEquals(contents, await Deno.readTextFile(join(dir, goldenName(name))), name);
   }
 }
 
