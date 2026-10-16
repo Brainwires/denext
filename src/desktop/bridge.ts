@@ -54,6 +54,7 @@ import {
   type DesktopMainThreadFn,
   validateStandard,
 } from "./extension.ts";
+import { readCapped } from "../utils/read-capped.ts";
 
 /** The RPC endpoint path (kept in sync with {@link ./bridge-client.ts}). */
 const RPC_PATH = "/_denext/desktop/rpc";
@@ -202,31 +203,6 @@ function gateEvents(
   if (!timingSafeEqual(presented, token)) return new Response(null, { status: 403 });
   if (!eventsPlaceOk(request, trust, info)) return new Response(null, { status: 403 });
   return null;
-}
-
-/**
- * The body as text, or `null` once it passes `max` bytes — counted while it streams, so a body
- * without (or lying about) `content-length` is cut off at the cap instead of buffered whole.
- */
-async function readCapped(request: Request, max: number): Promise<string | null> {
-  if (!request.body) return "";
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > max) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    chunks.push(value);
-  }
-  const all = new Uint8Array(size);
-  let at = 0;
-  for (const c of chunks) (all.set(c, at), at += c.byteLength);
-  return new TextDecoder().decode(all);
 }
 
 /** Read the RPC body: enforce the size cap, parse JSON, check the `{ cap, method, args }` shape. */

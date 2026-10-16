@@ -35,6 +35,7 @@ import {
 import { parseSnapshot } from "./devtools-snapshot.ts";
 import type { InspectSnapshot } from "../../client/devtools-inspect-sink.ts";
 import { sseSend } from "../sse.ts";
+import { readCapped } from "../../utils/read-capped.ts";
 
 /** Both payloads are live snapshots — never let a proxy or the browser keep one. */
 const NO_STORE = { "cache-control": "no-store" };
@@ -96,26 +97,6 @@ export async function devRoutesResponse(st: DevState, url: URL): Promise<Respons
  * Anything larger is refused with a 413 rather than buffered.
  */
 const MAX_SNAPSHOT_BYTES = 256 * 1024;
-
-/** A JSON body read, capped: the text, or null when it ran past `max` bytes. */
-async function readCapped(request: Request, max: number): Promise<string | null> {
-  const reader = request.body?.getReader();
-  if (!reader) return "";
-  const decoder = new TextDecoder();
-  let text = "";
-  let size = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > max) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    text += decoder.decode(value, { stream: true });
-  }
-  return text + decoder.decode();
-}
 
 /**
  * The media type of a `content-type` header — lower-cased, without its parameters.
