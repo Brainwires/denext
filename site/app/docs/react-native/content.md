@@ -598,10 +598,13 @@ animations in Reanimated's web build already, so their `transform` / `opacity` k
 the compositor too.
 
 `LayoutAnimation.configureNext` (a no-op in react-native-web) animates the next commit: views
-that moved glide from their old position (a transform, on the compositor), created views animate
-in and deleted views animate out by the config's `property` (`opacity`, `scaleX`, `scaleY`,
-`scaleXY`), with its `duration`, `delay` and `type` (`spring` as a sampled spring curve). Views
-that change size snap to the new size; a page with more than 3,000 elements is not animated.
+that moved glide from their old position and views that changed size grow or shrink from their
+old size (one transform each, on the compositor; the layout is final from the first frame),
+created views animate in and deleted views animate out by the config's `property` (`opacity`,
+`scaleX`, `scaleY`, `scaleXY`), with its `duration`, `delay` and `type` (`spring` as a sampled
+spring curve). A resize is a scale, so a resized view's text is drawn stretched while it plays;
+the views inside it are counter-scaled to start at their own old size. A page with more than
+3,000 elements is not animated.
 
 **Performance.** A worklet on the web is still main-thread JavaScript, sharing the thread with
 React, layout and your other code. For a simple transition (a fade, a slide, a press state), a

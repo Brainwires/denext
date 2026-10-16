@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Added
 
+- **`LayoutAnimation.configureNext` animates size changes** in React Native mode. A view whose
+  size the commit changed now grows or shrinks from its old size instead of snapping: the FLIP
+  transform carries a scale with the translation (still one compositor animation per view), and
+  each view's transform is computed against the one its ancestor plays, so a child of a resized
+  view starts at its own old place and size.
+
 - **`@denext/tanstack-start`: Start-style server rendering for TanStack Router.** A new plugin
   (`plugins: [tanstackStart()]`) for an app with Start's layout (`src/router.tsx` exporting
   `getRouter()`, file routes in `src/routes/`): it generates the route tree with TanStack's own

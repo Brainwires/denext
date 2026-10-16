@@ -242,7 +242,8 @@ on a device). Android is built only, and has run on an emulator only.
   frames while the main thread was blocked for 500 ms, and the same animation on Reanimated's
   loop drew none
   ([`tests/e2e/reanimated.e2e.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/e2e/reanimated.e2e.test.ts)).
-  `LayoutAnimation.configureNext` animates the next commit's moved, created and deleted views.
+  `LayoutAnimation.configureNext` animates the next commit's moved, resized, created and deleted
+  views.
 - **Deno Desktop (built):** the desktop runtime answers `denext/mobile`'s storage, file, SQLite,
   dialog, shell, keep-awake, secure-store and device calls, and packaged apps get
   least-privilege `--allow-*` flags instead of `-A`; see [Desktop apps](/docs/desktop).

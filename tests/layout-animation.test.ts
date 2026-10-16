@@ -3,10 +3,11 @@
 // against a stand-in DOM (a MutationObserver, element rectangles and `animate`). The real
 // browser run is the LayoutAnimation step of tests/e2e/reanimated.e2e.test.ts.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import {
   configureNext,
   easingFor,
+  flipTransform,
   hiddenFrame,
   springEasing,
 } from "../src/react-native/animation/layout-animation.ts";
@@ -56,9 +57,9 @@ class FakeEl {
   namespaceURI = "http://www.w3.org/1999/xhtml";
   isConnected = true;
   anims: { keyframes: Keyframe[]; options: KeyframeAnimationOptions }[] = [];
-  constructor(public top: number, public left = 0) {}
+  constructor(public top: number, public left = 0, public height = 30) {}
   getBoundingClientRect() {
-    return { top: this.top, left: this.left, width: 100, height: 30 } as DOMRect;
+    return { top: this.top, left: this.left, width: 100, height: this.height } as DOMRect;
   }
   contains(other: FakeEl) {
     for (let e: FakeEl | null = other; e; e = e.parentElement) if (e === this) return true;
@@ -125,17 +126,21 @@ Deno.test("LayoutAnimation: FLIP — moved views glide, created fade in, deleted
     a.parentElement = list;
     b.top = 30;
     child.top = 30;
+    list.height = 60; // the list grew by the inserted row
     gone.isConnected = false;
     observer!([{ addedNodes: [a], removedNodes: [gone] }]);
     observer!([{ addedNodes: [], removedNodes: [] }]); // later batches join the same frame
     assertEquals(frames.length, 1);
     frames[0]();
+    // The list grew: it scales from its old height (centre origin, so its top is held).
+    assertEquals(list.anims.length, 1);
+    assertEquals(list.anims[0].keyframes[0].transform, "translate(0px, -15px) scale(1, 0.5)");
+    // `b` slides from its old place inside the scaled list and counter-scales to its own size.
     assertEquals(b.anims.length, 1);
-    assertStringIncludes(String(b.anims[0].keyframes[0].transform), "translate(0px, -30px)");
+    assertEquals(b.anims[0].keyframes[0].transform, "translate(0px, -15px) scale(1, 2)");
     assertEquals(b.anims[0].options.duration, 250);
     assertEquals(b.anims[0].options.easing, "ease-in-out");
     assertEquals(child.anims.length, 0);
-    assertEquals(list.anims.length, 0);
     assertEquals(a.anims[0].keyframes[0], { opacity: 0 });
     await Promise.resolve();
     await new Promise((r) => setTimeout(r, 0));
@@ -149,4 +154,33 @@ Deno.test("LayoutAnimation: FLIP — moved views glide, created fade in, deleted
       getComputedStyle: saved.gcs,
     });
   }
+});
+
+Deno.test("LayoutAnimation: a resized view scales from its old size; its child counter-scales", () => {
+  const ident = { sx: 1, sy: 1, tx: 0, ty: 0 };
+  // A box that grows from 100x30 to 100x60 in place, origin at its centre.
+  const box = flipTransform(
+    { left: 0, top: 0, width: 100, height: 30 },
+    { left: 0, top: 0, width: 100, height: 60 },
+    ident,
+  );
+  assertEquals(box.scaleX, 1);
+  assertEquals(box.scaleY, 0.5);
+  assertEquals(box.x, 0);
+  assertEquals(box.y, -15); // the centre origin moves the top edge: compensated
+  // Its unchanged child is drawn at its own old size on the first frame (scale 2 inside 0.5).
+  const child = flipTransform(
+    { left: 0, top: 0, width: 100, height: 30 },
+    { left: 0, top: 0, width: 100, height: 30 },
+    box.map,
+  );
+  assertEquals(child.scaleY, 2);
+  // A view that moved down and shrank, with a top-left origin.
+  const moved = flipTransform(
+    { left: 10, top: 0, width: 200, height: 40 },
+    { left: 10, top: 50, width: 100, height: 20 },
+    ident,
+    { x: 0, y: 0 },
+  );
+  assertEquals([moved.x, moved.y, moved.scaleX, moved.scaleY], [0, -50, 2, 2]);
 });
