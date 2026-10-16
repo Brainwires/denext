@@ -139,15 +139,19 @@ export interface ChannelRef<T> {
 }
 
 /**
- * One transport event: a channel `publish`/`revoke`, a cross-instance cache-tag `invalidate`, or
- * an instance's `presence` snapshot of one `usePresence` room.
+ * One transport event: a channel `publish`/`revoke`, a cross-instance cache-tag `invalidate`, an
+ * instance's `presence` snapshot of one `usePresence` room, or a parked live view's
+ * `view-resumed` (it resumed on another instance, so the one that parked it stops its copy).
  */
 export interface ChannelEvent {
-  /** `publish`, `revoke`, a cross-instance cache-tag `invalidate`, or a room's `presence`. */
-  kind: "publish" | "revoke" | "invalidate" | "presence";
-  /** The channel (empty on an `invalidate` or `presence`, which are not channel-scoped). */
+  /**
+   * `publish`, `revoke`, a cross-instance cache-tag `invalidate`, a room's `presence`, or a live
+   * view's `view-resumed`.
+   */
+  kind: "publish" | "revoke" | "invalidate" | "presence" | "view-resumed";
+  /** The channel (empty on an `invalidate`, `presence` or `view-resumed`: not channel-scoped). */
   channelId: string;
-  /** The key (empty on an `invalidate`; the room on a `presence`). */
+  /** The key (empty on an `invalidate`; the room on a `presence`; the instance id on a `view-resumed`). */
   key: string;
   /**
    * The wire-encoded payload JSON (`publish`), or the JSON of the publishing instance's peers in

@@ -26,7 +26,10 @@
 // resumes the model; otherwise the next mount runs `init` again. A parked view's model is also
 // written, sealed, to the shared view store (`setLiveViewStore`), and rewritten when it changes
 // while parked: a reconnect that reaches another instance (or this one after eviction) takes the
-// snapshot back and resumes the model under a new instance id instead of running `init`.
+// snapshot back and resumes the model under a new instance id instead of running `init`. That
+// instance announces the resume on the cross-instance bus (`announceResumed`), and the instance
+// still holding the parked copy stops it at once (`resumedElsewhere`) — its effects,
+// subscriptions and pending store writes with it — instead of running it out its park window.
 
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { renderToFlight } from "../jsx/render-to-flight.ts";
@@ -104,6 +107,11 @@ export interface ViewHubDeps<C extends ViewConn> {
   armRecover(conn: C): void;
   /** The shared store parked views are written to (none: parked in this process only). */
   store?(): LiveViewStore | null;
+  /**
+   * Tell every instance that the parked view `iid` resumed here from the shared store (the
+   * cross-instance bus; each one answers with {@linkcode ViewHub.resumedElsewhere}).
+   */
+  announceResumed?(iid: string): void;
 }
 
 /** One server-held view. */
@@ -140,6 +148,8 @@ interface Instance<C> extends ViewInstance {
   parkTimer?: ReturnType<typeof setTimeout>;
   /** The store writes for this instance, in order. */
   storeChain?: Promise<void>;
+  /** Resumed on another instance: its queued store writes are dropped, never landed. */
+  superseded?: boolean;
 }
 
 /** The hub's live-view operations. */
@@ -158,6 +168,11 @@ export interface ViewHub<C extends ViewConn> {
   discard(conn: C): void;
   /** Re-send the whole tree of views whose frame was held back (the socket drained). */
   replayPending(conn: C): void;
+  /**
+   * The parked view `iid` resumed on another instance (from the shared store): stop the copy
+   * parked here, without writing it back. Nothing happens when `iid` is not parked here.
+   */
+  resumedElsewhere(iid: string): void;
   /** Stop every instance (teardown). */
   dispose(): void;
   /** Parked instances (tests, diagnostics). */
@@ -305,19 +320,23 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     const store = deps.store?.();
     if (!store) return;
     inst.storeChain = inRootContext(() =>
-      (inst.storeChain ?? Promise.resolve()).then(() => op(store)).catch((err) => {
-        if (err instanceof TypeError && !unstorable.has(inst.def.id)) {
-          unstorable.add(inst.def.id);
-          console.warn(
-            `denext live view ${inst.def.id}: its model is not serializable, so it is parked in ` +
-              `this process only (${err.message})`,
-          );
-        } else if (!(err instanceof TypeError)) {
-          console.warn(`denext live view ${inst.def.id}: view store failed:`, err);
-        }
-      })
+      (inst.storeChain ?? Promise.resolve()).then(() => inst.superseded ? undefined : op(store))
+        .catch((err) => {
+          if (err instanceof TypeError && !unstorable.has(inst.def.id)) {
+            unstorable.add(inst.def.id);
+            console.warn(
+              `denext live view ${inst.def.id}: its model is not serializable, so it is parked in ` +
+                `this process only (${err.message})`,
+            );
+          } else if (!(err instanceof TypeError)) {
+            console.warn(`denext live view ${inst.def.id}: view store failed:`, err);
+          }
+        })
     );
   };
+
+  /** Tell the other instances `iid` resumed here (the one that parked it stops its copy). */
+  const announceResumed = (iid: string): void => deps.announceResumed?.(iid);
 
   /** Write a parked instance's snapshot to the shared store. */
   const persist = (inst: Instance<C>): void => {
@@ -750,6 +769,8 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     }
     const snapshot = sealed === null ? null : await openViewSnapshot(resume!, sealed);
     if (!snapshot || snapshot.view !== view || snapshot.signed !== signed) return undefined;
+    // The instance that parked it may still run its copy: it stops it on hearing this.
+    announceResumed(resume!);
     return { model: snapshot.model };
   };
 
@@ -871,6 +892,13 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
         if (inst.rendering) inst.dirty = true;
         else sendWhole(inst);
       }
+    },
+
+    resumedElsewhere(iid) {
+      const inst = parkedViews.get(iid);
+      if (!inst || inst.attached) return;
+      inst.superseded = true;
+      stop(inst);
     },
 
     dispose() {

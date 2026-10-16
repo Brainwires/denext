@@ -1540,6 +1540,14 @@ const viewHub: ViewHub<Conn> = createLiveViewHub<Conn>({
     withRenderSlot(() => withDeadline(renderDeadlineMs(), () => withConnContext(conn, fn))),
   backPressured: (conn) => conn.socket.bufferedAmount > MAX_BUFFERED,
   store: getLiveViewStore,
+  announceResumed: (iid) =>
+    publishChannelEvent({
+      kind: "view-resumed",
+      channelId: "",
+      key: iid,
+      seq: 0,
+      instance: channelInstanceId(),
+    }),
   armRecover: (conn) => {
     if (conn.recoverTimer == null) {
       conn.recoverTimer = setTimeout(() => drainRecover(conn), RECOVER_POLL_MS);
@@ -1625,6 +1633,8 @@ function bindChannelTransport(): void {
         if (isForeignEvent(ev)) onRemotePresence(ev);
         return;
       }
+      // Our own echo finds nothing: the resumed view was not parked here.
+      if (ev.kind === "view-resumed") return viewHub.resumedElsewhere(ev.key);
       channelHub.deliver(ev);
     });
   };

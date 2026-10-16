@@ -76,6 +76,11 @@ and this project adheres to
   `"use server"` files from `node_modules`, the way the build found those files, so the component
   a page imports is the registered island. They used to resolve through Deno's `npm:` loader in
   that mode, often to another build of the package, and render on the server only.
+- **A live view resumed on another instance stops the copy parked on the first.** A reconnect
+  that resumed a parked `defineLiveView` from the shared view store on another instance left the
+  original instance running its parked copy (effects, subscriptions, snapshot rewrites) until the
+  park window ended. The resuming instance now announces it on the channel transport, and the
+  instance holding the parked copy stops it at once and drops its pending store writes.
 
 ## [4.2.0] - 2026-10-16
 
