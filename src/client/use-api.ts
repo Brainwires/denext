@@ -9,9 +9,10 @@
 //   fetching, but typed and deduped).
 // - **`suspense: true`:** `use()` on the entry's promise. On the server the call runs IN-PROCESS
 //   (the typed client's dispatcher) inside the nearest `<Suspense>`, and the fulfilled value is
-//   recorded under the hook's `useId()` into the `#__denext_state` island (Flight routes, where
-//   signal collection runs); the client adopts it before its first render, so it hydrates with
-//   the data and never refetches. On an isomorphic route (no signal island) it fetches on mount.
+//   recorded under the hook's `useId()` into the `#__denext_state` island — on a Flight route
+//   and on an isomorphic one (the whole route hydrated as one client bundle) alike, buffered or
+//   streamed, and in an isomorphic soft navigation's payload; the client adopts it before its
+//   first render, so it hydrates with the data and never refetches.
 //
 // Where entries live is the security-relevant part: in the browser one module-level table,
 // ref-counted by mounted hooks (an entry is dropped when its last hook unmounts and it is not

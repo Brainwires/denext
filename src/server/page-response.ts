@@ -223,6 +223,7 @@ function isoNavResponse(pr: PageRequest, rendered: RenderedPage): Response | nul
     data: navData(pr),
     entry: isoEntry,
     styles: config.styleHrefsFor?.(pr.page.route),
+    ...(rendered.signalState ? { signalState: rendered.signalState } : {}),
   };
   return finalize(
     pr.state,

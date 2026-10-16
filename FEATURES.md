@@ -924,13 +924,15 @@ cache uses Deno's built-in `node:sqlite`.)
   `useApi` need no type argument once it is imported.
 - **The client** (`src/runtime/api-client.ts`): `createApiClient({ base?, dedupe?, batch?,
   fetch? })`. Concurrent equal GET/HEAD calls share one fetch (per request during SSR —
-  never across users); the GET/HEAD calls of one tick ride ONE `POST /_denext/api-batch`
+  never across users); the calls of one tick ride ONE `POST /_denext/api-batch`
   (`src/server/api-batch-handler.ts`: same-origin, a marker header, caps; items run as
-  sub-requests through the FULL pipeline so middleware applies); a server-side call runs
+  sub-requests through the FULL pipeline so middleware applies; reads concurrently, each
+  mutation alone in call order with the batch's verified `Origin` and its own `x-csrf-token`
+  for the route's CSRF check); a server-side call runs
   in-process through the pipeline and the tag-aware cache (`src/server/api-dispatcher.ts`,
   no loopback HTTP). `useApi(path, method, opts, { tags?, suspense? })` is the hook
-  (`src/client/use-api.ts`; Suspense mode seeds hydration from the SSR value on Flight
-  routes; `useApiLive` from `denext/live` refetches on a Live tag invalidation).
+  (`src/client/use-api.ts`; Suspense mode seeds hydration from the SSR value on Flight and
+  isomorphic routes alike; `useApiLive` from `denext/live` refetches on a Live tag invalidation).
 - **Errors as values, opt-in** (`denext/result`): `Result`, `ok` / `err`, `tryAsync` /
   `trySync`, `map` / `andThen`, and an exhaustive `match(x).with(…).exhaustive()` whose missing
   case is a compile error; a `defineApi` handler may `return err("code")` (a declared code only)

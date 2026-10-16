@@ -23,7 +23,8 @@
 export type { HttpMethod } from "../server/types.ts";
 import type { HttpMethod } from "../server/types.ts";
 import { decodeWire, encodeWire, stableKey, WIRE_HEADER } from "./wire-codec.ts";
-import { type Batcher, createBatcher } from "./api-batch.ts";
+import { type BatchCall, type Batcher, createBatcher } from "./api-batch.ts";
+import { BATCH_ITEM_HEADERS, isBatchMutation } from "./api-batch-protocol.ts";
 import { getApiDispatcher } from "./api-dispatch.ts";
 
 /** One endpoint's typed shape: its params, optional request/response bodies, query, error codes. */
@@ -75,7 +76,7 @@ export type RequestOf<E extends ApiEndpoint> =
     timeoutMs?: number;
     /** Opt this call out of in-flight dedupe (GET/HEAD calls with equal inputs share one fetch). */
     dedupe?: boolean;
-    /** Opt this call out of batching (GET/HEAD calls in one tick ride one `/_denext/api-batch` POST). */
+    /** Opt this call out of batching (the calls made in one tick ride one `/_denext/api-batch` POST). */
     batch?: boolean;
     /** SSR only: Next-style fetch cache mode for the in-process call (`"force-cache"` / `"no-store"`). */
     cache?: RequestCache;
@@ -151,12 +152,14 @@ export interface ApiClientOptions {
    */
   dedupe?: boolean;
   /**
-   * Coalesce the GET/HEAD calls made in one tick into a single `POST /_denext/api-batch`
-   * (default true; `{ maxItems }` caps a batch, default 20). A call with custom headers or a
-   * body, a mutation, or `batch: false` always goes as its own request; a single pending call
-   * skips the batch framing entirely.
+   * Coalesce the calls made in one tick into a single `POST /_denext/api-batch` (default true;
+   * `{ maxItems }` caps a batch, default 20). Reads (GET/HEAD) run concurrently on the server;
+   * mutations (POST/PUT/PATCH/DELETE) each run alone, in the order they were called, with their
+   * route's CSRF checks — `{ mutations: false }` sends them as their own requests. A read with
+   * custom headers or a body, a mutation with a header other than `x-csrf-token`, or a call with
+   * `batch: false` always goes alone; a single pending call skips the batch framing entirely.
    */
-  batch?: boolean | { maxItems?: number };
+  batch?: boolean | { maxItems?: number; mutations?: boolean };
   /** The `fetch` to use (default: the global; a seam for tests and custom transports). */
   fetch?: typeof fetch;
   /**
@@ -454,23 +457,37 @@ async function settle(method: HttpMethod, url: string, res: Response): Promise<u
 
 // ── Batching ─────────────────────────────────────────────────────────────────
 
-/** GET/HEAD with no custom headers or body and no per-call opt-out may ride a batch. */
-function batchable(method: HttpMethod, opts: ApiRequestOptions): boolean {
-  return (method === "GET" || method === "HEAD") && opts.batch !== false && !opts.headers &&
-    opts.body === undefined;
+/**
+ * May this call ride a batch? A read with no custom headers or body; a mutation (when the client
+ * batches them) whose headers are only the protocol's item headers; never with `batch: false`.
+ */
+function batchable(method: HttpMethod, opts: ApiRequestOptions, mutations: boolean): boolean {
+  if (opts.batch === false) return false;
+  if (method === "GET" || method === "HEAD") return !opts.headers && opts.body === undefined;
+  if (!mutations || !isBatchMutation(method)) return false;
+  return [...new Headers(opts.headers).keys()].every((name) =>
+    (BATCH_ITEM_HEADERS as readonly string[]).includes(name)
+  );
 }
 
 /** Run one call through the batcher; its item response settles like a direct one. */
 async function batchedRequest(
   batcher: Batcher,
   pattern: string,
-  method: "GET" | "HEAD",
+  method: HttpMethod,
   opts: ApiRequestOptions,
   base: string,
 ): Promise<unknown> {
   const path = buildPath(pattern, opts.params, opts.query);
+  const call: BatchCall = { method: method as BatchCall["method"], path };
+  if (opts.body !== undefined) {
+    const encoded = encodeWire(opts.body);
+    call.body = encoded.body;
+    if (encoded.tagged) call.wire = true;
+  }
+  if (opts.headers) call.headers = Object.fromEntries(new Headers(opts.headers));
   const signal = resolveSignal(opts.signal, opts.timeoutMs);
-  const res = await batcher.enqueue(method, path, signal, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const res = await batcher.enqueue(call, signal, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   return await settle(method, base + path, res);
 }
 
@@ -553,6 +570,7 @@ export function createApiClient<S extends ApiSchema = RegisteredSchema>(
   const dedupe = options.dedupe ?? true;
   if (options.auth) return authenticatedClient<S>(options, options.auth);
   const batchOpt = options.batch ?? true;
+  const mutations = typeof batchOpt !== "object" || batchOpt.mutations !== false;
   const batcher = batchOpt
     ? createBatcher({
       fetch: options.fetch,
@@ -563,11 +581,11 @@ export function createApiClient<S extends ApiSchema = RegisteredSchema>(
   const local = new Map<string, Promise<unknown>>();
   return ((path: string, method: HttpMethod, opts: ApiRequestOptions = {}) => {
     // Batching is a browser optimization; a server-side call with a dispatcher goes in-process.
-    const canBatch = batcher && batchable(method, opts) &&
+    const canBatch = batcher && batchable(method, opts, mutations) &&
       !(isServerRuntime() && getApiDispatcher());
     const run = () =>
       canBatch
-        ? batchedRequest(batcher, path, method as "GET" | "HEAD", opts, base)
+        ? batchedRequest(batcher, path, method, opts, base)
         : apiRequest(path, method, opts, base, options.fetch);
     return maybeDeduped(dedupe, local, path, method, opts, run);
   }) as ApiClient<S>;

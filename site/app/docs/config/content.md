@@ -295,7 +295,8 @@ itself (it reads neither the config keys nor the env vars for them).
   responses are relayed as the backend encoded them).
 - **`apiBatch`** — `ApiBatchConfig`. The typed client's batch endpoint
   (`POST /_denext/api-batch`, same-origin only): `enabled` (default `true`;
-  `false` answers `404`), `maxItems` (default 20, at most 100), `maxBodyBytes`
+  `false` answers `404`), `mutations` (default `true`: POST/PUT/PATCH/DELETE items run
+  one at a time in call order; `false` refuses them), `maxItems` (default 20, at most 100), `maxBodyBytes`
   (default 1 MiB), `concurrency` (default 4), `maxItemResponseBytes` (default
   4 MiB) and `maxTotalResponseBytes` (default 16 MiB). See
   [Typed API](/docs/typed-api).

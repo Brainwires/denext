@@ -82,8 +82,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **Channels carry state, not a log:** no replay on reconnect, at-most-once, latest-wins, 16 ms
   coalescing, `seq` ordered per instance. Re-authorization is lazy (`authTtlSeconds`;
   `channel.revoke(key)` is immediate). The production handshake requires a browser `Origin`.
-- **Only GET/HEAD calls batch; `useApi({ suspense: true })` seeds hydration on Flight routes
-  only** (elsewhere it fetches on mount).
+- **A batched call carries no custom headers but `x-csrf-token`** (one that needs another goes as
+  its own request), and **`useApi({ suspense: true })` is not seeded from a Cache Components
+  (PPR) shell of a non-Flight route** (it fetches on mount there).
 - **`@denext/openapi` describes only what a validator can export** (else `{}` / `unknown`); a
   custom middleware's responses appear only as `default` until it is tagged with
   `documentsErrors`; `scalar` loads from a CDN (`swagger` is vendored).

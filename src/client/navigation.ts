@@ -680,6 +680,8 @@ function applyIsoNav(body: string, url: URL, href: string, options: NavigateOpti
   withViewTransition(async () => {
     if (payload.title != null) document.title = payload.title;
     writeDataIsland(payload.data);
+    // The re-run entry adopts the new route's signal state (and none of the old route's).
+    jsonIsland("__denext_state").textContent = JSON.stringify(payload.signalState ?? null);
     swapRouteStyles(payload.styles);
     emit();
     scrollAfterNav(url, options);

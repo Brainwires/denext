@@ -702,6 +702,16 @@ export interface ApiBatchConfig {
    */
   enabled?: boolean;
   /**
+   * Batch mutations too (default true): the client sends the POST / PUT / PATCH / DELETE calls a
+   * page makes in one tick in the same batch as its reads, and the server runs each one alone,
+   * in call order, with its route's CSRF checks. `false` refuses mutation items (the whole
+   * batch is a 400), so the client must send them as their own requests
+   * (`createApiClient({ batch: { mutations: false } })`).
+   *
+   * @default true
+   */
+  mutations?: boolean;
+  /**
    * Max items per batch (default 20, at most 100).
    *
    * @minimum 1

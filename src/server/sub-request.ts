@@ -53,6 +53,11 @@ export interface SubRequestInit {
   signal?: AbortSignal;
   /** The body (a server-side self-call may POST). */
   body?: BodyInit | null;
+  /**
+   * Inherit the parent's `Host` header — for a batched mutation, whose route's CSRF check
+   * compares the (inherited, already verified) `Origin` with the request's host.
+   */
+  inheritHost?: boolean;
 }
 
 /**
@@ -75,6 +80,7 @@ export function synthesizeSubRequest(init: SubRequestInit): Request {
     }
   }
   // After the caller's extras, so none can replace (or invent) the client's limit address.
+  if (init.inheritHost) inheritHeader(headers, init.parent, "host");
   const limitHeader = init.parentCtx.limitPolicy?.header;
   if (limitHeader) inheritHeader(headers, init.parent, limitHeader);
   headers.set("accept", "application/json");

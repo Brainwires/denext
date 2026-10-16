@@ -95,7 +95,7 @@ Deno.test("api batch: a malformed batch or item fails the WHOLE batch (nothing r
       ),
   });
   const bad: unknown[] = [
-    [{ id: 0, m: "POST", p: "/api/hello" }], // mutations never batch
+    [{ id: 0, m: "CONNECT", p: "/api/hello" }], // not a method a batch carries
     [{ id: 0, m: "GET", p: "//evil.example/x" }], // protocol-relative escape
     [{ id: 0, m: "GET", p: "http://evil.example/x" }], // absolute URL
     [{ id: 0, m: "GET", p: "/_denext/action/abc" }], // reserved endpoints

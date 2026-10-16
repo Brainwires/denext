@@ -359,6 +359,35 @@ export interface GenerateRouteEntryOptions {
 }
 
 /**
+ * The entry statements that adopt the server's `#__denext_state` island BEFORE hydration, so
+ * `useSignal` / `useStore` resume from it and `useApi({ suspense: true })` adopts its result
+ * instead of refetching. Parked on a global (no framework import) so the signal runtime stays
+ * off the shared chunk unless the app actually uses it; the readers check the same global. An
+ * absent island clears it (a re-run entry after a soft navigation must not keep the old page's).
+ */
+const SIGNAL_STATE_ADOPTION =
+  `  // Adopt server-transported signal state BEFORE hydration, so useSignal/useStore
+  // resume from it instead of recomputing their initializers. Parked on a global
+  // (no framework import) so the signal runtime stays off the shared chunk unless
+  // the app actually uses signals; useSignal reads the same global.
+  const stateEl = document.getElementById("__denext_state");
+  let adoptedState;
+  if (stateEl) {
+    try {
+      const raw = JSON.parse(stateEl.textContent || "null");
+      if (raw && typeof raw === "object") {
+        adoptedState = {};
+        for (const k of Object.keys(raw)) {
+          if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
+          adoptedState[k] = raw[k];
+        }
+      }
+    } catch { /* ignore malformed state */ }
+  }
+  globalThis.__denextSignalState = adoptedState;
+`;
+
+/**
  * Generate the browser entry source that hydrates a single page route.
  *
  * @param route The page route.
@@ -398,7 +427,7 @@ async function main() {
     ? JSON.parse(dataEl.textContent || "{}")
     : { params: {}, searchParams: "" };
   const sp = new URLSearchParams(data.searchParams || "");
-  ${routeEntryTree(route, slots)}
+${SIGNAL_STATE_ADOPTION}  ${routeEntryTree(route, slots)}
 ${classBoot}  try {
     startClient(el, tree);
   } catch (err) {
@@ -837,26 +866,7 @@ function flightMain(catchBody: string, classBoot: string): string {
   } catch {
     return;
   }
-  // Adopt server-transported signal state BEFORE hydration, so useSignal/useStore
-  // resume from it instead of recomputing their initializers. Parked on a global
-  // (no framework import) so the signal runtime stays off the shared chunk unless
-  // the app actually uses signals; useSignal reads the same global.
-  const stateEl = document.getElementById("__denext_state");
-  if (stateEl) {
-    try {
-      const raw = JSON.parse(stateEl.textContent || "null");
-      let clean;
-      if (raw && typeof raw === "object") {
-        clean = {};
-        for (const k of Object.keys(raw)) {
-          if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
-          clean[k] = raw[k];
-        }
-      }
-      globalThis.__denextSignalState = clean || undefined;
-    } catch { /* ignore malformed state */ }
-  }
-${classBoot}  await registry.ensure(flight); // this page's islands (code-split chunks)
+${SIGNAL_STATE_ADOPTION}${classBoot}  await registry.ensure(flight); // this page's islands (code-split chunks)
   // A null tree is a root-less islands page (every client part a carved island): nothing to
   // hydrate at the root — startClient only installs navigation, and the islands boot below.
   const tree = flight == null ? null : parseFlight(flight, registry);

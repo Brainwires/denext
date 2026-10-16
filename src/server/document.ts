@@ -96,6 +96,11 @@ export interface IsoNavPayload {
   entry: string;
   /** The new route's stylesheet hrefs, swapped in place of the old route's. */
   styles?: string[];
+  /**
+   * The signal state the server render recorded (`useApi({ suspense: true })` results,
+   * `useSignal` values), written to `#__denext_state` for the re-run entry to adopt.
+   */
+  signalState?: Record<string, unknown>;
 }
 
 /**
@@ -630,15 +635,22 @@ export function streamPageDocument(
   opts: Omit<DocumentOptions, "bodyHtml"> & {
     shell: ShellRender;
     signal?: AbortSignal;
+    /**
+     * Ends the request's signal collection once every hole has rendered: the state the shell
+     * and the holes recorded becomes the `#__denext_state` island, emitted before the entry.
+     */
+    finishSignals?: () => Record<string, unknown>;
   },
 ): ReadableStream<Uint8Array> {
   const { encoder, docOpts, prefix } = streamedDocumentStart(opts, opts.shell.shell);
-  const tail = `${renderBodyScripts(docOpts)}</body>
-</html>`;
   return streamedBody(async (controller) => {
     controller.enqueue(encoder.encode(prefix));
     await streamHoles(controller, encoder, opts.shell.holes, opts.signal);
-    controller.enqueue(encoder.encode(tail));
+    const collected = opts.finishSignals?.() ?? {};
+    const signalState = Object.keys(collected).length > 0 ? collected : docOpts.signalState;
+    controller.enqueue(
+      encoder.encode(`${renderBodyScripts({ ...docOpts, signalState })}</body>\n</html>`),
+    );
   });
 }
 

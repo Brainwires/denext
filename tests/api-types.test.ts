@@ -651,7 +651,7 @@ Deno.test("createApiClient: concurrent GETs in one tick ride one batch POST; eac
   });
 });
 
-Deno.test("createApiClient: a single call, a mutation, custom headers, or batch:false go alone", async () => {
+Deno.test("createApiClient: a single call, custom headers, or batch:false go alone", async () => {
   await asBrowser(async () => {
     const { fetch, calls } = appFetch(batchApp());
     const api = createApiClient<BatchSchema>({ fetch });
@@ -661,7 +661,7 @@ Deno.test("createApiClient: a single call, a mutation, custom headers, or batch:
     await Promise.allSettled([
       api("/api/hello", "GET", { batch: false }),
       api("/api/hello", "GET", { headers: { "x-extra": "1" } }),
-      api("/api/x", "POST", { body: { a: 1 } }),
+      api("/api/x", "POST", { body: { a: 1 }, headers: { "x-extra": "1" } }),
     ]);
     assertEquals(calls.sort(), ["GET /api/hello", "GET /api/hello", "POST /api/x"]);
     calls.length = 0;

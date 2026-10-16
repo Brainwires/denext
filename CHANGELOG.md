@@ -403,6 +403,20 @@ and this project adheres to
   through the config's relative imports, and re-imported from there after an edit, as a
   module-path `schema` is; subscriptions on the old schema complete. One it cannot trace keeps
   needing a restart, with a dev notice.
+- **Typed-API batching carries mutations.** The POST / PUT / PATCH / DELETE calls a page makes
+  in one tick ride the same `POST /_denext/api-batch` as its reads. The server runs reads
+  concurrently and each mutation alone — after every item before it has settled, before any
+  item after it starts — so a batch behaves like the calls made one by one in order; each
+  mutation item gets the batch's verified `Origin` (and `Host`) and may carry its own
+  `x-csrf-token`, so the route's `csrf()` (double submit included) checks it as a direct call.
+  `createApiClient({ batch: { mutations: false } })` and `apiBatch.mutations: false` keep
+  mutations out; a mutation with another custom header goes alone. Only GET/HEAD batched before.
+- **`useApi({ suspense: true })` seeds hydration on routes that don't use Flight.** An isomorphic
+  route (no `"use client"` boundary, hydrated as one client bundle) now records the signal state
+  its render produced — buffered or streamed — into `#__denext_state`, its route entry adopts it
+  before hydrating, and an isomorphic soft navigation's payload carries it (`signalState`). The
+  suspense result hydrates without a refetch, as on a Flight route; `useSignal` values resume
+  there too. It fetched on mount before.
 
 ### Changed
 
