@@ -1,18 +1,17 @@
 // The workspace packages @denext/denext pins at publish (scripts/lib/jsr-pins.ts), the
-// `@denext/docs-corpus` version rules (scripts/lib/docs-corpus-package.ts) and the release
-// script's refusal to tag while a pinned version is missing from JSR. JSR itself is faked.
+// `@denext/docs-corpus` version rule (scripts/lib/docs-corpus-package.ts: denext X.Y.Z pins exactly
+// @denext/docs-corpus X.Y.Z) and the release script's refusal to tag while a pinned version is
+// missing from JSR. JSR itself is faked.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
   CORPUS_MODULE,
   CORPUS_PACKAGE,
+  corpusConflictMessage,
+  corpusReleaseState,
   corpusVersion,
   moduleSourceHash,
-  nextPatch,
   publishedSourceHash,
-  releaseCorpusVersion,
-  setCorpusVersion,
-  versionAfterChange,
 } from "../scripts/lib/docs-corpus-package.ts";
 import { jsrHasVersion, memberPin, missingPins, RUNTIME_MEMBERS } from "../scripts/lib/jsr-pins.ts";
 import { pinRefusal } from "../scripts/release.ts";
@@ -45,21 +44,26 @@ Deno.test("jsr pins: RUNTIME_MEMBERS are exactly the workspace members published
   if (!files) return;
   const root = JSON.parse(await Deno.readTextFile(new URL("../deno.json", import.meta.url)));
   const members = new Map<string, string>();
+  const versions = new Map<string, string>();
   for (const dir of root.workspace as string[]) {
     const json = JSON.parse(
       await Deno.readTextFile(new URL(`../${dir}/deno.json`, import.meta.url)),
     );
     members.set(json.name, dir.split("/").pop()!);
+    versions.set(json.name, json.version);
   }
+  // A member the root import map pins explicitly (`jsr:@denext/swc@^76…`) resolves from JSR
+  // already; one pinned to exactly its own version (`jsr:@denext/docs-corpus@<version>`) is
+  // satisfied by the workspace member, so it is still released with denext.
+  const workspaceResolved = (name: string) =>
+    !(name in root.imports) || root.imports[name] === `jsr:${name}@${versions.get(name)}`;
   const imported = new Set<string>();
   const spec = /(?:from\s+|import\(\s*)["'](@denext\/[\w-]+)(?:\/[^"']*)?["']/g;
   for (const file of files.keys()) {
     if (!/\.(ts|tsx|js)$/.test(file)) continue;
     const text = await Deno.readTextFile(new URL(`../${file}`, import.meta.url));
     for (const m of text.matchAll(spec)) {
-      // A member the root import map pins explicitly (`jsr:@denext/swc@^76…`) resolves from JSR
-      // already; only a workspace-resolved one takes its pin from the member's version.
-      if (members.has(m[1]) && !(m[1] in root.imports)) imported.add(members.get(m[1])!);
+      if (members.has(m[1]) && workspaceResolved(m[1])) imported.add(members.get(m[1])!);
     }
   }
   // Generated code text, not imports: migrate / codemod write these specifiers into an app.
@@ -110,14 +114,20 @@ Deno.test("release: pinRefusal names every unpublished pin and its tag, or allow
   assertStringIncludes(refusal, "@denext/docs-corpus@0.1.4 — push the tag docs-corpus-v0.1.4");
 });
 
-Deno.test("docs-corpus version: patch bumps, and a bump only once the version was released", () => {
-  assertEquals(nextPatch("0.1.0"), "0.1.1");
-  assertEquals(nextPatch("1.9.9-rc.2"), "1.9.10");
-  assertEquals(versionAfterChange("0.1.3", ["v4.2.0", "docs-corpus-v0.1.2"]), null);
-  assertEquals(versionAfterChange("0.1.3", ["docs-corpus-v0.1.3"]), "0.1.4");
+Deno.test("docs-corpus version: it is denext's version, and denext imports exactly that version", async () => {
+  const root = JSON.parse(await Deno.readTextFile(new URL("../deno.json", import.meta.url)));
+  const corpus = await corpusVersion();
+  assertEquals(
+    corpus,
+    root.version,
+    "packages/docs-corpus/deno.json must carry denext's version (deno task bump moves both)",
+  );
+  // No caret: an older denext must never resolve a newer corpus. The workspace member satisfies
+  // the exact specifier locally only while the versions match.
+  assertEquals(root.imports[CORPUS_PACKAGE], `jsr:${CORPUS_PACKAGE}@${root.version}`);
 });
 
-Deno.test("docs-corpus version: the module's source hash, and setting the manifest's version", async () => {
+Deno.test("docs-corpus version: the module's source hash, and the manifest's version", async () => {
   const text = await Deno.readTextFile(CORPUS_MODULE);
   assertEquals(moduleSourceHash(text)?.length, 64);
   assertEquals(moduleSourceHash('export const CORPUS_SOURCE_HASH = "abc123";'), "abc123");
@@ -126,33 +136,39 @@ Deno.test("docs-corpus version: the module's source hash, and setting the manife
     const manifest = `${dir}/deno.json`;
     await Deno.writeTextFile(
       manifest,
-      '{\n  "name": "@denext/docs-corpus",\n  "version": "0.1.0"\n}\n',
+      '{\n  "name": "@denext/docs-corpus",\n  "version": "4.3.0-rc.1"\n}\n',
     );
-    await setCorpusVersion("0.1.1", manifest);
-    assertEquals(
-      await Deno.readTextFile(manifest),
-      '{\n  "name": "@denext/docs-corpus",\n  "version": "0.1.1"\n}\n',
-    );
-    assertEquals(await corpusVersion(manifest), "0.1.1");
+    assertEquals(await corpusVersion(manifest), "4.3.0-rc.1");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-Deno.test("docs-corpus version: the release bumps past a published version with other content", async () => {
+Deno.test("docs-corpus version: the release publishes its own version, or refuses a conflicting one", async () => {
   const version = await corpusVersion();
   const local = moduleSourceHash(await Deno.readTextFile(CORPUS_MODULE))!;
   const served = (hash: string) => `export const CORPUS_SOURCE_HASH: string = "${hash}";\n`;
   const path = `/${CORPUS_PACKAGE}/${version}/mod.ts`;
   // Not on JSR yet: this release publishes it.
-  assertEquals(await releaseCorpusVersion(fakeJsr({})), null);
+  assertEquals(await corpusReleaseState(version, fakeJsr({})), { state: "missing", version });
   assertEquals(await publishedSourceHash(version, fakeJsr({})), null);
-  // On JSR with the same content: nothing to publish.
+  // On JSR with the same content (a resumed release): nothing to publish.
   const same = fakeJsr({ [CORPUS_PACKAGE]: [version] }, { [path]: served(local) });
   assertEquals(await publishedSourceHash(version, same), local);
-  assertEquals(await releaseCorpusVersion(same), null);
-  // On JSR with older content: the next patch JSR does not have.
-  const next = nextPatch(version);
-  const stale = fakeJsr({ [CORPUS_PACKAGE]: [version, next] }, { [path]: served("0".repeat(64)) });
-  assertEquals(await releaseCorpusVersion(stale), nextPatch(next));
+  assertEquals(await corpusReleaseState(version, same), { state: "published", version });
+  // On JSR with other content: a conflict, never another version (a newer one JSR lacks too).
+  const other = "0".repeat(64);
+  const stale = fakeJsr({ [CORPUS_PACKAGE]: [version] }, { [path]: served(other) });
+  const conflict = await corpusReleaseState(version, stale);
+  assertEquals(conflict, { state: "conflict", version, local, published: other });
+  if (conflict.state !== "conflict") throw new Error("unreachable");
+  const message = corpusConflictMessage(conflict);
+  assertStringIncludes(message, `${CORPUS_PACKAGE}@${version} with another corpus`);
+  assertStringIncludes(message, other);
+  // A corpus that is not at the release's version is refused before JSR is asked.
+  await assertRejects(
+    () => corpusReleaseState(`${version}-other.1`, fakeJsr({})),
+    Error,
+    "the bump moves both",
+  );
 });

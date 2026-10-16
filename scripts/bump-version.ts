@@ -14,7 +14,11 @@
 //   - deno.json              root "version"
 //   - mod.ts                 export const VERSION
 //   - src/version.ts         the CLI's dependency-free copy of VERSION
-//   - packages/*/deno.json   the @denext/denext peer-dependency pins (all subpaths)
+//   - packages/*/deno.json   the @denext/denext peer-dependency pins (all subpaths), and the
+//                            version of packages/docs-corpus, which IS denext's version
+//   - deno.json              the exact `jsr:@denext/docs-corpus@<version>` import (denext X.Y.Z
+//                            ships with @denext/docs-corpus X.Y.Z, rc versions included); both
+//                            are set outright even when they had drifted from the old version
 //   - ROADMAP.md             the "development is <version>" status line
 //
 // And at a STABLE release only: the prerelease specifiers the docs teach with — README.md,
@@ -161,6 +165,7 @@ export async function bumpVersion(
     const r = await bumpFile(file, re, newVersion, opts.dry === true);
     if (r) results.push(r);
   }
+  results.push(...await syncCorpusVersion(oldVersion, newVersion, opts.dry === true));
   const docSpec = docSpecifierPattern(newVersion);
   if (docSpec) {
     const done = new Set(results.map((r) => r.file));
@@ -175,9 +180,37 @@ export async function bumpVersion(
     oldVersion,
     newVersion,
     changed,
-    zeroHits: results.filter((r) => r.hits === 0).map((r) => r.file),
+    zeroHits: results.filter((r) => r.hits === 0 && !changed.some((c) => c.file === r.file))
+      .map((r) => r.file),
     total: changed.reduce((n, r) => n + r.hits, 0),
   };
+}
+
+/** The docs corpus's version and denext's exact import of it (scripts/lib/docs-corpus-package.ts). */
+const CORPUS_SPOTS: Array<[file: string, re: RegExp]> = [
+  [join("packages", "docs-corpus", "deno.json"), /(?<="version":\s*")[^"]*(?=")/],
+  ["deno.json", /(?<="jsr:@denext\/docs-corpus@)[^"]*(?=")/],
+];
+
+/**
+ * Set `@denext/docs-corpus`'s version (and denext's pin of it) to `newVersion` where the
+ * old-version replace did not: a spot that had drifted from `oldVersion`. One hit per spot set.
+ */
+async function syncCorpusVersion(
+  oldVersion: string,
+  newVersion: string,
+  dry: boolean,
+): Promise<Array<{ file: string; hits: number }>> {
+  const out: Array<{ file: string; hits: number }> = [];
+  for (const [file, re] of CORPUS_SPOTS) {
+    const text = await readOrNull(join(ROOT, file));
+    const current = text === null ? null : re.exec(text)?.[0];
+    if (current === undefined) throw new Error(`${file}: no @denext/docs-corpus version to set`);
+    if (current === null || current === oldVersion || current === newVersion) continue;
+    if (!dry) await Deno.writeTextFile(join(ROOT, file), text!.replace(re, newVersion));
+    out.push({ file, hits: 1 });
+  }
+  return out;
 }
 
 /** Rewrite one file; null when it does not exist in this checkout. */

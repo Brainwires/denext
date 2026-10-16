@@ -36,6 +36,15 @@ Deno.test("bumpVersion (dry) finds the current version in the target files and r
   const result = await bumpVersion("99.0.0-test.1", { dry: true });
   assert(result.oldVersion !== "99.0.0-test.1");
   assert(result.changed.some((c) => c.file === "deno.json"), "root deno.json carries the version");
+  // @denext/docs-corpus IS denext's version: its manifest and denext's exact import of it move too.
+  assert(
+    result.changed.some((c) => c.file === "packages/docs-corpus/deno.json"),
+    "the docs corpus's version moves with denext's",
+  );
+  assert(
+    result.changed.find((c) => c.file === "deno.json")!.hits >= 2,
+    "root deno.json: the version and the jsr:@denext/docs-corpus@<version> import",
+  );
   assert(result.total >= result.changed.length);
   const out = await captured(() => printBumpResult(result, true));
   assertStringIncludes(out, `Bumping ${result.oldVersion} → 99.0.0-test.1  (dry run)`);

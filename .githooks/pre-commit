@@ -70,11 +70,6 @@ if git diff --cached --name-only --diff-filter=ACMDR \
   "$DENO" task docs:corpus
   "$DENO" task docs:llms
   git add -- packages/docs-corpus/mod.ts site/public/llms.txt site/public/llms-full.txt
-  # A changed corpus whose version was already released got the next patch version, and the
-  # plugin catalog that lists the package was regenerated with it (scripts/gen-docs-corpus.ts).
-  if ! git diff --quiet -- packages/docs-corpus/deno.json; then
-    git add -- packages/docs-corpus/deno.json src/plugin/catalog.json
-  fi
 fi
 
 # Fallow code-intelligence gate. `fallow audit` scopes dead-code + complexity +

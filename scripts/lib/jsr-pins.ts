@@ -1,7 +1,8 @@
 // The workspace members `@denext/denext` imports at run time. `deno publish` rewrites each bare
-// `@denext/<name>` specifier to `jsr:@denext/<name>@^<that member's version>`, so a denext release
-// is broken on arrival when one of those versions is not on JSR yet (4.1.0's `@denext/og`). The
-// release script refuses to tag until every pin resolves (scripts/release.ts).
+// `@denext/<name>` specifier to `jsr:@denext/<name>@^<that member's version>` (`@denext/docs-corpus`
+// to the exact `jsr:@denext/docs-corpus@<denext's version>` root deno.json maps it to), so a
+// denext release is broken on arrival when one of those versions is not on JSR yet (4.1.0's
+// `@denext/og`). The release script refuses to tag until every pin resolves (scripts/release.ts).
 
 import { fromFileUrl, join } from "@std/path";
 

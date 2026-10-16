@@ -7,9 +7,8 @@
 // /docs/examples/<name> renders it), the authoring guide (AGENTS.md) and README.md. The output,
 // packages/docs-corpus/mod.ts (the JSON Brotli-compressed, in base64), is the `@denext/docs-corpus`
 // package: published on its own (JSR caps @denext/denext at 20 MiB) and imported by denext's MCP
-// tools, so an agent can search and read the whole manual offline. When the content changes and
-// the package's version was already released, the run bumps its patch version and regenerates
-// the plugin catalog that lists it (scripts/lib/docs-corpus-package.ts).
+// tools, so an agent can search and read the whole manual offline. The package's version is
+// denext's own (the bump moves both; tests/release-pins.test.ts), so this run never touches it.
 //
 // How a page becomes Markdown:
 //   - `content.md` pages, and pages that render a root .md file, are taken from the Markdown
@@ -43,17 +42,8 @@ import {
   rootMdPage,
   VNodeMarkdown,
 } from "./lib/docs-corpus.ts";
-import {
-  CORPUS_MODULE,
-  CORPUS_PACKAGE,
-  corpusVersion,
-  gitTags,
-  moduleSourceHash,
-  setCorpusVersion,
-  versionAfterChange,
-} from "./lib/docs-corpus-package.ts";
+import { CORPUS_MODULE } from "./lib/docs-corpus-package.ts";
 import { brotliBase64 } from "./lib/pack-texts.ts";
-import { CATALOG_OUT, generatePluginCatalog } from "./gen-plugin-catalog.ts";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const DOCS = `${ROOT}site/app/docs/`;
@@ -316,16 +306,7 @@ export function corpusModule(
 if (import.meta.main) {
   const corpus = await buildCorpus();
   const { text, jsonBytes } = await corpusModule(corpus);
-  const before = await Deno.readTextFile(CORPUS_OUT).catch(() => "");
   await Deno.writeTextFile(CORPUS_OUT, text);
-  if (moduleSourceHash(before) !== corpus.sourceHash) {
-    const next = versionAfterChange(await corpusVersion(), await gitTags());
-    if (next) {
-      await setCorpusVersion(next);
-      await Deno.writeTextFile(CATALOG_OUT, await generatePluginCatalog());
-      console.log(`docs corpus changed since its release: ${CORPUS_PACKAGE} is now ${next}`);
-    }
-  }
   const guide = corpus.chunks.filter((c) => c.kind === "guide").length;
   console.log(
     `docs corpus: ${corpus.pages.length} pages, ${guide} guide sections, ` +
