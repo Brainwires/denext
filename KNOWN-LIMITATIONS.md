@@ -124,8 +124,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   Credentials, Resend, Nodemailer / Email, and custom OAuth / OIDC objects. Auth.js's other
   `next-auth/providers/*` modules are not shipped; write one as a custom provider object.
   WebAuthn (`next-auth/providers/passkey`) is not mapped — denext's own `passkeys` are.
-- **Per-call `authorizationParams`** (`signIn("google", {}, { prompt: "login" })`) are ignored;
-  set `authorization.params` on the provider.
 - **Lazy config:** `NextAuth((req) => config)` is called once, with no request, and must
   return the config itself (not a promise).
 - **`pages.newUser` and `pages.signOut`** are not used.

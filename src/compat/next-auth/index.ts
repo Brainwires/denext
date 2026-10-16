@@ -30,7 +30,14 @@ import { redirect } from "../../runtime/error-boundary.ts";
 import { denextAuth } from "../../server/auth/mod.ts";
 import { copyRemoteAddr } from "../../server/remote-addr.ts";
 import { translateConfig } from "./config.ts";
-import { contextRequest, runSignIn, runSignOut, safeCallbackUrl } from "./flows.ts";
+import {
+  type AuthorizationParamsInput,
+  contextRequest,
+  runSignIn,
+  runSignOut,
+  safeAuthorizationParams,
+  safeCallbackUrl,
+} from "./flows.ts";
 import { createHandlers, type RouteHandler } from "./handlers.ts";
 import { currentAuthJsSession } from "./session.ts";
 import { type ActiveNextAuth, setActiveNextAuth } from "./state.ts";
@@ -165,11 +172,14 @@ export interface NextAuthResult {
    * Sign in from a Server Action: a Credentials or email provider with the submitted fields, an
    * OAuth provider by redirecting to it. Redirects unless `redirect: false` (which returns the
    * URL); a refused Credentials sign-in throws {@linkcode CredentialsSignin}.
+   * `authorizationParams` (`{ prompt: "login" }`, `login_hint`, `scope`, …) are added to an
+   * OAuth / OIDC provider's authorization URL, except the ones the flow owns (`state`, PKCE,
+   * `nonce`, `redirect_uri`, `client_id`, `response_type`, `response_mode`, request objects).
    */
   signIn: (
     provider?: string,
     options?: FormData | SignInOptions,
-    authorizationParams?: Record<string, string> | string,
+    authorizationParams?: AuthorizationParamsInput,
   ) => Promise<string>;
   /** Sign out from a Server Action, then redirect (or return the URL with `redirect: false`). */
   signOut: (options?: SignOutOptions) => Promise<string>;
@@ -249,25 +259,27 @@ async function signInUrl(
   providerId: string | undefined,
   fields: Record<string, string>,
   target: string,
+  authorizationParams: Record<string, string>,
 ): Promise<string> {
   const provider = providerId ? active.providers.find((p) => p.id === providerId) : undefined;
   if (!provider) {
     const page = active.denext.pages?.signIn ?? `${active.basePath}/signin`;
     return `${page}?callbackUrl=${encodeURIComponent(target)}`;
   }
-  const result = await runSignIn(active, request, provider, fields, target);
+  const result = await runSignIn(active, request, provider, fields, target, authorizationParams);
   if (result.error === "CredentialsSignin") throw new CredentialsSignin();
   return result.url;
 }
 
 /** The server-side `signIn`. */
 function serverSignIn(active: ActiveNextAuth): NextAuthResult["signIn"] {
-  return async (providerId, options) => {
+  return async (providerId, options, authorizationParams) => {
     const request = contextRequest("signIn");
     const { redirectTo, redirect: _redirect, callbackUrl, ...fields } = signInFields(options);
     const requested = redirectTo ?? callbackUrl ?? request.headers.get("referer");
     const target = await safeCallbackUrl(active, request, requested);
-    const url = await signInUrl(active, request, providerId, fields, target);
+    const extra = safeAuthorizationParams(authorizationParams);
+    const url = await signInUrl(active, request, providerId, fields, target, extra);
     if (!wantsNoRedirect(options)) redirect(url);
     return url;
   };

@@ -65,7 +65,10 @@ and this project adheres to
   `decode`) run unchanged, mapped onto `denextAuth`. Providers: GitHub, Google, Apple, Discord,
   Microsoft Entra ID, GitLab, X (Twitter), LinkedIn, Facebook, Slack, Twitch, Spotify, Okta,
   Auth0, Keycloak, Cognito, Zoom, Notion, Credentials, Resend, Nodemailer / Email, and custom
-  OAuth / OIDC objects, with Auth.js's `AUTH_<ID>_ID` / `_SECRET` / `_ISSUER` defaults. Both session strategies: `"jwt"` seals the
+  OAuth / OIDC objects, with Auth.js's `AUTH_<ID>_ID` / `_SECRET` / `_ISSUER` defaults.
+  Per-call `authorizationParams` (`signIn("google", {}, { prompt: "login" })`, on the server and
+  in `next-auth/react`) reach the provider's authorization URL; the flow's own parameters
+  (`state`, PKCE, `nonce`, `redirect_uri`, …) can't be overridden. Both session strategies: `"jwt"` seals the
   `jwt` callback's token (AES-256-GCM) inside denext's signed cookie; `"database"` uses the
   adapter's sessions. An Auth.js adapter (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …) is
   bridged onto denext's adapter port. The `signIn`, `jwt`, `session`, `redirect` and `authorized`

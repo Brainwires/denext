@@ -349,6 +349,10 @@ place it behaves differently from Auth.js:
   kept to a same-origin path: a callback that allows another origin lands on `/` instead.
 - **Every OAuth flow uses `state` and PKCE** (and `nonce` for OIDC); a provider's `checks` are
   ignored.
+- **Per-call `authorizationParams` can't set the flow's own parameters.** `signIn("google", {},
+  { prompt: "login" })` adds `prompt` to the authorization URL, but `state`, `nonce`,
+  `code_challenge` / `code_challenge_method`, `redirect_uri`, `client_id`, `response_type`,
+  `response_mode` and `request` / `request_uri` are dropped (Auth.js passes them through).
 - **The session cookie is denext's** (`__Host-denext_auth`, signed, `SameSite=Lax`; unprefixed
   `denext_auth` over plain http, see below), not `authjs.session-token`; `cookies` and `useSecureCookies` are ignored. A token is sealed with
   AES-256-GCM inside it, in denext's own format: `next-auth/jwt`'s `encode` / `decode` don't read

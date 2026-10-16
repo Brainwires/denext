@@ -148,6 +148,71 @@ function signInError(active: ActiveNextAuth, code: string, callbackUrl: string):
 }
 
 /**
+ * The authorization-request parameters the flow itself owns, which a per-call
+ * `authorizationParams` may never set: replacing one would break the binding of the response to
+ * this browser (`state`, `nonce`, PKCE), send the code elsewhere (`redirect_uri`, a request
+ * object), or change the client or the response type.
+ */
+const RESERVED_AUTHORIZATION_PARAMS = new Set([
+  "client_id",
+  "client_secret",
+  "code_challenge",
+  "code_challenge_method",
+  "code_verifier",
+  "nonce",
+  "redirect_uri",
+  "request",
+  "request_uri",
+  "response_mode",
+  "response_type",
+  "state",
+]);
+
+/** A per-call `authorizationParams` value as Auth.js accepts it. */
+export type AuthorizationParamsInput =
+  | Record<string, string>
+  | string
+  | URLSearchParams
+  | string[][]
+  | undefined;
+
+/**
+ * A per-call `authorizationParams` (`signIn("google", {}, { prompt: "login" })`) as the
+ * parameters that may be added to the provider's authorization URL: every pair but the reserved
+ * ones (compared case-insensitively).
+ *
+ * @param input A record, a query string, `URLSearchParams` or pairs.
+ * @returns The safe parameters (empty when there are none).
+ */
+export function safeAuthorizationParams(input: AuthorizationParamsInput): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!input) return out;
+  let pairs: [string, string][];
+  try {
+    pairs = [...new URLSearchParams(input as ConstructorParameters<typeof URLSearchParams>[0])];
+  } catch {
+    return out;
+  }
+  for (const [key, value] of pairs) {
+    if (key && !RESERVED_AUTHORIZATION_PARAMS.has(key.toLowerCase())) out[key] = String(value);
+  }
+  return out;
+}
+
+/** The provider redirect `location` with `params` added — never one back to the app (an error). */
+function withAuthorizationParams(
+  location: string,
+  origin: string,
+  params: Record<string, string>,
+): string {
+  if (Object.keys(params).length === 0) return location;
+  const url = new URL(location, origin);
+  if (url.origin === new URL(origin).origin) return location;
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+  return url.href;
+}
+
+/**
  * Start (OAuth / OIDC), send (email) or complete (credentials) a sign-in with `provider`.
  *
  * @param active The instance.
@@ -155,6 +220,8 @@ function signInError(active: ActiveNextAuth, code: string, callbackUrl: string):
  * @param provider The provider.
  * @param fields The submitted fields (credentials, `email`), without `csrfToken`.
  * @param callbackUrl The already-safe path to land on.
+ * @param authorizationParams Extra authorization-request parameters for an OAuth / OIDC
+ *   provider, already filtered by {@linkcode safeAuthorizationParams}.
  * @returns Where to go: the provider, the "check your email" page, the landing path, or the
  *   sign-in page with an error.
  */
@@ -164,6 +231,7 @@ export async function runSignIn(
   provider: ProviderDescriptor,
   fields: Record<string, string>,
   callbackUrl: string,
+  authorizationParams: Record<string, string> = {},
 ): Promise<FlowResult> {
   const id = encodeURIComponent(provider.id);
   if (provider.type === "credentials") {
@@ -189,9 +257,9 @@ export async function runSignIn(
   );
   const to = locationOf(res);
   await res.body?.cancel();
-  return to
-    ? { url: translateErrorLocation(to) }
-    : signInError(active, "Configuration", callbackUrl);
+  if (!to) return signInError(active, "Configuration", callbackUrl);
+  const origin = appOrigin(active, request);
+  return { url: translateErrorLocation(withAuthorizationParams(to, origin, authorizationParams)) };
 }
 
 /**

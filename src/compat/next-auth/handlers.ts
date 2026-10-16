@@ -20,6 +20,7 @@ import {
   type FlowResult,
   runSignIn,
   runSignOut,
+  safeAuthorizationParams,
   safeCallbackUrl,
   translateErrorLocation,
 } from "./flows.ts";
@@ -95,7 +96,11 @@ async function checkedFields(
   return rest;
 }
 
-/** `POST {basePath}/signin/:provider` and `/callback/:provider` (credentials). */
+/**
+ * `POST {basePath}/signin/:provider` and `/callback/:provider` (credentials). The POST URL's
+ * query is the per-call `authorizationParams` (`next-auth/react`'s `signIn()` sends them there,
+ * as Auth.js's does), filtered of the parameters the flow owns.
+ */
 async function postSignIn(
   active: ActiveNextAuth,
   request: Request,
@@ -109,7 +114,8 @@ async function postSignIn(
     request,
     callbackUrl ?? request.headers.get("referer"),
   );
-  return answer(request, active, await runSignIn(active, request, provider, rest, target));
+  const extra = safeAuthorizationParams(new URL(request.url).searchParams);
+  return answer(request, active, await runSignIn(active, request, provider, rest, target, extra));
 }
 
 /** `POST {basePath}/signout`. */

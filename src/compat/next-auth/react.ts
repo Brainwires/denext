@@ -224,13 +224,15 @@ function formFields(options: SignInOptions): Record<string, string> {
  *
  * @param provider The provider id.
  * @param options `callbackUrl` / `redirectTo`, `redirect`, and the provider's fields.
- * @param _authorizationParams Accepted for compatibility (see KNOWN-DIFFERENCES).
+ * @param authorizationParams Extra authorization-request parameters for an OAuth / OIDC
+ *   provider (`{ prompt: "login" }`), sent as the POST URL's query as Auth.js does; the server
+ *   drops the ones the flow owns (`state`, PKCE, `redirect_uri`, …).
  * @returns The result with `redirect: false`; otherwise it navigates.
  */
 export async function signIn(
   provider?: string,
   options: SignInOptions = {},
-  _authorizationParams?: Record<string, string> | string,
+  authorizationParams?: Record<string, string> | string | URLSearchParams | string[][],
 ): Promise<SignInResponse | undefined> {
   const callbackUrl = sameOrigin(options.redirectTo ?? options.callbackUrl);
   if (!provider) {
@@ -241,7 +243,9 @@ export async function signIn(
   const type = providers?.[provider]?.type;
   const action = type === "credentials" ? "callback" : "signin";
   const csrfToken = (await getCsrfToken()) ?? "";
-  const { status, url } = await postForm(`${action}/${encodeURIComponent(provider)}`, {
+  const query = new URLSearchParams(authorizationParams ?? {}).toString();
+  const path = `${action}/${encodeURIComponent(provider)}${query ? `?${query}` : ""}`;
+  const { status, url } = await postForm(path, {
     ...formFields(options),
     csrfToken,
     callbackUrl,

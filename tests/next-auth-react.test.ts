@@ -162,6 +162,21 @@ Deno.test("next-auth/react: signIn(credentials, { redirect: false }) posts the f
   }
 });
 
+Deno.test("next-auth/react: signIn's authorizationParams ride the POST URL's query", async () => {
+  const fetched = stubFetch(server);
+  try {
+    await signIn("github", { redirect: false }, { prompt: "login", login_hint: "a@b.c" });
+    const post = fetched.calls.find((c) => c.method === "POST")!;
+    const url = new URL(post.url, "http://localhost");
+    assertEquals(url.pathname, "/api/auth/signin/github");
+    assertEquals(url.searchParams.get("prompt"), "login");
+    assertEquals(url.searchParams.get("login_hint"), "a@b.c");
+    assertEquals(new URLSearchParams(post.body).get("csrfToken"), "tok-1");
+  } finally {
+    fetched.restore();
+  }
+});
+
 Deno.test("next-auth/react: a foreign callbackUrl is replaced by the current page", async () => {
   const fetched = stubFetch(server);
   try {
