@@ -10,6 +10,18 @@ and this project adheres to
 
 ### Added
 
+- **Lustre apps as islands: `lustreIsland` in `denext/gleam`.** A Lustre app (the Gleam UI
+  framework) becomes an island component: export `lustreIsland(lustre, counter.app(), { flags })`
+  from a `"use client"` module and render it from a Server Component, with any `client:*`
+  directive. The server renders the app's first view (`element.to_string`) inside the island's
+  root; in the browser Lustre starts on that root and adopts the server's markup (the same nodes,
+  focus and typed text), props become its flags (new flags restart it), and unmounting clears the
+  root. Lustre's code ships only in the chunks of the islands that use it. When the app's Gleam
+  project depends on Lustre, every Gleam build (the `gleam()` plugin, `denext add gleam:`) writes
+  `.denext/lustre.ts`, the app's own Lustre build wrapped as the kit these helpers take (one copy
+  of Lustre, typed from Gleam's `.d.mts`). `denext/gleam` can now be imported from client code: the
+  build plugin loads its own modules only when it is set up.
+
 - **Background audio with lock-screen controls (`denext mobile add background-audio`).**
   `setNowPlaying({ title, artist, album, artwork, duration, position, playing, controls })`,
   `clearNowPlaying()`, `onMediaControl(handler)` / `useMediaControl` and

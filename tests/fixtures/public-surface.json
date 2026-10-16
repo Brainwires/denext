@@ -2255,7 +2255,16 @@
   ],
   "denext/gleam": [
     "GleamOptions:interface",
-    "gleam:function"
+    "GleamResult:interface",
+    "LustreApp:interface",
+    "LustreIslandOptions:interface",
+    "LustreKit:interface",
+    "LustreModules:interface",
+    "LustreRuntime:typeAlias",
+    "PrerenderedShadow:interface",
+    "gleam:function",
+    "lustreIsland:function",
+    "lustreKit:function"
   ],
   "denext/platform": [
     "Platform:typeAlias",
