@@ -506,6 +506,37 @@ Deno.test("AccessibilityInfo: a DenextAccessibility plugin answers for the scree
   resetAccessibilityInfoForTesting();
 });
 
+Deno.test("AccessibilityInfo: bold text and grayscale come from the DenextAccessibility plugin", async () => {
+  const plugin = fakePlugin(["isScreenReaderEnabled", "isBoldTextEnabled", "isGrayscaleEnabled"], {
+    isBoldTextEnabled: { value: true },
+    isGrayscaleEnabled: { value: false },
+  });
+  await inShell("android", { DenextAccessibility: plugin.plugin }, async () => {
+    assertEquals(await AccessibilityInfo.isBoldTextEnabled(), true);
+    assertEquals(await AccessibilityInfo.isGrayscaleEnabled(), false);
+    const seen: unknown[] = [];
+    const bold = AccessibilityInfo.addEventListener("boldTextChanged", (v) => void seen.push(v));
+    const gray = AccessibilityInfo.addEventListener("grayscaleChanged", (v) => void seen.push(v));
+    await settle();
+    plugin.fire("boldTextChanged", { value: false });
+    plugin.fire("grayscaleChanged", { value: true });
+    assertEquals(seen, [false, true]);
+    bold.remove();
+    gray.remove();
+    await settle();
+    assertEquals(plugin.listening(), 0);
+  });
+  // A plugin from before bold text and grayscale (generation 2): false, and no listener.
+  const older = fakePlugin(["isScreenReaderEnabled"], { isScreenReaderEnabled: { value: true } });
+  await inShell("ios", { DenextAccessibility: older.plugin }, async () => {
+    assertEquals(await AccessibilityInfo.isBoldTextEnabled(), false);
+    AccessibilityInfo.addEventListener("grayscaleChanged", () => {});
+    await settle();
+    assertEquals(older.listening(), 0);
+  });
+  resetAccessibilityInfoForTesting();
+});
+
 Deno.test("AccessibilityInfo: announcements go to a live region; focus moves to the node", async () => {
   const { doc } = makeDom();
   try {

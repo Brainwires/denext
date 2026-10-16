@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- **`AccessibilityInfo.isBoldTextEnabled()` / `isGrayscaleEnabled()` read the OS** in React
+  Native mode, with their `boldTextChanged` / `grayscaleChanged` events. The `DenextAccessibility`
+  plugin (`denext mobile add accessibility`, template generation 3; re-run it to upgrade an
+  unedited copy) answers them: iOS's Bold Text and grayscale color filter, Android's Bold text
+  (Android 12+) and color correction in grayscale mode. Without the plugin, and on the web, they
+  read `false` as before.
+
 - **Stacks move focus to the new screen.** In `denext/navigation` (`StackView`, `StackLayout`,
   `HistoryStack`, and React Native mode's React Navigation and Expo Router stacks) a push focuses
   the new screen's header title (else the screen), and a pop gives focus back to the element that

@@ -391,7 +391,8 @@ export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
     notes: "isScreenReaderEnabled() / onScreenReaderChange(cb) / useScreenReader() (VoiceOver, " +
       "TalkBack; React Native mode's AccessibilityInfo reads it too) and getFontScale() / " +
       "useFontScale() / applyFontScale() (Dynamic Type, Android's font scale; React Native " +
-      "mode's PixelRatio.getFontScale() and Text)",
+      "mode's PixelRatio.getFontScale() and Text), plus the OS's bold text and grayscale " +
+      "settings (React Native mode's AccessibilityInfo.isBoldTextEnabled / isGrayscaleEnabled)",
     configure: () => ({ install: ACCESSIBILITY_INSTALL }),
   },
   storage: {

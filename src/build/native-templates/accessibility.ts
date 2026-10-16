@@ -23,13 +23,18 @@ import UIKit
 /// - \`getFontScale()\`: resolves \`{ value }\`, the Dynamic Type size as React Native's font scale
 ///   (1.0 at the default size, "Large").
 /// - \`fontScaleChanged\` event: \`{ value }\`, sent when the user changes the text size.
+/// - \`isBoldTextEnabled()\` / \`isGrayscaleEnabled()\`: resolve \`{ value }\`, the Bold Text and
+///   Color Filters (grayscale) settings; \`boldTextChanged\` / \`grayscaleChanged\` send
+///   \`{ value }\` when they change.
 @objc(DenextAccessibilityPlugin)
 public class DenextAccessibilityPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
     public let identifier = "DenextAccessibilityPlugin"
     public let jsName = "DenextAccessibility"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "isScreenReaderEnabled", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "getFontScale", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "getFontScale", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "isBoldTextEnabled", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "isGrayscaleEnabled", returnType: CAPPluginReturnPromise)
     ]
 
     /// React Native's table (RCTFontSizeMultiplier): each content size category's multiplier.
@@ -65,6 +70,18 @@ public class DenextAccessibilityPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked 
             name: UIContentSizeCategory.didChangeNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(boldTextStatusDidChange),
+            name: UIAccessibility.boldTextStatusDidChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(grayscaleStatusDidChange),
+            name: UIAccessibility.grayscaleStatusDidChangeNotification,
+            object: nil
+        )
     }
 
     deinit {
@@ -94,6 +111,30 @@ public class DenextAccessibilityPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked 
             call.resolve(["value": DenextAccessibilityPlugin.currentFontScale()])
         }
     }
+
+    @objc func boldTextStatusDidChange() {
+        DispatchQueue.main.async {
+            self.notifyListeners("boldTextChanged", data: ["value": UIAccessibility.isBoldTextEnabled])
+        }
+    }
+
+    @objc func isBoldTextEnabled(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            call.resolve(["value": UIAccessibility.isBoldTextEnabled])
+        }
+    }
+
+    @objc func grayscaleStatusDidChange() {
+        DispatchQueue.main.async {
+            self.notifyListeners("grayscaleChanged", data: ["value": UIAccessibility.isGrayscaleEnabled])
+        }
+    }
+
+    @objc func isGrayscaleEnabled(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            call.resolve(["value": UIAccessibility.isGrayscaleEnabled])
+        }
+    }
 }
 `,
 };
@@ -106,8 +147,15 @@ export const ACCESSIBILITY_ANDROID_FILES: Readonly<Record<string, string>> = {
 
 package dev.denext.accessibility;
 
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.res.Configuration;
+import android.database.ContentObserver;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.Settings;
 import android.view.accessibility.AccessibilityManager;
 import android.webkit.WebView;
 import com.getcapacitor.JSObject;
@@ -130,6 +178,14 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  * ({@code Configuration.fontScale}, 1.0 at the default size) and the WebView's text zoom in
  * percent (what of it the WebView already applies to the page). {@code fontScaleChanged} sends
  * the same when a configuration change reaches the activity without recreating it.
+ *
+ * <p>{@code isBoldTextEnabled()} resolves {@code { value }}: whether the system's Bold text is on
+ * ({@code Configuration.fontWeightAdjustment > 0}, Android 12+; {@code false} before), with
+ * {@code boldTextChanged} on a configuration change the activity handles.
+ * {@code isGrayscaleEnabled()} resolves {@code { value }}: whether Color correction is on in
+ * Grayscale mode (the secure settings {@code accessibility_display_daltonizer_enabled} and
+ * {@code accessibility_display_daltonizer} = 0), with {@code grayscaleChanged} when either
+ * changes.
  */
 @CapacitorPlugin(name = "DenextAccessibility")
 public class DenextAccessibilityPlugin extends Plugin {
@@ -137,9 +193,48 @@ public class DenextAccessibilityPlugin extends Plugin {
     private AccessibilityManager manager;
     private AccessibilityManager.TouchExplorationStateChangeListener listener;
     private float fontScale = -1f;
+    private int fontWeightAdjustment = Integer.MIN_VALUE;
+    private ContentObserver grayscaleObserver;
+    private boolean grayscale;
+
+    /** The secure setting that turns color correction on. */
+    private static final String DALTONIZER_ENABLED = "accessibility_display_daltonizer_enabled";
+    /** The color correction mode (0 = grayscale, monochromacy). */
+    private static final String DALTONIZER = "accessibility_display_daltonizer";
+
+    private boolean grayscaleNow() {
+        ContentResolver resolver = getContext().getContentResolver();
+        return Settings.Secure.getInt(resolver, DALTONIZER_ENABLED, 0) == 1
+            && Settings.Secure.getInt(resolver, DALTONIZER, -1) == 0;
+    }
+
+    private static boolean boldText(Configuration config) {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && config.fontWeightAdjustment > 0;
+    }
+
+    private void watchGrayscale() {
+        grayscale = grayscaleNow();
+        grayscaleObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
+            @Override
+            public void onChange(boolean selfChange) {
+                boolean now = grayscaleNow();
+                if (now == grayscale) return;
+                grayscale = now;
+                JSObject data = new JSObject();
+                data.put("value", now);
+                notifyListeners("grayscaleChanged", data);
+            }
+        };
+        ContentResolver resolver = getContext().getContentResolver();
+        for (String name : new String[] { DALTONIZER_ENABLED, DALTONIZER }) {
+            Uri uri = Settings.Secure.getUriFor(name);
+            resolver.registerContentObserver(uri, false, grayscaleObserver);
+        }
+    }
 
     @Override
     public void load() {
+        watchGrayscale();
         manager = (AccessibilityManager) getContext().getSystemService(Context.ACCESSIBILITY_SERVICE);
         if (manager == null) return;
         listener = enabled -> {
@@ -155,6 +250,23 @@ public class DenextAccessibilityPlugin extends Plugin {
         if (manager != null && listener != null) {
             manager.removeTouchExplorationStateChangeListener(listener);
         }
+        if (grayscaleObserver != null) {
+            getContext().getContentResolver().unregisterContentObserver(grayscaleObserver);
+        }
+    }
+
+    @PluginMethod
+    public void isBoldTextEnabled(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("value", boldText(getContext().getResources().getConfiguration()));
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void isGrayscaleEnabled(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("value", grayscaleNow());
+        call.resolve(result);
     }
 
     @PluginMethod
@@ -185,6 +297,16 @@ public class DenextAccessibilityPlugin extends Plugin {
     @Override
     protected void handleOnConfigurationChanged(Configuration newConfig) {
         super.handleOnConfigurationChanged(newConfig);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            && newConfig.fontWeightAdjustment != fontWeightAdjustment) {
+            boolean was = fontWeightAdjustment > 0;
+            fontWeightAdjustment = newConfig.fontWeightAdjustment;
+            if (boldText(newConfig) != was) {
+                JSObject data = new JSObject();
+                data.put("value", boldText(newConfig));
+                notifyListeners("boldTextChanged", data);
+            }
+        }
         if (newConfig.fontScale == fontScale) return;
         fontScale = newConfig.fontScale;
         withFontScale(newConfig.fontScale, data -> notifyListeners("fontScaleChanged", data));

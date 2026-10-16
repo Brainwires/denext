@@ -29,8 +29,15 @@ interface FontScaleEvent {
 interface AccessibilityPlugin {
   isScreenReaderEnabled(): Promise<{ value?: boolean }>;
   getFontScale?(): Promise<FontScaleEvent>;
+  /** Generation 3 (an older plugin lacks them). */
+  isBoldTextEnabled?(): Promise<{ value?: boolean }>;
+  isGrayscaleEnabled?(): Promise<{ value?: boolean }>;
   addListener(
-    eventName: "screenReaderChanged" | "fontScaleChanged",
+    eventName:
+      | "screenReaderChanged"
+      | "fontScaleChanged"
+      | "boldTextChanged"
+      | "grayscaleChanged",
     listener: (event: { value?: boolean } & FontScaleEvent) => void,
   ): ListenerHandle | Promise<ListenerHandle>;
 }
@@ -65,6 +72,60 @@ export async function isScreenReaderEnabled(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * An OS display setting the `DenextAccessibility` plugin reports: iOS's Bold Text and Color
+ * Filters' grayscale, Android's Bold text (12+) and color correction in grayscale mode.
+ */
+export type AccessibilitySetting = "boldText" | "grayscale";
+
+/** The plugin method that answers each setting. */
+const SETTING_METHOD = {
+  boldText: "isBoldTextEnabled",
+  grayscale: "isGrayscaleEnabled",
+} as const;
+
+/**
+ * Whether the OS setting is on, through the `DenextAccessibility` plugin (`denext mobile add
+ * accessibility`). No web API reveals either, so on the web, during SSR, in a shell without the
+ * plugin (or with an older one that lacks it) and when the plugin fails it resolves `false`.
+ * Internal: React Native mode's `AccessibilityInfo.isBoldTextEnabled` / `isGrayscaleEnabled`.
+ *
+ * @param setting Which setting.
+ * @returns Whether it is on.
+ */
+export async function isAccessibilitySettingEnabled(
+  setting: AccessibilitySetting,
+): Promise<boolean> {
+  const plugin = accessibilityPlugin();
+  const method = plugin?.[SETTING_METHOD[setting]];
+  if (!plugin || typeof method !== "function") return false;
+  try {
+    return (await method.call(plugin))?.value === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Call `callback` with the new state when the OS setting changes; returns a function that stops
+ * listening. Without a plugin that reports it, it never fires. Internal: React Native mode's
+ * `boldTextChanged` / `grayscaleChanged` events.
+ *
+ * @param setting Which setting.
+ * @param callback Called with whether it is now on.
+ * @returns A function that removes the listener.
+ */
+export function onAccessibilitySettingChange(
+  setting: AccessibilitySetting,
+  callback: (enabled: boolean) => void,
+): () => void {
+  const plugin = accessibilityPlugin();
+  if (!plugin || typeof plugin[SETTING_METHOD[setting]] !== "function") return () => {};
+  return listenerDisposer(
+    plugin.addListener(`${setting}Changed`, (event) => callback(event?.value === true)),
+  );
 }
 
 /**

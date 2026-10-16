@@ -365,11 +365,15 @@ Deno.test("mobile add accessibility: no package; DenextAccessibility on iOS + An
       assert(report.written.includes(path), path);
     }
     const ios = await read(dir, IOS_A11Y);
-    assert(ios.startsWith("// denext-accessibility-template: 2 sha256="));
+    assert(ios.startsWith("// denext-accessibility-template: 3 sha256="));
+    assertStringIncludes(ios, "UIAccessibility.boldTextStatusDidChangeNotification");
+    assertStringIncludes(ios, "UIAccessibility.isGrayscaleEnabled");
     assertStringIncludes(ios, "UIAccessibility.voiceOverStatusDidChangeNotification");
     assertStringIncludes(ios, 'jsName = "DenextAccessibility"');
     const android = await read(dir, ANDROID_A11Y);
     assertStringIncludes(android, "addTouchExplorationStateChangeListener");
+    assertStringIncludes(android, "fontWeightAdjustment");
+    assertStringIncludes(android, "accessibility_display_daltonizer_enabled");
     assertStringIncludes(android, '@CapacitorPlugin(name = "DenextAccessibility")');
     assertEquals(
       await read(dir, BRIDGE),

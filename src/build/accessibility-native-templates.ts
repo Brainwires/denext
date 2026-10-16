@@ -20,7 +20,13 @@
 // React Native mode's AccessibilityInfo overlay already reads. The font scale answers and sends
 // `{ value: number, textZoom?: number }` (`textZoom` in percent, Android only).
 //
-// Generation 2 (denext 2.11) added the font scale; an unedited generation-1 file is upgraded.
+// - Both: `isBoldTextEnabled()` / `isGrayscaleEnabled()` and the `boldTextChanged` /
+//   `grayscaleChanged` events (React Native mode's AccessibilityInfo): iOS
+//   `UIAccessibility.isBoldTextEnabled` / `isGrayscaleEnabled` and their notifications; Android
+//   `Configuration.fontWeightAdjustment` (Android 12+) and color correction in grayscale mode.
+//
+// Generation 2 (denext 2.11) added the font scale, generation 3 bold text and grayscale; an
+// unedited earlier file is upgraded.
 //
 // Edit these as source in native-templates/accessibility.ts:
 // they are compiled only in an app (against Capacitor 8). Every `\``
@@ -38,7 +44,7 @@ import { markedTemplateIntact, renderMarkedTemplate } from "./native-template-ma
 import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
 
 /** The generation of the templates, stamped into every file the installer writes. */
-export const ACCESSIBILITY_TEMPLATE_VERSION = 2;
+export const ACCESSIBILITY_TEMPLATE_VERSION = 3;
 
 /**
  * A template as the installer writes it: a first line

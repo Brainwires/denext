@@ -43,11 +43,11 @@
   No Android parity claim before that.
 - **iPhone validation still to run:** the bottom safe-area inset and the example's button-row
   layout, biometrics with Face ID enrolled, native social login, a sandbox purchase, Sentry,
-  background tasks and location, native modules, context menus, `<SystemIcon>`, font scale, the
+  background tasks and location, native modules, context menus, `<SystemIcon>`, font scale, bold
+  text and grayscale (iOS and Android), the stacks' focus move under VoiceOver / TalkBack, the
   maps / video / symbols wiring of the Expo and community packages, and a migrated React Native
   app larger than `examples/expo-app` (a large real-world one).
 - **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
-- **Accessibility:** read bold text and grayscale from the OS (both read `false` today).
 - **`denext migrate --from expo` advice** for the most-used native-only SDKs
   (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`), pointing at
   the [native SDK recipes](https://denext.dev/docs/native-sdk-recipes).
