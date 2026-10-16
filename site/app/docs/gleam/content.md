@@ -28,8 +28,8 @@ denext add gleam:gleam_json
 ```
 
 `denext add gleam:<package>` (several at once, and mixed with `jsr:` / `npm:`
-specifiers) needs the `gleam` CLI ([install it](https://gleam.run/getting-started/)).
-It:
+specifiers) needs nothing installed: it runs denext's pinned Gleam compiler (see
+[The compiler](#the-compiler)). It:
 
 1. creates a Gleam project in `gleam/` when the app has none (a `gleam.toml`
    with `target = "javascript"` and `typescript_declarations = true`; a
@@ -59,9 +59,46 @@ export default {
 };
 ```
 
-When `gleam` is not installed the plugin says so once and skips the compile,
-and the app keeps the last compiled output; an app with no Gleam project is left
-alone. A compile error fails the step and prints Gleam's diagnostics.
+An app with no Gleam project is left alone. A compile error fails the step and
+prints Gleam's diagnostics. When no compiler can be had (offline before the
+first download, below), the step fails with an error naming the fix, unless the
+project already has compiled output: then the plugin keeps it and says why once.
+
+## The compiler
+
+denext manages Gleam like its [Deno toolchain](/docs/toolchain): each denext
+release pins one Gleam release (1.18.1 today) with a SHA-256 per platform, and
+the first command that needs it — `denext add gleam:`, or the plugin at
+`denext dev` / `build` — downloads it into the toolchain cache:
+
+```text
+<DENO_DIR>/denext-deno/gleam/<version>/<platform>/gleam      (gleam.exe on Windows)
+```
+
+The pinned platforms are macOS (arm64, x64), Linux (arm64, x64; Gleam's static
+musl builds, which run on any distribution) and Windows (arm64, x64). The
+download is checked against its pinned SHA-256 before it is extracted, a
+mismatch is refused and deleted, and the binary is renamed into place atomically
+under the same cache lock as the Deno toolchain, so two commands starting at
+once download it once. Gleam's JavaScript target needs no Erlang: this one
+binary is all a denext app uses.
+
+To work offline, fetch it ahead of time:
+
+```sh
+denext toolchain install --with gleam
+denext toolchain status     # lists the pinned Gleam and whether it is cached
+```
+
+| Setting                      | Effect                                                   |
+| ---------------------------- | -------------------------------------------------------- |
+| `DENEXT_GLEAM=<path>`        | That `gleam` runs instead of the pinned one, unverified. |
+| `gleam({ gleam: "<path>" })` | The same, for the plugin only.                           |
+
+A `gleam` on your `PATH` is never used on its own: its version would decide what
+the compiled JavaScript looks like, so a project builds the same on every
+machine with the pinned one. To use your own anyway, name it
+(`DENEXT_GLEAM=$(which gleam)`, or `gleam({ gleam: "gleam" })`).
 
 ## One fix-up after each build
 

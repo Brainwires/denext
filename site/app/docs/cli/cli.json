@@ -2382,12 +2382,18 @@
       "name": "toolchain",
       "summary": "Manage denext's Deno toolchain (install | status | path | link | unlink)",
       "usage": "denext toolchain <action> [options]",
-      "description": "denext runs the commands that execute project code on its own pinned Deno build\n(stock Deno plus Deno.SQL and Vitest/Jest compat in deno test), downloaded and SHA-256\nverified on first use. Your own `deno` is never replaced. DENEXT_DENO=stock opts out.\n  denext toolchain install      Download + verify it now (fails when it can't)\n  denext toolchain status       Pinned version, cache state, active or not (--json)\n  denext toolchain path         Print the binary's path (installs it first)\n  denext toolchain link         Put it on PATH as ~/.denext/bin/deno (opt-in)\n  denext toolchain unlink       Remove that link (only what link created)",
+      "description": "denext runs the commands that execute project code on its own pinned Deno build\n(stock Deno plus Deno.SQL and Vitest/Jest compat in deno test), downloaded and SHA-256\nverified on first use. Your own `deno` is never replaced. DENEXT_DENO=stock opts out.\n  denext toolchain install      Download + verify it now (fails when it can't)\n  denext toolchain install --with gleam   …and the pinned Gleam compiler\n  denext toolchain status       Pinned versions (Deno, Gleam), cache state, active (--json)\n  denext toolchain path         Print the binary's path (installs it first)\n  denext toolchain link         Put it on PATH as ~/.denext/bin/deno (opt-in)\n  denext toolchain unlink       Remove that link (only what link created)",
       "flags": [
         {
           "name": "verify",
           "type": "boolean",
           "description": "status: re-hash the cached binary instead of the size + mtime check"
+        },
+        {
+          "name": "with",
+          "type": "string",
+          "valueName": "<tool>",
+          "description": "install: also fetch these pinned tools (gleam)"
         }
       ],
       "positionals": [

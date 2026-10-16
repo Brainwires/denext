@@ -58,8 +58,11 @@ export interface DenoToolchainArtifact {
   readonly sha256: string;
   /** Its exact size in bytes (enforced while streaming when given). */
   readonly size?: number;
-  /** `zip` (a release archive holding `deno[.exe]`, the default) or a bare `binary`. */
-  readonly format?: "zip" | "binary";
+  /**
+   * `zip` (a release archive holding the executable at its top level, the default), `tar.gz`
+   * (the same as a gzipped tarball: the pinned Gleam on macOS and Linux) or a bare `binary`.
+   */
+  readonly format?: "zip" | "tar.gz" | "binary";
   /** The esbuild inside the zip, when the release ships one. */
   readonly esbuild?: DenoToolchainEsbuild;
 }
@@ -307,61 +310,87 @@ async function fileVerdict(
   return await sha256File(path) === stamped.sha256 ? "rehashed" : "bad";
 }
 
+/** Whether this process was denied network access to `url`'s host (`--deny-net`, `--offline`). */
+async function netDenied(url: string): Promise<boolean> {
+  const host = new URL(url).host;
+  const state = await Deno.permissions.query({ name: "net", host }).then((s) => s.state, () => "");
+  return state === "denied";
+}
+
 /** GET `artifact`, mapping a network failure / HTTP error to a download error. */
 async function openDownload(
-  artifact: DenoToolchainArtifact,
+  slot: DownloadNames,
   fetchImpl: typeof fetch,
 ): Promise<ReadableStream<Uint8Array>> {
+  const { artifact, what } = slot;
+  const hint = slot.offlineHint ? ` ${slot.offlineHint}` : "";
+  if (await netDenied(artifact.url)) {
+    throw new DenoToolchainDownloadError(
+      `denext: denext's ${what} (${artifact.file}) is not downloaded yet, and this process may ` +
+        `not reach ${new URL(artifact.url).host} (offline).${hint}`,
+    );
+  }
   let res: Response;
   try {
     res = await fetchImpl(artifact.url, { redirect: "follow" });
   } catch (err) {
     throw new DenoToolchainDownloadError(
-      `denext: could not download denext's Deno toolchain (${artifact.file}) from ` +
-        `${artifact.url}: ${err instanceof Error ? err.message : err}. Are you offline?`,
+      `denext: could not download denext's ${what} (${artifact.file}) from ` +
+        `${artifact.url}: ${err instanceof Error ? err.message : err}. Are you offline?${hint}`,
     );
   }
   if (res.ok && res.body) return res.body;
   await res.body?.cancel();
   throw new DenoToolchainDownloadError(
-    `denext: downloading denext's Deno toolchain failed: GET ${artifact.url} → ` +
+    `denext: downloading denext's ${what} failed: GET ${artifact.url} → ` +
       `${res.status} ${res.statusText}`,
   );
 }
 
+/** What a download's messages call it: the artifact, its name, and the way to fetch it ahead. */
+interface DownloadNames {
+  readonly artifact: DenoToolchainArtifact;
+  /** `Deno toolchain`, `denort`, `Gleam compiler`. */
+  readonly what: string;
+  /** Appended to an offline refusal (how to prefetch it). */
+  readonly offlineHint?: string;
+}
+
 /** Stream the download into the new file `dest`; its size and SHA-256. */
 async function download(
-  artifact: DenoToolchainArtifact,
+  slot: DownloadNames,
   dest: string,
   fetchImpl: typeof fetch,
 ): Promise<{ size: number; sha256: string }> {
-  const body = await openDownload(artifact, fetchImpl);
+  const { artifact, what } = slot;
+  const body = await openDownload(slot, fetchImpl);
   const cap = artifact.size ?? MAX_DOWNLOAD;
   return await streamHashed(body, dest, cap, {
     tooLarge: () =>
       new DenoToolchainDownloadError(
-        `denext: refusing denext's Deno toolchain ${artifact.file}: larger than its pinned ` +
+        `denext: refusing denext's ${what} ${artifact.file}: larger than its pinned ` +
           `${cap} bytes`,
       ),
     interrupted: (size, err) =>
       new DenoToolchainDownloadError(
-        `denext: the Deno toolchain download was interrupted (${artifact.file}, ${size} bytes): ` +
+        `denext: the ${what} download was interrupted (${artifact.file}, ${size} bytes): ` +
           `${err instanceof Error ? err.message : err}`,
       ),
   });
 }
 
 /** Check a finished download against the pin; throws (the caller deletes the file). */
-function checkDownload(artifact: DenoToolchainArtifact, got: { size: number; sha256: string }) {
+function checkDownload(slot: DownloadNames, got: { size: number; sha256: string }) {
+  const { artifact, what } = slot;
   if (artifact.size !== undefined && got.size !== artifact.size) {
     throw new DenoToolchainDownloadError(
-      `denext: refusing denext's Deno toolchain ${artifact.file}: got ${got.size} bytes, pinned ` +
+      `denext: refusing denext's ${what} ${artifact.file}: got ${got.size} bytes, pinned ` +
         `${artifact.size} (truncated download)`,
     );
   }
   if (got.sha256 !== artifact.sha256) {
     throw new DenoToolchainHashError(
-      `denext: REFUSING denext's Deno toolchain ${artifact.file}: SHA-256 mismatch.\n` +
+      `denext: REFUSING denext's ${what} ${artifact.file}: SHA-256 mismatch.\n` +
         `  pinned ${artifact.sha256}\n  got    ${got.sha256}\n` +
         "  The file was deleted unexecuted. Retry; if it persists, the download is being " +
         "tampered with.",
@@ -379,11 +408,12 @@ async function binaryFrom(
   scratch: string,
   exe: string,
 ): Promise<{ binary: string; extracted: string | null }> {
-  if ((artifact.format ?? "zip") === "binary") return { binary: downloaded, extracted: null };
+  const format = artifact.format ?? "zip";
+  if (format === "binary") return { binary: downloaded, extracted: null };
   const out = join(scratch, "x");
-  const result = await extractArchive(downloaded, "zip", out);
+  const result = await extractArchive(downloaded, format, out);
   if (!result.files[exe]) {
-    throw new Error(`denext: the toolchain archive ${artifact.file} has no top-level ${exe}`);
+    throw new Error(`denext: the archive ${artifact.file} has no top-level ${exe}`);
   }
   return { binary: join(out, exe), extracted: out };
 }
@@ -527,7 +557,7 @@ async function install(
       `  denext: downloading denext's ${slot.what} ${version} for ${target}${mb}…`,
     );
     try {
-      checkDownload(artifact, await download(artifact, downloaded, opts.fetch ?? fetch));
+      checkDownload(slot, await download(slot, downloaded, opts.fetch ?? fetch));
     } catch (err) {
       await Deno.remove(downloaded).catch(() => {});
       throw err;
@@ -547,7 +577,7 @@ async function install(
 }
 
 /** One verified binary in the cache: where it goes and the pinned archive it comes from. */
-interface CacheSlot {
+export interface CacheSlot extends DownloadNames {
   /** The cache root (the lock lives there). */
   readonly root: string;
   /** The binary's directory (its stamp beside it). */
@@ -558,17 +588,18 @@ interface CacheSlot {
   readonly os: string;
   readonly version: string;
   readonly target: string;
-  readonly artifact: DenoToolchainArtifact;
-  /** What the progress and error lines call it (`Deno toolchain`, `denort`). */
-  readonly what: string;
 }
 
 /**
  * Make `slot`'s binary available and verified in the cache (see the module header): reuse it when
  * its stamp matches, else download, verify and install it under the cache lock. Resolves whether
- * it was already cached.
+ * it was already cached. The pinned Gleam compiler (gleam-toolchain.ts) is cached the same way.
+ *
+ * @param slot The binary, its cache directory and its pinned archive.
+ * @param options The download seams (`fetch`, `log`).
+ * @returns Whether it was already cached.
  */
-async function ensureCached(
+export async function ensureCached(
   slot: CacheSlot,
   options: EnsureDenoToolchainOptions,
 ): Promise<boolean> {
@@ -598,6 +629,29 @@ async function ensureCached(
     throw new Error(`denext: the ${slot.what} at ${dir} did not verify after install`);
   }
   return false;
+}
+
+/**
+ * The cache state of `slot`'s binary, without downloading: `cached` (present, its stamp matches
+ * the pin, and — with `verify` — it re-hashes to the stamp), `missing`, or `invalid` (re-downloaded
+ * on next use).
+ *
+ * @param slot The binary.
+ * @param verify Re-hash it even when its size and mtime match.
+ * @returns The state.
+ */
+export async function cachedSlotState(
+  slot: CacheSlot,
+  verify = false,
+): Promise<"cached" | "missing" | "invalid"> {
+  const { dir, exe, version, target, artifact } = slot;
+  const verdict = await cacheVerdict(dir, exe, version, target, artifact, true);
+  if (verdict === "missing") return "missing";
+  if (verdict === "bad") return "invalid";
+  if (verify && await sha256File(join(dir, exe)) !== (await readStamp(dir))?.binary.sha256) {
+    return "invalid";
+  }
+  return "cached";
 }
 
 /**
@@ -733,10 +787,11 @@ async function queryMissingGrants(cacheRoot: string): Promise<string[]> {
  * Files\deno\deno.exe"` keeps the quotes in the value. Mismatched quotes are left as they are.
  *
  * @param env The environment to read (defaults to the process).
+ * @param name The variable (default `DENEXT_DENO`; `DENEXT_GLEAM` reads the same way).
  * @returns The value, `""` when unset.
  */
-export function toolchainEnvValue(env: EnvGet = processEnv): string {
-  const raw = (env(TOOLCHAIN_ENV) ?? "").trim();
+export function toolchainEnvValue(env: EnvGet = processEnv, name = TOOLCHAIN_ENV): string {
+  const raw = (env(name) ?? "").trim();
   const quote = raw[0];
   if (raw.length >= 2 && (quote === '"' || quote === "'") && raw.endsWith(quote)) {
     return raw.slice(1, -1).trim();
@@ -929,14 +984,17 @@ async function cacheState(
   if (!artifact) return { state: "unsupported", path: null };
   const dir = binaryDir(root, pin.version, target);
   const exe = exeName(os);
-  const path = join(dir, exe);
-  const verdict = await cacheVerdict(dir, exe, pin.version, target, artifact, true);
-  if (verdict === "missing") return { state: "missing", path };
-  if (verdict === "bad") return { state: "invalid", path };
-  if (verify && await sha256File(path) !== (await readStamp(dir))?.binary.sha256) {
-    return { state: "invalid", path };
-  }
-  return { state: "cached", path };
+  const slot = {
+    root,
+    dir,
+    exe,
+    os,
+    version: pin.version,
+    target,
+    artifact,
+    what: "Deno toolchain",
+  };
+  return { state: await cachedSlotState(slot, verify), path: join(dir, exe) };
 }
 
 /** A compiled executable fetches the toolchain before any command but `toolchain` / `completions`. */

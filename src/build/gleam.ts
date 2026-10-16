@@ -10,12 +10,15 @@
 // The import map maps `@gleam/` onto the build, so app code imports
 // `@gleam/<package>/<module>.mjs`. `denext add gleam:<package>` sets all of this up (a `gleam/`
 // project, the package, a build, the import map entry); the optional `gleam()` plugin
-// (`denext/gleam`) recompiles at dev startup, on `.gleam` changes and at build, and skips cleanly
-// when `gleam` is not installed. Nothing here runs at request time.
+// (`denext/gleam`) recompiles at dev startup, on `.gleam` changes and at build. The compiler is
+// denext's pinned Gleam (gleam-toolchain.ts), fetched and verified on first need, or the one
+// `DENEXT_GLEAM` / the `gleam` option names. Nothing here runs at request time.
 
 import { dirname, join, relative } from "@std/path";
 import { appendGitignore } from "./gitignore.ts";
 import type { DenextPlugin, PluginContext } from "../plugin/mod.ts";
+import { DenoToolchainHashError } from "./deno-toolchain.ts";
+import { resolveGleamToolchain } from "./gleam-toolchain.ts";
 
 /** The import-map prefix Gleam packages are imported under (`@gleam/<package>/<module>.mjs`). */
 const GLEAM_IMPORT_PREFIX = "@gleam/";
@@ -30,7 +33,11 @@ export interface GleamOptions {
    * Default: the root itself when it holds a `gleam.toml`, else `gleam/`.
    */
   dir?: string;
-  /** The `gleam` executable (default `gleam` on `PATH`). */
+  /**
+   * The `gleam` executable. Default: `DENEXT_GLEAM=<path>` when set, else denext's pinned Gleam,
+   * downloaded and SHA-256-verified on first need (`denext toolchain install --with gleam` fetches
+   * it ahead). Name `"gleam"` here to use the one on `PATH` instead.
+   */
   gleam?: string;
 }
 
@@ -40,6 +47,26 @@ export type GleamRunner = (
   args: string[],
   cwd: string,
 ) => Promise<{ success: boolean; output: string }>;
+
+/**
+ * Finds the `gleam` to run; the seam tests replace. Throws when there is none (offline before the
+ * first download, no build for this host, a refused download).
+ */
+export type GleamLocator = (options: GleamOptions) => Promise<string>;
+
+/** How the Gleam steps reach the compiler: locate it, then run it. */
+export interface GleamHost {
+  readonly run: GleamRunner;
+  readonly locate: GleamLocator;
+}
+
+/** The default {@link GleamLocator}: the `gleam` option, else `DENEXT_GLEAM`, else the pin. */
+const locateGleam: GleamLocator = async (options) => {
+  if (options.gleam !== undefined) return options.gleam;
+  const found = await resolveGleamToolchain();
+  if (found.warning) console.error(found.warning);
+  return found.gleam;
+};
 
 /** The default {@link GleamRunner}: a child process, its output collected. */
 const runCommand: GleamRunner = async (cmd, args, cwd) => {
@@ -57,7 +84,7 @@ const runCommand: GleamRunner = async (cmd, args, cwd) => {
 /** What {@link buildGleam} did. */
 export type GleamBuildResult =
   | { status: "no-project"; dir: string }
-  | { status: "missing"; dir: string }
+  | { status: "missing"; dir: string; reason: string; refused: boolean }
   | { status: "failed"; dir: string; output: string }
   | { status: "built"; dir: string; version: string; patched: number };
 
@@ -78,28 +105,52 @@ async function gleamProjectDir(root: string, options: GleamOptions = {}): Promis
 
 /**
  * Compile the Gleam project to JavaScript (`gleam build --target javascript`) and make its output
- * type-check under Deno ({@link patchGleamTypeRefs}). A project-less app and a machine without
- * `gleam` are reported, not thrown: the plugin skips them.
+ * type-check under Deno ({@link patchGleamTypeRefs}). A project-less app and a compiler that can't
+ * be had (offline before the first download, …) are reported, not thrown: the caller decides.
  *
  * @param root The app root.
  * @param options The project dir and the `gleam` executable.
- * @param run The command runner (tests).
+ * @param host How the compiler is found and run (tests).
  * @returns What happened.
  */
 export async function buildGleam(
   root: string,
   options: GleamOptions = {},
-  run: GleamRunner = runCommand,
+  host: GleamHost = DEFAULT_HOST,
 ): Promise<GleamBuildResult> {
   const dir = await gleamProjectDir(root, options);
   if (!await exists(join(dir, "gleam.toml"))) return { status: "no-project", dir };
-  const bin = options.gleam ?? "gleam";
-  const version = await run(bin, ["--version"], dir);
-  if (!version.success) return { status: "missing", dir };
-  const built = await run(bin, ["build", "--target", "javascript"], dir);
+  const found = await gleamBinary(options, host, dir);
+  if ("reason" in found) return { status: "missing", dir, ...found };
+  const { bin, version } = found;
+  const built = await host.run(bin, ["build", "--target", "javascript"], dir);
   if (!built.success) return { status: "failed", dir, output: built.output.trim() };
   const patched = await patchGleamTypeRefs(join(dir, "build", "dev", "javascript"));
-  return { status: "built", dir, version: version.output.trim(), patched };
+  return { status: "built", dir, version, patched };
+}
+
+const DEFAULT_HOST: GleamHost = { run: runCommand, locate: locateGleam };
+
+/**
+ * The `gleam` to run and its `--version`, or why there is none (`refused`: a download that failed
+ * its SHA-256 check — never something to skip past).
+ */
+async function gleamBinary(
+  options: GleamOptions,
+  host: GleamHost,
+  cwd: string,
+): Promise<{ bin: string; version: string } | { reason: string; refused: boolean }> {
+  let bin: string;
+  try {
+    bin = await host.locate(options);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { reason, refused: err instanceof DenoToolchainHashError };
+  }
+  const version = await host.run(bin, ["--version"], cwd);
+  if (version.success) return { bin, version: version.output.trim() };
+  const why = version.output.trim();
+  return { reason: `denext: \`${bin}\` did not run${why ? `: ${why}` : ""}`, refused: false };
 }
 
 /** A `/// <reference types>` directive naming `file`. */
@@ -171,7 +222,7 @@ export interface GleamIo {
  * @param packages Hex package names (`gleam_json`, `lustre@4`, …).
  * @param options The project dir and the `gleam` executable.
  * @param io Output.
- * @param run The command runner (tests).
+ * @param host How the compiler is found and run (tests).
  * @returns Whether every step succeeded.
  */
 export async function addGleamPackages(
@@ -179,25 +230,27 @@ export async function addGleamPackages(
   packages: readonly string[],
   options: GleamOptions = {},
   io: GleamIo = { log: console.log, error: console.error },
-  run: GleamRunner = runCommand,
+  host: GleamHost = DEFAULT_HOST,
 ): Promise<boolean> {
   const dir = await gleamProjectDir(root, options);
-  const bin = options.gleam ?? "gleam";
-  if (!(await run(bin, ["--version"], root)).success) {
-    io.error("denext add gleam: `gleam` is not installed (https://gleam.run/getting-started/).");
+  const found = await gleamBinary(options, host, root);
+  if ("reason" in found) {
+    io.error(`denext add gleam: no Gleam compiler\n${found.reason}`);
     return false;
   }
+  // The build below reuses the compiler just found (and downloaded, if it was).
+  const pinned: GleamOptions = { ...options, gleam: found.bin };
   if (!await exists(join(dir, "gleam.toml"))) {
     await Deno.mkdir(join(dir, "src"), { recursive: true });
     await Deno.writeTextFile(join(dir, "gleam.toml"), gleamToml(gleamName(await appName(root))));
     io.log(`denext add gleam: created ${relative(root, dir) || "."}/gleam.toml`);
   }
-  const added = await run(bin, ["add", ...packages], dir);
+  const added = await host.run(found.bin, ["add", ...packages], dir);
   if (!added.success) {
     io.error(`denext add gleam: gleam add failed\n${added.output.trim()}`);
     return false;
   }
-  const built = await buildGleam(root, options, run);
+  const built = await buildGleam(root, pinned, host);
   if (built.status !== "built") {
     io.error(`denext add gleam: the build failed${"output" in built ? `\n${built.output}` : ""}`);
     return false;
@@ -252,14 +305,16 @@ async function mapGleamImports(root: string, dir: string): Promise<boolean> {
 }
 
 /**
- * The `gleam()` plugin (`denext/gleam`), with a command runner for tests: a prepare step that
- * compiles the project, warns once and skips when `gleam` is missing, and fails on a compile error.
+ * The `gleam()` plugin (`denext/gleam`), with a compiler seam for tests: a prepare step that
+ * compiles the project and fails on a compile error. When no compiler can be had (offline before the
+ * first download, no build for this host) it fails too — unless the project already has compiled
+ * output, which it then keeps, saying why once. A download that fails its SHA-256 check always fails.
  *
  * @param options The project directory and the `gleam` executable.
- * @param run The command runner.
+ * @param host How the compiler is found and run.
  * @returns The plugin.
  */
-export function gleamPlugin(options: GleamOptions, run: GleamRunner = runCommand): DenextPlugin {
+export function gleamPlugin(options: GleamOptions, host: GleamHost = DEFAULT_HOST): DenextPlugin {
   let warned = false;
   return {
     name: "denext:gleam",
@@ -267,14 +322,19 @@ export function gleamPlugin(options: GleamOptions, run: GleamRunner = runCommand
       const base = options.dir === undefined ? "" : `${options.dir.replace(/\/+$/, "")}/`;
       const watch = [`${base}**/*.gleam`, `${base}**/gleam.toml`];
       ctx.addPrepareStep(async ({ projectRoot }) => {
-        const result = await buildGleam(projectRoot, options, run);
+        const result = await buildGleam(projectRoot, options, host);
         const where = relative(projectRoot, result.dir) || ".";
-        if (result.status === "missing" && !warned) {
-          warned = true;
-          console.warn(
-            `denext gleam: \`${options.gleam ?? "gleam"}\` is not installed — skipping the ` +
-              `Gleam build of ${where}/ (https://gleam.run/getting-started/)`,
-          );
+        if (result.status === "missing") {
+          const output = join(result.dir, "build", "dev", "javascript");
+          if (result.refused || !await exists(output)) {
+            throw new Error(`denext gleam: can't compile ${where}/\n${result.reason}`);
+          }
+          if (!warned) {
+            warned = true;
+            console.warn(
+              `denext gleam: keeping the last compiled output of ${where}/ — ${result.reason}`,
+            );
+          }
         } else if (result.status === "failed") {
           throw new Error(`denext gleam: the Gleam build of ${where}/ failed\n${result.output}`);
         } else if (result.status === "built") {

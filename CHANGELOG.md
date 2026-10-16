@@ -190,10 +190,19 @@ and this project adheres to
   `denext add gleam:<package>` creates a `gleam/` project when the app has none (JavaScript
   target, TypeScript declarations on), runs `gleam add` and `gleam build --target javascript`,
   and maps `@gleam/` in `deno.json`. The optional `gleam()` plugin (`denext/gleam`) recompiles
-  at `denext dev` startup, on `.gleam` / `gleam.toml` changes and at build, and skips with one
-  notice when `gleam` is not installed. After each build denext adds the type reference Gleam
-  leaves off `prelude.mjs` and each `gleam.mjs`, without which Deno types Gleam's `List` /
-  `Result` from the JavaScript and reports its declarations as duplicates. See
+  at `denext dev` startup, on `.gleam` / `gleam.toml` changes and at build. The compiler is
+  managed like denext's Deno toolchain: one pinned Gleam release (1.18.1) with a SHA-256 per
+  platform (macOS and Windows on arm64 / x64, Linux arm64 / x64 as the static musl builds),
+  downloaded on first need into `<DENO_DIR>/denext-deno/gleam/`, verified before it is
+  extracted and installed atomically under the toolchain's cache lock. No Erlang is needed for
+  the JavaScript target. `denext toolchain install --with gleam` fetches it ahead for offline
+  work, and `denext toolchain status` reports it. `DENEXT_GLEAM=<path>` (or the plugin's `gleam`
+  option) runs another `gleam`, unverified; a `gleam` on `PATH` is never picked up on its own.
+  Offline before the first download, `denext add gleam:` and the plugin stop with an error naming
+  the prefetch command (the plugin keeps a project's existing compiled output, with one warning).
+  After each build denext adds the type reference Gleam leaves off `prelude.mjs` and each
+  `gleam.mjs`, without which Deno types Gleam's `List` / `Result` from the JavaScript and
+  reports its declarations as duplicates. See
   [Gleam](https://denext.dev/docs/gleam).
 
 ### Fixed

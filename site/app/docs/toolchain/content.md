@@ -149,6 +149,19 @@ builds use the npm one and print one warning saying why. `denext toolchain statu
 esbuild the next build runs and where it comes from. An idle esbuild process never keeps a command
 alive.
 
+## Gleam
+
+[Gleam](/docs/gleam) is pinned and fetched the same way: one Gleam release per denext release, a
+SHA-256 per platform (macOS and Windows on arm64 and x64, Linux on arm64 and x64 as Gleam's static
+musl builds), downloaded on first need — `denext add gleam:`, or the `gleam()` plugin at dev and
+build — into `<DENO_DIR>/denext-deno/gleam/<version>/<platform>/`, verified before it is extracted
+and installed atomically under the same cache lock. Gleam's JavaScript target needs no Erlang.
+
+`denext toolchain install --with gleam` fetches it ahead of time, and `denext toolchain status`
+lists its version and whether it is cached. Offline (or with `--deny-net`) before the first download,
+a command that needs it stops with an error naming that command. `DENEXT_GLEAM=<path>` runs another
+`gleam` instead, unverified; a `gleam` on `PATH` is never used unless you name it there.
+
 ## `denext task`, `deno task` and tests
 
 `denext task <name>` is Deno's `deno task`, run on the toolchain with every argument verbatim. Inside
@@ -232,7 +245,8 @@ Finding a project's verbs means importing its `denext.config.ts` (and running ev
 
 ```sh
 denext toolchain install       # download + verify now (fails when it can't)
-denext toolchain status        # pinned version, cache state, whether this run is on it, which esbuild builds use (--json, --verify)
+denext toolchain install --with gleam   # …and the pinned Gleam compiler
+denext toolchain status        # pinned versions (Deno, Gleam), cache state, whether this run is on it, which esbuild builds use (--json, --verify)
 denext toolchain path          # the binary's path (installs it first)
 denext toolchain link          # opt-in: ~/.denext/bin/deno → the toolchain, and the PATH line to add
 denext toolchain unlink        # removes that link, and only a link it created
