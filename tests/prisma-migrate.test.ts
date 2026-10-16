@@ -5,7 +5,8 @@
 // better-sqlite3 driver adapter: schema generator, `@prisma/client` imports, the adapter at
 // each construction site, the deno.json links/imports/task, the patch package + setup script,
 // and package.json cleanup. These tests drive a minimal Prisma app through migrateProject and
-// assert the whole transform, plus that non-runtime tooling (the seed script) is left alone.
+// assert the whole transform, the seed and test tooling included (they move to the Deno client
+// with the app, the seed run by a `prisma:seed` task).
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
@@ -22,6 +23,7 @@ async function scaffoldPrismaApp(): Promise<string> {
       name: "prisma-app",
       dependencies: { "react": "^18.0.0", "react-dom": "^18.0.0", "@prisma/client": "^5.22.0" },
       devDependencies: { "prisma": "^5.22.0" },
+      prisma: { seed: "tsx prisma/seed.ts" },
     }),
   );
   await Deno.mkdir(join(dir, "prisma"), { recursive: true });
@@ -43,11 +45,26 @@ async function scaffoldPrismaApp(): Promise<string> {
     join(dir, "app", "models", "note.server.ts"),
     `import type { Note } from "@prisma/client";\nexport type { Note };\n`,
   );
-  // A NON-runtime tooling file (the seed) — must be left untouched (Node-only, native client).
+  // The seed and the test tooling — moved to the Deno client with the app.
   await Deno.writeTextFile(
     join(dir, "prisma", "seed.ts"),
     `import { PrismaClient } from "@prisma/client";\nnew PrismaClient();\n`,
   );
+  await Deno.mkdir(join(dir, "tests", "setup"), { recursive: true });
+  await Deno.writeTextFile(
+    join(dir, "tests", "db-utils.ts"),
+    `import { PrismaClient } from "@prisma/client";\nexport const db = new PrismaClient({ log: [] });\n`,
+  );
+  await Deno.writeTextFile(
+    join(dir, "tests", "setup", "fixtures.ts"),
+    `import type { Note } from "@prisma/client";\nexport const note: Partial<Note> = {};\n`,
+  );
+  await Deno.writeTextFile(
+    join(dir, "vitest.setup.ts"),
+    `import { PrismaClient } from "@prisma/client";\nawait new PrismaClient().$connect();\n`,
+  );
+  // Tooling without Prisma is left alone.
+  await Deno.writeTextFile(join(dir, "tests", "plain.test.ts"), `export const x = 1;\n`);
   return dir;
 }
 
@@ -63,6 +80,13 @@ Deno.test("prisma migrate: detects Prisma and reports the wiring", async () => {
   assertEquals(r.prisma.refsRewritten.sort(), ["app/db.server.ts", "app/models/note.server.ts"]);
   assert(r.prisma.packageJsonEdited, "package.json prisma deps should be dropped");
   assertEquals(r.prisma.setupTask, "prisma:setup");
+  assertEquals(r.prisma.seedTask, "prisma:seed");
+  assertEquals(r.prisma.toolingRewritten, [
+    "prisma/seed.ts",
+    "tests/db-utils.ts",
+    "tests/setup/fixtures.ts",
+    "vitest.setup.ts",
+  ]);
   assertEquals(r.prisma.warnings, []);
   await Deno.remove(dir, { recursive: true });
 });
@@ -102,12 +126,57 @@ Deno.test("prisma migrate: type-only import repointed, no adapter injected", asy
   await Deno.remove(dir, { recursive: true });
 });
 
-Deno.test("prisma migrate: non-runtime tooling (seed) is left untouched", async () => {
+Deno.test("prisma migrate: the seed and test tooling move to the Deno client", async () => {
   const dir = await scaffoldPrismaApp();
   await migrateProject(dir, { denextLocalPath: REPO_ROOT });
   const seed = await read(dir, "prisma/seed.ts");
-  assertStringIncludes(seed, `from "@prisma/client"`); // NOT rewritten
-  assert(!seed.includes("__denextPrismaAdapter"), "seed must not get the Deno adapter");
+  assertStringIncludes(seed, `from "../generated/client/client.ts"`);
+  assertStringIncludes(seed, "new PrismaClient({ adapter: __denextPrismaAdapter() })");
+  const utils = await read(dir, "tests/db-utils.ts");
+  assertStringIncludes(utils, `from "../generated/client/client.ts"`);
+  // An options object keeps its fields, with the adapter merged in.
+  assertStringIncludes(utils, "new PrismaClient({ adapter: __denextPrismaAdapter(), log: [] })");
+  const fixtures = await read(dir, "tests/setup/fixtures.ts");
+  assertStringIncludes(fixtures, `from "../../generated/client/client.ts"`);
+  assert(!fixtures.includes("__denextPrismaAdapter"), "a type-only module needs no adapter");
+  assertStringIncludes(await read(dir, "vitest.setup.ts"), `from "./generated/client/client.ts"`);
+  assertEquals(await read(dir, "tests/plain.test.ts"), "export const x = 1;\n");
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: the seed runs on Deno (task, package.json, prisma.config.ts)", async () => {
+  const dir = await scaffoldPrismaApp();
+  await Deno.writeTextFile(
+    join(dir, "prisma.config.ts"),
+    `export default { migrations: { seed: "tsx prisma/seed.ts" } };\n`,
+  );
+  await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  const deno = JSON.parse(await read(dir, "deno.json")) as { tasks?: Record<string, string> };
+  assertEquals(deno.tasks?.["prisma:seed"], "deno run -A prisma/seed.ts");
+  const pkg = JSON.parse(await read(dir, "package.json")) as { prisma?: { seed?: string } };
+  assertEquals(pkg.prisma?.seed, "deno run -A prisma/seed.ts", "`prisma db seed` runs it on Deno");
+  assertStringIncludes(await read(dir, "prisma.config.ts"), `seed: "deno run -A prisma/seed.ts"`);
+  // A second migrate leaves the seed stable (one adapter, the same command).
+  const seed1 = await read(dir, "prisma/seed.ts");
+  await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  assertEquals(await read(dir, "prisma/seed.ts"), seed1);
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: a seed named only by its command is found", async () => {
+  const dir = await scaffoldPrismaApp();
+  await Deno.remove(join(dir, "prisma", "seed.ts"));
+  await Deno.writeTextFile(
+    join(dir, "other-seed.mts"),
+    `import { PrismaClient } from "@prisma/client";\nnew PrismaClient();\n`,
+  );
+  const pkg = JSON.parse(await read(dir, "package.json"));
+  pkg.prisma.seed = "node --loader ts-node/esm ./other-seed.mts";
+  await Deno.writeTextFile(join(dir, "package.json"), JSON.stringify(pkg));
+  const r = await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  assert(r.prisma?.toolingRewritten.includes("other-seed.mts"));
+  const deno = JSON.parse(await read(dir, "deno.json")) as { tasks?: Record<string, string> };
+  assertEquals(deno.tasks?.["prisma:seed"], "deno run -A other-seed.mts");
   await Deno.remove(dir, { recursive: true });
 });
 

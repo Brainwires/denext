@@ -10,7 +10,9 @@
 // the deno.json wiring (manual node_modules + links + the adapter/client npm pins), (2)
 // rewrites the app's `prisma/schema.prisma` generator to the Deno client, (3) rewrites every
 // `@prisma/client` import to the generated client and injects the driver adapter at each
-// `new PrismaClient()` site, (4) drops the superseded `@prisma/client`/`prisma` entries from
+// `new PrismaClient()` site — in the runtime source AND the seed and test tooling, which then run
+// on Deno too (the seed as `deno task prisma:seed` / `prisma db seed`, tests under
+// `denext test`) — (4) drops the superseded `@prisma/client`/`prisma` entries from
 // package.json (they'd otherwise pin the native v5 client into node_modules and clash with
 // the v6 adapter), and (5) writes the `links` patch package + a one-shot `prisma:setup` task
 // (bundle the compat → install → `prisma generate` → `prisma migrate deploy`/`db push`). After setup the app
@@ -30,6 +32,7 @@ const GENERATED_CLIENT = "generated/client/client.ts";
 const PATCH_DIR = "patch/better-sqlite3";
 const SETUP_SCRIPT = "scripts/denext-prisma-setup.ts";
 const SETUP_TASK = "prisma:setup";
+const SEED_TASK = "prisma:seed";
 
 /** Summary of what the Prisma transform did (for the CLI report). */
 export interface PrismaMigrateInfo {
@@ -39,6 +42,13 @@ export interface PrismaMigrateInfo {
   clientModules: string[];
   /** Files (relative) whose `@prisma/client` import was repointed at the generated client. */
   refsRewritten: string[];
+  /**
+   * Seed and test tooling (relative: `prisma/seed.ts`, `tests/…`, `scripts/…`) rewritten the
+   * same way, so it runs on Deno against the same client as the app.
+   */
+  toolingRewritten: string[];
+  /** The task that runs the seed on Deno (`prisma:seed`), when the app has a seed script. */
+  seedTask?: string;
   /** `@prisma/client`/`prisma` were removed from package.json (superseded by the deno.json pins). */
   packageJsonEdited: boolean;
   /** The task the user must run once before build/start. */
@@ -86,6 +96,7 @@ export async function detectPrismaWiring(
   const schemaAbs = join(dir, "prisma", "schema.prisma");
   const hasSchema = await fileExists(schemaAbs);
   if (!("@prisma/client" in deps) && !hasSchema) return null;
+  const seed = await findSeedScript(dir);
 
   return {
     importsToAdd: {
@@ -94,10 +105,13 @@ export async function detectPrismaWiring(
     },
     importsToDelete: ["better-sqlite3"],
     links: [`./${PATCH_DIR}`],
-    tasks: { [SETUP_TASK]: `deno run -A ${SETUP_SCRIPT}` },
+    tasks: {
+      [SETUP_TASK]: `deno run -A ${SETUP_SCRIPT}`,
+      ...(seed ? { [SEED_TASK]: seedCommand(seed) } : {}),
+    },
     nodeModulesDir: "manual",
     handledDeps: Object.keys(deps).filter(isPrismaDep),
-    finalize: () => transformPrismaApp(dir, compatSpecifier, schemaAbs, hasSchema),
+    finalize: () => transformPrismaApp(dir, compatSpecifier, schemaAbs, hasSchema, seed),
   };
 }
 
@@ -107,6 +121,7 @@ async function transformPrismaApp(
   compatSpecifier: string,
   schemaAbs: string,
   hasSchema: boolean,
+  seed: string | null,
 ): Promise<PrismaMigrateInfo> {
   const warnings: string[] = [];
 
@@ -124,12 +139,16 @@ async function transformPrismaApp(
   }
 
   // 2 & 3. Rewrite `@prisma/client` imports across the app to the generated Deno client, and
-  //         inject the driver adapter at each construction site.
-  const { clientModules, refsRewritten } = await rewritePrismaSources(dir, warnings);
+  //         inject the driver adapter at each construction site — then the same for the seed
+  //         and test tooling (the native client they used is gone from package.json below).
+  const runtime = await rewritePrismaSources(dir, await collectSourceFiles(dir), warnings);
+  const tooling = await rewritePrismaSources(dir, await collectToolingFiles(dir, seed), warnings);
 
   // 4. Drop the superseded prisma deps from package.json so `deno install` materializes the
-  //    v6 client/adapter (pinned in deno.json) rather than the native v5 client.
-  const packageJsonEdited = await stripPrismaFromPackageJson(join(dir, "package.json"));
+  //    v6 client/adapter (pinned in deno.json) rather than the native v5 client, and point
+  //    Prisma's seed command (package.json / prisma.config.ts) at Deno.
+  const packageJsonEdited = await stripPrismaFromPackageJson(join(dir, "package.json"), seed);
+  if (seed) await rewriteSeedInPrismaConfig(dir, seed);
 
   // 5. The `links` patch package (its index.mjs is bundled by the setup script) + the setup
   //    script + gitignore for the generated + bundled artifacts.
@@ -139,8 +158,10 @@ async function transformPrismaApp(
 
   return {
     schemaPath,
-    clientModules,
-    refsRewritten,
+    clientModules: runtime.clientModules,
+    refsRewritten: runtime.refsRewritten,
+    toolingRewritten: [...new Set([...tooling.refsRewritten, ...tooling.clientModules])].sort(),
+    ...(seed ? { seedTask: SEED_TASK } : {}),
     packageJsonEdited,
     setupTask: SETUP_TASK,
     warnings,
@@ -148,7 +169,7 @@ async function transformPrismaApp(
 }
 
 /**
- * Rewrite every runtime source module that references Prisma: repoint `@prisma/client` at the
+ * Rewrite every module of `files` that references Prisma: repoint `@prisma/client` at the
  * generated Deno client and inject the driver adapter at each `new PrismaClient(...)`.
  * Idempotent: a module already carrying the injected factory is fully transformed (its import
  * repointed and the adapter threaded), so a second migrate is a no-op (commit-parity), not a
@@ -156,11 +177,12 @@ async function transformPrismaApp(
  */
 async function rewritePrismaSources(
   dir: string,
+  files: readonly string[],
   warnings: string[],
 ): Promise<{ clientModules: string[]; refsRewritten: string[] }> {
   const clientModules: string[] = [];
   const refsRewritten: string[] = [];
-  for (const file of await collectSourceFiles(dir)) {
+  for (const file of files) {
     const original = await mfs.readTextFile(file);
     if (!original.includes("@prisma/client") && !original.includes("new PrismaClient")) continue;
     if (original.includes("__denextPrismaAdapter")) continue;
@@ -260,35 +282,53 @@ const __denextPrismaAdapter = () => new __PrismaBetterSQLite3({ url: __denextDbU
   return text;
 }
 
-/** Remove `@prisma/client` and `prisma` from package.json deps/devDeps. Returns whether it changed. */
-async function stripPrismaFromPackageJson(pkgPath: string): Promise<boolean> {
-  let raw: string;
-  try {
-    raw = await mfs.readTextFile(pkgPath);
-  } catch {
-    return false;
+/**
+ * Remove `@prisma/client` and `prisma` from package.json deps/devDeps, and point a
+ * `prisma.seed` command at Deno (`prisma db seed` / `migrate reset` then seed through the
+ * rewritten script). Returns whether the Prisma deps were removed.
+ */
+async function stripPrismaFromPackageJson(pkgPath: string, seed: string | null): Promise<boolean> {
+  const pkg = await readPackageJson(pkgPath);
+  if (!pkg) return false;
+  const seedChanged = seed !== null && pointSeedAtDeno(pkg, seed);
+  const depsDropped = dropPrismaDeps(pkg);
+  if (seedChanged || depsDropped) {
+    // Preserve the file's indentation style where obvious (2-space default).
+    await mfs.remove(pkgPath).catch(() => {}); // unlink a possible symlink (cloned repos)
+    await mfs.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
   }
-  let pkg: Record<string, unknown>;
+  return depsDropped;
+}
+
+/** package.json as an object, or null when it is missing or not JSON. */
+async function readPackageJson(pkgPath: string): Promise<Record<string, unknown> | null> {
   try {
-    pkg = JSON.parse(raw);
+    const pkg = JSON.parse(await mfs.readTextFile(pkgPath));
+    return pkg && typeof pkg === "object" ? pkg : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** Point `prisma.seed` at the seed on Deno; whether it changed. */
+function pointSeedAtDeno(pkg: Record<string, unknown>, seed: string): boolean {
+  const block = pkg.prisma as Record<string, unknown> | undefined;
+  if (typeof block?.seed !== "string" || block.seed === seedCommand(seed)) return false;
+  block.seed = seedCommand(seed);
+  return true;
+}
+
+/** Delete `@prisma/client` and `prisma` from deps/devDeps; whether any was there. */
+function dropPrismaDeps(pkg: Record<string, unknown>): boolean {
   let changed = false;
   for (const field of ["dependencies", "devDependencies"]) {
     const block = pkg[field] as Record<string, string> | undefined;
-    if (!block) continue;
-    for (const name of Object.keys(block)) {
-      if (name === "@prisma/client" || name === "prisma") {
+    for (const name of ["@prisma/client", "prisma"]) {
+      if (block && name in block) {
         delete block[name];
         changed = true;
       }
     }
-  }
-  if (changed) {
-    // Preserve the file's indentation style where obvious (2-space default).
-    await mfs.remove(pkgPath).catch(() => {}); // unlink a possible symlink (cloned repos)
-    await mfs.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
   }
   return changed;
 }
@@ -363,6 +403,55 @@ console.log("\\n✓ Prisma setup complete — run \`denext task build\` (or dev)
   await mfs.writeTextFile(join(dir, SETUP_SCRIPT), script);
 }
 
+/** A seed script's run command on Deno. */
+function seedCommand(seed: string): string {
+  return `deno run -A ${seed}`;
+}
+
+/** A script path inside a seed command (`tsx prisma/seed.ts`, `node --loader ts-node/esm x.mts`). */
+const SEED_PATH = /(?:^|\s)((?:\.\/)?[\w./-]+\.(?:[cm]?[jt]s))(?=\s|$)/;
+
+/**
+ * The app's seed script (relative, `/`-separated): the script `prisma.seed` in package.json (or
+ * `migrations.seed` in `prisma.config.ts`) runs, else `prisma/seed.{ts,mts,js,mjs}`; null when
+ * there is none.
+ */
+async function findSeedScript(dir: string): Promise<string | null> {
+  for (const command of await seedCommands(dir)) {
+    const path = SEED_PATH.exec(command)?.[1]?.replace(/^\.\//, "");
+    if (path && await fileExists(join(dir, path))) return path;
+  }
+  for (const ext of ["ts", "mts", "js", "mjs"]) {
+    if (await fileExists(join(dir, "prisma", `seed.${ext}`))) return `prisma/seed.${ext}`;
+  }
+  return null;
+}
+
+/** The seed commands the app declares (package.json `prisma.seed`, `prisma.config.ts`). */
+async function seedCommands(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  try {
+    const pkg = JSON.parse(await mfs.readTextFile(join(dir, "package.json")));
+    if (typeof pkg?.prisma?.seed === "string") out.push(pkg.prisma.seed);
+  } catch { /* no package.json */ }
+  const config = await mfs.readTextFile(join(dir, "prisma.config.ts")).catch(() => "");
+  const m = /\bseed\s*:\s*(["'`])([^"'`]+)\1/.exec(config);
+  if (m) out.push(m[2]);
+  return out;
+}
+
+/** Point `prisma.config.ts`'s `migrations.seed` command at Deno. */
+async function rewriteSeedInPrismaConfig(dir: string, seed: string): Promise<void> {
+  const path = join(dir, "prisma.config.ts");
+  const config = await mfs.readTextFile(path).catch(() => null);
+  if (config === null) return;
+  const next = config.replace(
+    /(\bseed\s*:\s*)(["'`])[^"'`]+\2/,
+    (_m, key: string, q: string) => `${key}${q}${seedCommand(seed)}${q}`,
+  );
+  if (next !== config) await mfs.writeTextFile(path, next);
+}
+
 /** The relative specifier from `file`'s directory to the generated client entry. */
 function relToGenerated(dir: string, file: string): string {
   let rel = relative(dirname(file), join(dir, GENERATED_CLIENT)).replace(/\\/g, "/");
@@ -370,16 +459,50 @@ function relToGenerated(dir: string, file: string): string {
   return rel;
 }
 
-/**
- * App RUNTIME source roots — the code denext actually bundles/serves. Deliberately excludes
- * `prisma/` (the Node seed script), plus `cypress/`, `test/`, `mocks/`, `scripts/` (test + tooling),
- * and the like: those legitimately use the native `@prisma/client` under the app's own Node
- * toolchain, which denext doesn't run, so rewriting them to the Deno client would corrupt them.
- */
+/** App RUNTIME source roots — the code denext actually bundles/serves. */
 const RUNTIME_ROOTS = ["app", "src", "lib", "components", "pages", "server", "routes"];
 
+/**
+ * Seed and test tooling roots: the seed and its helpers (`prisma/`), test suites and their
+ * fixtures and mocks, and project scripts. migrate drops the native client from package.json,
+ * so these move to the generated Deno client too and run on Deno (`denext test`,
+ * `deno task prisma:seed`).
+ */
+const TOOLING_ROOTS = [
+  "prisma",
+  "tests",
+  "test",
+  "__tests__",
+  "e2e",
+  "mocks",
+  "__mocks__",
+  "cypress",
+  "playwright",
+  "scripts",
+];
+
+/** Root-level test setup and seed files (`vitest.setup.ts`, `jest.setup.js`, `seed.ts`, …). */
+const ROOT_TOOLING_FILE =
+  /^(?:(?:vitest|jest|playwright)[.-][\w.-]*|[\w.-]*setup[\w.-]*|seed)\.[cm]?[jt]sx?$/i;
+
 /** Collect runtime source files under {@link RUNTIME_ROOTS} (skips node_modules/dist/.denext/generated/out). */
-async function collectSourceFiles(dir: string): Promise<string[]> {
+function collectSourceFiles(dir: string): Promise<string[]> {
+  return collectUnder(dir, RUNTIME_ROOTS);
+}
+
+/** Collect the seed and test tooling files (see {@link TOOLING_ROOTS}), the seed script included. */
+async function collectToolingFiles(dir: string, seed: string | null): Promise<string[]> {
+  const files = new Set(await collectUnder(dir, TOOLING_ROOTS));
+  for await (const e of mfs.readDir(dir)) {
+    if (e.isFile && ROOT_TOOLING_FILE.test(e.name)) files.add(join(dir, e.name));
+  }
+  if (seed) files.add(join(dir, seed));
+  const runtime = new Set(await collectSourceFiles(dir));
+  return [...files].filter((f) => !runtime.has(f)).sort();
+}
+
+/** Source files under `roots` of `dir` (skips node_modules/dist/.denext/generated/out). */
+async function collectUnder(dir: string, roots: readonly string[]): Promise<string[]> {
   const out: string[] = [];
   const walk = async (root: string): Promise<void> => {
     let entries: Deno.DirEntry[];
@@ -400,7 +523,7 @@ async function collectSourceFiles(dir: string): Promise<string[]> {
       }
     }
   };
-  for (const sub of RUNTIME_ROOTS) await walk(join(dir, sub));
+  for (const sub of roots) await walk(join(dir, sub));
   return out;
 }
 

@@ -240,6 +240,12 @@ function reportPrisma(p: NonNullable<MigrateResult["prisma"]>): void {
       `import(s) repointed · adapter injected in ${p.clientModules.length} module(s)` +
       (p.packageJsonEdited ? " · dropped @prisma/client+prisma from package.json" : ""),
   );
+  if (p.toolingRewritten.length > 0) {
+    console.log(
+      `    seed + test tooling on the Deno client too: ${p.toolingRewritten.length} file(s)` +
+        (p.seedTask ? ` · seed with \`denext task ${p.seedTask}\`` : ""),
+    );
+  }
   printReviewNotes(p.warnings, 8);
   console.log(
     `    ‼️  run \`denext task ${p.setupTask}\` ONCE (bundles the compat, installs, ` +

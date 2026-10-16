@@ -105,6 +105,14 @@ and this project adheres to
   field throws, as in next-intl, instead of rendering a date without it. The parser and
   renderer are iterative, so `plural` / `select` / `selectordinal` nest to any depth (the
   64-level cap is gone) with no stack to overflow.
+- **`denext migrate` moves a Prisma app's seed and test tooling to the Deno client too.** The
+  seed (`prisma/seed.ts`, or the script `prisma.seed` names), `tests/` / `test/` / `e2e/`,
+  mocks, `scripts/` and root test-setup files get the same rewrite as the runtime source
+  (`@prisma/client` repointed at the generated client, the driver adapter injected at each
+  `new PrismaClient()`). The seed runs as `denext task prisma:seed`, and `prisma.seed` in
+  `package.json` / `prisma.config.ts` becomes `deno run -A <seed>`, so `prisma db seed` seeds
+  on Deno; the tests run under `denext test`. They used to keep the native client migrate
+  removes from `package.json`.
 
 ### Changed
 

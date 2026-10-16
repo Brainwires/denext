@@ -312,8 +312,14 @@ datasource db {
 > generated Deno client, injects the driver adapter at each
 > `new PrismaClient()`, writes the `deno.json` `links` + npm pins + a
 > `prisma:setup` task, and drops the superseded `@prisma/client` /`prisma` from
-> `package.json`. Then just run `denext task prisma:setup` once. The manual steps
-> below are what that automation encodes.
+> `package.json`. The seed and test tooling move with the app: `prisma/seed.ts`
+> (or the script `prisma.seed` names), `tests/`, `test/`, `e2e/`, mocks,
+> `scripts/` and root test-setup files get the same rewrite, the seed runs as
+> `denext task prisma:seed` (and `prisma.seed` in `package.json` /
+> `prisma.config.ts` becomes `deno run -A <seed>`, so `prisma db seed` seeds on
+> Deno too), and the tests run under `denext test`. Then just run
+> `denext task prisma:setup` once. The manual steps below are what that
+> automation encodes.
 
 Steps: bundle the compat into the `links` package, install, generate, push, then
 use the adapter:

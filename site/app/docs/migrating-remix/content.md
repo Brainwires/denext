@@ -466,9 +466,10 @@ The CLI prints up to twelve notes and a count of the rest.
   generator becomes the ESM `prisma-client` with `queryCompiler` and
   `driverAdapters`, every `@prisma/client` import is repointed, the adapter is
   injected at each `new PrismaClient()`, and `deno.json` gets the `links` shim,
-  npm pins, and a `prisma:setup` task. Run `denext task prisma:setup` once. Only
-  runtime source under `app/` / `src/` / `lib/` is rewritten (a `prisma/seed.ts`
-  is left for Node), a `new PrismaClient(<non-object>)` is flagged for a
+  npm pins, and a `prisma:setup` task. Run `denext task prisma:setup` once. The
+  seed and test tooling (`prisma/seed.ts`, `tests/`, mocks, `scripts/`, test
+  setup files) are rewritten with the runtime source, the seed runs as
+  `denext task prisma:seed`, a `new PrismaClient(<non-object>)` is flagged for a
   one-line manual adapter add, and non-SQLite datasources need their own driver
   adapter.
 - **Everything that is not Remix-specific** (the default Content-Security-Policy
