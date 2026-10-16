@@ -22,8 +22,13 @@ export interface ProfileOptions {
   minify?: boolean;
   /** Max self-time rows to return (default 20). */
   topN?: number;
-  /** Optional performance budget to gate the run against. */
+  /** Optional performance budget to gate the run against (judged on the unfiltered run). */
   budget?: Budget;
+  /**
+   * Show only the functions whose name or source URL contains this (case-insensitive): a
+   * component, a module or a package. Totals stay the whole run's.
+   */
+  filter?: string;
   /** Abort the run (server + browser are torn down). */
   signal?: AbortSignal;
 }
@@ -42,4 +47,6 @@ export interface ProfileResult {
   budget?: BudgetVerdict;
   /** Whether the profiled build was minified (false = readable function names). */
   minified: boolean;
+  /** The `filter` the self-time rows were narrowed by, when one was given. */
+  filter?: string;
 }

@@ -460,6 +460,25 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
         "type": "boolean",
         "help": "Profile a minified build (default: unminified)",
       },
+      {
+        "name": "filter",
+        "type": "string",
+        "valueName": "<text>",
+        "help":
+          "Show only functions whose name or source contains this (a component, module, package)",
+      },
+      {
+        "name": "out",
+        "type": "string",
+        "valueName": "<file>",
+        "help": "Save the run as JSON (to --compare a later run against)",
+      },
+      {
+        "name": "compare",
+        "type": "string",
+        "valueName": "<file>",
+        "help": "Compare with a run saved by --out: CPU, heap and per-function deltas",
+      },
     ],
     "positionals": [{ "name": "dir", "help": "Project directory (default: .)" }],
     "loadsModules": true,

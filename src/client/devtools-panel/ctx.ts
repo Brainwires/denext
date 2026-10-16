@@ -4,6 +4,7 @@
 import type { DenextDevtoolsApi, InspectNode } from "../devtools-inspect.ts";
 import { devFetch, type DevFetchFailure } from "./dev-api.ts";
 import { el, type PanelStyles } from "./styles.ts";
+import type { ComponentTotals } from "./profiler-data.ts";
 
 /** The panel's ten tabs (see `TABS` in `./shell.ts` for their order and labels). */
 export type TabId =
@@ -69,6 +70,19 @@ export interface NetworkUi {
   focused: boolean;
 }
 
+/** A Profiler comparison baseline: per-component totals and where they came from. */
+export interface ProfilerBaseline {
+  /** What the baseline is (`commit #3`, `profile.json (12 commits)`). */
+  label: string;
+  /** Its per-component self time and render counts. */
+  totals: ComponentTotals;
+  /**
+   * `"commit"`: compared with the selected commit. `"recording"`: an imported recording,
+   * compared with every commit of this one.
+   */
+  scope: "commit" | "recording";
+}
+
 export interface PanelState {
   open: boolean;
   tab: TabId;
@@ -85,6 +99,14 @@ export interface PanelState {
   expanded: Set<string>;
   /** The commit index selected in the Profiler tab's step-through, or null for the latest. */
   profilerCommit: number | null;
+  /** The Profiler tab's component filter (as typed); empty keeps every component. */
+  profilerFilter: string;
+  /** What the Profiler tab compares against (a pinned commit, or an imported recording). */
+  profilerBaseline: ProfilerBaseline | null;
+  /** A one-line note under the Profiler controls (an import that failed), or "". */
+  profilerNote: string;
+  /** The Profiler tab's filter box, created on its first render. */
+  profilerUi?: { box: HTMLInputElement; focused: boolean };
   /** Whether re-rendered components flash on the page (the ✨ highlight-updates toggle). */
   highlight: boolean;
   /** Last `/_denext/dev-state?kind=request` read (the Network tab). */

@@ -15,6 +15,13 @@ and this project adheres to
   module's `import type { Route } from "./+types/<route>"` type-checks (`Route.LoaderArgs`,
   `Route.ComponentProps`, … typed from the module itself). `denext migrate` writes the
   `compilerOptions.rootDirs` that resolves them.
+- **Profiler export, compare and component filters.** The DevTools Profiler tab filters by
+  component name (the ranking, the flamegraph and the commit strip follow it), pins a commit as
+  a baseline and lists each component's self-time and render-count change against it, and
+  exports a recording as JSON and imports one to compare with the current recording.
+  `denext profile` gets `--out <file>` (save the run), `--compare <file>` (CPU total, heap and
+  per-function deltas against a saved run) and `--filter <text>` (only functions whose name or
+  source contains it; totals and the `--budget` verdict stay the whole run's).
 - **A soft navigation sent as a POST streams its deferred values.** A navigation whose Remix
   `shouldRevalidate` echo is too large for headers goes out as a POST; it now gets the same
   answer as a GET: a Flight route's payload at once with each `defer()` value following as it

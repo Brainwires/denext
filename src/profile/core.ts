@@ -11,7 +11,7 @@ import { resolveProject } from "../build/paths.ts";
 import { build } from "../build/build.ts";
 import { buildSpa } from "../build/spa/build.ts";
 import { serveEphemeral } from "../build/prod-server.ts";
-import { aggregateSelfTime, type RawCpuProfile } from "./cpu.ts";
+import { aggregateSelfTime, frameFilter, type RawCpuProfile } from "./cpu.ts";
 import { type HeapResult, isLeak } from "./heap.ts";
 import { evaluateBudget } from "./budget.ts";
 import type { ProfileOptions, ProfileResult } from "./types.ts";
@@ -178,9 +178,12 @@ export async function profileApp(
       ? await captureInteraction(page, cdp, url, options.interact, iterations)
       : await captureStartup(page, cdp, url, iterations);
 
-    const cpu = aggregateSelfTime(profile, options.topN ?? 20);
-    const budget = options.budget ? evaluateBudget(options.budget, cpu, heap) : undefined;
-    return { route, origin, cpu, heap, budget, minified: minify };
+    const topN = options.topN ?? 20;
+    const all = aggregateSelfTime(profile, topN);
+    const budget = options.budget ? evaluateBudget(options.budget, all, heap) : undefined;
+    if (!options.filter) return { route, origin, cpu: all, heap, budget, minified: minify };
+    const cpu = aggregateSelfTime(profile, topN, frameFilter(options.filter));
+    return { route, origin, cpu, heap, budget, minified: minify, filter: options.filter };
   } finally {
     await browser.close().catch(() => {});
     await closeServer();

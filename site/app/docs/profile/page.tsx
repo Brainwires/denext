@@ -59,6 +59,28 @@ globalThis.__burst?.(200); // e.g. trigger 200 state updates the app exposes`}
 denext profile --interact burst.js --budget perf.budget.json         # fail (exit 1) on a regression`}
       </Code>
 
+      <h2>Compare two runs</h2>
+      <p>
+        Save a run with <code>--out</code>, change the code, and run again with{" "}
+        <code>--compare</code>: the report adds the CPU total, heap growth and retained-after-GC of
+        both runs, and each function's self time before and after, largest change first. Functions
+        are matched by name, since chunk URLs change between builds. <code>--json</code> then prints
+        {" "}
+        <code>{"{ result, comparison }"}</code>.
+      </p>
+      <Code lang="bash">
+        {`denext profile --interact burst.js --out before.json
+# …change the code…
+denext profile --interact burst.js --compare before.json`}
+      </Code>
+      <p>
+        <code>--filter &lt;text&gt;</code>{" "}
+        narrows the self-time table to functions whose name or source URL contains the text (any
+        case): a component (<code>--filter TodoList</code>), a module (<code>cart.tsx</code>) or a
+        package (<code>node_modules/zod</code>). The totals and shares stay those of the whole run,
+        and a <code>--budget</code> is judged on the whole run.
+      </p>
+
       <h2>Flags</h2>
       <ul>
         <li>
@@ -87,6 +109,16 @@ denext profile --interact burst.js --budget perf.budget.json         # fail (exi
         <li>
           <code>--minify</code>{" "}
           — profile a minified build (default is unminified for readable names).
+        </li>
+        <li>
+          <code>--filter &lt;text&gt;</code>{" "}
+          — show only functions whose name or source contains the text.
+        </li>
+        <li>
+          <code>--out &lt;file&gt;</code> — save the run as JSON.
+        </li>
+        <li>
+          <code>--compare &lt;file&gt;</code> — compare with a run saved by <code>--out</code>.
         </li>
       </ul>
 

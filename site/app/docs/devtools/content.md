@@ -263,6 +263,15 @@ Click **● Record**, interact, then **■ Stop** (**Clear** discards a recordin
 - A **ranked list** (top 25 by self time) with _why each rendered_ —
   `props: a,b · hooks: 0 · ctx: Theme` — so the commit's most expensive
   components and the reason they ran are one glance apart.
+- A **component filter** (the box beside the buttons; any case, part of a name):
+  the ranked list keeps only matching components, the flamegraph dims the rest,
+  and the commit strip dims every commit in which no matching component rendered.
+- **Compare.** **Pin as baseline** on a commit, then step to another: a
+  _Compare_ list shows each component's self time and render count in both,
+  largest change first (`List  2.0 → 4.0ms · renders 1 → 1  +2.0ms`).
+  **Export** saves the recording as JSON; **Import…** loads one as the baseline,
+  compared with every commit of the current recording — a before/after across a
+  code change. The filter applies to the comparison too.
 
 For whole-app CPU and heap profiling outside the browser, see
 [`denext profile`](/docs/profile).
