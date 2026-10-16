@@ -150,7 +150,7 @@ and this project adheres to
   `denext test --coverage[=<dir>]` writes both passes into one directory and makes one report
   (summary, `<dir>/lcov.info`, `<dir>/html/`); the toolchain's `deno coverage` maps each profile
   back through the form its module was emitted in, so a line either pass ran counts as covered.
-- **next-intl's ICU messages: every skeleton token `Intl` can express, and nesting to any depth.**
+- **next-intl's ICU messages: every skeleton token `Intl` can express, and deep nesting.**
   Number skeletons take the long and concise forms next-intl's formatter reads: units
   (`unit/…`, `measure-unit/…` with `per-measure-unit/…`), `unit-width-*`, significant digits
   (`@@#`), open and trailing-zero fraction forms (`.00+`, `.00/w`, `.##/@@#r`),
@@ -159,8 +159,10 @@ and this project adheres to
   cycles (`h` / `H` / `K` / `k`), fractional seconds (`S`), day periods (`B`), the generic and
   offset time-zone names (`v`, `O`, `Z`, `X`) and narrow eras; a quarter, week or day-of-year
   field throws, as in next-intl, instead of rendering a date without it. The parser and
-  renderer are iterative, so `plural` / `select` / `selectordinal` nest to any depth (the
-  64-level cap is gone) with no stack to overflow.
+  renderer are iterative, so `plural` / `select` / `selectordinal` nest 1,000 levels deep (up
+  from 64) with no stack to overflow. A hostile message stays bounded: one nested deeper, or
+  longer than 262,144 characters, throws a `SyntaxError`, and the parse cache holds at most
+  4 Mi characters of messages.
 - **`denext migrate` moves a Prisma app's seed and test tooling to the Deno client too.** The
   seed (`prisma/seed.ts`, or the script `prisma.seed` names), `tests/` / `test/` / `e2e/`,
   mocks, `scripts/` and root test-setup files get the same rewrite as the runtime source

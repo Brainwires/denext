@@ -1,20 +1,24 @@
-// The next-intl ICU engine (src/compat/next-intl/icu.ts) beyond the common subset: nesting to any
-// depth (an iterative parser and renderer), `selectordinal` with `#` / `=N` / `offset`, and the
+// The next-intl ICU engine (src/compat/next-intl/icu.ts) beyond the common subset: nesting to
+// MAX_ICU_DEPTH levels (an iterative parser and renderer, far past the recursive parser's 64), `selectordinal` with `#` / `=N` / `offset`, and the
 // full set of number and date `::` skeleton tokens `Intl` can express — each checked against a
 // direct `Intl` call so the assertions hold in any time zone and ICU version.
 
 import { assertEquals, assertThrows } from "@std/assert";
-import { formatIcu } from "../src/compat/next-intl/icu.ts";
+import { formatIcu, MAX_ICU_DEPTH } from "../src/compat/next-intl/icu.ts";
 
 const num = (n: number, o: Intl.NumberFormatOptions, locale = "en") =>
   new Intl.NumberFormat(locale, o).format(n);
 
-Deno.test("ICU nesting: thousands of plural/select levels render (no depth cap, no stack)", () => {
-  const depth = 5000;
+Deno.test("ICU nesting: plural/select render to MAX_ICU_DEPTH levels (no stack), one more throws", () => {
+  const depth = MAX_ICU_DEPTH;
   const deep = "{n, plural, other {".repeat(depth) + "x#" + "}}".repeat(depth);
   assertEquals(formatIcu(deep, { n: 3 }, "en"), "x3");
   const selects = "{g, select, a {".repeat(depth) + "deep" + "} other {no}}".repeat(depth);
   assertEquals(formatIcu(selects, { g: "a" }, "en"), "deep");
+  // Every level's sibling branch counts at the same depth: the `other` branches here are fine.
+  assertEquals(formatIcu(selects, { g: "b" }, "en"), "no");
+  const over = "{n, plural, other {".repeat(depth + 1) + "x" + "}}".repeat(depth + 1);
+  assertThrows(() => formatIcu(over, { n: 1 }, "en"), SyntaxError, "too deep");
   // Text around every level still renders in order.
   const framed = "<{n, plural, other {".repeat(50) + "#" + "}}>".repeat(50);
   assertEquals(formatIcu(framed, { n: 1 }, "en"), "<".repeat(50) + "1" + ">".repeat(50));

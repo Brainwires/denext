@@ -418,6 +418,10 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
   may be cached (ISR, `force-static`, a static export) keeps `og:image` relative and omits
   hreflang / canonical, and a per-request page uses the request's origin and is sent `no-store`.
   Set `canonicalOrigin` or `metadataBase` for absolute URLs everywhere.
+- **next-intl's ICU messages are bounded.** next-intl (FormatJS) parses a message of any size
+  and nesting; denext's parser refuses one longer than 262,144 characters or nesting `plural` /
+  `select` / `selectordinal` more than 1,000 levels deep, with a `SyntaxError`, so a hostile
+  message string costs bounded CPU and memory. Real catalog messages are far inside both.
 - **HSTS is host-only by default** (no `includeSubDomains`/`preload`) so it
   can't brick non-HTTPS sibling subdomains. Strengthen via `hsts`, or
   `hsts: false`.

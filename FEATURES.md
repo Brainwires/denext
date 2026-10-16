@@ -1733,8 +1733,8 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   Radix's slot package. — `src/compat/slot.ts:41, 88, 107`.
 - **`next-intl` compat, `Intl.*` + first-party** — a first-party ICU
   MessageFormat implementation covering plurals with `offset:`/`#`,
-  selectordinal, select, submessages nested to any depth (an iterative parser
-  and renderer), the long and concise `::` number skeletons and the date-field
+  selectordinal, select, submessages nested up to 1,000 levels deep (an
+  iterative parser and renderer; longer or deeper hostile messages throw), the long and concise `::` number skeletons and the date-field
   skeletons `Intl` can express, `duration`, and `spellout`/`ordinal` (a number-to-words speller,
   English built in) — **zero npm deps and zero bundled data** (no
   `intl-messageformat`). Plus `t.rich()`/`t.markup()` rich-text/markup rendering

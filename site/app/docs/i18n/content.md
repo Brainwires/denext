@@ -123,7 +123,8 @@ rendering. `createNavigation(routing)` returns a locale-prefixing `Link`,
 Messages are formatted by a first-party ICU implementation built on the standard
 `Intl.*` APIs — zero npm deps and zero bundled data, no `intl-messageformat`. It
 covers plurals with `offset:` and `#`, `selectordinal`, `select`, submessages
-nested to any depth, `duration`, `spellout`/`ordinal`, and the `::` skeletons:
+nested up to 1,000 levels deep (a message longer than 262,144 characters, or
+nested deeper, throws a `SyntaxError`), `duration`, `spellout`/`ordinal`, and the `::` skeletons:
 
 - **Number skeletons**, long and concise: `currency/EUR`, `unit/…`,
   `measure-unit/…` with `per-measure-unit/…`, `unit-width-*`, fraction and

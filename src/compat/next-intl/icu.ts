@@ -19,8 +19,8 @@
  * - `{count, plural, offset:1 =0 {…} one {…} other {…}}` with `#` — via `Intl.PluralRules`
  * - `{rank, selectordinal, one {…} other {…}}` — ordinal plural rules
  * - `{gender, select, male {…} female {…} other {…}}`
- * - nested submessages inside plural/select branches, to any depth (an iterative parser and
- *   renderer: nesting costs no JS stack)
+ * - nested submessages inside plural/select branches, up to {@link MAX_ICU_DEPTH} levels (an
+ *   iterative parser and renderer: nesting costs no JS stack)
  *
  * - apostrophe escaping — `''` → literal `'`; `'{'`/`'}'`/`'#'` quote the syntax
  *   char; a lone apostrophe before a non-syntax char is a literal `'`
@@ -69,15 +69,44 @@ interface ParseFrame {
 }
 
 /**
+ * The deepest `plural` / `select` / `selectordinal` nesting a message may have. Real catalogs
+ * stop at three or four levels; nesting costs a heap frame per level (never JS stack), so the
+ * cap is set far above any real message (and well above the recursive parser's old 64) while a
+ * hostile message still fails fast with a `SyntaxError`, as FormatJS's parser throws one.
+ */
+export const MAX_ICU_DEPTH = 1000;
+
+/**
+ * The longest message, in UTF-16 code units, {@link formatIcu} parses. Parsing and rendering are
+ * linear in the length, so this bounds the CPU and memory one hostile message (an
+ * attacker-controlled string) can cost; a real message, even a long legal paragraph, is a few
+ * thousand.
+ */
+export const MAX_ICU_LENGTH = 256 * 1024;
+
+/**
  * Parser over an ICU message string. Iterative — an explicit stack of submessages, never the JS
- * call stack — so a message nests `plural` / `select` as deeply as it likes in linear time and
- * a pathologically deep one (an attacker-controlled message string) cannot overflow the stack.
+ * call stack — so nesting costs no stack and parsing is linear in the message's length; the
+ * nesting ({@link MAX_ICU_DEPTH}) and the length ({@link MAX_ICU_LENGTH}) are capped, so a
+ * pathological message (an attacker-controlled string) throws instead of costing unbounded work.
  */
 class Parser {
   #s: string;
   #i = 0;
   constructor(s: string) {
+    if (s.length > MAX_ICU_LENGTH) {
+      throw new SyntaxError(`ICU message too long (${s.length} > ${MAX_ICU_LENGTH} characters)`);
+    }
     this.#s = s;
+  }
+
+  /** Enter one more level of submessage, refusing past {@link MAX_ICU_DEPTH}. */
+  static #push(stack: ParseFrame[], frame: ParseFrame): void {
+    // The root frame is level 0, so the stack holds the depth plus one.
+    if (stack.length > MAX_ICU_DEPTH) {
+      throw new SyntaxError(`ICU message nesting too deep (> ${MAX_ICU_DEPTH} levels)`);
+    }
+    stack.push(frame);
   }
 
   /** Parse the whole message (a stray top-level `}` ends it, as in a submessage). */
@@ -88,7 +117,7 @@ class Parser {
       const frame = stack[stack.length - 1];
       const branch = this.#scan(frame);
       if (branch) {
-        stack.push(branch);
+        Parser.#push(stack, branch);
         continue;
       }
       // The frame ended (`}` or end of input).
@@ -100,7 +129,7 @@ class Parser {
       arg.options![frame.selector!] = frame.nodes;
       if (this.#s[this.#i] === "}") this.#i++; // the submessage's "}"
       const next = this.#nextBranch(arg);
-      if (next) stack.push(next);
+      if (next) Parser.#push(stack, next);
     }
     return root.nodes;
   }
@@ -625,6 +654,35 @@ interface RenderFrame {
 }
 
 /**
+ * `Intl` formatters by locale and options, built once: a message renders one `#` per character
+ * at worst and one plural rule per level, so building a formatter for each would make the
+ * render's cost a constructor per character. Cleared when it grows past a few dozen entries
+ * (the locales an app serves), so hostile locale strings cannot grow it either.
+ */
+const intlCache = new Map<string, Intl.PluralRules | Intl.NumberFormat>();
+
+function cachedIntl<T extends Intl.PluralRules | Intl.NumberFormat>(key: string, make: () => T): T {
+  let hit = intlCache.get(key) as T | undefined;
+  if (hit === undefined) {
+    if (intlCache.size >= 64) intlCache.clear();
+    hit = make();
+    intlCache.set(key, hit);
+  }
+  return hit;
+}
+
+/** The locale's plain number format (what `#` renders as). */
+const numberFormat = (locale: string): Intl.NumberFormat =>
+  cachedIntl(`n\0${locale}`, () => new Intl.NumberFormat(locale));
+
+/** `text` with every `#` replaced by `count` (a function, so `$` is never a pattern). */
+const replacePound = (text: string, count: string): string => text.replaceAll("#", () => count);
+
+/** The locale's cardinal or ordinal plural rules. */
+const pluralRules = (locale: string, type: Intl.PluralRuleType): Intl.PluralRules =>
+  cachedIntl(`p\0${type}\0${locale}`, () => new Intl.PluralRules(locale, { type }));
+
+/**
  * Render a parsed message. Iterative, like the parser: a `plural` / `select` pushes its chosen
  * branch instead of recursing, so nesting depth costs no stack.
  */
@@ -640,9 +698,9 @@ function render(nodes: Node[], values: IcuValues, locale: string): string {
     const node = frame.nodes[frame.i++];
     if (typeof node === "string") {
       const pound = frame.pound;
-      out += pound === undefined
+      out += pound === undefined || !node.includes("#")
         ? node
-        : node.replace(/#/g, () => new Intl.NumberFormat(locale).format(pound));
+        : replacePound(node, numberFormat(locale).format(pound));
       continue;
     }
     const branch = node.options ? chooseBranch(node, values, locale, frame.pound) : null;
@@ -676,9 +734,8 @@ function pluralBranch(node: ArgNode, n: number | null, locale: string): RenderFr
   // Non-numeric count falls back to the `other` branch with no `#` value.
   if (n === null) return { nodes: options.other ?? [], i: 0 };
   const adjusted = n - node.offset;
-  const category = new Intl.PluralRules(locale, {
-    type: node.type === "selectordinal" ? "ordinal" : "cardinal",
-  }).select(adjusted);
+  const category = pluralRules(locale, node.type === "selectordinal" ? "ordinal" : "cardinal")
+    .select(adjusted);
   const nodes = options[`=${n}`] ?? options[category] ?? options.other ?? [];
   return { nodes, i: 0, pound: adjusted };
 }
@@ -772,9 +829,12 @@ const ARG_RENDERERS: Record<string, (arg: ArgRender) => string> = {
 
 // Bounded parse cache. Catalog messages are few and fixed, but an app formatting
 // dynamic/user-derived message strings must not grow this without limit — evict
-// oldest-first once the cap is reached.
+// oldest-first once either cap is reached: the entry count, or the total length of the cached
+// messages (each up to MAX_ICU_LENGTH, so a count alone would let a thousand of them stay).
 const cache = new Map<string, Node[]>();
 const CACHE_MAX = 1000;
+const CACHE_MAX_CHARS = 4 * 1024 * 1024;
+let cachedChars = 0;
 
 /**
  * Format an ICU `message` with `values` for `locale`.
@@ -788,11 +848,15 @@ export function formatIcu(message: string, values: IcuValues = {}, locale = "en"
   let ast = cache.get(message);
   if (!ast) {
     ast = new Parser(message).parseMessage();
-    if (cache.size >= CACHE_MAX) {
-      const oldest = cache.keys().next().value;
-      if (oldest !== undefined) cache.delete(oldest);
+    while (
+      cache.size >= CACHE_MAX || (cache.size > 0 && cachedChars + message.length > CACHE_MAX_CHARS)
+    ) {
+      const oldest = cache.keys().next().value as string;
+      cache.delete(oldest);
+      cachedChars -= oldest.length;
     }
     cache.set(message, ast);
+    cachedChars += message.length;
   }
   // Restore any apostrophe-quoted `#` (protected from the plural substitution).
   const out = render(ast, values, locale);

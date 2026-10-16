@@ -17,7 +17,7 @@ import {
 import type { VNode } from "../src/jsx/types.ts";
 import { assertTailwindIntegrity } from "../src/build/tailwind.ts";
 import { sanitizeLimits, withDeadline, withRenderSlot } from "../src/server/live.ts";
-import { formatIcu } from "../src/compat/next-intl/icu.ts";
+import { formatIcu, MAX_ICU_DEPTH, MAX_ICU_LENGTH } from "../src/compat/next-intl/icu.ts";
 
 // ---- #6: OIDC `email_verified` enforcement in the built-in profile mappers -----------
 
@@ -245,12 +245,33 @@ Deno.test("live: sanitizeLimits rejects a non-number/negative cap and falls back
   }
 });
 
-// ---- #10: ICU parser nesting-depth cap (untrusted message can't overflow the stack) --
+// ---- #10: ICU parser bounds (an untrusted message can't cost unbounded CPU or memory) --
+// The parser is iterative, so depth no longer overflows the stack, but a hostile message is
+// still refused past MAX_ICU_DEPTH levels or MAX_ICU_LENGTH characters.
 
 Deno.test("intl: a pathologically-nested ICU message throws instead of overflowing", () => {
-  let msg = "x";
-  for (let i = 0; i < 200; i++) msg = `{v, select, other {${msg}}}`;
-  assertThrows(() => formatIcu(msg, { v: "a" }), Error, "too deep");
+  const levels = MAX_ICU_DEPTH + 1;
+  const msg = "{v, select, other {".repeat(levels) + "x" + "}}".repeat(levels);
+  assertThrows(() => formatIcu(msg, { v: "a" }), SyntaxError, "too deep");
+  // Far past the cap (100k levels, ~2 MB) is refused too, by the length bound first.
+  const huge = "{v, select, other {".repeat(100_000) + "x" + "}}".repeat(100_000);
+  assertThrows(() => formatIcu(huge, { v: "a" }), SyntaxError, "too long");
+});
+
+Deno.test("intl: an ICU message past MAX_ICU_LENGTH throws; one at the limit renders", () => {
+  assertThrows(() => formatIcu("a".repeat(MAX_ICU_LENGTH + 1)), SyntaxError, "too long");
+  assertEquals(formatIcu("a".repeat(MAX_ICU_LENGTH)).length, MAX_ICU_LENGTH);
+});
+
+Deno.test("intl: a message of nothing but plural `#`s renders in bounded time", () => {
+  // Each `#` once built its own Intl.NumberFormat: ~10 s for a message this long. The locale's
+  // formatter is now built once, so this takes milliseconds; 2 s leaves room for a loaded host.
+  const pounds = "{n, plural, other {" + "#".repeat(MAX_ICU_LENGTH - 64) + "}}";
+  const start = performance.now();
+  const out = formatIcu(pounds, { n: 7 });
+  assertEquals(out.length, MAX_ICU_LENGTH - 64);
+  const ms = performance.now() - start;
+  assert(ms < 2000, `rendering took ${ms.toFixed(0)} ms`);
 });
 
 // ---- Live per-render deadline: a hung fetcher can't pin a render slot forever ---------
