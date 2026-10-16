@@ -83,6 +83,177 @@ export function clearChildren(parent: { childNodes: unknown[] }): void {
   for (const child of parent.childNodes.splice(0)) (child as TreeNode).parentNode = null;
 }
 
+// ---- innerHTML: markup parsed into child nodes, as a browser does ----------------------------
+
+/** How {@link parseHtmlInto} builds the nodes it parses: an element or a text node at a time. */
+interface HtmlNodeBuilder {
+  /** A new element named `tag` (lower-case), with no attributes or children. */
+  element(tag: string): TreeNode & { setAttribute(name: string, value: string): void };
+  /** A new text node holding `value` (character references already decoded). */
+  text(value: string): TreeNode;
+}
+
+/** Elements with no content or end tag. */
+const VOID_ELEMENTS = new Set(
+  "area base br col embed hr img input link meta param source track wbr".split(" "),
+);
+/** Elements whose content is text up to their end tag (never parsed as markup). */
+const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title"]);
+/** A start or end tag: `/`, the name, the attribute run, and a self-closing `/`. */
+const TAG_RE =
+  /<(\/?)([a-zA-Z][\w:.-]*)((?:\s+[^\s"'>\/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*(\/?)>/y;
+/** One attribute of a tag's attribute run, with its double-, single- or unquoted value. */
+const ATTR_RE = /([^\s"'>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+const NAMED_REFS: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: "\u00a0",
+};
+
+/** Decode the character references a browser would (`&amp;`, `&#38;`, `&#x26;`, …). */
+function decodeRefs(s: string): string {
+  if (!s.includes("&")) return s;
+  return s.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (ref, body: string) => {
+    if (body[0] !== "#") return NAMED_REFS[body.toLowerCase()] ?? ref;
+    const hex = body[1] === "x" || body[1] === "X";
+    const code = parseInt(body.slice(hex ? 2 : 1), hex ? 16 : 10);
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "\ufffd";
+  });
+}
+
+/**
+ * Parse `html` into child nodes of `parent`, as assigning `innerHTML` does in a browser: elements
+ * with their attributes, text with character references decoded, void elements (`<br>`,
+ * `<input>`) closed, the text of `<script>` / `<style>` / `<textarea>` / `<title>` left
+ * unparsed, comments dropped, an end tag closing up to its open element (a stray one is
+ * ignored), and a `<` that starts no tag kept as text. Shared by the `denext/testing` DOM and
+ * the repo's reconciler test fakes, so a reconciler that prunes nodes it does not own removes
+ * injected markup in a test exactly as it would in a page.
+ *
+ * @param parent The node the parsed nodes are appended to (its children are not cleared).
+ * @param html The markup.
+ * @param build Creates the element and text nodes.
+ */
+function parseHtmlInto(parent: TreeNode, html: string, build: HtmlNodeBuilder): void {
+  new HtmlFragmentParser(html, build, parent).run();
+}
+
+/** The state of one {@link parseHtmlInto}: the input, the open elements and pending text. */
+class HtmlFragmentParser {
+  #i = 0;
+  #text = "";
+  readonly #open: TreeNode[];
+  readonly #names: string[] = [""];
+
+  constructor(readonly html: string, readonly build: HtmlNodeBuilder, parent: TreeNode) {
+    this.#open = [parent];
+  }
+
+  run(): void {
+    const { html } = this;
+    while (this.#i < html.length) {
+      const lt = html.indexOf("<", this.#i);
+      const end = lt === -1 ? html.length : lt;
+      this.#text += html.slice(this.#i, end);
+      this.#i = end;
+      if (lt !== -1) this.#markup(lt);
+    }
+    this.#flush();
+  }
+
+  /** The markup at `lt` (a `<`): a comment, a tag, or a `<` that is only text. */
+  #markup(lt: number): void {
+    if (this.html.startsWith("<!--", lt)) {
+      this.#flush();
+      const end = this.html.indexOf("-->", lt + 4);
+      this.#i = end === -1 ? this.html.length : end + 3;
+      return;
+    }
+    TAG_RE.lastIndex = lt;
+    const tag = TAG_RE.exec(this.html);
+    if (tag === null) {
+      this.#text += "<";
+      this.#i = lt + 1;
+      return;
+    }
+    this.#flush();
+    this.#i = TAG_RE.lastIndex;
+    const name = tag[2].toLowerCase();
+    if (tag[1] === "/") this.#close(name);
+    else this.#start(name, tag[3], tag[4] === "/");
+  }
+
+  /** A start tag: the element, its attributes, then its content (unless void or raw text). */
+  #start(name: string, attrs: string, selfClosing: boolean): void {
+    const el = this.build.element(name);
+    for (const a of attrs.matchAll(ATTR_RE)) {
+      el.setAttribute(a[1], decodeRefs(a[2] ?? a[3] ?? a[4] ?? ""));
+    }
+    insertChild(this.#current(), el, null);
+    if (RAW_TEXT_ELEMENTS.has(name)) this.#rawText(name, el);
+    else if (!VOID_ELEMENTS.has(name) && !selfClosing) {
+      this.#open.push(el);
+      this.#names.push(name);
+    }
+  }
+
+  /** An end tag closes its open element and every one inside it; a stray one is ignored. */
+  #close(name: string): void {
+    const at = this.#names.lastIndexOf(name);
+    if (at > 0) this.#open.length = this.#names.length = at;
+  }
+
+  /** A raw-text element's content, as one text node, through its end tag. */
+  #rawText(name: string, el: TreeNode): void {
+    const { html } = this;
+    const close = html.toLowerCase().indexOf(`</${name}`, this.#i);
+    const body = html.slice(this.#i, close === -1 ? html.length : close);
+    const escapable = name === "textarea" || name === "title";
+    if (body !== "") insertChild(el, this.build.text(escapable ? decodeRefs(body) : body), null);
+    const gt = close === -1 ? -1 : html.indexOf(">", close);
+    this.#i = gt === -1 ? html.length : gt + 1;
+  }
+
+  #current(): TreeNode {
+    return this.#open[this.#open.length - 1];
+  }
+
+  /** Append the pending text as one text node. */
+  #flush(): void {
+    if (this.#text !== "") {
+      insertChild(this.#current(), this.build.text(decodeRefs(this.#text)), null);
+    }
+    this.#text = "";
+  }
+}
+
+/**
+ * Replace `el`'s children with `html` parsed (an `innerHTML` assignment), elements made through
+ * `el`'s document when it has one.
+ */
+export function replaceWithMarkup<
+  E extends TreeNode & { setAttribute(n: string, v: string): void },
+>(
+  el: TreeNode & { ownerDocument: { createElement(tag: string): E } | null },
+  html: string,
+  make: { element(tag: string): E; text(value: string): TreeNode },
+): void {
+  clearChildren(el);
+  parseHtmlInto(el, html, {
+    element: (tag) => el.ownerDocument?.createElement(tag) ?? make.element(tag),
+    text: make.text,
+  });
+}
+
+/** Replace `el`'s children with one text node holding `value` (a `textContent` assignment). */
+export function replaceWithText(el: TreeNode, value: string, text: (v: string) => TreeNode): void {
+  clearChildren(el);
+  if (value !== "") insertChild(el, text(value), null);
+}
+
 /** An element's listener sets, bubble and capture phase, by event type. */
 interface ListenerMaps<F> {
   listeners: Map<string, Set<F>>;
@@ -163,7 +334,6 @@ export class DomEl extends DomNode implements TestElement {
   value = "";
   checked = false;
   ownerDocument: DomDocument | null = null;
-  #rawHtml: string | null = null;
 
   constructor(tagName: string) {
     super();
@@ -197,22 +367,25 @@ export class DomEl extends DomNode implements TestElement {
     return `<${tag}${attrs}>${this.innerHTML}</${tag}>`;
   }
   get innerHTML(): string {
-    if (this.#rawHtml !== null) return this.#rawHtml;
     return this.childNodes.map(serialize).join("");
   }
+  /** Assigning innerHTML replaces the children with the parsed markup, as a browser does. */
   set innerHTML(html: string) {
-    this.#rawHtml = html === "" ? null : html;
-    clearChildren(this);
+    replaceWithMarkup(this, html, DOM_NODES);
   }
   get textContent(): string {
     return this.childNodes.map(textOf).join("");
   }
   set textContent(value: string) {
-    clearChildren(this);
-    this.#rawHtml = null;
-    if (value !== "") this.appendChild(new DomText(value));
+    replaceWithText(this, value, DOM_NODES.text);
   }
 }
+
+/** How this DOM's elements and text nodes are made outside a document. */
+const DOM_NODES = {
+  element: (tag: string) => new DomEl(tag),
+  text: (value: string) => new DomText(value),
+};
 
 // The listener methods (declared on the class through the merged interface below).
 Object.assign(DomEl.prototype, listenerMethods);

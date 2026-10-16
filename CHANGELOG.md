@@ -219,6 +219,12 @@ and this project adheres to
   (`suppressHydrationWarning` silences it), and a production build carries no comparison. A
   fresh client mount, a keyed move and a switch to `dangerouslySetInnerHTML` no longer drop the
   injected markup either, and a re-render with the same `__html` leaves its nodes alone.
+- **`denext/testing`'s DOM parses `innerHTML` into nodes, as a browser does.** Assigning
+  `innerHTML` (what `dangerouslySetInnerHTML` does) stored the markup as a string with no child
+  nodes, so a component test could neither query the injected markup (`getByText`, `getByRole`)
+  nor catch a render that pruned or re-created it. The markup is now parsed into elements and
+  text: attributes, character references, void elements, the unparsed text of `<script>` /
+  `<style>` / `<textarea>` / `<title>`, and comments dropped.
 - **A source checkout's `denext start` resolves an app's own import-map entries.** From a
   checkout (`deno run -A <denext>/cli.ts start`), a server module importing a specifier only the
   app's `deno.json` maps, such as a `"@gleam/"` prefix for compiled Gleam, failed with "not a

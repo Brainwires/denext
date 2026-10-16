@@ -10,6 +10,8 @@ import {
   listenerMethods,
   type ListenerTarget,
   propagateEvent,
+  replaceWithMarkup,
+  replaceWithText,
 } from "../../src/testing/dom.ts";
 
 export class FakeNode {
@@ -227,38 +229,33 @@ export class FakeElement extends FakeNode {
     return this.childNodes.map(serialize).join("");
   }
   /**
-   * Assigning innerHTML replaces the children with the parsed markup, as a browser does: here
-   * one opaque {@link FakeRawHtml} child node standing for it, so a reconciler that then prunes
-   * children it does not own removes the markup exactly as it would in a real DOM.
+   * Assigning innerHTML replaces the children with the parsed markup, as a browser does
+   * (denext/testing's parser), so a reconciler that then prunes children it does not own removes
+   * the markup exactly as it would in a real DOM.
    */
   set innerHTML(html: string) {
-    clearChildren(this);
-    if (html !== "") this.appendChild(new FakeRawHtml(html));
+    replaceWithMarkup(this, html, FAKE_NODES);
   }
   get textContent(): string {
     return this.childNodes.map(textOf).join("");
   }
   /** Assigning textContent replaces children with a single text node. */
   set textContent(value: string) {
-    clearChildren(this);
-    if (value !== "") this.appendChild(new FakeText(value));
+    replaceWithText(this, value, FAKE_NODES.text);
   }
 }
+
+/** How the fake's elements and text nodes are made outside a document. */
+const FAKE_NODES = {
+  element: (tag: string) => new FakeElement(tag),
+  text: (value: string) => new FakeText(value),
+};
 
 // The listener methods (declared on the class through the merged interface below).
 Object.assign(FakeElement.prototype, listenerMethods);
 export interface FakeElement extends ListenerMethods<Listener> {}
 
-/** The markup an `innerHTML` assignment parsed into, kept as one opaque node. */
-class FakeRawHtml extends FakeNode {
-  override nodeType = 11;
-  constructor(readonly html: string) {
-    super();
-  }
-}
-
 function serialize(node: FakeNode): string {
-  if (node instanceof FakeRawHtml) return node.html;
   if (node instanceof FakeText) return node.nodeValue;
   if (node instanceof FakeElement) return node.outerHTML;
   return "";
