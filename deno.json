@@ -357,6 +357,8 @@
       "bench/results/",
       "bench/REPORT.md",
       "src/mcp/docs-corpus.ts",
+      "denext.config.schema.json",
+      "src/plugin/catalog.json",
       "tests/fixtures/capacitor8/template/",
       "tests/fixtures/docker-stack/",
       "tests/fixtures/saml/"
@@ -398,6 +400,8 @@
       "CHANGELOG.md",
       "ROADMAP.md",
       "FEATURES.md",
+      "KNOWN-DIFFERENCES.md",
+      "KNOWN-LIMITATIONS.md",
       ".github/",
       ".vscode/",
       ".agents/",

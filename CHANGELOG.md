@@ -362,6 +362,12 @@ and this project adheres to
 
 ### Changed
 
+- **A lighter JSR package (19.16 → 18.45 MiB).** The MCP docs corpus ships Brotli-compressed
+  (quality 11) instead of gzipped: 1.38 MB instead of 1.94 MB, decoded through `node:zlib` on the
+  first docs search. `denext.config.schema.json` is written minified, and `next/font`'s Capsize
+  metrics table is one compact line per family (63 KB instead of 102 KB); the plugin catalog is
+  minified too. `FEATURES.md`, `KNOWN-DIFFERENCES.md` and `KNOWN-LIMITATIONS.md`, which nothing
+  reads at runtime (the docs site and the MCP docs corpus carry them), stay out of the package.
 - **CEF on macOS keeps a team-signed app's cookie key in the Keychain.** From runtime
   2.9.7-denext.20 a Developer ID or Apple Development signed CEF app stores its cookie key in a
   login-keychain item of its own (`"<app id> Safe Storage"`) instead of Chromium's mock keychain,

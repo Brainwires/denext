@@ -1,8 +1,9 @@
 // The font-metrics generator (scripts/gen-font-metrics.ts): Capsize entries → the compact,
 // sorted tuple table `next/font`'s fallback math reads. Pure function; no network.
 
-import { assertEquals } from "@std/assert";
-import { toTuples } from "../scripts/gen-font-metrics.ts";
+import { assertEquals, assertThrows } from "@std/assert";
+import { toFileUrl } from "@std/path";
+import { render, toTuples } from "../scripts/gen-font-metrics.ts";
 
 const entry = (familyName: string, extra: Record<string, unknown> = {}) => ({
   familyName,
@@ -31,4 +32,22 @@ Deno.test("toTuples keeps the seven fields, sorts by family, and drops unusable 
 Deno.test("toTuples is deterministic (same input → identical output)", () => {
   const data = { b: entry("B"), a: entry("A") };
   assertEquals(toTuples(data), toTuples({ ...data }));
+});
+
+Deno.test("render: the generated module's table reads back the rows it was given", async () => {
+  const rows = toTuples({
+    a: entry("Alpha"),
+    z: entry("Zeta Mono", { category: "monospace", lineGap: 7, descent: -12 }),
+  });
+  const dir = await Deno.makeTempDir();
+  try {
+    const file = `${dir}/metrics.ts`;
+    await Deno.writeTextFile(file, render(rows));
+    const { FONT_METRICS } = await import(toFileUrl(file).href);
+    assertEquals(FONT_METRICS, rows);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+  assertThrows(() => render([["Bad|Name", "serif", 1, 1, 1, 1, 1]]), Error, "unsafe family");
+  assertThrows(() => render([["X", "cursive", 1, 1, 1, 1, 1]]), Error, "unknown category");
 });

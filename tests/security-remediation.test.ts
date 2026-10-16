@@ -21,18 +21,18 @@ import { formatIcu } from "../src/compat/next-intl/icu.ts";
 
 // ---- #6: OIDC `email_verified` enforcement in the built-in profile mappers -----------
 
-Deno.test("auth: google/oidc mappers drop the email when email_verified is false", () => {
+Deno.test("auth: google/oidc mappers drop the email when email_verified is false", async () => {
   const g = google({ clientId: "c", clientSecret: "s" });
   // Attacker registers an IdP account carrying a victim's (unverified) address.
   assertEquals(
-    g.profile!({
+    (await g.profile!({
       claims: { sub: "1", email: "victim@corp.com", email_verified: false },
       tokens: {},
-    }).email,
+    })).email,
     undefined,
     "unverified email must be dropped so email-linking apps can't be fooled",
   );
-  const verified = g.profile!({
+  const verified = await g.profile!({
     claims: { sub: "1", email: "me@corp.com", email_verified: true },
     tokens: {},
   });
@@ -48,18 +48,18 @@ Deno.test("auth: google/oidc mappers drop the email when email_verified is false
     jwksUrl: "https://issuer.example/jwks",
   });
   assertEquals(
-    o.profile!({
+    (await o.profile!({
       claims: { sub: "1", email: "victim@corp.com", email_verified: false },
       userinfo: {},
       tokens: {},
-    }).email,
+    })).email,
     undefined,
   );
 });
 
 // ---- GitHub OAuth: only a provider-verified email reaches the AuthUser ----------------
 
-Deno.test("auth: github mapper exposes only a verified email (from /user/emails)", () => {
+Deno.test("auth: github mapper exposes only a verified email (from /user/emails)", async () => {
   const gh = github({ clientId: "c", clientSecret: "s" });
   // It configures the emails endpoint so the flow fetches the verified list.
   assertEquals(gh.userEmailsUrl, "https://api.github.com/user/emails");
@@ -67,7 +67,7 @@ Deno.test("auth: github mapper exposes only a verified email (from /user/emails)
   const userinfo = { id: 7, login: "octo", email: "public@x.com", avatar_url: "a" };
 
   // A verified primary email is exposed and marked verified.
-  const verified = gh.profile!({
+  const verified = await gh.profile!({
     tokens: {},
     userinfo,
     emails: [
@@ -80,7 +80,7 @@ Deno.test("auth: github mapper exposes only a verified email (from /user/emails)
   assertEquals(verified.id, "7");
 
   // Only unverified addresses → no email at all (mirrors the google/oidc hardening).
-  const unverified = gh.profile!({
+  const unverified = await gh.profile!({
     tokens: {},
     userinfo,
     emails: [{ email: "me@x.com", primary: true, verified: false }],
@@ -89,7 +89,7 @@ Deno.test("auth: github mapper exposes only a verified email (from /user/emails)
   assertEquals(unverified.emailVerified, undefined);
 
   // No emails list (endpoint missing/failed) → no email, never the raw userinfo.email.
-  const none = gh.profile!({ tokens: {}, userinfo });
+  const none = await gh.profile!({ tokens: {}, userinfo });
   assertEquals(none.email, undefined, "never falls back to the unverified userinfo.email");
 });
 
