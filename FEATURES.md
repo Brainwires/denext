@@ -782,7 +782,7 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - **Locale routing** with `localePrefix` `"as-needed"` (default — the default
   locale is unprefixed) or `"always"` (every locale, including the default, gets
   a prefix), **`next-intl`** compatibility (provider, navigation, middleware,
-  routing), ICU message subset, `useTranslations`.
+  routing), ICU messages, `useTranslations`.
 - **Automatic `hreflang`** — configuring i18n emits per-locale `hreflang`
   alternates (+ `x-default`) and a per-locale canonical on every page, in SSR
   and static export alike; a page's own `alternates.languages` always wins.
@@ -1730,15 +1730,14 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   Radix's slot package. — `src/compat/slot.ts:41, 88, 107`.
 - **`next-intl` compat, `Intl.*` + first-party** — a first-party ICU
   MessageFormat implementation covering plurals with `offset:`/`#`,
-  selectordinal, select, nested submessages, `::` number and date-field
-  skeletons, `duration`, and `spellout`/`ordinal` (a number-to-words speller,
+  selectordinal, select, submessages nested to any depth (an iterative parser
+  and renderer), the long and concise `::` number skeletons and the date-field
+  skeletons `Intl` can express, `duration`, and `spellout`/`ordinal` (a number-to-words speller,
   English built in) — **zero npm deps and zero bundled data** (no
   `intl-messageformat`). Plus `t.rich()`/`t.markup()` rich-text/markup rendering
   and **localized `pathnames`** — per-locale URL translation with a
   locale-prefixing `<Link>`/`useRouter`/`redirect` and a reverse-mapping
-  `getPathname`. It is a common-subset re-implementation, not
-  `intl-messageformat`; the subset edges are in
-  [KNOWN-LIMITATIONS](https://denext.dev/docs/limitations). —
+  `getPathname`. It is a re-implementation, not `intl-messageformat`. —
   `src/compat/next-intl/icu.ts:1`,
   `src/compat/next-intl/index.ts:1`, `src/compat/next-intl/navigation.ts`.
 - **Self-hosted Google fonts (build-time, pure core)** — `selfHostFonts`

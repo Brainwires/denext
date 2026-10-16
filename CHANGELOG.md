@@ -87,6 +87,17 @@ and this project adheres to
   `denext test --coverage[=<dir>]` writes both passes into one directory and makes one report
   (summary, `<dir>/lcov.info`, `<dir>/html/`); the toolchain's `deno coverage` maps each profile
   back through the form its module was emitted in, so a line either pass ran counts as covered.
+- **next-intl's ICU messages: every skeleton token `Intl` can express, and nesting to any depth.**
+  Number skeletons take the long and concise forms next-intl's formatter reads: units
+  (`unit/…`, `measure-unit/…` with `per-measure-unit/…`), `unit-width-*`, significant digits
+  (`@@#`), open and trailing-zero fraction forms (`.00+`, `.00/w`, `.##/@@#r`),
+  `precision-increment/…`, `rounding-mode-*`, `scale/N`, `%x100`, `numbering-system/…` and the
+  concise `K` / `KK` / `+!` / `()` / `,_` / `000` / `E0`. Date skeletons add the four hour
+  cycles (`h` / `H` / `K` / `k`), fractional seconds (`S`), day periods (`B`), the generic and
+  offset time-zone names (`v`, `O`, `Z`, `X`) and narrow eras; a quarter, week or day-of-year
+  field throws, as in next-intl, instead of rendering a date without it. The parser and
+  renderer are iterative, so `plural` / `select` / `selectordinal` nest to any depth (the
+  64-level cap is gone) with no stack to overflow.
 
 ### Fixed
 
