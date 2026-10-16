@@ -28,7 +28,7 @@ import {
 import { beginWork } from "./begin-work.ts";
 import { updateDepthError } from "./fiber-utils.ts";
 import { completeWork } from "./complete-work.ts";
-import { handleThrow, SUSPENDED_TRANSITION } from "./unwind.ts";
+import { handleThrow, SUSPENDED_ROOT, SUSPENDED_TRANSITION } from "./unwind.ts";
 import { commitRoot, flushPassiveEffects } from "./commit.ts";
 import {
   createWorkInProgress,
@@ -137,7 +137,7 @@ export function resumeConcurrent(): void {
   try {
     resumeConcurrentInner();
   } catch (thrown) {
-    if (thrown === SUSPENDED_TRANSITION) {
+    if (thrown === SUSPENDED_TRANSITION || thrown === SUSPENDED_ROOT) {
       discardSuspendedTransition(rootHandle);
       return;
     }
@@ -204,6 +204,33 @@ function resumeConcurrentInner(): void {
 
 const MAX_RENDER_PASSES = 50;
 
+/**
+ * Render `wipRoot` to completion (hydrating when the root still is). True when it suspended with
+ * no boundary (`SUSPENDED_ROOT`): nothing is committed, what is on screen stays (a hydration
+ * stays pending) and the root renders again when the promise settles.
+ */
+function renderTree(handle: RootHandle, wipRoot: Fiber): boolean {
+  setDuringRender(true);
+  enterRootDocument(handle);
+  const hydrate = handle.hydrate;
+  if (hydrate) beginHydration(handle.container, handle.hydrateStart);
+  let wip: Fiber | null = wipRoot;
+  setWorkInProgress(wip);
+  let suspended = false;
+  try {
+    while (wip !== null) wip = performUnitOfWork(wip);
+  } catch (thrown) {
+    if (thrown !== SUSPENDED_ROOT) throw thrown;
+    suspended = true;
+  } finally {
+    setWorkInProgress(suspended ? null : wip);
+    setDuringRender(false);
+    endHydration();
+    handle.hydrate = suspended && hydrate;
+  }
+  return suspended;
+}
+
 export function renderRoot(handle: RootHandle, lanes: number): void {
   let guard = 0;
   do {
@@ -234,20 +261,8 @@ export function renderRoot(handle: RootHandle, lanes: number): void {
     fiberToRoot.set(wipRoot, handle);
     fiberExt(wipRoot).pendingElement = handle.pendingElement;
     wipRoot.host = wipRoot;
-    setDuringRender(true);
-    enterRootDocument(handle);
-    const hydrate = handle.hydrate;
-    if (hydrate) beginHydration(handle.container, handle.hydrateStart);
-    let wip: Fiber | null = wipRoot;
-    setWorkInProgress(wip);
-    try {
-      while (wip !== null) wip = performUnitOfWork(wip);
-    } finally {
-      setWorkInProgress(wip);
-      setDuringRender(false);
-      endHydration();
-      handle.hydrate = false;
-    }
+    const suspended = renderTree(handle, wipRoot);
+    if (suspended) return;
     commitWith(wipRoot, eligible, () => commitRoot(handle, wipRoot));
   } while ((handle.pendingLanes & lanes) !== NoLane);
   // A lower-priority lane (e.g. a transition scheduled by useDeferredValue during

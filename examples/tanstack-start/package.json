@@ -1,0 +1,7 @@
+{
+  "name": "denext-tanstack-start-example",
+  "private": true,
+  "dependencies": {
+    "@tanstack/react-router": "^1.170.0"
+  }
+}

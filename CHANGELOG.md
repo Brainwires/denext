@@ -8,10 +8,23 @@ and this project adheres to
 
 ## [Unreleased]
 
-## [4.2.0] - 2026-10-16
-
 ### Added
 
+- **`@denext/tanstack-start`: Start-style server rendering for TanStack Router.** A new plugin
+  (`plugins: [tanstackStart()]`) for an app with Start's layout (`src/router.tsx` exporting
+  `getRouter()`, file routes in `src/routes/`): it generates the route tree with TanStack's own
+  generator (at build, and as route files change in dev), renders every page through TanStack
+  Router's SSR (loaders on the server, the root route's `shellComponent` as the document, the
+  router state dehydrated into it), and hydrates it in the browser with `RouterClient` from a
+  client bundle it builds. `denext dev` / `build` / `start` accept a project whose only route
+  tree is `src/routes/__root.tsx`. See `examples/tanstack-start`.
+- **`hydrateRoot(document, <App />)`** hydrates the whole document as React does: it adopts the
+  server's `<html>` past the doctype instead of appending a second one.
+- **A component that suspends with no Suspense boundary suspends the root,** as in React 19:
+  nothing commits, the server DOM of a hydration stays, and the root renders (or hydrates) again
+  once the promise settles. It used to throw out of the render. While hydrating, a class
+  component waiting for the on-demand class runtime suspends the same way, so the root hydrates
+  once the runtime loads instead of mounting fresh DOM.
 - **Per-island hydration on isomorphic routes.** A `client:*` directive now defers hydration on a
   route without a Flight boundary too (the page hydrates as one client tree): the server renders
   the component inside the island wrapper, the page hydrates around it leaving its server DOM
@@ -19,6 +32,11 @@ and this project adheres to
   tree, so context, events and error boundaries work as without the directive. The click that
   wakes a `client:interaction` island reaches its handler. The runtime ships only in an app whose
   sources write a directive (a build scan).
+
+## [4.2.0] - 2026-10-16
+
+### Added
+
 - **`@denext/react-router` route typegen.** The plugin writes React Router's `+types/<route>.ts`
   modules under `.react-router/types/` on every scan and on `denext typegen`, so a route
   module's `import type { Route } from "./+types/<route>"` type-checks (`Route.LoaderArgs`,

@@ -47,7 +47,8 @@ ignoreDependencies = [
   "@clerk/nextjs", # examples/clerk/deno.json + package.json: npm:@clerk/nextjs (Clerk's Next.js SDK, run unchanged)
   "@clerk/electron", # examples/clerk/deno.json + package.json: @clerk/electron/passkeys in the desktop preload
   "react-router", # examples/react-router/app/*: bare RR runtime import, mapped to denext/remix in that example's deno.json
-  "@tanstack/react-router", # examples/tanstack-router/package.json: installed into that example's manual node_modules
+  "@tanstack/react-router", # examples/tanstack-router + tanstack-start package.json: installed into each example's manual node_modules
+  "@tanstack/router-generator", # packages/tanstack-start/deno.json: npm:@tanstack/router-generator (the build-time route generator)
   # examples/scroll-bench/web/package.json: the list libraries the scroll bench compares, installed
   # into that app's manual node_modules (`react-native` resolves to react-native-web through
   # denext's `reactNative: true` mode).
@@ -159,6 +160,10 @@ entry = [
   # TanStack Router file-based routes (examples/tanstack-router): every module under
   # src/routes/ is wired by the generated src/routeTree.gen.ts (the TanStack Router CLI).
   "examples/tanstack-router/src/routes/**",
+  # TanStack Start (@denext/tanstack-start plugin, examples/tanstack-start): the router module is
+  # imported by the plugin's generated entries, the routes by the generated route tree.
+  "examples/tanstack-start/src/router.tsx",
+  "examples/tanstack-start/src/routes/**",
   # React Native mode's community-package stand-ins: prebuilt runtime entries
   # (`denext/react-native-compat/<name>`, src/build/react-native-aliases.ts) that an app reaches by
   # importing the npm package they stand in for, so each export is that package's public API

@@ -21,9 +21,11 @@ import {
   OffscreenBit,
   setBit,
   ShowingFallbackBit,
+  SyncLane,
   TransitionLane,
 } from "./fiber.ts";
-import { concurrentWipRoot, renderLanes } from "./scheduler.ts";
+import { concurrentWipRoot, renderLanes, scheduleSyncFlush } from "./scheduler.ts";
+import { rootHandleOf } from "./state.ts";
 import { dropHydrationCursor, isHydrating } from "./hydration.ts";
 
 /**
@@ -37,6 +39,16 @@ import { dropHydrationCursor, isHydrating } from "./hydration.ts";
  */
 export const SUSPENDED_TRANSITION: { readonly denextSuspendedTransition: true } = {
   denextSuspendedTransition: true,
+};
+
+/**
+ * Thrown by {@link handleThrow} when a component suspends with no Suspense boundary above it:
+ * React 19 suspends the whole root, keeping what is on screen (for a hydration, the server's
+ * DOM) and rendering it again once the promise settles. The render is abandoned, not committed
+ * ({@link renderRoot} / `resumeConcurrent` catch it).
+ */
+export const SUSPENDED_ROOT: { readonly denextSuspendedRoot: true } = {
+  denextSuspendedRoot: true,
 };
 
 /**
@@ -93,7 +105,16 @@ function prepareFallbackRender(suspense: Fiber): void {
 /** A component suspended: hand the render to its nearest Suspense boundary. */
 function handleSuspend(sourceFiber: Fiber, thenable: Promise<unknown>): Fiber {
   const suspense = findSuspense(sourceFiber);
-  if (!suspense) throw thenable;
+  if (!suspense) {
+    const handle = rootHandleOf(sourceFiber);
+    const retry = () => {
+      if (!handle) return;
+      handle.pendingLanes |= SyncLane;
+      scheduleSyncFlush();
+    };
+    thenable.then(retry, retry);
+    throw SUSPENDED_ROOT;
+  }
   if (keepsRevealedContent(suspense)) {
     thenable.then(
       () => retrySuspendedTransition(suspense),

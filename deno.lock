@@ -59,6 +59,7 @@
     "npm:@mdx-js/mdx@3": "3.1.1",
     "npm:@sqlite.org/sqlite-wasm@3.53.4-build1": "3.53.4-build1",
     "npm:@supabase/supabase-js@2.117.2": "2.117.2",
+    "npm:@tanstack/router-generator@1.167.40": "1.167.40",
     "npm:@tanstack/router-plugin@1.168.42": "1.168.42_esbuild@0.24.2",
     "npm:effect@*": "3.22.1",
     "npm:effect@^3.22.0": "3.22.1",
@@ -2309,6 +2310,13 @@
           "jsr:@denext/denext@^4.2.0",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
+        ]
+      },
+      "packages/tanstack-start": {
+        "dependencies": [
+          "jsr:@denext/denext@^4.1.0",
+          "jsr:@std/path@1",
+          "npm:@tanstack/router-generator@1.167.40"
         ]
       }
     }

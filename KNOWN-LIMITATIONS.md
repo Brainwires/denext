@@ -214,6 +214,14 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **Prisma auto-migration rewrites runtime source only** (seed and test tooling keep the native
   client); non-SQLite datasources need their own driver adapter.
 
+### TanStack Start
+
+- **`@denext/tanstack-start` renders each page whole and serves no server functions.** Pages go
+  through TanStack Router's `defaultRenderHandler` (no streaming); `createServerFn`, server
+  routes and `denext export` prerendering are not provided (a denext route handler under
+  `app/api` serves endpoints). The server render and the client bundle are compiled onto
+  denext's React, so an app's own `react` import must resolve to denext (`compatibilityMode`).
+
 ## Mobile (Capacitor shell)
 
 Rendering is a WebView by design, so the WebView's and the OS's limits apply.

@@ -417,6 +417,12 @@ App Router pipeline (Flight, streaming, per-segment boundaries, soft nav, ISR, F
 serves them, and the plugin writes no render path of its own. Proof the synthesizer seam
 scales to a full framework router, not just aliasing.
 
+[`@denext/tanstack-start`](https://github.com/Brainwires/denext/tree/main/packages/tanstack-start)
+takes the claiming path: a **prepare step** runs TanStack's own route generator over
+`src/routes/`, a **request handler** renders every page through TanStack Router's SSR and serves
+the client bundle, and a **build step** builds that bundle — both halves compiled onto denext's
+React with `@denext/denext/build/next-compat`, as `pages-router` does for an npm-React app.
+
 ## The first-party catalog
 
 The **first-party catalog is generated**, not hand-maintained: every `@denext/*` package,
@@ -574,3 +580,7 @@ The walk-throughs below are the ones worth **reading as models** of a seam — t
   writes React Router's route types (`+types/<route>.ts` under `.react-router/types/`) and adds
   `denext typegen` (**CLI verb**). The model for adapting a foreign routing convention onto
   denext's own pipeline.
+- **[`@denext/tanstack-start`](https://github.com/Brainwires/denext/tree/main/packages/tanstack-start)** — Start-style server
+  rendering for a TanStack Router app: it generates the route tree (**prepare step**), renders
+  each page through TanStack Router's SSR and serves the client bundle (**request handler**),
+  and builds that bundle (**build step**); the browser hydrates with `RouterClient`.

@@ -78,10 +78,9 @@ Each is documented as a manual recipe today (the
 
 ## Router plugins
 
-- **TanStack Start depth:** Start-style SSR through `plugin-kit`, as `@denext/react-router` did.
-  The named unknown is the route tree, which TanStack generates with its Vite plugin; a Start
-  plugin must own that generation. (Library mode already runs in SPA mode with no plugin.) A
-  missing primitive goes into `plugin-kit` as a tested semver addition, never private surface.
+- **TanStack Start, the rest:** `@denext/tanstack-start` server-renders and hydrates a Start
+  app; Start's server functions (`createServerFn`), server routes, streaming SSR and
+  `denext export` prerendering are next, and `denext migrate` should recognize a Start app.
 
 ## Build toolchain: waiting on `deno bundle`
 

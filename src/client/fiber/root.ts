@@ -192,6 +192,12 @@ export function createRoot(container: Element, options?: RootOptions): Root {
 /** Hydrate `vnode` against server-rendered markup already in `container`. */
 export function hydrateRoot(container: Element, vnode: VNode, options?: RootOptions): Root {
   const handle = registerRoot(container, options, true, vnode);
+  // React's `hydrateRoot(document, <App />)`: the app renders the whole document, so hydration
+  // starts at `<html>` (past the doctype), as `hydrateDocument`'s does.
+  if ((container as unknown as Node).nodeType === 9) {
+    handle.hydrateStart = (container as unknown as Document).documentElement;
+    handle.documentRoot = true;
+  }
   void bootMomentumSafeScroll();
   renderRoot(handle, SyncLane);
   return {

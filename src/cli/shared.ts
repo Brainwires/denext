@@ -208,6 +208,14 @@ export function commandCwd(ctx: CommandContext): string {
   return ctx.global.cwd ? resolve(ctx.global.cwd) : Deno.cwd();
 }
 
+async function isFile(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isFile;
+  } catch {
+    return false;
+  }
+}
+
 async function isDir(path: string): Promise<boolean> {
   try {
     return (await Deno.stat(path)).isDirectory;
@@ -219,8 +227,9 @@ async function isDir(path: string): Promise<boolean> {
 /**
  * Exit with a clear message unless the project has a routable tree: an `app/`
  * directory (App Router) or — when `projectDir` is given — a `pages/` / `src/pages/`
- * tree (Pages Router, served by the `@denext/pages-router` plugin). SPA mode skips
- * this gate at the call site.
+ * tree (Pages Router, served by the `@denext/pages-router` plugin) or a TanStack Start tree
+ * (`src/routes/__root.tsx`, served by `@denext/tanstack-start`). SPA mode skips this gate at the
+ * call site.
  */
 export async function ensureAppDir(
   appDir: string,
@@ -234,10 +243,13 @@ export async function ensureAppDir(
   ) {
     return; // Pages Router app — the pages-router plugin handles routing.
   }
+  if (projectDir && await isFile(join(projectDir, "src", "routes", "__root.tsx"))) {
+    return; // TanStack Start app — the tanstack-start plugin handles routing.
+  }
   console.error(
     `denext: no app directory found at ${appDir}\n` +
-      `Create an app/ folder with a page.tsx (App Router), or a pages/ folder ` +
-      `(Pages Router) to get started.`,
+      `Create an app/ folder with a page.tsx (App Router), a pages/ folder ` +
+      `(Pages Router) or src/routes/__root.tsx (TanStack Start) to get started.`,
   );
   Deno.exit(1);
 }

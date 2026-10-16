@@ -88,6 +88,7 @@ export const EXAMPLE_CATEGORY: Readonly<Record<string, string>> = {
   "postgres-load": "databases",
   "pages-router": "routers",
   "react-router": "routers",
+  "tanstack-start": "routers",
   "tanstack-router": "routers",
   "plugin-aliases": "routers",
   "next-compat": "compat",

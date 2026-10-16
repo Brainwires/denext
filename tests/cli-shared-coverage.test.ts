@@ -111,6 +111,18 @@ Deno.test("ensureAppDir returns when an app/ directory exists", async () => {
   }
 });
 
+Deno.test("ensureAppDir accepts a TanStack Start tree (src/routes/__root.tsx)", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(join(dir, "src", "routes"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "src", "routes", "__root.tsx"), "export const Route = {};");
+    // No app/ and no pages/: the @denext/tanstack-start plugin routes this project.
+    await ensureAppDir(join(dir, "app"), dir);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("ensureAppDir accepts a Pages Router tree (pages/ or src/pages/)", async () => {
   const dir1 = await Deno.makeTempDir();
   const dir2 = await Deno.makeTempDir();

@@ -629,6 +629,20 @@
       "runFrom": "example"
     },
     {
+      "name": "tanstack-start",
+      "title": "TanStack Start on denext",
+      "blurb": "A TanStack Start-shaped app — src/router.tsx exporting getRouter(), file routes under src/routes/, and a root route whose shellComponent renders the document — server-rendered by the…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/tanstack-start",
+      "tags": [
+        "compat",
+        "plugin:tanstackStart"
+      ],
+      "hasReadme": true,
+      "category": "routers",
+      "run": "denext task install   # installs @tanstack/react-router into node_modules (once)\ndenext task dev       # http://localhost:3000\ndenext task build && denext task start",
+      "runFrom": "example"
+    },
+    {
       "name": "transitions",
       "title": "denext × useTransition",
       "blurb": "A runnable demo of denext's fiber concurrency on the classic typeahead.",

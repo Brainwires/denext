@@ -25,6 +25,7 @@ import { componentDisplayName, resolveComponentType } from "../../runtime/react-
 import { getClassSupport } from "./class-support.ts";
 import { loadClassRuntime } from "../class-loader.ts";
 import { findSuspense, updateDepthError } from "./fiber-utils.ts";
+import { isHydrating } from "./hydration.ts";
 import { ERR_ASYNC_COMPONENT, ERR_MEMO_CLASS, reconcilerError } from "./errors.ts";
 import { scheduleUpdate } from "./scheduler.ts";
 import {
@@ -155,8 +156,9 @@ let classRuntimeUnavailable = false;
  * it was not server-rendered on this page, so the entry had no `#__denext_classes` marker to
  * preload on — a soft navigation onto a class page, a `client:only` island. Start the load
  * (coalesced in class-loader.ts) and re-render this fiber when it lands. Inside a Suspense
- * boundary the load suspends like any thenable (fallback, then retry); with no boundary above,
- * the fiber keeps its committed child for this pass — nothing, on a first mount — and is
+ * boundary — or while hydrating — the load suspends like any thenable (fallback, or the whole
+ * root keeping its server DOM, then retry); otherwise, with no boundary above, the fiber keeps
+ * its committed child for this pass — nothing, on a first mount — and is
  * scheduled again, so the cost is at most one round trip of blank subtree. Only a load
  * failure surfaces the guided "class components are disabled" error.
  */
@@ -166,7 +168,9 @@ function awaitClassRuntime(inst: Fiber): VNode | null {
     classRuntimeUnavailable = true;
     console.error("denext: the class-component runtime failed to load:", err);
   };
-  if (findSuspense(inst)) {
+  // While hydrating, suspend (the whole root, with no boundary above): its server DOM stays and
+  // the retry hydrates it, as React's selective hydration keeps a pending subtree dehydrated.
+  if (isHydrating || findSuspense(inst)) {
     load.catch(failed);
     throw load;
   }

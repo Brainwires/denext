@@ -19,6 +19,7 @@ name: Publish to JSR
 #   git tag openapi-v0.1.0    && git push origin openapi-v0.1.0      # @denext/openapi
 #   git tag graphql-v0.1.0    && git push origin graphql-v0.1.0      # @denext/graphql
 #   git tag react-router-v0.1.0 && git push origin react-router-v0.1.0  # @denext/react-router
+#   git tag tanstack-start-v0.1.0 && git push origin tanstack-start-v0.1.0  # @denext/tanstack-start
 #   git tag content-collections-v0.1.0 && git push origin content-collections-v0.1.0  # @denext/content-collections
 #   git tag backend-v0.1.0    && git push origin backend-v0.1.0      # @denext/backend
 #   git tag lightningcss-v1.0.0-rc.72 && git push origin lightningcss-v1.0.0-rc.72  # @denext/lightningcss
@@ -43,6 +44,7 @@ on:
       - "openapi-v*" # @denext/openapi
       - "graphql-v*" # @denext/graphql
       - "react-router-v*" # @denext/react-router
+      - "tanstack-start-v*" # @denext/tanstack-start
       - "content-collections-v*" # @denext/content-collections
       - "backend-v*" # @denext/backend
       - "lightningcss-v*" # @denext/lightningcss
@@ -98,6 +100,7 @@ jobs:
             openapi-v*)      cfg=packages/openapi/deno.json ;;
             graphql-v*)      cfg=packages/graphql/deno.json ;;
             react-router-v*) cfg=packages/react-router/deno.json ;;
+            tanstack-start-v*) cfg=packages/tanstack-start/deno.json ;;
             content-collections-v*) cfg=packages/content-collections/deno.json ;;
             backend-v*)      cfg=packages/backend/deno.json ;;
             lightningcss-v*) cfg=packages/lightningcss/deno.json ;;
