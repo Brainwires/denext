@@ -14,13 +14,14 @@
  *   `callbacks.session` hook and on every read; `callbacks.session` / `redirect` /
  *   `authorized` → run by the shim;
  * - `events.signIn` / `signOut` / `createUser` / `linkAccount` → the denext events;
+ *   `events.updateUser` from the adapter bridge, `events.session` on every session read;
  * - `pages` → `pages` (the built-in pages under the base path otherwise);
  * - `logger` / `debug` → `logger`.
  *
  * @module
  */
 
-import { fromAuthJsAdapter } from "./adapter.ts";
+import { type AuthJsAdapterUser, fromAuthJsAdapter } from "./adapter.ts";
 import { decode } from "./jwt.ts";
 import {
   buildProvider,
@@ -187,13 +188,31 @@ function pages(config: NextAuthConfig, basePath: string): NonNullable<AuthConfig
 function bridgedAdapter(
   config: NextAuthConfig,
   descriptors: ProviderDescriptor[],
-  warn: (message: string) => void,
+  log: AuthLogger,
 ): AuthConfig["adapter"] {
   if (!config.adapter) return undefined;
   const credentialsProviders = new Set(
     descriptors.filter((d) => d.type === "credentials").map((d) => d.id),
   );
-  return fromAuthJsAdapter(config.adapter, { credentialsProviders, warn });
+  const warn = (message: string) => log.warn?.(message);
+  // Auth.js's `updateUser` event; a throwing listener is logged, never fails the write.
+  const onUpdateUser = async (row: AuthJsAdapterUser) => {
+    try {
+      await config.events?.updateUser?.({ user: authJsRow(row) });
+    } catch (error) {
+      log.error?.("next-auth: events.updateUser threw", error);
+    }
+  };
+  return fromAuthJsAdapter(config.adapter, { credentialsProviders, warn, onUpdateUser });
+}
+
+/** An Auth.js adapter row as the events see a user. */
+function authJsRow(row: AuthJsAdapterUser): User {
+  const user: User = { id: String(row.id) };
+  if (row.name) user.name = row.name;
+  if (row.email) user.email = row.email;
+  if (row.image) user.image = row.image;
+  return user;
 }
 
 /**
@@ -217,7 +236,6 @@ export function translateConfig(
   const built = descriptors.map((d) => buildProvider(d, env));
   const { strategy, session } = sessionSettings(config);
   const log = logger(config);
-  const warn = (message: string) => log.warn?.(message);
   // Filled in below; the callbacks read it lazily, once `NextAuth()` has returned.
   const ref: { current?: ActiveNextAuth } = {};
   const active = () => ref.current!;
@@ -236,9 +254,9 @@ export function translateConfig(
   };
   if (url.origin) denext.canonicalOrigin = url.origin;
   if (rateLimit) denext.rateLimit = rateLimit;
-  const adapter = bridgedAdapter(config, descriptors, warn);
+  const adapter = bridgedAdapter(config, descriptors, log);
   if (adapter) denext.adapter = adapter;
-  const send = emailSender(built, warn);
+  const send = emailSender(built, (message) => log.warn?.(message));
   if (send) denext.sendVerificationRequest = send;
   const maxAge = session.maxAge!;
   ref.current = {

@@ -972,3 +972,40 @@ Deno.test("next-auth pages: GET signout goes to pages.signOut when the app has o
   assertEquals(builtIn.status, 200);
   assert((await builtIn.text()).includes("Are you sure you want to sign out?"));
 });
+
+Deno.test("next-auth events: session fires on every read, updateUser on a verifying sign-in", async () => {
+  const sessions: unknown[] = [];
+  const updated: unknown[] = [];
+  const a = emailApp({
+    events: {
+      session: (message) => void sessions.push(message),
+      updateUser: ({ user }) => void updated.push(user),
+    },
+  });
+  // A user the adapter knows, its address not yet verified: the email sign-in verifies it.
+  a.adapter.createUser({
+    id: "known",
+    email: "known@example.com",
+    emailVerified: null,
+    name: "Known",
+    image: null,
+  });
+  await a.call(await a.requestLink("resend", "known@example.com"));
+  assertEquals(updated.length, 1);
+  assertEquals((updated[0] as { id: string }).id, "known");
+  const session = await (await a.call("/api/auth/session")).json();
+  assertEquals(session.user.id, "known");
+  const event = sessions.at(-1) as { session: { user: { id: string } }; token?: { sub?: string } };
+  assertEquals(event.session.user.id, "known");
+  assertEquals(event.token?.sub, "known", "the JWT strategy hands the token too");
+  const count = sessions.length;
+  await a.run(() => a.result.auth());
+  assertEquals(sessions.length, count + 1, "auth() fires it as well");
+});
+
+Deno.test("next-auth events: a throwing session listener never fails the read", async () => {
+  const a = app({ events: { session: () => Promise.reject(new Error("listener broke")) } });
+  await signInWithPassword(a);
+  const session = await (await a.call("/api/auth/session")).json();
+  assertEquals(session.user.email, "ada@example.com");
+});

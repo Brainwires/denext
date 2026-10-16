@@ -79,7 +79,8 @@ and this project adheres to
   (`NextAuth(async (req) => config)`) runs on every request, with the request where Auth.js
   passes one, and concurrent requests each read their own. `pages.newUser` receives a first
   sign-in (with the landing path as `callbackUrl`) and `pages.signOut` replaces the built-in
-  sign-out page. Both session strategies: `"jwt"` seals the
+  sign-out page. `events.session` fires on every session read and `events.updateUser` when the
+  adapter updates a user. Both session strategies: `"jwt"` seals the
   `jwt` callback's token (AES-256-GCM) inside denext's signed cookie; `"database"` uses the
   adapter's sessions. An Auth.js adapter (`@auth/prisma-adapter`, `@auth/drizzle-adapter`, …) is
   bridged onto denext's adapter port. The `signIn`, `jwt`, `session`, `redirect` and `authorized`

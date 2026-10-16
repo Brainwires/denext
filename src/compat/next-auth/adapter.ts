@@ -262,6 +262,8 @@ export interface FromAuthJsAdapterOptions {
   credentialsProviders: ReadonlySet<string>;
   /** Where a limitation is reported. */
   warn: (message: string) => void;
+  /** Told about every user row the bridge updated (Auth.js's `updateUser` event). */
+  onUpdateUser?: (user: AuthJsAdapterUser) => void | Promise<void>;
 }
 
 /**
@@ -318,7 +320,9 @@ export function fromAuthJsAdapter(
         if (!current) throw new Error(`next-auth: no user ${JSON.stringify(patch.id)}`);
         return fromRow(current);
       }
-      return fromRow(await updateUser({ ...row, id: patch.id }));
+      const updated = await updateUser({ ...row, id: patch.id });
+      await options.onUpdateUser?.(updated);
+      return fromRow(updated);
     },
     async linkAccount(account: AdapterAccount) {
       if (account.type === "credentials") return;

@@ -186,13 +186,33 @@ async function toAuthJsSession(
     const token = await readToken(active, session as SealedSession, options);
     if (!token) return null;
     const base = tokenSession(token, expires);
-    if (!callback) return base;
-    return await callback({ session: base, token, user: base.user ?? {}, ...update }) as Session;
+    const shaped = callback
+      ? await callback({ session: base, token, user: base.user ?? {}, ...update }) as Session
+      : base;
+    await sessionEvent(active, { session: shaped, token });
+    return shaped;
   }
   const user = authJsUser(session.user);
   const base: Session = { user, expires };
-  if (!callback) return base;
-  return await callback({ session: base, user, token: {}, ...update }) as Session;
+  const shaped = callback
+    ? await callback({ session: base, user, token: {}, ...update }) as Session
+    : base;
+  await sessionEvent(active, { session: shaped });
+  return shaped;
+}
+
+/** Fire `events.session` for a read; a throwing listener is logged, never fails the read. */
+async function sessionEvent(
+  active: ActiveNextAuth,
+  message: { session: Session; token?: JWT },
+): Promise<void> {
+  const listener = active.config.events?.session;
+  if (!listener) return;
+  try {
+    await listener(message);
+  } catch (error) {
+    active.denext.logger?.error?.("next-auth: events.session threw", error);
+  }
 }
 
 /**

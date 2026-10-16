@@ -135,6 +135,13 @@ export interface EventCallbacks {
   linkAccount?: (
     message: { user: User; account: Partial<Account>; profile?: Profile; ip?: string },
   ) => Awaitable<void>;
+  /** The adapter updated a user (an email sign-in verifying its address, a profile change). */
+  updateUser?: (message: { user: User }) => Awaitable<void>;
+  /**
+   * A session was read (the `session` endpoint, `auth()`, `useSession`): with the token on the
+   * JWT strategy, without it on the database strategy.
+   */
+  session?: (message: { session: Session; token?: JWT }) => Awaitable<void>;
 }
 
 /** The Auth.js logger shape. */
