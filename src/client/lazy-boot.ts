@@ -9,7 +9,7 @@ import { createRoot, hydrateRoot, type Root } from "./reconciler.ts";
 import { type ClientRegistry, ensureFlightModules, parseFlight } from "./flight-client.ts";
 import { dropDetachedLazyIslands, registerLazyIsland, resetLazyIslands } from "./lazy-hydrate.ts";
 import { installQrlDispatch } from "./qrl-dispatch.ts";
-import { setResumabilityReboot } from "./navigation.ts";
+import { setResumabilityReboot } from "./nav-state.ts";
 import { setRootlessMount } from "./flight-nav.ts";
 import { ROOT_ID } from "../server/root-id.ts";
 import { adoptSignalState } from "../runtime/signal-state.ts";

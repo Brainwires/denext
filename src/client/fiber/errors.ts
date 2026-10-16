@@ -13,6 +13,8 @@ export const ERR_UPDATE_DEPTH = 2;
 export const ERR_ASYNC_COMPONENT = 3;
 /** `memo()` wraps a class component. */
 export const ERR_MEMO_CLASS = 4;
+/** A class component rendered with the class runtime off (or after it failed to load). */
+export const ERR_CLASS_DISABLED = 5;
 
 /** A full error text: the named component (may be empty) and the fiber it was raised at. */
 export type ErrorText = (name: string, fiber?: Fiber | null) => string;

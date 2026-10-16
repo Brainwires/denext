@@ -95,7 +95,7 @@ export function readsContext(node: Fiber, contextId: symbol): boolean {
 }
 
 /** XML namespaces for non-HTML host elements. */
-const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+export const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 const MATHML_NAMESPACE = "http://www.w3.org/1998/Math/MathML";
 
 /**

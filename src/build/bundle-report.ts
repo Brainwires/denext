@@ -185,12 +185,12 @@ function mdTopModules(sorted: BundleChunk[], metafile: BundleMetafile): string[]
 export type ChunkRole = "shared" | "island" | "on-demand" | "entry";
 
 /** Name prefixes of the framework's on-demand chunks (see {@linkcode classifyChunk}). */
-const ON_DEMAND_PREFIXES = ["lazy-", "class-runtime-", "momentum-scroll-"];
+const ON_DEMAND_PREFIXES = ["lazy-", "class-runtime-", "momentum-scroll-", "nav-document-"];
 
 /**
  * Classify a chunk by its content-hashed name prefix. `lazy-*` (deferred island hydration),
- * `class-runtime-*` (the class-component runtime) and `momentum-scroll-*` (the iOS scroll shim)
- * are the framework's on-demand chunks: fetched only by a page that needs them, so they count
+ * `class-runtime-*` (the class-component runtime), `momentum-scroll-*` (the iOS scroll shim) and
+ * `nav-document-*` (the soft-navigation commit) are the framework's on-demand chunks: fetched only by a page that needs them, so they count
  * against neither the shared runtime nor the route entries.
  */
 export function classifyChunk(name: string): ChunkRole {

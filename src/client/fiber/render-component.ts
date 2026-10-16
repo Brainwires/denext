@@ -20,13 +20,18 @@ import type { VNode } from "../../jsx/types.ts";
 import { enterScope, ID_PATH_PROP, rootScope } from "../../jsx/tree-id.ts";
 import { setDispatcher } from "../../runtime/hooks.ts";
 import type { RefreshResolution, RefreshSwapHooks } from "./refresh-swap.ts";
-import { classComponentsDisabledError, isClassComponent } from "../../compat/class-detect.ts";
+import { isClassComponent } from "../../compat/class-detect.ts";
 import { componentDisplayName, resolveComponentType } from "../../runtime/react-brands.ts";
 import { getClassSupport } from "./class-support.ts";
 import { loadClassRuntime } from "../class-loader.ts";
 import { findSuspense, updateDepthError } from "./fiber-utils.ts";
 import { isHydrating } from "./hydration.ts";
-import { ERR_ASYNC_COMPONENT, ERR_MEMO_CLASS, reconcilerError } from "./errors.ts";
+import {
+  ERR_ASYNC_COMPONENT,
+  ERR_CLASS_DISABLED,
+  ERR_MEMO_CLASS,
+  reconcilerError,
+} from "./errors.ts";
 import { scheduleUpdate } from "./scheduler.ts";
 import {
   BailedBit,
@@ -192,7 +197,7 @@ function awaitClassRuntime(inst: Fiber): VNode | null {
 function renderClassFiber(inst: Fiber): VNode | null {
   const cs = getClassSupport();
   if (!__DENEXT_CLASS_COMPONENTS__ || classRuntimeUnavailable) {
-    throw classComponentsDisabledError();
+    throw reconcilerError(ERR_CLASS_DISABLED, componentDisplayName(inst.vnode.type));
   }
   if (cs === null) return awaitClassRuntime(inst);
   const { vnode, bailed } = cs.renderClassInstance(inst as never);

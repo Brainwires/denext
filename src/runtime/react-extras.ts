@@ -355,7 +355,7 @@ function markHosts(children: VNodeChildren, scope: VTScope): VNodeChildren {
  *   An urgent update never animates, and neither does a `useSyncExternalStore` change (React
  *   renders a store change synchronously even inside `startTransition`).
  * - **Soft navigations** commit inside `document.startViewTransition` (see `withViewTransition`
- *   in `src/client/navigation.ts`), so a `name` shared across routes morphs one element into the
+ *   in `src/client/nav-document.ts`), so a `name` shared across routes morphs one element into the
  *   other; the route-level cross-fade applies regardless.
  *
  * A hidden `<Activity>` going hidden in a Transition animates its boundaries as exits, and a

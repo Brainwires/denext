@@ -88,6 +88,17 @@ and this project adheres to
   park window ended. The resuming instance now announces it on the channel transport, and the
   instance holding the parked copy stops it at once and drops its pending store writes.
 
+### Changed
+
+- **Every app's shared client runtime is 2.7 KB smaller (raw), with no change in behaviour.** The
+  soft-navigation commit (the view-transition wrapper, history, scroll, the data-island writes and
+  the isomorphic / full-HTML paths) is an on-demand `nav-document-*` chunk: a Link prefetch warms
+  it, and a navigation loads it alongside its route fetch, so a first page load carries none of
+  it. The error for a class component whose runtime is off (or failed to load) is reconciler code
+  5 in a production bundle, its full text installed with the dev warnings and by
+  `denext/testing`. `examples/hello`'s shared chunks went from 67,032 B to 64,341 B, and the
+  build-smoke budget moves from 67,100 B to 65,500 B.
+
 ## [4.2.0] - 2026-10-16
 
 ### Added

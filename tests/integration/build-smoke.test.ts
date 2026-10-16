@@ -189,6 +189,16 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * exports it (−306 B). Each gate is asserted in {@link assertGatedRuntimeAbsent}.
  * StrictMode's dev double-invoke and the `useDebugValue` recorder then moved behind
  * `installDevtools` too (dev-render.ts, −237 B: 65,590 → 65,353 B), with no budget change.
+ * Re-based 67.1 → 65.5 KB (65,500 B) after recovering 2,691 B with no change in behaviour, once
+ * the conditional-slot matching, Activity's class lifecycles and refs, root-level suspension and
+ * isomorphic-island hydration (67,032 B, 68 B under the old budget) had used up the headroom
+ * (measured 64,341 B, ~1.2 KB of headroom): the soft-navigation commit — the view-transition
+ * wrapper, history, scroll, the data-island writes and the isomorphic / full-HTML paths — moved to
+ * nav-document.ts, an on-demand `nav-document-*` chunk that a prefetch warms and a navigation
+ * loads alongside its route fetch, with the state it shares in the leaf nav-state.ts (−2,491 B);
+ * the class-runtime-unavailable error became reconciler code 5, its full text installed with the
+ * others (−166 B); and the SVG namespace is one constant (−32 B). Each gate is asserted in
+ * {@link assertGatedRuntimeAbsent}.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -197,7 +207,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 67_100, `shared chunks total ${sharedTotal} bytes (budget 67,100 B raw)`);
+  assert(sharedTotal < 65_500, `shared chunks total ${sharedTotal} bytes (budget 65,500 B raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);
@@ -251,6 +261,12 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     ['"defaultValue"in', "AsyncContext Variable"],
     // StrictMode's dev double-invoke (its boundary marker check) rides `installDevtools`.
     ["__dnxStrict", "StrictMode dev double-invoke"],
+    // The soft-navigation commit is the on-demand nav-document chunk, loaded by a navigation.
+    ["startViewTransition", "soft-nav view-transition wrapper (nav-document.ts)"],
+    ["data-dnx-css", "isomorphic soft-nav stylesheet swap (nav-document.ts)"],
+    ["DOMParser", "full-HTML soft navigation (nav-document.ts)"],
+    // The class-runtime-unavailable text is reconciler code 5's full text (errors.ts).
+    ["class components are disabled", "reconciler error texts"],
   ];
   let shared = "";
   for await (const e of Deno.readDir(clientDir)) {

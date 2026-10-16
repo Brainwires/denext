@@ -389,6 +389,13 @@ exports = ["redirect"]
 file = "src/compat/remix/responses.ts"
 exports = ["redirect"]
 
+# nav-document.ts is the on-demand soft-navigation commit: navigation.ts loads it through a
+# cached `import()` and calls these on the loaded module (handing the module to flight-nav.ts's
+# navigator too) — member accesses fallow cannot trace back to the exports.
+[[ignoreExports]]
+file = "src/client/nav-document.ts"
+exports = ["applyHtmlNav", "applyIsoNav", "scrollAfterNav", "updateHistory", "writeDataIsland"]
+
 # `ensureBundleSupport` is exercised by tests/integration/build-smoke.test.ts through a
 # `deno eval` SUBPROCESS (each probe needs a fresh process so the cached verdict resets),
 # i.e. a string of code fallow cannot see. In-process callers are in the same file.

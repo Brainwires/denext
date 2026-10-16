@@ -61,6 +61,7 @@ Deno.test("classifyChunk: shared runtime, islands, and entries by name prefix", 
   assertEquals(classifyChunk("lazy-VUOUC2XY.js"), "on-demand");
   assertEquals(classifyChunk("class-runtime-Q2ZQ7A3B.js"), "on-demand");
   assertEquals(classifyChunk("momentum-scroll-DT2RLQSK.js"), "on-demand");
+  assertEquals(classifyChunk("nav-document-MLG7FNHP.js"), "on-demand");
 });
 
 Deno.test("bundleRoleLines: isolates the shared-runtime subtotal (the budget target)", () => {

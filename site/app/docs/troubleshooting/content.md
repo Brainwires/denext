@@ -330,6 +330,7 @@ not their full text (a dev build, `denext dev`, and `denext/testing` throw the f
 | 2    | Maximum update depth exceeded: the component schedules an update on every render |
 | 3    | An async component rendered on the client (async components are server-only)     |
 | 4    | `memo()` of a class component (wrap the class in a function component instead)   |
+| 5    | A class component with the class runtime off, or after it failed to load         |
 
 **Fix.** Reproduce it under `denext dev` for the full message, the component stack and the
 dev warnings; the component the production error names is where to start.

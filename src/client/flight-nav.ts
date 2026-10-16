@@ -9,22 +9,21 @@
 import type { VNode, VNodeChild } from "../jsx/types.ts";
 import type { FlightNavPayload } from "../server/document.ts";
 import type { Root } from "./reconciler.ts";
+import { emit, setFlightNavigator } from "./navigation.ts";
 import {
-  emit,
+  globalWin,
   type NavigateOptions,
   resumabilityReboot,
   retainedRoot,
   retainRoot,
-  scrollAfterNav,
-  setFlightNavigator,
   setRootlessPrepare,
-  updateHistory,
-  withViewTransition,
-  writeDataIsland,
-} from "./navigation.ts";
+} from "./nav-state.ts";
 
-/** `startClient` flags a root-less islands page here (navigation.ts). */
-const globalWin = globalThis as { __dnxRootless?: boolean };
+/**
+ * The soft-navigation commit module (nav-document.ts: the view-transition wrapper, history and
+ * scroll), loaded on demand by navigation.ts and handed to the Flight navigator.
+ */
+type NavCommit = typeof import("./nav-document.ts");
 
 /**
  * Register the Flight-payload parser used by soft navigation, which installs the Flight
@@ -34,7 +33,7 @@ const globalWin = globalThis as { __dnxRootless?: boolean };
 export function setFlightParser(
   parse: (flight: unknown) => VNodeChild | Promise<VNodeChild>,
 ): void {
-  setFlightNavigator(async (body, url, href, options, res) => {
+  setFlightNavigator(async (body, url, href, options, nav, res) => {
     // No root to render into (and not a root-less page this runtime can mount one for): hard
     // navigate rather than leave the user on the old route.
     if (!retainedRoot && !canMountRootless()) {
@@ -47,7 +46,7 @@ export function setFlightParser(
     const stream = res ? await openStream(res, parse) : undefined;
     if (stream === null) return void (location.href = href);
     const prepared = await prepareFlightNav(parse, stream?.body ?? body, href, stream?.fill);
-    if (prepared) withViewTransition(() => commitFlightNav(prepared, url, href, options));
+    if (prepared) nav.withViewTransition(() => commitFlightNav(nav, prepared, url, href, options));
   });
 }
 
@@ -97,6 +96,7 @@ async function prepareFlightNav(
  * unaffected-subtree state). Synchronous, so it can run inside a view transition.
  */
 function commitFlightNav(
+  { scrollAfterNav, updateHistory, writeDataIsland }: NavCommit,
   { payload, tree }: PreparedFlightNav,
   url: URL,
   href: string,

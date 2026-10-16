@@ -2,9 +2,11 @@
 // `installDevtools` and by `denext/testing`. A production bundle never imports this module.
 
 import { componentDisplayName } from "../../runtime/react-brands.ts";
+import { classComponentsDisabledError } from "../../compat/class-detect.ts";
 import { devHydrationActive } from "./fiber-utils.ts";
 import {
   ERR_ASYNC_COMPONENT,
+  ERR_CLASS_DISABLED,
   ERR_MEMO_CLASS,
   ERR_MORE_HOOKS,
   ERR_UPDATE_DEPTH,
@@ -33,6 +35,7 @@ const TEXTS: Record<number, ErrorText> = {
   [ERR_MEMO_CLASS]: () =>
     "denext: memo() of a class component is unsupported; wrap the class in a " +
     "function component (or memo the function) instead.",
+  [ERR_CLASS_DISABLED]: () => classComponentsDisabledError().message,
 };
 
 /** Install (or, with `false`, remove) the full texts of the client reconciler's errors. */
