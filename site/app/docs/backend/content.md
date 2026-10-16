@@ -8,7 +8,7 @@ lead: "@denext/backend puts backend services inside your app as one opt-in plugi
 denext plugin add @denext/backend
 ```
 
-Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.5.0"` to `deno.json`'s `imports`, then
+Or by hand: add `"@denext/backend": "jsr:@denext/backend@^0.6.0"` to `deno.json`'s `imports`, then
 the plugin to `denext.config.ts`.
 
 Moving a project from Supabase? [Coming from Supabase](/docs/coming-from-supabase) maps each
@@ -1204,7 +1204,7 @@ expired token, `PGRST301` otherwise — with `WWW-Authenticate: Bearer error="in
 | `or=(year.gt.2000,authors.name.eq.Ann)`                     | A logic tree may test an embedded resource's column: the parent row matches when a related row does (`PGRST108` when the embed is not in `select`).                                                                                                                                                                                                                         |
 | `select=author_id,total:price.sum(),count()`                | Aggregates — `sum`, `avg`, `min`, `max`, `count`, with casts before and after (`price::int.sum()::text`) — grouped by the other selected columns and embeds. Off by default (`aggregates: true`; `PGRST123` otherwise): one reads every matching row.                                                                                                                       |
 | `PUT` with one complete row, plus `pk=eq.v` filters         | A single-row upsert: the filters must be exactly the primary key (`PGRST105`, `405`), the body every writable column (`PGRST102`), and the body's key the URL's (`PGRST115`). `200` with the row, or `204`.                                                                                                                                                                 |
-| `GET /rest/v1`                                              | PostgREST's OpenAPI (Swagger 2.0) document for the schema `Accept-Profile` picks, listing only what the requester can use (the secret key sees everything). `/rest/v1/` redirects there. It is separate from `@denext/openapi`'s document, which describes route handlers.                                                                                                  |
+| `GET /rest/v1`                                              | PostgREST's OpenAPI (Swagger 2.0) document for the schema `Accept-Profile` picks, listing only what the requester can use (the secret key sees everything). `/rest/v1/` redirects there. `@denext/openapi`'s document lists the same routes as OpenAPI 3.1 (below).                                                                                                         |
 | `Accept: application/vnd.pgrst.plan`                        | The execution plan (`+json` / `+text`, `options=analyze\|verbose\|…`), only with `explain: true`; analyzed statements are rolled back.                                                                                                                                                                                                                                      |
 
 **What is safe.** A schema, table, column, function, argument or type name is never taken from
@@ -1346,12 +1346,23 @@ the plugin says so, keeps an earlier generated file, or writes a stub under whic
 | `explain`          | `false`                           | Serve execution plans (`Accept: application/vnd.pgrst.plan`). Plans show table sizes and indexes: development only.                                                                                               |
 | `aggregates`       | `false`                           | Allow aggregate functions in `select=` (PostgREST's `db-aggregates-enabled`). An aggregate reads every matching row whatever `limit` says; enable it when the statement timeout bounds the cost.                  |
 | `rateLimit`        | `{ max: 1200, windowMs: 60_000 }` | Each client's request budget (a user by id, else an address; never the secret key); past it `429` `over_request_rate_limit` with `Retry-After`. `store` shares the counts between replicas; `false` turns it off. |
+| `openapi`          | `true`                            | List the routes in `@denext/openapi`'s document (when that plugin is installed): the default schema's relations and functions the RLS roles can use.                                                              |
 
 Two features are off until you turn them on, because each can cost a lot or reveal a lot:
 aggregates (`aggregates: true`) and execution plans (`explain: true`). Everything else on this page
 is always on. A view inherits a relationship only through plain column references: a column
-computed by an expression has no origin, so a key that needs it is not inherited. The routes are
-described by `GET /rest/v1`, not by the `@denext/openapi` document.
+computed by an expression has no origin, so a key that needs it is not inherited.
+
+The routes are described twice. `GET /rest/v1` is PostgREST's own Swagger 2.0 document, per
+requester and per `Accept-Profile`. With the `@denext/openapi` plugin installed, the app's
+`/openapi.json` (its docs page, `denext openapi emit` and the clients generated from it) lists them
+too, as OpenAPI 3.1 operations beside the route handlers: every relation and function of the
+default schema that the `anon` and `authenticated` roles can use (what only the secret key reaches
+is left out), typed rows as `rest.<table>` schemas, the row filters and shaping parameters, and the
+PostgREST error body. Nothing to configure; `rest: { openapi: false }` keeps them out (and
+`openapi({ sources: false })` leaves out every plugin's routes). The catalog is read when the
+document is built; without a reachable database the routes are left out with a `source-failed`
+lint warning.
 
 ## Edge Functions
 

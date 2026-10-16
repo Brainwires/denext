@@ -113,6 +113,25 @@ export default {
         request.
       </Callout>
 
+      <h2>Routes from plugins</h2>
+      <p>
+        A plugin that serves routes of its own registers an <code>OpenApiSource</code>{" "}
+        and the document lists them beside the route handlers. <code>@denext/backend</code>
+        's auto-REST does: with <code>backend({"{ postgres: {}, rest: {} }"})</code>{" "}
+        installed, every relation and function of the default schema the <code>anon</code> and{" "}
+        <code>authenticated</code> roles can use is an OpenAPI 3.1 operation under{" "}
+        <code>/rest/v1</code>, its rows typed as <code>rest.&lt;table&gt;</code>{" "}
+        schemas. A path an app route already describes keeps the app's operation (a{" "}
+        <code>path-collision</code>{" "}
+        warning); a source that fails (no database reachable) is left out with a{" "}
+        <code>source-failed</code> warning.
+      </p>
+      <Code lang="ts">
+        {`openapi({ sources: [mySource] });   // describe more routes
+openapi({ sources: false });        // the app's route handlers only
+backend({ postgres: {}, rest: { openapi: false } }); // keep auto-REST out`}
+      </Code>
+
       <h2>JSON Schema from your validator</h2>
       <p>
         Standard Schema has no JSON-Schema export of its own; its companion{" "}
@@ -246,6 +265,14 @@ const { document, warnings } = await buildOpenApi({
         <li>
           <code>toJsonSchema</code>{" "}
           — a converter for validators the built-in detection cannot describe.
+        </li>
+        <li>
+          <code>sources</code> — more{" "}
+          <code>OpenApiSource</code>s beside the ones plugins register, or <code>false</code>{" "}
+          to leave those out (see{" "}
+          <a href="#routes-from-plugins">
+            Routes from plugins
+          </a>).
         </li>
         <li>
           <code>expose</code> — <code>"always"</code>{" "}

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0
+
+### Added
+
+- **The auto-REST routes join `@denext/openapi`'s document.** With that plugin (0.5.0) installed,
+  `rest` registers an OpenAPI source: every relation and function of the default schema the
+  `anon` and `authenticated` roles can use becomes an OpenAPI 3.1 operation under the routes'
+  base path — `rest.<table>` row schemas (nullable columns as type arrays, read-only columns
+  marked, insert-required columns listed), the per-column row filters and PostgREST's shaping
+  parameters and headers, the write bodies, `rpc` calls with argument and result schemas (a
+  volatile function is POST only, a `void` one answers 204), and PostgREST's error body as
+  `rest.Error`. What only the secret key reaches is left out. `rest: { openapi: false }` opts out.
+
 ## 0.5.0
 
 ### Added

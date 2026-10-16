@@ -14,8 +14,8 @@
     },
     {
       "name": "@denext/backend",
-      "version": "0.5.0",
-      "spec": "jsr:@denext/backend@^0.5.0",
+      "version": "0.6.0",
+      "spec": "jsr:@denext/backend@^0.6.0",
       "exports": [
         ".",
         "./client",
@@ -483,6 +483,10 @@
                     ]
                   }
                 ]
+              },
+              "openapi": {
+                "description": "Describe the routes in `@denext/openapi`'s document (default `true`): with that plugin installed, `/openapi.json` (and its docs page, `denext openapi emit`, and the clients generated from it) lists every relation and function of the default schema the `anon` and `authenticated` roles can use — what the secret key alone reaches is left out — with typed rows, PostgREST's filters and its error body. `false` keeps them out.",
+                "type": "boolean"
               }
             }
           },
@@ -1046,7 +1050,8 @@
         "security",
         "expose",
         "authorize",
-        "outFile"
+        "outFile",
+        "sources"
       ],
       "title": "@denext/openapi",
       "blurb": "An OpenAPI 3.1 document and a docs page for a denext app, derived from the defineApi definitions its route handlers already carry.",
@@ -1165,6 +1170,35 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "enum": [
+                  false
+                ]
+              }
+            ]
+          },
+          "sources": {
+            "description": "More OpenApiSources to describe beside the app's routes. The sources plugins register themselves (`@denext/backend`'s auto-REST routes) are included without this; `sources: false` leaves every registered one out.",
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "description": "A unique name (`\"@denext/backend rest\"`); a later registration under it replaces the earlier.",
+                      "type": "string"
+                    },
+                    "describe": {
+                      "description": "Describe the routes now (called on each document build, so a changed database catalog shows on the next request)."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "describe"
+                  ]
+                }
               },
               {
                 "enum": [

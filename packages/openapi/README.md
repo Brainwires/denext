@@ -62,6 +62,17 @@ export const POST = defineApi({
 - A plain handler (no `defineApi`) is still listed by path and method, with a lint
   warning.
 
+### Routes from plugins
+
+A plugin that serves routes of its own registers an `OpenApiSource` (`registerOpenApiSource`, or
+the `Symbol.for("denext.openapi.sources")` map, so it needs no dependency on this package), and
+the document lists its operations beside the route handlers. `@denext/backend`'s auto-REST does:
+every relation and function of the default schema the `anon` and `authenticated` roles can use,
+under `/rest/v1`, rows typed as `rest.<table>` schemas (`rest: { openapi: false }` opts out).
+`openapi({ sources: [...] })` adds sources; `sources: false` leaves every registered one out. A
+path an app route already describes keeps the app's operation (`path-collision`); a source that
+throws is skipped with a `source-failed` warning.
+
 ### JSON Schema from your validator
 
 Standard Schema has no JSON-Schema export of its own; its companion
@@ -243,6 +254,7 @@ const { document, warnings } = await buildOpenApi({
 | `tags`            | segment after api | `(route) => string[]`                                                     |
 | `authorize`       | open              | `(request) => boolean \| Promise<boolean>`; `false` → the app's own 404   |
 | `outFile`         | `openapi.json`    | The build-output file; `false` skips the build step                       |
+| `sources`         | registered ones   | More `OpenApiSource`s; `false` leaves out the registered ones too         |
 
 ## Endpoint details
 
@@ -255,7 +267,7 @@ const { document, warnings } = await buildOpenApi({
   status }` for every code a call may fail with, builtins included) and, when the definition
   sets `maxBodyBytes`, `x-denext-max-body-bytes`.
 - Lint codes: `opaque-schema`, `undescribed-route`, `missing-summary`, `catch-all-path`,
-  `load-failed`, `path-collision`.
+  `load-failed`, `path-collision`, `source-failed`.
 - Subpaths: `@denext/openapi/spec` (`buildOpenApi`, `diffSpecs`, `toJsonSchema`,
   `pathVariants`, `API_ERROR_SCHEMA`), `@denext/openapi/command` (`createOpenapiCommand`,
   `formatWarning`), `@denext/openapi/types` (`emitTypes`); the root also exports

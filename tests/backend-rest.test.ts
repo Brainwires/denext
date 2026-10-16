@@ -549,7 +549,9 @@ Deno.test("resolveRest validates options; rest needs postgres", () => {
     explain: false,
     aggregates: false,
     rateLimit: { max: 1200, windowMs: 60_000, store: undefined },
+    openapi: true,
   });
+  assertEquals(resolveRest({ openapi: false }).openapi, false);
   assertEquals(resolveRest({ schemas: ["a", "b", "a"], schema: "c" }).schemas, ["a", "b"]);
   const bad: RestOptions[] = [
     { schema: 'x"; drop' },

@@ -344,6 +344,16 @@ and this project adheres to
   start-up script in place of the inline one; each file is checked against its recorded SHA-256
   before it is served. Every docs page answers with its own `content-security-policy` (`'self'`
   only for `builtin` and `swagger`). `cdn` still loads it from a CDN when set.
+- **Auto-REST routes in the OpenAPI document (`@denext/backend` 0.6.0, `@denext/openapi`
+  0.5.0).** With both plugins installed, `/openapi.json` lists every relation and function of the
+  default schema the `anon` and `authenticated` roles can use as OpenAPI 3.1 operations under
+  `/rest/v1` — typed `rest.<table>` row schemas (nullable columns as `["…", "null"]`, read-only
+  ones marked), the row filters, `select` / `order` / `limit` / `offset` / `Range` / `Prefer`, the
+  insert / update / delete bodies, `rpc` calls with their argument and result schemas, and
+  PostgREST's error body. Plugins describe their own routes through a new seam,
+  **`OpenApiSource`** (`registerOpenApiSource`, or the `Symbol.for("denext.openapi.sources")`
+  map); `openapi({ sources })` adds or (`false`) drops them, `rest: { openapi: false }` keeps
+  auto-REST out. A source that fails is skipped with a `source-failed` lint warning.
 
 ### Changed
 

@@ -72,7 +72,7 @@ import {
   requireOne,
 } from "./rest-http.ts";
 import { csvFromJson } from "./rest-format.ts";
-import { openApiDocument } from "./rest-openapi.ts";
+import { openApiContribution, openApiDocument } from "./rest-openapi.ts";
 import { IDENTIFIER } from "./realtime-shared.ts";
 import { positiveOption } from "./options.ts";
 import { writeRestTypes } from "./rest-codegen.ts";
@@ -148,6 +148,14 @@ export interface RestOptions {
    * process unless `store` is shared; `false` turns it off.
    */
   rateLimit?: RestRateLimitOptions | false;
+  /**
+   * Describe the routes in `@denext/openapi`'s document (default `true`): with that plugin
+   * installed, `/openapi.json` (and its docs page, `denext openapi emit`, and the clients
+   * generated from it) lists every relation and function of the default schema the `anon` and
+   * `authenticated` roles can use — what the secret key alone reaches is left out — with typed
+   * rows, PostgREST's filters and its error body. `false` keeps them out.
+   */
+  openapi?: boolean;
 }
 
 /** Validated auto-REST options. */
@@ -174,6 +182,8 @@ export interface ResolvedRest {
   aggregates: boolean;
   /** The request budget per client, or `null` (off). */
   rateLimit: ResolvedRestRateLimit | null;
+  /** Whether the routes join `@denext/openapi`'s document. */
+  openapi: boolean;
 }
 
 /** The schemas from `schema` / `schemas`, validated. */
@@ -227,6 +237,7 @@ export function resolveRest(o: RestOptions): ResolvedRest {
     explain: o.explain === true,
     aggregates: o.aggregates === true,
     rateLimit: resolveRestRateLimit(o.rateLimit),
+    openapi: o.openapi !== false,
   };
 }
 
@@ -1213,6 +1224,34 @@ function restHandler(
   };
 }
 
+/** The global slot `@denext/openapi` reads its sources from (no dependency on that package). */
+const OPENAPI_SOURCES = Symbol.for("denext.openapi.sources");
+
+/** The source's name in that registry. */
+const OPENAPI_SOURCE_NAME = "@denext/backend rest";
+
+/**
+ * Register the auto-REST routes as a source of `@denext/openapi`'s document: the default schema
+ * of the catalog the RLS roles see, under the app's `basePath` + `rest.basePath`.
+ *
+ * @param rest The resolved options.
+ * @param read Reads the (cached) catalog.
+ * @returns The teardown that unregisters it.
+ */
+export function registerOpenApi(rest: ResolvedRest, read: () => Promise<RestCatalog>): () => void {
+  const slot = globalThis as unknown as Record<symbol, Map<string, unknown> | undefined>;
+  const sources = slot[OPENAPI_SOURCES] ??= new Map();
+  const source = {
+    name: OPENAPI_SOURCE_NAME,
+    describe: async ({ basePath }: { basePath: string }) =>
+      openApiContribution(await read(), rest.schemas[0], basePath + rest.basePath),
+  };
+  sources.set(OPENAPI_SOURCE_NAME, source);
+  return () => {
+    if (sources.get(OPENAPI_SOURCE_NAME) === source) sources.delete(OPENAPI_SOURCE_NAME);
+  };
+}
+
 /**
  * Wire auto-REST into the plugin: the request handler, the catalog read at startup (`dev`,
  * `prod`; a failure is retried by the first request), and the prepare step that writes the
@@ -1224,6 +1263,7 @@ function restHandler(
 export function setupRest(ctx: PluginContext, rest: ResolvedRest, sql?: SqlClient): void {
   const catalog = new RestCatalogCache(catalogLoader(rest), ctx.mode === "dev");
   ctx.addRequestHandler(restHandler(rest, catalog));
+  if (rest.openapi) ctx.addTeardown(registerOpenApi(rest, () => catalog.get()));
   ctx.addPrepareStep(({ outDir }) => writeRestTypes(outDir, rest, () => catalog.get()));
   if (ctx.mode === "dev" || ctx.mode === "prod") {
     listenForSchemaReload(ctx, catalog, sql);

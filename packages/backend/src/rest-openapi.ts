@@ -113,18 +113,27 @@ function keyNotes(table: RestTable, column: RestColumn, keys: readonly RestForei
   return notes;
 }
 
-/** A relation's definition. */
-function definition(table: RestTable, keys: readonly RestForeignKey[]): Json {
+/** A relation's columns as schema properties (each built by `property`) and its insert-required ones. */
+function columnsOf(
+  table: RestTable,
+  keys: readonly RestForeignKey[],
+  property: (column: RestColumn, notes: string[]) => Json,
+): { properties: Json; required: string[] } {
   const properties: Json = {};
   for (const column of table.columns) {
-    const notes = keyNotes(table, column, keys);
-    properties[column.name] = {
-      ...(notes.length ? { description: `Note:\n${notes.join("\n")}` } : {}),
-      ...typeOf(column),
-    };
+    properties[column.name] = property(column, keyNotes(table, column, keys));
   }
   const required = table.columns.filter((c) => !c.nullable && !c.hasDefault && !c.readOnly)
     .map((c) => c.name);
+  return { properties, required };
+}
+
+/** A relation's definition. */
+function definition(table: RestTable, keys: readonly RestForeignKey[]): Json {
+  const { properties, required } = columnsOf(table, keys, (column, notes) => ({
+    ...(notes.length ? { description: `Note:\n${notes.join("\n")}` } : {}),
+    ...typeOf(column),
+  }));
   return { ...(required.length ? { required } : {}), properties, type: "object" };
 }
 
@@ -287,4 +296,221 @@ export function openApiDocument(
       url: "https://postgrest.org/en/v12/references/api.html",
     },
   };
+}
+
+// ── OpenAPI 3.1, for `@denext/openapi` ───────────────────────────────────────
+
+/** A component name OpenAPI accepts (`^[A-Za-z0-9._-]+$`) for a relation. */
+function componentName(name: string): string {
+  return `rest.${name.replace(/[^A-Za-z0-9._-]/g, "_")}`;
+}
+
+/** A column or argument's JSON Schema (2020-12): its Swagger type, `null` added when nullable. */
+function jsonSchemaOf(facts: RestTypeFacts, nullable: boolean): Json {
+  const { format, ...rest } = typeOf(facts);
+  const schema: Json = { ...rest, ...(format ? { format } : {}) };
+  if (nullable && typeof schema.type === "string") schema.type = [schema.type, "null"];
+  return schema;
+}
+
+/** A relation's row schema (3.1): typed columns, the key notes, the insert-required columns. */
+function rowSchema(table: RestTable, keys: readonly RestForeignKey[]): Json {
+  const { properties, required } = columnsOf(table, keys, (column, notes) => ({
+    ...jsonSchemaOf(column, column.nullable),
+    ...(notes.length ? { description: notes.join(" ").replace(/<[^>]+>/g, "") } : {}),
+    ...(column.readOnly ? { readOnly: true } : {}),
+  }));
+  return { type: "object", properties, ...(required.length ? { required } : {}) };
+}
+
+/** PostgREST's error body. */
+const REST_ERROR: Json = {
+  type: "object",
+  properties: {
+    code: { type: "string" },
+    message: { type: "string" },
+    details: { type: ["string", "null"] },
+    hint: { type: ["string", "null"] },
+  },
+};
+
+/** A header parameter. */
+const header = (name: string, description: string, values?: string[]): Json => ({
+  name,
+  in: "header",
+  required: false,
+  description,
+  schema: { type: "string", ...(values ? { enum: values } : {}) },
+});
+
+/** A query parameter taking a PostgREST expression. */
+const query = (name: string, description: string): Json => ({
+  name,
+  in: "query",
+  required: false,
+  description,
+  schema: { type: "string" },
+});
+
+/** The reads' shaping parameters. */
+const READ_PARAMETERS = [
+  query("select", "Columns and embedded relations (`id,body,author:users(name)`)"),
+  query("order", "Ordering (`created_at.desc.nullslast`)"),
+  query("limit", "At most this many rows"),
+  query("offset", "Skip this many rows"),
+  header("Range", "Limiting and pagination (`0-24`)"),
+  header("Prefer", "Preference", ["count=exact", "count=planned", "count=estimated"]),
+];
+
+/** The default (error) response. */
+const ERROR_RESPONSE: Json = {
+  description: "A PostgREST error (`PGRST…` or a SQLSTATE code)",
+  content: { "application/json": { schema: { $ref: "#/components/schemas/rest.Error" } } },
+};
+
+/** A JSON body or response of `schema`. */
+const jsonOf = (schema: Json): Json => ({ "application/json": { schema } });
+
+/** One relation's operations (3.1). */
+function tableOperations(table: RestTable, ref: string): Record<string, Json> {
+  const filters = table.columns.map((c) =>
+    query(c.name, `A row filter on \`${c.name}\` (\`eq.1\`, \`in.(1,2)\`, \`is.null\`, …)`)
+  );
+  const row = { $ref: ref };
+  const base = { tags: [table.name], "x-denext-source": "@denext/backend rest" };
+  const get = {
+    ...base,
+    operationId: `rest_select_${table.name}`,
+    summary: `Read ${table.name}`,
+    parameters: [...filters, ...READ_PARAMETERS],
+    responses: {
+      200: { description: "OK", content: jsonOf({ type: "array", items: row }) },
+      206: { description: "Partial Content (a `Range`)" },
+      default: ERROR_RESPONSE,
+    },
+  };
+  if (table.kind !== "table" && table.kind !== "view") return { get };
+  const prefer = header("Prefer", "Preference", [
+    "return=representation",
+    "return=minimal",
+    "resolution=merge-duplicates",
+    "resolution=ignore-duplicates",
+  ]);
+  const written = {
+    200: {
+      description: "The rows (`Prefer: return=representation`)",
+      content: jsonOf({ type: "array", items: row }),
+    },
+    default: ERROR_RESPONSE,
+  };
+  return {
+    get,
+    post: {
+      ...base,
+      operationId: `rest_insert_${table.name}`,
+      summary: `Insert into ${table.name}`,
+      parameters: [
+        query("select", "Columns of the returned rows"),
+        query("on_conflict", "Upsert key columns"),
+        prefer,
+      ],
+      requestBody: {
+        required: true,
+        content: jsonOf({ oneOf: [row, { type: "array", items: row }] }),
+      },
+      responses: { 201: { description: "Created" }, ...written },
+    },
+    patch: {
+      ...base,
+      operationId: `rest_update_${table.name}`,
+      summary: `Update ${table.name}`,
+      parameters: [...filters, prefer],
+      requestBody: { required: true, content: jsonOf(row) },
+      responses: { 204: { description: "No Content" }, ...written },
+    },
+    delete: {
+      ...base,
+      operationId: `rest_delete_${table.name}`,
+      summary: `Delete from ${table.name}`,
+      parameters: [...filters, prefer],
+      responses: { 204: { description: "No Content" }, ...written },
+    },
+  };
+}
+
+/** What a call answers with: its row(s) or value — an array for a set-returning function. */
+function resultSchema(fn: RestFunction): Json {
+  const { returns } = fn;
+  let one: Json = {};
+  if (returns.kind === "scalar" && returns.column) one = jsonSchemaOf(returns.column, true);
+  if (returns.kind === "composite") {
+    const properties: Json = {};
+    for (const c of returns.columns ?? []) properties[c.name] = jsonSchemaOf(c, c.nullable);
+    one = { type: "object", properties };
+  }
+  return fn.setOf ? { type: "array", items: one } : one;
+}
+
+/** One function's operations (3.1; its first overload, as PostgREST lists one per name). */
+function functionOperations(fn: RestFunction): Record<string, Json> {
+  const named = fn.args.filter((a) => a.name !== "");
+  const properties: Json = {};
+  for (const arg of named) properties[arg.name] = jsonSchemaOf(arg, false);
+  const required = named.filter((a) => !a.hasDefault).map((a) => a.name);
+  const base = {
+    tags: [`(rpc) ${fn.name}`],
+    summary: `Call ${fn.name}`,
+    "x-denext-source": "@denext/backend rest",
+    responses: fn.returns.kind === "void"
+      ? { 204: { description: "No Content" }, default: ERROR_RESPONSE }
+      : { 200: { description: "OK", content: jsonOf(resultSchema(fn)) }, default: ERROR_RESPONSE },
+  };
+  const post = {
+    ...base,
+    operationId: `rest_rpc_${fn.name}`,
+    requestBody: {
+      required: required.length > 0,
+      content: jsonOf({ type: "object", properties, ...(required.length ? { required } : {}) }),
+    },
+  };
+  if (fn.volatility === "v") return { post };
+  const get = {
+    ...base,
+    operationId: `rest_rpc_${fn.name}_get`,
+    parameters: named.map((a) => ({
+      name: a.name,
+      in: "query",
+      required: !a.hasDefault,
+      schema: jsonSchemaOf(a, false),
+    })),
+  };
+  return { get, post };
+}
+
+/**
+ * The auto-REST routes as an OpenAPI 3.1 contribution for `@denext/openapi`'s document: every
+ * relation and function of `schema` in `catalog` (the RLS roles' view — pass the anonymous
+ * catalog so nothing only the secret key reaches is listed), under `basePath`.
+ *
+ * @param catalog The catalog to describe.
+ * @param schema The schema (the default one).
+ * @param basePath The routes' public prefix (the app's `basePath` + `rest.basePath`).
+ * @returns The paths and the row schemas they reference.
+ */
+export function openApiContribution(
+  catalog: RestCatalog,
+  schema: string,
+  basePath: string,
+): { paths: Record<string, Record<string, Json>>; schemas: Record<string, Json> } {
+  const paths: Record<string, Record<string, Json>> = {};
+  const schemas: Record<string, Json> = { "rest.Error": REST_ERROR };
+  for (const table of catalog.tables.get(schema)?.values() ?? []) {
+    const name = componentName(table.name);
+    schemas[name] = rowSchema(table, catalog.foreignKeys);
+    paths[`${basePath}/${table.name}`] = tableOperations(table, `#/components/schemas/${name}`);
+  }
+  for (const [name, overloads] of catalog.functions.get(schema) ?? []) {
+    paths[`${basePath}/rpc/${name}`] = functionOperations(overloads[0]);
+  }
+  return { paths, schemas };
 }

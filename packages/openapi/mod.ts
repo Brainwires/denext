@@ -37,20 +37,33 @@ import {
   type OpenApiInfo,
   type OpenApiSecurityScheme,
   type OpenApiServer,
+  type OpenApiSource,
+  registeredOpenApiSources,
   type SchemaConverter,
   type SecurityRequirement,
 } from "./spec.ts";
 
-export { API_ERROR_SCHEMA, buildOpenApi, diffSpecs, pathVariants, toJsonSchema } from "./spec.ts";
+export {
+  API_ERROR_SCHEMA,
+  buildOpenApi,
+  diffSpecs,
+  OPENAPI_SOURCES,
+  pathVariants,
+  registeredOpenApiSources,
+  registerOpenApiSource,
+  toJsonSchema,
+} from "./spec.ts";
 export type {
   BuildOpenApiOptions,
   JsonSchema,
   OpenApiBuild,
+  OpenApiContribution,
   OpenApiDocument,
   OpenApiInfo,
   OpenApiOperation,
   OpenApiSecurityScheme,
   OpenApiServer,
+  OpenApiSource,
   OpenApiWarning,
   OpenApiWarningCode,
   RouteModuleLoader,
@@ -220,6 +233,12 @@ export interface OpenApiOptions {
    * `false` skips the build step.
    */
   outFile?: string | false;
+  /**
+   * More {@link OpenApiSource}s to describe beside the app's routes. The sources plugins
+   * register themselves (`@denext/backend`'s auto-REST routes) are included without this;
+   * `sources: false` leaves every registered one out.
+   */
+  sources?: OpenApiSource[] | false;
 }
 
 /**
@@ -383,7 +402,12 @@ function specBuilder(
   const title = ctx.projectRoot.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "API";
   return async () => {
     const m = manifest ?? await scanRoutes(ctx.appDir);
-    if (cached?.manifest === m) return cached.result;
+    // Read the registry per build: a plugin listed after this one registers its source later,
+    // and a source's routes (a database catalog) change without a route rescan.
+    const sources = options.sources === false
+      ? []
+      : [...registeredOpenApiSources(), ...(options.sources ?? [])];
+    if (cached?.manifest === m && sources.length === 0) return cached.result;
     const result = await buildOpenApi({
       manifest: m,
       load: ctx.load,
@@ -395,6 +419,7 @@ function specBuilder(
       tags: options.tags,
       securitySchemes: options.securitySchemes,
       security: options.security,
+      sources,
     });
     cached = { manifest: m, result };
     return result;

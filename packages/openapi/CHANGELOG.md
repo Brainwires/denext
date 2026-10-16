@@ -19,6 +19,14 @@
   served; `scripts/vendor-swagger-ui.ts` re-vendors a version. `cdn` still points it at a CDN.
 - **Every docs page answers with its own `content-security-policy`** (`docsCsp(ui, cdn?)`):
   `'self'` only for `builtin` and `swagger`; Scalar's names its CDN host.
+- **Routes from plugins: `OpenApiSource`.** A plugin that serves routes of its own registers a
+  source (`registerOpenApiSource(source)`, or the `Symbol.for("denext.openapi.sources")` map, so
+  it needs no dependency on this package) whose `describe({ basePath })` returns path items and
+  shared schemas; the document merges them after the app's routes on every build (an app route's
+  operation is kept on a collision, with a `path-collision` warning; a source that throws is left
+  out with a `source-failed` warning). `@denext/backend` 0.6.0 registers its auto-REST routes.
+  `openapi({ sources: [...] })` adds sources, `sources: false` leaves the registered ones out.
+  `buildOpenApi` takes `sources`.
 
 ## 0.4.0 - 2026-10-13
 
