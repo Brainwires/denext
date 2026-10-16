@@ -224,6 +224,12 @@ and this project adheres to
   resolve now switches too. An app that maps only what the framework resolves (denext's own
   entries, a `jsr:` / `npm:` package the framework maps, a workspace package) still starts in one
   process.
+- **`denext analyze` reports a chunk only islands load as an island chunk.** It labelled every
+  `chunk-*` file as shared runtime, so a library chunk that only client components import (and
+  that a page without them never loads) was counted in the shared-runtime subtotal. `analyze`,
+  `analyze --md` and `doctor --report` now follow the chunks' imports: a chunk no route entry
+  imports is listed under islands, or under the on-demand runtime when only the framework's
+  on-demand chunks import it. `analyze --json` lists each chunk's `imports` and `lazyImports`.
 - **A library's `"use client"` components hydrate under `nodeResolve: false` too.** The server
   bundle now resolves the packages on the import paths to a library's own `"use client"` /
   `"use server"` files from `node_modules`, the way the build found those files, so the component

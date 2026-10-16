@@ -10,6 +10,25 @@ export interface BundleChunk {
   bytes: number;
   /** Gzipped size (the `.gz` sibling), when precompression ran. */
   gzip?: number;
+  /**
+   * The sibling chunks it imports statically (`import … from "./x.js"`, `import "./x.js"`;
+   * not `import()`), when read from disk: what tells an island-only `chunk-*` from the shared
+   * runtime (see {@linkcode chunkRoles}).
+   */
+  imports?: string[];
+  /** The sibling chunks it loads with `import("./x.js")`, when read from disk. */
+  lazyImports?: string[];
+}
+
+/** A static `from "./x.js"` / `import "./x.js"` in emitted code (a dynamic `import(` has a paren). */
+const STATIC_IMPORT = /\b(?:from|import)\s*["']\.\/([^"'/]+\.js)["']/g;
+/** A dynamic `import("./x.js")` in emitted code. */
+const DYNAMIC_IMPORT = /\bimport\(\s*["']\.\/([^"'/]+\.js)["']\s*\)/g;
+
+/** The sibling chunks `code` imports, statically or with `import()`, in first-seen order. */
+export function chunkImports(code: string): { imports: string[]; lazyImports: string[] } {
+  const names = (re: RegExp) => [...new Set(Array.from(code.matchAll(re), (m) => m[1]))];
+  return { imports: names(STATIC_IMPORT), lazyImports: names(DYNAMIC_IMPORT) };
 }
 
 /**
@@ -25,12 +44,13 @@ export async function readClientChunks(clientDir: string): Promise<BundleChunk[]
   try {
     for await (const e of Deno.readDir(clientDir)) {
       if (!e.isFile || !e.name.endsWith(".js")) continue;
-      const bytes = (await Deno.stat(join(clientDir, e.name))).size;
+      const code = await Deno.readTextFile(join(clientDir, e.name));
+      const bytes = new TextEncoder().encode(code).length;
       let gzip: number | undefined;
       try {
         gzip = (await Deno.stat(join(clientDir, e.name + ".gz"))).size;
       } catch { /* below the precompress floor — no .gz sibling */ }
-      chunks.push({ name: e.name, bytes, gzip });
+      chunks.push({ name: e.name, bytes, gzip, ...chunkImports(code) });
     }
   } catch { /* no client dir → fully static (0 KB JS) */ }
   return chunks;
@@ -153,10 +173,11 @@ function mdChunkTable(sorted: BundleChunk[], ranked: number): string[] {
     "| Chunk | Role | Raw | Gzip | % |",
     "| --- | --- | --: | --: | --: |",
   ];
+  const roles = chunkRoles(sorted);
   for (const c of sorted) {
     const share = ranked > 0 ? (chunkMetric(c) / ranked) * 100 : 0;
     const gz = c.gzip !== undefined ? kb(c.gzip) : "—";
-    const role = ROLE_LABEL[classifyChunk(c.name)];
+    const role = ROLE_LABEL[roles.get(c.name)!];
     lines.push(`| \`${c.name}\` | ${role} | ${kb(c.bytes)} | ${gz} | ${share.toFixed(1)}% |`);
   }
   return lines;
@@ -199,6 +220,53 @@ export function classifyChunk(name: string): ChunkRole {
   return ON_DEMAND_PREFIXES.some((p) => name.startsWith(p)) ? "on-demand" : "entry";
 }
 
+/** A content-hashed module name (`counter-V6JCWT7F.js`, a client component's own module). */
+const HASHED = /-[A-Z0-9]{8}\.js$/;
+
+/**
+ * Each chunk's role, refining {@linkcode classifyChunk} with the static import graph when the
+ * chunks carry their `imports` (as {@linkcode readClientChunks} reads them). A `chunk-*` no route
+ * entry reaches is not shared runtime: one only islands and client components reach (an
+ * `island-*`, or a content-hashed module another loads with `import()`) is an island chunk — a
+ * library a few islands share, say — and one only the framework's on-demand chunks reach is
+ * on-demand.
+ *
+ * @param chunks The emitted client chunks.
+ * @returns The role of each chunk, by name.
+ */
+export function chunkRoles(chunks: BundleChunk[]): Map<string, ChunkRole> {
+  const roles = new Map(chunks.map((c) => [c.name, classifyChunk(c.name)]));
+  if (!chunks.some((c) => c.imports)) return roles;
+  // Which non-chunk modules (the importers that load a chunk) reach each chunk, transitively.
+  const owners = new Map<string, Set<string>>();
+  const visit = (owner: string, name: string): void => {
+    const seen = owners.get(name) ?? new Set<string>();
+    if (seen.has(owner)) return;
+    owners.set(name, seen.add(owner));
+    for (const dep of byName.get(name)?.imports ?? []) {
+      if (roles.get(dep) === "shared") visit(owner, dep);
+    }
+  };
+  const byName = new Map(chunks.map((c) => [c.name, c]));
+  for (const c of chunks) {
+    if (roles.get(c.name) === "shared") continue;
+    for (const dep of c.imports ?? []) if (roles.get(dep) === "shared") visit(c.name, dep);
+  }
+  const lazy = new Set(chunks.flatMap((c) => c.lazyImports ?? []));
+  const ownerRole = (name: string): ChunkRole => {
+    const role = roles.get(name)!;
+    return role === "entry" && HASHED.test(name) && lazy.has(name) ? "island" : role;
+  };
+  for (const [name, from] of owners) roles.set(name, ownedRole([...from].map(ownerRole)));
+  return roles;
+}
+
+/** The role of a chunk its importers of these roles reach: shared once any route entry does. */
+function ownedRole(importers: ChunkRole[]): ChunkRole {
+  if (importers.includes("entry")) return "shared";
+  return importers.includes("island") ? "island" : "on-demand";
+}
+
 const ROLE_LABEL: Record<ChunkRole, string> = {
   shared: "shared runtime",
   entry: "route entries",
@@ -218,9 +286,10 @@ const ROLE_LABEL: Record<ChunkRole, string> = {
 export function bundleRoleLines(chunks: BundleChunk[]): string[] {
   if (chunks.length === 0) return [];
   const order: ChunkRole[] = ["shared", "entry", "island", "on-demand"];
+  const roles = chunkRoles(chunks);
   const lines = ["By role:"];
   for (const role of order) {
-    const group = chunks.filter((c) => classifyChunk(c.name) === role);
+    const group = chunks.filter((c) => roles.get(c.name) === role);
     if (group.length === 0) continue;
     const raw = group.reduce((s, c) => s + c.bytes, 0);
     const gz = group.reduce((s, c) => s + (c.gzip ?? 0), 0);
