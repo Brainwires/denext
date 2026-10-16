@@ -882,6 +882,10 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  @capgo/background-geolocation, UIBackgroundModes location,\n" +
     "  NSLocationAlwaysAndWhenInUseUsageDescription and Android's FOREGROUND_SERVICE_LOCATION\n" +
     "  (not ACCESS_BACKGROUND_LOCATION), and prints the App Store and Play review steps.\n" +
+    "  background-audio has no npm package: it writes denext's DenextNowPlaying plugin\n" +
+    "  (setNowPlaying / onMediaControl / setAudioSession: lock-screen and notification\n" +
+    "  controls), UIBackgroundModes audio, and Android's media-playback foreground service\n" +
+    "  with FOREGROUND_SERVICE_MEDIA_PLAYBACK.\n" +
     "  application adds @capacitor/app and @capacitor/device (expo-application). camera also\n" +
     "  adds NSMicrophoneUsageDescription (video recorded in the page has sound).\n" +
     "  text-to-speech adds @capacitor-community/text-to-speech (expo-speech on the OS speech\n" +

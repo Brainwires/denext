@@ -24491,6 +24491,30 @@
           "denextOnly": true
         },
         {
+          "name": "AudioInterruption",
+          "slug": "AudioInterruption",
+          "kind": "typeAlias",
+          "signature": "type AudioInterruption = exclusive | mix | duck",
+          "doc": "How the app's audio meets other apps' audio, for setAudioSession.",
+          "docFull": "How the app's audio meets other apps' audio, for {@linkcode setAudioSession}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AudioSessionOptions",
+          "slug": "AudioSessionOptions",
+          "kind": "interface",
+          "signature": "interface AudioSessionOptions",
+          "doc": "Options for setAudioSession.",
+          "docFull": "Options for {@linkcode setAudioSession}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "AuthCancelOverlayText",
           "slug": "AuthCancelOverlayText",
           "kind": "interface",
@@ -24861,6 +24885,20 @@
           "returns": "Its status.",
           "examples": [
             "```ts\nimport { checkPermission, openAppSettings } from \"denext/mobile\";\n\nif ((await checkPermission(\"camera\")) === \"blocked\") {\n  if (confirm(\"Camera access is off. Open Settings?\")) await openAppSettings();\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "clearNowPlaying",
+          "slug": "clearNowPlaying",
+          "kind": "function",
+          "signature": "clearNowPlaying(): Promise<void>",
+          "doc": "Take the now-playing information and the controls off the lock screen (the media notification goes, and on Android the foreground service stops). Call it when playback ends for good, not on pause.",
+          "docFull": "Take the now-playing information and the controls off the lock screen (the media\nnotification goes, and on Android the foreground service stops). Call it when playback ends\nfor good, not on pause.",
+          "params": [],
+          "returns": "A promise that settles once the OS has dropped it.",
+          "examples": [
+            "```ts\nimport { clearNowPlaying } from \"denext/mobile\";\n\naudio.addEventListener(\"ended\", () => clearNowPlaying());\n```"
           ],
           "denextOnly": true
         },
@@ -26300,6 +26338,30 @@
           "denextOnly": true
         },
         {
+          "name": "MediaControlAction",
+          "slug": "MediaControlAction",
+          "kind": "typeAlias",
+          "signature": "type MediaControlAction = play | pause | stop | next | previous | seek | seekForward | seekBackward",
+          "doc": "A command from the lock screen, Control Center, the media notification, a headset or a car: \"seek\" carries the target position, \"seekForward\" / \"seekBackward\" the offset.",
+          "docFull": "A command from the lock screen, Control Center, the media notification, a headset or a car:\n`\"seek\"` carries the target `position`, `\"seekForward\"` / `\"seekBackward\"` the `offset`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MediaControlEvent",
+          "slug": "MediaControlEvent",
+          "kind": "interface",
+          "signature": "interface MediaControlEvent",
+          "doc": "A command the OS sent, for onMediaControl.",
+          "docFull": "A command the OS sent, for {@linkcode onMediaControl}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "MediaItem",
           "slug": "MediaItem",
           "kind": "interface",
@@ -26682,6 +26744,18 @@
           "denextOnly": true
         },
         {
+          "name": "NowPlayingInfo",
+          "slug": "NowPlayingInfo",
+          "kind": "interface",
+          "signature": "interface NowPlayingInfo",
+          "doc": "What setNowPlaying describes. Every field is optional and merged into the last.",
+          "docFull": "What {@linkcode setNowPlaying} describes. Every field is optional and merged into the last.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "OfflineScreenOptions",
           "slug": "OfflineScreenOptions",
           "kind": "interface",
@@ -26903,6 +26977,25 @@
           "returns": "A function that unsubscribes.",
           "examples": [
             "```ts\nimport { onLocalNotificationTapped } from \"denext/mobile\";\n\nconst stop = onLocalNotificationTapped(({ actionId, inputValue }) => {\n  if (actionId === \"reply\" && inputValue) sendReply(inputValue);\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "onMediaControl",
+          "slug": "onMediaControl",
+          "kind": "function",
+          "signature": "onMediaControl(handler: (event: MediaControlEvent) => void): () => void",
+          "doc": "Call handler with each command the OS sends for the now-playing item (lock screen, Control Center, the media notification, headset buttons, a car); returns a function that stops listening. Only the controls setNowPlaying offered are sent. On the web the handlers replace the browser's own media-key behaviour while any is registered.",
+          "docFull": "Call `handler` with each command the OS sends for the now-playing item (lock screen, Control\nCenter, the media notification, headset buttons, a car); returns a function that stops\nlistening. Only the controls {@linkcode setNowPlaying} offered are sent. On the web the\nhandlers replace the browser's own media-key behaviour while any is registered.",
+          "params": [
+            {
+              "name": "handler",
+              "doc": "Called with the command: action, plus position for \"seek\" and offset for \"seekForward\" / \"seekBackward\"."
+            }
+          ],
+          "returns": "A function that removes the handler.",
+          "examples": [
+            "```ts\nimport { onMediaControl } from \"denext/mobile\";\n\nconst stop = onMediaControl(({ action }) => {\n  if (action === \"next\") queue.next();\n  if (action === \"previous\") queue.previous();\n});\n```"
           ],
           "denextOnly": true
         },
@@ -27660,6 +27753,18 @@
           "denextOnly": true
         },
         {
+          "name": "PickedMedia",
+          "slug": "PickedMedia",
+          "kind": "interface",
+          "signature": "interface PickedMedia",
+          "doc": "A photo or video from pickMedia.",
+          "docFull": "A photo or video from {@linkcode pickMedia}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "pickFolder",
           "slug": "pickFolder",
           "kind": "function",
@@ -27699,6 +27804,49 @@
           "signature": "interface PickImageOptions",
           "doc": "Options for pickImage.",
           "docFull": "Options for {@linkcode pickImage}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "pickMedia",
+          "slug": "pickMedia",
+          "kind": "function",
+          "signature": "pickMedia(options?: PickMediaOptions): Promise<PickedMedia[] | null>",
+          "doc": "Pick photos and videos: several at once from the library, or one taken / recorded with the camera.",
+          "docFull": "Pick photos and videos: several at once from the library, or one taken / recorded with the\ncamera.\n\n- Inside the native shell, `@capacitor/camera`'s gallery picker (`denext mobile add camera`;\n  `chooseFromGallery`, with `selectionLimit` honoured on iOS and Android 13+) or its\n  `recordVideo`. With `ordered: true`, or without the Camera plugin,\n  `@capawesome/capacitor-file-picker` (`denext mobile add document-picker`) picks from the\n  library instead.\n- Otherwise a file chooser (`<input type=\"file\" multiple accept=\"image/*,video/*\">`); a\n  `source: \"camera\"` one asks mobile browsers for the camera. A browser cannot cap the\n  selection, so the result is cut to `selectionLimit`.\n\nPicks come in the order chosen wherever the platform keeps it. A dismissed picker resolves\n`null` rather than rejecting.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "mediaTypes (\"images\", the default, \"videos\" or \"all\"), multiple, selectionLimit, ordered, quality (0–100, native) and source (\"library\", the default, or \"camera\")."
+            }
+          ],
+          "returns": "The picked items (at least one), or null when the user cancelled. It rejects when permission is denied, or during SSR.",
+          "examples": [
+            "```ts\nimport { pickMedia } from \"denext/mobile\";\n\nconst items = await pickMedia({ mediaTypes: \"all\", multiple: true, selectionLimit: 10 });\nfor (const item of items ?? []) {\n  gallery.add(item.type === \"video\" ? { video: item.webPath, seconds: item.duration } : { src: item.webPath });\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "PickMediaOptions",
+          "slug": "PickMediaOptions",
+          "kind": "interface",
+          "signature": "interface PickMediaOptions",
+          "doc": "Options for pickMedia.",
+          "docFull": "Options for {@linkcode pickMedia}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PickMediaTypes",
+          "slug": "PickMediaTypes",
+          "kind": "typeAlias",
+          "signature": "type PickMediaTypes = images | videos | all",
+          "doc": "What pickMedia offers: photos, videos, or both.",
+          "docFull": "What {@linkcode pickMedia} offers: photos, videos, or both.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -28749,6 +28897,25 @@
           "denextOnly": true
         },
         {
+          "name": "setAudioSession",
+          "slug": "setAudioSession",
+          "kind": "function",
+          "signature": "setAudioSession(options?: AudioSessionOptions): Promise<void>",
+          "doc": "Set how the app's audio behaves: whether it keeps playing in the background and with the phone locked, and how it meets other apps' audio. In the iOS shell this sets the AVAudioSession category (.playback for background audio) and activates it; on Android the choice decides whether a foreground media service keeps playback alive; on the web (and without the plugin) it does nothing, as a browser decides itself.",
+          "docFull": "Set how the app's audio behaves: whether it keeps playing in the background and with the\nphone locked, and how it meets other apps' audio. In the iOS shell this sets the\n`AVAudioSession` category (`.playback` for background audio) and activates it; on Android the\nchoice decides whether a foreground media service keeps playback alive; on the web (and\nwithout the plugin) it does nothing, as a browser decides itself.\n\nNeeds `denext mobile add background-audio` (which also declares the iOS `audio` background\nmode and Android's media-playback foreground service).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "background (default true) and interruption (default \"exclusive\")."
+            }
+          ],
+          "returns": "A promise that settles once the session is set. It rejects when the OS refuses it.",
+          "examples": [
+            "```ts\nimport { setAudioSession } from \"denext/mobile\";\n\nawait setAudioSession({ background: true, interruption: \"exclusive\" });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "setKeyboardResizeMode",
           "slug": "setKeyboardResizeMode",
           "kind": "function",
@@ -28783,6 +28950,25 @@
           "returns": "A promise that settles once registered.",
           "examples": [
             "```ts\nimport { setNotificationCategories } from \"denext/mobile\";\n\nawait setNotificationCategories([{\n  id: \"message\",\n  actions: [\n    { id: \"reply\", title: \"Reply\", input: { buttonTitle: \"Send\", placeholder: \"Message\" } },\n    { id: \"mark-read\", title: \"Mark as read\" },\n  ],\n}]);\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "setNowPlaying",
+          "slug": "setNowPlaying",
+          "kind": "function",
+          "signature": "setNowPlaying(info: NowPlayingInfo): Promise<void>",
+          "doc": "Show what is playing on the lock screen, in Control Center / the media notification, and on headsets and cars, and offer the controls in info.controls there (they reach onMediaControl). Each call merges info into the last one, so after the first a page sends what changed: { playing: false, position } on pause, a new title for the next track. Calls that only restate the clock (a timeupdate while playing) are not sent on: the OS runs the position on from the rate.",
+          "docFull": "Show what is playing on the lock screen, in Control Center / the media notification, and on\nheadsets and cars, and offer the controls in `info.controls` there (they reach\n{@linkcode onMediaControl}). Each call merges `info` into the last one, so after the first a\npage sends what changed: `{ playing: false, position }` on pause, a new title for the next\ntrack. Calls that only restate the clock (a `timeupdate` while playing) are not sent on: the\nOS runs the position on from the rate.\n\nIn the shell this needs `denext mobile add background-audio`; elsewhere it uses\n`navigator.mediaSession` (nothing happens without it, or during SSR).",
+          "params": [
+            {
+              "name": "info",
+              "doc": "The track, its state and the controls to offer."
+            }
+          ],
+          "returns": "A promise that settles once the OS has it. It rejects only when the native plugin does.",
+          "examples": [
+            "```ts\nimport { onMediaControl, setAudioSession, setNowPlaying } from \"denext/mobile\";\n\nawait setAudioSession({ background: true });\nconst audio = new Audio(\"/episodes/42.mp3\");\nonMediaControl(({ action, position }) => {\n  if (action === \"play\") audio.play();\n  if (action === \"pause\") audio.pause();\n  if (action === \"seek\" && position !== undefined) audio.currentTime = position;\n});\naudio.addEventListener(\"play\", () =>\n  setNowPlaying({ title: \"Episode 42\", artist: \"The Show\", artwork: \"/cover.jpg\",\n    duration: audio.duration, position: audio.currentTime, playing: true }));\naudio.addEventListener(\"pause\", () =>\n  setNowPlaying({ playing: false, position: audio.currentTime }));\n```"
           ],
           "denextOnly": true
         },
@@ -29691,6 +29877,25 @@
           "params": [],
           "returns": "",
           "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useMediaControl",
+          "slug": "useMediaControl",
+          "kind": "function",
+          "signature": "useMediaControl(handler: (event: MediaControlEvent) => void): void",
+          "doc": "Hook form of onMediaControl: handles the OS's media commands while the component is mounted, always with the latest handler.",
+          "docFull": "Hook form of {@linkcode onMediaControl}: handles the OS's media commands while the component\nis mounted, always with the latest `handler`.",
+          "params": [
+            {
+              "name": "handler",
+              "doc": "Called with each command."
+            }
+          ],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useMediaControl } from \"denext/mobile\";\n\nexport function Player({ audio }: { audio: HTMLAudioElement }) {\n  useMediaControl(({ action, position }) => {\n    if (action === \"play\") audio.play();\n    else if (action === \"pause\") audio.pause();\n    else if (action === \"seek\" && position !== undefined) audio.currentTime = position;\n  });\n  return null;\n}\n```"
+          ],
           "denextOnly": true
         },
         {
@@ -34697,6 +34902,42 @@
       "module": "denext/expo/audio",
       "symbols": [
         {
+          "name": "AudioLockScreenOptions",
+          "slug": "AudioLockScreenOptions",
+          "kind": "typeAlias",
+          "signature": "type AudioLockScreenOptions = object",
+          "doc": "Which lock-screen controls to show (expo-audio's shape).",
+          "docFull": "Which lock-screen controls to show (expo-audio's shape).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "AudioMetadata",
+          "slug": "AudioMetadata",
+          "kind": "typeAlias",
+          "signature": "type AudioMetadata = object",
+          "doc": "What the lock screen shows for a player (expo-audio's shape).",
+          "docFull": "What the lock screen shows for a player (expo-audio's shape).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "AudioMode",
+          "slug": "AudioMode",
+          "kind": "typeAlias",
+          "signature": "type AudioMode = object",
+          "doc": "The audio mode (only shouldPlayInBackground and interruptionMode change anything here).",
+          "docFull": "The audio mode (only `shouldPlayInBackground` and `interruptionMode` change anything here).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "AudioModule",
           "slug": "AudioModule",
           "kind": "variable",
@@ -34850,6 +35091,18 @@
           "denextOnly": false
         },
         {
+          "name": "InterruptionMode",
+          "slug": "InterruptionMode",
+          "kind": "typeAlias",
+          "signature": "type InterruptionMode = mixWithOthers | doNotMix | doNotMixPersistent | duckOthers",
+          "doc": "How the app's audio meets other apps' audio.",
+          "docFull": "How the app's audio meets other apps' audio.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "NativeAudioModule",
           "slug": "NativeAudioModule",
           "kind": "class",
@@ -34961,16 +35214,16 @@
           "name": "setAudioModeAsync",
           "slug": "setAudioModeAsync",
           "kind": "function",
-          "signature": "setAudioModeAsync(_mode: Record<string, unknown>): Promise<void>",
-          "doc": "Set the audio session mode: there is no audio session on the web, so nothing changes.",
-          "docFull": "Set the audio session mode: there is no audio session on the web, so nothing changes.",
+          "signature": "setAudioModeAsync(mode: Partial<AudioMode>): Promise<void>",
+          "doc": "Set the audio mode. shouldPlayInBackground and interruptionMode set the shell's audio session through denext/mobile's setAudioSession (denext mobile add background-audio; the iOS .playback category keeps audio playing in the background and with the phone locked); the other fields are accepted. On the web, a browser decides itself, so nothing changes. Lock-screen controls on iOS need a doNotMix mode, as in expo-audio.",
+          "docFull": "Set the audio mode. `shouldPlayInBackground` and `interruptionMode` set the shell's audio\nsession through `denext/mobile`'s {@linkcode setAudioSession} (`denext mobile add\nbackground-audio`; the iOS `.playback` category keeps audio playing in the background and with\nthe phone locked); the other fields are accepted. On the web, a browser decides itself, so\nnothing changes. Lock-screen controls on iOS need a `doNotMix` mode, as in expo-audio.",
           "params": [
             {
-              "name": "_mode",
-              "doc": "The mode."
+              "name": "mode",
+              "doc": "The fields to change."
             }
           ],
-          "returns": "A promise that settles at once.",
+          "returns": "A promise that settles once the session is set.",
           "examples": [],
           "denextOnly": false
         },
@@ -45363,12 +45616,12 @@
           "slug": "launchCameraAsync",
           "kind": "function",
           "signature": "launchCameraAsync(options?: ImagePickerOptions): Promise<ImagePickerResult>",
-          "doc": "Take a picture with the camera.",
-          "docFull": "Take a picture with the camera.",
+          "doc": "Take a picture with the camera, or record a video with mediaTypes: \"videos\".",
+          "docFull": "Take a picture with the camera, or record a video with `mediaTypes: \"videos\"`.",
           "params": [
             {
               "name": "options",
-              "doc": "The quality and base64 options."
+              "doc": "mediaTypes, quality and base64."
             }
           ],
           "returns": "The asset, or canceled: true.",
@@ -45380,15 +45633,15 @@
           "slug": "launchImageLibraryAsync",
           "kind": "function",
           "signature": "launchImageLibraryAsync(options?: ImagePickerOptions): Promise<ImagePickerResult>",
-          "doc": "Pick a picture from the photo library.",
-          "docFull": "Pick a picture from the photo library.",
+          "doc": "Pick photos or videos from the library: one, or several with allowsMultipleSelection.",
+          "docFull": "Pick photos or videos from the library: one, or several with `allowsMultipleSelection`.",
           "params": [
             {
               "name": "options",
-              "doc": "The quality and base64 options."
+              "doc": "mediaTypes, allowsMultipleSelection, selectionLimit, orderedSelection, quality and base64."
             }
           ],
-          "returns": "The asset, or canceled: true.",
+          "returns": "The assets, or canceled: true.",
           "examples": [],
           "denextOnly": false
         },

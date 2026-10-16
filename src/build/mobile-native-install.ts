@@ -69,6 +69,11 @@ import {
   renderSystemIconTemplate,
   SYSTEM_ICON_TEMPLATE_VERSION,
 } from "./system-icon-native-templates.ts";
+import {
+  isPristineNowPlayingTemplate,
+  NOW_PLAYING_TEMPLATE_VERSION,
+  renderNowPlayingTemplate,
+} from "./now-playing-native-templates.ts";
 import { nativeJoin } from "./capacitor-native-dirs.ts";
 import {
   EXPO_SDK_TEMPLATE_VERSIONS,
@@ -94,7 +99,8 @@ export type NativeFeature =
   | "calendar"
   | "contacts"
   | "print"
-  | "brightness";
+  | "brightness"
+  | "background-audio";
 
 /** Every feature, in the order the bridge view controller registers them after OTA. */
 const ALL_FEATURES: readonly NativeFeature[] = [
@@ -114,6 +120,7 @@ const ALL_FEATURES: readonly NativeFeature[] = [
   "contacts",
   "print",
   "brightness",
+  "background-audio",
 ];
 
 /** The report fields every native installer fills, as project-relative paths and notes. */
@@ -208,6 +215,7 @@ const TEMPLATE_GENERATIONS: Readonly<Record<string, number>> = {
   "native-views": NATIVE_VIEWS_TEMPLATE_VERSION,
   storage: STORAGE_TEMPLATE_VERSION,
   ...EXPO_SDK_TEMPLATE_VERSIONS,
+  "now-playing": NOW_PLAYING_TEMPLATE_VERSION,
 };
 
 /** The manual step for a shared file a newer denext wrote that lacks `step`'s registration. */
@@ -267,6 +275,12 @@ export const STORAGE_TEMPLATES: TemplateKind = {
 export const CONTEXT_MENU_TEMPLATES: TemplateKind = {
   render: (template) => renderContextMenuTemplate(template),
   isPristine: (_name, text) => isPristineContextMenuTemplate(text),
+};
+
+/** The background-audio templates (`DenextNowPlaying`): `// denext-now-playing-template:`. */
+export const NOW_PLAYING_TEMPLATES: TemplateKind = {
+  render: (template) => renderNowPlayingTemplate(template),
+  isPristine: (_name, text) => isPristineNowPlayingTemplate(text),
 };
 
 /** The SF Symbol renderer template (`DenextSystemIcon`): `// denext-system-icon-template:`. */
@@ -405,6 +419,7 @@ const IOS_FEATURE_FILES: Readonly<Record<NativeFeature, string>> = {
   contacts: "DenextContactsPlugin.swift",
   print: "DenextPrintPlugin.swift",
   brightness: "DenextBrightnessPlugin.swift",
+  "background-audio": "DenextNowPlayingPlugin.swift",
 };
 
 /** Where the OTA bridge view controller registers its plugin; the others go after it. */
@@ -443,6 +458,9 @@ const IOS_REGISTRATIONS: Readonly<Record<Exclude<NativeFeature, "ota">, string>>
     "        bridge?.registerPluginInstance(DenextPrintPlugin())\n",
   brightness: "        // denext brightness: expo-brightness's change events.\n" +
     "        bridge?.registerPluginInstance(DenextBrightnessPlugin())\n",
+  "background-audio":
+    "        // denext background audio: setNowPlaying() / onMediaControl() in denext/mobile.\n" +
+    "        bridge?.registerPluginInstance(DenextNowPlayingPlugin())\n",
 };
 
 /** The registration lines of the non-OTA features in `features`, in their fixed order. */
@@ -725,6 +743,12 @@ const ANDROID_REGISTRATIONS: Readonly<
     "denext brightness: registers the DenextBrightness plugin (expo-brightness's system\n" +
       "        // brightness)",
   ),
+  "background-audio": pluginRegistration(
+    "dev.denext.nowplaying",
+    "DenextNowPlayingPlugin",
+    "denext background audio: registers the DenextNowPlaying plugin (setNowPlaying in\n" +
+      "        // denext/mobile)",
+  ),
   storage: pluginRegistration(
     "dev.denext.storage",
     "DenextStoragePlugin",
@@ -804,6 +828,7 @@ const FEATURE_ORDER: readonly AndroidFeature[] = [
   "contacts",
   "print",
   "brightness",
+  "background-audio",
   "context-menu",
   "storage",
   "native-modules",

@@ -290,6 +290,9 @@ export const CAPABILITY_PRIVACY: Readonly<Record<string, readonly PrivacyEntry[]
   // UIContextMenuInteraction / UIMenu and UIImage(systemName:) use no required-reason API.
   "context-menu": [],
   "system-icons": [],
+  // AVAudioSession, MPNowPlayingInfoCenter / MPRemoteCommandCenter and the artwork's URLSession
+  // fetch use no required-reason API.
+  "background-audio": [],
   // The fixes themselves are the app's data to declare (Precise Location, when they leave the
   // device); the plugin's own API use is UserDefaults.
   "background-location": [{

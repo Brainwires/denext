@@ -241,6 +241,15 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **Native context menus differ per OS:** iOS lifts a preview only for a bound element
   (`useContextMenu`); Android's `PopupMenu` flattens submenus into groups and draws no icons or
   title; the Deno Desktop menu draws no destructive style or icons.
+- **Background audio (`denext mobile add background-audio`) and `pickMedia`** are compiled and
+  unit-tested, not yet run on a device (background playback, the lock-screen and notification
+  controls, multi-select and video picks). `setAudioSession`'s `interruption` applies on iOS only
+  (Android's WebView takes audio focus itself); the iOS lock screen shows controls only for a
+  non-mixing session; Android starts the media foreground service only with the app in the
+  foreground (Android 12+) and keeps it until `clearNowPlaying()`. expo-audio's other audio-mode
+  fields (silent mode, earpiece routing, background recording) are accepted without effect. A
+  native `selectionLimit` holds on iOS and Android 13+ (elsewhere, and on the web, the result is
+  cut to it); `ordered` needs `@capawesome/capacitor-file-picker` and iOS 15+.
 - **Interactive keyboard dismissal** works at best on the outer scroller; screen readers follow
   the DOM accessibility tree; on Android `allowFontScaling={false}` can't undo WebView text zoom.
 - **`NativeViewSlot` is a native layer, not DOM:** non-scroll layout changes reach it a frame

@@ -422,8 +422,9 @@ survives virtualized-list scroll corrections automatically (the runtime installs
 WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fallbacks: `haptic`,
 `readClipboard`/`writeClipboard`, `share`, `deviceInfo`, `networkStatus`/`useNetworkStatus`,
 `useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web), `readFile`/`writeFile`/
-`listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickDocument`/`scanBarcode` (`null`
-when cancelled), `setQuickActions`/`useQuickAction` (home-screen shortcuts), `openSqlite` (the
+`listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickMedia` (several photos and
+videos)/`pickDocument`/`scanBarcode` (`null` when cancelled), `setQuickActions`/`useQuickAction`
+(home-screen shortcuts), `openSqlite` (the
 app's own `@sqlite.org/sqlite-wasm` on OPFS on the web) and `showContextMenu` /
 `useContextMenu` (native in the shell once `denext mobile add context-menu` installs the plugin:
 `UIMenu` with the lifted preview on iOS, `PopupMenu` on Android; an in-page menu elsewhere,
@@ -470,7 +471,8 @@ core and `offline-screen` writes a page; web fallback where one exists): `keyboa
 prompt | prompt-with-rationale | denied | blocked; `openAppSettings`), `local-notifications` (`scheduleNotification`; `deliveredNotifications` / `removeDeliveredNotifications({ threadId })` list and clear delivered ones, pushes too),
 `biometrics` (`authenticateBiometric`; `secureStore.set(k, v, { requireBiometric: true })`),
 `social-login` (`signInWithApple`/`signInWithGoogle` → `signInNative`), `geolocation` /
-`background-location`, `purchases` (RevenueCat), `app-review`, `app-update`,
+`background-location`, `background-audio` (`setNowPlaying`/`onMediaControl`/`setAudioSession`:
+background playback with lock-screen / notification controls; the Media Session API on the web), `purchases` (RevenueCat), `app-review`, `app-update`,
 `screen-orientation`, `media-library`, `privacy-screen`, `tracking` (ATT), `background`
 (`defineBackgroundTask` in `background/`, no DOM), `restore` (Android process death),
 `accessibility` (`useScreenReader`, `getFontScale` / `applyFontScale` for Dynamic Type),
@@ -2966,6 +2968,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface AppUpdateInfo` — What getAppUpdateInfo reports. Fields a platform does not know are absent.
 - `type AppUpdateOutcome = accepted | cancelled | failed | not-available | not-allowed | info-missing | unsupported` — How an in-app update call ended: the plugin's AppUpdateResultCode, named, plus "unsupported" (not Android, or no plugin).
 - `attachContextMenu(el: ContextMenuElement, items: ContextMenuItems, onSelect: (id: string) => void, options?: ContextMenuTargetOptions): () => void` — Bind a context menu to el: a long press (or a right click) opens it and onSelect gets the chosen item's id. Inside the iOS shell with denext mobile add context-menu it is the system's UIContextMenuInteraction with the lifted element as its preview; see the module docs for the other platforms.
+- `type AudioInterruption = exclusive | mix | duck` — How the app's audio meets other apps' audio, for setAudioSession.
+- `interface AudioSessionOptions` — Options for setAudioSession.
 - `interface AuthCancelOverlayText` — The text of the cancel overlay (both optional; English by default).
 - `authenticateBiometric(options?: BiometricAuthOptions): Promise<void>` — Ask the user to authenticate with Face ID / Touch ID / a fingerprint (or, with allowDeviceCredential, the device passcode).
 - `interface AuthSessionError` — The Error an openAuthSession promise rejects with.
@@ -2995,6 +2999,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `cancelNotification(ids: number | typeOperator): Promise<void>` — Cancel pending local notifications (and remove delivered ones with those ids on Android). An id that is not pending is ignored. Outside the shell it does nothing.
 - `checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResult>` — Check a server for a newer UI and, when it offers a different version, install it.
 - `checkPermission(name: PermissionName): Promise<PermissionState>` — The current status of a permission, without prompting (see PermissionState for what each status means).
+- `clearNowPlaying(): Promise<void>` — Take the now-playing information and the controls off the lock screen (the media notification goes, and on Android the foreground service stops). Call it when playback ends for good, not on pause.
 - `type ClipboardContent = object | object | object` — Rich content for writeClipboard: text, HTML with an optional plain-text alternative (what apps without HTML paste), or a PNG image as base64. An image replaces the clipboard on its own: it cannot carry text alongside.
 - `type ClipboardFormat = text | html | image` — What readClipboard can read.
 - `clipboardFormats(): Promise<string[]>` — The kinds of content on the clipboard, as MIME types ("text/plain", "text/html", "image/png" for any image, "text/uri-list" for files, "text/rtf").
@@ -3095,6 +3100,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `lockOrientation(orientation: OrientationLock): Promise<void>` — Lock the screen to an orientation (a video player going landscape, a scanner staying portrait). Undo it with unlockOrientation.
 - `materialNameFor(sfName: string): string | undefined` — The Material Symbol an SF Symbol name maps to: the .fill suffix becomes the -fill variant (when there is one), and trailing components are dropped until a stem is known (heart.circle.fill → favorite-fill).
 - `interface MediaAlbum` — An album, as getAlbums lists it.
+- `type MediaControlAction = play | pause | stop | next | previous | seek | seekForward | seekBackward` — A command from the lock screen, Control Center, the media notification, a headset or a car: "seek" carries the target position, "seekForward" / "seekBackward" the offset.
+- `interface MediaControlEvent` — A command the OS sent, for onMediaControl.
 - `interface MediaItem` — One item from getRecentMedia.
 - `interface MomentumSafeScrollOptions` — Options for installMomentumSafeScroll and useMomentumSafeScroll (denext/mobile).
 - `moveToTrash(item: ShellItem): Promise<void>` — Move a file or folder to the Trash (macOS), Recycle Bin (Windows) or the freedesktop trash (Linux), so the user can restore it.
@@ -3124,6 +3131,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface NotificationAction` — An action button on a notification.
 - `interface NotificationCategory` — A category: a set of action buttons notifications opt into with categoryId.
 - `interface NotificationChannel` — An Android notification channel.
+- `interface NowPlayingInfo` — What setNowPlaying describes. Every field is optional and merged into the last.
 - `interface OfflineScreenOptions` — Options for installOfflineScreen.
 - `onAppResume(cb: (awayMs: number) => void): () => void` — Call cb each time the page returns to the foreground, with how long it was away in milliseconds.
 - `onBack(handler: BackHandler): () => void` — Register handler for the system back action, on top of the handlers already registered (a LIFO stack, like React Native's BackHandler). On a back action the newest handler runs first; returning true consumes it. When no handler consumes it, the default runs: history back when there is somewhere to go back to, else the app leaves the foreground (@capacitor/app's minimizeApp, exitApp where that is missing).
@@ -3136,6 +3144,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `onLiveActivityPushToStartToken(callback: (token: LiveActivityPushToStartToken) => void): () => void` — Call callback with each push-to-start token ActivityKit issues the app (iOS 17.2 and later), including the current one: a token issued before the first subscriber is kept for it. Send each to your server, which replaces the one it had. Elsewhere it is never called.
 - `onLocalNotificationReceived(callback: (notification: LocalNotification) => void): () => void` — Call callback for each local notification delivered while the app is in the foreground. Outside the shell it does nothing.
 - `onLocalNotificationTapped(callback: (tap: LocalNotificationTap) => void, options?: LocalNotificationTapOptions): () => void` — Call callback when the user taps a local notification (or one of its actions), and by default navigate to its data.path (an in-app path) or data.url (under the deep-link acceptance rules), exactly as onPushTapped does for a push. A tap that cold-started the app is kept by the shell (or the Deno Desktop runtime) for the first listener, so subscribe early. In a Deno Desktop window it needs the notifications capability. Elsewhere it does nothing.
+- `onMediaControl(handler: (event: MediaControlEvent) => void): () => void` — Call handler with each command the OS sends for the now-playing item (lock screen, Control Center, the media notification, headset buttons, a car); returns a function that stops listening. Only the controls setNowPlaying offered are sent. On the web the handlers replace the browser's own media-key behaviour while any is registered.
 - `onNativeEvent<D>(name: string, event: string, handler: (data: D) => void): () => void` — Call handler with each event the native plugin name emits. Does nothing (and returns a no-op) where nativeModule would return null.
 - `onOpenFile(callback: (file: OpenedFile) => void): () => void` — Call callback for every file the OS opens with the app (Deno Desktop).
 - `onOrientationChange(cb: (orientation: Orientation) => void): () => void` — Call cb with the new orientation each time the screen rotates.
@@ -3185,9 +3194,13 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PickedFolder` — A folder pickFolder returned.
 - `type PickedHandle = string` — An opaque handle to a file or folder the user picked in a dialog (pickFolder, pickDocument, saveFile). It is the only authority the filesystem and shell functions accept for a location outside the app's own folders: a result's path is for display only and is never accepted back. A handle lasts for the session (a Deno Desktop launch, or the page's lifetime in a browser); an unknown or expired one rejects with code "forbidden".
 - `interface PickedImage` — A picture from pickImage: one of webPath / dataUrl, plus its format.
+- `interface PickedMedia` — A photo or video from pickMedia.
 - `pickFolder(): Promise<PickedFolder | null>` — Let the user choose a folder.
 - `pickImage(options?: PickImageOptions): Promise<PickedImage | null>` — Take a picture or pick one from the photo library.
 - `interface PickImageOptions` — Options for pickImage.
+- `pickMedia(options?: PickMediaOptions): Promise<PickedMedia[] | null>` — Pick photos and videos: several at once from the library, or one taken / recorded with the camera.
+- `interface PickMediaOptions` — Options for pickMedia.
+- `type PickMediaTypes = images | videos | all` — What pickMedia offers: photos, videos, or both.
 - `preloadSystemIcons(names: ReadonlyArray<string | Pick<SystemIconProps, name | size | weight | scale>>): Promise<void>` — Warm the native SF Symbol cache (in the iOS shell; a no-op elsewhere), so the icons a first screen shows draw without waiting for the bridge. Call it early (before the first render).
 - `prepareUiUpdate(options: OtaCheckOptions): Promise<OtaPrepareResult>` — Download and verify a newer UI WITHOUT switching to it, so the app can ask the user first.
 - `interface PressEvent` — The slice of a pointer / mouse event a bound menu reads.
@@ -3261,8 +3274,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SecureStoreSetResult` — Where SecureStore.set put the value.
 - `interface SentryCapacitorSdk` — The slice of @sentry/capacitor this uses: init(options, siblingInit).
 - `interface SentrySiblingSdk` — The slice of the sibling SDK (@sentry/browser, @sentry/react, …): its init.
+- `setAudioSession(options?: AudioSessionOptions): Promise<void>` — Set how the app's audio behaves: whether it keeps playing in the background and with the phone locked, and how it meets other apps' audio. In the iOS shell this sets the AVAudioSession category (.playback for background audio) and activates it; on Android the choice decides whether a foreground media service keeps playback alive; on the web (and without the plugin) it does nothing, as a browser decides itself.
 - `setKeyboardResizeMode(mode: KeyboardResizeMode): Promise<void>` — Change how the iOS shell resizes the app when the keyboard shows (KeyboardResizeMode), through Keyboard.setResizeMode. @capacitor/keyboard supports it on iOS only, so on Android, on the web and without the plugin this does nothing (Android resizes the WebView itself). The startup mode is plugins.Keyboard.resize in capacitor.config.
 - `setNotificationCategories(categories: typeOperator): Promise<void>` — Register the app's notification categories: the action buttons a notification shows when its categoryId names one. The call **replaces** every category registered before, so pass the full set each time.
+- `setNowPlaying(info: NowPlayingInfo): Promise<void>` — Show what is playing on the lock screen, in Control Center / the media notification, and on headsets and cars, and offer the controls in info.controls there (they reach onMediaControl). Each call merges info into the last one, so after the first a page sends what changed: { playing: false, position } on pause, a new title for the next track. Calls that only restate the clock (a timeupdate while playing) are not sent on: the OS runs the position on from the rate.
 - `setPrivacyScreen(enabled: boolean, options?: PrivacyScreenOptions): Promise<boolean>` — Turn the privacy screen on or off for the whole app.
 - `setQuickActions(actions: typeOperator): Promise<void>` — Replace the app's home-screen quick actions (long-press on the icon).
 - `setSystemBars(options: SystemBarsOptions): Promise<void>` — Style, hide or show the system bars.
@@ -3320,6 +3335,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useLocalNotificationTapped(callback: (tap: LocalNotificationTap) => void, options?: LocalNotificationTapOptions): void` — Hook form of onLocalNotificationTapped: subscribes on mount, unsubscribes on unmount, and always uses the latest callback and options.
 - `useLocation(options?: UseLocationOptions): LocationState` — Hook form of watchPosition: the latest fix and error, watched while mounted and enabled. Changing accuracy or minimumIntervalMs restarts the watch.
 - `interface UseLocationOptions` — Options for useLocation.
+- `useMediaControl(handler: (event: MediaControlEvent) => void): void` — Hook form of onMediaControl: handles the OS's media commands while the component is mounted, always with the latest handler.
 - `useMomentumSafeScroll(options?: MomentumSafeScrollOptions): void` — Hook form of installMomentumSafeScroll: installs on mount and uninstalls when the last mounted hook unmounts. An install made by denext's runtime or directly with installMomentumSafeScroll is left in place. A change to force or settleMs re-runs the hook (it releases its share, then takes a new one); settleMs applies only when that share is the one that installs the shim, since a live install keeps its own options.
 - `useNativeViewSlot(type: string, options?: NativeViewSlotOptions): NativeViewSlotHandle` — Keep a native view of type on a slot element: the hook behind NativeViewSlot. Put ref on the slot (give it a size), overlayRef on the element holding DOM drawn over the view, and, while placement is "embed", render nativeViewEmbedScroller inside it. Render your web fallback while status is "web" or "error".
 - `useNetworkStatus(): NetworkStatus` — Hook form of networkStatus: the current status, updated on every change until unmount. Before mount (and during SSR) it reads { connected: true, connectionType: "unknown" }, so an offline banner never flashes on first paint.
@@ -3728,6 +3744,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/expo/audio`
 
+- `type AudioLockScreenOptions = object` — Which lock-screen controls to show (expo-audio's shape).
+- `type AudioMetadata = object` — What the lock screen shows for a player (expo-audio's shape).
+- `type AudioMode = object` — The audio mode (only shouldPlayInBackground and interruptionMode change anything here).
 - `AudioModule: NativeAudioModule` — expo-audio's native module object (AudioModule), for code that constructs the classes through it (new AudioModule.AudioRecorder(options)) or calls its functions. The classes and the session and permission calls are the ones this module exports; preloading and the notification permission are not provided and reject with a nativeOnly error.
 - `class AudioPlayer` — An audio player over an HTMLAudioElement (created on first use).
 - `interface AudioPlayerOptions` — Options for a player.
@@ -3740,6 +3759,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `class AudioStream` — The type of expo-audio's raw PCM input stream. Streams are not provided here (useAudioStream is not exported): constructing this stand-in throws. Record with AudioRecorder, or read the microphone through Web Audio.
 - `createAudioPlayer(source?: AudioSource, options?: AudioPlayerOptions): AudioPlayer` — A player not tied to a component (call remove() when done).
 - `getRecordingPermissionsAsync(): Promise<PermissionResponse>` — The microphone permission (the browser's).
+- `type InterruptionMode = mixWithOthers | doNotMix | doNotMixPersistent | duckOthers` — How the app's audio meets other apps' audio.
 - `class NativeAudioModule` — The type of expo-audio's native module (what requireNativeModule("ExpoAudio") returns). There is no native module on the web: constructing this stand-in throws. Use the package's functions and AudioPlayer / AudioRecorder instead.
 - `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
 - `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
@@ -3749,7 +3769,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `RecordingPresets: object` — Expo's recording presets.
 - `interface RecordingStatus` — A recording outcome, for the status listener.
 - `requestRecordingPermissionsAsync(): Promise<PermissionResponse>` — Ask for the microphone (a getUserMedia call, stopped at once).
-- `setAudioModeAsync(_mode: Record<string, unknown>): Promise<void>` — Set the audio session mode: there is no audio session on the web, so nothing changes.
+- `setAudioModeAsync(mode: Partial<AudioMode>): Promise<void>` — Set the audio mode. shouldPlayInBackground and interruptionMode set the shell's audio session through denext/mobile's setAudioSession (denext mobile add background-audio; the iOS .playback category keeps audio playing in the background and with the phone locked); the other fields are accepted. On the web, a browser decides itself, so nothing changes. Lock-screen controls on iOS need a doNotMix mode, as in expo-audio.
 - `setIsAudioActiveAsync(_active: boolean): Promise<void>` — Activate or deactivate the audio session: there is none on the web.
 - `interface Subscription` — What Expo's add…Listener functions return.
 - `useAudioPlayer(source?: AudioSource, options?: AudioPlayerOptions): AudioPlayer` — A player for the component's lifetime (released on unmount; a new source replaces the current one).
@@ -4574,8 +4594,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ImagePickerErrorResult` — A pending-result error (never produced here).
 - `interface ImagePickerOptions` — Options for the launch calls.
 - `type ImagePickerResult = object | object` — What a launch call resolves with.
-- `launchCameraAsync(options?: ImagePickerOptions): Promise<ImagePickerResult>` — Take a picture with the camera.
-- `launchImageLibraryAsync(options?: ImagePickerOptions): Promise<ImagePickerResult>` — Pick a picture from the photo library.
+- `launchCameraAsync(options?: ImagePickerOptions): Promise<ImagePickerResult>` — Take a picture with the camera, or record a video with mediaTypes: "videos".
+- `launchImageLibraryAsync(options?: ImagePickerOptions): Promise<ImagePickerResult>` — Pick photos or videos from the library: one, or several with allowsMultipleSelection.
 - `type MediaLibraryPermissionResponse = PermissionResponse & object` — A photo-library permission answer.
 - `type MediaType = images | videos | livePhotos` — A media kind.
 - `enum MediaTypeOptions` — Media kinds (legacy enum).

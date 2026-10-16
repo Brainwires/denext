@@ -4,7 +4,7 @@
 // entitlement and Google's URL scheme, and denext's DenextSettings plugin (behind
 // openAppSettings) written once however many capabilities install it, registered through the
 // shared bridge view controller and MainActivity. Also `accessibility` (the DenextAccessibility
-// plugin, and a 2.10.0 bridge upgraded to register it), `background-location`,
+// plugin, and a 2.10.0 bridge upgraded to register it), `background-location`, `background-audio`,
 // `application`, camera's microphone string, and the web-export precheck before `cap sync`. No
 // test spawns a real process.
 
@@ -644,4 +644,99 @@ Deno.test("mobile add: the web-export check follows webDir, server.url and Capac
       assertEquals(plan.webAssetsMissing, missing);
     });
   }
+});
+
+const IOS_NOW_PLAYING = "ios/App/App/DenextNowPlayingPlugin.swift";
+const ANDROID_NOW_PLAYING = "android/app/src/main/java/dev/denext/nowplaying/";
+
+Deno.test("mobile add background-audio: DenextNowPlaying, the audio mode, the media service", async () => {
+  await inProject({}, async (dir) => {
+    const { run, lines } = fakeRunner();
+    const report = await addMobileCapabilities({
+      capabilities: ["background-audio"],
+      cwd: dir,
+      run,
+    });
+    assertEquals(lines(), [], "no npm package, no cap sync");
+    const android = ["DenextNowPlayingPlugin.java", "DenextNowPlayingService.java"]
+      .map((f) => ANDROID_NOW_PLAYING + f);
+    for (const path of [IOS_NOW_PLAYING, ...android, BRIDGE, MAIN_ACTIVITY, PBXPROJ]) {
+      assert(report.written.includes(path), path);
+    }
+    const ios = await read(dir, IOS_NOW_PLAYING);
+    assert(ios.startsWith("// denext-now-playing-template: 1 sha256="));
+    for (
+      const s of [
+        "MPNowPlayingInfoCenter",
+        "MPRemoteCommandCenter",
+        ".playback",
+        'jsName = "DenextNowPlaying"',
+      ]
+    ) {
+      assertStringIncludes(ios, s);
+    }
+    const plugin = await read(dir, android[0]);
+    assertStringIncludes(plugin, '@CapacitorPlugin(name = "DenextNowPlaying")');
+    assertStringIncludes(plugin, "Notification.MediaStyle");
+    assertStringIncludes(
+      await read(dir, android[1]),
+      "ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK",
+    );
+    assertEquals(
+      await read(dir, BRIDGE),
+      await bridgeViewControllerSource(new Set(["background-audio"])),
+    );
+    assertStringIncludes(
+      await read(dir, BRIDGE),
+      "registerPluginInstance(DenextNowPlayingPlugin())",
+    );
+    assertEquals(
+      await read(dir, MAIN_ACTIVITY),
+      await mainActivitySource("com.example.app", new Set(["background-audio"])),
+    );
+    assertStringIncludes(await read(dir, PBXPROJ), "DenextNowPlayingPlugin.swift");
+    const plist = await read(dir, INFO_PLIST);
+    const modes = plist.slice(plist.indexOf("<key>UIBackgroundModes</key>"));
+    assertStringIncludes(modes.slice(0, modes.indexOf("</array>")), "<string>audio</string>");
+    const manifest = await read(dir, MANIFEST);
+    for (const p of ["FOREGROUND_SERVICE", "FOREGROUND_SERVICE_MEDIA_PLAYBACK"]) {
+      assertStringIncludes(manifest, `android.permission.${p}"`);
+    }
+    assertStringIncludes(
+      manifest,
+      '<service android:name="dev.denext.nowplaying.DenextNowPlayingService" ' +
+        'android:exported="false" android:foregroundServiceType="mediaPlayback" />',
+    );
+    assertStringIncludes(report.plan.notes.join("\n"), "setNowPlaying(");
+    assertStringIncludes(report.plan.manual.join("\n"), "Foreground service permissions");
+    const again = await addMobileCapabilities({
+      capabilities: ["background-audio"],
+      cwd: dir,
+      run,
+    });
+    assertEquals(again.written, []);
+    assertEquals((await read(dir, MANIFEST)).split("DenextNowPlayingService").length, 2);
+  });
+});
+
+Deno.test("mobile add background-audio + accessibility: one bridge and one MainActivity, either order", async () => {
+  const results: string[][] = [];
+  for (
+    const order of [["background-audio", "accessibility"], ["accessibility", "background-audio"]]
+  ) {
+    await inProject({}, async (dir) => {
+      const { run } = fakeRunner();
+      for (const cap of order) await addMobileCapabilities({ capabilities: [cap], cwd: dir, run });
+      results.push([await read(dir, BRIDGE), await read(dir, MAIN_ACTIVITY)]);
+    });
+  }
+  assertEquals(results[0], results[1]);
+  const [bridge, activity] = results[0];
+  assertEquals(
+    bridge,
+    await bridgeViewControllerSource(new Set(["accessibility", "background-audio"])),
+  );
+  assertStringIncludes(activity, "registerPlugin(DenextNowPlayingPlugin.class);");
+  assertStringIncludes(activity, "import dev.denext.nowplaying.DenextNowPlayingPlugin;");
+  assertStringIncludes(activity, "registerPlugin(DenextAccessibilityPlugin.class);");
 });

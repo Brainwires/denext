@@ -58,9 +58,12 @@
 - **`denext migrate --from expo` advice** for the most-used native-only SDKs
   (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`), pointing at
   the [native SDK recipes](https://denext.dev/docs/native-sdk-recipes).
-- **Capabilities:** background audio with lock-screen controls, multi-select and video image
-  picking, file transfer with progress, a notification service extension and badges, SQLite
-  encryption, a PowerSync recipe.
+- **Capabilities:** file transfer with progress, a notification service extension and badges,
+  SQLite encryption, a PowerSync recipe.
+- **On a device:** background audio with the lock-screen / notification controls
+  (`denext mobile add background-audio`: playback with the app backgrounded and the phone locked,
+  the controls reaching the page, the Android foreground service), and `pickMedia`'s
+  multi-select and video picks, on an iPhone and an Android phone.
 - **React Native 0.88.0 final in the parity ledger:** the baselines are captured from
   `0.88.0-rc.5` (97 expected names, no gaps; the lists too). 0.88.0 was published on
   2026-10-15 and this machine's npm installs a version only two days after its release, so move

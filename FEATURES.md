@@ -557,11 +557,14 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `useNetworkStatus`, `useKeepAwake`, `hideSplash`, `secureStore` (Keychain /
   Keystore; IndexedDB, not secret, on the web), the file API (`readFile` /
   `writeFile` / `deleteFile` / `listDir` / `downloadToFile`; OPFS on the web),
-  `pickImage` / `pickDocument`, `scanBarcode` (`BarcodeDetector` on the web),
+  `pickImage` / `pickMedia` (several photos and videos, or a recorded video) /
+  `pickDocument`, `scanBarcode` (`BarcodeDetector` on the web),
   `setQuickActions` / `onQuickAction`, `openSqlite` / `deleteSqlite`
   (`@capacitor-community/sqlite`; the app's `@sqlite.org/sqlite-wasm` on OPFS on
-  the web), and `showContextMenu` (an accessible in-page menu, or an
-  app-registered native plugin). Each calls its official Capacitor plugin in the
+  the web), `showContextMenu` (an accessible in-page menu, or an
+  app-registered native plugin), and background audio with lock-screen controls
+  (`setNowPlaying` / `onMediaControl` / `setAudioSession`; the Media Session API
+  on the web). Each calls its official Capacitor plugin in the
   shell.
 - **Deep links, push and OAuth sheets** — `onDeepLink` / `useDeepLink` (cold and
   warm start, filtered by `accept`, routed once); `requestPushPermission` /

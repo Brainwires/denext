@@ -115,7 +115,11 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     ],
     notes: "Playback over HTMLAudioElement, recording over MediaRecorder (WebM/MP4, metering " +
       "from a Web Audio analyser; the recorder state's fileSize counts the bytes delivered; " +
-      "fileName is ignored). Audio-session calls resolve without effect. Playlists and " +
+      "fileName is ignored). setAudioModeAsync's shouldPlayInBackground / interruptionMode set " +
+      "the shell's audio session and setActiveForLockScreen / updateLockScreenMetadata / " +
+      "clearLockScreenControls drive the lock screen, both over denext/mobile's now-playing API " +
+      "(`denext mobile add background-audio`; the Media Session API on the web); the other " +
+      "audio-mode fields and setIsAudioActiveAsync have no effect. Playlists and " +
       "PCM streams are not provided: the AudioPlaylist and AudioStream classes (and the " +
       "NativeAudioModule type) are stand-ins that throw when constructed. `AudioModule` holds " +
       "the classes and the session and permission calls; its preload and notification-permission " +
@@ -552,8 +556,11 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "UIImagePickerPresentationStyle",
       "UIImagePickerPreferredAssetRepresentationMode",
     ],
-    notes: "One image per pick, no crop editor, no video. The picker asks for access itself, " +
-      "so the permission calls report granted.",
+    notes: "Images and videos (mediaTypes), several per pick with allowsMultipleSelection / " +
+      "selectionLimit, orderedSelection through @capawesome/capacitor-file-picker (iOS 15+), a " +
+      "recorded video from launchCameraAsync; video assets carry duration in ms. No crop " +
+      "editor, no live-photo pairing, no EXIF. The picker asks for access itself, so the " +
+      "permission calls report granted.",
   },
   "expo-intent-launcher": {
     module: "./intent-launcher.ts",

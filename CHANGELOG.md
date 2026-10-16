@@ -10,6 +10,29 @@ and this project adheres to
 
 ### Added
 
+- **Background audio with lock-screen controls (`denext mobile add background-audio`).**
+  `setNowPlaying({ title, artist, album, artwork, duration, position, playing, controls })`,
+  `clearNowPlaying()`, `onMediaControl(handler)` / `useMediaControl` and
+  `setAudioSession({ background, interruption })` from `denext/mobile` keep the page's audio
+  playing with the app backgrounded or the phone locked, show it on the lock screen, in Control
+  Center and in the media notification, and route play / pause / next / previous / seek back to
+  the page. In the shell, denext's `DenextNowPlaying` plugin: an `AVAudioSession` in `.playback`
+  with `MPNowPlayingInfoCenter` and `MPRemoteCommandCenter` (plus `UIBackgroundModes: audio`) on
+  iOS; a `MediaSession`, a media-style notification and a `mediaPlayback` foreground service
+  (`FOREGROUND_SERVICE_MEDIA_PLAYBACK`) on Android. Elsewhere, the Media Session API. In React
+  Native mode, expo-audio's `setAudioModeAsync({ shouldPlayInBackground, interruptionMode })`
+  and `AudioPlayer.setActiveForLockScreen` / `updateLockScreenMetadata` /
+  `clearLockScreenControls` run on it.
+- **Multi-select and video picks: `pickMedia` in `denext/mobile`.**
+  `pickMedia({ mediaTypes: "images" | "videos" | "all", multiple, selectionLimit, ordered })`
+  picks several photos and videos from the library (the Camera plugin's `chooseFromGallery`;
+  `@capawesome/capacitor-file-picker` for numbered, ordered picks) or records one video
+  (`source: "camera"`), and is a `multiple` file input on the web. Each item carries its type,
+  MIME type, size, dimensions and a video's duration where the picker reports them.
+  `expo-image-picker`'s `launchImageLibraryAsync` now honours `allowsMultipleSelection`,
+  `selectionLimit`, `mediaTypes` and `orderedSelection`, and `launchCameraAsync` records a video
+  with `mediaTypes: "videos"` (video assets carry `duration` in ms, web assets the `File`).
+
 - **`AccessibilityInfo.isBoldTextEnabled()` / `isGrayscaleEnabled()` read the OS** in React
   Native mode, with their `boldTextChanged` / `grayscaleChanged` events. The `DenextAccessibility`
   plugin (`denext mobile add accessibility`, template generation 3; re-run it to upgrade an
