@@ -35,6 +35,7 @@ import { denoExecutable, frameworkRoot, minDepAgeArgs } from "../build/bundle.ts
 import {
   configAnchorsResolution,
   ensureFrameworkNodeModules,
+  frameworkResolvableKeys,
   readConfig,
   writeMergedModuleConfig,
 } from "../build/module-config.ts";
@@ -386,7 +387,8 @@ async function reexecWithConfig(
 /**
  * Re-exec module commands with a merged framework+app config when the project has
  * its own `deno.json` that anchors module resolution to itself — a manual
- * `node_modules` or a `npm:` import (server-side npm deps like an ORM driver).
+ * `node_modules`, a `npm:` import (server-side npm deps like an ORM driver), or an import-map
+ * entry the framework's config does not resolve (an app-only `"@gleam/"` prefix).
  *
  * Deno resolves a locally-run `cli.ts`'s imports against the framework's config, so
  * a bare `import "drizzle-orm"` in an app's server module would otherwise be "not a
@@ -400,12 +402,11 @@ async function maybeReexecForModules(dir: string): Promise<boolean> {
   const paths = await resolveProject(dir);
   if (paths.configPath === join(frameworkRoot(), "deno.json")) return false;
   const appCfg = await readConfig(paths.configPath);
-  if (!configAnchorsResolution(appCfg)) return false;
-  const configPath = await writeMergedModuleConfig(
-    paths.outDir,
-    paths.configPath,
-    join(frameworkRoot(), "deno.json"),
-  );
+  const frameworkConfig = join(frameworkRoot(), "deno.json");
+  if (!configAnchorsResolution(appCfg, await frameworkResolvableKeys(frameworkConfig))) {
+    return false;
+  }
+  const configPath = await writeMergedModuleConfig(paths.outDir, paths.configPath, frameworkConfig);
   // Manual mode resolves the framework's own npm build deps (esbuild, …) from the
   // node_modules beside the merged config, which the app's tree does not carry;
   // supply the framework half. (A `npm:`-anchored app without a manual dir resolves

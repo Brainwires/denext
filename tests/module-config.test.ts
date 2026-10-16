@@ -8,6 +8,7 @@ import { join } from "@std/path";
 import {
   acquireFwdepsInstall,
   configAnchorsResolution,
+  frameworkResolvableKeys,
   mergeModuleConfig,
   readConfig,
   readImportsAbsolute,
@@ -87,6 +88,95 @@ Deno.test("configAnchorsResolution: manual node_modules or npm: imports anchor",
   assert(
     !configAnchorsResolution({ imports: { denext: "../../mod.ts", "@db/pg": "jsr:@db/postgres" } }),
   );
+});
+
+Deno.test("configAnchorsResolution: an import-map key the framework config lacks anchors", () => {
+  // What a source checkout's framework config resolves: its map, a `jsr:` / `npm:` package's
+  // subpaths, a `"x/"` prefix, and its workspace packages (by name, with subpaths).
+  const fw = {
+    exact: new Set(["denext", "denext/server", "@std/path", "lib/", "@denext/htmx"]),
+    prefixes: ["@std/path/", "lib/", "@denext/htmx/"],
+  };
+  // An app-only prefix (a Gleam build's `@gleam/`) or bare key: the merged config is needed,
+  // or an app server module importing it is "not in import map" (B2).
+  assert(configAnchorsResolution({ imports: { "@gleam/": "./gleam/build/dev/javascript/" } }, fw));
+  assert(configAnchorsResolution({ imports: { "@db/pg": "jsr:@db/postgres" } }, fw));
+  assert(
+    configAnchorsResolution({ imports: { denext: "../mod.ts", "denext/mobile": "../m.ts" } }, fw),
+  );
+  // Keys the framework config resolves keep a plain project off the re-exec (startup cost).
+  assert(!configAnchorsResolution({ imports: { denext: "../../mod.ts" } }, fw));
+  assert(
+    !configAnchorsResolution({
+      imports: { "denext/server": "../s.ts", "@std/path/posix": "jsr:@std/path/posix" },
+    }, fw),
+  );
+  assert(
+    !configAnchorsResolution(
+      { imports: { "lib/x.ts": "./x.ts", "@denext/htmx/types": "./t.ts" } },
+      fw,
+    ),
+  );
+  assert(!configAnchorsResolution({}, fw));
+  // Without the framework's keys only the manual / npm: rule applies (the CSS stage's check).
+  assert(!configAnchorsResolution({ imports: { "@gleam/": "./gleam/" } }));
+});
+
+Deno.test("frameworkResolvableKeys: the map's keys, package subpaths and workspace package names", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_fwkeys_" });
+  try {
+    await Deno.mkdir(join(dir, "packages", "htmx"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "packages", "htmx", "deno.json"),
+      JSON.stringify({ name: "@denext/htmx", exports: "./mod.ts" }),
+    );
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      `{ // JSONC, like the real one may be
+        "name": "@denext/denext",
+        "workspace": ["./packages/htmx", "./packages/missing"],
+        "imports": {
+          "denext": "./mod.ts",
+          "denext/": "./src/",
+          "@std/path": "jsr:@std/path@^1",
+          "esbuild": "npm:esbuild@0.25.5",
+        },
+      }`,
+    );
+    const fw = await frameworkResolvableKeys(join(dir, "deno.json"));
+    assertEquals([...fw.exact].sort(), [
+      "@denext/denext",
+      "@denext/htmx",
+      "@std/path",
+      "denext",
+      "denext/",
+      "esbuild",
+    ]);
+    assertEquals([...fw.prefixes].sort(), [
+      "@denext/denext/",
+      "@denext/htmx/",
+      "@std/path/",
+      "denext/",
+      "esbuild/",
+    ]);
+    assert(
+      !configAnchorsResolution({ imports: { "denext/x": "./x.ts", "@denext/htmx": "./h" } }, fw),
+    );
+    assert(configAnchorsResolution({ imports: { "@gleam/": "./gleam/" } }, fw));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the source checkout's framework config does not anchor the repo's plain examples", async () => {
+  // The startup-cost guard: an example that maps only what the framework config resolves must
+  // not start re-exec'ing. examples/hello maps denext's own entries and nothing else.
+  const root = new URL("..", import.meta.url).pathname;
+  const fw = await frameworkResolvableKeys(join(root, "deno.json"));
+  for (const example of ["hello", "htmx", "pages-router", "typed-api"]) {
+    const cfg = await readConfig(join(root, "examples", example, "deno.json"));
+    assertEquals(configAnchorsResolution(cfg, fw), false, `examples/${example} would re-exec`);
+  }
 });
 
 Deno.test("mergeModuleConfig: app imports win on overlap; passthrough of compilerOptions + nodeModulesDir", () => {

@@ -34,11 +34,67 @@ export interface DenoConfigView {
  * project (relative/jsr imports, `nodeModulesDir: "auto"` or unset) does NOT — Deno
  * resolves it under the framework config unchanged.
  *
+ * Given `frameworkKeys` (from {@linkcode frameworkResolvableKeys}), an import-map entry the
+ * framework's config cannot resolve anchors too: an app-only key (`"@gleam/": "./gleam/…"`,
+ * `"@db/pg": "jsr:…"`) that an app server module imports is otherwise "not in import map"
+ * under a source checkout's CLI. Keys the framework config already resolves — its own map,
+ * a `jsr:`/`npm:` entry's subpaths, its workspace packages — keep the plain project on the
+ * no-re-exec path, so it pays no second process at startup.
+ *
  * @param appCfg The app's parsed deno config.
+ * @param frameworkKeys What the framework config resolves; omit to check `manual` / `npm:` only.
  */
-export function configAnchorsResolution(appCfg: DenoConfigView): boolean {
+export function configAnchorsResolution(
+  appCfg: DenoConfigView,
+  frameworkKeys?: FrameworkKeys,
+): boolean {
   if (appCfg.nodeModulesDir === "manual") return true;
-  return Object.values(appCfg.imports ?? {}).some((v) => String(v).startsWith("npm:"));
+  const imports = appCfg.imports ?? {};
+  if (Object.values(imports).some((v) => String(v).startsWith("npm:"))) return true;
+  if (!frameworkKeys) return false;
+  return Object.keys(imports).some((key) => !resolvesUnder(key, frameworkKeys));
+}
+
+/** The bare specifiers a framework config resolves: exact keys and key prefixes (ending "/"). */
+export interface FrameworkKeys {
+  /** Import-map keys matched exactly. */
+  exact: ReadonlySet<string>;
+  /** Prefixes whose every subpath resolves (`"@std/path/"` for a `jsr:` mapping, a workspace package). */
+  prefixes: readonly string[];
+}
+
+/** Whether `key` resolves under the framework config described by `fw`. */
+function resolvesUnder(key: string, fw: FrameworkKeys): boolean {
+  return fw.exact.has(key) || fw.prefixes.some((p) => key.startsWith(p));
+}
+
+/**
+ * What a framework config at `configPath` resolves by itself: its import-map keys (a `"x/"`
+ * prefix key covers its subpaths, and so does a `jsr:` / `npm:` package mapping), plus its own
+ * package name and its workspace's (a source checkout resolves `@denext/htmx` through the
+ * workspace, unmapped).
+ */
+export async function frameworkResolvableKeys(configPath: string): Promise<FrameworkKeys> {
+  const cfg = await readConfig(configPath) as DenoConfigView & { workspace?: unknown };
+  const exact = new Set<string>();
+  const prefixes: string[] = [];
+  for (const [key, value] of Object.entries(cfg.imports ?? {})) {
+    exact.add(key);
+    if (key.endsWith("/")) prefixes.push(key);
+    else if (/^(jsr|npm):/.test(String(value))) prefixes.push(key + "/");
+  }
+  const names: unknown[] = [(cfg as { name?: unknown }).name];
+  const members = Array.isArray(cfg.workspace) ? cfg.workspace : [];
+  for (const member of members) {
+    const memberCfg = await readConfig(join(dirname(configPath), String(member), "deno.json"));
+    names.push((memberCfg as { name?: unknown }).name);
+  }
+  for (const name of names) {
+    if (typeof name !== "string") continue;
+    exact.add(name);
+    prefixes.push(name + "/");
+  }
+  return { exact, prefixes };
 }
 
 /**

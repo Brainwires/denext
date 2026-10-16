@@ -216,6 +216,14 @@ and this project adheres to
   `<br>`) is reported as a hydration mismatch and replaced. A fresh client mount, a keyed move and
   a switch to `dangerouslySetInnerHTML` no longer drop the injected markup either, and a re-render
   with the same `__html` leaves its nodes alone.
+- **A source checkout's `denext start` resolves an app's own import-map entries.** From a
+  checkout (`deno run -A <denext>/cli.ts start`), a server module importing a specifier only the
+  app's `deno.json` maps, such as a `"@gleam/"` prefix for compiled Gleam, failed with "not a
+  dependency and not in import map": the CLI switched to the merged framework and app config only
+  for a manual `node_modules` or an `npm:` import. Any app entry the framework's config does not
+  resolve now switches too. An app that maps only what the framework resolves (denext's own
+  entries, a `jsr:` / `npm:` package the framework maps, a workspace package) still starts in one
+  process.
 - **A library's `"use client"` components hydrate under `nodeResolve: false` too.** The server
   bundle now resolves the packages on the import paths to a library's own `"use client"` /
   `"use server"` files from `node_modules`, the way the build found those files, so the component
