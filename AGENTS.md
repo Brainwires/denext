@@ -820,6 +820,18 @@ driver is `s3()`, a one-shot `denext job migrate`, `.env.example` listing every 
 `--postgres`/`--no-postgres`, `--pgvector`, `--storage`, `--migrate`, `--expose-db`, `--dev`,
 `--dry-run`, `--force`). `denext routes [--json]` lists the app's pages and API routes.
 
+**Deploying (adapters):** `denext build` writes `.denext/deploy-manifest.json` (the typed
+`DeployManifest` from `denext/deploy` / `denext/plugin-kit`: routes as `static` / `isr` /
+`dynamic` / `route-handler` / `middleware`, assets + `Cache-Control`, the start command, jobs and
+schedules, services, env vars, permissions, images, `--compile` output). `deploy: { adapter:
+fly({ app }) }` in `denext.config.ts` runs that adapter's `prepare` after every build; presets from
+`denext/deploy`: `docker()`, `fly()`, `denoDeploy()` (a `denext.deploy.ts` entry: `Deno.cron` at
+top level via `registerCronSchedules`, cache on Deno KV), `genericHost()` (systemd + nginx/Caddy)
+and `staticHost()` (refuses, listing every route that needs a server). `denext deploy prepare
+[--preset <name>] [--dry-run]` writes the files; `denext deploy` also pushes (`FLY_API_TOKEN` /
+`DENO_DEPLOY_TOKEN` from the environment only). A plugin adds one with `addDeployAdapter`. Deno's
+`deno deploy` is `denext deno deploy`. Docs: https://denext.dev/docs/deploy#deploy-adapters
+
 **A scheduled / background job (cron):** put it in `jobs/<name>.ts`; schedule it in
 `denext.config.ts` (`scheduledJobs`) or per-job; run it on demand with `runJob(name)`
 or `denext job <name>`. Uses `Deno.cron` where available (Deno Deploy), else a userland
@@ -1029,7 +1041,7 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   current config / `deno.json` / `deno.lock`; one notice). `task` is Deno's; background work is
   `denext job`. `info <module>` is
   Deno's info; `audit` runs denext's checks and `deno audit`. For Deno's meaning of a verb denext
-  keeps (`test`, `fmt`, `upgrade`, `desktop`, `create`, `init`, `completions`): `denext deno <verb>`.
+  keeps (`test`, `fmt`, `upgrade`, `desktop`, `deploy`, `create`, `init`, `completions`): `denext deno <verb>`.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
   (CI-enforced). esbuild is not an npm import either: denext vendors esbuild's JS API and runs the
   esbuild 0.25.5 binary its Deno toolchain ships (verified by SHA-256), else

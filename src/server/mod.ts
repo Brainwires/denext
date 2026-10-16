@@ -387,7 +387,15 @@ export type {
 export type { RenderScope } from "../runtime/render-scope.ts";
 // Scheduled/background jobs: define one in `jobs/<name>.ts`, schedule it via `scheduledJobs`
 // in denext.config.ts or a per-job `schedule`, and/or run it on demand (`runJob` / `denext job`).
-export { defineJob, getJob, isJob, jobNames, registerJob, runJob } from "./jobs.ts";
+export {
+  defineJob,
+  getJob,
+  isJob,
+  jobNames,
+  registerCronSchedules,
+  registerJob,
+  runJob,
+} from "./jobs.ts";
 export type { Job, JobBackoff, JobContext, JobDefinition, JobRetry, JobRunRecord } from "./jobs.ts";
 export { sqliteJobHistoryStore } from "./job-history.ts";
 

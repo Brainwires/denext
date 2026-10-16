@@ -91,9 +91,6 @@ Each is documented as a manual recipe today (the
 [multi-instance](https://denext.dev/docs/multi-instance) and
 [route handler recipes](https://denext.dev/docs/route-handler-recipes) pages).
 
-- **Deploy adapter API and presets:** a typed build manifest and a pluggable adapter seam
-  (static export, Deno Deploy, Node, Docker; a documented seam for Workers / Vercel), on the
-  plugin `addBuildStep` seam.
 - **Generated clients in other languages** from the OpenAPI / GraphQL documents (TypeScript is
   served by `denext openapi types`).
 

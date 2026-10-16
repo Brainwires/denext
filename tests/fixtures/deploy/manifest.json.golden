@@ -1,0 +1,212 @@
+{
+  "version": 1,
+  "denext": "<version>",
+  "mode": "app",
+  "basePath": "",
+  "trailingSlash": false,
+  "i18n": null,
+  "routes": [
+    {
+      "path": "*",
+      "kind": "middleware",
+      "source": "middleware.ts",
+      "reason": "runs before every matched request",
+      "matcher": [
+        "/account/:path*",
+        "/api/:path*"
+      ]
+    },
+    {
+      "path": "/",
+      "kind": "static",
+      "source": "app/page.tsx"
+    },
+    {
+      "path": "/account",
+      "kind": "dynamic",
+      "source": "app/account/page.tsx",
+      "reason": "calls cookies()"
+    },
+    {
+      "path": "/api/hello",
+      "kind": "route-handler",
+      "source": "app/api/hello/route.ts",
+      "reason": "a route handler",
+      "methods": [
+        "GET",
+        "POST"
+      ]
+    },
+    {
+      "path": "/blog/[slug]",
+      "kind": "static",
+      "source": "app/blog/[slug]/page.tsx"
+    },
+    {
+      "path": "/feed",
+      "kind": "isr",
+      "source": "app/feed/page.tsx",
+      "reason": "export const revalidate",
+      "revalidate": 60
+    },
+    {
+      "path": "/live",
+      "kind": "dynamic",
+      "source": "app/live/page.tsx",
+      "reason": "export const dynamic = \"force-dynamic\""
+    },
+    {
+      "path": "/sitemap.xml",
+      "kind": "route-handler",
+      "source": "app/sitemap.ts",
+      "reason": "a metadata route, rendered by the server",
+      "metadata": true
+    },
+    {
+      "path": "/users/[id]",
+      "kind": "dynamic",
+      "source": "app/users/[id]/page.tsx",
+      "reason": "a dynamic segment without generateStaticParams"
+    }
+  ],
+  "assets": [
+    {
+      "urlPrefix": "/_denext/client/",
+      "dir": ".denext/client",
+      "cacheControl": "public, max-age=31536000, immutable",
+      "immutable": true,
+      "files": [
+        "page-AB12CD34.js"
+      ]
+    },
+    {
+      "urlPrefix": "/_denext/fonts/",
+      "dir": ".denext/client/_fonts",
+      "cacheControl": "public, max-age=31536000, immutable",
+      "immutable": true,
+      "files": [
+        "inter-1234.woff2"
+      ]
+    },
+    {
+      "urlPrefix": "/",
+      "dir": ".denext/emitted",
+      "cacheControl": "public, max-age=0, must-revalidate",
+      "immutable": false,
+      "files": [
+        "licenses.json"
+      ]
+    },
+    {
+      "urlPrefix": "/",
+      "dir": "public",
+      "cacheControl": "public, max-age=0, must-revalidate",
+      "immutable": false,
+      "files": [
+        "robots-extra.txt"
+      ]
+    }
+  ],
+  "server": {
+    "command": [
+      "deno",
+      "run",
+      "--allow-net",
+      "--allow-read",
+      "--allow-env",
+      "--allow-write=.denext",
+      "jsr:@denext/denext@^4.1.0/cli",
+      "start",
+      "."
+    ],
+    "port": 3000,
+    "portEnv": "PORT",
+    "healthPath": "/_denext/health",
+    "drain": {
+      "ms": 10000,
+      "env": "DENEXT_SHUTDOWN_DRAIN_MS"
+    },
+    "buildDir": ".denext"
+  },
+  "jobs": [
+    {
+      "name": "cleanup",
+      "source": "jobs/cleanup.ts"
+    },
+    {
+      "name": "digest",
+      "source": "jobs/digest.ts"
+    }
+  ],
+  "schedules": [
+    {
+      "cron": "0 0 * * 1",
+      "job": "digest",
+      "from": "config"
+    },
+    {
+      "cron": "0 3 * * *",
+      "job": "cleanup",
+      "from": "config"
+    }
+  ],
+  "services": [
+    {
+      "name": "mailer",
+      "source": "services/mailer.ts"
+    }
+  ],
+  "env": [
+    {
+      "name": "DATABASE_URL",
+      "required": true,
+      "public": false,
+      "sources": [
+        "lib/db.ts"
+      ]
+    },
+    {
+      "name": "DENEXT_PUBLIC_SITE_NAME",
+      "required": false,
+      "public": true,
+      "sources": [
+        "lib/db.ts"
+      ]
+    },
+    {
+      "name": "GREETING",
+      "required": false,
+      "public": false,
+      "sources": [
+        "app/api/hello/route.ts"
+      ]
+    }
+  ],
+  "permissions": {
+    "flags": [
+      "--allow-net",
+      "--allow-env",
+      "--allow-read",
+      "--allow-write=.denext,data"
+    ],
+    "allowAll": false
+  },
+  "images": {
+    "optimizer": true,
+    "endpoint": "/_denext/image",
+    "remoteHosts": [
+      "cdn.example.com",
+      "images.example.com"
+    ]
+  },
+  "cache": {
+    "store": "default"
+  },
+  "compile": {
+    "output": "dist/app",
+    "target": "x86_64-unknown-linux-gnu",
+    "permissions": [
+      "--allow-net"
+    ]
+  }
+}

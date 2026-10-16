@@ -13,6 +13,7 @@ import { startProdServer } from "../../build/prod-server.ts";
 import { build } from "../../build/build.ts";
 import { COMPILE_TARGETS, compileApp } from "../../build/compile-app.ts";
 import { staticExport } from "../../build/export.ts";
+import { deployAfterBuild } from "../../build/deploy-flow.ts";
 import { applyPatchesAtBoot } from "./patch.ts";
 import { lanBanner, pickLanAddress } from "../../build/dev-server/lan.ts";
 import { devSessionToken, withDevTokenParam } from "../../build/dev-server/dev-token.ts";
@@ -173,7 +174,8 @@ export const buildCommand: CommandSpec = {
       help: "With --compile: the executable's path (default: dist/<name>)",
     },
   ],
-  usage:
+  usage: "Writes .denext/deploy-manifest.json and runs denext.config's deploy.adapter (its\n" +
+    "prepare) after the build: https://denext.dev/docs/deploy#deploy-adapters\n\n" +
     "--compile builds, then embeds the build, public/, the server modules, jobs/, services/ and the\n" +
     "migrations into one executable that serves the app as `denext start` does (`./app`,\n" +
     "`./app job <name>`, `./app db migrate`). It bakes the Docker image's least-privilege\n" +
@@ -189,16 +191,21 @@ export const buildCommand: CommandSpec = {
     const { dir } = await appProject(ctx);
     console.log(`\n  denext build${compile ? " --compile" : ""}  ▸  ${dir}\n`);
     await runBuildStep(() => build(dir), "build");
-    if (!compile) return;
-    const result = await runBuildStep(
-      () =>
-        compileApp(dir, {
-          target: ctx.flags.target as string | undefined,
-          output: ctx.flags.output as string | undefined,
-        }),
-      "compile",
+    const target = ctx.flags.target as string | undefined;
+    const result = compile
+      ? await runBuildStep(
+        () => compileApp(dir, { target, output: ctx.flags.output as string | undefined }),
+        "compile",
+      )
+      : undefined;
+    if (result) {
+      console.log(`\n  Compiled ${result.output}\n  Permissions: ${result.permissions.join(" ")}`);
+    }
+    // The deploy manifest (.denext/deploy-manifest.json) and the configured adapter's prepare.
+    await runBuildStep(
+      () => deployAfterBuild(dir, result && { ...result, ...(target ? { target } : {}) }),
+      "deploy manifest",
     );
-    console.log(`\n  Compiled ${result.output}\n  Permissions: ${result.permissions.join(" ")}`);
   },
 };
 

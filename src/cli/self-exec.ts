@@ -325,6 +325,7 @@ const TOOLCHAIN_VERBS: ReadonlySet<string> = new Set([
   "build",
   "export",
   "start",
+  "deploy",
   "test",
   "check",
   "job",

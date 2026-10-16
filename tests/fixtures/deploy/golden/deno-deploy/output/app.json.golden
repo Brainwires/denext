@@ -1,0 +1,25 @@
+{
+  "runtimeMode": "dynamic",
+  "installCommand": "deno install",
+  "buildCommand": "deno task build",
+  "entrypoint": "denext.deploy.ts",
+  "create": [
+    "deno",
+    "deploy",
+    "create",
+    "--source",
+    "local",
+    "--org",
+    "acme",
+    "--app",
+    "shop",
+    "--runtime-mode",
+    "dynamic",
+    "--entrypoint",
+    "denext.deploy.ts",
+    "--install-command",
+    "deno install",
+    "--build-command",
+    "deno task build"
+  ]
+}

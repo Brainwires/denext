@@ -51,7 +51,7 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
     "name": "build",
     "summary": "Build for production",
     "usage":
-      "--compile builds, then embeds the build, public/, the server modules, jobs/, services/ and the\nmigrations into one executable that serves the app as `denext start` does (`./app`,\n`./app job <name>`, `./app db migrate`). It bakes the Docker image's least-privilege\n--allow-* plus denext.config's compile.permissions, and embeds no .env file: the binary\nreads its environment at run time. Docs: https://denext.dev/docs/deployment-targets",
+      "Writes .denext/deploy-manifest.json and runs denext.config's deploy.adapter (its\nprepare) after the build: https://denext.dev/docs/deploy#deploy-adapters\n\n--compile builds, then embeds the build, public/, the server modules, jobs/, services/ and the\nmigrations into one executable that serves the app as `denext start` does (`./app`,\n`./app job <name>`, `./app db migrate`). It bakes the Docker image's least-privilege\n--allow-* plus denext.config's compile.permissions, and embeds no .env file: the binary\nreads its environment at run time. Docs: https://denext.dev/docs/deployment-targets",
     "flags": [{
       "name": "raw",
       "type": "boolean",
@@ -118,6 +118,32 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
     "loadsModules": true,
     "envTier": "production",
   }, () => importCliModule("./commands/serve.ts").then((m) => m.startCommand as CommandSpec)],
+  [{
+    "name": "deploy",
+    "summary": "Prepare (and push) the app for a deploy target: docker, fly, deno-deploy, …",
+    "usage":
+      "Usage: denext deploy [prepare] [dir] [--preset <name>] [--dry-run] [--force]\n\n  prepare  Run the deploy adapter's prepare: write the target's files from the deploy\n           manifest (.denext/deploy-manifest.json) the last `denext build` wrote\n  (none)   prepare, then push with the target's CLI — fly (flyctl + FLY_API_TOKEN),\n           deno-deploy (deno deploy + DENO_DEPLOY_TOKEN), docker (docker build [+ push])\n\nThe adapter is denext.config's `deploy.adapter` (presets in denext/deploy), else one a\nplugin contributed, else --preset: docker | fly | deno-deploy | generic-host | static.\n`denext build` runs the configured adapter's prepare after every build. Credentials are\nread from the environment only, and nothing is pushed without `denext deploy`.\nDeno's own `deno deploy`: `denext deno deploy`. Docs: https://denext.dev/docs/deploy#deploy-adapters",
+    "flags": [{
+      "name": "preset",
+      "type": "string",
+      "valueName": "<name>",
+      "help": "Use this preset (default options) instead of the configured adapter",
+    }, {
+      "name": "dry-run",
+      "type": "boolean",
+      "help": "Say what would be written and run; do neither",
+    }, {
+      "name": "force",
+      "type": "boolean",
+      "help": "Also replace project files that were not generated (or were edited)",
+    }],
+    "positionals": [{ "name": "action", "help": "prepare (else: prepare, then push)" }, {
+      "name": "dir",
+      "help": "Project directory (default: .)",
+    }],
+    "loadsModules": true,
+    "envTier": "production",
+  }, () => importCliModule("./commands/deploy.ts").then((m) => m.deployCommand as CommandSpec)],
   [{
     "name": "job",
     "summary": "Run a background job by name, or list them (--list)",

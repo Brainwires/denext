@@ -10,6 +10,28 @@ and this project adheres to
 
 ### Added
 
+- **Deploy adapters and presets: `denext/deploy`, `denext deploy`.** `denext build` writes
+  `.denext/deploy-manifest.json`, a typed, versioned build manifest (`DeployManifest`, exported
+  from `denext/deploy` and `denext/plugin-kit`): every route classified as `static`, `isr`,
+  `dynamic`, `route-handler` or `middleware` (with the reason, the `revalidate`, the methods, the
+  matcher), the files served as they are with their `Cache-Control`, the server's start command,
+  port, health path and drain, the jobs and every schedule, the services, the environment the app
+  reads, the Deno permissions, the image optimizer, the cache store and the `build --compile`
+  output — read from the sources as text, sorted and project-relative, so one tree writes the same
+  bytes. A deploy adapter turns it into a target's files: `deploy: { adapter }` in
+  `denext.config.ts` (run after every `denext build`), a plugin's new `addDeployAdapter`, or
+  `denext deploy prepare --preset <name>`; `denext deploy` then pushes with the target's CLI.
+  Presets: `docker()` (the `generate docker` files), `fly()` (plus `fly.toml`; `fly deploy` with
+  `FLY_API_TOKEN`), `denoDeploy()` (a `denext.deploy.ts` entrypoint that registers the schedules
+  with `Deno.cron` at its top level and puts the cache on Deno KV; `deno deploy` with
+  `DENO_DEPLOY_TOKEN`), `genericHost()` (a systemd unit, nginx and Caddy snippets, an env example)
+  and `staticHost()` (refuses an app whose routes need a server, listing each, else exports with a
+  `_headers` file). Credentials come from the environment only; a generated project file is
+  replaced only while it carries its marker; `--dry-run` writes and runs nothing. `denext deploy`
+  now means denext's verb: Deno's is `denext deno deploy`.
+- **`registerCronSchedules` (`denext/server`)** registers schedules with `Deno.cron` from an
+  entrypoint's top level, before the server discovers `jobs/`; the boot's scheduler skips those
+  names (a second `Deno.cron` under one name throws).
 - **Keyed lists in live views and `<Live>` patches.** Flight now carries an element's `key` (`k`
   on a host or client-reference node; a keyed server component passes it to the single element
   it renders), the browser hands it to the reconciler, and the live-view diff matches a keyed

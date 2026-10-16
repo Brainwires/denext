@@ -5,7 +5,8 @@ lead: Where a denext app runs, in one table, then a stanza per target with the o
 ---
 
 `denext build` writes `.denext/`; `denext start` serves it with `Deno.serve`.
-Anything that can run a Deno process can run that. The differences between
+Anything that can run a Deno process can run that. `denext deploy prepare --preset <name>` writes a target's files for you
+([deploy adapters](/docs/deploy#deploy-adapters)). The differences between
 targets are operational — who terminates TLS, whether the disk persists, how the
 process is told to stop — and those are the columns below. The
 [deployment guide](/docs/deploy) has the full Docker, Deno Deploy and systemd
@@ -187,12 +188,12 @@ runtime for the server build, and the Next.js-specific deployment output (the
 build output API) is not what `denext build` writes. A static `denext export`
 deploys there like any static site.
 
-Both are the reason the roadmap carries a **deploy adapter API** — a typed build
-manifest (routes, prerenders, assets, cache rules) plus a pluggable adapter seam
-with first-party presets for the Deno-fit targets (static, Deno Deploy, Node
-under `deno` compat, Docker) and a documented third-party seam for Workers and
-Vercel. It is a larger, separate bet; see
-[ROADMAP.md](https://github.com/Brainwires/denext/blob/main/ROADMAP.md).
+Both can still be reached through the **deploy adapter seam**: `denext build` writes a typed
+deploy manifest (routes and how each is served, assets and their cache headers, the server entry,
+jobs, services, env, permissions), and an adapter turns it into a target's files. denext ships
+presets for the Deno-fit targets — Docker, Fly.io, Deno Deploy, a generic host (systemd + a
+reverse proxy) and static hosts — and a third-party adapter for Workers or Vercel plugs into the
+same seam. See [Deployment › Deploy adapters](/docs/deploy#deploy-adapters).
 
 ## Zero-downtime and rolling restarts
 

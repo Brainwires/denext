@@ -48,6 +48,8 @@ const CONFIG_TYPE_SOURCES = [
   fromFileUrl(new URL("../src/plugin/mod.ts", import.meta.url)),
   // `commands[].flags` / `commands[].positionals` (`FlagSpec` / `PositionalSpec`).
   fromFileUrl(new URL("../src/cli/command.ts", import.meta.url)),
+  // `deploy` (`DeployConfig` / `DeployAdapter`).
+  fromFileUrl(new URL("../src/deploy/adapter.ts", import.meta.url)),
 ];
 /** Output: the import-free runtime key list. */
 export const KEYS_OUT = `${ROOT}src/server/config-keys.generated.ts`;

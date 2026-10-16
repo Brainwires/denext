@@ -824,6 +824,18 @@ driver is `s3()`, a one-shot `denext job migrate`, `.env.example` listing every 
 `--postgres`/`--no-postgres`, `--pgvector`, `--storage`, `--migrate`, `--expose-db`, `--dev`,
 `--dry-run`, `--force`). `denext routes [--json]` lists the app's pages and API routes.
 
+**Deploying (adapters):** `denext build` writes `.denext/deploy-manifest.json` (the typed
+`DeployManifest` from `denext/deploy` / `denext/plugin-kit`: routes as `static` / `isr` /
+`dynamic` / `route-handler` / `middleware`, assets + `Cache-Control`, the start command, jobs and
+schedules, services, env vars, permissions, images, `--compile` output). `deploy: { adapter:
+fly({ app }) }` in `denext.config.ts` runs that adapter's `prepare` after every build; presets from
+`denext/deploy`: `docker()`, `fly()`, `denoDeploy()` (a `denext.deploy.ts` entry: `Deno.cron` at
+top level via `registerCronSchedules`, cache on Deno KV), `genericHost()` (systemd + nginx/Caddy)
+and `staticHost()` (refuses, listing every route that needs a server). `denext deploy prepare
+[--preset <name>] [--dry-run]` writes the files; `denext deploy` also pushes (`FLY_API_TOKEN` /
+`DENO_DEPLOY_TOKEN` from the environment only). A plugin adds one with `addDeployAdapter`. Deno's
+`deno deploy` is `denext deno deploy`. Docs: https://denext.dev/docs/deploy#deploy-adapters
+
 **A scheduled / background job (cron):** put it in `jobs/<name>.ts`; schedule it in
 `denext.config.ts` (`scheduledJobs`) or per-job; run it on demand with `runJob(name)`
 or `denext job <name>`. Uses `Deno.cron` where available (Deno Deploy), else a userland
@@ -1033,7 +1045,7 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   current config / `deno.json` / `deno.lock`; one notice). `task` is Deno's; background work is
   `denext job`. `info <module>` is
   Deno's info; `audit` runs denext's checks and `deno audit`. For Deno's meaning of a verb denext
-  keeps (`test`, `fmt`, `upgrade`, `desktop`, `create`, `init`, `completions`): `denext deno <verb>`.
+  keeps (`test`, `fmt`, `upgrade`, `desktop`, `deploy`, `create`, `init`, `completions`): `denext deno <verb>`.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
   (CI-enforced). esbuild is not an npm import either: denext vendors esbuild's JS API and runs the
   esbuild 0.25.5 binary its Deno toolchain ships (verified by SHA-256), else
@@ -2017,6 +2029,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RefreshSsoMetadataOptions` — Options for refreshSsoMetadata.
 - `registerBootCheck(check: () => Promise<void>): void` — With boot-time DDL off, register a feature's schema check for the server's startup (verifyBootSchemas); a no-op with it on. Each check runs once.
 - `registerCacheLifeProfiles(profiles: Record<string, CacheLifeProfile>): void` — Register named cacheLife profiles (typically from denext.config). A custom profile whose name collides with a built-in overrides it. Idempotent-ish: a later call with the same name wins.
+- `registerCronSchedules(entries: typeOperator): void` — Register schedules with Deno.cron NOW, from an entrypoint's top level — before the server boots and discovers jobs/. Deno Deploy records the crons an app registers while its entrypoint loads, so the entry denext deploy writes for it calls this with the build's schedules; the boot's scheduler then skips them. A run that fires before the boot has discovered its job waits for that (up to a minute). A no-op where Deno.cron is absent (the server's own scheduler covers the schedules there).
 - `type RegisterFn = () => void | Promise<void>` — The register export: run once at server startup.
 - `registerFrameworkMigrations(key: string, set: SetSource): void` — Declare the migrations a feature applies for itself, so denext db push / migration up apply them out of band. Every Postgres store of denext declares its set when it is built (one per tracking table and schema); a function is resolved when the CLI reads the sets.
 - `registerHealthCheck(name: string, check: HealthCheck, options?: HealthCheckOptions): () => void` — Register a readiness check /_denext/health runs on every probe. While it fails the probe answers 503 with "status": "degraded" and checks: { [name]: "down" } (never the error itself — the probe is public). Registering a name again replaces the check.
@@ -3494,6 +3507,25 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `createNextCompatServerLoader(base: ModuleLoader, opts: NextCompatServerLoaderOptions): ModuleLoader` — Wrap a base ModuleLoader so route source modules that have a react→denext rewritten server bundle load from that bundle instead of source (a keyed ref resolves to the module's namespace inside the single server bundle).
 - `interface DenextConfig` — Project configuration exported from denext.config.{ts,js} (as default or named).
 - `interface DenextPlugin` — A denext plugin. Declared in denext.config.ts as plugins: [myPlugin()]; its setup runs once per process, before the first route scan.
+- `DEPLOY_MANIFEST_FILE: deploy-manifest.json` — The manifest's file name, under the build directory (.denext/deploy-manifest.json).
+- `DEPLOY_MANIFEST_VERSION: 1` — The manifest format version DeployManifest.version carries.
+- `interface DeployAdapter` — A deploy adapter: prepare writes a target's files from the manifest, and the optional deploy pushes them with the target's own CLI. Declare one in denext.config.ts as deploy: { adapter: fly({ app: "my-app" }) }, or contribute one from a plugin with addDeployAdapter.
+- `interface DeployAssetGroup` — One directory of files the server serves as they are, with the Cache-Control it sends.
+- `interface DeployCache` — The data / page (ISR) cache store the config chooses.
+- `interface DeployCompile` — What denext build --compile produced.
+- `interface DeployContext` — What an adapter's prepare and deploy receive.
+- `interface DeployEnvVar` — An environment variable the app reads.
+- `interface DeployImages` — The built-in image optimizer.
+- `interface DeployJob` — A job under jobs/.
+- `interface DeployManifest` — The deploy manifest denext build writes to .denext/deploy-manifest.json.
+- `interface DeployPermissions` — The Deno permissions the production server runs with.
+- `interface DeployRoute` — One route of the app, classified for a host.
+- `type DeployRouteKind = static | isr | dynamic | route-handler | middleware` — How a route is served, as a host needs to know it: - "static" — rendered once (at build or on the first request) and the same for everyone: denext export writes it, and a CDN may cache it until the next deploy. - "isr" — cached and re-rendered in the background every DeployRoute.revalidate seconds (export const revalidate = N): needs the server. - "dynamic" — rendered per request (dynamic = "force-dynamic", a request API such as cookies(), or a dynamic segment with no generateStaticParams): needs the server. - "route-handler" — a route.ts (or a metadata route such as sitemap.ts): needs the server. - "middleware" — the root middleware.ts / proxy.ts: runs before every matched request.
+- `interface DeployRunOptions` — Options for DeployContext.run.
+- `interface DeploySchedule` — One scheduled run: a job and the cron expression (UTC, POSIX weekdays) that fires it.
+- `interface DeployServer` — How the production server is started.
+- `interface DeployService` — A supervised service under services/, started with the server.
+- `interface DeployWriteOptions` — Where DeployContext.writeFile writes.
 - `edgeFunctionSource(name: string): string` — An Edge Function in Supabase's shape, for backend({ functions }) from @denext/backend: what denext generate function <name> and denext functions new <name> write.
 - `interface EmittedAsset` — A generated file a build step publishes with PluginBuildContext.emitFile.
 - `enableFastRefresh(): void` — Install the family-identity check and hook-signature guard into the reconciler. Idempotent; called once by the dev route entry before its first render. A no-op in production (this module is never imported there).

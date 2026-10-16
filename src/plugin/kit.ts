@@ -49,6 +49,30 @@ export type {
   PrepareStepOptions,
   RouteSynthesizer,
 } from "../server/mod.ts";
+// For the `addDeployAdapter` seam: the adapter contract and the typed deploy manifest
+// (`.denext/deploy-manifest.json`) every adapter reads.
+export type {
+  DeployAdapter,
+  DeployContext,
+  DeployRunOptions,
+  DeployWriteOptions,
+} from "../deploy/adapter.ts";
+export { DEPLOY_MANIFEST_FILE, DEPLOY_MANIFEST_VERSION } from "../deploy/manifest.ts";
+export type {
+  DeployAssetGroup,
+  DeployCache,
+  DeployCompile,
+  DeployEnvVar,
+  DeployImages,
+  DeployJob,
+  DeployManifest,
+  DeployPermissions,
+  DeployRoute,
+  DeployRouteKind,
+  DeploySchedule,
+  DeployServer,
+  DeployService,
+} from "../deploy/manifest.ts";
 // For the `addCommand` seam (contribute a `denext <verb>`).
 export type { CommandContext, CommandSpec } from "../cli/command.ts";
 

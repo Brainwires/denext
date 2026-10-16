@@ -186,3 +186,27 @@ export function validateCompile(compile: unknown, fail: Fail): void {
   validateCompileInclude(include, fail);
   validateCompilePermissions(permissions, fail);
 }
+
+/**
+ * `deploy`: an object whose `adapter` (when set) is a deploy adapter — a `name` string and a
+ * `prepare` function (`deploy`, when present, a function too).
+ */
+export function validateDeploy(deploy: unknown, fail: Fail): void {
+  if (deploy === undefined) return;
+  if (typeof deploy !== "object" || deploy === null || Array.isArray(deploy)) {
+    return fail("deploy", "must be an object");
+  }
+  const adapter = (deploy as { adapter?: unknown }).adapter;
+  if (adapter === undefined) return;
+  const a = adapter as { name?: unknown; prepare?: unknown; deploy?: unknown };
+  if (
+    typeof adapter !== "object" || adapter === null || typeof a.name !== "string" ||
+    !/^[a-z0-9][a-z0-9._-]*$/i.test(a.name) || typeof a.prepare !== "function" ||
+    (a.deploy !== undefined && typeof a.deploy !== "function")
+  ) {
+    fail(
+      "deploy.adapter",
+      "must be a deploy adapter ({ name, prepare(), deploy?() }) — a preset from denext/deploy",
+    );
+  }
+}

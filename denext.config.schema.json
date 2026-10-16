@@ -2190,6 +2190,32 @@
         }
       }
     },
+    "deploy": {
+      "description": "Deploy adapter: `denext build` runs its `prepare` with the typed deploy manifest (`.denext/deploy-manifest.json`) after every build, and `denext deploy` pushes with it. A preset from `denext/deploy` (`docker()`, `fly()`, `denoDeploy()`, `genericHost()`, `staticHost()`) or your own adapter. See https://denext.dev/docs/deploy.deploy-adapters.",
+      "type": "object",
+      "properties": {
+        "adapter": {
+          "description": "The adapter `denext build` runs after every build (its `prepare`), and `denext deploy` uses: a preset from `denext/deploy` (`docker()`, `fly()`, `denoDeploy()`, `genericHost()`, `staticHost()`) or your own DeployAdapter.",
+          "type": "object",
+          "properties": {
+            "name": {
+              "description": "The adapter's name (its output directory under `.denext/deploy/`).",
+              "type": "string"
+            },
+            "prepare": {
+              "description": "Write the target's files. Throw an `Error` whose message starts with `denext:` to refuse the app (the static preset does, for routes that need a server)."
+            },
+            "deploy": {
+              "description": "Push the prepared output (`denext deploy`). Absent: the target has no CLI denext drives."
+            }
+          },
+          "required": [
+            "name",
+            "prepare"
+          ]
+        }
+      }
+    },
     "reactNative": {
       "description": "Build a React Native / Expo app's source for the web through `react-native-web` — SPA mode only (`mode: \"spa\"`). `true` turns on the defaults; an object sets options.",
       "anyOf": [

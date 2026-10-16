@@ -2,6 +2,7 @@
 // declarative redirects / rewrites / headers plus basePath / trailingSlash /
 // assetPrefix. Loaded once at startup (static config, like Next).
 
+import type { DeployConfig } from "../deploy/adapter.ts";
 import type { I18nConfig } from "./i18n.ts";
 import type { DenextPlugin } from "../plugin/mod.ts";
 import type { CspSetting } from "./segment-config.ts";
@@ -2062,6 +2063,13 @@ export interface DenextConfig {
    * {@link https://denext.dev/docs/deployment-targets#a-single-binary-with-denext-build---compile}.
    */
   compile?: CompileConfig;
+  /**
+   * Deploy adapter: `denext build` runs its `prepare` with the typed deploy manifest
+   * (`.denext/deploy-manifest.json`) after every build, and `denext deploy` pushes with it. A
+   * preset from `denext/deploy` (`docker()`, `fly()`, `denoDeploy()`, `genericHost()`,
+   * `staticHost()`) or your own adapter. See {@link https://denext.dev/docs/deploy#deploy-adapters}.
+   */
+  deploy?: DeployConfig;
   /**
    * Build a React Native / Expo app's source for the web through `react-native-web` — SPA
    * mode only (`mode: "spa"`). `true` turns on the defaults; an object sets options.

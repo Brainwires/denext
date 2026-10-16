@@ -37,6 +37,7 @@ on:
     paths:
       - "src/desktop/**"
       - "src/build/**"
+      - "src/deploy/**"
       - "src/cli/commands/desktop*.ts"
       - "src/cli/commands/serve.ts"
       - "src/cli/commands/patch.ts"
@@ -53,6 +54,7 @@ on:
       - "src/mcp/inspect.ts"
       - "src/mcp/next-denext-map.ts"
       - "src/platform.ts"
+      - "src/version.ts"
       - "src/plugin/mod.ts"
       - "src/react-native-compat/manifest.ts"
       - "src/react-native/lists/manifest.ts"

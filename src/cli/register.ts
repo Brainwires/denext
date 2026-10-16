@@ -31,6 +31,7 @@ import { dashboardCommand, dashboardLogsCommand } from "./commands/dashboard.ts"
 import { dbCommand } from "./commands/db.ts";
 import { migrationCommand } from "./commands/migration.ts";
 import { stackCommand } from "./commands/stack.ts";
+import { deployCommand } from "./commands/deploy.ts";
 import { genCommand } from "./commands/gen.ts";
 import { makeCompletionsCommand } from "./commands/completions.ts";
 import { makeCommandsCommand } from "./commands/commands.ts";
@@ -43,6 +44,8 @@ export function buildRegistry(): CommandRegistry {
   reg.register(buildCommand);
   reg.register(exportCommand);
   reg.register(startCommand);
+  // Deploy adapters: `denext deploy [prepare]` (Deno's `deno deploy` is `denext deno deploy`).
+  reg.register(deployCommand);
   reg.register(jobCommand);
   reg.register(routesCommand);
   // Toolchain (deno passthrough). `task` is Deno's `deno task`.

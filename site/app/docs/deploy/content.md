@@ -18,6 +18,79 @@ for the safe defaults that deliberately differ from Next's.
 `denext build` writes a `.denext/` output; `denext start` serves it. Build in
 the image/CI, then run `start`.
 
+### Deploy adapters
+
+`denext build` also writes **`.denext/deploy-manifest.json`**, a typed, versioned description of
+what it built (the `DeployManifest` type from `denext/deploy` and `denext/plugin-kit`):
+
+- every route and how it is served: `static`, `isr` (with its `revalidate`), `dynamic` (with the
+  reason: `force-dynamic`, a request API such as `cookies()`, or a dynamic segment without
+  `generateStaticParams`), `route-handler` (with its methods; metadata routes such as
+  `sitemap.ts` are marked) and `middleware` (with a literal `matcher`);
+- the files served as they are, by directory, with the `Cache-Control` the server sends
+  (content-hashed `/_denext/client/` files are immutable; `public/` revalidates);
+- the server: its start command, port (`PORT`), health path and drain;
+- the jobs under `jobs/` and every schedule (`scheduledJobs` and each job's own), the services
+  under `services/`;
+- the environment variables the app reads (the detected stack's secrets and every literal
+  `Deno.env.get` / `process.env` read; `required` when the stack needs it or the read is
+  asserted with `!`);
+- the Deno permissions, the image optimizer, the cache store and the `build --compile` output.
+
+The manifest is read from the sources as text, like Next's segment config: a route's
+`dynamic` / `revalidate` must be literal exports, and a page that reads request data only through
+a helper of its own (not `cookies()` / `headers()` / `auth()` / `searchParams`) is classified by
+what its route files say. Version 1 only ever gains fields; a breaking change bumps `version`.
+
+A **deploy adapter** turns the manifest into a target's files. Name one in `denext.config.ts`
+(add `"denext/deploy": "jsr:@denext/denext@^4/deploy"` to `deno.json`'s imports):
+
+```ts
+// denext.config.ts
+import { fly } from "denext/deploy";
+export default { deploy: { adapter: fly({ app: "my-app", region: "ams" }) } };
+```
+
+```sh
+denext build                       # build, write the manifest, run the adapter's prepare
+denext deploy prepare              # run prepare again (on the last build's manifest)
+denext deploy prepare --preset static --dry-run   # a preset without the config; write nothing
+denext deploy                      # prepare, then push with the target's CLI
+```
+
+Credentials come **only from the environment** (`FLY_API_TOKEN`, `DENO_DEPLOY_TOKEN`), are never
+written to a file or passed on a command line, and nothing is pushed without an explicit
+`denext deploy`. A file a preset writes at the project root (`Dockerfile`, `fly.toml`,
+`denext.deploy.ts`) carries a generated-file marker: the next prepare replaces it only while the
+marker is there, so delete the marker line to keep your edits (`--force` replaces it anyway).
+Deno's own `deno deploy` is `denext deno deploy`.
+
+| Preset                          | Writes                                                                                                                                                                                                                                                                                                           | `denext deploy`                                                      | Can't support                                                                                                                                                                                                  |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker({ … })`                 | what `denext generate docker` writes (`Dockerfile`, compose file, `.dockerignore`; `stack: true` adds Postgres, storage and migrations)                                                                                                                                                                          | `docker build -t <image>`; `push: true` pushes (your `docker login`) | nothing app-side; persistence is a volume you mount, and replicas are separate nodes ([multi-instance](/docs/multi-instance))                                                                                  |
+| `fly({ app, region })`          | the Docker files plus `fly.toml`: `PORT`, `SIGTERM` with a 30 s kill timeout (above the drain), a health check on `/_denext/health`, the required secrets listed; machines stay on when the app has schedules or services                                                                                        | `fly deploy --remote-only` (needs `flyctl` and `FLY_API_TOKEN`)      | a persistent cache across machines and deploys (use a shared `cache.store`); schedules run on every machine, so keep one or use a shared job runner                                                            |
+| `denoDeploy({ org, app })`      | `denext.deploy.ts`, the entrypoint: the schedules registered with `Deno.cron` at its top level (where Deno Deploy records crons), the cache on Deno KV when `cache.store` is unset, then the server; `.denext/deploy/deno-deploy/app.json` with the build settings and the one-time `deno deploy create` command | `deno deploy --prod` (needs `DENO_DEPLOY_TOKEN`)                     | a persistent disk (SQLite files, the default job history), `Deno.SQL` (use postgres.js), long-lived `services/` (isolates start and stop on demand), the `build --compile` executable                          |
+| `genericHost({ name, domain })` | under `.denext/deploy/generic-host/`: a systemd unit (the compiled executable when there is one, else the least-privilege `start`; `SIGTERM`, sandboxing, `ReadWritePaths` on the build dir), nginx and Caddy snippets, `env.example`                                                                            | none: copy the files to the host yourself                            | rolling restarts across hosts (one unit, one process); schedules run in that process, so run one instance or move them to timers running `denext job <name>`                                                   |
+| `staticHost()`                  | runs `denext export`, then `out/_headers` (immutable caching for the content-hashed files)                                                                                                                                                                                                                       | none: upload `out/` with your host's tool                            | **refuses** an app with any `isr`, `dynamic`, `route-handler` or `middleware` route and lists each one with its reason; metadata routes, `jobs/`, `services/` and the image optimizer are reported as warnings |
+
+Your own adapter is an object with a `name`, a `prepare(ctx)` and, optionally, a `deploy(ctx)`;
+`ctx` carries the `manifest`, `writeFile(path, contents, { in: "output" | "project", marker })`
+(the adapter's own `.denext/deploy/<name>/`, or a marked project file), `env(name)`,
+`which(...names)`, `run(command)`, `exportStatic()` and `dryRun`. A plugin contributes one with
+`addDeployAdapter(adapter)` (the config's `deploy.adapter` wins). This is the seam for targets
+denext does not ship, such as a Workers or Vercel adapter:
+
+```ts
+import { defineDeployAdapter } from "denext/deploy";
+export const myHost = defineDeployAdapter({
+  name: "my-host",
+  async prepare({ manifest, writeFile }) {
+    const routes = manifest.routes.filter((r) => r.kind !== "static").map((r) => r.path);
+    await writeFile("routes.json", JSON.stringify(routes, null, 2));
+  },
+});
+```
+
 ### Static export
 
 If your app is fully static (no per-request data), export it to plain HTML and

@@ -43,6 +43,8 @@ Deno.test("plugin-kit does not leak an over-broad value surface", () => {
   const values = Object.keys(kit).sort();
   assertEquals(values, [
     "ChannelAccessError",
+    "DEPLOY_MANIFEST_FILE",
+    "DEPLOY_MANIFEST_VERSION",
     "PageCache",
     "STALLED",
     "TOO_LARGE",

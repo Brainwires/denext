@@ -63,8 +63,10 @@ Deno.test("searchDocs: a guide question lands on the guide section", async () =>
   const guide = notif.slice(0, 2).find((h) => h.ref === "desktop#desktop-notifications");
   assertEquals(guide?.url, "/docs/desktop#desktop-notifications");
 
+  // The Fly.io stanza is among the top two (the `denext deploy` verb, whose fly preset is the
+  // other fair first answer, may lead).
   const fly = await searchDocs("deploy to fly", { limit: 5 });
-  assertEquals(fly[0].ref, "deployment-targets#flyio");
+  assert(fly.slice(0, 2).some((h) => h.ref === "deployment-targets#flyio"), JSON.stringify(fly));
 });
 
 Deno.test("searchDocs: an exact symbol name ranks the symbol first", async () => {
