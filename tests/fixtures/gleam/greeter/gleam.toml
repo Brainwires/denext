@@ -1,0 +1,8 @@
+name = "greeter"
+version = "1.0.0"
+target = "javascript"
+
+[dependencies]
+
+[javascript]
+typescript_declarations = true

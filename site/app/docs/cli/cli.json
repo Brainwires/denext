@@ -31,9 +31,9 @@
   "commands": [
     {
       "name": "add",
-      "summary": "Add a dependency (deno add)",
+      "summary": "Add a dependency (deno add, or a Gleam package)",
       "usage": "denext add <packages> [-- <deno args>]",
-      "description": "  denext add jsr:@std/assert\n  denext add npm:zod",
+      "description": "  denext add jsr:@std/assert\n  denext add npm:zod\n  denext add gleam:gleam_json   Compile a Gleam package to JavaScript (@gleam/…)",
       "flags": [],
       "positionals": [
         {

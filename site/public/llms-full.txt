@@ -933,6 +933,11 @@ export default async function Blog() {
 // CLI: `denext content build | list | validate` (validate exits 1 on a schema failure — a CI gate).
 ```
 
+**Gleam:** `denext add gleam:<package>` (needs the `gleam` CLI) compiles a Gleam package to
+JavaScript in a `gleam/` project and maps `@gleam/` in `deno.json`; import it typed as
+`@gleam/<package>/<module>.mjs`. `plugins: [gleam()]` (from `denext/gleam`) recompiles your own
+`gleam/src/**/*.gleam` at dev and build, and skips when `gleam` is missing.
+
 **A compile-time feature flag (dead-code-eliminated):** `feature("KEY")` from `denext/feature`
 folds to a boolean literal at build time for any KEY in `features` — denext's
 `feature()` (cf. Bun's `bun:bundle`). `feature()` always returns the configured value; the untaken
@@ -3498,6 +3503,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/feature`
 
 - `feature(name: string): boolean` — Whether the feature flag name is enabled. A feature("KEY") call with a **string literal** argument is folded to a boolean literal at build time (for a KEY listed in features) so the branch is dead-code eliminated; otherwise it reads the build-seeded flag map at runtime, defaulting to false for any unset flag.
+
+### `denext/gleam`
+
+- `gleam(options?: GleamOptions): DenextPlugin` — The Gleam build plugin. Registers a prepare step that runs gleam build --target javascript in the Gleam project (gleam.toml at the app root, else gleam/, or options.dir).
+- `interface GleamOptions` — Options shared by the plugin and denext add gleam:.
 
 ### `denext/platform`
 

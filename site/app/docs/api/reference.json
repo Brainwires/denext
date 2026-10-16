@@ -31944,6 +31944,40 @@
       ]
     },
     {
+      "module": "denext/gleam",
+      "symbols": [
+        {
+          "name": "gleam",
+          "slug": "gleam",
+          "kind": "function",
+          "signature": "gleam(options?: GleamOptions): DenextPlugin",
+          "doc": "The Gleam build plugin. Registers a prepare step that runs gleam build --target javascript in the Gleam project (gleam.toml at the app root, else gleam/, or options.dir).",
+          "docFull": "The Gleam build plugin. Registers a prepare step that runs `gleam build --target javascript` in\nthe Gleam project (`gleam.toml` at the app root, else `gleam/`, or `options.dir`).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The project directory and the gleam executable."
+            }
+          ],
+          "returns": "The plugin, for plugins: [gleam()].",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GleamOptions",
+          "slug": "GleamOptions",
+          "kind": "interface",
+          "signature": "interface GleamOptions",
+          "doc": "Options shared by the plugin and denext add gleam:.",
+          "docFull": "Options shared by the plugin and `denext add gleam:`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        }
+      ]
+    },
+    {
       "module": "denext/platform",
       "symbols": [
         {

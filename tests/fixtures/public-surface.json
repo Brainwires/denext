@@ -2253,6 +2253,10 @@
   "denext/feature": [
     "feature:function"
   ],
+  "denext/gleam": [
+    "GleamOptions:interface",
+    "gleam:function"
+  ],
   "denext/platform": [
     "Platform:typeAlias",
     "platform:variable"

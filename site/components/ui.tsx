@@ -53,6 +53,7 @@ export const NAV: {
       { slug: "htmx", label: "htmx" },
       { slug: "react-router", label: "React Router" },
       { slug: "effect", label: "Effect" },
+      { slug: "gleam", label: "Gleam" },
       { slug: "spa", label: "SPA mode" },
       { slug: "react-native", label: "React Native / Expo" },
       { slug: "native-code", label: "Your own native code" },

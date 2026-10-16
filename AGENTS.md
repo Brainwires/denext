@@ -929,6 +929,11 @@ export default async function Blog() {
 // CLI: `denext content build | list | validate` (validate exits 1 on a schema failure — a CI gate).
 ```
 
+**Gleam:** `denext add gleam:<package>` (needs the `gleam` CLI) compiles a Gleam package to
+JavaScript in a `gleam/` project and maps `@gleam/` in `deno.json`; import it typed as
+`@gleam/<package>/<module>.mjs`. `plugins: [gleam()]` (from `denext/gleam`) recompiles your own
+`gleam/src/**/*.gleam` at dev and build, and skips when `gleam` is missing.
+
 **A compile-time feature flag (dead-code-eliminated):** `feature("KEY")` from `denext/feature`
 folds to a boolean literal at build time for any KEY in `features` — denext's
 `feature()` (cf. Bun's `bun:bundle`). `feature()` always returns the configured value; the untaken

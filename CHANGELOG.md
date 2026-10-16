@@ -185,6 +185,16 @@ and this project adheres to
   `redisChannelTransport()` brings a shared log in Redis (`log: false` keeps each instance's
   own), so a subscriber on any replica replays every replica's publishes; `inMemoryChannelLog`
   / `redisChannelLog` and a transport's `log` are the seam for another store.
+- **Gleam interop.** Gleam compiled to JavaScript imports into a denext app typed, under the
+  `@gleam/` import-map prefix (`import { greet } from "@gleam/app/app.mjs"`).
+  `denext add gleam:<package>` creates a `gleam/` project when the app has none (JavaScript
+  target, TypeScript declarations on), runs `gleam add` and `gleam build --target javascript`,
+  and maps `@gleam/` in `deno.json`. The optional `gleam()` plugin (`denext/gleam`) recompiles
+  at `denext dev` startup, on `.gleam` / `gleam.toml` changes and at build, and skips with one
+  notice when `gleam` is not installed. After each build denext adds the type reference Gleam
+  leaves off `prelude.mjs` and each `gleam.mjs`, without which Deno types Gleam's `List` /
+  `Result` from the JavaScript and reports its declarations as duplicates. See
+  [Gleam](https://denext.dev/docs/gleam).
 
 ### Fixed
 
