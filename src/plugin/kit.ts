@@ -151,6 +151,7 @@ export {
 } from "../build/next-compat-public.ts";
 export type {
   BuildNextCompatModulesOptions,
+  CompatReactNativeOptions,
   NextCompatServerLoaderOptions,
 } from "../build/next-compat-public.ts";
 

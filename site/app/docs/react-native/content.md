@@ -4,7 +4,8 @@ slug: react-native
 lead: Build a React Native or Expo app's own source for the web with react-native-web. Set reactNative in denext.config.ts and the bundler resolves the app the way Metro's web build does, with no patches.
 ---
 
-denext can build a React Native / Expo app for the browser as a [SPA](/docs/spa):
+denext can build a React Native / Expo app for the browser as a [SPA](/docs/spa), or use
+React Native components in an App Router app ([On the App Router](#on-the-app-router)):
 `react-native` resolves to [react-native-web](https://necolas.github.io/react-native-web/),
 the components render to the DOM, and denext's React runs them. Rendering stays DOM; this is
 API compatibility, not native rendering.
@@ -259,8 +260,6 @@ points the Capacitor shell at the dev server, and an edit updates the running ap
 `DENEXT_DEV_UNBUNDLED=0` (or the `unbundled: false` dev server option) returns to the bundled
 loop, which rebuilds the whole app on each change.
 
-`reactNative` is valid only with `mode: "spa"`; anywhere else the config fails validation.
-
 ### Options
 
 Pass an object instead of `true` to change a default:
@@ -282,6 +281,62 @@ reactNative: {
   desktopPackage: "react-native-macos",
 },
 ```
+
+## On the App Router
+
+`reactNative` also works without `mode: "spa"`, in an [App Router](/docs/routing) app: Server
+Components and `"use client"` components can both import `react-native` and the `expo-*`
+packages. The app builds through the [compat pipeline](/docs/npm-react-libraries) (`reactNative`
+implies it), and its server bundle, its client islands and its hydrated routes all get the
+resolution [`reactNative` does](#what-reactnative-does): react-native-web, `.web.*` first,
+JSX in `.js`, the globals, the [Expo API shims](#expo-apis), the [lists](#lists) and the
+[community stand-ins](#community-packages).
+
+```ts
+// denext.config.ts
+export default { reactNative: true } satisfies DenextConfig;
+```
+
+```tsx
+// app/page.tsx: a Server Component
+import { StyleSheet, Text, View } from "react-native";
+import { Counter } from "./counter.tsx"; // "use client", imports react-native too
+
+const styles = StyleSheet.create({ title: { fontSize: 24, color: "teal" } });
+
+export default function Page() {
+  return (
+    <View>
+      <Text style={styles.title}>Hello</Text>
+      <Counter />
+    </View>
+  );
+}
+```
+
+The server renders react-native-web's markup, and react-native-web's style sheet (the atomic
+CSS its `StyleSheet` builds) goes into the page's `<head>` as
+`<style id="react-native-stylesheet">`, so the first paint is styled and the island hydrates
+over the same classes; react-native-web on the client adopts that element. `build`, `start`,
+`export` and `dev` all do this.
+
+What differs from SPA mode:
+
+- **expo-router is not available.** It is a router, and `app/` is the App Router's: an
+  `expo-router` import fails the build, naming the alternatives (`Link`, `useRouter`,
+  `usePathname` from `denext`, and [`denext/navigation`](/docs/navigation-native) for native
+  stacks and tabs). An expo-router app runs in SPA mode.
+- **The sheet holds every style the server has created**, not only the page's:
+  react-native-web keeps one sheet per process and `StyleSheet.create` runs when a module
+  loads. A module first loaded by a `dynamic()` / `import()` inside a streamed Suspense
+  boundary adds its rules after the head was sent; the client inserts them when it renders that
+  boundary.
+- **`dev` uses the bundled loop:** an edit rebuilds the compat bundles and reloads the page (no
+  per-module hot swap with state kept, which needs the SPA's dependency bundle).
+- **The SPA shell's options don't apply:** `rootStyle`, `fonts` (refused; load fonts with
+  `next/font/local` or an `@font-face` stylesheet) and the uniwind integration, whose stylesheet
+  pass is the SPA build's.
+- **`compatibilityMode: false`** beside `reactNative` fails validation.
 
 ## React Native APIs
 

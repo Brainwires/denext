@@ -275,8 +275,14 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   `ellipsizeMode="head"` / `"middle"` work on one plain-text line only, and `onTextLayout`'s font
   metrics are estimated from the font size. An `Image` with `crossOrigin` / `referrerPolicy` is
   drawn as an `<img>`, which doesn't draw `tintColor`.
-- **`reactNative` requires `mode: "spa"`.** Fast Refresh reloads on a new dependency import, an
-  added or removed route or a lockfile change. Resolution variants (`@2x`) are picked at load.
+- Fast Refresh reloads on a new dependency import, an added or removed route or a lockfile
+  change. Resolution variants (`@2x`) are picked at load.
+- **On the App Router** (`reactNative` without `mode: "spa"`): expo-router is not available (it
+  is a router, and `app/` is the App Router's; an import fails the build). react-native-web's
+  server style sheet holds every style the process has created, and a module first loaded inside
+  a streamed Suspense boundary adds its rules on the client only. `dev` uses the bundled loop
+  (rebuild and reload, no per-module hot swap). `fonts`, `rootStyle` and uniwind are the SPA
+  shell's; `compatibilityMode: false` cannot be combined with it.
 - **Can't (no WebView or browser API):** `expo-gl` on a worklet / UI runtime
   (`getWorkletContext` is undefined) and camera textures (`createCameraTextureAsync` rejects):
   `GLView` is the page's WebGL 2. Barometer and pedometer readings, the carrier facts of

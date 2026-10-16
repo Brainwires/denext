@@ -30,6 +30,16 @@ and this project adheres to
   only the outer `Text`, so a nested one with its own size kept it and could keep the text from
   fitting at all.
 
+- **React Native mode on the App Router.** `reactNative` no longer requires `mode: "spa"`: in an
+  App Router app it implies the compat pipeline, and the server bundle, the client islands and
+  the hydrated routes all resolve `react-native` to react-native-web (with `.web.*` first, JSX in
+  `.js`, the build-time globals, the `expo-*` shims, the lists and the community stand-ins), so
+  Server Components and `"use client"` components can both use React Native components.
+  react-native-web's style sheet is written into each server-rendered page's `<head>` as
+  `<style id="react-native-stylesheet">`, which its client adopts, so the first paint is styled.
+  `build`, `start`, `export` and `dev` (the bundled loop) do this. An `expo-router` import there
+  fails the build, naming the App Router's equivalents; `reactNative.fonts` and
+  `compatibilityMode: false` are refused on the App Router.
 - **`LayoutAnimation.configureNext` animates size changes** in React Native mode. A view whose
   size the commit changed now grows or shrinks from its old size instead of snapping: the FLIP
   transform carries a scale with the translation (still one compositor animation per view), and

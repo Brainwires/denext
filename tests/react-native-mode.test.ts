@@ -568,11 +568,23 @@ Deno.test("reactNative config: options, root-style switch, validation", () => {
     Error,
     "`reactNative.rootStyle` must be a boolean",
   );
+  // The App Router takes React Native mode too (through the compat pipeline)…
+  validateDenextConfig({ reactNative: true });
+  validateDenextConfig({ reactNative: { lists: "library", expoShims: false } });
+  validateDenextConfig({ compatibilityMode: true, reactNative: true });
+  // …but not beside `compatibilityMode: false`, and not the SPA shell's `fonts`.
   assertThrows(
-    () => validateDenextConfig({ reactNative: true }),
+    () => validateDenextConfig({ compatibilityMode: false, reactNative: true }),
     Error,
-    "applies only in SPA mode",
+    "remove `compatibilityMode: false`",
   );
+  assertThrows(
+    () => validateDenextConfig({ reactNative: { fonts: { Inter: "./Inter.ttf" } } }),
+    Error,
+    "`reactNative.fonts` applies only in SPA mode",
+  );
+  validateDenextConfig({ ...spa, compatibilityMode: false, reactNative: true });
+  validateDenextConfig({ ...spa, reactNative: { fonts: { Inter: "./Inter.ttf" } } });
 });
 
 /** react-native-web 0.21's `Appearance` module, verbatim in shape (no `setColorScheme`). */

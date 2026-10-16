@@ -21,6 +21,7 @@ import {
   type AssetOptions,
   bundleNextCompat,
   bundleNextCompatModules,
+  type BundleNextCompatModulesOptions,
   type MdxBuildOptions,
   prebuildDenextRuntime,
   serverStubPlugin,
@@ -61,6 +62,41 @@ export type { AssetLoader, AssetOptions, MdxBuildOptions } from "./next-compat.t
 // a public type may not reference a private one); the `Platform` it names is `denext/platform`'s.
 // fallow-ignore-next-line unused-type
 export type { PlatformResolution } from "./platform-extensions.ts";
+
+/**
+ * React Native mode (`reactNative` in the config) for the App Router's compat bundles: what
+ * each of the server, Flight and client-route bundles adds (see
+ * `react-native-app-router.ts` `reactNativeCompatOptions`). Absent when `reactNative` is off,
+ * which leaves every bundle exactly as it is without it.
+ */
+export interface CompatReactNativeOptions {
+  /** The react-native → react-native-web and `expo-*` resolvers (`esbuild.Plugin`s). */
+  readonly plugins: readonly unknown[];
+  /** React Native's build-time globals (`__DEV__`, `global`, `process.env.EXPO_OS`). */
+  readonly define: Readonly<Record<string, string>>;
+  /** The `.web.*` extensions, probed first. */
+  readonly platformExtensions: readonly string[];
+  /** Parse `.js` as JSX. */
+  readonly jsxInJs: boolean;
+  /**
+   * Source put ahead of the server bundle's entry: it registers react-native-web's style sheet
+   * with the server renderer, which writes it into each page's `<head>`.
+   */
+  readonly serverPrelude: string;
+}
+
+/** The bundler options {@link CompatReactNativeOptions} turns into (none when it is absent). */
+function reactNativeBundlerOptions(
+  rn: CompatReactNativeOptions | undefined,
+  define: Record<string, string> | undefined,
+): Pick<BundleNextCompatModulesOptions, "define" | "platformExtensions" | "jsxInJs"> {
+  if (!rn) return {};
+  return {
+    define: { ...define, ...rn.define },
+    platformExtensions: rn.platformExtensions,
+    jsxInJs: rn.jsxInJs,
+  };
+}
 
 /** A built next-compat page: paths to its server + client bundles. */
 export interface BuiltNextCompatPage {
@@ -170,6 +206,8 @@ export interface BuildNextCompatModulesOptions {
   buildTarget?: Platform;
   /** Forwarded to {@link BundleNextCompatModulesOptions.resolveAlias}. */
   resolveAlias?: ResolveAliasConfig;
+  /** React Native mode's additions (see {@link CompatReactNativeOptions}). */
+  reactNative?: CompatReactNativeOptions;
 }
 
 /**
@@ -224,7 +262,8 @@ export async function buildNextCompatModules(
     lines.push(`export * as ${key} from ${JSON.stringify(abs)};`);
   });
   const entryPath = join(entriesDir, "app.tsx");
-  await Deno.writeTextFile(entryPath, lines.join("\n") + "\n");
+  const rn = options.reactNative;
+  await Deno.writeTextFile(entryPath, (rn?.serverPrelude ?? "") + lines.join("\n") + "\n");
 
   await bundleNextCompatModules({
     entryPoints: { [SERVER_BUNDLE_NAME]: entryPath },
@@ -249,6 +288,8 @@ export async function buildNextCompatModules(
     buildTarget: options.buildTarget,
     resolveAlias: options.resolveAlias,
     assets: options.assets,
+    ...(rn ? { extraPlugins: rn.plugins as esbuild.Plugin[] } : {}),
+    ...reactNativeBundlerOptions(rn, undefined),
   });
 
   const bundle = join(outRoot, `${SERVER_BUNDLE_NAME}.js`);
@@ -371,6 +412,12 @@ export interface BuildNextCompatClientOptions {
   buildTarget?: Platform;
   /** Forwarded to {@link BundleNextCompatModulesOptions.resolveAlias}. */
   resolveAlias?: ResolveAliasConfig;
+  /**
+   * React Native mode's additions (see {@link CompatReactNativeOptions}): its resolvers run
+   * after the action stubs and ahead of {@link extraPlugins}; its `define`,
+   * `platformExtensions` and `jsxInJs` take the place of those options.
+   */
+  reactNative?: CompatReactNativeOptions;
 }
 
 /**
@@ -419,10 +466,12 @@ export async function buildNextCompatClientEntries(
     // which is what callers pass.
     extraPlugins: [
       serverStubPlugin(options.server ?? [], generateServerStub),
+      ...(options.reactNative?.plugins as esbuild.Plugin[] | undefined ?? []),
       ...(options.extraPlugins as esbuild.Plugin[] | undefined ?? []),
     ],
     platformExtensions: options.platformExtensions,
     jsxInJs: options.jsxInJs,
+    ...reactNativeBundlerOptions(options.reactNative, options.define),
   });
   await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
 }
@@ -522,6 +571,8 @@ export interface BuildNextCompatFlightOptions {
   buildTarget?: Platform;
   /** Forwarded to {@link BundleNextCompatModulesOptions.resolveAlias}. */
   resolveAlias?: ResolveAliasConfig;
+  /** React Native mode's additions (see {@link CompatReactNativeOptions}). */
+  reactNative?: CompatReactNativeOptions;
 }
 
 /**
@@ -602,7 +653,11 @@ export async function buildNextCompatFlightEntry(
     resolveAlias: options.resolveAlias,
     assets: options.assets,
     // Strip `"use server"` modules (reached transitively via islands) → stubs.
-    extraPlugins: [serverStubPlugin(options.boundary.server, generateServerStub)],
+    extraPlugins: [
+      serverStubPlugin(options.boundary.server, generateServerStub),
+      ...(options.reactNative?.plugins as esbuild.Plugin[] | undefined ?? []),
+    ],
+    ...reactNativeBundlerOptions(options.reactNative, undefined),
   });
   await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
 }

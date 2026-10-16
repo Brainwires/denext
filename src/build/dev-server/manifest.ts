@@ -4,7 +4,12 @@
 import { type Platform, platformResolution } from "../platform-extensions.ts";
 import { devBuildTarget, devPlatformImports, devStylesheetImports } from "./platform.ts";
 import { type RouteManifest, scanRoutes } from "../../router/manifest.ts";
-import { domListsEnabled, featureFlags, momentumSafeScrollEnabled } from "../../server/config.ts";
+import {
+  domListsEnabled,
+  featureFlags,
+  momentumSafeScrollEnabled,
+  reactNativeOptions,
+} from "../../server/config.ts";
 import { domListAliases } from "../dom-lists.ts";
 import { applyPlugins } from "../../plugin/mod.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
@@ -98,7 +103,11 @@ async function scanManifest(st: DevState): Promise<RouteManifest> {
 async function resolveUnbundledMode(st: DevState): Promise<void> {
   st.unbundledCompat = await isCompat(st);
   const transformMaps = await getTransformMaps(st);
-  st.unbundledActive = st.unbundledOptIn && Object.keys(transformMaps).length === 0;
+  // React Native mode keeps the bundled compat loop too: the unbundled loop's React Native
+  // dependency bundle is built from an SPA entry (and expo-router's routes), not from the App
+  // Router's islands and route entries, so its client modules would miss react-native-web.
+  st.unbundledActive = st.unbundledOptIn && Object.keys(transformMaps).length === 0 &&
+    reactNativeOptions(st.paths.config) === null;
 }
 
 /** The current route manifest, with the boundary, CSS and dev-loop mode brought up to date. */

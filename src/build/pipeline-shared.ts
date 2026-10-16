@@ -39,6 +39,7 @@ import {
 } from "./optimize-package-imports.ts";
 import { CLIENT_PREFIX } from "./prod-server/assets.ts";
 import type { AssetOptions } from "./next-compat.ts";
+import { reactNativeCompatOptions } from "./react-native-app-router.ts";
 
 /** Whether `path` is an existing directory. */
 export async function dirExists(path: string): Promise<boolean> {
@@ -203,6 +204,9 @@ export function compatBuildOptions(
     // staging dir, swapped into `client/` at finalize (emitting into `client/` directly
     // would be wiped by that swap).
     assets: compatAssets(projectDir, clientDir),
+    // React Native mode: react-native → react-native-web (and the rest of its resolvers) in the
+    // server, Flight and client bundles; undefined (no change) without `reactNative`.
+    reactNative: reactNativeCompatOptions(paths.config, projectDir, false),
   };
 }
 

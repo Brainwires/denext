@@ -32449,6 +32449,18 @@
           "denextOnly": true
         },
         {
+          "name": "CompatReactNativeOptions",
+          "slug": "CompatReactNativeOptions",
+          "kind": "interface",
+          "signature": "interface CompatReactNativeOptions",
+          "doc": "React Native mode (reactNative in the config) for the App Router's compat bundles: what each of the server, Flight and client-route bundles adds (see react-native-app-router.ts reactNativeCompatOptions). Absent when reactNative is off, which leaves every bundle exactly as it is without it.",
+          "docFull": "React Native mode (`reactNative` in the config) for the App Router's compat bundles: what\neach of the server, Flight and client-route bundles adds (see\n`react-native-app-router.ts` `reactNativeCompatOptions`). Absent when `reactNative` is off,\nwhich leaves every bundle exactly as it is without it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "compileMdxSource",
           "slug": "compileMdxSource",
           "kind": "function",

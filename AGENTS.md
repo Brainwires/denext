@@ -690,7 +690,9 @@ a reload / relaunch never settles. Docs: https://denext.dev/docs/updates
 
 **An Expo / React Native app on the web:** `reactNative: true` (with `mode: "spa"`) builds the
 app's own source through `react-native-web` (`react-native` → react-native-web, `.web.*` first,
-expo-router's routes), and every `expo-*` import resolves to a `denext/expo/*` shim over
+expo-router's routes); on the App Router (no `mode: "spa"`) Server and `"use client"` components
+import `react-native` too, server-rendered with react-native-web's style sheet in the `<head>`
+(no expo-router there). Every `expo-*` import resolves to a `denext/expo/*` shim over
 `denext/mobile` (`denext/expo/manifest` lists what each omits; the synchronous JSI APIs are not
 provided). React Native's mocked APIs (`Keyboard`, `BackHandler`, `StatusBar`, `Alert`,
 `RefreshControl`, `Linking`, …) are replaced with shell-backed ones, `FlatList` / `SectionList` /

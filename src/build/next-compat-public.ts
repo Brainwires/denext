@@ -24,6 +24,7 @@ export type {
   BuildNextCompatModulesOptions,
   BuildNextCompatOptions,
   BuiltNextCompatPage,
+  CompatReactNativeOptions,
   MdxBuildOptions,
   NextCompatClientEntry,
   NextCompatPageInput,

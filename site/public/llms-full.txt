@@ -694,7 +694,9 @@ a reload / relaunch never settles. Docs: https://denext.dev/docs/updates
 
 **An Expo / React Native app on the web:** `reactNative: true` (with `mode: "spa"`) builds the
 app's own source through `react-native-web` (`react-native` → react-native-web, `.web.*` first,
-expo-router's routes), and every `expo-*` import resolves to a `denext/expo/*` shim over
+expo-router's routes); on the App Router (no `mode: "spa"`) Server and `"use client"` components
+import `react-native` too, server-rendered with react-native-web's style sheet in the `<head>`
+(no expo-router there). Every `expo-*` import resolves to a `denext/expo/*` shim over
 `denext/mobile` (`denext/expo/manifest` lists what each omits; the synchronous JSI APIs are not
 provided). React Native's mocked APIs (`Keyboard`, `BackHandler`, `StatusBar`, `Alert`,
 `RefreshControl`, `Linking`, …) are replaced with shell-backed ones, `FlatList` / `SectionList` /
@@ -3540,6 +3542,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CommandContext` — The parsed invocation handed to a command's CommandSpec.run.
 - `interface CommandSpec` — A first-class denext CLI verb.
 - `compareSpecificity(a: Segment[], b: Segment[]): number` — Order two patterns by specificity the way Next.js does: compare segment by segment from the left, and at the first position that differs the more specific kind wins (static > dynamic > catch-all > optional catch-all). A pattern that has run out of segments (its catch-all consumed the rest) ranks below one that still has a concrete segment there. Returns negative when a should be tried first.
+- `interface CompatReactNativeOptions` — React Native mode (reactNative in the config) for the App Router's compat bundles: what each of the server, Flight and client-route bundles adds (see react-native-app-router.ts reactNativeCompatOptions). Absent when reactNative is off, which leaves every bundle exactly as it is without it.
 - `compileMdxSource(path: string, source: string, opts?: MdxBuildOptions): Promise<string>` — Compile one MDX/Markdown source to a JS module string (React automatic runtime, jsxImportSource: "react" → aliased to denext downstream). With no opts this is the baseline plain-MDX/CommonMark path; when the app configures mdx in denext.config.ts, its unified remark/rehype/recma plugin lists (e.g. Codehike, GFM) are forwarded verbatim to MDX's compile. Exported for unit testing the plugin wiring.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `createNextCompatServerLoader(base: ModuleLoader, opts: NextCompatServerLoaderOptions): ModuleLoader` — Wrap a base ModuleLoader so route source modules that have a react→denext rewritten server bundle load from that bundle instead of source (a keyed ref resolves to the module's namespace inside the single server bundle).

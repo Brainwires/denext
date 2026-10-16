@@ -611,10 +611,11 @@ every `--platform` target included.
   plain file. `{ native: true }` also probes `.native` after the OS on iOS and Android; `false`
   turns platform files off. See [platform-specific files](/docs/platform-files).
 - **`reactNative`** — `boolean | { rootStyle?, expoShims?, lists?, aliases?,
-  desktopPackage? }` (off; SPA mode only). Builds a React Native / Expo app's
-  source for the web through `react-native-web`: `react-native` resolves to
-  react-native-web (with denext's shell-backed overlay) for every importer,
-  `.web.*` files win, `.js` parses as JSX, `__DEV__` / `global` /
+  desktopPackage? }` (off). Builds a React Native / Expo app's source for the
+  web through `react-native-web`, in SPA mode or on the App Router (Server and
+  client components; see [On the App Router](/docs/react-native#on-the-app-router)):
+  `react-native` resolves to react-native-web (with denext's shell-backed
+  overlay) for every importer, `.web.*` files win, `.js` parses as JSX, `__DEV__` / `global` /
   `process.env.EXPO_OS` are defined, and the SPA shell gets Expo web's root
   style and a `viewport-fit=cover` viewport (`rootStyle: false` leaves both
   out). `expoShims: false` resolves `expo-*` packages normally instead of to

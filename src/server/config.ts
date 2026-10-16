@@ -2106,8 +2106,9 @@ export interface DenextConfig {
    */
   deploy?: DeployConfig;
   /**
-   * Build a React Native / Expo app's source for the web through `react-native-web` — SPA
-   * mode only (`mode: "spa"`). `true` turns on the defaults; an object sets options.
+   * Build a React Native / Expo app's source for the web through `react-native-web`, in SPA
+   * mode (`mode: "spa"`) or on the App Router. `true` turns on the defaults; an object sets
+   * options.
    *
    * - `react-native` (and every `react-native/…` subpath) resolves to the installed
    *   `react-native-web`, for every importer, even when a real `react-native` is installed.
@@ -2120,9 +2121,15 @@ export interface DenextConfig {
    *   `process.env.EXPO_OS` → `"web"` are defined at build time.
    * - The SPA shell gets Expo web's root style (see {@link ReactNativeConfig.rootStyle}).
    *
-   * The build always takes the esbuild (compat) path, and `denext dev` defaults to the
-   * bundled loop, which applies the same resolution. Install `react-native-web` in the
+   * The build always takes the esbuild (compat) path. Install `react-native-web` in the
    * project; native-only modules still need web shims of your own.
+   *
+   * On the App Router, the server bundle, the client islands and the hydrated routes all
+   * resolve this way, so Server Components and `"use client"` components can both import
+   * `react-native`; react-native-web's style sheet is written into each server-rendered
+   * `<head>` (`<style id="react-native-stylesheet">`). `expo-router` imports fail there (`app/`
+   * is the App Router's), `dev` uses the bundled loop, and `fonts` and
+   * `compatibilityMode: false` are refused.
    */
   reactNative?: boolean | ReactNativeConfig;
   /**
