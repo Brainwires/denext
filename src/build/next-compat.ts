@@ -958,6 +958,8 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/cli/command",
   "denext/plugin-kit",
   "denext/plugin-kit/vite-emitter",
+  // The `gleam()` build plugin: imported by denext.config.ts, it runs the Gleam compiler.
+  "denext/gleam",
   "denext/lint-plugin",
   "denext/bundle",
   "denext/build/css",
