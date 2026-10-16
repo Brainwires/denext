@@ -160,6 +160,13 @@ and this project adheres to
   read-modify-write a version-checked commit. `cacheStoreContract`, `sessionStoreContract` and
   `rateLimitStoreContract` (`denext/testing`) are the suites every shipped store passes (in-memory,
   SQLite, Postgres, Redis, Deno KV), so a store of your own can prove itself.
+- **`sqliteAuthAdapter` can rename and drop columns and tables.** A versioned migration list
+  (`auth_schema_migrations`) runs on every open, before the additive reconcile: each migration
+  once, in version order, inside one `BEGIN IMMEDIATE` transaction (SQLite's write lock, so a
+  second process opening the file waits and then finds them recorded), with the recorded versions
+  read again inside the lock and a failure rolling the batch back. The helpers a migration uses
+  (`renameColumn`, `dropColumn`, `renameTable`, `dropTable`) do nothing when the change is already
+  made, so a fresh file records them without change. The schema was additive-only before.
 
 ### Changed
 

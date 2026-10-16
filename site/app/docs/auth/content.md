@@ -629,11 +629,17 @@ hold two working reset links), `auth_credentials`, `auth_api_tokens` (unique on 
 `auth_sso_sessions`, `auth_saml_message_ids`) — plus the `/auth/v1` OAuth-server, stored-provider
 and Web3 nonce tables.
 
-Schema policy: `CREATE TABLE IF NOT EXISTS` on every open, then every declared column a
-table is missing is added with `ALTER TABLE … ADD COLUMN`, decided by
-`PRAGMA table_info`. There is no migration framework, no column is ever dropped or
-retyped, and a denext upgrade never rewrites your rows — schema changes are additive by
-construction.
+Schema policy: every open first applies the versioned migrations the release lists that the
+file has not recorded in `auth_schema_migrations` — the renames and drops an additive change
+can't make. They run once each, in version order, inside one `BEGIN IMMEDIATE` transaction:
+SQLite's write lock, so a second process opening the same file waits (`busy_timeout`) and then
+finds them recorded; the recorded versions are read again inside the lock, and a failure rolls
+the whole batch back for the next open to retry. Each migration is written against the shape it
+finds, so on a fresh file it changes nothing and is simply recorded. Then `CREATE TABLE IF NOT
+EXISTS`, and every declared column a table is missing is added with `ALTER TABLE … ADD COLUMN`,
+decided by `PRAGMA table_info`. No column is retyped, and only a listed migration renames or
+drops one. A file that records a migration this release doesn't know (opened by a newer denext)
+is reported once on stderr.
 
 A unique index cannot be created over a table that already violates it — an `auth_users`
 populated before 2.5 may hold two rows whose emails differ only in case. That failure is

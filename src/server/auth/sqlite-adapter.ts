@@ -17,12 +17,13 @@
  * adapter still never *makes* sessions stateful on its own — that is
  * `session: { strategy: "database" }`.
  *
- * **Schema policy.** `CREATE TABLE IF NOT EXISTS` on every open, then each declared column
- * a table is missing is added with `ALTER TABLE … ADD COLUMN` (nullable — the only form
- * SQLite can add to a populated table), decided by `PRAGMA table_info`. Adding a derived
- * column also runs its backfill. There is no migration framework, no column is ever
- * dropped or retyped, and a denext upgrade never rewrites your rows: schema changes are
- * additive by construction.
+ * **Schema policy.** Every open first applies the versioned migrations this release lists
+ * that the file has not recorded (`auth_schema_migrations`; renames and drops, run once each
+ * under SQLite's write lock — see {@link ./sqlite-migrations.ts}), then `CREATE TABLE IF NOT
+ * EXISTS`, then adds each declared column a table is missing with `ALTER TABLE … ADD COLUMN`
+ * (nullable — the only form SQLite can add to a populated table), decided by
+ * `PRAGMA table_info`. Adding a derived column also runs its backfill. No column is retyped,
+ * and nothing but a listed migration renames or drops one.
  *
  * Single-node, like the session store: a local file suits one instance. Every replica must
  * see the same database, so for multi-replica either mount one shared volume or implement
@@ -52,6 +53,7 @@ import {
   sqlOAuthServerGroups,
 } from "./sql-adapter-oauth-server.ts";
 import { sqliteSessionStore } from "./sqlite-session-store.ts";
+import { runSchemaMigrations, SQLITE_AUTH_MIGRATIONS } from "./sqlite-migrations.ts";
 import {
   ACCOUNT_MAP,
   API_TOKEN_MAP,
@@ -464,13 +466,18 @@ function createIndex(db: SqliteDb, spec: TableSpec, index: IndexSpec): void {
   }
 }
 
-/** Bring a handle up to the current schema (idempotent) and set the usual WAL pragmas. */
-function initSchema(db: SqliteDb): void {
+/**
+ * Bring a handle up to the current schema (idempotent) and set the usual WAL pragmas: the
+ * versioned migrations first (renames and drops, under the write lock), then the additive
+ * reconcile.
+ */
+function initSchema(db: SqliteDb, path: string, now: () => number): void {
   try {
     // busy_timeout first: a second writer (a seed script, `denext job`) waits instead of
     // failing at once with "database is locked", even when WAL is refused.
     db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL");
   } catch { /* a handle that refuses pragmas keeps its defaults */ }
+  runSchemaMigrations(db, SQLITE_AUTH_MIGRATIONS, { now, label: path });
   for (const spec of [...SCHEMA, ...SSO_SCHEMA]) reconcileTable(db, spec);
   rekeyInternationalisedEmails(db);
 }
@@ -1203,7 +1210,7 @@ function createState(
     }
     if (db) return db;
     const opened = open(path);
-    initSchema(opened);
+    initSchema(opened, path, now);
     db = opened;
     return db;
   };

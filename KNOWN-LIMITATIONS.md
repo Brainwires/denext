@@ -88,7 +88,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **Mail delivery is best-effort:** emailed tokens go to `sendVerificationRequest` (`smtpMailer()`
   or your own) after the response, so delivery can be cut short where the platform freezes the
   isolate.
-- **`sqliteAuthAdapter` is single-node and additive-only** (no renames or drops).
+- **`sqliteAuthAdapter` is single-node.**
 - **Without an adapter, a stateless cookie session can't be ended early:** the user's
   `sessionsValidAfter` (set by `revokeAllSessions`, a password reset or change, a ban, a deletion
   and the pre-account-hijacking eviction) lives on the stored user, so with no adapter there is
