@@ -212,6 +212,12 @@ and this project adheres to
   `"use server"` files from `node_modules`, the way the build found those files, so the component
   a page imports is the registered island. They used to resolve through Deno's `npm:` loader in
   that mode, often to another build of the package, and render on the server only.
+- **`nodeResolve: false` keeps the app's own npm imports on Deno's `npm:` loader in a pnpm
+  workspace.** With `catalog:` / `workspace:` dependencies, the resolver that reads those
+  packages from `node_modules` also took every other bare import in the app's own code that it
+  found there, so the import map's version of a package could be passed over for whatever
+  `node_modules` held. It now claims only the `catalog:` / `workspace:` packages from app code.
+  Their own dependencies, and a workspace package's source, still resolve from `node_modules`.
 - **A live view resumed on another instance stops the copy parked on the first.** A reconnect
   that resumed a parked `defineLiveView` from the shared view store on another instance left the
   original instance running its parked copy (effects, subscriptions, snapshot rewrites) until the

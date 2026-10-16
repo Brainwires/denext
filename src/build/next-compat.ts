@@ -2298,6 +2298,28 @@ async function resolveBareForBuild(
   return remapped ?? await resolveNodeFromBrowser(fromDir, spec, conditions, platformExtensions);
 }
 
+/**
+ * Where the narrow (catalog) resolver walks `node_modules` from for `spec`, or `null` when the
+ * specifier is not its to claim. A catalog / workspace package imported from outside
+ * `node_modules` resolves from the app root (pnpm hoists direct deps there). Inside a package — a catalog
+ * package's dependency subtree in `node_modules`, or a workspace package's raw source (its own
+ * `package.json`, inside or outside the app) — every bare specifier resolves importer-relative,
+ * since the deno-loader can't see those packages' deps. The app's own code importing anything
+ * else is the deno-loader's (the import map, `npm:`): `nodeResolve: false` asked for that.
+ */
+async function narrowFromDir(
+  projectDir: string,
+  packages: Set<string>,
+  spec: string,
+  importer: string,
+): Promise<string | null> {
+  const [name] = splitPackageSpecifier(spec);
+  const inModules = inNodeModules(importer);
+  if (packages.has(name) && !inModules) return projectDir;
+  const appCode = !importer || (!inModules && await ownerPackageDir(importer) === projectDir);
+  return appCode ? null : dirname(importer);
+}
+
 export function catalogResolverPlugin(
   projectDir: string,
   packages: Set<string> | "all",
@@ -2315,17 +2337,13 @@ export function catalogResolverPlugin(
         // denext's own runtime imports — never intercept them. (The narrow catalog set is
         // always plain package names, so this only gates the `"all"` path.)
         if (all && /^[a-z][a-z0-9+.-]*:/.test(args.path)) return null;
-        const [name] = splitPackageSpecifier(args.path);
-        const importerInNodeModules = inNodeModules(args.importer);
         // `"all"`: always walk up from the importer's own dir (Node semantics) — this is
         // what lets a workspace package's SOURCE file (outside the app root) resolve its
-        // deps from its own `node_modules`, not just the app's. The narrow catalog set
-        // keeps its app-root bias for hoisted direct deps (backward-compatible).
+        // deps from its own `node_modules`, not just the app's.
         const fromDir = all
           ? (args.importer ? dirname(args.importer) : projectDir)
-          : (packages.has(name) && !importerInNodeModules) || !args.importer
-          ? projectDir
-          : dirname(args.importer);
+          : await narrowFromDir(projectDir, packages, args.path, args.importer);
+        if (fromDir === null) return null;
         const resolved = await resolveBareForBuild(
           args.importer,
           fromDir,
