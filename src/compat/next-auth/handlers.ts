@@ -12,6 +12,7 @@
  */
 
 import { readCappedBody, STALLED, TOO_LARGE } from "../../server/body.ts";
+import { safeRedirectLocation } from "../../server/config.ts";
 import { handleAuthRequest } from "../../server/auth/routes.ts";
 import { isSameOrigin } from "../../server/auth/routes-shared.ts";
 import { csrfToken, csrfTokenValid } from "./csrf.ts";
@@ -27,7 +28,7 @@ import {
 import { errorPage, signInPage, signOutPage, verifyRequestPage } from "./pages.ts";
 import type { ProviderDescriptor } from "./providers/shared.ts";
 import { currentAuthJsSession } from "./session.ts";
-import type { ActiveNextAuth } from "./state.ts";
+import { type ActiveNextAuth, signInRecord } from "./state.ts";
 
 /** The most a form POST here may carry. */
 const MAX_FORM_BYTES = 64 * 1024;
@@ -153,15 +154,46 @@ function providersJson(active: ActiveNextAuth, request: Request): Response {
   return json(out);
 }
 
-/** Hand the request to denext's endpoints, renaming the `?error=` codes in a redirect. */
+/** A plain redirect to an app-configured page (kept a safe `Location`). */
+function redirectTo(location: string): Response {
+  return new Response(null, {
+    status: 302,
+    headers: { location: safeRedirectLocation(location), "cache-control": "no-store" },
+  });
+}
+
+/**
+ * Where a sign-in that just created its user lands: `pages.newUser`, carrying the landing path
+ * as `callbackUrl` (as Auth.js does) — `null` when there is no such page, the user isn't new
+ * or the sign-in failed.
+ */
+function newUserLocation(active: ActiveNextAuth, location: string): string | null {
+  const page = active.config.pages?.newUser;
+  if (!page || signInRecord().isNewUser !== true) return null;
+  if (new URL(location, "http://denext.invalid").searchParams.has("error")) return null;
+  const separator = page.includes("?") ? "&" : "?";
+  return safeRedirectLocation(`${page}${separator}callbackUrl=${encodeURIComponent(location)}`);
+}
+
+/**
+ * Hand the request to denext's endpoints, renaming the `?error=` codes in a redirect — and
+ * sending a first sign-in (an OAuth or email callback that created the user) to
+ * `pages.newUser`.
+ */
 async function delegate(active: ActiveNextAuth, request: Request): Promise<Response> {
   const res = await handleAuthRequest(request, active.denext);
   if (!res) return json({ error: "not found" }, 404);
   const location = res.headers.get("location");
   if (!location || res.status < 300 || res.status >= 400) return res;
   const headers = new Headers(res.headers);
-  headers.set("location", translateErrorLocation(location));
+  headers.set("location", newUserLocation(active, location) ?? translateErrorLocation(location));
   return new Response(res.body, { status: res.status, headers });
+}
+
+/** `GET {basePath}/signout`: the app's own sign-out page (`pages.signOut`), else the built-in one. */
+async function signOutGet(active: ActiveNextAuth, query: URLSearchParams): Promise<Response> {
+  const page = active.config.pages?.signOut;
+  return page ? redirectTo(page) : signOutPage(active.basePath, await csrfToken(active), query);
 }
 
 /** The GET endpoints the shim answers itself, by action. */
@@ -181,7 +213,7 @@ async function handleGet(
     case "signin":
       return signInPage(active.basePath, active.providers, await csrfToken(active), query);
     case "signout":
-      return signOutPage(active.basePath, await csrfToken(active), query);
+      return await signOutGet(active, query);
     case "verify-request":
       return verifyRequestPage();
     case "error":

@@ -924,3 +924,51 @@ Deno.test("next-auth: database sessions through an Auth.js adapter", async () =>
   assertEquals(sessions.size, 0, "sign-out deleted the row");
   assertEquals(await (await a.call("/api/auth/session")).json(), null);
 });
+
+/** An email-provider app over the memory adapter, its sign-in links captured. */
+function emailApp(config: Partial<NextAuthConfig> = {}) {
+  const sent: { provider: string; url: string }[] = [];
+  const adapter = memoryAdapter();
+  const sender = (provider: string) => ({ url }: { url: string }) =>
+    void sent.push({ provider, url });
+  const a = app({
+    adapter,
+    session: { strategy: "jwt" },
+    providers: [
+      Resend({ confirm: false, sendVerificationRequest: sender("resend") }),
+      Nodemailer({
+        server: "smtp://u:p@mail.test:587",
+        from: "a@app.test",
+        confirm: false,
+        sendVerificationRequest: sender("nodemailer"),
+      }),
+    ],
+    ...config,
+  });
+  const requestLink = async (provider: string, email: string, callbackUrl = "/dash") => {
+    await a.call(`/api/auth/signin/${provider}`, {
+      form: { csrfToken: await a.csrf(), email, callbackUrl },
+    });
+    const link = new URL(sent.at(-1)!.url);
+    return link.pathname + link.search;
+  };
+  return { ...a, adapter, sent, requestLink };
+}
+
+Deno.test("next-auth pages: a first sign-in lands on pages.newUser, a later one on callbackUrl", async () => {
+  const a = emailApp({ pages: { newUser: "/welcome" } });
+  const first = await a.call(await a.requestLink("resend", "new@example.com"));
+  assertEquals(first.headers.get("location"), "/welcome?callbackUrl=%2Fdash");
+  await a.call("/api/auth/signout", { form: { csrfToken: await a.csrf() } });
+  const again = await a.call(await a.requestLink("resend", "new@example.com"));
+  assertEquals(again.headers.get("location"), "/dash");
+});
+
+Deno.test("next-auth pages: GET signout goes to pages.signOut when the app has one", async () => {
+  const own = app({ pages: { signOut: "/goodbye" } });
+  const res = await own.call("/api/auth/signout");
+  assertEquals([res.status, res.headers.get("location")], [302, "/goodbye"]);
+  const builtIn = await app().call("/api/auth/signout");
+  assertEquals(builtIn.status, 200);
+  assert((await builtIn.text()).includes("Are you sure you want to sign out?"));
+});
