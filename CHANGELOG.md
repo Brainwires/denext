@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-10-16
+
 ### Added
 
 - **`@denext/react-router` route typegen.** The plugin writes React Router's `+types/<route>.ts`
@@ -39,7 +41,6 @@ and this project adheres to
   too. A name the target gets only through `export *` from two modules with different bindings
   (a SyntaxError in browsers) is reported with both sources, and Chrome's "conflicting star
   exports" / Firefox's "ambiguous indirect export" messages are surfaced like a missing export.
-
 - **`<ViewTransition ref>` and `onUpdate` on a soft navigation.** A `ref` receives the boundary's
   `ViewTransitionInstance` once its first host mounts (React's `commitAttachRef`): kept across
   renders, a new one when `name` changes, detached on unmount or when an `<Activity>` hides it. A
@@ -87,7 +88,6 @@ and this project adheres to
   `denext desktop run` / `dev`. `"direct"` skips proxy discovery, so a slow WPAD / PAC lookup no
   longer holds the page's loopback WebSocket at startup; under `"system"` the runtime now warms the
   resolver up as the window is created.
-
 - **`ViewTransitionCallback`, `ViewTransitionInstance` and `ViewTransitionPseudoElement`
   (`denext`) and `DeferredValueSink` (`denext/server`) are exported**: the types the public
   `<ViewTransition>` props and the render options already referenced (`deno task doc-lint` is
@@ -126,7 +126,6 @@ and this project adheres to
   AES-256-GCM under a key derived from `DENEXT_LIVE_VIEW_SECRET` and bound to the instance id.
   A reconnect that lands on any instance takes the snapshot (once) and resumes the model instead
   of running `init`. Models must be serializable by the wire codec to be stored.
-
 - **The MCP DevTools tools work on SPA apps.** The SPA dev server now serves
   `/_denext/dev-inspect` (the page's DevTools sink posts its tree, `denext_component_tree`,
   `denext_why_render` and `denext_hook_state` read it) and answers the on-demand pull over its
@@ -212,7 +211,6 @@ and this project adheres to
   Zoom and Notion require it) instead of the default `client_secret_post`; a provider with no
   scopes sends no `scope` parameter; and an `allowedHosts` entry `*.domain` admits a discovered
   endpoint on that domain's subdomains (a Cognito pool's hosted domain), never the apex.
-
 - **Live across replicas through Redis: `redisChannelTransport()`, and `usePresence` on every
   instance.** `setChannelTransport(redisChannelTransport({ url }))` (`denext/server`) carries
   `createChannel` publishes and revokes and `revalidateTag`'s Live re-pushes over Redis pub/sub,
@@ -223,7 +221,6 @@ and this project adheres to
   change (and on a 10-second heartbeat once another instance is heard from), merges the others'
   into the `presence-state` it sends, and drops a crashed instance's peers after 35 seconds.
   `ChannelEvent.kind` gains `"presence"`.
-
 - **`denext/auth`: the auth surface as its own entry point.** `import { auth, denextAuth, github }
   from "denext/auth"` — `denextAuth()`, `auth()` and the guards (`requireAuth`, `requireSession`),
   the provider presets, the adapters and stores, bearer tokens, email verification and password
@@ -261,7 +258,6 @@ and this project adheres to
   the way `clientIp()` reads it (the socket peer, or with `trustForwardedHeaders` the proxy's last
   `x-forwarded-for` hop). A rate-limited route's `signInFailed` keeps the limiter's bucket (an
   IPv6 client's /64) as before; an event raised outside a request (a job) has none.
-
 - **`next/font/local` emits Next's metric-matched fallback face.** `localFont({ src })` now
   reads the font file's own metrics (`head`, `hhea`, and the `cmap` + `hmtx` width of Next's
   sample text) from a `.ttf`, `.otf`, `.woff` or `.woff2` — parsed in-house, no npm; WOFF and
@@ -273,7 +269,6 @@ and this project adheres to
   still emits none, and a file that can't be found or parsed emits none. The file is looked up
   under `public/` for a `/…` path, else under the project root, `public/`, `app/`, `src/app/`
   and `src/`.
-
 - **The CLI on Homebrew, Scoop and winget.** A stable release now publishes the manifests it
   generates: the formula to the `Brainwires/homebrew-denext` tap
   (`brew install brainwires/denext/denext`), the manifest to the `Brainwires/scoop-denext` bucket
@@ -287,7 +282,6 @@ and this project adheres to
   an x64 PowerShell running under emulation), and falls back to the x64 binary for a release that
   predates it. denext's Deno toolchain has no Windows on Arm build yet, so there the binary runs
   its Deno verbs on the `deno` on your `Path`.
-
 - **Shared stores on Redis and Deno KV, and exported store contract suites.** `redisCacheStore`,
   `redisSessionStore` and `redisRateLimitStore` (`denext/server`) share the data and ISR page
   cache, revocable sessions and rate-limit counts across replicas through Redis 7+ or Valkey. They
@@ -405,7 +399,6 @@ and this project adheres to
   document with a placeholder no content filled, naming the hole and the error. The server now
   reports that error to `onRequestError` (`routeType: "render"`), as Next reports every render
   error, on the streamed HTML, Flight and PPR-resume paths alike.
-
 - **A conditional child no longer takes its sibling's state.** In
   `{open && <Counter />}<Counter />`, showing the first one handed it the second one's fiber (its
   state, effects and DOM) because unkeyed children were matched by type alone. Each unkeyed child
@@ -413,14 +406,12 @@ and this project adheres to
   counted (React's implicit index); one left without a match still reuses a leftover child of its
   type instead of remounting. Found by the `<ViewTransition>` callback e2e test, whose `onEnter`
   landed on the wrong boundary.
-
 - **A root layout rendered by client code keeps its `<title>` / `<meta>` / `<link>` in the
   head.** The server hoists them into the document's head, as React 19 does; hydration now adopts
   them there (matched by tag and identifying attributes, among the document's own tags) instead
   of creating them again in the page container with a dev mismatch warning, a fresh render adds
   them to the head, and unmounting the layout takes them out. The rest of its `<head>` content
   (a `<style>`, a `<script>`) stays where the parser left it.
-
 - **`next-auth` resolves to denext's shim in the next-compat build without an import map.**
   `next-auth/react` (the app's and a `node_modules` library's) bundles from the prebuilt runtime,
   and `next-auth`, `next-auth/jwt` and the providers stay external to the shim, so an installed
@@ -436,7 +427,6 @@ and this project adheres to
 - **A `next-auth` provider's `profile()` override decides the account id and email**, as in
   Auth.js (it used to set only the name and image). The provider's own "verified" verdict carries
   over only to the address the provider itself returned.
-
 - **Routes at `/global-error`, `/flight` or `/flight-boot` keep their own client bundles.** The
   build wrote the framework's fixed-name client bundles as `client/global-error.js`,
   `client/flight.js` (the Flight islands entry) and `client/flight-boot.js` (its deferred boot),
@@ -444,7 +434,6 @@ and this project adheres to
   are now `client/__denext_global_error__.js`, `client/__denext_flight__.js` and
   `client/__denext_flight_boot__.js` on every path (build, next-compat, export, dev's compat
   outputs), and a dynamic segment that would spell one of those ids is refused at build time.
-
 - **A hidden `<Activity>` holds class lifecycles and refs, as React does.** A class component
   that mounts inside a hidden one no longer runs `componentDidMount` (nor `componentDidUpdate`
   while it stays hidden); hiding a shown one runs its `componentWillUnmount`, and revealing runs
@@ -452,7 +441,6 @@ and this project adheres to
   callback ref gets `null` or its cleanup, an object ref is cleared), none attach while it
   mounts hidden, and revealing attaches them. A Suspense boundary that re-suspends behind its
   fallback hides its content the same way.
-
 - **`react-dom/server` streams honour the consumer's backpressure.** `renderToPipeableStream`'s
   `pipe()` stops writing when the destination's `write()` returns `false` and resumes on
   `'drain'` (calling a destination's `flush()` after each chunk, as React does); a destination
@@ -466,7 +454,6 @@ and this project adheres to
   rendering on their own, so `await stream.allReady` before reading still completes, and a
   render with many boundaries streams faster (one batch per read instead of a race over every
   pending boundary).
-
 - **`global-error.tsx` hydrates on the next-compat build and in a static export.** Both paths
   emitted no global-error entry, so the global-error document was dead HTML: its `reset` did
   nothing and no author handler ran. A next-compat `denext build` now bundles the entry
@@ -475,7 +462,6 @@ and this project adheres to
   global-error document as the native build does. `denext export` bundles the same entry and
   pre-renders global-error to `out/500.html`, wired to hydrate, for a static host's error page;
   it renders with the `Internal Server Error` message a production server hands it.
-
 - **`defineLiveView` in `denext/live`: a Model–View–Update program held on the server, per
   connection.** Render the component it returns from a Server Component: the page gets
   `view(init(props))` as plain HTML (the first paint works with JavaScript disabled), and in the
@@ -15637,7 +15623,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.1.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.2.0...development
+[4.2.0]: https://jsr.io/@denext/denext@4.2.0
 [4.1.0]: https://jsr.io/@denext/denext@4.1.0
 [4.0.0]: https://jsr.io/@denext/denext@4.0.0
 [4.0.0-rc.2]: https://jsr.io/@denext/denext@4.0.0-rc.2

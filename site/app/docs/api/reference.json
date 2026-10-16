@@ -4200,7 +4200,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 4.1.0",
+          "signature": "VERSION: 4.2.0",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
