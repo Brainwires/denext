@@ -98,6 +98,22 @@ export interface AuthSession {
    * (e.g. `["pwd"]`, `["pwd", "otp"]`). Absent on a v1 payload; readers treat that as `[]`.
    */
   amr?: string[];
+  /**
+   * For a session a `saml()` provider's sign-in started: the assertion's NameID (with its Format
+   * and the AuthnStatement's SessionIndex, when given) — what SAML Single Logout names the
+   * session by. Set by the framework; a `callbacks.session` result can't change it.
+   */
+  saml?: AuthSessionSaml;
+}
+
+/** The SAML subject of a session a `saml()` provider started ({@linkcode AuthSession.saml}). */
+export interface AuthSessionSaml {
+  /** The Subject's NameID. */
+  nameId: string;
+  /** The NameID's Format, when the assertion gave one. */
+  nameIdFormat?: string;
+  /** The AuthnStatement's SessionIndex, when the assertion gave one. */
+  sessionIndex?: string;
 }
 
 /** Raw inputs a provider maps into an {@link AuthUser}. */

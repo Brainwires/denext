@@ -285,6 +285,7 @@ export type {
   AuthProvider,
   AuthSession,
   AuthSessionConfig,
+  AuthSessionSaml,
   AuthUser,
   CredentialsProvider,
   EmailProvider,

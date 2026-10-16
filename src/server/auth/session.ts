@@ -38,7 +38,8 @@ import { randomToken } from "./oauth.ts";
 import { cookieSessionOptions, resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { sessionExpired, type SessionStore } from "./session-store.ts";
 import { ssoSessionAllowed } from "./sso-user.ts";
-import type { AuthConfig, AuthSession, AuthUser } from "./types.ts";
+import { recordSamlSession } from "./saml-sessions.ts";
+import type { AuthConfig, AuthSession, AuthSessionSaml, AuthUser } from "./types.ts";
 
 /** What the signed cookie carries: the payload (stateless) or a store id. */
 type CookieData = AuthSession | { sid: string };
@@ -251,6 +252,8 @@ export interface IssueAuthSessionOptions {
    * window for the second.
    */
   lifetime?: number;
+  /** The SAML subject, for a session a `saml()` provider started (Single Logout). */
+  saml?: AuthSessionSaml;
 }
 
 /**
@@ -280,6 +283,8 @@ function sealOwnedFields(result: AuthSession, minted: AuthSession): AuthSession 
   };
   if (pending) sealed.mfaPending = true;
   if (minted.amr) sealed.amr = [...minted.amr];
+  if (minted.saml) sealed.saml = { ...minted.saml };
+  else delete sealed.saml;
   return sealed;
 }
 
@@ -318,6 +323,7 @@ export async function buildSessionPayload(
   };
   if (issue.mfaPending) payload.mfaPending = true;
   if (issue.amr?.length) payload.amr = [...issue.amr];
+  if (issue.saml) payload.saml = { ...issue.saml };
   if (config.callbacks?.session) {
     payload = sealOwnedFields(await config.callbacks.session(payload), payload);
     // The callback may shorten the expiry, never lift it past the absolute ceiling.
@@ -352,6 +358,7 @@ export async function issueAuthSession(
   const sid = randomToken();
   await options.sessionStore.create(sid, payload);
   await session.set({ sid });
+  await recordSamlSession(options, payload, sid);
   return { ...payload, sessionId: sid };
 }
 

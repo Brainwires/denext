@@ -21,7 +21,7 @@ import {
   wantsJson,
 } from "./routes-shared.ts";
 import { issueAuthSession } from "./session.ts";
-import type { AuthUser } from "./types.ts";
+import type { AuthSessionSaml, AuthUser } from "./types.ts";
 
 /**
  * How long a pending (second-factor-owed) session lives: 15 minutes, never more than the
@@ -41,6 +41,8 @@ export interface FinishSignInOptions {
   amr: string[];
   /** Answer JSON instead of redirecting; defaults to what the request asks for. */
   json?: boolean;
+  /** The SAML subject, for a `saml()` provider's sign-in (kept for Single Logout). */
+  saml?: AuthSessionSaml;
   /**
    * The first factor was itself multi-factor (a passkey with user verification: possession
    * plus a PIN or biometric), so no pending step-up is owed whatever `mfa.required` says.
@@ -69,6 +71,7 @@ export async function finishSignIn(
     mfaPending: pending,
     amr: options.amr,
     lifetime: pending ? PENDING_MFA_LIFETIME : undefined,
+    ...(options.saml ? { saml: options.saml } : {}),
   });
   if (pending) {
     return asJson

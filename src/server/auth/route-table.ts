@@ -41,6 +41,7 @@ import { handleOAuthCallback, handleOAuthFormPost, handleSignin } from "./routes
 import { passkeyRoutes } from "./routes-passkeys.ts";
 import { phoneCallbacks } from "./routes-phone.ts";
 import { handleSamlAcs, samlRoutes, startSamlSignIn } from "./routes-saml.ts";
+import { samlSloRoutes } from "./routes-saml-slo.ts";
 import { handleProviders, handleSession, handleSignout } from "./routes-session.ts";
 import {
   type AuthRoute,
@@ -223,6 +224,7 @@ const declaredRoutes: readonly AuthRoute[] = [
   // SAML providers (`saml()`): the SP metadata. Their sign-in and ACS ride `/signin/:provider`
   // and `/callback/:provider`; the metadata answers `null` for any other provider.
   ...samlRoutes,
+  ...samlSloRoutes,
 ];
 
 /** The table the dispatcher matches against: every row with its `limit` gate applied. */

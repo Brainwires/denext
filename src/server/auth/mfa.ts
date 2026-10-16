@@ -449,6 +449,7 @@ export async function completeStepUp(
   const added = method === "hwk" ? ["hwk", "mfa"] : [method];
   const fresh = await issueAuthSession(ctx.config, session.user, session.provider, {
     amr: [...(session.amr ?? []), ...added],
+    ...(session.saml ? { saml: session.saml } : {}),
   });
   await emitAuthEvent(ctx.options, "signIn", {
     user: session.user,
