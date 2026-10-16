@@ -79,6 +79,8 @@ export interface LustreKit {
    * `SystemRequestedShutdown` as a TODO): callers clear the root themselves.
    */
   stop(runtime: LustreRuntime): void;
+  /** Is this a browser (Lustre's `is_browser`: a `document` exists)? */
+  isBrowser(): boolean;
   /** Define `app` as the custom element `tag`, once (later calls are no-ops). */
   register(app: LustreApp<undefined>, tag: string): boolean;
   /**
@@ -142,6 +144,7 @@ export function lustreKit(modules: LustreModules): LustreKit {
       return null;
     },
     stop: (runtime) => void modules.send(runtime, modules.shutdown()),
+    isBrowser: () => modules.is_browser(),
     register(app, tag) {
       if (registered.has(tag) || globalThis.customElements?.get(tag)) return true;
       const result = modules.register(app, tag);

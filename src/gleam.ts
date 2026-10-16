@@ -24,7 +24,8 @@
  *
  * Lustre apps (the Gleam UI framework) run as denext islands: when the app depends on Lustre, the
  * Gleam build writes `.denext/lustre.ts`, the app's own Lustre build wrapped as a kit, and
- * {@link lustreIsland} turns a Lustre app into an island component.
+ * {@link lustreIsland} turns a Lustre app into an island component; {@link lustreElement} renders a
+ * Lustre component as a custom element, its shadow root prerendered as Declarative Shadow DOM.
  *
  * ```ts
  * // app/counter.tsx
@@ -58,6 +59,8 @@ export type {
 } from "./lustre/kit.ts";
 export { lustreIsland } from "./lustre/island.ts";
 export type { LustreIslandOptions } from "./lustre/island.ts";
+export { lustreElement } from "./lustre/element.ts";
+export type { LustreElementAttributes } from "./lustre/element.ts";
 
 /**
  * The plugin's implementation, loaded when the plugin is set up. The specifier is not a literal so

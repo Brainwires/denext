@@ -21,6 +21,15 @@ and this project adheres to
   `.denext/lustre.ts`, the app's own Lustre build wrapped as the kit these helpers take (one copy
   of Lustre, typed from Gleam's `.d.mts`). `denext/gleam` can now be imported from client code: the
   build plugin loads its own modules only when it is set up.
+- **Lustre custom elements in JSX: `lustreElement` in `denext/gleam`.**
+  `lustreElement(lustre, "my-counter", counter.component())`, exported from a `"use client"`
+  module, renders a Lustre component (`lustre.component`) as the custom element `<my-counter>`:
+  the server prerenders its shadow root with Lustre's `component.prerender` as Declarative Shadow
+  DOM (the attributes applied through the component's attribute decoders), so the first paint is
+  the component's view, and the browser registers the element lazily, once per tag, from the
+  island's chunk; Lustre then adopts the declarative shadow root instead of rendering a new one.
+  Props are the element's attributes. `LustreElementAttributes<{ start: string }>` types the tag
+  when an app declares it in `JSX.IntrinsicElements`.
 
 - **Background audio with lock-screen controls (`denext mobile add background-audio`).**
   `setNowPlaying({ title, artist, album, artwork, duration, position, playing, controls })`,
