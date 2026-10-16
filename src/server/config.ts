@@ -737,8 +737,9 @@ export interface ApiBatchConfig {
 }
 
 /**
- * Cross-origin access to the app's route handlers (`route.ts`, `defineApi`) and the native
- * `denextAuth` endpoints — what a Capacitor shell (`capacitor://localhost`,
+ * Cross-origin access to the app's route handlers (`route.ts`, `defineApi`), the native
+ * `denextAuth` endpoints, pages, Server Actions, the API batch endpoint and the Live socket —
+ * the last three letting an allowed origin in only without cookies — what a Capacitor shell (`capacitor://localhost`,
  * `https://localhost`) or another front end on a different origin needs to call this server.
  * Origins match EXACTLY (scheme + host + port, byte for byte); there are no wildcards,
  * prefixes or suffixes, and `"null"` is refused.
@@ -756,7 +757,7 @@ export interface CorsConfig {
   methods?: string[];
   /**
    * The request headers a preflight may approve, case-insensitive (default
-   * `authorization`, `content-type`, `x-denext-wire`).
+   * `authorization`, `content-type` and the `x-denext-*` markers denext's own client sends).
    */
   headers?: string[];
   /** Response headers the caller's script may read beyond the safelisted ones (default none). */

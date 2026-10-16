@@ -980,7 +980,7 @@
           }
         },
         "headers": {
-          "description": "The request headers a preflight may approve, case-insensitive (default `authorization`, `content-type`, `x-denext-wire`).",
+          "description": "The request headers a preflight may approve, case-insensitive (default `authorization`, `content-type` and the `x-denext-*` markers denext's own client sends).",
           "type": "array",
           "items": {
             "type": "string"

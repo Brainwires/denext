@@ -27,7 +27,8 @@ import { localeDomainHost, type PeeledLocale, peelLocale } from "./i18n.ts";
 import { fillDestination, matchPattern, safeRedirectLocation } from "./config.ts";
 import { handleAction, isActionRequest } from "./action-handler.ts";
 import { handleApiBatch, isApiBatchRequest } from "./api-batch-handler.ts";
-import { BATCH_ITEM_HEADER } from "../runtime/api-batch-protocol.ts";
+import { API_BATCH_PATH, BATCH_ITEM_HEADER } from "../runtime/api-batch-protocol.ts";
+import { ACTION_PREFIX } from "../runtime/server-action.ts";
 import { runSubRequest } from "./sub-request.ts";
 import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
 import { serveMetadataFile } from "./metadata-files.ts";
@@ -44,7 +45,7 @@ import {
 } from "./pipeline-state.ts";
 import { htmlHeaders, notFound } from "./response-headers.ts";
 import { servePage } from "./page-response.ts";
-import { endpointCorsPolicy, isPreflight, preflightResponse } from "./cors.ts";
+import { applyCors, endpointCorsPolicy, isPreflight, preflightResponse } from "./cors.ts";
 
 // `DENEXT_DEBUG_SUSPENSE=1`: `use()` remembers where each suspension started (`_origin`), so a
 // thenable that escapes every boundary can be traced below (a raw Promise carries no stack of
@@ -276,6 +277,7 @@ async function dispatchAction(state: RequestState): Promise<Response> {
     canonicalOrigin: config.canonicalOrigin,
     trustForwardedHeaders: config.trustForwardedHeaders,
     desktopAppOrigin: config.desktopAppOrigin,
+    cors: state.app.cors ?? null,
     maxBodyBytes: config.actionMaxBodyBytes,
     scope: config.actionScope,
     onError: (err) => reportRequestError(config, err, request, pathname, { routeType: "action" }),
@@ -467,11 +469,24 @@ async function serveStaticDirs(
 
 /** The reserved `/_denext/*` RPC endpoints dispatched before routing: actions and the batch. */
 function dispatchReserved(state: RequestState): Promise<Response> | null {
-  if (isActionRequest(state.request, state.pathname)) return dispatchAction(state);
+  if (isActionRequest(state.request, state.pathname)) {
+    return withAppCors(state, dispatchAction(state));
+  }
   if (isApiBatchRequest(state.request, state.pathname)) {
-    return handleApiBatch(state, (req, ctx) => runSubRequest(runPipeline, state.app, req, ctx));
+    return withAppCors(
+      state,
+      handleApiBatch(state, (req, ctx) => runSubRequest(runPipeline, state.app, req, ctx)),
+    );
   }
   return null;
+}
+
+/**
+ * The app's `cors` headers on a response that isn't an API route's (those run their own
+ * endpoint policy): a page, a Server Action, the batch, a static file or the not-found page.
+ */
+async function withAppCors(state: RequestState, pending: Promise<Response>): Promise<Response> {
+  return applyCors(state.request, await pending, state.app.cors ?? null);
 }
 
 /** A sub-request that matched no API route: a bare JSON 404 (never a page or an asset). */
@@ -486,23 +501,38 @@ function subRequestNotFound(pathname: string): Response {
 }
 
 /**
- * A CORS preflight for an API route is answered here — before middleware — under the route's
+ * A CORS preflight is answered here — before middleware. For an API route, under the route's
  * effective policy (the `cors()` middleware on the asked-about method's handler, else its
- * `export const cors`, else the app's `cors`). A preflight carries no
- * credentials, so an auth guard in `middleware.ts` would otherwise refuse it and the browser
- * would never send the real, authenticated request. Nothing covers the route → `null`, and the
- * request continues as before (a route's own `OPTIONS` export, or a 405).
+ * `export const cors`, else the app's `cors`); for anything else (a page, a Server Action, the
+ * API batch), under the app's `cors`. A preflight carries no credentials, so an auth guard in
+ * `middleware.ts` would otherwise refuse it and the browser would never send the real request.
+ * Nothing covers the path → `null`, and the request continues as before (a route's own
+ * `OPTIONS` export, or a 405).
  */
 async function answerApiPreflight(state: RequestState): Promise<Response | null> {
   if (!isPreflight(state.request)) return null;
   if (state.request.headers.get(BATCH_ITEM_HEADER) === "1") return null;
   const manifest = await state.app.config.getManifest();
   const locale = resolveLocale(state);
-  const api = matchApi(manifest, locale ? locale.rest : state.pathname);
-  if (!api) return null;
-  const mod = await state.app.config.load(api.route.filePath);
-  const policy = endpointCorsPolicy(state.app.cors ?? null, mod, state.request);
+  const routingPath = locale ? locale.rest : state.pathname;
+  const api = matchApi(manifest, routingPath);
+  const policy = api
+    ? endpointCorsPolicy(
+      state.app.cors ?? null,
+      await state.app.config.load(api.route.filePath),
+      state.request,
+    )
+    : appCorsCovers(state, manifest, routingPath)
+    ? state.app.cors ?? null
+    : null;
   return policy ? finalize(state, preflightResponse(state.request, policy)) : null;
+}
+
+/** Whether the app's `cors` covers a non-API path: a Server Action, the API batch, or a page. */
+function appCorsCovers(state: RequestState, manifest: RouteManifest, routingPath: string): boolean {
+  const { pathname } = state;
+  return pathname.startsWith(ACTION_PREFIX) || pathname === API_BATCH_PATH ||
+    !!matchPage(manifest, routingPath, { soft: false });
 }
 
 /** The routing stages, in order; each either produces the response or hands on. */
@@ -538,9 +568,8 @@ async function dispatch(state: RequestState): Promise<Response> {
   const fromApi = await dispatchApi(state, manifest, routingPath, softNavPost);
   if (fromApi) return fromApi;
   if (subRequest) return finalize(state, subRequestNotFound(state.pathname));
-  const fromPage = await dispatchPage(state, manifest, routingPath, localeInfo, softNavPost);
-  if (fromPage) return fromPage;
-  return serveFallback(state, manifest, routingPath);
+  const fromPage = dispatchPage(state, manifest, routingPath, localeInfo, softNavPost);
+  return await withAppCors(state, fromPage ?? serveFallback(state, manifest, routingPath));
 }
 
 /**

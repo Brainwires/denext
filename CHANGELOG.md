@@ -285,6 +285,14 @@ and this project adheres to
   request must come from that origin with client data naming it, and a same-origin ceremony
   can't be finished cross-origin — on top of the per-tab `ceremonyId`. `registerPasskey` and
   `signInWithPasskey` take `origin` for an auth server on another origin.
+- **`cors` covers pages, Server Actions, the API batch endpoint and the Live socket.** Their
+  preflights are answered before `middleware.ts` under the app policy, and their answers carry
+  its headers for an allowed origin (the default `headers` now include denext's own client
+  markers). The same-origin check that is the CSRF defense of Server Actions, the batch and the
+  Live handshake still holds for every cookie-carrying request: an allowed origin gets in only
+  with no `Cookie` and no `Authorization` but an explicit `Bearer`, so it acts with the
+  credentials it presented and nothing ambient. Before, `cors` covered route handlers and the
+  native auth endpoints only.
 
 ### Changed
 

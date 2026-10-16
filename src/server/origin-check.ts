@@ -15,6 +15,7 @@
 // does not widen browser-borne CSRF.
 
 import { parseDesktopAppOrigin } from "../desktop/app-origin.ts";
+import { corsCredentialless, type CorsPolicy } from "./cors.ts";
 
 /** What {@link verifyOrigin} needs from the app config. */
 export interface OriginCheckOptions {
@@ -111,6 +112,23 @@ export function sameOriginUpgrade(request: Request, desktopAppOrigin?: string): 
   } catch {
     return false;
   }
+}
+
+/**
+ * The production Live handshake gate: {@link sameOriginUpgrade}, or a handshake from an origin
+ * the app's `cors` allows that carries no cookie ({@link corsCredentialless}) — a WebSocket is
+ * not covered by CORS, so a cookie-carrying cross-origin one stays refused.
+ *
+ * @param request The upgrade request.
+ * @param options The app's `desktop.app.origin` and `cors` policy.
+ * @returns True when the upgrade may proceed.
+ */
+export function liveOriginAllowed(
+  request: Request,
+  options: { desktopAppOrigin?: string; cors?: CorsPolicy | null },
+): boolean {
+  return sameOriginUpgrade(request, options.desktopAppOrigin) ||
+    corsCredentialless(request, options.cors ?? null);
 }
 
 /**

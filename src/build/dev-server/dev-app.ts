@@ -2,6 +2,7 @@
 // cache store booted once, then `createApp` wired to the per-generation dev state, and the
 // Live Server Components hub on top.
 
+import { corsCredentialless, resolveCors } from "../../server/cors.ts";
 import { renderPlatform } from "./platform.ts";
 import { join } from "@std/path";
 import { type AppConfig, createApp, type RequestHandler } from "../../server/app.ts";
@@ -138,10 +139,14 @@ export function createDevApp(st: DevState): RequestHandler {
   });
   const appHandler = createApp(appConfig);
   // Live Server Components hub (dev): push `<Live>` boundary updates over a WebSocket.
-  // Same-origin gate reuses the dev-origin allowlist used for SSE.
+  // Same-origin gate reuses the dev-origin allowlist used for SSE; a `cors`-allowed origin may
+  // open a socket that carries no cookie.
+  const cors = resolveCors(paths.config?.cors);
   installLiveHub({
     appHandler,
-    originAllowed: (req) => devOriginAllowed(req, new URL(req.url), st.allowedDevOrigins),
+    originAllowed: (req) =>
+      devOriginAllowed(req, new URL(req.url), st.allowedDevOrigins) ||
+      corsCredentialless(req, cors),
     config: resolveLive(paths.config),
     trustForwardedHeaders: appConfig.trustForwardedHeaders,
     limitPolicy: resolveLimitPolicy(appConfig),

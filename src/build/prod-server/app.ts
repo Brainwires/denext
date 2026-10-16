@@ -32,7 +32,8 @@ import { bootServices } from "../../server/service-loader.ts";
 import { installLiveHub } from "../../server/live.ts";
 import { resolveLimitPolicy } from "../../server/remote-addr.ts";
 import { runtimeStateDir } from "../../server/standalone.ts";
-import { sameOriginUpgrade } from "../../server/origin-check.ts";
+import { liveOriginAllowed } from "../../server/origin-check.ts";
+import { resolveCors } from "../../server/cors.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../../server/middleware.ts";
 import { defaultLoader } from "../../server/mod.ts";
 import type { ModuleLoader } from "../../server/types.ts";
@@ -278,11 +279,13 @@ function installProdLiveHub(
   appConfig: AppConfig,
 ): void {
   // Strict same-origin for the Live handshake; a Deno Desktop window's own
-  // `desktop.app.origin` (exactly) counts as same-origin.
+  // `desktop.app.origin` (exactly) counts as same-origin, and a `cors`-allowed origin may open a
+  // socket that carries no cookie (nothing ambient for another page to borrow).
   const desktopAppOrigin = configuredDesktopAppOrigin(paths.config);
+  const cors = resolveCors(paths.config?.cors);
   installLiveHub({
     appHandler,
-    originAllowed: (req) => sameOriginUpgrade(req, desktopAppOrigin),
+    originAllowed: (req) => liveOriginAllowed(req, { desktopAppOrigin, cors }),
     config: resolveLive(paths.config),
     trustForwardedHeaders: appConfig.trustForwardedHeaders,
     limitPolicy: resolveLimitPolicy(appConfig),
