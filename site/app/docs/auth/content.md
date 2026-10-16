@@ -155,6 +155,8 @@ Every path is relative to `basePath` (default `/auth`).
 | `/native/:provider`        | POST        | `apple` / `google`: verify a native sign-in sheet's `id_token` and answer the native session tokens.                                                                          |
 | `/native/mfa`              | POST        | `{ mfa_token, code[, factor_id, challenge_id] }`: finish a native `id_token` sign-in that owes a second factor.                                                               |
 | `/native/mfa-challenge`    | POST        | `{ mfa_token, factor_id }`: text a code to a verified phone factor for that pending native sign-in.                                                                           |
+| `/native/mfa-enroll`       | POST        | `{ mfa_token }` (a sign-in answered with `mfa_enroll: true`): start a first TOTP factor — `{ factor_id, secret, uri, mfa_token }`.                                            |
+| `/native/mfa-confirm`      | POST        | `{ mfa_token, code }`: confirm that factor and finish the sign-in — the native tokens plus `backup_codes`.                                                                    |
 | `/saml/:provider/metadata` | GET         | A [`saml()`](#saml-providers) provider's SP metadata, to give its identity provider.                                                                                          |
 | `/account/delete`          | POST        | Delete the signed-in user (cookie, same-origin; or a native bearer). Needs a recent sign-in, else `403 reauth_required`. Revokes Sign in with Apple tokens.                   |
 
@@ -343,11 +345,12 @@ denextAuth({
 });
 ```
 
-| Endpoint                            | What it does                                                                     |
-| ----------------------------------- | -------------------------------------------------------------------------------- |
-| `GET {basePath}/signin/acme`        | Sends the browser to the IdP with an AuthnRequest (signed with `sp.signingKey`). |
-| `POST {basePath}/callback/acme`     | The Assertion Consumer Service: the IdP posts its Response here.                 |
-| `GET {basePath}/saml/acme/metadata` | This SP's metadata (also the default entity id) — give it to the IdP.            |
+| Endpoint                               | What it does                                                                     |
+| -------------------------------------- | -------------------------------------------------------------------------------- |
+| `GET {basePath}/signin/acme`           | Sends the browser to the IdP with an AuthnRequest (signed with `sp.signingKey`). |
+| `POST {basePath}/callback/acme`        | The Assertion Consumer Service: the IdP posts its Response here.                 |
+| `GET {basePath}/saml/acme/metadata`    | This SP's metadata (also the default entity id) — give it to the IdP.            |
+| `GET \| POST {basePath}/saml/acme/slo` | Single Logout (with `sp.signingKey`): the IdP's LogoutRequest or LogoutResponse. |
 
 `signIn("acme")` from `denext/client` starts it like any provider. Only SP-initiated logins are
 accepted: the AuthnRequest's ID and a fresh RelayState ride the signed, single-use transaction
@@ -373,7 +376,30 @@ its SSO rules:
   trust model under [Threat notes](#threat-notes).
 - A user with a second factor gets the pending step-up, like any other sign-in.
 
-Single Logout is `/auth/v1`'s only; a `saml()` sign-in ends with `signOut()` like any session.
+**Single Logout** is on when the provider has `sp.signingKey` (+ `sp.signingCertificate`); the SP
+metadata then lists `{basePath}/saml/acme/slo` (HTTP-Redirect and HTTP-POST) as its
+SingleLogoutService. The session a `saml()` sign-in starts carries the assertion's NameID and
+SessionIndex (`session.saml`), and:
+
+- **SP-initiated.** `signOut()` (`POST {basePath}/signout`) ends the session at once, as always,
+  then sends the browser on to the IdP's SingleLogoutService with a LogoutRequest signed over the
+  HTTP-Redirect binding (RSA-SHA256) — a `303`, or `{ ok: true, url }` for a JSON caller. Its ID
+  and a fresh RelayState ride the signed, single-use transaction cookie, and the IdP's
+  LogoutResponse must answer exactly that request; it lands on the sign-out target
+  (`callbackUrl`, else `pages.afterSignOut`), with `?error=saml_logout_failed` when the IdP
+  reports a partial logout or the response can't be verified. An IdP without a SingleLogoutService
+  just signs out locally.
+- **IdP-initiated.** A LogoutRequest at `{basePath}/saml/acme/slo` (a query signature, or an
+  enveloped XML signature over HTTP-POST) must be signed by the provider's IdP, name this SP's SLO
+  URL as its Destination, be fresh, and be new (its ID is claimed in the shared replay cache). It
+  ends the sessions its NameID started: with a `sessionStore` (and an adapter with the SSO session
+  group, as the shipped ones have) exactly those its SessionIndexes name, each recorded at sign-in;
+  with stateless cookie sessions, which have no id to end one by, every session of that user signed
+  in before now (`sessionsValidAfter`). The caller's own cookie is cleared when it is one of them,
+  and the answer is a LogoutResponse signed over HTTP-Redirect to the IdP (`200` when it has no
+  SingleLogoutService).
+
+The messages are checked by the same code as `/auth/v1`'s [Single Logout](#saml-single-sign-on).
 
 ## OIDC discovery and key caching
 
@@ -2039,8 +2065,11 @@ tokens: `{ mfa_required: true, mfa_token, expires_in, factors }`, finished at `P
 {basePath}/native/mfa` with a TOTP, backup or SMS code (`nativeSession()`'s `completeMfa`; `POST
 {basePath}/native/mfa-challenge` texts a phone factor first). The `mfa_token` is single-use, lives
 five minutes, and is not a credential for anything else. Under `mfa.required: "always"` a user with
-no factor yet can't enroll from a native `id_token` sign-in (`403 mfa_required`); the browser flow
-enrolls.
+no factor yet gets the same pending result with `mfa_enroll: true`, and finishes it by enrolling a
+first factor: `POST {basePath}/native/mfa-enroll` (`{ factor_id, secret, uri, mfa_token }`), then
+`POST {basePath}/native/mfa-confirm` with a code (the tokens plus `backup_codes`) —
+`nativeSession()`'s `enrollMfa` and `confirmMfaEnrollment`, under the web enrollment's rules
+(first factor only, the MFA budget, single-use tokens).
 
 The whole flow — CORS for the app's origin, the client helper `nativeSession()`,
 `createApiClient({ base, auth })`, the id_token checks, the second factor and deletion — is on

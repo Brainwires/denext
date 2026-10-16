@@ -112,13 +112,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   Service checks fetch no certificate revocation lists.
 - **Fixed profiles:** TOTP is SHA-1 / 6 digits / 30 s (what every authenticator supports); an
   email local part must be ASCII.
-- **Native sessions:** under `mfa.required: "always"` a user with no factor yet can't enroll from
-  a native `id_token` sign-in (`403 mfa_required`; the browser flow enrolls); Apple token
-  revocation needs `native.apple.clientSecret`.
+- **Native sessions:** Apple token revocation needs `native.apple.clientSecret`.
 - **`cors` covers route handlers and the native auth endpoints only**, not pages, Server Actions,
   the batch endpoint or Live; middleware must let `OPTIONS` under `/auth` through.
-- **SAML Single Logout is `/auth/v1`'s only:** a `saml()` provider on denext's own endpoints
-  signs in, and its session ends with `signOut()`, not with an IdP's LogoutRequest.
+- **SAML Single Logout with stateless sessions ends every session of the user:** a cookie session
+  has no id, so an IdP's LogoutRequest naming one SessionIndex ends all of that user's sessions
+  signed in before it (a `sessionStore` ends exactly the named one).
 
 ### `next-auth` (Auth.js v5) compat
 

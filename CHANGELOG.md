@@ -223,6 +223,15 @@ and this project adheres to
   read again inside the lock and a failure rolling the batch back. The helpers a migration uses
   (`renameColumn`, `dropColumn`, `renameTable`, `dropTable`) do nothing when the change is already
   made, so a fresh file records them without change. The schema was additive-only before.
+- **A native `id_token` sign-in enrolls a first second factor.** Under `mfa.required: "always"`
+  a user with no factor yet used to get `403 mfa_required` from `/native/apple` | `/native/google`
+  and had to enroll in the browser. The sign-in now answers a pending result with
+  `mfa_enroll: true`, finished at `POST {basePath}/native/mfa-enroll` (the secret and its URI)
+  and `POST {basePath}/native/mfa-confirm` (the tokens plus `backup_codes`) — `nativeSession()`'s
+  `enrollMfa` and `confirmMfaEnrollment`. The web enrollment's rules hold: first factor only
+  (`409 already_enrolled` once one is verified), the single-use five-minute token with five
+  attempts, the `rateLimit.mfa` budget on every confirm, and a banned or deleted user never
+  finishes.
 
 ### Changed
 
@@ -326,6 +335,21 @@ and this project adheres to
 - **DevTools: an MVU tab with time travel.** In `denext dev` it lists each `useMvu` / `MvuView`
   program's last 200 messages with the model each produced; clicking one puts that model on
   screen.
+
+### Security
+
+- **SAML Single Logout on denextAuth's own endpoints.** A `saml()` provider with `sp.signingKey`
+  now ends sessions with its IdP, as `/auth/v1` did alone before: `signOut()` of a session it
+  started sends the browser on to the IdP's SingleLogoutService with a signed LogoutRequest for the
+  session's NameID and SessionIndex (`{ ok, url }` for a JSON caller), and the IdP's
+  LogoutResponse, answering exactly that request (the single-use transaction cookie), lands on the
+  sign-out target. An IdP-initiated LogoutRequest at the new `{basePath}/saml/:id/slo` (query or
+  XML signature, Destination, Issuer, freshness and replay checked by the `/auth/v1` code) ends the
+  sessions its NameID started — exactly the named SessionIndexes with a `sessionStore`, every
+  session of that user signed in before it with stateless cookies — and answers a signed
+  LogoutResponse. The SP metadata lists the SLO URL, and a session a `saml()` sign-in started
+  carries `session.saml` (`nameId`, `nameIdFormat`, `sessionIndex`). Before, an IdP's logout left
+  denextAuth's sessions running.
 
 ## [4.1.0] - 2026-10-15
 

@@ -2,7 +2,9 @@
  * The pending second factor of a native `id_token` sign-in (`POST {basePath}/native/apple` |
  * `/native/google`). A user with a verified factor is not handed tokens for the id_token
  * alone: the sign-in answers `{ mfa_required: true, mfa_token, expires_in, factors }`, and the
- * app finishes it at `POST {basePath}/native/mfa` with a code — the way the web sign-in's
+ * app finishes it at `POST {basePath}/native/mfa` with a code. Under `mfa.required: "always"` a
+ * user with no factor yet gets the same answer with `mfa_enroll: true` and no factors, and
+ * finishes it by enrolling one (`/native/mfa-enroll`, then `/native/mfa-confirm`) — the way the web sign-in's
  * pending session is finished at `/mfa`, and the way GoTrue's `grant_type=id_token` is followed
  * by the MFA verify calls (there, an `aal1` session; a native session has no lesser level, so
  * here a token that is not a session at all).
@@ -45,6 +47,11 @@ export interface NativeMfaPending {
   attemptsLeft: number;
   /** When the pending sign-in ends, epoch seconds. */
   expiresAt: number;
+  /**
+   * The user has no verified factor and `mfa.required` is `"always"`: the sign-in is finished
+   * by enrolling one (`/native/mfa-enroll`, then `/native/mfa-confirm`), not by a code check.
+   */
+  enroll?: true;
 }
 
 function nowSeconds(): number {
@@ -115,12 +122,15 @@ export async function consumeNativeMfaToken(
  * @param user The approved user.
  * @param provider The id_token's provider.
  * @param isNewUser Whether the sign-in created the user.
+ * @param enroll The sign-in is finished by enrolling a first factor (see
+ *   {@linkcode NativeMfaPending.enroll}).
  * @returns The pending state to issue a token for.
  */
 export function newNativeMfaPending(
   user: AuthUser,
   provider: string,
   isNewUser: boolean,
+  enroll = false,
 ): NativeMfaPending {
   const now = nowSeconds();
   return {
@@ -130,6 +140,7 @@ export function newNativeMfaPending(
     authTime: now,
     attemptsLeft: NATIVE_MFA_ATTEMPTS,
     expiresAt: now + NATIVE_MFA_TTL,
+    ...(enroll ? { enroll: true as const } : {}),
   };
 }
 

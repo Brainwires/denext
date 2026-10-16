@@ -320,8 +320,29 @@ state, and nothing else:
 
 This mirrors `/auth/v1`, where GoTrue's `grant_type=id_token` issues an `aal1` session that the
 MFA verify calls raise; a native session has no lesser level, so the pending state is a token
-that is not a session at all. Under `mfa.required: "always"`, a user with no factor yet still
-gets `403 { "error": "mfa_required" }`: enrollment runs in the browser flow (`signIn`).
+that is not a session at all.
+
+Under `mfa.required: "always"`, a user with no factor yet gets the same pending result with
+`"mfa_enroll": true` and no factors (`error.mfa.enroll` on the client), and enrolls one to finish
+signing in:
+
+```ts
+const enrollment = await session.enrollMfa(error.mfa); // { factorId, secret, uri, mfa }
+showQrCode(enrollment.uri); // or the secret, for manual entry
+const { user, backupCodes } = await session.confirmMfaEnrollment(
+  enrollment.mfa,
+  await askForCode(),
+);
+showOnce(backupCodes);
+```
+
+On the wire: `POST /auth/native/mfa-enroll` `{ mfa_token }` answers
+`{ factor_id, secret, uri, mfa_token, expires_in }`, and `POST /auth/native/mfa-confirm`
+`{ mfa_token, code }` answers the tokens plus `backup_codes`. The web enrollment's rules hold:
+the pending token is the same single-use, five-minute, five-attempt state; only a **first**
+factor is enrolled this way (once the user has a verified one, both answer
+`409 already_enrolled` and the sign-in starts over to be finished with it); every confirm attempt
+spends the `rateLimit.mfa` budget; and a user banned or deleted in between never finishes.
 
 With Apple, pass the `authorizationCode` too. When `clientSecret` is configured (or an
 `apple()` web provider has one), the server exchanges the code at Apple's token endpoint and
@@ -405,9 +426,6 @@ The checks, in one place:
 
 ## Limitations
 
-- **Enrolling a second factor needs the browser flow.** A native `id_token` sign-in can finish an
-  enrolled factor, but under `mfa.required: "always"` a user with no factor yet gets
-  `403 mfa_required` and enrolls through `signIn`.
 - **Apple revocation needs the client secret JWT** (`native.apple.clientSecret`, or an
   `apple()` provider's) — minting it from your `.p8` key is yours to do.
 - **CORS does not cover pages, Server Actions, the API batch endpoint or Live.**

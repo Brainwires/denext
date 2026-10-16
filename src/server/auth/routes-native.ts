@@ -21,7 +21,8 @@
  * - `POST {basePath}/native/apple` | `/native/google` — `{ id_token, nonce, authorization_code?,
  *   name? }`: verify the provider's id_token, create or link the account, answer the tokens — or,
  *   for a user with a verified second factor, `{ mfa_required, mfa_token, expires_in, factors }`,
- *   finished at `/native/mfa` (`routes-native-mfa.ts`).
+ *   finished at `/native/mfa` (`routes-native-mfa.ts`); under `mfa.required: "always"`, for a user
+ *   with no factor yet, the same with `mfa_enroll: true`, finished by enrolling one there.
  * - `POST {basePath}/account/delete` — delete the signed-in user (cookie session, same-origin;
  *   or a native bearer). Requires a recent sign-in (`authTime` within `mfa.freshness`, five
  *   minutes at least), else `403 { error: "reauth_required" }`.
@@ -420,13 +421,11 @@ async function signInWithIdToken(
   const user = await applySignInCallback(ctx.config, resolved.user, id);
   if (!user) return await refusedSignIn(ctx, id, "access_denied", 403);
   // An enrolled user gets a pending sign-in to finish with a code at /native/mfa. Under
-  // `mfa.required: "always"` a user with no factor yet enrolls in the browser
-  // (/native/authorize), which runs the enrollment.
+  // `mfa.required: "always"` a user with no factor yet gets one to finish by enrolling a first
+  // factor (/native/mfa-enroll, then /native/mfa-confirm) — the web flow's pending enrollment.
   if (await mfaPendingFor(ctx.config, user)) {
-    if (!(await hasVerifiedFactor(ctx.config, user.id))) {
-      return json({ error: "mfa_required" }, 403);
-    }
-    return await pendingNativeSignIn(ctx, native, user, id, resolved.isNewUser);
+    const enroll = !(await hasVerifiedFactor(ctx.config, user.id));
+    return await pendingNativeSignIn(ctx, native, user, id, resolved.isNewUser, enroll);
   }
   const snapshot = await snapshotFor(ctx.config, user, id, ["ext"]);
   const tokens = await startNativeSession(ctx.config, native, snapshot);
@@ -445,12 +444,14 @@ async function pendingNativeSignIn(
   user: AuthSession["user"],
   provider: NativeIdTokenProvider,
   isNewUser: boolean,
+  enroll: boolean,
 ): Promise<Response> {
-  const pending = newNativeMfaPending(user, provider, isNewUser);
+  const pending = newNativeMfaPending(user, provider, isNewUser, enroll);
   const token = await issueNativeMfaToken(native, pending);
   return json(
     {
       mfa_required: true,
+      ...(enroll ? { mfa_enroll: true } : {}),
       mfa_token: token,
       expires_in: nativeMfaExpiresIn(pending),
       factors: nativeMfaFactors(await userFactors(ctx.config, user.id)),

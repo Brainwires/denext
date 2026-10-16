@@ -1669,6 +1669,7 @@
     "ModuleEndpoints:typeAlias",
     "NativeIdTokenSignIn:interface",
     "NativeMfaChallenge:interface",
+    "NativeMfaEnrollment:interface",
     "NativeSession:interface",
     "NativeSessionError:class",
     "NativeSessionOptions:interface",

@@ -91,8 +91,12 @@ interface Harness {
   backupCodes: string[];
 }
 
-/** A Google-linked user with a confirmed TOTP factor. */
-async function setup(): Promise<Harness> {
+/**
+ * A Google-linked user with a confirmed TOTP factor — or, with `enrolled: false`, with none yet
+ * under `mfa.required: "always"`.
+ */
+async function setup(options: { enrolled?: boolean } = {}): Promise<Harness> {
+  const enrolled = options.enrolled ?? true;
   const adapter = inMemoryAuthAdapter();
   const events: string[] = [];
   const config: AuthConfig = {
@@ -101,7 +105,7 @@ async function setup(): Promise<Harness> {
     providers: [{ id: "credentials", type: "credentials" }],
     adapter,
     rateLimit: false,
-    mfa: { window: 2, backupCodes: 2 },
+    mfa: { window: 2, backupCodes: 2, ...(enrolled ? {} : { required: "always" as const }) },
     native: {
       redirectUris: ["com.example.app://auth/callback"],
       requireNonce: false,
@@ -126,6 +130,9 @@ async function setup(): Promise<Harness> {
     expiresAt: now() + 3600,
     authTime: now(),
   };
+  if (!enrolled) {
+    return { config, adapter, events, userId: user.id, totp: "", backupCodes: [] };
+  }
   const enrollment = await enrollTotp(config, session);
   assert(enrollment.ok);
   const confirmed = await confirmTotp(config, {
@@ -366,4 +373,142 @@ Deno.test("nativeSession: mfa_required carries the pending sign-in; completeMfa 
   assertEquals(user.id, h.userId);
   assert(await session.signedIn());
   assertMatch(String(await session.getToken()), /^nat_/);
+});
+
+// ---- enrolling a first factor (`mfa.required: "always"`) ---------------------------------------
+
+/** The pending sign-in, enrolled: the new factor's secret and the token to confirm with. */
+async function enrolled(h: Harness): Promise<{ secret: string; token: string }> {
+  const body = await pending(h);
+  const res = await post(h, "/native/mfa-enroll", { mfa_token: String(body.mfa_token) });
+  assertEquals(res.status, 200);
+  const enrollment = await res.json();
+  assertMatch(enrollment.uri, /^otpauth:\/\/totp\//);
+  return { secret: enrollment.secret, token: enrollment.mfa_token };
+}
+
+Deno.test('"always" + no factor: the id_token sign-in answers a pending enrollment, no tokens', async () => {
+  const h = await setup({ enrolled: false });
+  const body = await pending(h);
+  assertEquals([body.mfa_required, body.mfa_enroll], [true, true]);
+  assertMatch(String(body.mfa_token), /^nmf_/);
+  assertEquals(body.factors, []);
+  assertEquals(body.access_token, undefined);
+  assertEquals(h.events, [], "no signIn before the factor is enrolled");
+});
+
+Deno.test("enroll + confirm finishes the sign-in: tokens, amr totp, backup codes, signIn", async () => {
+  const h = await setup({ enrolled: false });
+  const { secret, token } = await enrolled(h);
+  const res = await post(h, "/native/mfa-confirm", {
+    mfa_token: token,
+    code: await totpAt(secret, step()),
+  });
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertMatch(body.access_token, /^nat_/);
+  assertEquals(body.backup_codes.length, 2);
+  const session = await verifyNativeAccessToken(h.config, body.access_token);
+  assertEquals(session?.user.id, h.userId);
+  assert(session?.amr?.includes("totp"));
+  assertEquals(h.events, ["signIn:google"]);
+  // The token is spent, and the user now owes the factor at the next sign-in.
+  const again = await post(h, "/native/mfa-confirm", {
+    mfa_token: token,
+    code: await totpAt(secret, step() + 1),
+  });
+  assertEquals(again.status, 400);
+  const next = await pending(h);
+  assertEquals(next.mfa_enroll, undefined);
+  assertEquals((next.factors as Array<{ type: string }>).map((f) => f.type), ["totp"]);
+});
+
+Deno.test("a wrong enrollment code costs an attempt and hands back a fresh token", async () => {
+  const h = await setup({ enrolled: false });
+  const { secret, token } = await enrolled(h);
+  const wrong = await post(h, "/native/mfa-confirm", { mfa_token: token, code: "000000" });
+  assertEquals(wrong.status, 401);
+  const body = await wrong.json();
+  assertEquals([body.error, body.attempts_left], ["invalid_code", 4]);
+  const ok = await post(h, "/native/mfa-confirm", {
+    mfa_token: body.mfa_token,
+    code: await totpAt(secret, step()),
+  });
+  assertEquals(ok.status, 200);
+});
+
+Deno.test("enrollment is a first factor only: once one is verified, the pending token can't add one", async () => {
+  const h = await setup({ enrolled: false });
+  const body = await pending(h);
+  // A factor appears meanwhile (the owner enrolled in the browser).
+  const owner = {
+    user: { id: h.userId, email: EMAIL },
+    provider: "credentials",
+    expiresAt: now() + 3600,
+    authTime: now(),
+  };
+  const started = await enrollTotp(h.config, owner);
+  assert(started.ok);
+  assert(
+    (await confirmTotp(h.config, { user: owner.user, code: await totpAt(started.secret, step()) }))
+      .ok,
+  );
+  const res = await post(h, "/native/mfa-enroll", { mfa_token: String(body.mfa_token) });
+  assertEquals(res.status, 409);
+  assertEquals((await res.json()).error, "already_enrolled");
+  // Nor can an enrollment started earlier be confirmed next to it.
+  const h2 = await setup({ enrolled: false });
+  const { secret, token } = await enrolled(h2);
+  const owner2 = { ...owner, user: { id: h2.userId, email: EMAIL } };
+  const other = await enrollTotp(h2.config, owner2);
+  assert(other.ok);
+  assert(
+    (await confirmTotp(h2.config, { user: owner2.user, code: await totpAt(other.secret, step()) }))
+      .ok,
+  );
+  const confirm = await post(h2, "/native/mfa-confirm", {
+    mfa_token: token,
+    code: await totpAt(secret, step()),
+  });
+  assertEquals(confirm.status, 409);
+});
+
+Deno.test("an enrollment token never verifies a code, and a code-check token never enrolls", async () => {
+  const h = await setup({ enrolled: false });
+  const { token } = await enrolled(h);
+  const verify = await post(h, "/native/mfa", { mfa_token: token, code: "123456" });
+  assertEquals(verify.status, 400);
+  const e = await setup();
+  const plain = String((await pending(e)).mfa_token);
+  const enroll = await post(e, "/native/mfa-enroll", { mfa_token: plain });
+  assertEquals(enroll.status, 400);
+  assertEquals((await enroll.json()).error, "invalid_grant");
+});
+
+Deno.test("a user banned after the id_token never enrolls", async () => {
+  const h = await setup({ enrolled: false });
+  const body = await pending(h);
+  await h.adapter.updateUser({ id: h.userId, bannedUntil: now() + 3600 });
+  const res = await post(h, "/native/mfa-enroll", { mfa_token: String(body.mfa_token) });
+  assertEquals(res.status, 400);
+});
+
+Deno.test("nativeSession: enrollMfa + confirmMfaEnrollment finish an enrollment-owed sign-in", async () => {
+  const h = await setup({ enrolled: false });
+  const session = clientFor(h);
+  const token = await idToken();
+  const error = await assertRejects(
+    () => session.signInWithIdToken("google", { idToken: token }),
+    NativeSessionError,
+  );
+  assertEquals([error.code, error.mfa?.enroll], ["mfa_required", true]);
+  const enrollment = await session.enrollMfa(error.mfa!);
+  assertEquals(enrollment.mfa.enroll, true);
+  const done = await session.confirmMfaEnrollment(
+    enrollment.mfa,
+    await totpAt(enrollment.secret, step()),
+  );
+  assertEquals(done.user.id, h.userId);
+  assertEquals(done.backupCodes.length, 2);
+  assert(await session.signedIn());
 });

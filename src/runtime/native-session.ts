@@ -83,6 +83,24 @@ export interface NativeMfaChallenge {
   factors: Array<{ id: string; type: "totp" | "phone"; friendlyName?: string }>;
   /** Wrong codes still allowed, after a wrong one. */
   attemptsLeft?: number;
+  /**
+   * The user has no second factor yet and the server requires one (`mfa.required: "always"`):
+   * finish the sign-in with {@link NativeSession.enrollMfa}, then
+   * {@link NativeSession.confirmMfaEnrollment}.
+   */
+  enroll?: true;
+}
+
+/** A first factor being enrolled to finish a pending sign-in ({@link NativeSession.enrollMfa}). */
+export interface NativeMfaEnrollment {
+  /** The new (unconfirmed) factor's id. */
+  factorId: string;
+  /** The base32 TOTP secret, for manual entry. */
+  secret: string;
+  /** The `otpauth://` URI — render it as a QR code (`totpQrSvg`). */
+  uri: string;
+  /** The pending sign-in to confirm with. */
+  mfa: NativeMfaChallenge;
 }
 
 /** A failed native-session call. */
@@ -97,8 +115,8 @@ export class NativeSessionError extends Error {
   /**
    * With `code: "mfa_required"` (an id_token sign-in for a user with a second factor) and after
    * a wrong code (`"invalid_code"`): the pending sign-in to pass to
-   * {@link NativeSession.completeMfa}. Absent when the sign-in can't be finished natively (under
-   * `mfa.required: "always"`, a user with no factor yet enrolls through `signIn`).
+   * {@link NativeSession.completeMfa} — or, when its `enroll` is set (`mfa.required: "always"`,
+   * a user with no factor yet), to {@link NativeSession.enrollMfa}.
    */
   readonly mfa?: NativeMfaChallenge;
 
@@ -162,6 +180,26 @@ export interface NativeSession {
     mfa: NativeMfaChallenge,
     factorId: string,
   ): Promise<{ challengeId: string; expiresAt: number; mfa: NativeMfaChallenge }>;
+  /**
+   * Start the first second factor of a pending sign-in whose `mfa.enroll` is set: a TOTP secret
+   * and its URI to show, and the pending sign-in to confirm with.
+   *
+   * @param mfa The pending sign-in (`error.mfa`, with `enroll`).
+   * @returns The enrollment.
+   */
+  enrollMfa(mfa: NativeMfaChallenge): Promise<NativeMfaEnrollment>;
+  /**
+   * Confirm the factor {@link enrollMfa} started with a code from it, and finish the sign-in. A
+   * wrong code throws `invalid_code` with a fresh `error.mfa`, as {@link completeMfa} does.
+   *
+   * @param mfa The pending sign-in from the enrollment.
+   * @param code The code the authenticator shows.
+   * @returns The signed-in user and the backup codes — shown to the user once, never again.
+   */
+  confirmMfaEnrollment(
+    mfa: NativeMfaChallenge,
+    code: string,
+  ): Promise<{ user: NativeSessionUser; backupCodes: string[] }>;
   /** A single-use server nonce to give the native sign-in sheet. */
   nonce(): Promise<string>;
   /** The access token (refreshed first when missing or about to expire), or `null`. */
@@ -187,26 +225,34 @@ interface TokenAnswer {
   user: NativeSessionUser;
 }
 
+/** The factors a server answer lists (snake_case on the wire), else the previous ones. */
+function factorsOf(
+  json: Record<string, unknown>,
+  previous?: NativeMfaChallenge,
+): NativeMfaChallenge["factors"] {
+  if (!Array.isArray(json.factors)) return previous?.factors ?? [];
+  return (json.factors as Array<{ id: string; type: "totp" | "phone"; friendly_name?: string }>)
+    .map((f) => ({
+      id: f.id,
+      type: f.type,
+      ...(f.friendly_name ? { friendlyName: f.friendly_name } : {}),
+    }));
+}
+
 /** The pending second factor a server answer carries, or `undefined`. */
 function mfaOf(
   json: Record<string, unknown>,
   previous?: NativeMfaChallenge,
 ): NativeMfaChallenge | undefined {
   if (typeof json.mfa_token !== "string") return undefined;
-  const factors = Array.isArray(json.factors)
-    ? (json.factors as Array<{ id: string; type: "totp" | "phone"; friendly_name?: string }>)
-      .map((f) => ({
-        id: f.id,
-        type: f.type,
-        ...(f.friendly_name ? { friendlyName: f.friendly_name } : {}),
-      }))
-    : previous?.factors ?? [];
-  return {
+  const challenge: NativeMfaChallenge = {
     token: json.mfa_token,
-    factors,
-    ...(typeof json.expires_in === "number" ? { expiresIn: json.expires_in } : {}),
-    ...(typeof json.attempts_left === "number" ? { attemptsLeft: json.attempts_left } : {}),
+    factors: factorsOf(json, previous),
   };
+  if (typeof json.expires_in === "number") challenge.expiresIn = json.expires_in;
+  if (typeof json.attempts_left === "number") challenge.attemptsLeft = json.attempts_left;
+  if (json.mfa_enroll === true || previous?.enroll) challenge.enroll = true;
+  return challenge;
 }
 
 /** Refresh this long before the access token actually expires (ms). */
@@ -363,6 +409,25 @@ export function nativeSession(options: NativeSessionOptions): NativeSession {
         expiresAt: Number(answer.expires_at),
         mfa: mfaOf(answer, mfa)!,
       };
+    },
+    async enrollMfa(mfa) {
+      const answer = await post("/native/mfa-enroll", { mfa_token: mfa.token }, undefined, mfa);
+      return {
+        factorId: String(answer.factor_id),
+        secret: String(answer.secret),
+        uri: String(answer.uri),
+        mfa: mfaOf(answer, mfa)!,
+      };
+    },
+    async confirmMfaEnrollment(mfa, code) {
+      const answer = await post(
+        "/native/mfa-confirm",
+        { mfa_token: mfa.token, code },
+        undefined,
+        mfa,
+      );
+      const backupCodes = Array.isArray(answer.backup_codes) ? answer.backup_codes.map(String) : [];
+      return { user: await accept(answer as unknown as TokenAnswer), backupCodes };
     },
     async nonce() {
       const answer = await post("/native/nonce", {});
