@@ -138,20 +138,23 @@ chosen:
 | a custom hook declared in the same module          | the hook's own cells, breadcrumbed: `useAuth › user · useAuth › useState` |
 | a custom hook imported by a relative path          | the same breadcrumb, read from the module that declares the hook          |
 | a composite (`useTransition`, `useActionState`, …) | its first cell is named; its internal extra cells carry the hook alone    |
+| a hook in a branch or after an early `return`      | named whether or not it ran this render                                   |
+| a package's custom hook (`useQuery` from npm)      | `q · useQuery` on its first cell, `useQuery` on the rest it took          |
 
-The join is lockstep and checked: a table of how many cells each hook consumes
-(and with which kind tags) is walked against the component's live cells, and
-**any** divergence abandons naming for that whole component rather than pairing a
-name with the wrong cell. The pane then shows kind labels and says so:
+The join is checked: a table of how many cells each hook consumes (and with which
+kind tags) is aligned against the component's live cells. A call the metadata pass
+saw in a branch (`if`, `?:`, `&&` / `||` / `??`, `switch`, a loop) or after an early
+`return` may have taken its cells or none. A custom hook whose own calls are not
+known — a package's, one whose module registered no metadata, or one nested more
+than three custom hooks deep — took however many cells the calls around it leave.
+Every alignment that uses up exactly the live cells is found, and a cell is named
+only when they all agree on it: two unknown hooks in a row leave the cells they
+could share unnamed, never mislabelled. When no alignment fits (the metadata is
+out of date), the pane shows kind labels and says so:
 
 ```text
-names unavailable (conditional hooks?)
+names unavailable (hook metadata out of date)
 ```
-
-That is what you see for a conditionally-called hook, a chain of custom hooks
-nested more than three deep, or a custom hook whose declaring module registered no
-metadata — there is no way to know how many cells an unknown hook took, so every
-later name would be a guess.
 
 A custom hook does not have to live in the component's module. When a component
 calls a hook it bound through a **static relative import** — `import { useAuth }
@@ -168,13 +171,13 @@ declares only hooks (a `useCart.ts` with no component) still emits its metadata,
 there is something to join against.
 
 In the default dev loop an import-map alias (`@/lib/auth`) resolves exactly as the dev server
-resolves the import, and a barrel that re-exports a hook by name
-(`export { useAuth } from "./auth"`) sends the lookup on to the declaring module — one hop; a
-barrel of a barrel stops. Naming still stops at a hook imported by a bare specifier (a package,
-`npm:`, `jsr:`), a URL, through a namespace import (`import * as auth`, then
-`auth.useAuth()`) or a barrel's `export *`, and at an import-map alias in SPA mode. An importee
-that has not registered yet — one behind a dynamic `import()` — is the same clean miss, never a
-wrong name.
+resolves the import, a namespace import's member call (`import * as auth`, then
+`auth.useAuth()`) looks in the namespace's module, and a barrel sends the lookup on to the
+declaring module whether it re-exports the hook by name (`export { useAuth } from "./auth"`) or
+with `export * from "./auth"` — up to three barrels deep. A hook imported by a bare specifier (a
+package, `npm:`, `jsr:`), a URL, or an import-map alias in SPA mode is not expanded: it is the
+unknown hook above, labelled by its call. So is an importee that has not registered yet — one
+behind a dynamic `import()` — never a wrong name.
 
 #### Debug values
 

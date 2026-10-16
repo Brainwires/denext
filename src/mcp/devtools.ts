@@ -339,7 +339,7 @@ export function hookStateText(
       return `${head}\n  ${what}`;
     }
     const note = node.hooksNamed === false
-      ? "\n  names unavailable (conditional hooks?) — showing kind labels"
+      ? "\n  names unavailable (hook metadata out of date) — showing kind labels"
       : "";
     return `${head}${note}\n${cells.map(hookLine).join("\n")}`;
   });

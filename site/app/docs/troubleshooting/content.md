@@ -269,15 +269,17 @@ off it.
 
 **Fix.** Restart `denext ui` without `--offline` for that step.
 
-## DevTools shows hook kinds, not names ("names unavailable (conditional hooks?)")
+## DevTools shows hook kinds, not names ("names unavailable (hook metadata out of date)")
 
-**Cause.** Hook names come from the source and are matched, in order, to the hooks
-the component actually ran. A hook called conditionally or after an early return
-breaks that match, so the panel shows kind labels (`useState`, `useEffect`)
-instead of guessing.
+**Cause.** Hook names come from the source and are aligned, in order, with the hooks
+the component actually ran (a hook in a branch or after an early return may or may
+not have run). When no reading of the source fits the live hooks, the metadata is
+stale — usually a module edited without a reload reaching the page — so the panel
+shows kind labels (`useState`, `useEffect`) instead of guessing.
 
-**Fix.** Move the hook above the condition, which is also what the
-`denext/rules-of-hooks` lint rule asks for.
+**Fix.** Reload the page. If it persists, a hook may be called in a way the source
+pass can't see as conditional (from a nested helper function); move it to the top
+of the component, which is also what the `denext/rules-of-hooks` lint rule asks for.
 
 ## An MCP DevTools tool says no page has posted a component tree
 

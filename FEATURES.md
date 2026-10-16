@@ -508,8 +508,8 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   overlay; a **searchable, collapsible component tree** (+ optional host nodes);
   per-node **props, hooks/state, and context** with **named hooks**
   (`count · useState`, custom hooks expanded as breadcrumbs — declared in the same
-  module or across a static relative import — **`useDebugValue`** labels, and an
-  honest all-or-nothing fallback to kind labels when the walk can't be trusted),
+  module or across a static relative import — **`useDebugValue`** labels, conditional
+  and package hooks aligned around, and kind labels only where no name is certain),
   **live `useState` editing**, **ref-set / reducer-dispatch**, **live prop
   overrides**, and **deep lazy value inspection** (copy / `console.log` /
   store-as-`$d`); **capability badges** (memo/forwardRef/Suspense/…); **"why did

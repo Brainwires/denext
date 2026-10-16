@@ -15,6 +15,12 @@ and this project adheres to
   answer as a GET: a Flight route's payload at once with each `defer()` value following as it
   settles (an isomorphic route's compact payload), instead of a whole HTML document carrying
   every resolved value.
+- **DevTools names hooks around what it can't see.** A hook in a branch or after an early
+  `return` is named whether or not it ran, a package's custom hook (a bare / `npm:` / `jsr:` /
+  URL import) is labelled by its call and takes the cells its neighbours leave, a namespace
+  import's `auth.useAuth()` and a barrel's `export *` are followed to the declaring module, and
+  barrels chain up to three deep. Where two unknown hooks could share cells, those cells stay
+  unnamed instead of the whole component losing its names.
 - **Boot diagnosis follows the import map and catches ambiguous exports.** The walk follows a
   bare specifier the page's import map resolves (an exact key, a `"pkg/"` prefix, or a scope
   containing the importer) into the mapped module, so its imports and link edges are checked

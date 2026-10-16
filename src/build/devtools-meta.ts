@@ -158,15 +158,23 @@ interface RawHook {
   at: number;
   /** The declaring module's URL, for a hook bound by a static relative import. */
   from?: string;
+  /** The call sits in a branch or after an early return (it may not run every render). */
+  cond?: true;
 }
 
 /** Where an imported binding comes from: the module's absolute URL and the exported name. */
 interface ImportBinding {
   /** The absolute URL of the imported module (`new URL(specifier, moduleUrl)`). */
   url: string;
-  /** The name the module exports it under (`"default"` for a default import). */
+  /**
+   * The name the module exports it under (`"default"` for a default import, {@link NAMESPACE}
+   * for a namespace import, whose member calls name the export).
+   */
   imported: string;
 }
+
+/** The {@link ImportBinding.imported} of a namespace import (`import * as hooks`). */
+const NAMESPACE = "*";
 
 /** Local binding name → where a static relative import binds it from. */
 type ImportTable = Map<string, ImportBinding>;
@@ -187,13 +195,13 @@ function importeeUrl(
 }
 
 /**
- * The exported name an import specifier binds, or undefined when it cannot name a hook's
- * declaring module: a type-only specifier, or a namespace import (`import * as h` —
- * `h.useX()` stays opaque).
+ * The exported name an import specifier binds ({@link NAMESPACE} for `import * as h`, whose
+ * `h.useX()` names `useX` in that module), or undefined for a type-only specifier.
  */
 function importedName(spec: Node): string | undefined {
   if (!spec?.local || spec.isTypeOnly) return undefined;
   if (spec.type === "ImportDefaultSpecifier") return "default";
+  if (spec.type === "ImportNamespaceSpecifier") return NAMESPACE;
   if (spec.type !== "ImportSpecifier") return undefined;
   return (spec.imported?.value ?? spec.local.value) as string;
 }
@@ -231,17 +239,76 @@ function importBindings(
 }
 
 /**
+ * The import a hook callee is bound by: `useAuth` bound by a named / default import, or
+ * `auth.useAuth` where `auth` is a namespace import (then the export is the member's name).
+ */
+function boundImport(callee: Node, hook: string, imports: ImportTable): ImportBinding | undefined {
+  if (callee.type === "Identifier") {
+    const bound = imports.get(hook);
+    return bound?.imported === NAMESPACE ? undefined : bound;
+  }
+  if (callee.object?.type !== "Identifier") return undefined;
+  const ns = imports.get(callee.object.value as string);
+  return ns?.imported === NAMESPACE ? { url: ns.url, imported: hook } : undefined;
+}
+
+/**
  * The call-site record of one hook call: a callee bound by a static relative import keeps
- * its IMPORTED name and gains `from` (so `import { useAuth as useA }` records `useAuth`);
- * anything else — a primitive, a same-module hook, a member callee — keeps its own name.
+ * its IMPORTED name and gains `from` (so `import { useAuth as useA }` records `useAuth`, and
+ * `auth.useAuth()` on `import * as auth` records `useAuth`); anything else — a primitive, a
+ * same-module hook, another member callee — keeps its own name.
  */
 function hookCall(node: Node, label: string, at: number, imports: ImportTable): RawHook | null {
   const hook = calleeName(node.callee);
   if (!hook) return null;
-  const bound = node.callee.type === "Identifier" ? imports.get(hook) : undefined;
+  const bound = boundImport(node.callee, hook, imports);
   return bound
     ? { hook: bound.imported, name: label, at, from: bound.url }
     : { hook, name: label, at };
+}
+
+/** The keys of a node that run only on some renders, by node type (the rest always run). */
+const BRANCHES: Record<string, readonly string[]> = {
+  IfStatement: ["consequent", "alternate"],
+  ConditionalExpression: ["consequent", "alternate"],
+  SwitchStatement: ["cases"],
+  ForStatement: ["test", "update", "body"],
+  ForInStatement: ["body"],
+  ForOfStatement: ["body"],
+  WhileStatement: ["test", "body"],
+  DoWhileStatement: ["body", "test"],
+  CatchClause: ["body"],
+};
+
+/** `a && b`, `a || b`, `a ?? b`: the right operand runs only on some renders. */
+const SHORT_CIRCUIT = new Set(["&&", "||", "??"]);
+
+/** Whether `key` of `node` is evaluated only on some renders. */
+function isBranch(node: Node, key: string): boolean {
+  if (node.type === "BinaryExpression") return key === "right" && SHORT_CIRCUIT.has(node.operator);
+  if (node.type === "OptionalChainingExpression") return key !== "base";
+  return BRANCHES[node.type]?.includes(key) === true;
+}
+
+/** Node types that start a nested function: a `return` inside one does not leave the outer. */
+const FUNCTION_TYPES = new Set([
+  "ArrowFunctionExpression",
+  "FunctionExpression",
+  "FunctionDeclaration",
+  "ClassDeclaration",
+  "ClassExpression",
+]);
+
+/** Whether a statement may leave the function (a `return` / `throw` outside a nested one). */
+function mayExit(stmt: Node): boolean {
+  if (!stmt || typeof stmt !== "object" || typeof stmt.type !== "string") return false;
+  if (stmt.type === "ReturnStatement" || stmt.type === "ThrowStatement") return true;
+  if (FUNCTION_TYPES.has(stmt.type)) return false;
+  let exits = false;
+  forEachChild(stmt, (c) => {
+    if (!exits && mayExit(c)) exits = true;
+  });
+  return exits;
 }
 
 /**
@@ -257,23 +324,56 @@ function hookCall(node: Node, label: string, at: number, imports: ImportTable): 
  * @returns The call sites, ascending by byte offset.
  */
 function hookCalls(fn: Node, ctx: Ctx, imports: ImportTable): RawHook[] {
-  const out: RawHook[] = [];
-  const visit = (node: Node, label: string): void => {
-    if (!node || typeof node !== "object" || typeof node.type !== "string") return;
-    if (node.type === "VariableDeclarator") {
-      if (node.init) visit(node.init, bindingLabel(node.id));
-      return;
-    }
-    if (node.type === "CallExpression") {
-      const call = hookCall(node, label, startOf(ctx, node), imports);
-      if (call) out.push(call);
-      forEachChild(node, (c) => visit(c, ""));
-      return;
-    }
-    forEachChild(node, (c) => visit(c, label));
-  };
-  visit(fn, "");
-  return out.sort((a, b) => a.at - b.at);
+  const scan: HookScan = { ctx, imports, out: [] };
+  visitHooks(scan, fn, "", false);
+  return scan.out.sort((a, b) => a.at - b.at);
+}
+
+/** What one declaration's hook scan carries: the module's context and the calls found. */
+interface HookScan {
+  ctx: Ctx;
+  imports: ImportTable;
+  out: RawHook[];
+}
+
+/** Whether `v` is an AST node (an object with a string `type`). */
+function isNode(v: unknown): v is Node {
+  return !!v && typeof v === "object" && typeof (v as Node).type === "string";
+}
+
+/** Record the hook calls under `node`; `cond` when it runs only on some renders. */
+function visitHooks(scan: HookScan, node: unknown, label: string, cond: boolean): void {
+  if (!isNode(node)) return;
+  if (node.type === "VariableDeclarator") visitHooks(scan, node.init, bindingLabel(node.id), cond);
+  else if (node.type === "BlockStatement") visitBlock(scan, node.stmts ?? [], label, cond);
+  else if (node.type === "CallExpression") visitCall(scan, node, label, cond);
+  else visitChildren(scan, node, label, cond);
+}
+
+/** A block's statements: after one that may return, the rest run only on some renders. */
+function visitBlock(scan: HookScan, stmts: Node[], label: string, cond: boolean): void {
+  let exited = false;
+  for (const stmt of stmts) {
+    visitHooks(scan, stmt, label, cond || exited);
+    exited ||= mayExit(stmt);
+  }
+}
+
+/** A call: recorded when it is a hook call, then its callee and arguments are visited. */
+function visitCall(scan: HookScan, node: Node, label: string, cond: boolean): void {
+  const call = hookCall(node, label, startOf(scan.ctx, node), scan.imports);
+  if (call) scan.out.push(cond ? { ...call, cond: true } : call);
+  visitChildren(scan, node, "", cond);
+}
+
+/** Visit every child of `node`, a branch key's children as conditional. */
+function visitChildren(scan: HookScan, node: Node, label: string, cond: boolean): void {
+  for (const key of Object.keys(node)) {
+    if (key === "span") continue;
+    const branch = cond || isBranch(node, key);
+    const child = node[key];
+    for (const c of Array.isArray(child) ? child : [child]) visitHooks(scan, c, label, branch);
+  }
 }
 
 /**
@@ -304,9 +404,11 @@ function defaultExportName(body: Node[]): string | undefined {
  * the module boundary (`"<importeeUrl>#useAuth"`), and so does one bound by an import-map alias
  * the `resolve` hook maps to first-party source. A barrel's named re-export of a hook
  * (`export { useAuth } from "./auth.ts"`) is recorded as an alias to the declaring module, which
- * the runtime follows one hop. A bare/`npm:`/`jsr:`/URL import, a namespace import and
- * `export *` stay opaque. A default-exported `use*` hook is also
- * keyed `default`, the name a default import of it records.
+ * the runtime follows; a namespace import's member call (`auth.useAuth()`) records the
+ * namespace's module, and a barrel's `export * from` lines are one record keyed `"*"`
+ * listing the modules to look in. A call in a branch or after an early `return` is marked
+ * `cond`. A bare/`npm:`/`jsr:`/URL import stays opaque (the runtime aligns around it). A
+ * default-exported `use*` hook is also keyed `default`, the name a default import of it records.
  *
  * @param parsed The module parsed by `parseModule()`.
  * @param moduleUrl The module's `file://` URL (the family id prefix); without it no call
@@ -321,6 +423,8 @@ export function collectComponentMeta(
   resolve?: SpecifierResolver,
 ): Record<string, ComponentDevMeta> {
   const aliases = reExportAliases(parsed.body, moduleUrl, resolve);
+  const stars = reExportStars(parsed.body, moduleUrl, resolve);
+  if (stars) aliases[STARS] = stars;
   const decls = componentDecls(parsed);
   if (decls.length === 0) return aliases;
   const scan = scanOf(parsed, moduleUrl, resolve);
@@ -378,6 +482,41 @@ function reExportAliases(
   return out;
 }
 
+/** The record key of a module's `export *` lines (`"<url>#*"`; never a binding name). */
+const STARS = "*";
+
+/**
+ * A barrel's `export * from "…"` lines as one record (keyed `"*"`): the module URLs
+ * it re-exports everything from, so a hook imported through the barrel is looked up in them.
+ * Undefined when the module has none (or no URL to resolve them against).
+ */
+function reExportStars(
+  body: Node[],
+  moduleUrl: string | undefined,
+  resolve: SpecifierResolver | undefined,
+): ComponentDevMeta | undefined {
+  if (!moduleUrl) return undefined;
+  const urls = new Set<string>();
+  for (const stmt of body) {
+    const url = starSource(stmt, moduleUrl, resolve);
+    if (url) urls.add(url);
+  }
+  return urls.size > 0
+    ? { name: STARS, line: 0, column: 0, hooks: [], reExportsAll: [...urls] }
+    : undefined;
+}
+
+/** The module a value `export * from "…"` reads from, or undefined. */
+function starSource(
+  stmt: Node,
+  moduleUrl: string,
+  resolve: SpecifierResolver | undefined,
+): string | undefined {
+  if (stmt?.type !== "ExportAllDeclaration" || stmt.typeOnly) return undefined;
+  const spec = stmt.source?.value;
+  return typeof spec === "string" ? importeeUrl(spec, moduleUrl, resolve) : undefined;
+}
+
 /** The module a value re-export (`export { … } from "…"`) reads from, or undefined. */
 function reExportSource(
   stmt: Node,
@@ -407,6 +546,7 @@ function declMeta(scan: MetaScan, name: string, at: Node, fn: Node): ComponentDe
     name: h.name,
     line: positionAt(ctx.bytes, index, h.at).line,
     ...(h.from ? { from: h.from } : {}),
+    ...(h.cond ? { cond: h.cond } : {}),
   }));
   return { name, line: pos.line, column: pos.column, hooks };
 }

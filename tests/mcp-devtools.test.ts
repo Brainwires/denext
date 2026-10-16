@@ -415,7 +415,7 @@ Deno.test("hookStateText: every cell, one cell by index, and the unnamed-hooks n
   assertStringIncludes(hookStateText(inspect, "Counter", 9), "no hook at index 9 (it has 2)");
 
   const legacy = hookStateText(inspect, "Legacy");
-  assertStringIncludes(legacy, "names unavailable (conditional hooks?)");
+  assertStringIncludes(legacy, "names unavailable (hook metadata out of date)");
   assertStringIncludes(legacy, "  [0] state = 1");
 });
 
