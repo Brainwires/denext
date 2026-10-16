@@ -6,6 +6,7 @@ import {
   collectEffects,
   collectInsertionEffects,
   needsSync,
+  rawHtmlOf,
   walk,
   walkFlagged,
 } from "./fiber-utils.ts";
@@ -133,6 +134,8 @@ function commitPlacement(handle: RootHandle, wipRoot: Fiber): void {
   else syncChildren(handle.container, childrenDom(wipRoot));
   walkFlagged(wipRoot, Placement | ChildDeletion | ChildrenChanged, (f) => {
     if (f.tag === "host" && f.alternate !== null && needsSync(f)) {
+      // A raw-HTML host owns no reconciled children: a sync would prune its markup.
+      if (rawHtmlOf(f.vnode.props) !== undefined) return;
       syncChildren(f.stateNode as Element, childrenDom(f));
     } else if (f.tag === "singleton" && needsSync(f)) {
       getSingletonSupport()!.place(f); // an adopted <head>'s children go into the page's head

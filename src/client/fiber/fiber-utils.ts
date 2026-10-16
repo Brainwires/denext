@@ -199,6 +199,16 @@ export function needsSync(fiber: Fiber): boolean {
   return ((fiber.flags | fiber.subtreeFlags) & (Placement | ChildDeletion | ChildrenChanged)) !== 0;
 }
 
+/**
+ * A host's `dangerouslySetInnerHTML` object, or undefined (null counts as absent). Such a host
+ * owns no reconciled children, so its DOM children are never synced (that would prune them).
+ */
+export function rawHtmlOf(
+  props: Record<string, unknown> | null | undefined,
+): { __html?: unknown } | undefined {
+  return (props?.dangerouslySetInnerHTML ?? undefined) as { __html?: unknown } | undefined;
+}
+
 /** Pre-order DFS over the work-in-progress tree. */
 export function walk(fiber: Fiber, visit: (f: Fiber) => void): void {
   visit(fiber);

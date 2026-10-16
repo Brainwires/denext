@@ -207,6 +207,15 @@ and this project adheres to
 
 ### Fixed
 
+- **Hydration keeps a `dangerouslySetInnerHTML` element's server markup, as React does.** On any
+  page that hydrates, an element rendered with `dangerouslySetInnerHTML` (in a Server Component
+  or a client component) was emptied: hydration re-applied the HTML, then pruned the element's
+  children as nodes no fiber owned. A re-render then re-created the markup, because the prop was
+  compared by object identity rather than by its `__html`. Hydration now adopts the parser's own
+  nodes as-is; markup that differs from `__html` (beyond re-serialization, such as `<br/>` and
+  `<br>`) is reported as a hydration mismatch and replaced. A fresh client mount, a keyed move and
+  a switch to `dangerouslySetInnerHTML` no longer drop the injected markup either, and a re-render
+  with the same `__html` leaves its nodes alone.
 - **A library's `"use client"` components hydrate under `nodeResolve: false` too.** The server
   bundle now resolves the packages on the import paths to a library's own `"use client"` /
   `"use server"` files from `node_modules`, the way the build found those files, so the component

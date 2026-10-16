@@ -96,9 +96,14 @@ export function installDomPropWarnings(on = true): void {
   devWarnings = on ? { html: warnDangerousHtml, url: warnRefusedUrl } : null;
 }
 
+/** The `__html` of a `dangerouslySetInnerHTML` value (undefined when there is none). */
+function htmlOf(value: unknown): unknown {
+  return (value as { __html?: unknown } | null | undefined)?.__html;
+}
+
 /** Raw HTML injection (React parity): apply innerHTML; warn (dev) about the XSS sink. */
 function applyDangerousHtml(el: Element, value: unknown): void {
-  const html = (value as { __html?: unknown } | null | undefined)?.__html;
+  const html = htmlOf(value);
   if (typeof html !== "string") return;
   devWarnings?.html(el.tagName.toLowerCase());
   el.innerHTML = html;
@@ -121,8 +126,10 @@ function setProp(
   if (isFormActionProp(name, value)) {
     return setFormAction(el, state, value as (payload: unknown) => void, onError);
   }
+  // Compared by `__html` (React parity): a fresh `{ __html }` object of the same markup each
+  // render must not re-create the nodes.
   if (name === "dangerouslySetInnerHTML") {
-    if (oldValue !== value) applyDangerousHtml(el, value);
+    if (htmlOf(oldValue) !== htmlOf(value)) applyDangerousHtml(el, value);
     return;
   }
   if (typeof value === "function") return; // non-event function props aren't attrs

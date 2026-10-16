@@ -224,22 +224,23 @@ export class FakeElement extends FakeNode {
     return `<${this.tagName.toLowerCase()}${attrs}>${inner}</${this.tagName.toLowerCase()}>`;
   }
   get innerHTML(): string {
-    if (this._rawHtml !== null) return this._rawHtml;
     return this.childNodes.map(serialize).join("");
   }
-  /** Assigning innerHTML replaces children with raw markup (dangerouslySetInnerHTML). */
+  /**
+   * Assigning innerHTML replaces the children with the parsed markup, as a browser does: here
+   * one opaque {@link FakeRawHtml} child node standing for it, so a reconciler that then prunes
+   * children it does not own removes the markup exactly as it would in a real DOM.
+   */
   set innerHTML(html: string) {
-    this._rawHtml = html === "" ? null : html;
     clearChildren(this);
+    if (html !== "") this.appendChild(new FakeRawHtml(html));
   }
-  private _rawHtml: string | null = null;
   get textContent(): string {
     return this.childNodes.map(textOf).join("");
   }
   /** Assigning textContent replaces children with a single text node. */
   set textContent(value: string) {
     clearChildren(this);
-    this._rawHtml = null;
     if (value !== "") this.appendChild(new FakeText(value));
   }
 }
@@ -248,7 +249,16 @@ export class FakeElement extends FakeNode {
 Object.assign(FakeElement.prototype, listenerMethods);
 export interface FakeElement extends ListenerMethods<Listener> {}
 
+/** The markup an `innerHTML` assignment parsed into, kept as one opaque node. */
+class FakeRawHtml extends FakeNode {
+  override nodeType = 11;
+  constructor(readonly html: string) {
+    super();
+  }
+}
+
 function serialize(node: FakeNode): string {
+  if (node instanceof FakeRawHtml) return node.html;
   if (node instanceof FakeText) return node.nodeValue;
   if (node instanceof FakeElement) return node.outerHTML;
   return "";

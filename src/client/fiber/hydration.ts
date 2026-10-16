@@ -175,6 +175,33 @@ export function claimText(wip: Fiber): void {
 }
 
 /**
+ * The props an adopted host's markup already reflects, for its first `applyProps` (null: none).
+ * An adopted `dangerouslySetInnerHTML` host keeps the server's inner HTML — the very nodes the
+ * parser built, never cleared or re-created (React parity) — so its prop reads as already
+ * applied. Only a real
+ * difference — the markup still differs once `__html` is parsed into a copy of the element, so
+ * mere re-serialization (`<br/>` vs `<br>`) is not one — is reported and patched.
+ */
+export function adoptServerHtml(
+  wip: Fiber,
+  el: Element,
+  value: { __html?: unknown } | undefined,
+): Record<string, unknown> | null {
+  if (value === undefined) return null;
+  const html = value.__html;
+  const server = el.innerHTML;
+  if (typeof html === "string" && server !== html) {
+    const probe = el.cloneNode(false) as Element;
+    probe.innerHTML = html;
+    if (probe.innerHTML !== server) {
+      reportHydrationMismatch(wip, "dangerouslySetInnerHTML differs from the server");
+      el.innerHTML = html;
+    }
+  }
+  return { dangerouslySetInnerHTML: value };
+}
+
+/**
  * Report a recovered error (`onRecoverableError`) — currently a hydration mismatch,
  * where denext keeps the client render. Fires the callback if registered (any env),
  * else falls back to the dev-only console warning.
