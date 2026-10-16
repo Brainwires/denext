@@ -137,6 +137,9 @@ function catalogSpec(name: string): string {
  * denext's barrel surface, so an older 0.x line boots against a barrel it no longer matches.
  */
 export const PAGES_ROUTER_SPEC: string = catalogSpec("@denext/pages-router");
+/** Where `@denext/react-router` writes React Router's route types (its `TYPES_DIR`). */
+const RR_TYPES_DIR = ".react-router/types";
+
 /** The `@denext/react-router` package the RR7 framework-mode plugin path pins. */
 const REACT_ROUTER_SPEC = catalogSpec("@denext/react-router");
 /**
@@ -803,6 +806,7 @@ async function writeAppRouterDenoJson(
   prismaWiring: PrismaWiring | null,
   written: string[],
   cap?: CapacitorPlan,
+  rr?: boolean,
 ): Promise<boolean> {
   const denoJson = {
     tasks: appRouterTasks(R, prismaWiring, cap),
@@ -822,13 +826,20 @@ async function writeAppRouterDenoJson(
       // deep in node_modules. Skip declaration-file checking (as Next.js/CRA do) so `deno check`
       // validates YOUR code, not the libraries' bundled types — your `.tsx` is still checked.
       skipLibCheck: true,
+      // React Router's route typegen (`@denext/react-router`): `./+types/<route>` resolves
+      // into `.react-router/types`, where the plugin writes them, as React Router's tsconfig does.
+      ...(rr ? { rootDirs: [".", `./${RR_TYPES_DIR}`] } : {}),
     },
     imports,
   };
   const denoJsonExists = await writeDenoJsonUnlessAuthored(dir, denoJson, written);
   // Ignore denext's generated build artifacts (`.denext/` build cache, `out/` export), and
   // with a Capacitor target the native build outputs.
-  await ensureGitignore(dir, [".denext/", "out/", ...(cap ? cap.ignores : [])], written);
+  await ensureGitignore(
+    dir,
+    [".denext/", "out/", ...(rr ? [".react-router/"] : []), ...(cap ? cap.ignores : [])],
+    written,
+  );
   // Turn on the Deno LSP so editors resolve the `denext` import map like `deno` does.
   await ensureVscodeDeno(dir, written);
   return denoJsonExists;
@@ -1579,7 +1590,15 @@ async function migrateReactRouterProject(
 
   const written: string[] = [];
   const prismaWiring = await applyPrismaImports(dir, deps, imports, R);
-  const denoJsonExists = await writeAppRouterDenoJson(dir, R, imports, prismaWiring, written);
+  const denoJsonExists = await writeAppRouterDenoJson(
+    dir,
+    R,
+    imports,
+    prismaWiring,
+    written,
+    undefined,
+    true,
+  );
 
   const configPath = join(dir, "denext.config.ts");
   const hasEffect = "effect" in deps;

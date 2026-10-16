@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Added
 
+- **`@denext/react-router` route typegen.** The plugin writes React Router's `+types/<route>.ts`
+  modules under `.react-router/types/` on every scan and on `denext typegen`, so a route
+  module's `import type { Route } from "./+types/<route>"` type-checks (`Route.LoaderArgs`,
+  `Route.ComponentProps`, … typed from the module itself). `denext migrate` writes the
+  `compilerOptions.rootDirs` that resolves them.
 - **A soft navigation sent as a POST streams its deferred values.** A navigation whose Remix
   `shouldRevalidate` echo is too large for headers goes out as a POST; it now gets the same
   answer as a GET: a Flight route's payload at once with each `defer()` value following as it

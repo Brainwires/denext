@@ -570,5 +570,7 @@ The walk-throughs below are the ones worth **reading as models** of a seam — t
 - **[`@denext/react-router`](https://github.com/Brainwires/denext/tree/main/packages/react-router)** — a full React Router v7 framework
   router through the **route-synthesizer** seam alone: it reads the app's `app/routes.ts`,
   generates denext route wrappers under `.denext/react-router/`, and adds them to the
-  manifest — the core App Router renders them, so the plugin ships no render path. The model
-  for adapting a foreign routing convention onto denext's own pipeline.
+  manifest — the core App Router renders them, so the plugin ships no render path. It also
+  writes React Router's route types (`+types/<route>.ts` under `.react-router/types/`) and adds
+  `denext typegen` (**CLI verb**). The model for adapting a foreign routing convention onto
+  denext's own pipeline.

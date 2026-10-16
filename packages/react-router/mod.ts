@@ -8,15 +8,17 @@
 // `ErrorBoundary`, the root `Layout` export and the `Route.ComponentProps` props contract run
 // on the `denext/remix` runtime (RR7's framework API is Remix's), as do the browser half —
 // `clientLoader` / `clientAction` / `HydrateFallback` — and `react-router.config.ts`'s
-// `ssr: false` (SPA mode) and `prerender`.
+// `ssr: false` (SPA mode) and `prerender`. Route typegen writes React Router's `+types` modules
+// (`import type { Route } from "./+types/home"`) on every scan and on `denext typegen`.
 //
 //   // denext.config.ts
 //   import { reactRouter } from "@denext/react-router";
 //   export default { plugins: [reactRouter()] };
 
-import type { DenextPlugin, PluginContext } from "@denext/denext/plugin-kit";
+import type { CommandSpec, DenextPlugin, PluginContext } from "@denext/denext/plugin-kit";
 import { join } from "@std/path";
 import { generateRoutes } from "./src/generate.ts";
+import { generateRouteTypes } from "./src/typegen.ts";
 import { resolvePrerenderPaths } from "./src/prerender.ts";
 import { resolveReactRouterConfig, resolveRouteConfig } from "./src/load-config.ts";
 import { synthesizeRoutes } from "./src/manifest.ts";
@@ -64,16 +66,39 @@ export function reactRouter(options: ReactRouterOptions = {}): DenextPlugin {
       const rootFile = await firstExisting(appDir, ROOT_FILES);
       const outDir = join(ctx.projectRoot, ".denext", "react-router");
 
+      const routeTree = async () =>
+        buildRouteTree(await resolveRouteConfig(await ctx.load(routesFile), routesFile));
+      const typegen = (nodes: Awaited<ReturnType<typeof routeTree>>) =>
+        generateRouteTypes({ projectRoot: ctx.projectRoot, appDir, nodes, rootFile });
+
       // Runs on every manifest scan (once per build/start, per request in dev): read the
       // config, (re)generate what changed, and add the routes.
       ctx.addRouteSynthesizer(async (manifest) => {
-        const entries = await resolveRouteConfig(await ctx.load(routesFile), routesFile);
-        const nodes = buildRouteTree(entries);
+        const nodes = await routeTree();
         const prerender = await resolvePrerenderPaths(rrConfig.prerender, nodes);
         const spa = rrConfig.ssr === false;
         const generated = await generateRoutes({ appDir, outDir, nodes, rootFile, spa, prerender });
+        await typegen(nodes);
         synthesizeRoutes(manifest, nodes, generated);
       });
+      ctx.addCommand(typegenCommand(async () => (await typegen(await routeTree())).length));
+    },
+  };
+}
+
+/** `denext typegen`: React Router's `react-router typegen` (the route `+types` modules). */
+function typegenCommand(run: () => Promise<number>): CommandSpec {
+  return {
+    name: "typegen",
+    summary: "Generate the React Router route types (.react-router/types)",
+    usage: [
+      "Usage: denext typegen",
+      "",
+      "Writes a `+types/<route>.ts` module per route under .react-router/types, as",
+      "`react-router typegen` does; `compilerOptions.rootDirs` resolves `./+types/<route>`.",
+    ].join("\n"),
+    async run() {
+      console.log(`wrote the types of ${await run()} route module(s) to .react-router/types`);
     },
   };
 }

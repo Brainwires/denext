@@ -1266,6 +1266,7 @@
       "denext": "^4.1.0",
       "kind": "plugin",
       "factory": "reactRouter",
+      "verb": "typegen",
       "configKeys": [
         "appDirectory",
         "routesFile"

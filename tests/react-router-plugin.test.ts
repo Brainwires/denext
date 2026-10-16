@@ -145,6 +145,12 @@ Deno.test("react-router plugin: routes.ts → generated wrappers → the core Ap
     const pages = manifest.pages.map((p) => p.routePath).sort();
     assertEquals(pages, ["/", "/about", "/boom", "/teams", "/teams/[id]"]);
     assertEquals(manifest.api.map((a) => a.routePath).sort(), ["/api/health", "/teams/[id]"]);
+    // The scan also wrote React Router's route types (`./+types/<route>` via rootDirs).
+    const types = await Deno.readTextFile(
+      join(root, ".react-router", "types", "app", "routes", "teams", "+types", "team.ts"),
+    );
+    assertStringIncludes(types, "export namespace Route");
+    assertStringIncludes(types, `type Params = { "id": string };`);
     assert(
       manifest.rootLayout?.endsWith(join(".denext", "react-router", "root", "layout.tsx")),
       manifest.rootLayout ?? "",

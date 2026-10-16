@@ -21,7 +21,7 @@ const entries: CatalogEntry[] = catalog.plugins;
 const plugins = entries.filter((e) => e.kind === "plugin");
 
 /** The CLI verbs the first-party plugins contribute through `addCommand`, sorted. */
-const VERBS = ["content", "graphql", "htmx", "openapi"];
+const VERBS = ["content", "graphql", "htmx", "openapi", "typegen"];
 
 /**
  * Factory names a package deliberately spells differently from the camelCased last path
