@@ -50,9 +50,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Islands, resumability and Cache Components
 
-- **Per-island hydration is a Flight-route feature.** The isomorphic path and SPA mode hydrate
-  as one root; `client:only` skips SSR by definition. In SPA mode the directives defer the
-  component's mount and split its code instead (no server HTML to keep inert): only for a
+- **On an isomorphic route an island hydrates in the page's tree, its code in the page bundle.**
+  The page imports the component, so its code is not split off; a module-level `hydrate`
+  default is not read (only the usage-site directive), a class or lazy component renders
+  eagerly, and an `on*Capture` handler in a `client:interaction` island misses the event that
+  woke it. `client:only` skips SSR by definition.
+- **In SPA mode the directives defer the mount, not hydration.** There is no server HTML to keep
+  inert, so the directives defer the component's mount and split its code instead: only for a
   component imported by name, not a member tag or a module-level `hydrate` default; a component
   also used without a directive stays in the main bundle; `client:interaction` needs a
   `client:placeholder` to interact with, and replays the triggering gesture on the element at the

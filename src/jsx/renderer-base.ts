@@ -27,6 +27,7 @@ import {
   type ProviderScope,
 } from "./render-to-string.ts";
 import { enterScope, type IdScope, rootScope, scopePrefix } from "./tree-id.ts";
+import { isoIsland, IsoIslandServer } from "./iso-island-server.ts";
 import {
   checkpointScope,
   invokeServerComponent,
@@ -67,6 +68,12 @@ export abstract class VNodeRenderer<T> {
   readonly ids: IdHolder;
   /** The hook dispatcher's live context; reassigned per boundary and component. */
   protected activeScopes: ProviderScope[] = [];
+  /**
+   * Whether a `client:*` component element renders as an isomorphic island (iso-island-server.ts):
+   * the HTML renderers of non-Flight routes. A Flight renderer carves islands at the client
+   * boundary instead.
+   */
+  protected isoIslands = false;
   /** The one shared read-only SSR dispatcher (installed around the render). */
   readonly dispatcher: Dispatcher;
 
@@ -179,7 +186,7 @@ export abstract class VNodeRenderer<T> {
       return this.renderChildren(props.children, scopesWithProvider(scopes, props), head);
     }
     if ((type as unknown) === ERROR_BOUNDARY) return this.renderErrorBoundary(props, scopes, head);
-    if (isComponentType(type)) return this.renderComponent(node, type, props, scopes, head);
+    if (isComponentType(type)) return this.renderElementComponent(node, type, props, scopes, head);
     return this.renderHost(node, scopes, head);
   }
 
@@ -264,6 +271,20 @@ export abstract class VNodeRenderer<T> {
    */
   protected wrapErrorBoundary(_props: Props, rendered: T): T {
     return rendered;
+  }
+
+  /** A component element, or a `client:*` one as an isomorphic island (iso-island-server.ts). */
+  private renderElementComponent(
+    node: VNode,
+    type: unknown,
+    props: Props,
+    scopes: ProviderScope[],
+    head: HeadCollector | null,
+  ): Promise<T> {
+    const island = this.isoIslands ? isoIsland(type, props) : null;
+    return island
+      ? this.renderComponent(node, IsoIslandServer, island as unknown as Props, scopes, head)
+      : this.renderComponent(node, type, props, scopes, head);
   }
 
   /**

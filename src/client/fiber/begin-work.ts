@@ -2,7 +2,7 @@
 // that renders / reconciles the fiber's children.
 
 import { devHydrationActive, isClassBoundary, isPlainUnkeyedFragment } from "./fiber-utils.ts";
-import { claimHost, isHydrating } from "./hydration.ts";
+import { beginHostHydration } from "./hydration.ts";
 import { resetBoundary } from "./boundaries.ts";
 import { renderComponent } from "./render-component.ts";
 import { cloneChildFibers, reconcileChildren } from "./reconcile-children.ts";
@@ -371,7 +371,7 @@ function beginHost(wip: Fiber): Fiber | null {
 // establish a form-scoped pending signal seeded into descendant context so useFormStatus reads
 // the nearest form. Split out of {@linkcode beginWork}.
 function beginElement(wip: Fiber): Fiber | null {
-  if (isHydrating) claimHost(wip);
+  beginHostHydration(wip);
   let childInherited = wip.inherited;
   if (wip.vnode.type === "form") {
     const props = wip.vnode.props ?? {};

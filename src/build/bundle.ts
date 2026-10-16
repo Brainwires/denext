@@ -346,6 +346,8 @@ export interface GenerateRouteEntryOptions {
   usesActivity?: boolean;
   /** Install `<ViewTransition>` support. Default `false`. */
   usesViewTransition?: boolean;
+  /** Install the isomorphic `client:*` island runtime. Default `false`. */
+  usesIsoIslands?: boolean;
   /** Install host-singleton support (a client root layout's document tags). Default `true`. */
   usesSingletons?: boolean;
   /**
@@ -373,16 +375,21 @@ export function generateRouteEntry(
   const { activityImport, activityInstall } = activitySupportBlock(opts.usesActivity ?? false);
   const { vtImport, vtInstall } = viewTransitionSupportBlock(opts.usesViewTransition ?? false);
   const { singletonImport, singletonInstall } = singletonSupportBlock(opts.usesSingletons ?? true);
+  // A `client:*` island hydrates on its own (iso-island.ts): installed before hydration.
+  const isoImport = opts.usesIsoIslands
+    ? `import { installIsoIslands } from "denext/client-runtime";\n`
+    : "";
+  const isoInstall = opts.usesIsoIslands ? "installIsoIslands();\n" : "";
   return `// denext generated route entry — do not edit.
 ${
     clientInstrumentationImport(opts.instrumentationClient)
   }import { startClient, provideLayoutSegments } from "denext/client-runtime";
 import { Suspense, ErrorBoundary } from "denext/client";
 import { h } from "denext/jsx-runtime";
-${classImport}${activityImport}${vtImport}${singletonImport}${refreshImport}${
+${classImport}${activityImport}${vtImport}${isoImport}${singletonImport}${refreshImport}${
     routeEntryImports(route, slots)
   }
-${refreshReg}${classInstall}${activityInstall}${vtInstall}${singletonInstall}
+${refreshReg}${classInstall}${activityInstall}${vtInstall}${isoInstall}${singletonInstall}
 async function main() {
   const el = document.getElementById("__denext");
   const dataEl = document.getElementById("__denext_data");
@@ -554,6 +561,19 @@ export function appUsesViewTransition(
   extraFiles: string[] = [],
 ): Promise<boolean> {
   return scanAppSources(rootDir, (c) => /\bViewTransition\b/.test(c), extraFiles);
+}
+
+/**
+ * Whether any source file under `rootDir` writes a `client:*` directive — the build-time signal
+ * that makes a route entry install the isomorphic island runtime (iso-island.ts). An island
+ * can't be marked without writing the directive, so the scan can't false-drop one.
+ */
+export function appUsesIsoIslands(rootDir: string, extraFiles: string[] = []): Promise<boolean> {
+  return scanAppSources(
+    rootDir,
+    (c) => /\bclient:(?:load|idle|visible|interaction|media|only)\b/.test(c),
+    extraFiles,
+  );
 }
 
 /**
@@ -1029,6 +1049,8 @@ export interface BundleOptions {
    * tree-shakes the per-element marking runtime out. Defaults to `false`; dev passes `true`.
    */
   usesViewTransition?: boolean;
+  /** Whether the app writes a `client:*` directive (an {@linkcode appUsesIsoIslands} scan). */
+  usesIsoIslands?: boolean;
   /**
    * Whether the app renders a document tag (from an {@linkcode appRendersDocumentTags} scan).
    * When false, the generated entry omits `installSingletonSupport()` so `deno bundle`
@@ -1863,6 +1885,7 @@ export function bundleRoute(
       classRuntime: opts.classRuntime,
       usesActivity: opts.usesActivity,
       usesViewTransition: opts.usesViewTransition,
+      usesIsoIslands: opts.usesIsoIslands,
       usesSingletons: opts.usesSingletons,
       devMetaFooter: opts.devMetaFooter,
     }),

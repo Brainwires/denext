@@ -210,6 +210,7 @@ async function buildCompat(
         classRuntime: "eager",
         usesActivity: true,
         usesViewTransition: true,
+        usesIsoIslands: true,
       }),
     })),
   });

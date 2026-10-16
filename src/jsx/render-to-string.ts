@@ -40,6 +40,7 @@ import {
 } from "./dom-attributes.ts";
 export { serializeStyle } from "./dom-attributes.ts";
 import { enterScope, type IdHolder, type IdScope, nextId, rootScope } from "./tree-id.ts";
+import { isoIsland, IsoIslandServer } from "./iso-island-server.ts";
 export type { IdHolder } from "./tree-id.ts";
 
 /** HTML void elements that must not have a closing tag. */
@@ -673,8 +674,20 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
   if ((type as unknown) === ERROR_BOUNDARY) {
     return appendResult(renderErrorBoundaryToStr(props, ctx), ctx);
   }
-  if (isComponentType(type)) return renderComponentInto(type, props, ctx);
+  if (isComponentType(type)) return renderElementComponentInto(type, props, ctx);
   return renderHostInto(type as string, props, ctx, node.key);
+}
+
+/** A component element, or a `client:*` one as an isomorphic island (iso-island-server.ts). */
+function renderElementComponentInto(
+  type: unknown,
+  props: Props,
+  ctx: RenderCtx,
+): void | Promise<void> {
+  const island = isoIsland(type, props);
+  return island
+    ? renderComponentInto(IsoIslandServer, island as unknown as Props, ctx)
+    : renderComponentInto(type, props, ctx);
 }
 
 /** A VNode's props (null-normalized). */

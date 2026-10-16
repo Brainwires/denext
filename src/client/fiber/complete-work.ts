@@ -73,7 +73,7 @@ export function completeHostUpdate(wip: Fiber): boolean {
 }
 
 function completeHost(wip: Fiber): void {
-  if (isHydrating) popHydrationCursor();
+  if (isHydrating) popHydrationCursor(wip);
   if (completeHostUpdate(wip)) return;
   // Fresh mount (or a hydration-adopted node): build off-DOM. Apply every prop EXCEPT the ref
   // — a ref callback must fire at commit (after the node is placed), never during this render

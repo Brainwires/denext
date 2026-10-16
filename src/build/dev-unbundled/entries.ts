@@ -55,6 +55,7 @@ export async function serveEntry(
       classRuntime: "eager",
       usesActivity: true,
       usesViewTransition: true,
+      usesIsoIslands: true,
     }),
     `entry:${route.routePath}`,
     platform,

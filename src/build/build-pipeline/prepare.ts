@@ -17,6 +17,7 @@ import {
   appRendersDocumentTags,
   appUsesActivity,
   appUsesClassComponents,
+  appUsesIsoIslands,
   appUsesViewTransition,
   type ClassRuntimeMode,
 } from "../bundle.ts";
@@ -106,7 +107,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   // `<ViewTransition>` defined there counts as used. npm packages are not scanned (their
   // sources are opaque to a token scan) — the class runtime covers them by loading on demand.
   const outside = await localModulesOutside(projectDir, manifest.pages);
-  const { classRuntime, usesActivity, usesViewTransition, usesSingletons } =
+  const { classRuntime, usesActivity, usesViewTransition, usesIsoIslands, usesSingletons } =
     await runtimeFeatureScans(projectDir, paths, outside);
   return {
     projectDir,
@@ -133,6 +134,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     classRuntime,
     usesActivity,
     usesViewTransition,
+    usesIsoIslands,
     usesSingletons,
     compatServerModules: {},
   };
@@ -173,7 +175,10 @@ async function runtimeFeatureScans(
   paths: ProjectPaths,
   outside: Awaited<ReturnType<typeof localModulesOutside>>,
 ): Promise<
-  Pick<BuildContext, "classRuntime" | "usesActivity" | "usesViewTransition" | "usesSingletons">
+  Pick<
+    BuildContext,
+    "classRuntime" | "usesActivity" | "usesViewTransition" | "usesIsoIslands" | "usesSingletons"
+  >
 > {
   // The class-component runtime is a code-split chunk the generated entry loads on demand
   // when the server-rendered document says a class rendered ("lazy" — the default, and what
@@ -193,8 +198,10 @@ async function runtimeFeatureScans(
   // Gate the ViewTransition marking runtime, same as Activity — install it only when the app
   // renders `<ViewTransition>` (a build scan).
   const usesViewTransition = await appUsesViewTransition(projectDir, outside);
+  // Gate the isomorphic island runtime: only an app that writes a `client:*` directive.
+  const usesIsoIslands = await appUsesIsoIslands(projectDir, outside);
   // Gate the host-singleton runtime: install it only when the app renders a document tag (a
   // client root layout's `<html>`/`<body>` adopt the page's own elements).
   const usesSingletons = await appRendersDocumentTags(projectDir, outside);
-  return { classRuntime, usesActivity, usesViewTransition, usesSingletons };
+  return { classRuntime, usesActivity, usesViewTransition, usesIsoIslands, usesSingletons };
 }

@@ -39,6 +39,7 @@ export interface ResumedHole {
 }
 
 class PPRRenderer extends PprVNodeRenderer<string> {
+  protected override isoIslands = true;
   /** Holes discovered during a resume pass. */
   readonly holes: ResumedHole[] = [];
 

@@ -196,6 +196,7 @@ export async function bundleExportRoutes(ctx: ExportContext): Promise<void> {
       instrumentationClient: ctx.paths.instrumentationClientPath,
       usesActivity: ctx.usesActivity,
       usesViewTransition: ctx.usesViewTransition,
+      usesIsoIslands: ctx.usesIsoIslands,
     });
     await writeBundleOutput(ctx.clientOut, bundle, `${routeId(route.routePath)}.js`);
   }

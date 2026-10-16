@@ -33,11 +33,38 @@ export function beginHydration(container: Node, startNode?: Node | null): void {
 export function endHydration(): void {
   isHydrating = false;
   hydrationCursor = null;
+  islandRoot = null;
 }
 
-/** Leaving a host: restore the parent's cursor that claimHost pushed. */
-export function popHydrationCursor(): void {
+/** Leaving a host: restore the parent's cursor that claimHost pushed (and end an island's). */
+export function popHydrationCursor(wip: Fiber): void {
   hydrationCursor = hydrationStack.pop() ?? null;
+  if (wip === islandRoot) endHydration();
+}
+
+/** The island wrapper whose children are hydrating after the page did (see iso-island.ts). */
+let islandRoot: Fiber | null = null;
+
+/**
+ * Hydrate `wip`'s children against the server DOM it kept while the page hydrated around it: an
+ * isomorphic island turning live in a later render. Ends when `wip` completes.
+ */
+export function hydrateChildrenOf(wip: Fiber): void {
+  isHydrating = true;
+  islandRoot = wip;
+  hydrationStack.push(hydrationCursor);
+  hydrationCursor = { parent: wip.stateNode as Element, index: 0 };
+}
+
+/**
+ * The isomorphic island runtime's begin hook for a host outside hydration (iso-island.ts), or
+ * null when no page has loaded it.
+ */
+let islandHydration: ((wip: Fiber) => void) | null = null;
+
+/** Install (or clear) {@link islandHydration}. */
+export function setIslandHydration(fn: ((wip: Fiber) => void) | null): void {
+  islandHydration = fn;
 }
 
 /** Stop adopting server DOM below this point (e.g. a fallback must mount fresh). */
@@ -61,16 +88,25 @@ function warnHydrationMismatch(detail: string): void {
   );
 }
 
-export function claimHost(wip: Fiber): void {
+/** Entering a host: claim its server node while hydrating, else let an island hydrate (iso-island.ts). */
+export function beginHostHydration(wip: Fiber): void {
+  if (isHydrating) claimHost(wip);
+  else islandHydration?.(wip);
+}
+
+/** The server node at the hydration cursor (null past the end, or with no cursor). */
+function cursorNode(): Node | null {
+  return hydrationCursor
+    ? (hydrationCursor.parent.childNodes[hydrationCursor.index] ?? null)
+    : null;
+}
+
+function claimHost(wip: Fiber): void {
   const tag = wip.vnode.type as string;
   // A client root layout's head tag, which the server hoisted into the page's head: claimed
   // there by match (null: none, so it mounts fresh), never from the container's cursor.
   const hoisted = getSingletonSupport()?.claimHoisted(wip);
-  const existing = hoisted !== undefined
-    ? hoisted
-    : hydrationCursor
-    ? (hydrationCursor.parent.childNodes[hydrationCursor.index] ?? null)
-    : null;
+  const existing = hoisted !== undefined ? hoisted : cursorNode();
   const matches = existing !== null && existing.nodeType === 1 &&
     (existing as Element).tagName.toLowerCase() === tag.toLowerCase();
   if (matches) {
@@ -133,9 +169,7 @@ function placeFreshText(wip: Fiber, value: string, existing: Node | null): void 
 
 export function claimText(wip: Fiber): void {
   const value = String(wip.vnode.props.nodeValue ?? "");
-  const existing = hydrationCursor
-    ? (hydrationCursor.parent.childNodes[hydrationCursor.index] ?? null)
-    : null;
+  const existing = cursorNode();
   if (existing && existing.nodeType === 3) adoptServerText(wip, existing as Text, value);
   else placeFreshText(wip, value, existing);
 }

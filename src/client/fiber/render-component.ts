@@ -123,6 +123,19 @@ function withoutRef(props: unknown): unknown {
 }
 
 /**
+ * The isomorphic island runtime's render hook (iso-island.ts): the wrapper render of a component
+ * fiber whose element carries a `client:*` directive, else null. Null until a page loads it.
+ */
+let islandRender:
+  | ((fiber: Fiber, type: unknown, props: Record<string, unknown>) => unknown)
+  | null = null;
+
+/** Install (or clear) the isomorphic island render hook. */
+export function setIslandRender(fn: typeof islandRender): void {
+  islandRender = fn;
+}
+
+/**
  * Dev Fast Refresh's per-render hooks ({@link RefreshSwapHooks}), installed by the refresh
  * runtime (refresh-swap.ts) and null in production, where a reused fiber never changes its
  * implementation: a component then renders its `vnode.type` with no resolution step.
@@ -378,6 +391,12 @@ export function renderComponent(inst: Fiber): VNode | null {
       forwardsRef = target.forwardsRef;
     }
     const props = prepareRenderProps(inst);
+    // An isomorphic island (iso-island.ts) renders its wrapper in place of the component.
+    const island = islandRender?.(inst, rawType, props as Record<string, unknown>);
+    if (island) {
+      type = island as RenderFn;
+      forwardsRef = false;
+    }
     // forwardRef receives `(props, ref)` with `ref` REMOVED from props, as in React (a
     // render fn that spreads `props` onto a host element must not forward the ref twice).
     const ref = forwardsRef ? ((props as { ref?: unknown }).ref ?? null) : undefined;

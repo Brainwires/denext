@@ -61,7 +61,7 @@ export interface LazyScheduler {
   media(query: string, cb: () => void): () => void;
 }
 
-let scheduler: LazyScheduler = defaultScheduler();
+let scheduler: LazyScheduler = /* @__PURE__ */ defaultScheduler();
 
 /** Replace the scheduling primitives (tests). Pass no argument to reset to default. */
 export function setLazyScheduler(s: LazyScheduler = defaultScheduler()): void {

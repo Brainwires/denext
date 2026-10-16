@@ -30,6 +30,9 @@ export { clientActionStub } from "../runtime/server-action.ts";
 // otherwise calls `loadClassRuntime()` — the single dynamic-import site — when the document
 // says the server rendered a class. The install itself is deliberately NOT re-exported here.
 export { loadClassRuntime } from "./class-loader.ts";
+// Isomorphic islands: the route entry emits `installIsoIslands()` ONLY when the app's sources use
+// a `client:*` directive (a build scan), so an app without one drops the island runtime.
+export { installIsoIslands } from "./iso-island.ts";
 // Activity: the entry emits `installActivitySupport()` to wire the offscreen scheduler into
 // the reconciler seam ONLY when the app uses `<Activity>` — so an app that never renders one
 // drops this re-export (and the whole offscreen begin logic) via tree-shaking.

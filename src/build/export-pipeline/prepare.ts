@@ -9,7 +9,7 @@ import {
   runPluginPrepareSteps,
 } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
-import { appUsesActivity, appUsesViewTransition } from "../bundle.ts";
+import { appUsesActivity, appUsesIsoIslands, appUsesViewTransition } from "../bundle.ts";
 import { resolveCacheComponents } from "../../server/config.ts";
 import { defaultLoader } from "../../server/mod.ts";
 import type { ModuleLoader } from "../../server/types.ts";
@@ -181,6 +181,7 @@ export async function prepareExport(
   const outside = await localModulesOutside(paths.projectDir, manifest.pages);
   const usesActivity = await appUsesActivity(paths.projectDir, outside);
   const usesViewTransition = await appUsesViewTransition(paths.projectDir, outside);
+  const usesIsoIslands = await appUsesIsoIslands(paths.projectDir, outside);
   const outDir = await freshStagingDir(finalOutDir);
   const clientOut = join(outDir, "_denext", "client");
   await ensureDir(clientOut);
@@ -206,6 +207,7 @@ export async function prepareExport(
     transforms: {},
     usesActivity,
     usesViewTransition,
+    usesIsoIslands,
     pages: 0,
     skipped: [],
   };

@@ -41,6 +41,7 @@ export type PendingHole = Promise<
 
 class StreamRenderer extends VNodeRenderer<string> {
   private id = 0;
+  protected override isoIslands = true;
   /** Dev-only: record each boundary's server resolve duration (see StreamOptions). */
   collectTiming = false;
   /** Told each error a streamed hole's render threw that nothing inside the hole caught. */

@@ -12,6 +12,13 @@ and this project adheres to
 
 ### Added
 
+- **Per-island hydration on isomorphic routes.** A `client:*` directive now defers hydration on a
+  route without a Flight boundary too (the page hydrates as one client tree): the server renders
+  the component inside the island wrapper, the page hydrates around it leaving its server DOM
+  inert, and when the strategy fires the island's children hydrate against that DOM in the same
+  tree, so context, events and error boundaries work as without the directive. The click that
+  wakes a `client:interaction` island reaches its handler. The runtime ships only in an app whose
+  sources write a directive (a build scan).
 - **`@denext/react-router` route typegen.** The plugin writes React Router's `+types/<route>.ts`
   modules under `.react-router/types/` on every scan and on `denext typegen`, so a route
   module's `import type { Route } from "./+types/<route>"` type-checks (`Route.LoaderArgs`,

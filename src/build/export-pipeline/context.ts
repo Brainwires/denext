@@ -84,6 +84,8 @@ export interface ExportContext {
   readonly usesActivity: boolean;
   /** Whether the app renders `<ViewTransition>` (the build's source scan): likewise. */
   readonly usesViewTransition: boolean;
+  /** Whether the app writes a `client:*` directive (route entries install the island runtime). */
+  readonly usesIsoIslands: boolean;
   /**
    * The `global-error.tsx` hydration bundle URL, once `bundleExportGlobalError` wrote it (unset
    * when the app has no global-error.tsx).

@@ -245,10 +245,8 @@ export function renderRoot(handle: RootHandle, lanes: number): void {
     } finally {
       setWorkInProgress(wip);
       setDuringRender(false);
-      if (hydrate) {
-        endHydration();
-        handle.hydrate = false;
-      }
+      endHydration();
+      handle.hydrate = false;
     }
     commitWith(wipRoot, eligible, () => commitRoot(handle, wipRoot));
   } while ((handle.pendingLanes & lanes) !== NoLane);
