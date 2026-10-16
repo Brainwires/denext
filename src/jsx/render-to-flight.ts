@@ -117,6 +117,8 @@ export interface FlightHost {
   p: FlightProps;
   /** Serialized children. */
   c: FlightNode[];
+  /** The element's `key`, as a string (absent when it has none). */
+  k?: string;
 }
 
 /** A serialized client-component reference. */
@@ -129,6 +131,8 @@ export interface FlightClient {
   p: FlightProps;
   /** Serialized children ("holes" filled with server-rendered content). */
   c: FlightNode[];
+  /** The element's `key`, as a string (absent when it has none). */
+  k?: string;
 }
 
 /**
@@ -241,7 +245,7 @@ async function flightVNode(node: VNode, ctx: FlightCtx): Promise<FlightNode> {
   if (isComponentType(type)) return flightComponent(type, props, ctx);
   // Intrinsic host element.
   const p = await serializeProps(props, ctx);
-  return flightHost(type as string, p, await flightChildren(props.children, ctx));
+  return flightHost(type as string, p, await flightChildren(props.children, ctx), node.key);
 }
 
 /** A fragment, or a context provider whose scope wraps its children. */
@@ -290,7 +294,7 @@ async function flightComponent(
     if (ref) {
       const p = await serializeProps(props, ctx);
       const children = await flightChildren(props.children as VNodeChildren, ctx);
-      return flightClientRef(ref.id, p, scopePrefix(scope), children);
+      return flightClientRef(ref.id, p, scopePrefix(scope), children, props.key);
     }
     setDispatcher(ctx.dispatcher);
     return await flightChild(await invokeServerComponent(type, props, ctx.scopes), ctx);

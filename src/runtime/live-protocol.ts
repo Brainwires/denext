@@ -270,7 +270,8 @@ export interface LiveViewRender {
 export type LiveViewOp =
   | ["r", number[], FlightNode]
   | ["p", number[], Record<string, unknown>, string[]]
-  | ["s", number[], number, number, FlightNode[]];
+  | ["s", number[], number, number, FlightNode[]]
+  | ["m", number[], number[], FlightNode[]];
 
 /** Server → client: the changes from revision `base` to `rev`. */
 export interface LiveViewPatch {

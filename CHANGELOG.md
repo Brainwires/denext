@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- **Keyed lists in live views and `<Live>` patches.** Flight now carries an element's `key` (`k`
+  on a host or client-reference node; a keyed server component passes it to the single element
+  it renders), the browser hands it to the reconciler, and the live-view diff matches a keyed
+  list by key: a reorder is one `m` op that moves the rows instead of rewriting each in place.
+  A reordered row keeps its DOM node and typed input state. `<Live>` pushes and soft
+  navigation reconcile by key as well. Lists without keys are still patched by position.
+
 - **The MCP DevTools tools work on SPA apps.** The SPA dev server now serves
   `/_denext/dev-inspect` (the page's DevTools sink posts its tree, `denext_component_tree`,
   `denext_why_render` and `denext_hook_state` read it) and answers the on-demand pull over its

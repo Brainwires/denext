@@ -113,3 +113,63 @@ Deno.test("diffFlight + applyFlightOps round-trip 2000 random tree pairs", () =>
     assert(jsonEqual(out, b), `case ${i}: ${JSON.stringify({ a, b, ops })}`);
   }
 });
+
+// ---- Keyed lists ------------------------------------------------------------------------------
+
+const keyed = (t: string, k: string, p: Record<string, unknown>, ...c: FlightNode[]): FlightNode =>
+  ({ $: "h", t, p, c, k }) as FlightNode;
+
+Deno.test("diffFlight: a reordered keyed list is one move, and kept children diff in place", () => {
+  const li = (k: string, text: string) => keyed("li", k, {}, text);
+  const a = [el("ul", {}, li("a", "A"), li("b", "B"), li("c", "C"))];
+  const b = [el("ul", {}, li("c", "C"), li("a", "A!"), li("d", "D"))];
+  const ops = diffFlight(a, b);
+  assertEquals(ops, [
+    ["m", [0], [2, 0, -1], [li("d", "D")]],
+    ["r", [0, 1, 0], "A!"],
+  ]);
+  assertEquals(applyFlightOps(a, ops), b);
+  // A keyed append keeps the cheaper splice (no order changed).
+  const c = [el("ul", {}, li("a", "A"), li("b", "B"), li("e", "E"))];
+  assertEquals(diffFlight(a, c), [["s", [0], 2, 1, [li("e", "E")]]]);
+  // An unkeyed list never moves (position-wise, React's rule without keys).
+  const u = [el("p", {}, "1"), el("div", {}, "2")];
+  const v = [el("div", {}, "2"), el("p", {}, "1")];
+  assert(diffFlight(u, v).every((op) => op[0] !== "m"));
+});
+
+Deno.test("applyFlightOps refuses a move that does not fit", () => {
+  const a = [keyed("li", "a", {}, "A")];
+  const bad = (from: unknown, items: unknown) =>
+    assertThrows(
+      () => applyFlightOps(a, [["m", [], from, items] as unknown as ["m", number[], number[], []]]),
+      FlightPatchError,
+    );
+  bad([3], []);
+  bad([-1, 0], []); // fewer items than new slots
+  bad([0], ["x"]); // more items than new slots
+  bad("0", []);
+});
+
+function randomKeyedList(r: () => number): FlightNode[] {
+  const keys = ["a", "b", "c", "d", "e", "f"].filter(() => r() < 0.6);
+  for (let i = keys.length - 1; i > 0; i--) {
+    const j = Math.floor(r() * (i + 1));
+    [keys[i], keys[j]] = [keys[j], keys[i]];
+  }
+  const out: FlightNode[] = keys.map((k) =>
+    keyed(r() < 0.8 ? "li" : "p", k, r() < 0.5 ? { className: k } : {}, String(Math.floor(r() * 3)))
+  );
+  if (r() < 0.3) out.splice(Math.floor(r() * out.length), 0, el("hr", {}));
+  return out;
+}
+
+Deno.test("diffFlight + applyFlightOps round-trip 2000 random keyed list pairs", () => {
+  const r = rng(0x5eed);
+  for (let i = 0; i < 2000; i++) {
+    const a = [el("ul", {}, ...randomKeyedList(r))];
+    const b = [el("ul", {}, ...randomKeyedList(r))];
+    const ops = diffFlight(a, b);
+    assert(jsonEqual(applyFlightOps(a, ops), b), `case ${i}: ${JSON.stringify({ a, b, ops })}`);
+  }
+});

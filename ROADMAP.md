@@ -108,11 +108,6 @@ Each is documented as a manual recipe today (the
   (the MVU tab covers browser programs only).
 - **A Live / channel and state inspector tab** (subscriptions, channel pushes, cache entries).
 
-## Live views
-
-- **Keyed lists in live views and `<Live>` patches:** carry `key` through Flight so a reordered
-  list keeps its elements (today they reconcile by position).
-
 ## Router plugins
 
 - **TanStack Start depth:** Start-style SSR through `plugin-kit`, as `@denext/react-router` did.

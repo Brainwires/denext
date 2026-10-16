@@ -142,6 +142,17 @@ subscribes the view to a [`createChannel`](/docs/live#server-push--channels) key
 channel's own `authorize` for the viewer, so a publish from any request — or any instance, with a
 `ChannelTransport` — becomes a message.
 
+## Keyed lists
+
+Give list rows a `key`, as in React: `items.map((item) => <li key={item.id}>…</li>)`. The key
+travels with the element in Flight, so when the model reorders the list the patch moves the
+rows (one `m` op naming each row's old index) and the browser moves their DOM nodes: a row keeps
+its element and whatever the viewer typed into an input inside it. The same holds
+for a `<Live>` boundary's pushed subtree and for soft navigation. A keyed component's key carries
+onto the single element it renders (`<Row key={id} />` rendering an `<li>`); a component that
+renders a fragment or a list has no element to carry it, so give its rows their own keys. A
+list without keys is patched by position.
+
 ## Reconnects
 
 When the socket drops, the server parks the connection's views for `viewResumeSeconds`. The
@@ -178,7 +189,6 @@ A live view's state lives in the process that holds the viewer's socket, so:
 
 - `view` must be a pure function of the model: the server and the page number handlers by the
   order `send` is called, and a click sent before the mount answered uses the page's numbering.
-- Flight carries no `key`, so a live view's lists reconcile by position.
 - `send` handlers bind on HTML elements; a `"use client"` component inside a view is an island
   with its own state and its own (browser) handlers.
 - With JavaScript disabled only the first render works: events need the socket.

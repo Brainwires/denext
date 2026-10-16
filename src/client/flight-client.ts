@@ -8,7 +8,13 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { Component, VNodeChild } from "../jsx/types.ts";
-import type { FlightNode, FlightProps, FlightValue } from "../jsx/render-to-flight.ts";
+import type {
+  FlightClient,
+  FlightHost,
+  FlightNode,
+  FlightProps,
+  FlightValue,
+} from "../jsx/render-to-flight.ts";
 import { clientActionStub } from "../runtime/server-action.ts";
 import { qrlStub } from "../runtime/qrl.ts";
 import { decodeTagged, NOT_TAGGED } from "../runtime/wire-codec.ts";
@@ -67,7 +73,7 @@ export function parseFlight(node: FlightNode, registry: ClientRegistry): VNodeCh
 
   switch (node.$) {
     case "h":
-      return h(node.t, parseProps(node.p, registry), ...parseChildren(node.c, registry));
+      return h(node.t, keyedProps(node, registry), ...parseChildren(node.c, registry));
     case "c": {
       const component = registry.get(node.i);
       if (!component) {
@@ -76,7 +82,7 @@ export function parseFlight(node: FlightNode, registry: ClientRegistry): VNodeCh
         console.warn(`denext: no client component registered for "${node.i}"`);
         return null;
       }
-      return h(component, parseProps(node.p, registry), ...parseChildren(node.c, registry));
+      return h(component, keyedProps(node, registry), ...parseChildren(node.c, registry));
     }
     case "b": {
       // A segment's client `error.tsx` around its children: a real boundary on the client,
@@ -91,6 +97,13 @@ export function parseFlight(node: FlightNode, registry: ClientRegistry): VNodeCh
       // A bare action reference as a node has no visual output.
       return null;
   }
+}
+
+/** A host / client node's props, with its `key` (`k`) so a patched list reconciles by key. */
+function keyedProps(node: FlightHost | FlightClient, registry: ClientRegistry) {
+  const props = parseProps(node.p, registry);
+  if (node.k !== undefined) props.key = node.k;
+  return props;
 }
 
 /** Parse a Flight children array into VNode children (drops nulls implicitly). */

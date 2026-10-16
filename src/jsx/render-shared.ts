@@ -43,7 +43,13 @@ import {
 import { enterScope, ID_PATH_PROP, type IdHolder, type IdScope, scopePrefix } from "./tree-id.ts";
 import { FRAGMENT, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import { islandWrapper, warnClientOnlySeoContent } from "./island-wrapper.ts";
-import type { FlightNode, FlightProps, FlightValue } from "./render-to-flight.ts";
+import type {
+  FlightClient,
+  FlightHost,
+  FlightNode,
+  FlightProps,
+  FlightValue,
+} from "./render-to-flight.ts";
 import { serializeScalar, serializeThenable, warnDroppedFunctionProps } from "./flight-scalar.ts";
 
 /** A renderer output that carries both the SSR HTML and the Flight tree for the same subtree. */
@@ -210,6 +216,37 @@ export function invokeServerComponent(
   props: Record<string, unknown>,
   scopes: ProviderScope[],
 ): VNodeChild | Promise<VNodeChild> {
+  const out = invokeServerComponentUnkeyed(type, props, scopes);
+  const key = props.key;
+  if (key == null) return out;
+  return out instanceof Promise ? out.then((v) => inheritKey(v, key)) : inheritKey(out, key);
+}
+
+/**
+ * A keyed server component's output keeps the key (React's Flight does the same): a single
+ * element takes it, composed in front of a key of its own (`outer,inner`), so `<Row key={id} />`
+ * rendering an `<li>` reconciles by `id` after a Flight patch. A list or text has nowhere to
+ * carry it and is returned as is.
+ */
+function inheritKey(child: VNodeChild, key: unknown): VNodeChild {
+  if (!isVNode(child) || Array.isArray(child)) return child;
+  const k = child.key == null ? String(key) : `${String(key)},${String(child.key)}`;
+  // One copy per (element, key): a component returning a constant element hands both render
+  // passes the same object, which the nested-island carve map is keyed by.
+  const seen = keyedCopies.get(child);
+  if (seen?.key === k) return seen;
+  const copy: VNode = { ...child, key: k, props: { ...child.props, key: k } };
+  keyedCopies.set(child, copy);
+  return copy;
+}
+
+const keyedCopies = /* @__PURE__ */ new WeakMap<VNode, VNode>();
+
+function invokeServerComponentUnkeyed(
+  type: unknown,
+  props: Record<string, unknown>,
+  scopes: ProviderScope[],
+): VNodeChild | Promise<VNodeChild> {
   if (isClassComponent(type)) {
     if (__DENEXT_CLASS_COMPONENTS__) {
       markClassRendered(); // the document tells the browser entry to load the class runtime
@@ -300,8 +337,22 @@ const DOCUMENT_TAGS = new Set(["html", "head", "body"]);
  * gone; its `<style>`/`<script>` stay). The Flight tree mirrors that parsed DOM — the children
  * alone — so the client hydrates the server markup instead of re-creating the page.
  */
-export function flightHost(tag: string, p: FlightProps, c: FlightNode[]): FlightNode {
-  return DOCUMENT_TAGS.has(tag) ? c : { $: "h", t: tag, p, c };
+export function flightHost(
+  tag: string,
+  p: FlightProps,
+  c: FlightNode[],
+  key?: unknown,
+): FlightNode {
+  return DOCUMENT_TAGS.has(tag) ? c : withFlightKey({ $: "h", t: tag, p, c }, key);
+}
+
+/**
+ * A host / client node with the element's `key` as `k` (a string, React's key coercion), so a
+ * patched list reconciles by key (live views, `<Live>`, soft navigation). No key: unchanged.
+ */
+function withFlightKey(node: FlightHost | FlightClient, key: unknown): FlightNode {
+  if (key != null) node.k = String(key);
+  return node;
 }
 
 /** A children result's Flight as a host node's child list (children flights are arrays). */
@@ -392,16 +443,16 @@ export async function renderHostDual(
   recordDocumentAttrs(tag, props);
   const p = await serializeFlightProps(props, (v) => r.serializeValue(v, scopes));
   if (VOID_ELEMENTS.has(tag)) {
-    return { html: hostHtml(tag, attrs, ""), flight: flightHost(tag, p, []) };
+    return { html: hostHtml(tag, attrs, ""), flight: flightHost(tag, p, [], node.key) };
   }
   const dangerous = dangerousInnerHtml(props, tag);
   if (dangerous !== null) {
-    return { html: hostHtml(tag, attrs, dangerous), flight: flightHost(tag, p, []) };
+    return { html: hostHtml(tag, attrs, dangerous), flight: flightHost(tag, p, [], node.key) };
   }
   const inner = await r.renderChildren(children, scopes, head);
   return {
     html: hostHtml(tag, attrs, inner.html),
-    flight: flightHost(tag, p, asFlightArray(inner.flight)),
+    flight: flightHost(tag, p, asFlightArray(inner.flight), node.key),
   };
 }
 
@@ -576,6 +627,7 @@ async function flightOnlyVNode(
       type as string,
       p,
       await flightOnlyChildren(props.children as VNodeChildren, w, scopes),
+      node.key,
     );
   }
   const { parent, scope } = pushScope(w.ids);
@@ -607,7 +659,7 @@ async function flightOnlyIsland(
   const { rest } = parseStrategy(props, ref.moduleHydrate);
   const p = await w.serializeProps(rest, scopes);
   const children = await flightOnlyChildren(rest.children as VNodeChildren, w, scopes);
-  return flightClientRef(ref.id, p, prefix, children);
+  return flightClientRef(ref.id, p, prefix, children, rest.key);
 }
 
 /** Each child's Flight from a dual render (the HTML side is discarded). */
@@ -714,7 +766,7 @@ async function islandFlightInside(
     const c = r.flightChildren
       ? await r.flightChildren(children, scopes)
       : await flightChildrenOf(children, (child) => r.renderChild(child, scopes, null));
-    return flightClientRef(refId, p, prefix, c);
+    return flightClientRef(refId, p, prefix, c, rest.key);
   } finally {
     r.insideIsland = wasInside;
   }
@@ -734,9 +786,10 @@ export function flightClientRef(
   p: FlightProps,
   prefix: string,
   c: FlightNode[],
+  key?: unknown,
 ): FlightNode {
   p[ID_PATH_PROP] = prefix;
-  return { $: "c", i: id, p, c };
+  return withFlightKey({ $: "c", i: id, p, c }, key);
 }
 
 /**

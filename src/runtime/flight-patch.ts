@@ -11,8 +11,12 @@
 //   ["r", path, node]                     replace the node at `path`
 //   ["p", path, set, del]                 set / delete props of the host or client node at `path`
 //   ["s", path, start, deleteCount, items] splice the child list of the node at `path` (`[]`: root)
-// Lists are matched position-wise over a common prefix and suffix of nodes of the same kind and
-// tag (Flight carries no `key`), with one splice for the rest.
+//   ["m", path, from, items]              reorder that child list: entry `i` of the new list is old
+//                                         child `from[i]`, or (`-1`) the next of `items`
+// A node's shape is its kind, tag / reference id and `key` (`k`). Lists are matched over a common
+// prefix and suffix of same-shaped nodes, with one splice for the rest. A list holding keyed
+// nodes whose surviving children changed order is matched by shape instead (one `m`), so a
+// reordered keyed list moves its elements rather than rewriting them in place.
 
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import type { LiveViewOp } from "./live-protocol.ts";
@@ -55,7 +59,44 @@ function shapeOf(n: FlightNode): string | null {
   if (Array.isArray(n)) return "[]";
   const o = n as unknown as Obj;
   const id = o.$ === "h" ? o.t : o.$ === "c" ? o.i : o.$ === "b" ? o.f : undefined;
-  return typeof id === "string" ? `${o.$}:${id}` : null;
+  if (typeof id !== "string") return null;
+  return typeof o.k === "string" ? `${o.$}:${id}\0${o.k}` : `${o.$}:${id}`;
+}
+
+/** Whether any node of `list` carries a `key`. */
+function hasKey(list: FlightNode[]): boolean {
+  return list.some((n) => typeof (n as { k?: unknown } | null)?.k === "string");
+}
+
+/**
+ * For each node of `b`, the index of the unused same-shaped node of `a` it continues (first come,
+ * first served — keys are unique in a well-formed list), or `-1` for a new node.
+ */
+function matchByShape(a: FlightNode[], b: FlightNode[]): number[] {
+  const pool = new Map<string, number[]>();
+  a.forEach((n, i) => {
+    const shape = shapeOf(n);
+    if (shape === null) return;
+    const queue = pool.get(shape);
+    if (queue) queue.push(i);
+    else pool.set(shape, [i]);
+  });
+  return b.map((n) => {
+    const shape = shapeOf(n);
+    const queue = shape === null ? undefined : pool.get(shape);
+    return queue?.length ? queue.shift()! : -1;
+  });
+}
+
+/** Whether the kept children of a match changed their relative order. */
+function reordered(from: number[]): boolean {
+  let last = -1;
+  for (const i of from) {
+    if (i < 0) continue;
+    if (i < last) return true;
+    last = i;
+  }
+  return false;
 }
 
 /** Whether `b` can be reached from `a` by patching in place (same kind, same tag / id). */
@@ -108,6 +149,15 @@ function diffProps(a: Obj, b: Obj, path: number[], ops: LiveViewOp[]): void {
 }
 
 function diffList(a: FlightNode[], b: FlightNode[], path: number[], ops: LiveViewOp[]): void {
+  if (hasKey(a) || hasKey(b)) {
+    const from = matchByShape(a, b);
+    if (reordered(from)) return diffMoved(a, b, from, path, ops);
+  }
+  diffAligned(a, b, path, ops);
+}
+
+/** Same-shaped common prefix and suffix diffed in place, one splice for the rest. */
+function diffAligned(a: FlightNode[], b: FlightNode[], path: number[], ops: LiveViewOp[]): void {
   const min = Math.min(a.length, b.length);
   let pre = 0;
   while (pre < min && sameShape(a[pre], b[pre])) pre++;
@@ -124,6 +174,20 @@ function diffList(a: FlightNode[], b: FlightNode[], path: number[], ops: LiveVie
     const bi = b.length - suf + j;
     diffNode(a[ai], b[bi], [...path, bi], ops);
   }
+}
+
+/** One `m` op for a reordered list, then each kept child diffed at its new index. */
+function diffMoved(
+  a: FlightNode[],
+  b: FlightNode[],
+  from: number[],
+  path: number[],
+  ops: LiveViewOp[],
+): void {
+  ops.push(["m", path, from, b.filter((_, i) => from[i] < 0)]);
+  from.forEach((ai, bi) => {
+    if (ai >= 0) diffNode(a[ai], b[bi], [...path, bi], ops);
+  });
 }
 
 /** Thrown by {@link applyFlightOps} when an op does not fit the tree (the client resyncs). */
@@ -211,6 +275,16 @@ const APPLY: Record<string, (node: FlightNode, op: LiveViewOp) => void> = {
     const [, , start, count, items] = op as ["s", number[], number, number, FlightNode[]];
     if (!(count >= 0)) throw new FlightPatchError("bad splice");
     list.splice(checkIndex(start, list, true), count, ...items);
+  },
+  m(node, op) {
+    const list = listOf(node);
+    const [, , from, items] = op as ["m", number[], number[], FlightNode[]];
+    if (!Array.isArray(from) || !Array.isArray(items)) throw new FlightPatchError("bad move");
+    const old = [...list];
+    let n = 0;
+    const next = from.map((i) => i === -1 ? items[n++] : old[checkIndex(i, old)]);
+    if (n !== items.length) throw new FlightPatchError("bad move");
+    list.splice(0, list.length, ...next);
   },
 };
 
