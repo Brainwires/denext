@@ -29,7 +29,7 @@ import {
   TOO_LARGE,
   verifyOrigin,
 } from "@denext/denext/plugin-kit";
-import { dirname, isAbsolute, join, normalize } from "@std/path";
+import { dirname, isAbsolute, join, normalize, relative } from "@std/path";
 import type {
   DocumentNode,
   FieldNode,
@@ -41,7 +41,7 @@ import type {
   ValidationContext,
   VariableDefinitionNode,
 } from "graphql";
-import { getIntrospectionQuery } from "graphql";
+import { getIntrospectionQuery, parse } from "graphql";
 import {
   createGraphQLError,
   createYoga,
@@ -49,6 +49,7 @@ import {
   type YogaServerOptions,
 } from "graphql-yoga";
 import { createGraphqlCommand, sdlFromIntrospection } from "./command.ts";
+import { type TracedExport, traceExport } from "./trace.ts";
 import { createConnectionLimiter, releaseWhenDone, resolveCaps, wantsStream } from "./limits.ts";
 import {
   acceptGraphqlWs,
@@ -147,8 +148,10 @@ export type {
 /**
  * A schema, a factory for one (resolved once, on first use), or the path of the module that
  * exports it (`"./app/graphql/schema.ts"`, relative to the project root; its `schema` export, else
- * its default export, either a schema or a factory). Only the module path form reloads on an edit
- * under `denext dev` — see {@linkcode GraphqlOptions.watch}.
+ * its default export, either a schema or a factory). Every form reloads on an edit under
+ * `denext dev` — see {@linkcode GraphqlOptions.watch}: a schema object or factory imported into
+ * `denext.config.ts` is traced to the project module that exports it (through the config's
+ * relative imports) and re-imported from there.
  */
 export type SchemaSource =
   | GraphQLSchema
@@ -233,7 +236,9 @@ export interface GraphqlOptions {
    * guard); set a number (a budget of ~1000 suits most apps) to enable it. The check runs at
    * execute time, so a page size passed as a **variable** (`first: $n`) is counted at its
    * **actual** value — a variable can't smuggle a large page past the budget. With Yoga
-   * `batching` enabled the budget is per-operation, so an N-operation batch may cost up to N×.
+   * `batching` enabled the budget covers the **whole batch**: the operations' costs are summed
+   * when the request is parsed, and a batch over the budget is refused (`400`) before any of
+   * them runs.
    */
   maxCost?: number | false;
   /** Tune the {@linkcode GraphqlOptions.maxCost} estimate (field weight, which args multiply). */
@@ -269,9 +274,12 @@ export interface GraphqlOptions {
   websocket?: WebSocketOptions | false;
   /**
    * Under `denext dev`, the files whose edit reloads the schema (globs, relative to the project
-   * root) when {@linkcode GraphqlOptions.schema} is a module path. Default: the scripts and
-   * `.graphql` files in the schema module's directory and below (the schema module alone when it
-   * sits at the project root). In-flight subscriptions on the old schema end (`complete`).
+   * root). Default: the scripts and `.graphql` files in the schema module's directory and below
+   * (the schema module alone when it sits at the project root) — the module path given, or the
+   * module a schema object / factory was traced to. In-flight subscriptions on the old schema end
+   * (`complete`). A schema object that cannot be traced (it is built in `denext.config.ts`
+   * itself, or reached through a non-relative import) needs a restart after an edit; a dev notice
+   * says so.
    */
   watch?: string[];
 }
@@ -285,7 +293,7 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
   if (!options?.schema) throw new TypeError("graphql(): `schema` is required");
   return {
     name: "@denext/graphql",
-    setup(ctx: PluginContext) {
+    async setup(ctx: PluginContext) {
       const {
         path,
         dev,
@@ -308,6 +316,9 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
       // subscriptions it serves. A dev reload starts a new one and aborts the old.
       let ended = new AbortController();
       let getSchema = once(() => resolveSchema(options.schema, ctx));
+      // A dev reload re-imports the schema from its module: the path given, or the module a
+      // schema object / factory imported into the config was traced to.
+      const reloadFrom = dev ? await reloadSourceOf(options.schema, ctx) : null;
       const yogaFor = (end: AbortSignal) =>
         once(async () =>
           createYoga({
@@ -316,7 +327,10 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
             plugins: [
               endSubscriptionsOn(end),
               ...(maxDepth === false ? [] : [limitDepth(maxDepth)]),
-              ...(maxCost === false ? [] : [limitCost(maxCost, options.costOptions)]),
+              ...(maxCost === false ? [] : [
+                limitCost(maxCost, options.costOptions),
+                limitBatchCost(maxCost, options.costOptions),
+              ]),
               ...(introspection ? [] : [disableIntrospection(), blockFieldSuggestions()]),
               ...(options.yoga?.plugins ?? []),
             ],
@@ -333,14 +347,14 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
         stale = false;
         ended.abort();
         ended = new AbortController();
-        getSchema = once(() => resolveSchema(options.schema, ctx));
+        getSchema = once(() => resolveSchema(reloadFrom!.source, ctx));
         getYoga = yogaFor(ended.signal);
         getSdl = sdlOnce();
       };
-      if (dev && typeof options.schema === "string") {
+      if (reloadFrom) {
         ctx.addPrepareStep(() => {
           stale = true; // reloaded by the next request, after the dev server applied the edit
-        }, { watch: options.watch ?? defaultSchemaWatch(options.schema) });
+        }, { watch: options.watch ?? defaultSchemaWatch(reloadFrom.watch) });
       }
 
       const wsDeps = socketDeps(options.websocket, {
@@ -478,18 +492,61 @@ function nativeResponse(raw: unknown): Response {
   });
 }
 
-async function resolveSchema(source: SchemaSource, ctx: PluginContext): Promise<GraphQLSchema> {
+async function resolveSchema(
+  source: SchemaSource | TracedExport,
+  ctx: PluginContext,
+): Promise<GraphQLSchema> {
   if (typeof source === "function") return await source();
+  if (isTraced(source)) return await fromModule(ctx, source.file, source.name);
   if (typeof source !== "string") return source;
-  const file = isAbsolute(source) ? source : join(ctx.projectRoot, source);
+  return await fromModule(ctx, isAbsolute(source) ? source : join(ctx.projectRoot, source));
+}
+
+/** The schema a module exports: `name`, else its `schema` export, else its default one. */
+async function fromModule(
+  ctx: PluginContext,
+  file: string,
+  name?: string,
+): Promise<GraphQLSchema> {
   const mod = await ctx.load(file) as Record<string, unknown>;
-  const exported = mod.schema ?? mod.default;
+  const exported = name ? mod[name] : mod.schema ?? mod.default;
   if (exported == null) {
-    throw new Error(`graphql(): ${source} exports no \`schema\` (nor a default export)`);
+    throw new Error(`graphql(): ${file} exports no \`${name ?? "schema"}\` (nor a default export)`);
   }
   return typeof exported === "function"
     ? await (exported as () => GraphQLSchema | Promise<GraphQLSchema>)()
     : exported as GraphQLSchema;
+}
+
+function isTraced(source: unknown): source is TracedExport {
+  return typeof source === "object" && source !== null && "file" in source && "name" in source &&
+    !("getQueryType" in source);
+}
+
+/** Where a dev reload re-imports the schema from, and the path its default watch globs follow. */
+interface ReloadSource {
+  source: string | TracedExport;
+  watch: string;
+}
+
+/**
+ * The module a dev reload re-imports the schema from: a module path as given; a schema object or
+ * factory traced to the project module exporting it; else `null` (a dev notice: edits need a
+ * restart).
+ */
+async function reloadSourceOf(
+  schema: SchemaSource,
+  ctx: PluginContext,
+): Promise<ReloadSource | null> {
+  if (typeof schema === "string") return { source: schema, watch: schema };
+  const traced = await traceExport(schema, ctx.projectRoot);
+  if (traced) return { source: traced, watch: relative(ctx.projectRoot, traced.file) };
+  console.warn(
+    "[@denext/graphql] could not trace the module that exports `schema` (a relative import of " +
+      "denext.config.*); a schema edit needs a dev-server restart. Pass its module path " +
+      '(`schema: "./app/graphql/schema.ts"`) to reload it on an edit.',
+  );
+  return null;
 }
 
 /** The dev watch globs for a schema module path (see {@linkcode GraphqlOptions.watch}). */
@@ -826,21 +883,12 @@ function limitCost(
   max: number,
   opts: CostOptions = {},
 ): NonNullable<YogaPassthrough["plugins"]>[number] {
-  const fieldCost = opts.fieldCost ?? 1;
-  const argNames = new Set(opts.listMultiplierArgs ?? ["first", "last", "limit"]);
-  const defaultMultiplier = opts.defaultMultiplier ?? 1;
+  const estimate = costEstimator(opts);
   const check = (
     args: CostCheckArgs,
     stop: (result: { errors: unknown[] }) => void,
   ): void => {
-    const total = estimateOperationCost(
-      args.document,
-      args.operationName,
-      args.variableValues,
-      fieldCost,
-      argNames,
-      defaultMultiplier,
-    );
+    const total = estimate(args.document, args.operationName, args.variableValues);
     if (total > max) {
       stop({ errors: [createGraphQLError(`Query is too expensive (cost ${total}, max ${max})`)] });
     }
@@ -861,6 +909,72 @@ function limitCost(
       },
     ) {
       check(args, setResultAndStopExecution);
+    },
+  } as NonNullable<YogaPassthrough["plugins"]>[number];
+}
+
+/** The cost estimate under `opts` (see {@linkcode estimateOperationCost}). */
+function costEstimator(
+  opts: CostOptions,
+): (doc: DocumentNode, name?: string | null, vars?: Record<string, unknown> | null) => number {
+  const fieldCost = opts.fieldCost ?? 1;
+  const argNames = new Set(opts.listMultiplierArgs ?? ["first", "last", "limit"]);
+  const defaultMultiplier = opts.defaultMultiplier ?? 1;
+  return (doc, name, vars) =>
+    estimateOperationCost(doc, name, vars, fieldCost, argNames, defaultMultiplier);
+}
+
+/** One operation's GraphQL-over-HTTP parameters, as Yoga's request parser yields them. */
+interface BatchParams {
+  query?: string;
+  operationName?: string | null;
+  variables?: Record<string, unknown> | null;
+}
+
+/**
+ * The summed estimate of a batch's operations. An operation whose `query` does not parse (or is
+ * absent — a persisted-document id) adds nothing here: Yoga reports the parse error, and the
+ * per-operation check still runs at execute time.
+ */
+function batchCost(batch: readonly BatchParams[], opts: CostOptions): number {
+  const estimate = costEstimator(opts);
+  let total = 0;
+  for (const params of batch) {
+    if (typeof params?.query !== "string") continue;
+    let document: DocumentNode;
+    try {
+      document = parse(params.query);
+    } catch {
+      continue;
+    }
+    total += estimate(document, params.operationName, params.variables);
+  }
+  return total;
+}
+
+/**
+ * A Yoga (envelop) plugin that charges a **batch** (Yoga `batching`: a JSON array of operations)
+ * against one budget: when the request is parsed — before any operation runs — the operations'
+ * estimated costs are summed, and a batch over `max` is refused with a `400` and no operation
+ * executed. {@linkcode limitCost} still checks each operation (with its variables) as it runs.
+ */
+function limitBatchCost(
+  max: number,
+  opts: CostOptions = {},
+): NonNullable<YogaPassthrough["plugins"]>[number] {
+  return {
+    onRequestParse() {
+      return {
+        onRequestParseDone({ requestParserResult }: { requestParserResult: unknown }) {
+          if (!Array.isArray(requestParserResult) || requestParserResult.length < 2) return;
+          const total = batchCost(requestParserResult as BatchParams[], opts);
+          if (total > max) {
+            throw createGraphQLError(`Batch is too expensive (cost ${total}, max ${max})`, {
+              extensions: { http: { status: 400 }, code: "BATCH_TOO_EXPENSIVE" },
+            });
+          }
+        },
+      };
     },
   } as NonNullable<YogaPassthrough["plugins"]>[number];
 }

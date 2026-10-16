@@ -21,8 +21,8 @@ export default {
 ```
 
 (`context` hands your resolvers the request's abort signal, which a subscription uses to end
-on disconnect.) `schema` also takes a `GraphQLSchema` object or a factory for one — only the
-module path form reloads in dev. Any `GraphQLSchema` works. [Pothos](https://pothos-graphql.dev) (code-first, fully typed,
+on disconnect.) `schema` also takes a `GraphQLSchema` object or a factory for one — every form
+reloads in dev. Any `GraphQLSchema` works. [Pothos](https://pothos-graphql.dev) (code-first, fully typed,
 **no decorators**) is the recommended builder; `createSchema` (re-exported from Yoga)
 covers SDL + resolvers.
 
@@ -32,7 +32,7 @@ covers SDL + resolvers.
 // deno.json
 {
   "imports": {
-    "@denext/graphql": "jsr:@denext/graphql@^0.4.0",
+    "@denext/graphql": "jsr:@denext/graphql@^0.5.0",
     "graphql": "npm:graphql@^16.9.0",
     "graphql-yoga": "npm:graphql-yoga@^5.10.0",
     "@pothos/core": "npm:@pothos/core@^4" // if you use Pothos
@@ -173,13 +173,16 @@ With `schema` given as a module path, an edit to a script or `.graphql` file in 
 directory (or below) loads the schema again for the next request — no restart. Subscriptions
 on the old schema complete (over SSE and WebSocket), so a client resubscribes against the new
 one. `watch: ["app/graphql/**/*.ts", "lib/resolvers/**/*.ts"]` names the files yourself. A schema
-object or factory imported into `denext.config.ts` still needs a restart.
+object or factory imported into `denext.config.ts` reloads too: the plugin follows the config's
+relative imports to the module that exports it and re-imports that module after an edit. One it
+cannot trace (built in the config itself, or imported through an alias) needs a restart, and a dev
+notice says so.
 
 ## Options
 
 | Option                | Default                | What                                                                               |
 | --------------------- | ---------------------- | ---------------------------------------------------------------------------------- |
-| `schema`              | required               | A module path (reloads in dev), a `GraphQLSchema`, or a factory resolved once      |
+| `schema`              | required               | A module path, a `GraphQLSchema`, or a factory resolved once (all reload in dev)   |
 | `path`                | `/graphql`             | Mount point (prefixed with `basePath`)                                             |
 | `graphiql`            | dev only               | Serve GraphiQL on a browser `GET`                                                  |
 | `context`             | `{}`                   | `({ request, signal }) => object` — your resolvers' context                        |
@@ -188,12 +191,12 @@ object or factory imported into `denext.config.ts` still needs a restart.
 | `requireSameOrigin`   | `true`                 | Same-origin proof on non-`GET` requests and the WebSocket handshake                |
 | `allowedOrigins`      | —                      | Extra origins allowed past `requireSameOrigin`                                     |
 | `maxDepth`            | `12`                   | Reject a query nested deeper than this; `false` disables it                        |
-| `maxCost`             | `false` (off)          | Reject a query over this estimated cost (the multiplicative-fan-out guard); opt-in |
+| `maxCost`             | `false` (off)          | Reject a query (or a whole batch) over this estimated cost; opt-in                 |
 | `costOptions`         | —                      | Tune `maxCost`: `fieldCost`, `listMultiplierArgs`, `defaultMultiplier`             |
 | `yoga`                | —                      | Passthrough: `plugins`, `maskedErrors`, `cors`, `batching`, `logging`              |
 | `outFile`             | `schema.graphql`       | The SDL `denext build` writes into the output dir; `false` skips it                |
 | `websocket`           | `{}` (on)              | GraphQL over WebSocket: `connectionInitTimeoutMs`, `maxSubscriptions`; `false` off |
-| `watch`               | schema's dir           | Dev: globs whose edit reloads a module-path `schema`                               |
+| `watch`               | schema's dir           | Dev: globs whose edit reloads the schema                                           |
 | `maxConnections`      | `live.limits` / 10 000 | Open WebSockets + streamed responses, all clients; past it `429`                   |
 | `maxConnectionsPerIp` | `live.limits` / 64     | The same, per client address (`clientIpForLimits`)                                 |
 
@@ -231,8 +234,9 @@ file into the output directory.
 - **Query depth and cost are built in.** `maxDepth` (default 12) is on out of the box; `maxCost`
   is an opt-in cost budget for the multiplicative fan-out a depth limit misses. Both are
   estimated in linear time (fragment costs memoized) and `maxCost` reads the request's real
-  variable values, so `first: $n` can't smuggle a large page past it. Enable `maxCost` for a
-  public API; a schema-level max page size remains good practice.
+  variable values, so `first: $n` can't smuggle a large page past it. With Yoga `batching` on,
+  `maxCost` budgets the whole batch (summed at parse time; over it, `400` before any operation
+  runs). Enable `maxCost` for a public API; a schema-level max page size remains good practice.
 
 ## Package surface
 

@@ -359,6 +359,15 @@ and this project adheres to
   **`OpenApiSource`** (`registerOpenApiSource`, or the `Symbol.for("denext.openapi.sources")`
   map); `openapi({ sources })` adds or (`false`) drops them, `rest: { openapi: false }` keeps
   auto-REST out. A source that fails is skipped with a `source-failed` lint warning.
+- **`@denext/graphql` 0.5.0: `maxCost` budgets a whole batch.** With Yoga `batching` on, the
+  operations' estimated costs are summed when the request is parsed (a variable page size at its
+  value), and a batch over the budget is refused with `400` (`BATCH_TOO_EXPENSIVE`) before any of
+  them runs. The budget was per operation, so an N-operation batch could cost N×.
+- **`@denext/graphql` 0.5.0: a schema object reloads in `denext dev`.** A `GraphQLSchema` (or
+  factory) imported into `denext.config.ts` is traced to the project module that exports it,
+  through the config's relative imports, and re-imported from there after an edit, as a
+  module-path `schema` is; subscriptions on the old schema complete. One it cannot trace keeps
+  needing a restart, with a dev notice.
 
 ### Changed
 
