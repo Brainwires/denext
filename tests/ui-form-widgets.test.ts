@@ -165,6 +165,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     asyncContext: "toggle",
     features: "map",
     optimizePackageImports: "union", // `string[] | false`: a chips branch + a `false` branch
+    resolveAlias: "map",
     momentumSafeScroll: "toggle",
     lists: "segmented",
     platformExtensions: "union", // `boolean | PlatformExtensionsConfig`: a toggle + an options group

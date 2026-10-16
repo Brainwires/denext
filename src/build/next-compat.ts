@@ -926,6 +926,8 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/next-auth/providers/resend",
   "denext/better-sqlite3",
   "denext/testing",
+  // The `denext ui` form components, rendered to HTML on the server (plugin pages, project verbs).
+  "denext/ui-kit",
   "denext/cli",
   "denext/cli/command",
   "denext/plugin-kit",
