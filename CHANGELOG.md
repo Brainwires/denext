@@ -320,6 +320,19 @@ and this project adheres to
   ES256/384/512, RS256/384/512, RS1, PS256/384/512 or EdDSA. With `attestation.mds` their `x5c`
   chains to the authenticator's metadata roots like `packed`'s. Tested against the W3C Level 3
   §16 vectors and real registrations published with SimpleWebAuthn (MIT).
+- **`@denext/openapi` 0.5.0: middleware responses are described.** `requireSession()` documents
+  its `401` (and its `403` with a `role`), `requireBearer()` its `401` with the
+  `www-authenticate` header (and `403` with a `scope` or `role`), `rateLimit()` its `429` with
+  `retry-after`, beside `csrf()`'s `403`; an endpoint built with `createApi().use(...)` lists them
+  in the OpenAPI document and its `x-denext-errors` like its own `errors`. Tag your own middleware
+  with **`documentsErrors(mw, { code: status | { status, message?, headers? } })`** (new in
+  `denext/server`); `ErrorSpec`'s object form takes `headers` (name → description), rendered on
+  that status's response. They appeared only as the `default` response before.
+- **`@denext/openapi` 0.5.0: Swagger UI is vendored.** `ui: "swagger"` serves swagger-ui-dist
+  5.32.15 from the package under `<docs>/swagger-ui/` instead of unpkg, with a same-origin
+  start-up script in place of the inline one; each file is checked against its recorded SHA-256
+  before it is served. Every docs page answers with its own `content-security-policy` (`'self'`
+  only for `builtin` and `swagger`). `cdn` still loads it from a CDN when set.
 
 ### Changed
 

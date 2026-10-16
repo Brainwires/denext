@@ -29,7 +29,8 @@ import type { ApiRoute, DenextPlugin, PluginContext, RouteManifest } from "@dene
 import { scanRoutes } from "@denext/denext/server";
 import { join } from "@std/path";
 import { createOpenapiCommand } from "./command.ts";
-import { DOCS_CSS, type DocsUi, renderDocsHtml } from "./docs-ui.ts";
+import { DOCS_CSS, docsCsp, type DocsUi, renderDocsHtml } from "./docs-ui.ts";
+import { readSwaggerAsset, SWAGGER_UI_ASSETS, SWAGGER_UI_INIT } from "./swagger-ui.ts";
 import {
   buildOpenApi,
   type OpenApiBuild,
@@ -60,7 +61,14 @@ export type {
   SecurityRequirement,
   SpecChange,
 } from "./spec.ts";
-export { DOCS_CDN, DOCS_CSS, renderDocsHtml, renderSchema } from "./docs-ui.ts";
+export { DOCS_CDN, DOCS_CSS, docsCsp, renderDocsHtml, renderSchema } from "./docs-ui.ts";
+export {
+  readSwaggerAsset,
+  SWAGGER_UI_ASSETS,
+  SWAGGER_UI_INIT,
+  SWAGGER_UI_VERSION,
+} from "./swagger-ui.ts";
+export type { VendoredAsset } from "./swagger-ui.ts";
 export type { DocsHtmlOptions, DocsUi } from "./docs-ui.ts";
 export { createOpenapiCommand, formatWarning } from "./command.ts";
 export type { OpenapiCommandIo } from "./command.ts";
@@ -158,11 +166,17 @@ export interface OpenApiOptions {
   /** Where the docs page is served (default `/docs`, app-relative); `false` disables it. */
   docs?: string | false;
   /**
-   * The docs renderer: `builtin` (server-rendered, no JavaScript, strict-CSP clean — the
-   * default), `scalar` or `swagger` (interactive, loaded from a CDN).
+   * The docs renderer: `builtin` (server-rendered, no JavaScript — the default), `swagger`
+   * (interactive Swagger UI, vendored and served from the app's own origin under
+   * `<docs>/swagger-ui/`, each file checked against its recorded SHA-256) or `scalar`
+   * (interactive, loaded from a CDN). Each page answers with its own strict CSP; only Scalar's
+   * names a CDN host.
    */
   ui?: DocsUi;
-  /** Override the CDN URL for `scalar` (script URL) or `swagger` (dist base URL). */
+  /**
+   * Override the CDN URL for `scalar` (script URL), or load `swagger` from a CDN dist base URL
+   * (e.g. `DOCS_CDN.swagger`) instead of the vendored copy.
+   */
   cdn?: string;
   /** The document's `info` (defaults: the project directory's name, version `0.0.0`). */
   info?: Partial<OpenApiInfo>;
@@ -280,30 +294,73 @@ interface Endpoints {
   cdn?: string;
 }
 
-/** Serve `/openapi.json`, `/docs` or the docs stylesheet; `null` for anything else. */
+/** The vendored Swagger UI file a request names (`<docs>/swagger-ui/<file>`), if any. */
+function swaggerAssetOf(pathname: string, e: Endpoints): string | null {
+  if (e.ui !== "swagger") return null;
+  const prefix = e.docsPath + "/swagger-ui/";
+  if (!pathname.startsWith(prefix)) return null;
+  const name = pathname.slice(prefix.length);
+  return name === "init.js" || Object.hasOwn(SWAGGER_UI_ASSETS, name) ? name : null;
+}
+
+/** Which of the plugin's endpoints a path names, if any. */
+type Target = { kind: "spec" | "docs" | "css" } | { kind: "asset"; name: string };
+
+function targetOf(pathname: string, e: Endpoints): Target | null {
+  if (pathname === e.specPath) return { kind: "spec" };
+  if (e.docsPath === null) return null;
+  if (pathname === e.docsPath) return { kind: "docs" };
+  if (e.ui === "builtin" && pathname === e.docsPath + ".css") return { kind: "css" };
+  const name = swaggerAssetOf(pathname, e);
+  return name ? { kind: "asset", name } : null;
+}
+
+/** Serve `/openapi.json`, `/docs`, the docs stylesheet or Swagger UI's files; `null` otherwise. */
 async function serveDocs(request: Request, e: Endpoints): Promise<Response | null> {
-  const url = new URL(request.url);
-  const isCss = e.ui === "builtin" && e.docsPath !== null && url.pathname === e.docsPath + ".css";
-  const wants = url.pathname === e.specPath || url.pathname === e.docsPath || isCss;
-  if (!wants || (request.method !== "GET" && request.method !== "HEAD")) return null;
+  const target = targetOf(new URL(request.url).pathname, e);
+  if (!target || (request.method !== "GET" && request.method !== "HEAD")) return null;
   if (e.authorize && !(await e.authorize(request))) return null;
-  if (url.pathname === e.specPath) return specResponse(request, await e.build());
-  if (url.pathname === e.docsPath) return docsPageResponse(request, e);
+  if (target.kind === "spec") return specResponse(request, await e.build());
+  if (target.kind === "docs") return docsPageResponse(request, e);
+  if (target.kind === "asset") return await swaggerAssetResponse(request, target.name);
   return new Response(DOCS_CSS, {
     headers: { "content-type": "text/css; charset=utf-8", "cache-control": "public, max-age=3600" },
   });
 }
 
-/** The rendered docs page for the configured renderer. */
+/** One of Swagger UI's vendored files (verified against its SHA-256), or its start-up script. */
+async function swaggerAssetResponse(request: Request, name: string): Promise<Response> {
+  const vendored = SWAGGER_UI_ASSETS[name];
+  const body = vendored ? await readSwaggerAsset(name) : SWAGGER_UI_INIT;
+  const etag = `"swagger-ui-${vendored ? vendored.sha256.slice(0, 16) : "init"}"`;
+  const headers = {
+    "content-type": vendored?.contentType ?? "text/javascript; charset=utf-8",
+    "cache-control": "public, max-age=3600",
+    "x-content-type-options": "nosniff",
+    etag,
+  };
+  if (request.headers.get("if-none-match") === etag) {
+    return new Response(null, { status: 304, headers });
+  }
+  return new Response(request.method === "HEAD" ? null : body as BodyInit, { headers });
+}
+
+/** The rendered docs page for the configured renderer, under its own CSP. */
 async function docsPageResponse(request: Request, e: Endpoints): Promise<Response> {
   const html = renderDocsHtml((await e.build()).document, {
     specUrl: e.basePath + e.specPath,
     ui: e.ui,
     cdn: e.cdn,
     styleUrl: e.ui === "builtin" ? e.basePath + e.docsPath + ".css" : undefined,
+    assetBase: e.basePath + e.docsPath + "/swagger-ui",
   });
   return new Response(request.method === "HEAD" ? null : html, {
-    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-cache",
+      "content-security-policy": docsCsp(e.ui, e.cdn),
+      "x-content-type-options": "nosniff",
+    },
   });
 }
 

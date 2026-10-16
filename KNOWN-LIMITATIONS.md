@@ -81,8 +81,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `channel.revoke(key)` is immediate). The production handshake requires a browser `Origin`.
 - **Only GET/HEAD calls batch; `useApi({ suspense: true })` seeds hydration on Flight routes
   only** (elsewhere it fetches on mount).
-- **`@denext/openapi` describes only what a validator can export** (else `{}` / `unknown`);
-  middleware responses appear only as `default`; `scalar` / `swagger` load from a CDN.
+- **`@denext/openapi` describes only what a validator can export** (else `{}` / `unknown`); a
+  custom middleware's responses appear only as `default` until it is tagged with
+  `documentsErrors`; `scalar` loads from a CDN (`swagger` is vendored).
 - **`@denext/graphql`: with Yoga `batching` the cost budget is per operation.** A schema object
   imported into `denext.config.ts` needs a restart after an edit (a module-path `schema` reloads).
 

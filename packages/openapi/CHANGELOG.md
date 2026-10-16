@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0
+
+### Added
+
+- **Middleware responses are described.** The error codes an endpoint's middleware documents —
+  `requireSession()`'s `401` (`403` with a `role`), `requireBearer()`'s `401` with its
+  `www-authenticate` header (`403` with a `scope` or `role`), `rateLimit()`'s `429` with
+  `retry-after`, `csrf()`'s `403`, and any middleware tagged with `documentsErrors` from
+  `denext/server` — get their own responses, codes enum and `x-denext-errors` entries; an error
+  spec's `headers` become the response's `headers`. The `default` response now covers only what
+  the framework answers (a 413, a redacted 500). The first-party tags need the denext release
+  after 4.1.0; with an older denext those responses stay under `default`.
+- **Swagger UI is vendored.** `ui: "swagger"` serves swagger-ui-dist 5.32.15 (Apache-2.0, license
+  and notice in `vendor/swagger-ui/`) from `<docs>/swagger-ui/` instead of unpkg, and its
+  start-up script from `<docs>/swagger-ui/init.js` instead of an inline script. Each file is
+  checked against the SHA-256 recorded in `swagger-ui.ts` (`SWAGGER_UI_ASSETS`) before it is
+  served; `scripts/vendor-swagger-ui.ts` re-vendors a version. `cdn` still points it at a CDN.
+- **Every docs page answers with its own `content-security-policy`** (`docsCsp(ui, cdn?)`):
+  `'self'` only for `builtin` and `swagger`; Scalar's names its CDN host.
+
 ## 0.4.0 - 2026-10-13
 
 - Requires `@denext/denext` ^4.0.0-rc.1 (the jobs rename and the rest of denext 4.0's breaking

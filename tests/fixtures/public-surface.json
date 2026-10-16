@@ -1156,6 +1156,7 @@
     "detectLocale:function",
     "disableTotp:function",
     "discord:function",
+    "documentsErrors:function",
     "documentsSecurity:function",
     "draftMode:function",
     "emailOtp:function",

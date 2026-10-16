@@ -473,32 +473,70 @@ function errorCodes(def: ApiDefinition): Record<string, number> {
   return codes;
 }
 
-/** The success response plus one response per declared error status (codes as an enum). */
+/** One error status's documentation: its codes, their messages and the headers they carry. */
+interface StatusDocs {
+  codes: string[];
+  messages: string[];
+  headers: Record<string, string>;
+}
+
+/** A declared code's default message: the builtins' fixed ones, else its spec's `message`. */
+function messageOf(def: ApiDefinition, code: string): string | undefined {
+  if (code === "validation" && !(code in (def.errors ?? {}))) return "Validation failed";
+  if (code === "bad_request" && !(code in (def.errors ?? {}))) {
+    return "Malformed or non-JSON body";
+  }
+  const spec = def.errors?.[code];
+  return typeof spec === "object" ? spec.message : undefined;
+}
+
+/** The response headers a declared code documents (`{ status, headers }`), if any. */
+function headersOf(def: ApiDefinition, code: string): Record<string, string> {
+  const spec = def.errors?.[code] as { headers?: unknown } | number | undefined;
+  const headers = typeof spec === "object" ? spec.headers : undefined;
+  if (typeof headers !== "object" || headers === null) return {};
+  return Object.fromEntries(
+    Object.entries(headers).filter(([, d]) => typeof d === "string"),
+  ) as Record<string, string>;
+}
+
+/** Group a definition's error codes (the middleware's included) by status. */
+function errorsByStatus(def: ApiDefinition): [number, StatusDocs][] {
+  const byStatus = new Map<number, StatusDocs>();
+  for (const [code, status] of Object.entries(errorCodes(def))) {
+    const entry = byStatus.get(status) ?? { codes: [], messages: [], headers: {} };
+    entry.codes.push(code);
+    const message = messageOf(def, code);
+    if (message) entry.messages.push(message);
+    Object.assign(entry.headers, headersOf(def, code));
+    byStatus.set(status, entry);
+  }
+  return [...byStatus].sort(([a], [b]) => a - b);
+}
+
+/**
+ * The success response plus one response per declared error status (codes as an enum). The
+ * codes include the ones the endpoint's middleware documents (`requireSession`'s 401,
+ * `rateLimit`'s 429 with its `retry-after`, `csrf`'s 403, …), folded into the definition by
+ * `createApi().use()`, so those responses are described like the endpoint's own.
+ */
 function responses(def: ApiDefinition, response: JsonSchema | undefined): Record<string, unknown> {
   const out: Record<string, unknown> = {
     "200": response
       ? { description: "OK", content: { "application/json": { schema: response } } }
       : { description: "OK (a handler that returns nothing answers 204)" },
   };
-  const byStatus = new Map<number, { codes: string[]; messages: string[] }>();
-  const messageOf = (code: string): string | undefined => {
-    if (code === "validation" && !(code in (def.errors ?? {}))) return "Validation failed";
-    if (code === "bad_request" && !(code in (def.errors ?? {}))) {
-      return "Malformed or non-JSON body";
-    }
-    const spec = def.errors?.[code];
-    return typeof spec === "object" ? spec.message : undefined;
-  };
-  for (const [code, status] of Object.entries(errorCodes(def))) {
-    const entry = byStatus.get(status) ?? { codes: [], messages: [] };
-    entry.codes.push(code);
-    const message = messageOf(code);
-    if (message) entry.messages.push(message);
-    byStatus.set(status, entry);
-  }
-  for (const [status, { codes, messages }] of [...byStatus].sort(([a], [b]) => a - b)) {
+  for (const [status, { codes, messages, headers }] of errorsByStatus(def)) {
+    const names = Object.keys(headers).sort();
     out[String(status)] = {
       description: messages.length ? messages.join("; ") : codes.join(" | "),
+      ...(names.length
+        ? {
+          headers: Object.fromEntries(
+            names.map((name) => [name, { description: headers[name], schema: { type: "string" } }]),
+          ),
+        }
+        : {}),
       content: {
         "application/json": {
           schema: {
@@ -511,10 +549,10 @@ function responses(def: ApiDefinition, response: JsonSchema | undefined): Record
       },
     };
   }
-  // Everything the dispatch seam and middleware may answer with that the definition cannot
-  // name (401/429 from `requireSession`/`rateLimit`, 413, a redacted 500 `internal`, …).
+  // What the dispatch seam answers with that no definition or middleware names (a 413 over the
+  // body cap, a redacted 500 `internal`, an undocumented middleware's own refusal).
   out.default = {
-    description: "Any other error — middleware and framework responses (ApiError envelope)",
+    description: "Any other error — framework responses (ApiError envelope)",
     content: { "application/json": { schema: { $ref: "#/components/schemas/ApiError" } } },
   };
   return out;

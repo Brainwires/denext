@@ -241,6 +241,9 @@ ignorePatterns = [
   # 0.25.5 (MIT) so a version bump is a re-copy; refactoring them would defeat that. denext's
   # host half (src/build/esbuild/mod.ts, binary.ts) is analyzed as usual.
   "src/build/esbuild/vendor/**",
+  # Swagger UI's dist files, vendored verbatim (SHA-256 recorded in packages/openapi/swagger-ui.ts)
+  # and served as bytes — never imported, so neither reachability nor its findings apply.
+  "packages/openapi/vendor/**",
   # Fixture trees the migrate tests READ AS TEXT (never imported), so reachability can't see
   # them; CONTRIBUTING.md documents this as the place to exclude such fixtures.
   "tests/fixtures/**",

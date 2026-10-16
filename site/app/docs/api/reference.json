@@ -2590,7 +2590,7 @@
           ],
           "returns": "The provider element wrapping children.",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "SessionProviderProps",
@@ -2712,7 +2712,7 @@
           ],
           "returns": "The credentials result, or the sign-in URL for the redirect flow.",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "SignInOptions",
@@ -2741,7 +2741,7 @@
           ],
           "returns": "A promise that settles once the navigation has been started.",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "SignOutOptions",
@@ -3943,7 +3943,7 @@
           "params": [],
           "returns": "The session state plus update().",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "useSessionStorage",
@@ -5578,6 +5578,18 @@
           "denextOnly": true
         },
         {
+          "name": "AuthSessionSaml",
+          "slug": "AuthSessionSaml",
+          "kind": "interface",
+          "signature": "interface AuthSessionSaml",
+          "doc": "The SAML subject of a session a saml() provider started (AuthSession.saml).",
+          "docFull": "The SAML subject of a session a `saml()` provider started ({@linkcode AuthSession.saml}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "AuthUser",
           "slug": "AuthUser",
           "kind": "interface",
@@ -6471,8 +6483,8 @@
           "slug": "CorsConfig",
           "kind": "interface",
           "signature": "interface CorsConfig",
-          "doc": "Cross-origin access to the app's route handlers (route.ts, defineApi) and the native denextAuth endpoints — what a Capacitor shell (capacitor://localhost, https://localhost) or another front end on a different origin needs to call this server. Origins match EXACTLY (scheme + host + port, byte for byte); there are no wildcards, prefixes or suffixes, and \"null\" is refused.",
-          "docFull": "Cross-origin access to the app's route handlers (`route.ts`, `defineApi`) and the native\n`denextAuth` endpoints — what a Capacitor shell (`capacitor://localhost`,\n`https://localhost`) or another front end on a different origin needs to call this server.\nOrigins match EXACTLY (scheme + host + port, byte for byte); there are no wildcards,\nprefixes or suffixes, and `\"null\"` is refused.",
+          "doc": "Cross-origin access to the app's route handlers (route.ts, defineApi), the native denextAuth endpoints, pages, Server Actions, the API batch endpoint and the Live socket — the last three letting an allowed origin in only without cookies — what a Capacitor shell (capacitor://localhost, https://localhost) or another front end on a different origin needs to call this server. Origins match EXACTLY (scheme + host + port, byte for byte); there are no wildcards, prefixes or suffixes, and \"null\" is refused.",
+          "docFull": "Cross-origin access to the app's route handlers (`route.ts`, `defineApi`), the native\n`denextAuth` endpoints, pages, Server Actions, the API batch endpoint and the Live socket —\nthe last three letting an allowed origin in only without cookies — what a Capacitor shell (`capacitor://localhost`,\n`https://localhost`) or another front end on a different origin needs to call this server.\nOrigins match EXACTLY (scheme + host + port, byte for byte); there are no wildcards,\nprefixes or suffixes, and `\"null\"` is refused.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7319,6 +7331,18 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopWindowsConfig",
+          "slug": "DesktopWindowsConfig",
+          "kind": "interface",
+          "signature": "interface DesktopWindowsConfig",
+          "doc": "DesktopConfig.windows: Windows launch settings of the packaged app.",
+          "docFull": "{@link DesktopConfig.windows}: Windows launch settings of the packaged app.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "detectLocale",
           "slug": "detectLocale",
           "kind": "function",
@@ -7401,6 +7425,27 @@
           "docFull": "Inputs to {@linkcode renderDocument} for assembling the full HTML page.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "documentsErrors",
+          "slug": "documentsErrors",
+          "kind": "function",
+          "signature": "documentsErrors<M>(mw: M, errors: Record<string, ErrorSpec>): M",
+          "doc": "Tag a middleware so applying it also DOCUMENTS the error responses it answers with: an endpoint built with createApi().use(documentsErrors(mw, { quota_exceeded: 402 })).define(...) lists them in its generated OpenAPI document (and its x-denext-errors) beside its own errors, with no repetition in the definition. A code the definition declares itself keeps its own spec. The first-party middleware (requireSession, requireBearer, rateLimit, csrf) document theirs already.",
+          "docFull": "Tag a middleware so applying it also DOCUMENTS the error responses it answers with: an endpoint\nbuilt with `createApi().use(documentsErrors(mw, { quota_exceeded: 402 })).define(...)` lists\nthem in its generated OpenAPI document (and its `x-denext-errors`) beside its own `errors`,\nwith no repetition in the definition. A code the definition declares itself keeps its own spec.\nThe first-party middleware (`requireSession`, `requireBearer`, `rateLimit`, `csrf`) document\ntheirs already.",
+          "params": [
+            {
+              "name": "mw",
+              "doc": "The middleware to tag."
+            },
+            {
+              "name": "errors",
+              "doc": "The codes it may fail with, each a status or { status, message?, headers? }."
+            }
+          ],
+          "returns": "The same middleware, tagged.",
           "examples": [],
           "denextOnly": true
         },
@@ -7564,8 +7609,8 @@
           "slug": "ErrorSpec",
           "kind": "typeAlias",
           "signature": "type ErrorSpec = number | object",
-          "doc": "How a declared error code maps to HTTP: a status, or a status with a default message.",
-          "docFull": "How a declared error code maps to HTTP: a status, or a status with a default message.",
+          "doc": "How a declared error code maps to HTTP: a status, or a status with a default message. The object form may also list the response headers the error carries (name → description, e.g. { \"retry-after\": \"Seconds until the window resets\" }) — documentation only, which @denext/openapi renders on that status's response; set the header itself with fail(code, { headers }).",
+          "docFull": "How a declared error code maps to HTTP: a status, or a status with a default message. The\nobject form may also list the response `headers` the error carries (name → description, e.g.\n`{ \"retry-after\": \"Seconds until the window resets\" }`) — documentation only, which\n`@denext/openapi` renders on that status's response; set the header itself with\n`fail(code, { headers })`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -8021,6 +8066,18 @@
           "denextOnly": true
         },
         {
+          "name": "getLiveViewStore",
+          "slug": "getLiveViewStore",
+          "kind": "function",
+          "signature": "getLiveViewStore(): LiveViewStore",
+          "doc": "The installed store (the in-memory default until setLiveViewStore runs).",
+          "docFull": "The installed store (the in-memory default until {@linkcode setLiveViewStore} runs).",
+          "params": [],
+          "returns": "The store.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "getSession",
           "slug": "getSession",
           "kind": "function",
@@ -8037,7 +8094,7 @@
           "examples": [
             "```ts\nconst session = await getSession<{ userId: string }>({ secret: Deno.env.get(\"SESSION_SECRET\")! });\nif (!session.data) redirect(\"/login\");\n// after a successful login:\nawait session.set({ userId: user.id });\n```"
           ],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "github",
@@ -9632,6 +9689,18 @@
           "denextOnly": true
         },
         {
+          "name": "LiveViewStore",
+          "slug": "LiveViewStore",
+          "kind": "interface",
+          "signature": "interface LiveViewStore",
+          "doc": "Where parked live views wait between instances. Values are opaque sealed strings; a store only has to keep them for ttlSeconds and hand each back once.",
+          "docFull": "Where parked live views wait between instances. Values are opaque sealed strings; a store\nonly has to keep them for `ttlSeconds` and hand each back once.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "loadEnv",
           "slug": "loadEnv",
           "kind": "function",
@@ -9870,6 +9939,35 @@
           "signature": "interface MdxConfig",
           "doc": "MDX compilation options (see DenextConfig.mdx). Each plugin list is a unified PluggableList: an array whose entries are either a plugin function or a [plugin, options] tuple. Typed loosely (unknown[]) so the public config surface doesn't depend on unified/@mdx-js types; the values are forwarded verbatim to MDX's compile.",
           "docFull": "MDX compilation options (see {@link DenextConfig.mdx}). Each plugin list is a\nunified `PluggableList`: an array whose entries are either a plugin function or a\n`[plugin, options]` tuple. Typed loosely (`unknown[]`) so the public config surface\ndoesn't depend on `unified`/`@mdx-js` types; the values are forwarded verbatim to\nMDX's `compile`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "memoryLiveViewStore",
+          "slug": "memoryLiveViewStore",
+          "kind": "function",
+          "signature": "memoryLiveViewStore(options?: MemoryLiveViewStoreOptions): LiveViewStore",
+          "doc": "The in-memory LiveViewStore (the default): one process, bounded, expiring.",
+          "docFull": "The in-memory {@linkcode LiveViewStore} (the default): one process, bounded, expiring.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The entry cap."
+            }
+          ],
+          "returns": "The store.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MemoryLiveViewStoreOptions",
+          "slug": "MemoryLiveViewStoreOptions",
+          "kind": "interface",
+          "signature": "interface MemoryLiveViewStoreOptions",
+          "doc": "Options for memoryLiveViewStore.",
+          "docFull": "Options for {@linkcode memoryLiveViewStore}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -11382,6 +11480,35 @@
           "denextOnly": true
         },
         {
+          "name": "postgresLiveViewStore",
+          "slug": "postgresLiveViewStore",
+          "kind": "function",
+          "signature": "postgresLiveViewStore(options: PostgresLiveViewStoreOptions): LiveViewStore & object",
+          "doc": "A LiveViewStore on Postgres, shared by every replica.",
+          "docFull": "A {@linkcode LiveViewStore} on Postgres, shared by every replica.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "sql (a client) or url (opened with Deno.SQL), an optional schema, migrate, and the sweep interval."
+            }
+          ],
+          "returns": "A store for setLiveViewStore; its close() closes a client it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PostgresLiveViewStoreOptions",
+          "slug": "PostgresLiveViewStoreOptions",
+          "kind": "interface",
+          "signature": "interface PostgresLiveViewStoreOptions",
+          "doc": "Options for postgresLiveViewStore.",
+          "docFull": "Options for {@linkcode postgresLiveViewStore}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "PostgresMigrateOptions",
           "slug": "PostgresMigrateOptions",
           "kind": "interface",
@@ -11946,6 +12073,35 @@
           "signature": "class RedisError",
           "doc": "An error reply from the server (-ERR …, -WRONGTYPE …, -NOAUTH …).",
           "docFull": "An error reply from the server (`-ERR …`, `-WRONGTYPE …`, `-NOAUTH …`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "redisLiveViewStore",
+          "slug": "redisLiveViewStore",
+          "kind": "function",
+          "signature": "redisLiveViewStore(options?: RedisLiveViewStoreOptions): LiveViewStore & object",
+          "doc": "A LiveViewStore on Redis (6.2+, or Valkey), shared by every replica.",
+          "docFull": "A {@linkcode LiveViewStore} on Redis (6.2+, or Valkey), shared by every replica.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "client (a redisClient) or url, and a key prefix (default denext:liveview:)."
+            }
+          ],
+          "returns": "A store for setLiveViewStore; its close() closes a client it opened.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RedisLiveViewStoreOptions",
+          "slug": "RedisLiveViewStoreOptions",
+          "kind": "typeAlias",
+          "signature": "type RedisLiveViewStoreOptions = RedisConnectionOptions",
+          "doc": "Options for redisLiveViewStore.",
+          "docFull": "Options for {@linkcode redisLiveViewStore}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -13903,6 +14059,23 @@
             {
               "name": "t",
               "doc": "The transport."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "setLiveViewStore",
+          "slug": "setLiveViewStore",
+          "kind": "function",
+          "signature": "setLiveViewStore(store: LiveViewStore | null): void",
+          "doc": "Install the store parked live views are written to (the default is memoryLiveViewStore, per process). Call it once at startup, before the first socket connects; every instance of the app must share the store and DENEXT_LIVE_VIEW_SECRET.",
+          "docFull": "Install the store parked live views are written to (the default is\n{@linkcode memoryLiveViewStore}, per process). Call it once at startup, before the first\nsocket connects; every instance of the app must share the store and `DENEXT_LIVE_VIEW_SECRET`.",
+          "params": [
+            {
+              "name": "store",
+              "doc": "The store, or null to go back to the in-memory default."
             }
           ],
           "returns": "",
@@ -16848,6 +17021,18 @@
           "denextOnly": true
         },
         {
+          "name": "NativeMfaEnrollment",
+          "slug": "NativeMfaEnrollment",
+          "kind": "interface",
+          "signature": "interface NativeMfaEnrollment",
+          "doc": "A first factor being enrolled to finish a pending sign-in (NativeSession.enrollMfa).",
+          "docFull": "A first factor being enrolled to finish a pending sign-in ({@link NativeSession.enrollMfa}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "nativeSession",
           "slug": "nativeSession-fn",
           "kind": "function",
@@ -17439,7 +17624,7 @@
           ],
           "returns": "The provider element wrapping children.",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "SessionProviderProps",
@@ -17525,7 +17710,7 @@
           ],
           "returns": "The credentials result, or the sign-in URL for the redirect flow.",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "SignInOptions",
@@ -17571,7 +17756,7 @@
           ],
           "returns": "A promise that settles once the navigation has been started.",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "SignOutOptions",
@@ -18141,7 +18326,7 @@
           "params": [],
           "returns": "The session state plus update().",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "useShellHandoff",
@@ -21796,8 +21981,8 @@
           "slug": "writeLaufeyLaunchConfig",
           "kind": "function",
           "signature": "writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string): Promise<string | null>",
-          "doc": "Write the packaged app's laufey-launch.json from desktop.app, desktop.inspectable and (on Linux) desktop.linux.requireSandbox in the project's denext.config.ts (the bridge pinned to the app origin, desktopBridgeOrigins) (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS call it BEFORE code-signing: the file lives inside the sealed bundle.",
-          "docFull": "Write the packaged app's `laufey-launch.json` from `desktop.app`, `desktop.inspectable` and (on\nLinux) `desktop.linux.requireSandbox` in the project's `denext.config.ts` (the bridge pinned to\nthe app origin, {@linkcode\ndesktopBridgeOrigins}) (resolved beside `entryUrl`'s directory, like `desktopPackageFlags`).\nOn macOS call it BEFORE code-signing: the file lives inside the sealed bundle.",
+          "doc": "Write the packaged app's laufey-launch.json from desktop.app, desktop.inspectable, (on Linux) desktop.linux.requireSandbox and (on Windows) desktop.windows.proxy in the project's denext.config.ts (the bridge pinned to the app origin, desktopBridgeOrigins) (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS it also lists desktop.macos.userActivityTypes as the bundle's NSUserActivityTypes. On macOS call it BEFORE code-signing: both files live inside the sealed bundle.",
+          "docFull": "Write the packaged app's `laufey-launch.json` from `desktop.app`, `desktop.inspectable`, (on\nLinux) `desktop.linux.requireSandbox` and (on Windows) `desktop.windows.proxy` in the project's\n`denext.config.ts` (the bridge pinned to the app origin, {@linkcode desktopBridgeOrigins})\n(resolved beside `entryUrl`'s directory, like `desktopPackageFlags`). On macOS it also lists\n`desktop.macos.userActivityTypes` as the bundle's `NSUserActivityTypes`. On macOS call it BEFORE\ncode-signing: both files live inside the sealed bundle.",
           "params": [
             {
               "name": "entryUrl",
@@ -23150,6 +23335,25 @@
           "denextOnly": true
         },
         {
+          "name": "shareFromWindow",
+          "slug": "shareFromWindow",
+          "kind": "function",
+          "signature": "shareFromWindow(data: WindowShareData): Promise<WindowShareResult>",
+          "doc": "Show the OS share sheet over the window: macOS NSSharingServicePicker (anchored at x / y), Windows DataTransferManager (files go as their paths in the text). Linux has none (outcome \"not_supported\"). Needs denext's pinned runtime, 2.9.7-denext.20 or later (share in windowCapabilities); elsewhere it rejects unsupported. A file the app may not read rejects forbidden. share() in denext/mobile uses it for text and URLs, and falls back to the web where it can't.",
+          "docFull": "Show the OS share sheet over the window: macOS `NSSharingServicePicker` (anchored at `x` / `y`),\nWindows `DataTransferManager` (files go as their paths in the text). Linux has none (`outcome`\n`\"not_supported\"`). Needs denext's pinned runtime, 2.9.7-denext.20 or later (`share` in\n{@linkcode windowCapabilities}); elsewhere it rejects `unsupported`. A file the app may not read\nrejects `forbidden`. `share()` in `denext/mobile` uses it for text and URLs, and falls back to\nthe web where it can't.",
+          "params": [
+            {
+              "name": "data",
+              "doc": "What to share."
+            }
+          ],
+          "returns": "How the sheet ended.",
+          "examples": [
+            "```ts\nimport { shareFromWindow } from \"denext/desktop/window\";\n\nconst { outcome } = await shareFromWindow({\n  title: \"Q3 report\",\n  files: [{ directory: \"documents\", path: \"reports/q3.pdf\" }],\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "showWindow",
           "slug": "showWindow",
           "kind": "function",
@@ -23317,6 +23521,30 @@
           "denextOnly": true
         },
         {
+          "name": "WindowShareData",
+          "slug": "WindowShareData",
+          "kind": "interface",
+          "signature": "interface WindowShareData",
+          "doc": "What shareFromWindow shares: at least one of text, url or files.",
+          "docFull": "What {@linkcode shareFromWindow} shares: at least one of `text`, `url` or `files`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WindowShareResult",
+          "slug": "WindowShareResult",
+          "kind": "interface",
+          "signature": "interface WindowShareResult",
+          "doc": "How a share sheet ended: \"completed\" (a target was chosen; target names it where the OS says), \"shown\" (the sheet opened and this OS reports nothing more: Windows), \"cancelled\", \"not_supported\" (Linux has no share sheet) or \"failed\" (reason).",
+          "docFull": "How a share sheet ended: `\"completed\"` (a target was chosen; `target` names it where the OS\nsays), `\"shown\"` (the sheet opened and this OS reports nothing more: Windows), `\"cancelled\"`,\n`\"not_supported\"` (Linux has no share sheet) or `\"failed\"` (`reason`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "WindowState",
           "slug": "WindowState",
           "kind": "interface",
@@ -23443,6 +23671,30 @@
             }
           ],
           "returns": "A promise that settles once requested.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "clearUserActivity",
+          "slug": "clearUserActivity",
+          "kind": "function",
+          "signature": "clearUserActivity(): Promise<boolean>",
+          "doc": "End the current user activity (the user left what it described).",
+          "docFull": "End the current user activity (the user left what it described).",
+          "params": [],
+          "returns": "Whether there was one the OS ended (false off macOS).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ContinuedUserActivity",
+          "slug": "ContinuedUserActivity",
+          "kind": "interface",
+          "signature": "interface ContinuedUserActivity",
+          "doc": "An activity the user continued (onUserActivityContinued). Untrusted input.",
+          "docFull": "An activity the user continued ({@linkcode onUserActivityContinued}). Untrusted input.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -23577,6 +23829,23 @@
           "denextOnly": true
         },
         {
+          "name": "onUserActivityContinued",
+          "slug": "onUserActivityContinued",
+          "kind": "function",
+          "signature": "onUserActivityContinued(handler: (activity: ContinuedUserActivity) => void): () => void",
+          "doc": "Call handler with each user activity the user continues: Handoff from another device, or a Spotlight result (macOS, runtime 2.9.7-denext.20). The one that launched the app is delivered to the first handler. Treat its fields as untrusted input, as a deep link's.",
+          "docFull": "Call `handler` with each user activity the user continues: Handoff from another device, or a\nSpotlight result (macOS, runtime 2.9.7-denext.20). The one that launched the app is delivered to\nthe first handler. Treat its fields as untrusted input, as a deep link's.",
+          "params": [
+            {
+              "name": "handler",
+              "doc": "Called with each activity."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "PlatformUnknown",
           "slug": "PlatformUnknown",
           "kind": "typeAlias",
@@ -23689,6 +23958,25 @@
           "denextOnly": true
         },
         {
+          "name": "setUserActivity",
+          "slug": "setUserActivity",
+          "kind": "function",
+          "signature": "setUserActivity(activity: UserActivity): Promise<boolean>",
+          "doc": "Make activity the app's current user activity, for Handoff (the user's other devices offer to continue it) and Spotlight (searchable: true indexes it). macOS only, under denext's pinned runtime 2.9.7-denext.20 or later; elsewhere (Windows, Linux, an older runtime) it resolves false and nothing happens.",
+          "docFull": "Make `activity` the app's current user activity, for Handoff (the user's other devices offer to\ncontinue it) and Spotlight (`searchable: true` indexes it). macOS only, under denext's pinned\nruntime 2.9.7-denext.20 or later; elsewhere (Windows, Linux, an older runtime) it resolves\n`false` and nothing happens.",
+          "params": [
+            {
+              "name": "activity",
+              "doc": "The activity."
+            }
+          ],
+          "returns": "Whether the OS took it. It rejects validation for a malformed activity.",
+          "examples": [
+            "```ts\nimport { setUserActivity } from \"denext/desktop/app\";\n\nawait setUserActivity({\n  type: \"com.example.notes.editing\",\n  title: note.title,\n  url: `https://notes.example.com/n/${note.id}`,\n  userInfo: { noteId: note.id },\n  searchable: true,\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "shortcutCapabilities",
           "slug": "shortcutCapabilities-fn",
           "kind": "function",
@@ -23774,6 +24062,18 @@
             }
           ],
           "returns": "Whether it was registered.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "UserActivity",
+          "slug": "UserActivity",
+          "kind": "interface",
+          "signature": "interface UserActivity",
+          "doc": "An activity the app is engaged in (setUserActivity): what Handoff offers the user's other devices and what Spotlight indexes (macOS NSUserActivity).",
+          "docFull": "An activity the app is engaged in ({@linkcode setUserActivity}): what Handoff offers the user's\nother devices and what Spotlight indexes (macOS `NSUserActivity`).",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         }
@@ -24799,7 +25099,7 @@
           "kind": "function",
           "signature": "deliveredNotifications(): Promise<DeliveredNotification[]>",
           "doc": "The notifications the app has in the notification centre: local ones and remote pushes alike, most platforms newest first as the OS reports them. Group summaries (Android) are not listed.",
-          "docFull": "The notifications the app has in the notification centre: local ones and remote pushes alike,\nmost platforms newest first as the OS reports them. Group summaries (Android) are not listed.\n\n- iOS / Android: everything the OS shows for the app (needs `denext mobile add\n  local-notifications` or `push`, generation 3 of denext's `DenextSettings` plugin; it rejects in\n  a binary built before, until the command is re-run and a new binary shipped).\n- Deno Desktop (`notifications` capability): the notifications denext posted during this run\n  whose time has come and that were not removed through denext. The runtime cannot list the\n  OS's notification centre, so one the user dismissed is still listed, and one from an earlier\n  run is not.\n- Web: the open notifications `scheduleNotification` showed from this page, plus the service\n  worker registration's (a web push's thread is its `data.threadId`).",
+          "docFull": "The notifications the app has in the notification centre: local ones and remote pushes alike,\nmost platforms newest first as the OS reports them. Group summaries (Android) are not listed.\n\n- iOS / Android: everything the OS shows for the app (needs `denext mobile add\n  local-notifications` or `push`, generation 3 of denext's `DenextSettings` plugin; it rejects in\n  a binary built before, until the command is re-run and a new binary shipped).\n- Deno Desktop (`notifications` capability): on macOS and Windows the app's notifications the\n  OS's notification centre still shows (runtime 2.9.7-denext.20), local ones the app scheduled\n  through denext. On Linux, whose notification servers keep no list, the ones denext posted\n  during this run whose time has come and that were not removed through denext: one the user\n  dismissed is still listed, and one from an earlier run is not.\n- Web: the open notifications `scheduleNotification` showed from this page, plus the service\n  worker registration's (a web push's thread is its `data.threadId`).",
           "params": [],
           "returns": "The delivered notifications.",
           "examples": [
@@ -28490,7 +28790,7 @@
           "kind": "function",
           "signature": "share(opts: ShareOptions): Promise<ShareResult>",
           "doc": "Open the share sheet.",
-          "docFull": "Open the share sheet.\n\n- Inside the native shell with `@capacitor/share` installed (`denext mobile add share`),\n  the OS share sheet.\n- Otherwise `navigator.share` where the browser has it (and `canShare` accepts the data).\n- Otherwise the text and URL are copied to the clipboard (joined by a space), and the\n  result is `\"copied\"` so the UI can say so.\n\nA dismissed sheet resolves `\"cancelled\"` rather than rejecting.",
+          "docFull": "Open the share sheet.\n\n- Inside the native shell with `@capacitor/share` installed (`denext mobile add share`),\n  the OS share sheet.\n- In a Deno Desktop window under denext's pinned runtime (2.9.7-denext.20 or later), the OS\n  share sheet over the window for a `text` or `url`: macOS `NSSharingServicePicker`, Windows\n  `DataTransferManager` (it reports no more than that the sheet was shown: `\"shared\"`). Linux has\n  none, so the paths below run. To share files, use `shareFromWindow` from\n  `denext/desktop/window`.\n- Otherwise `navigator.share` where the browser has it (and `canShare` accepts the data).\n- Otherwise the text and URL are copied to the clipboard (joined by a space), and the\n  result is `\"copied\"` so the UI can say so.\n\nA dismissed sheet resolves `\"cancelled\"` rather than rejecting.",
           "params": [
             {
               "name": "opts",
@@ -28569,7 +28869,7 @@
           "kind": "function",
           "signature": "showContextMenu(items: typeOperator, options?: ContextMenuOptions): Promise<string | null>",
           "doc": "Open a context menu and resolve the chosen item's id, or null if it was dismissed.",
-          "docFull": "Open a context menu and resolve the chosen item's `id`, or `null` if it was dismissed.\n\n- Inside the native shell with the `DenextContextMenu` plugin (`denext mobile add\n  context-menu`), the OS menu: on iOS a `UIMenu` at `(x, y)` (the edit-menu presentation,\n  iOS 16+; an action sheet on iOS 15) with SF Symbol `systemIcon`s, subtitles, destructive\n  and disabled items and submenus; on Android a Material `PopupMenu` anchored at `(x, y)`\n  (submenus as labelled groups, destructive items in the error color). For the long-press\n  menu that lifts the pressed element (`UIContextMenuInteraction` with its preview), bind the\n  element with {@linkcode useContextMenu} instead.\n- Inside a Deno Desktop window with the `contextMenu` capability (`denext desktop add\n  context-menu`) and denext's pinned runtime, the OS's own menu at `(x, y)`: submenus,\n  disabled items, subtitles appended to the label, and `null` when the user dismisses it\n  (`destructive`, `icon` and `systemIcon` are not drawn there; a `title` is a disabled first\n  item). Without the capability, or under the stock runtime, the in-page popover below.\n- Otherwise (the web, and SSR-safe) an accessible in-DOM popover: `role=\"menu\"`\n  with a `role=\"menuitem\"` per item (a submenu is a `role=\"group\"` labelled by its item),\n  opened at `(x, y)` or under `anchor`. It is keyboard navigable (Up/Down to move,\n  Enter/Space to choose, Escape to dismiss), dismisses on an outside pointer press, respects\n  `disabled` (shown, not selectable) and `destructive`, and removes every node and listener it\n  added when it resolves.\n\nEvery path renders **every** item, so no menu action is silently dropped. Aborting\n`options.signal` closes the in-page popover and the shell's native menu (the plugin's\ngeneration-2 `dismiss`), which then resolve `null`.",
+          "docFull": "Open a context menu and resolve the chosen item's `id`, or `null` if it was dismissed.\n\n- Inside the native shell with the `DenextContextMenu` plugin (`denext mobile add\n  context-menu`), the OS menu: on iOS a `UIMenu` at `(x, y)` (the edit-menu presentation,\n  iOS 16+; an action sheet on iOS 15) with SF Symbol `systemIcon`s, subtitles, destructive\n  and disabled items and submenus; on Android a Material `PopupMenu` anchored at `(x, y)`\n  (submenus as labelled groups, destructive items in the error color). For the long-press\n  menu that lifts the pressed element (`UIContextMenuInteraction` with its preview), bind the\n  element with {@linkcode useContextMenu} instead.\n- Inside a Deno Desktop window with the `contextMenu` capability (`denext desktop add\n  context-menu`) and denext's pinned runtime, the OS's own menu at `(x, y)`: submenus,\n  disabled items, subtitles appended to the label, `destructive` items in red (macOS, Linux and\n  the CEF backend; runtime 2.9.7-denext.20), an `iconPng` next to the label where the backend\n  draws icons, and `null` when the user dismisses it (`icon` and `systemIcon` are not drawn there;\n  a `title` is a disabled first item). Without the capability, or under the stock runtime, the\n  in-page popover below.\n- Otherwise (the web, and SSR-safe) an accessible in-DOM popover: `role=\"menu\"`\n  with a `role=\"menuitem\"` per item (a submenu is a `role=\"group\"` labelled by its item),\n  opened at `(x, y)` or under `anchor`. It is keyboard navigable (Up/Down to move,\n  Enter/Space to choose, Escape to dismiss), dismisses on an outside pointer press, respects\n  `disabled` (shown, not selectable) and `destructive`, and removes every node and listener it\n  added when it resolves.\n\nEvery path renders **every** item, so no menu action is silently dropped. Aborting\n`options.signal` closes the in-page popover and the shell's native menu (the plugin's\ngeneration-2 `dismiss`), which then resolve `null`.",
           "params": [
             {
               "name": "items",
@@ -33380,7 +33680,7 @@
           ],
           "returns": "The config value.",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "encode",
@@ -33405,7 +33705,7 @@
           ],
           "returns": "The fields, in render order.",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "Field",

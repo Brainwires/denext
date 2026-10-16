@@ -53,8 +53,18 @@ import { decodeWire, WIRE_HEADER } from "../runtime/wire-codec.ts";
 import { isReturnedErr } from "../runtime/result-brand.ts";
 import type { Err } from "../result.ts";
 
-/** How a declared error code maps to HTTP: a status, or a status with a default message. */
-export type ErrorSpec = number | { status: number; message?: string };
+/**
+ * How a declared error code maps to HTTP: a status, or a status with a default message. The
+ * object form may also list the response `headers` the error carries (name → description, e.g.
+ * `{ "retry-after": "Seconds until the window resets" }`) — documentation only, which
+ * `@denext/openapi` renders on that status's response; set the header itself with
+ * `fail(code, { headers })`.
+ */
+export type ErrorSpec = number | {
+  status: number;
+  message?: string;
+  headers?: Record<string, string>;
+};
 
 /** What an endpoint declares: its schemas, error codes, and per-method body cap. */
 export interface ApiDefinition {
@@ -209,6 +219,26 @@ export function documentsSecurity<M extends ApiMiddleware<object, object>>(
   security: Record<string, string[]>[],
 ): M {
   return tagMiddlewareDocs(mw, { security });
+}
+
+/**
+ * Tag a middleware so applying it also DOCUMENTS the error responses it answers with: an endpoint
+ * built with `createApi().use(documentsErrors(mw, { quota_exceeded: 402 })).define(...)` lists
+ * them in its generated OpenAPI document (and its `x-denext-errors`) beside its own `errors`,
+ * with no repetition in the definition. A code the definition declares itself keeps its own spec.
+ * The first-party middleware (`requireSession`, `requireBearer`, `rateLimit`, `csrf`) document
+ * theirs already.
+ *
+ * @param mw The middleware to tag.
+ * @param errors The codes it may fail with, each a status or `{ status, message?, headers? }`.
+ * @returns The same middleware, tagged.
+ */
+export function documentsErrors<M extends ApiMiddleware<object, object>>(
+  mw: M,
+  errors: Record<string, ErrorSpec>,
+): M {
+  const slot = mw as unknown as Record<symbol, ApiMiddlewareDocs>;
+  return tagMiddlewareDocs(mw, { errors: { ...slot[MIDDLEWARE_DOCS]?.errors, ...errors } });
 }
 
 /**

@@ -1020,8 +1020,8 @@
     },
     {
       "name": "@denext/openapi",
-      "version": "0.4.0",
-      "spec": "jsr:@denext/openapi@^0.4.0",
+      "version": "0.5.0",
+      "spec": "jsr:@denext/openapi@^0.5.0",
       "exports": [
         ".",
         "./command",
@@ -1074,7 +1074,7 @@
             ]
           },
           "ui": {
-            "description": "The docs renderer: `builtin` (server-rendered, no JavaScript, strict-CSP clean — the default), `scalar` or `swagger` (interactive, loaded from a CDN).",
+            "description": "The docs renderer: `builtin` (server-rendered, no JavaScript — the default), `swagger` (interactive Swagger UI, vendored and served from the app's own origin under `<docs>/swagger-ui/`, each file checked against its recorded SHA-256) or `scalar` (interactive, loaded from a CDN). Each page answers with its own strict CSP; only Scalar's names a CDN host.",
             "enum": [
               "builtin",
               "scalar",
@@ -1082,7 +1082,7 @@
             ]
           },
           "cdn": {
-            "description": "Override the CDN URL for `scalar` (script URL) or `swagger` (dist base URL).",
+            "description": "Override the CDN URL for `scalar` (script URL), or load `swagger` from a CDN dist base URL (e.g. `DOCS_CDN.swagger`) instead of the vendored copy.",
             "type": "string"
           },
           "info": {

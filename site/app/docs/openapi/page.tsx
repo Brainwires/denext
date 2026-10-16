@@ -58,10 +58,21 @@ export default {
           A declared <code>params</code>, <code>query</code> or <code>body</code> schema adds the
           {" "}
           <code>400</code> validation response (a <code>body</code> also adds{" "}
-          <code>bad_request</code> for a malformed one); every operation gets a <code>default</code>
+          <code>bad_request</code>{" "}
+          for a malformed one). The endpoint's middleware adds the responses it answers with:{" "}
+          <code>requireSession()</code>'s <code>401</code> (and its <code>403</code> with a{" "}
+          <code>role</code>), <code>requireBearer()</code>'s <code>401</code> with its{" "}
+          <code>www-authenticate</code> header (and <code>403</code> with a <code>scope</code> or
           {" "}
-          envelope response for what the definition cannot name. Every error response uses the
-          shared <code>ApiError</code>{" "}
+          <code>role</code>), <code>rateLimit()</code>'s <code>429</code> with{" "}
+          <code>retry-after</code>, <code>csrf()</code>'s <code>403</code>{" "}
+          — and your own middleware's, tagged with{" "}
+          <code>documentsErrors(mw, {"{ quota_exceeded: 402 }"})</code> (an error spec may list the
+          {" "}
+          <code>headers</code> it carries). A <code>default</code>{" "}
+          envelope response covers what only the framework answers (a <code>413</code>{" "}
+          over the body cap, a redacted <code>500</code>). Every error response uses the shared{" "}
+          <code>ApiError</code>{" "}
           envelope schema (<code>components.schemas.ApiError</code>) with that status's codes as an
           enum, so a generated client can narrow on <code>error.code</code> exactly like{" "}
           <code>ApiClientError</code> does.
@@ -145,13 +156,22 @@ export default {
         <code>script-src 'self'; style-src 'self'</code> CSP.
       </p>
       <Code lang="ts">
-        {`openapi({ ui: "scalar" });                              // Scalar API Reference, from cdn.jsdelivr.net
-openapi({ ui: "swagger" });                             // Swagger UI, from unpkg.com
+        {`openapi({ ui: "swagger" });                             // Swagger UI, vendored, from your origin
+openapi({ ui: "scalar" });                              // Scalar API Reference, from cdn.jsdelivr.net
 openapi({ ui: "scalar", cdn: "/vendor/scalar.js" });   // self-hosted bundle`}
       </Code>
+      <p>
+        <code>ui: "swagger"</code>{" "}
+        serves Swagger UI (swagger-ui-dist 5.32.15, Apache-2.0) from the package itself, under{" "}
+        <code>&lt;docs&gt;/swagger-ui/</code>: nothing loads from a CDN, the start-up script is a
+        file rather than an inline script, and each vendored file is checked against its recorded
+        SHA-256 before it is served (bytes that differ are refused). Every docs page answers with
+        its own <code>content-security-policy</code>; the builtin and Swagger pages allow{" "}
+        <code>'self'</code> only.
+      </p>
       <Callout kind="note">
-        The interactive renderers load a bundle from a CDN by default. Allow that host in your{" "}
-        <code>csp</code>, or self-host the bundle and point <code>cdn</code> at it.
+        Scalar still loads from a CDN by default, and its page's CSP names that host. Self-host its
+        bundle and point <code>cdn</code> at it to keep everything on your origin.
       </Callout>
 
       <h2>CI</h2>
@@ -205,7 +225,9 @@ const { document, warnings } = await buildOpenApi({
           <code>false</code>) — both prefixed with <code>basePath</code>.
         </li>
         <li>
-          <code>ui</code>, <code>cdn</code> — the renderer and where its bundle comes from.
+          <code>ui</code>, <code>cdn</code>{" "}
+          — the renderer and where its bundle comes from (Swagger UI: the vendored copy unless{" "}
+          <code>cdn</code> names one).
         </li>
         <li>
           <code>info</code>, <code>servers</code>{" "}

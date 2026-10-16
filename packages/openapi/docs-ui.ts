@@ -4,10 +4,13 @@
 //              with its parameters, request body, responses and schemas. Works unchanged
 //              under a strict `script-src 'self'` CSP; its stylesheet is served from the
 //              same origin at `<docsPath>.css`.
+//   swagger  — Swagger UI, vendored (`vendor/swagger-ui/`, its SHA-256 recorded in
+//              `swagger-ui.ts`) and served from the app's own origin with a start-up script
+//              of its own: no CDN, and a strict `script-src 'self'` CSP holds.
 //   scalar   — Scalar's API reference loaded from a CDN (the default `cdn` is jsDelivr).
-//   swagger  — Swagger UI loaded from a CDN (the default is unpkg's swagger-ui-dist@5).
 //
-// The CDN variants are interactive ("try it") but need the CDN host in the app's CSP.
+// The interactive variants offer "try it". Every page answers with its own CSP
+// (`docsCsp`); Scalar's names its CDN host.
 
 import type { JsonSchema, OpenApiDocument, OpenApiOperation } from "./spec.ts";
 
@@ -20,13 +23,24 @@ export interface DocsHtmlOptions {
   specUrl: string;
   /** The renderer. */
   ui: DocsUi;
-  /** Override the CDN script URL (scalar) or dist base URL (swagger). */
+  /**
+   * Override the CDN script URL (scalar), or load Swagger UI from a CDN dist base URL instead
+   * of the vendored copy (swagger).
+   */
   cdn?: string;
+  /**
+   * Where the vendored Swagger UI and its start-up script are served (default
+   * `/docs/swagger-ui`; the plugin passes `<docs path>/swagger-ui`).
+   */
+  assetBase?: string;
   /** The stylesheet URL for the builtin renderer. */
   styleUrl?: string;
 }
 
-/** Default CDN locations for the interactive renderers. */
+/**
+ * CDN locations for the interactive renderers: Scalar's default, and the Swagger UI dist an
+ * app may opt into with `cdn: DOCS_CDN.swagger` (by default it is served from the vendored copy).
+ */
 export const DOCS_CDN: Record<Exclude<DocsUi, "builtin">, string> = {
   // Pinned to an exact version: a floating tag would run whatever the CDN serves next on the
   // app's own origin. Bump deliberately; or self-host and point `cdn` at your copy.
@@ -49,17 +63,41 @@ export function renderDocsHtml(doc: OpenApiDocument, options: DocsHtmlOptions): 
       `<script src="${src}"></script></body></html>`;
   }
   if (options.ui === "swagger") {
-    const base = esc((options.cdn ?? DOCS_CDN.swagger).replace(/\/$/, ""));
+    const local = (options.assetBase ?? "/docs/swagger-ui").replace(/\/$/, "");
+    const base = esc((options.cdn ?? local).replace(/\/$/, ""));
     return `<!doctype html><html lang="en"><head>${head}` +
-      `<link rel="stylesheet" href="${base}/swagger-ui.css"></head><body><div id="swagger-ui"></div>` +
-      `<script src="${base}/swagger-ui-bundle.js" crossorigin></script>` +
-      `<script>window.onload=()=>{window.ui=SwaggerUIBundle({url:${
-        JSON.stringify(options.specUrl).replace(/</g, "\\u003c")
-      },dom_id:"#swagger-ui"})}</script></body></html>`;
+      `<link rel="stylesheet" href="${base}/swagger-ui.css"></head><body>` +
+      `<div id="swagger-ui" data-url="${esc(options.specUrl)}"></div>` +
+      `<script src="${base}/swagger-ui-bundle.js"${options.cdn ? " crossorigin" : ""}></script>` +
+      `<script src="${esc(local)}/init.js"></script></body></html>`;
   }
   const style = options.styleUrl ? `<link rel="stylesheet" href="${esc(options.styleUrl)}">` : "";
   return `<!doctype html><html lang="en"><head>${head}${style}</head><body>` +
     renderReference(doc, options.specUrl) + `</body></html>`;
+}
+
+/**
+ * The `content-security-policy` a docs page answers with. The builtin reference loads only its
+ * stylesheet; Swagger UI its vendored bundle, stylesheet and start-up script (all `'self'`,
+ * plus the `cdn` origin when one is set), and fetches the document (`connect-src 'self'`,
+ * which "try it" uses too); Scalar its CDN script, which injects its own styles and fonts.
+ *
+ * @param ui The renderer.
+ * @param cdn The `cdn` override, if any.
+ * @returns The policy.
+ */
+export function docsCsp(ui: DocsUi, cdn?: string): string {
+  const fixed = "base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'";
+  if (ui === "builtin") return `default-src 'none'; style-src 'self'; img-src 'self'; ${fixed}`;
+  const from = (url: string) => new URL(url, "https://app.invalid").origin;
+  if (ui === "swagger") {
+    const remote = cdn && /^https?:/i.test(cdn) ? ` ${from(cdn)}` : "";
+    return `default-src 'none'; script-src 'self'${remote}; style-src 'self'${remote}; ` +
+      `img-src 'self' data:; font-src 'self'; connect-src 'self'; ${fixed}`;
+  }
+  const host = from(cdn ?? DOCS_CDN.scalar);
+  return `default-src 'none'; script-src ${host}; style-src 'unsafe-inline' ${host}; ` +
+    `img-src 'self' data: https:; font-src 'self' data: https:; connect-src 'self' https:; ${fixed}`;
 }
 
 // ── builtin ──────────────────────────────────────────────────────────────────
@@ -138,12 +176,21 @@ function renderParams(params: Record<string, unknown>[]): string {
 function renderResponses(responses: Record<string, unknown>): string {
   return `<dl>${
     Object.entries(responses).map(([status, r]) => {
-      const res = r as { description?: string; content?: Record<string, { schema?: JsonSchema }> };
+      const res = r as {
+        description?: string;
+        headers?: Record<string, { description?: string }>;
+        content?: Record<string, { schema?: JsonSchema }>;
+      };
       const schema = res.content?.["application/json"]?.schema;
+      const headers = Object.entries(res.headers ?? {}).map(([name, h]) =>
+        `<li><code>${esc(name)}</code>${h.description ? ` — ${esc(h.description)}` : ""}</li>`
+      ).join("");
       return `<dt><code class="s s${status[0]}">${esc(status)}</code> ${
         esc(res.description ?? "")
       }</dt>` +
-        `<dd>${schema ? renderSchema(schema, 0) : "<em>no body</em>"}</dd>`;
+        `<dd>${schema ? renderSchema(schema, 0) : "<em>no body</em>"}${
+          headers ? `<ul class="obj">${headers}</ul>` : ""
+        }</dd>`;
     }).join("")
   }</dl>`;
 }
