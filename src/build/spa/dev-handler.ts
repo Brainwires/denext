@@ -3,7 +3,8 @@
 
 import { devPlatformOf, pinDevPlatform } from "../platform-extensions.ts";
 import { devLogResponse, devOriginAllowed, devStateResponse } from "../dev-server/dev-endpoints.ts";
-import { DEV_LOG_PATH, DEV_STATE_PATH } from "../dev-server/state.ts";
+import { DEV_INSPECT_PATH, DEV_LOG_PATH, DEV_STATE_PATH } from "../dev-server/state.ts";
+import { devInspectRead, devInspectSink } from "../dev-server/devtools-endpoints.ts";
 import { reactNativeRootStyle } from "../../server/config.ts";
 import {
   fontFaceStyle,
@@ -171,6 +172,17 @@ export function createSpaDevHandler(st: SpaDevState): (request: Request) => Prom
   return async (request) => pinDevPlatform(request, await handle(request));
 }
 
+/** `/_denext/dev-inspect`: the sink's POST, the MCP bridge's GET, nothing else. */
+async function devInspectResponse(
+  st: SpaDevState,
+  request: Request,
+  url: URL,
+): Promise<Response> {
+  if (request.method === "POST") return await devInspectSink(st, request);
+  if (request.method === "GET") return await devInspectRead(st, url, request);
+  return new Response("method not allowed", { status: 405, headers: { allow: "GET, POST" } });
+}
+
 /** Whether `pathname` is a dev endpoint or a client asset (behind the dev origin gate). */
 function gatedPath(pathname: string, prefix: string): boolean {
   return pathname.startsWith("/_denext/") || pathname.startsWith(prefix);
@@ -203,6 +215,9 @@ function spaRequestHandler(st: SpaDevState): (request: Request) => Promise<Respo
     if (url.pathname === DEV_STATE_PATH && url.searchParams.get("kind") !== "request") {
       return devStateResponse(st, url);
     }
+    // The DevTools → MCP bridge, as on the App Router dev server: the page's inspect sink posts
+    // its component tree, `denext_component_tree` & co. read it (and pull a fresh one).
+    if (url.pathname === DEV_INSPECT_PATH) return await devInspectResponse(st, request, url);
     const unbundled = await serveUnbundled(st, request, url);
     if (unbundled) return unbundled;
     return await serveFile(st, request, url, prefix);

@@ -26,6 +26,7 @@ import { getCacheStats } from "../../server/cache.ts";
 import { routeMapData } from "../../mcp/inspect.ts";
 import { getManifest } from "./manifest.ts";
 import {
+  type DevInspectState,
   type DevState,
   INSPECT_TTL_MS,
   type InspectSnapshotEntry,
@@ -129,7 +130,7 @@ function mediaType(header: string | null): string {
 }
 
 /** Store `snapshot` as its URL's latest, evicting the oldest URL past the LRU's size. */
-function storeSnapshot(st: DevState, snapshot: InspectSnapshot): void {
+function storeSnapshot(st: DevInspectState, snapshot: InspectSnapshot): void {
   st.devInspect.delete(snapshot.url); // re-insert so Map order stays write-recency order
   st.devInspect.set(snapshot.url, { snapshot, receivedAt: Date.now() });
   while (st.devInspect.size > MAX_INSPECT_URLS) {
@@ -148,11 +149,11 @@ function storeSnapshot(st: DevState, snapshot: InspectSnapshot): void {
  * never be taught to log server errors by posting junk. What IS stored is rebuilt field by
  * field by {@link parseSnapshot}, never the posted object.
  *
- * @param st The dev-server state (its {@link DevState.devInspect} LRU is written).
+ * @param st The dev-server state (its {@link DevInspectState.devInspect} LRU is written).
  * @param request The POST request.
  * @returns 204 on accept-or-drop, 415/413 when the request itself is refused.
  */
-export async function devInspectSink(st: DevState, request: Request): Promise<Response> {
+export async function devInspectSink(st: DevInspectState, request: Request): Promise<Response> {
   if (mediaType(request.headers.get("content-type")) !== "application/json") {
     return new Response("expected application/json", { status: 415, headers: NO_STORE });
   }
@@ -173,14 +174,14 @@ export async function devInspectSink(st: DevState, request: Request): Promise<Re
 }
 
 /** Drop every snapshot older than the TTL — a dev page's state is not kept forever. */
-function evictStale(st: DevState, now: number): void {
+function evictStale(st: DevInspectState, now: number): void {
   for (const [url, entry] of [...st.devInspect]) {
     if (now - entry.receivedAt > INSPECT_TTL_MS) st.devInspect.delete(url);
   }
 }
 
 /** The stored entry for `want` (exact URL, else the newest with that path), or the newest. */
-function pickEntry(st: DevState, want: string | null): InspectSnapshotEntry | undefined {
+function pickEntry(st: DevInspectState, want: string | null): InspectSnapshotEntry | undefined {
   evictStale(st, Date.now());
   if (want === null) {
     let newest: InspectSnapshotEntry | undefined;
@@ -243,7 +244,7 @@ const PULL_WAIT_MS = 3000;
  * @param waitMs How long to wait for a page to answer.
  */
 async function pullSnapshot(
-  st: DevState,
+  st: DevInspectState,
   scope: string | null,
   waitMs = PULL_WAIT_MS,
 ): Promise<void> {
@@ -290,7 +291,7 @@ async function pullSnapshot(
  *   (with `pages`: how many pages are connected to the reload stream).
  */
 export async function devInspectRead(
-  st: DevState,
+  st: DevInspectState,
   url: URL,
   request?: Request,
 ): Promise<Response> {

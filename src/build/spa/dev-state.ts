@@ -25,6 +25,7 @@ import { createUnbundledDev, type UnbundledDev } from "../dev-unbundled.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { DevEventLog } from "../dev-events.ts";
+import { createDevInspectState, type DevInspectState } from "../dev-server/state.ts";
 import { type SseClients, sseSend } from "../sse.ts";
 import { spaTailwind } from "../react-native-uniwind.ts";
 import { bundleSpaInto, spaCssGraph, spaCssRoots, spaDefines, usesExpoRouter } from "./bundle.ts";
@@ -75,7 +76,7 @@ export interface SpaTargetBuild {
 }
 
 /** Everything the SPA dev server's stages share. */
-export interface SpaDevState {
+export interface SpaDevState extends DevInspectState {
   readonly options: SpaDevServerOptions;
   readonly paths: ProjectPaths;
   readonly spa: SpaConfig;
@@ -135,6 +136,8 @@ export function createSpaDevState(options: SpaDevServerOptions): SpaDevState {
     builds: new Map(),
     reloadClients: new Set(),
     devEvents: new DevEventLog(),
+    // The DevTools → MCP bridge (`/_denext/dev-inspect`), as on the App Router dev server.
+    ...createDevInspectState(),
     unbundledOptIn: unbundledOptIn(options),
     unbundled: null,
     unbundledReady: null,

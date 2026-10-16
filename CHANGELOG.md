@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Added
 
+- **The MCP DevTools tools work on SPA apps.** The SPA dev server now serves
+  `/_denext/dev-inspect` (the page's DevTools sink posts its tree, `denext_component_tree`,
+  `denext_why_render` and `denext_hook_state` read it) and answers the on-demand pull over its
+  reload stream, behind the same Host / Origin gate as the App Router dev server.
 - **Agent control of `denext ui`: a `denext_ui_*` MCP tool per panel.** `denext mcp` adds
   `denext_ui_overview` and one tool per panel (`setup`, `config`, `plugins`, `generate`,
   `docker`, `desktop`, `dev`, `tasks`, `services`, `database`, `commands`), each calling the

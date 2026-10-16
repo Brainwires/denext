@@ -554,6 +554,8 @@ tree younger than a second, the dev server sends every page connected to its rel
 tool, which waits up to 3 s for it, answers with that tree. So the first call on a fresh session
 has a tree too, as long as a page is open. With no page connected the tool answers at once.
 `DENEXT_DEV_INSPECT=1` still arms the pages from the start, so they post on every commit.
+The App Router and SPA dev servers both serve the bridge (`/_denext/dev-inspect`), behind the
+same Host / Origin gate as every other `/_denext/*` endpoint.
 
 What gets pushed is deliberately bounded and inert:
 

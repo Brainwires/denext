@@ -147,8 +147,48 @@ export interface InspectSnapshotEntry {
   receivedAt: number;
 }
 
+/**
+ * The DevTools → MCP bridge's state, kept by both dev servers (App Router and SPA): what the
+ * `DEV_INSPECT_PATH` endpoints read and write (./devtools-endpoints.ts).
+ */
+export interface DevInspectState {
+  /** Live-reload subscribers (the pull asks the open pages for a tree through them). */
+  readonly reloadClients: Set<ReadableStreamDefaultController<Uint8Array>>;
+  /**
+   * DevTools inspector snapshots the page pushed (`DEV_INSPECT_PATH`), keyed by page URL,
+   * one latest each. Insertion order is write recency, so the Map doubles as the LRU the
+   * MCP bridge reads: the oldest key is evicted past {@link MAX_INSPECT_URLS}.
+   */
+  readonly devInspect: Map<string, InspectSnapshotEntry>;
+  /**
+   * Whether any reader has asked for a snapshot (an MCP `denext_component_tree` /
+   * `denext_why_render` / `denext_hook_state`, or any other GET of `DEV_INSPECT_PATH`).
+   *
+   * Pages ask for this with a cheap `?probe=1` GET and walk their fiber tree ONLY once it
+   * is true — a whole-tree walk on every commit costs real time, and on most dev pages
+   * nobody is reading. Sticky for the dev server's lifetime (a reader that asked once will
+   * ask again), and pre-armed by `DENEXT_DEV_INSPECT=1` for a session that wants the very
+   * first read to land.
+   */
+  devInspectArmed: boolean;
+  /**
+   * Readers waiting for the next snapshot a page posts: an MCP read with `?pull=1` asks the
+   * open pages for a fresh tree over the reload stream, then waits here (briefly) for it.
+   */
+  readonly devInspectWaiters: Set<() => void>;
+}
+
+/** A fresh {@linkcode DevInspectState} (armed from the start under `DENEXT_DEV_INSPECT=1`). */
+export function createDevInspectState(): Omit<DevInspectState, "reloadClients"> {
+  return {
+    devInspect: new Map(),
+    devInspectArmed: Deno.env.get("DENEXT_DEV_INSPECT") === "1",
+    devInspectWaiters: new Set(),
+  };
+}
+
 /** Everything the dev server's stages share. Mutable fields are per-generation caches. */
-export interface DevState {
+export interface DevState extends DevInspectState {
   readonly paths: ProjectPaths;
   readonly options: DevServerOptions;
   readonly allowedDevOrigins: string[];
@@ -292,29 +332,6 @@ export interface DevState {
    * DEV_LOG_PATH) land here and are read back via DEV_STATE_PATH (the MCP live tools).
    */
   readonly devEvents: DevEventLog;
-  /**
-   * DevTools inspector snapshots the page pushed (`DEV_INSPECT_PATH`), keyed by page URL,
-   * one latest each. Insertion order is write recency, so the Map doubles as the LRU the
-   * MCP bridge reads: the oldest key is evicted past {@link MAX_INSPECT_URLS}.
-   */
-  readonly devInspect: Map<string, InspectSnapshotEntry>;
-  /**
-   * Whether any reader has asked for a snapshot (an MCP `denext_component_tree` /
-   * `denext_why_render` / `denext_hook_state`, or any other GET of `DEV_INSPECT_PATH`).
-   *
-   * Pages ask for this with a cheap `?probe=1` GET and walk their fiber tree ONLY once it
-   * is true — a whole-tree walk on every commit costs real time, and on most dev pages
-   * nobody is reading. Sticky for the dev server's lifetime (a reader that asked once will
-   * ask again), and pre-armed by `DENEXT_DEV_INSPECT=1` for a session that wants the very
-   * first read to land.
-   */
-  devInspectArmed: boolean;
-  /**
-   * Readers waiting for the next snapshot a page posts: an MCP read with `?pull=1` asks the
-   * open pages for a fresh tree over the reload stream, then waits here (briefly) for it.
-   */
-  readonly devInspectWaiters: Set<() => void>;
-
   /** Monotonic token so a stale `deno check` run is dropped when a newer edit lands. */
   typeCheckToken: number;
 
@@ -376,9 +393,7 @@ export function createDevState(options: DevServerOptions): DevState {
     instrumentation: {},
     reloadClients: new Set(),
     devEvents: new DevEventLog(),
-    devInspect: new Map(),
-    devInspectArmed: Deno.env.get("DENEXT_DEV_INSPECT") === "1",
-    devInspectWaiters: new Set(),
+    ...createDevInspectState(),
     typeCheckToken: 0,
     load: () => Promise.reject(new Error("denext: dev loader used before startDevServer wired it")),
     tagLoad: () =>
