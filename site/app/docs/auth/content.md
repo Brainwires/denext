@@ -1798,6 +1798,14 @@ even behind a proxy that omits `x-forwarded-proto`, and on any `SameSite=None` c
 `responseMode: "form_post"` provider's transaction cookie is always `SameSite=None`, whatever
 `cookies.transaction.sameSite` says — its callback is a cross-site POST.
 
+The prefix follows the transport. A browser refuses a `__Host-` cookie over plain http, even on
+`localhost`, so a request over http (no `https:` `canonicalOrigin`, and neither the URL nor
+`x-forwarded-proto` says https) gets plain names (`denext_auth`, `denext_auth_tx`) on a loopback
+host (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`) and, outside production, on any host —
+which is what lets `denext dev` on `http://localhost` hold a session. Production over http on
+another host keeps `__Host-`, which the browser refuses: a session never travels in clear text
+there. Over https, and whenever `canonicalOrigin` is `https:`, the names are always `__Host-`.
+
 > [!WARNING]
 > Changing a cookie name — or turning `hostPrefix` off — renames the cookie, which logs
 > every existing session of that kind out **once**, on the deploy.
@@ -2160,8 +2168,9 @@ denext keeps its own defaults where they are stricter, and nothing is relaxed fo
 - **Redirects.** A `callbackUrl` / `redirectTo` goes through the `redirect` callback, then is kept
   to a same-origin path. A callback that returns another origin lands on `/`.
 - **Cookies.** The session is `__Host-denext_auth` (`Secure`, `httpOnly`, `SameSite=Lax`), with
-  no `cookies` override. Over plain http (an `http://` `AUTH_URL`, or `denext dev` without one) the
-  names drop the `__Host-` prefix, which a browser refuses there, as Auth.js drops `__Secure-`. A session also ends 30 days after sign-in at the latest
+  no `cookies` override. Over plain http on a loopback host, or outside production, the names
+  drop the `__Host-` prefix, which a browser refuses there (as `denextAuth`'s do; see
+  [Base path and cookies](#base-path-and-cookies)), much as Auth.js drops `__Secure-`. A session also ends 30 days after sign-in at the latest
   (`session.maxLifetime`), however often it slides.
 - **Email links** open a confirmation page by default; `Resend({ confirm: false })` signs in on
   the GET, as Auth.js does.

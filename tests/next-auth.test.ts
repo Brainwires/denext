@@ -166,14 +166,6 @@ Deno.test("next-auth config: Auth.js env defaults, AUTH_URL, strategy", () => {
   assertEquals(ms.authorizationParams?.prompt, "login");
   assert(ms.authorizationUrl.includes("5f1c6e7a-0000-4000-8000-000000000001"));
   assertEquals(active.denext.pages?.signIn, "/custom/auth/signin");
-  assertEquals(active.hostPrefix, true, "an https AUTH_URL keeps the __Host- cookies");
-  assertEquals(active.denext.cookies, undefined);
-  const plain = translateConfig(
-    { providers: [GitHub] },
-    (name) => name === "AUTH_URL" ? "http://localhost:3000" : env[name],
-  );
-  assertEquals(plain.hostPrefix, false, "plain http: unprefixed, or the browser drops them");
-  assertEquals(plain.denext.cookies?.session?.hostPrefix, false);
 });
 
 Deno.test("next-auth providers: every preset, the email providers and custom objects", () => {
@@ -335,10 +327,7 @@ Deno.test("next-auth: credentials sign-in, the Auth.js session shape, jwt + sess
   const res = await signInWithPassword(a);
   assertEquals(res.status, 302);
   assertEquals(res.headers.get("location"), "/home");
-  assert(
-    a.jar.cookies.has("denext_auth"),
-    "unprefixed without an https AUTH_URL, as Auth.js on http",
-  );
+  assert(a.jar.cookies.has("__Host-denext_auth"), "https: denext's __Host- session cookie");
   const session = await (await a.call("/api/auth/session")).json();
   assertEquals(session.user, { id: "u1", name: "Ada", email: "ada@example.com" });
   assertEquals(session.role, "admin");
@@ -507,7 +496,7 @@ Deno.test("next-auth: a jwt callback returning null signs the session out", asyn
   assertNotEquals(await (await a.call("/api/auth/session")).json(), null);
   allow = false;
   assertEquals(await (await a.call("/api/auth/session")).json(), null);
-  assert(!a.jar.cookies.has("denext_auth"), "the cookie was cleared");
+  assert(!a.jar.cookies.has("__Host-denext_auth"), "the cookie was cleared");
 });
 
 Deno.test("next-auth: providers, csrf and the built-in pages", async () => {
@@ -554,7 +543,7 @@ Deno.test("next-auth: an OAuth sign-in starts with state + PKCE through the POST
   assertEquals(to.searchParams.get("code_challenge_method"), "S256");
   assert(to.searchParams.get("state"));
   assertEquals(to.searchParams.get("redirect_uri"), `${ORIGIN}/api/auth/callback/github`);
-  assert(a.jar.cookies.has("denext_auth_tx"), "the transaction cookie");
+  assert(a.jar.cookies.has("__Host-denext_auth_tx"), "the transaction cookie");
 });
 
 Deno.test("next-auth: server-side signIn / signOut from a Server Action", async () => {

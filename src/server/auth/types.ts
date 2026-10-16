@@ -703,7 +703,9 @@ export interface AuthCookieConfig {
   /**
    * Origin-lock the cookie with the `__Host-` name prefix (Secure + `Path=/` + no
    * `Domain`). **On by default**, and leaving it on is strongly recommended: it is what
-   * stops a sibling subdomain reading or shadowing the cookie.
+   * stops a sibling subdomain reading or shadowing the cookie. Over plain http on a loopback
+   * host, or outside production, the prefix is left off for that request (a browser refuses
+   * `__Host-` over http, even on `localhost`).
    */
   hostPrefix?: boolean;
   /** Cookie `SameSite` (default `"Lax"` — the OAuth callback is a top-level GET). */

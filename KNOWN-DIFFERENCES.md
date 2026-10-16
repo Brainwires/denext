@@ -340,11 +340,10 @@ place it behaves differently from Auth.js:
 - **`AUTH_URL` is required in production.** denext never derives the OAuth `redirect_uri` or its
   origin checks from the `Host` header, so `trustHost` / `AUTH_TRUST_HOST` don't stand in for
   it. Without `AUTH_URL` (or `NEXTAUTH_URL`) `NextAuth()` throws when serving in production.
-- **Over plain http the cookies lose their `__Host-` prefix.** A browser refuses a `__Host-`
-  cookie over http, even on `localhost`, so with an `http://` `AUTH_URL` — or no `AUTH_URL`
-  outside production (`denext dev`) — the session, OAuth-transaction and CSRF cookies are named
-  without it, as Auth.js drops its `__Secure-` prefix on http. An `https://` `AUTH_URL`, and
-  production, keep `__Host-`.
+- **Over plain http the cookies lose their `__Host-` prefix** on a loopback host, and on any host
+  outside production, as `denextAuth`'s do (a browser refuses a `__Host-` cookie over http, even
+  on `localhost`). Auth.js drops its `__Secure-` prefix on any http origin; denext keeps
+  `__Host-` (so no session) for production http on another host, and over https.
 - **`AUTH_SECRET` must be at least 32 characters in production** (`npx auth secret` makes 44).
 - **Redirects stay on the origin.** The `redirect` callback runs, but whatever it returns is
   kept to a same-origin path: a callback that allows another origin lands on `/` instead.
@@ -380,6 +379,11 @@ place it behaves differently from Auth.js:
 Deliberate **safe defaults** that differ from Next's, each with a one-line
 opt-in — documented, not surprises. Full checklist in [the deployment guide](https://denext.dev/docs/deploy).
 
+- **`denextAuth`'s cookies follow the transport.** They are `__Host-` (with `Secure`) over https.
+  Over plain http, where a browser refuses `__Host-` even on `localhost`, they are plain
+  (`denext_auth`, `denext_auth_tx`) on a loopback host and, outside production, on any host — so
+  `denext dev` on `http://localhost` holds a session. Production over http on another host keeps
+  `__Host-` and so gets no session: a session cookie never travels in clear text there.
 - **Strict CSP by default** blocks external `<script>`/stylesheet/`<img>` until
   opted in per route (`csp: "strict" | "off" | {…}`; a route's `csp` export
   overrides). Applies to buffered **and** streamed/PPR responses.

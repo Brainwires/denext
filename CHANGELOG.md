@@ -183,10 +183,14 @@ and this project adheres to
   `next-auth/react` (the app's and a `node_modules` library's) bundles from the prebuilt runtime,
   and `next-auth`, `next-auth/jwt` and the providers stay external to the shim, so an installed
   `next-auth` package is never loaded.
-- **`next-auth` signs in over plain http.** Its session, OAuth-transaction and CSRF cookies are
-  `__Host-` prefixed, which a browser refuses over http (even on `localhost`), so `denext dev`
-  could not hold a session. With an `http://` `AUTH_URL`, or none outside production, the names
-  are now unprefixed, as Auth.js drops `__Secure-` on http; https and production keep `__Host-`.
+- **`denextAuth` (and `next-auth` on it) signs in over plain http under `denext dev`.** Its
+  session and OAuth-transaction cookies (and the shim's CSRF cookie) were always `__Host-`, which a
+  browser refuses over http, even on `localhost`: a sign-in succeeded and the next request was
+  signed out. The prefix now follows the transport — `__Host-` with `Secure` over https (the URL,
+  `x-forwarded-proto` or an `https:` `canonicalOrigin`), plain names over http on a loopback host
+  and, outside production, on any host. Production over http on another host keeps `__Host-`, so
+  no session cookie travels in clear text. A Chromium e2e signs in under `denext dev` on
+  `http://localhost` and `http://127.0.0.1`.
 - **A `next-auth` provider's `profile()` override decides the account id and email**, as in
   Auth.js (it used to set only the name and image). The provider's own "verified" verdict carries
   over only to the address the provider itself returned.

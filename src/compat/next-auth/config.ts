@@ -20,7 +20,6 @@
  * @module
  */
 
-import { isProductionEnv } from "../../server/session.ts";
 import { fromAuthJsAdapter } from "./adapter.ts";
 import { decode } from "./jwt.ts";
 import {
@@ -229,13 +228,6 @@ export function translateConfig(config: NextAuthConfig, env: EnvReader = readEnv
     pages: pages(config, basePath),
   };
   if (url.origin) denext.canonicalOrigin = url.origin;
-  // `__Host-` cookies need https: a browser drops them over plain http, even on `localhost`.
-  // Like Auth.js (prefixed cookies only on https), an `http://` AUTH_URL — or, outside
-  // production, none — keeps the names unprefixed; production on https keeps `__Host-`.
-  const hostPrefix = url.origin ? url.origin.startsWith("https:") : isProductionEnv();
-  if (!hostPrefix) {
-    denext.cookies = { session: { hostPrefix: false }, transaction: { hostPrefix: false } };
-  }
   const adapter = bridgedAdapter(config, descriptors, warn);
   if (adapter) denext.adapter = adapter;
   const send = emailSender(built, warn);
@@ -249,7 +241,6 @@ export function translateConfig(config: NextAuthConfig, env: EnvReader = readEnv
     secret,
     maxAge,
     providers: descriptors,
-    hostPrefix,
   };
   return ref.current;
 }

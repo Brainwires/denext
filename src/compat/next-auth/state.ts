@@ -29,8 +29,6 @@ export interface ActiveNextAuth {
   maxAge: number;
   /** The providers, as `next-auth/providers/*` described them. */
   providers: ProviderDescriptor[];
-  /** Whether the cookies carry the `__Host-` prefix (https), as Auth.js decides `__Secure-`. */
-  hostPrefix: boolean;
 }
 
 let active: ActiveNextAuth | null = null;
