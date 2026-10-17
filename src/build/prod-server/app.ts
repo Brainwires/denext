@@ -8,6 +8,7 @@ import type { RouteManifest } from "../../router/manifest.ts";
 import { type AppConfig, createApp } from "../../server/app.ts";
 import {
   cacheStoreKind,
+  installCacheLifeProfiles,
   PageCache,
   resolveDefaultCacheStore,
   sweepOtherBuildPages,
@@ -15,6 +16,7 @@ import {
 import {
   configuredDesktopAppOrigin,
   resolveCacheComponents,
+  resolveCacheLifeProfiles,
   resolveConfigRules,
   type ResolvedRules,
   resolveLive,
@@ -203,6 +205,7 @@ async function bootProdServices(
     onServiceError: instrumentation.onServiceError,
   });
   const rules = await resolveConfigRules(paths.config);
+  installCacheLifeProfiles(resolveCacheLifeProfiles(paths.config));
   await resolveDefaultCacheStore(
     paths.config?.cache?.path
       ? paths.config.cache

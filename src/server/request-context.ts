@@ -13,7 +13,7 @@ import { deleteCookie, getCookies, getSetCookies, setCookie } from "@std/http/co
 import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 import type { SegmentConfig } from "./segment-config.ts";
 import type { CorsPolicy } from "./cors.ts";
-import { currentCacheScope } from "./cache-scope.ts";
+import { type CacheScopeKind, currentCacheScope, currentCacheScopeKind } from "./cache-scope.ts";
 import {
   clientAddrOf,
   copyRemoteAddr,
@@ -27,16 +27,34 @@ import {
  * Reading request-specific data (`cookies()`/`headers()`/`connection()`) inside a
  * `"use cache"` function is unsafe: the cached result would be keyed only on the
  * function's args and then served to other requests — a cross-request data leak.
- * Next.js errors on this; so do we (loud, not silent).
+ * Next.js errors on this; so do we (loud, not silent). A `"use cache: private"` function
+ * may read `cookies()` and `headers()` (its result is never shared across requests), but
+ * not `connection()`. The messages are Next.js's, per scope kind.
  */
 function assertNotInCacheScope(api: string): void {
-  if (currentCacheScope()) {
-    throw new Error(
-      `\`${api}()\` cannot be read inside a "use cache" function: its value is ` +
-        `request-specific and would be cached and served to other requests. Read ` +
-        `it outside the cached function and pass the result in as an argument.`,
-    );
+  const kind = currentCacheScopeKind();
+  if (kind === undefined) return;
+  if (kind === "private" && api !== "connection") return;
+  throw new Error(cacheScopeReadMessage(api, kind));
+}
+
+/** Next.js's message for reading `api` inside a cache scope of `kind`. */
+function cacheScopeReadMessage(api: string, kind: CacheScopeKind): string {
+  if (api === "connection") {
+    if (kind === "private") {
+      return '`connection()` can\'t be called inside `"use cache: private"` because private ' +
+        "cached functions may run during prefetching, without a navigation request. Call it " +
+        "outside the cached function.";
+    }
+    const where = kind === "unstable" ? "`unstable_cache()`" : '`"use cache"`';
+    return `\`connection()\` can't be called inside ${where} because cached functions may run ` +
+      "during prerendering, without an incoming request. Call it outside the cached function.";
   }
+  const where = kind === "unstable" ? "`unstable_cache()`" : '`"use cache"`';
+  return `\`${api}()\` can't be read inside ${where}: its value is request-specific and would ` +
+    `be cached and served to other requests. Read it outside the cached function and pass ` +
+    `what you need as an argument (or use \`"use cache: private"\`, which may read ` +
+    `\`cookies()\` and \`headers()\`).`;
 }
 
 /**
@@ -1163,6 +1181,13 @@ export function draftMode(): AwaitableDraftMode {
  * write is ignored. Returns whether the write may proceed.
  */
 function cookieWriteAllowed(ctx: RequestContext, op: "set" | "delete", name: string): boolean {
+  if (currentCacheScopeKind() === "private") {
+    throw new Error(
+      `cookies().${op}("${name}") can't be called inside \`"use cache: private"\`: a cached ` +
+        `function reads the request, it doesn't change the response. Set the cookie in a ` +
+        `Server Action or a Route Handler.`,
+    );
+  }
   if (!ctx.headersCommitted) return true;
   const message = `cookies().${op}("${name}"): cookies can only be modified before the ` +
     `response starts — in a Server Action, a Route Handler, middleware, or a component ` +

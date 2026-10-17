@@ -131,6 +131,37 @@ Deno.test("next.config is honored even when a plugin wrapper crashes AFTER expor
   }
 });
 
+Deno.test("next.config cacheLife (top-level or Next 15's experimental) carries, Infinity kept", async () => {
+  for (
+    const [label, key] of [["top-level", "cacheLife"], ["experimental", "experimental"]] as const
+  ) {
+    const dir = await tmp(`mig_cachelife_${label}`);
+    try {
+      await Deno.writeTextFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { react: "19.0.0" } }),
+      );
+      await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
+      await Deno.mkdir(join(dir, "app"), { recursive: true });
+      const profiles = `{ biweekly: { stale: 300, revalidate: 1209600, expire: Infinity } }`;
+      await Deno.writeTextFile(
+        join(dir, "next.config.mjs"),
+        key === "cacheLife"
+          ? `export default { cacheComponents: true, cacheLife: ${profiles} };\n`
+          : `export default { experimental: { cacheLife: ${profiles} } };\n`,
+      );
+      await migrateProject(dir);
+      const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
+      assertStringIncludes(
+        cfg,
+        `cacheLife: {"biweekly":{"stale":300,"revalidate":1209600,"expire":Infinity}}`,
+      );
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  }
+});
+
 Deno.test("migrate is idempotent — a second run produces byte-identical generated files", async () => {
   const dir = await tmp("mig_idem");
   try {

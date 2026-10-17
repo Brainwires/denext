@@ -1,7 +1,8 @@
 // The request-serving parts of denext.config: routing, images, security headers (CSP, HSTS,
 // CORS, app links), the production-server knobs, the API batch, caches and job history.
 
-import { type DenextConfig, isHeaderName, isOrigin } from "../config.ts";
+import { type DenextConfig, isHeaderName, isOrigin, resolveCacheLifeProfiles } from "../config.ts";
+import { validateCacheLifeProfile } from "../cache-scope.ts";
 import { resolveCors } from "../cors.ts";
 import { ROUTE_CSP_KEYS } from "../segment-config.ts";
 import { validateAppLinks } from "../app-links.ts";
@@ -274,9 +275,25 @@ export function validateCacheAndEnv(config: DenextConfig, fail: Fail): void {
   if (config.cache?.maxPageEntries !== undefined) {
     num(fail, "cache.maxPageEntries", config.cache.maxPageEntries, { int: true, min: 1 });
   }
+  validateCacheLifeConfig(resolveCacheLifeProfiles(config), fail);
   if (config.publicEnv !== undefined) {
     if (!Array.isArray(config.publicEnv) || config.publicEnv.some((k) => typeof k !== "string")) {
       fail("publicEnv", "must be an array of env-variable-name strings");
+    }
+  }
+}
+
+/** `cacheLife`: an object of named profiles, each valid as Next.js checks one. */
+function validateCacheLifeConfig(profiles: unknown, fail: Fail): void {
+  if (profiles === undefined) return;
+  if (typeof profiles !== "object" || profiles === null || Array.isArray(profiles)) {
+    return fail("cacheLife", "must be an object of named { stale, revalidate, expire } profiles");
+  }
+  for (const [name, profile] of Object.entries(profiles)) {
+    try {
+      validateCacheLifeProfile(profile, { config: name });
+    } catch (err) {
+      fail(`cacheLife.${name}`, (err as Error).message);
     }
   }
 }

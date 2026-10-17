@@ -958,12 +958,20 @@ const NEXT_DROP_GUIDANCE: Record<string, string> = {
   compiler: "", // SWC/Babel compiler options don't apply to Deno's toolchain.
   swcMinify: "", // minification is handled by the denext build, always on for prod.
   experimental:
-    "Next experimental flags have no denext equivalent — except `ppr`/`useCache`/`dynamicIO`, which map to top-level `cacheComponents: true`, and `optimizePackageImports`, which is top-level `optimizePackageImports` (lucide-react, date-fns, … are optimized by default).",
+    "Next experimental flags have no denext equivalent — except `ppr`/`useCache`/`dynamicIO`, which map to top-level `cacheComponents: true`, `cacheLife`, which is carried to top-level `cacheLife`, and `optimizePackageImports`, which is top-level `optimizePackageImports` (lucide-react, date-fns, … are optimized by default).",
   poweredByHeader: "", // denext never emits an X-Powered-By header.
   productionBrowserSourceMaps: "", // source-map emission is governed by the denext build.
 };
 /** The set of drop keys (derived from {@link NEXT_DROP_GUIDANCE}). */
 const NEXT_DROP_KEYS = new Set(Object.keys(NEXT_DROP_GUIDANCE));
+
+/** How `Infinity` (a `cacheLife` field) crosses the evaluator's JSON line. */
+const INFINITY_MARKER = "__denext_infinity__";
+
+/** A next.config literal as config source: JSON, with the `Infinity` marker restored. */
+function configLiteral(value: unknown): string {
+  return JSON.stringify(value).replaceAll(JSON.stringify(INFINITY_MARKER), "Infinity");
+}
 
 /** The line prefix {@link NEXT_EVAL_PROGRAM} prints its JSON result behind. */
 const NEXT_EVAL_MARKER = "__DENEXT_NEXT_CONFIG__";
@@ -985,6 +993,14 @@ ${LOAD_NEXT_CONFIG}
 const out = { fields: {}, rules: {}, dropped: [] };
 if (cfg && typeof cfg === "object") {
   for (const k of PASS) if (cfg[k] !== undefined) out.fields[k] = cfg[k];
+  // cacheLife profiles (top-level since Next 16, experimental in 15): Infinity has no JSON
+  // spelling, so it crosses as a marker the config writer turns back into \`Infinity\`.
+  const life = cfg.cacheLife ?? cfg.experimental?.cacheLife;
+  if (life && typeof life === "object") {
+    out.fields.cacheLife = JSON.parse(
+      JSON.stringify(life, (_k, v) => v === Infinity ? ${JSON.stringify(INFINITY_MARKER)} : v),
+    );
+  }
   for (const fn of RULES) {
     if (typeof cfg[fn] === "function") {
       try { out.rules[fn] = await cfg[fn](); } catch { /* skip a rule fn that throws */ }
@@ -2409,7 +2425,7 @@ function nextConfigTranslationLines(next: NextConfigTranslation, bodyLines: stri
   }
   const notes: string[] = [];
   for (const [k, v] of Object.entries(next.fields)) {
-    bodyLines.push(`  ${propertyKey(k)}: ${JSON.stringify(v)},`);
+    bodyLines.push(`  ${propertyKey(k)}: ${configLiteral(v)},`);
   }
   const ruleEntries = Object.entries(next.rules);
   if (ruleEntries.length) {

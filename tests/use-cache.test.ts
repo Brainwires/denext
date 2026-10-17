@@ -152,16 +152,20 @@ Deno.test("B2: cacheLife controls the entry's staleness window", async () => {
   setCacheStore(store);
   let n = 0;
   const f = __useCache("m#life", () => {
-    cacheLife("max"); // revalidate 30d, expire Infinity
+    cacheLife("max"); // revalidate 30d, expire 1 year (Next.js 16)
     return Promise.resolve(++n);
   });
   const ctx = createRequestContext(new Request("http://x/"));
   await runWithContext(ctx, async () => {
+    const before = Date.now();
     assertEquals(await f(), 1);
-    // Stored entry should carry a far-future staleAt (not stale now) and no hard expiry.
+    // Stored entry should carry a far-future staleAt (not stale now) and a one-year expiry.
     const entry = await store.getData(JSON.stringify(["m#life", []]));
     assert(entry, "entry stored");
-    assertEquals(entry!.expiresAt, Infinity, "max profile never hard-expires");
+    assert(
+      entry!.expiresAt >= before + 31536000_000 && entry!.expiresAt <= Date.now() + 31536000_000,
+      "max profile expires after a year",
+    );
     assert(entry!.staleAt != null && entry!.staleAt > Date.now(), "not yet stale");
     assertEquals(await f(), 1, "served from cache while fresh");
   });

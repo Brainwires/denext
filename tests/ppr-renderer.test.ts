@@ -121,7 +121,7 @@ Deno.test("C3: reading a dynamic API inside `use cache` throws (prevents cross-u
   await assertRejects(
     () => prerender(h("div", null, h(Cached, null)), "bob"),
     Error,
-    'cannot be read inside a "use cache"',
+    'can\'t be read inside `"use cache"`',
   );
 });
 

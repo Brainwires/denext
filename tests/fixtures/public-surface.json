@@ -5557,6 +5557,8 @@
     "cacheLife:function",
     "cacheTag:function",
     "io:function",
+    "navigation:function",
+    "prefetch:function",
     "refresh:function",
     "revalidatePath:function",
     "revalidateTag:function",
@@ -5566,7 +5568,9 @@
     "unstable_cacheTag:reference",
     "unstable_expirePath:reference",
     "unstable_expireTag:reference",
+    "unstable_navigation:function",
     "unstable_noStore:function",
+    "unstable_prefetch:function",
     "unstable_rethrow:function",
     "updateTag:function"
   ],

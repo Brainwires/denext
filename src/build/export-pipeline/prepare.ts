@@ -10,7 +10,8 @@ import {
 } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
 import { appUsesActivity, appUsesIsoIslands, appUsesViewTransition } from "../bundle.ts";
-import { resolveCacheComponents } from "../../server/config.ts";
+import { resolveCacheComponents, resolveCacheLifeProfiles } from "../../server/config.ts";
+import { installCacheLifeProfiles } from "../../server/cache.ts";
 import { defaultLoader } from "../../server/mod.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import type { ProjectPaths } from "../paths.ts";
@@ -137,6 +138,7 @@ async function exportLoader(
   redirects: Record<string, string>,
 ): Promise<ModuleLoader> {
   const useCache = resolveCacheComponents(paths.config);
+  installCacheLifeProfiles(resolveCacheLifeProfiles(paths.config));
   // A target other than `web` folds `platform` (denext/platform) in the copies it renders.
   if (!useCache && Object.keys(redirects).length === 0 && platform === "web") {
     return defaultLoader;

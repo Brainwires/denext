@@ -477,3 +477,36 @@ Deno.test("desktop.capabilities.passkeys: false or a required { rpIds: string[] 
     );
   }
 });
+
+Deno.test("cacheLife: named profiles validated as Next.js does; experimental.cacheLife too", () => {
+  validateDenextConfig({
+    cacheLife: { biweekly: { stale: 300, revalidate: 1209600, expire: Infinity } },
+  });
+  assertThrows(
+    () => validateDenextConfig({ cacheLife: { bad: { revalidate: 60, expire: 10 } } }),
+    Error,
+    "invalid denext.config: `cacheLife.bad` If providing both the revalidate and expire options",
+  );
+  assertThrows(
+    () => validateDenextConfig({ cacheLife: { bad: { stale: false as never } } }),
+    Error,
+    "Pass `Infinity` instead of `false`",
+  );
+  assertThrows(
+    () => validateDenextConfig({ cacheLife: [] as never }),
+    Error,
+    "`cacheLife` must be an object of named",
+  );
+  // Next 15's experimental spelling is validated the same way.
+  assertThrows(
+    () => validateDenextConfig({ experimental: { cacheLife: { x: { expire: NaN } } } }),
+    Error,
+    'Invalid "cacheLife.x.expire" provided',
+  );
+  const warns = captureWarn(() =>
+    warnUnknownConfigKeys({ experimental: { cacheLife: { x: { stale: 1 } } } })
+  );
+  assertEquals(warns, [
+    "denext: denext.config sets `experimental.cacheLife`, which is still honored for now but has moved — set top-level `cacheLife` instead.",
+  ]);
+});

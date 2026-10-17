@@ -51,6 +51,7 @@ export const CONFIG_KEYS = [
   "compress",
   "nodeResolve",
   "cacheComponents",
+  "cacheLife",
   "reactCompiler",
   "asyncContext",
   "features",
@@ -79,4 +80,5 @@ export const EXPERIMENTAL_KEYS = [
   "reactCompiler",
   "optimizePackageImports",
   "cacheComponents",
+  "cacheLife",
 ] as const;
