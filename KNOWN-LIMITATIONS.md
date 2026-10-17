@@ -222,8 +222,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Remix and React Router
 
-- **`getLoadContext` values read from the Express request are `TODO` stubs** after migration, and
-  `cspNonce` is `undefined` (denext's CSP is hash-based). The synthesized `ServerBuild` is flat.
+- **Some `getLoadContext` values stay `TODO(denext migrate)` notes after migration.** Request reads,
+  cookies, the client address, `req.session`, `req.user` and what an Express middleware set are
+  mapped, but a value built from a top-level declaration of the server file or a middleware's local
+  variable, a request field with no Fetch equivalent, and `req` / `res` passed on whole are left as
+  located notes. A session the old server's store held does not carry over, `cspNonce` is
+  `undefined` (denext's CSP is hash-based), and the synthesized `ServerBuild` is flat.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
 - **Prisma auto-migration wires SQLite, Postgres and MySQL only:** a `sqlserver`, `mongodb` or
   `cockroachdb` datasource keeps its `new PrismaClient()` unwired (SQL Server takes

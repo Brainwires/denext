@@ -406,15 +406,41 @@ single denext React.
   route, exactly as in Remix.
 - **The custom server's load context**: a `getLoadContext` becomes a root
   `load-context.ts` (`defineLoadContext`), so loaders keep reading their
-  `context`. `context.serverBuild` is denext's synthesized Remix `ServerBuild`
-  (`remixServerBuild()`), which is what `@nasa-gcn/remix-seo` reads to generate
-  a sitemap. A value the old server read off the Express request has no
-  equivalent and is left as a `TODO` stub to fill in.
+  `context`, re-derived for every request. `context.serverBuild` is denext's
+  synthesized Remix `ServerBuild` (`remixServerBuild()`), which is what
+  `@nasa-gcn/remix-seo` reads to generate a sitemap. What the old server read
+  off the Express request and response is mapped (§6.1); a value with no
+  equivalent is an `undefined` property under a `TODO(denext migrate)` note
+  that names the file and line it came from and why.
 - **Assets and Tailwind**: `import logo from "./logo.svg"` and a
   `styles.css?url` import are served under `/_denext/client/assets/`, and a
   Tailwind v3 stylesheet is compiled through the project's own `tailwindcss`.
   A Prisma app gets the Rust-free Deno client and has its SQL migrations
   applied by `denext task prisma:setup` (§8).
+
+### 6.1 What `getLoadContext` values become
+
+| In the Express server                                                                                          | In `load-context.ts`                                                                                                     |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `req.headers["x"]`, `req.get("x")`, `req.header("x")`                                                          | `request.headers.get("x") ?? undefined` (`host`: the request URL's host)                                                 |
+| `req.headers`                                                                                                  | `Object.fromEntries(request.headers)`                                                                                    |
+| `req.method`, `req.url` / `originalUrl`, `req.path`, `req.query`, `req.hostname`, `req.protocol`, `req.secure` | the same, read from `request` and its URL                                                                                |
+| `req.params`                                                                                                   | the route's `params`                                                                                                     |
+| `req.ip`                                                                                                       | `clientIp()` from `denext/server`                                                                                        |
+| `req.cookies`, `req.cookies.x`                                                                                 | `cookies()` from `denext/server`                                                                                         |
+| `req.session` (express-session, cookie-session)                                                                | the data of denext's signed-cookie session (`getSession`), signed with the secret the server gave the session middleware |
+| `req.user`, `req.isAuthenticated()`                                                                            | `(await auth())?.user`, `(await auth()) !== null` (with `denextAuth`)                                                    |
+| `res.locals.x`, `req.x` set by an `app.use` middleware                                                         | the middleware's own expression, recomputed per request                                                                  |
+| an import, `process.env.X`, a global                                                                           | carried as is (the import is re-based to the new file)                                                                   |
+| `res.locals.cspNonce` / `nonce`                                                                                | `undefined`: denext's CSP is hash-based                                                                                  |
+
+What stays a `TODO(denext migrate)` note: a value built from a top-level
+declaration of the server file (move it to a module both can import), from a
+middleware's local variable, a request field with no equivalent (`req.app`, a
+property only a library sets), `req` or `res` passed on whole, and a spread of
+`res.locals`. A session the old server's store held does not carry over: users
+sign in again, and writes go through `getSession({ secret }).set(…)` in an
+action.
 
 ---
 

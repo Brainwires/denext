@@ -18,6 +18,14 @@ and this project adheres to
   `db push`), refusing early when the URL is not set. A `sqlserver` or `mongodb` datasource is no
   longer handed the SQLite adapter: its constructions are left as they are, with a note.
   `tests/e2e/prisma-server-db.e2e.test.ts` runs a migrated app against live databases.
+- **`denext migrate --from remix` ports what `getLoadContext` read from Express.** Headers,
+  `req.get()`, the URL, query, params, cookies, `req.ip` (`clientIp()`), `req.session` (denext's
+  signed-cookie session, signed with the secret the server gave `express-session` /
+  `cookie-session`), `req.user` (`auth()`), and what an `app.use` middleware put on `res.locals` or
+  `req` (its own expression, recomputed per request) become working values in `load-context.ts`,
+  with the server's imports carried over. What has no equivalent is an `undefined` property under
+  a `TODO(denext migrate)` note naming its file, line and reason. A `getLoadContext(req, res)`
+  written as a method is read too (it was reported as unreadable).
 - **Deno Desktop runtime 2.9.7-denext.21, pinned** (the toolchain moves with it). What it brings to
   denext apps is below; [the runtime releases](https://denext.dev/docs/desktop-runtime#runtime-releases)
   list the rest.

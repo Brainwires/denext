@@ -65,6 +65,8 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/postgres-boot.test.ts",
   "tests/public-env.test.ts",
   "tests/react-native-uniwind-css.test.ts",
+  // Sets the variables a migrated load context reads (`process.env.*`) and runs it.
+  "tests/remix-load-context.test.ts",
   "tests/security-remediation.test.ts",
   "tests/server-misc-coverage.test.ts",
   "tests/spa-export.test.ts",
