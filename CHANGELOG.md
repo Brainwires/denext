@@ -26,6 +26,25 @@ and this project adheres to
   with the server's imports carried over. What has no equivalent is an `undefined` property under
   a `TODO(denext migrate)` note naming its file, line and reason. A `getLoadContext(req, res)`
   written as a method is read too (it was reported as unreadable).
+- **NextAuth.js v4 apps migrate with no code changes.** The `next-auth` shim now serves v4's
+  server API on the same instance as v5's: `NextAuth(authOptions)` is the route handler for the
+  App Router (`export { handler as GET, handler as POST }`) and a Pages API route (`export default
+  NextAuth(authOptions)`, or `NextAuth(req, res, authOptions)`), `getServerSession(authOptions)`
+  reads the session in Server Components and route handlers and `getServerSession(req, res,
+  authOptions)` in `getServerSideProps` and API routes (also from `next-auth/next`), and
+  `next-auth/middleware` gates `config.matcher` with its default export or `withAuth(middleware,
+  { callbacks: { authorized }, pages })` (`req.nextauth.token`). `next-auth/react` adds v4's
+  server-side `getSession({ req })` / `getSession(ctx)`, `getCsrfToken({ req })` and
+  `getProviders({ req })`, answered in-process; `signIn` with a provider the server doesn't list
+  opens the sign-in page; `authorize(credentials, req)` gets a `req` that also answers v4's
+  `req.headers[name]`, `req.query` and `req.body`; and `next-auth/adapters` exports the adapter
+  types. `denext migrate` aliases the v4 subpaths and reports the next-auth major, the v4 APIs and
+  the Auth.js adapters it found (`--check` lists what to review). The v4 endpoints keep every v5
+  rule: both CSRF checks, same-origin callback URLs and denext's cookie defaults.
+- **Auth.js adapters from the app's own dependencies, verified end to end.** `@auth/drizzle-adapter`
+  backs the shim's users, linked accounts, verification tokens and database sessions on SQLite
+  (`node:sqlite` through `drizzle-orm/sqlite-proxy`) and Postgres, and `@auth/prisma-adapter` on
+  the Prisma Deno client `denext migrate` wires.
 - **Deno Desktop runtime 2.9.7-denext.21, pinned** (the toolchain moves with it). What it brings to
   denext apps is below; [the runtime releases](https://denext.dev/docs/desktop-runtime#runtime-releases)
   list the rest.

@@ -80,6 +80,7 @@ import {
   type PrismaMigrateInfo,
   type PrismaWiring,
 } from "./prisma-migrate.ts";
+import { type NextAuthMigrateInfo, nextAuthMigrateInfo } from "./next-auth-migrate.ts";
 
 /** react/next specifiers aliased to their denext JSR subpath (matches denext's
  * deno.json exports); the subpath equals the specifier. React-family entries come
@@ -307,8 +308,9 @@ async function buildAppRouterImports(
 }
 
 /**
- * `next-auth` (Auth.js v5) and every `next-auth/*` subpath → denext's shim, mapped onto
- * `denextAuth`, when the app depends on `next-auth` — exact entries, plus the prefix when it is a
+ * `next-auth` (Auth.js v5 or NextAuth.js v4) and every `next-auth/*` subpath (v4's
+ * `next-auth/next`, `next-auth/middleware` and `next-auth/adapters` included) → denext's shim,
+ * mapped onto `denextAuth`, when the app depends on `next-auth` — exact entries, plus the prefix when it is a
  * URL (see the `next/*` ones above).
  */
 async function addNextAuthAliases(
@@ -455,6 +457,8 @@ export interface MigrateResult {
   remix?: RemixMigrateInfo;
   /** Present when the app uses Prisma — the Deno-client/adapter wiring report. */
   prisma?: PrismaMigrateInfo;
+  /** Present when the app depends on `next-auth` — its major, the v4 APIs and adapters found. */
+  nextAuth?: NextAuthMigrateInfo;
   /** Present when {@link kind} is `"expo"` — the React Native mode + Capacitor report. */
   expo?: ExpoMigrateInfo;
   /** Present when an App Router app has a `next.config.*` — what was carried over and what was not. */
@@ -1381,6 +1385,7 @@ async function migrateNextProject(
   // Prisma source transform (schema + `@prisma/client` imports + adapter injection + patch
   // package + setup script) runs after the config is written.
   const prisma = prismaWiring ? await prismaWiring.finalize() : undefined;
+  const nextAuth = await nextAuthMigrateInfo(dir, deps, pagesRouter);
   return {
     kind: "next",
     wrote: written,
@@ -1391,6 +1396,7 @@ async function migrateNextProject(
     pagesConfigExists,
     denoJsonExists,
     prisma,
+    ...(nextAuth ? { nextAuth } : {}),
     nextConfig: nextConfigReport(next),
     capacitor,
   };

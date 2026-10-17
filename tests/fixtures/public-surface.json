@@ -5250,6 +5250,7 @@
     "AuthError:class",
     "AuthFunction:interface",
     "AuthHandler:typeAlias",
+    "AuthOptions:typeAlias",
     "AuthorizationParamsInput:typeAlias",
     "AuthorizedCallbackParams:interface",
     "Awaitable:typeAlias",
@@ -5258,12 +5259,18 @@
     "CredentialsSignin:class",
     "DefaultSession:interface",
     "EventCallbacks:interface",
+    "GetServerSessionArgs:typeAlias",
     "JwtCallbackParams:interface",
     "LoggerInstance:interface",
     "NextAuthConfig:interface",
+    "NextAuthInstance:typeAlias",
+    "NextAuthOptions:typeAlias",
     "NextAuthRequest:typeAlias",
     "NextAuthResult:interface",
+    "NextAuthV4Handler:typeAlias",
     "NextRequest:class",
+    "NodeLikeRequest:interface",
+    "NodeLikeResponse:interface",
     "Profile:typeAlias",
     "Provider:typeAlias",
     "RouteHandler:typeAlias",
@@ -5275,11 +5282,15 @@
     "User:interface",
     "VerificationToken:interface",
     "customFetch:variable",
-    "default:function"
+    "default:function",
+    "getServerSession:function",
+    "unstable_getServerSession:reference"
   ],
   "denext/next-auth/react": [
     "ClientSafeProvider:interface",
+    "CtxOrReq:interface",
     "GetSessionParams:interface",
+    "ServerRequestLike:interface",
     "Session:interface",
     "SessionContext:variable",
     "SessionContextValue:typeAlias",
@@ -5305,6 +5316,36 @@
     "decode:function",
     "encode:function",
     "getToken:function"
+  ],
+  "denext/next-auth/next": [
+    "AuthOptions:typeAlias",
+    "GetServerSessionArgs:typeAlias",
+    "NextAuthInstance:typeAlias",
+    "NextAuthOptions:typeAlias",
+    "NextAuthV4Handler:typeAlias",
+    "NodeLikeRequest:interface",
+    "NodeLikeResponse:interface",
+    "default:function",
+    "getServerSession:function",
+    "unstable_getServerSession:reference"
+  ],
+  "denext/next-auth/middleware": [
+    "AuthorizedParams:interface",
+    "NextAuthMiddlewareOptions:interface",
+    "NextMiddlewareResult:typeAlias",
+    "NextMiddlewareWithAuth:typeAlias",
+    "NextRequestWithAuth:typeAlias",
+    "WithAuthMiddleware:typeAlias",
+    "default:function",
+    "withAuth:function"
+  ],
+  "denext/next-auth/adapters": [
+    "Adapter:interface",
+    "AdapterAccount:interface",
+    "AdapterSession:interface",
+    "AdapterUser:interface",
+    "AdapterUserExtension:interface",
+    "VerificationToken:interface"
   ],
   "denext/next-auth/providers": [
     "BuiltProvider:interface",
@@ -5336,6 +5377,7 @@
     "default:function"
   ],
   "denext/next-auth/providers/credentials": [
+    "AuthorizeRequest:typeAlias",
     "CredentialInput:interface",
     "CredentialsConfig:interface",
     "default:function"

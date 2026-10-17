@@ -254,6 +254,19 @@ function reportPrisma(p: NonNullable<MigrateResult["prisma"]>): void {
   );
 }
 
+/** The `next-auth` wiring: the major, the v4 APIs and adapters found, and what to check. */
+function reportNextAuth(n: NonNullable<MigrateResult["nextAuth"]>): void {
+  const label = n.version === "v4" ? "NextAuth.js v4" : "Auth.js v5";
+  console.log(
+    `  ▸ ${label} detected — next-auth and its subpaths run on denext's shim (no edits).`,
+  );
+  if (n.v4Apis.length > 0) console.log(`    v4 APIs: ${n.v4Apis.join(", ")}`);
+  if (n.adapters.length > 0) {
+    console.log(`    adapters (from your dependencies): ${n.adapters.join(", ")}`);
+  }
+  printReviewNotes(n.notes, 4);
+}
+
 /** The Expo app config's static reading: where from, what it could not read. */
 function reportExpoConfig(e: NonNullable<MigrateResult["expo"]>): void {
   console.log(
@@ -744,6 +757,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
       reportFramework(r, desktop);
       if (r.effect) reportEffect(r);
       if (r.prisma) reportPrisma(r.prisma);
+      if (r.nextAuth) reportNextAuth(r.nextAuth);
       await capacitorSteps(r, run ?? terminalRunner(false), false);
 
       if (r.denoJsonExists) {

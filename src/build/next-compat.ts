@@ -200,6 +200,9 @@ const LIBRARY_ONLY_NEXT: ReadonlySet<string> = new Set([
 export const NEXT_AUTH_SERVER_SPECIFIERS: ReadonlySet<string> = new Set([
   "next-auth",
   "next-auth/jwt",
+  "next-auth/next",
+  "next-auth/middleware",
+  "next-auth/adapters",
   "next-auth/providers",
   ...[
     "apple",
@@ -928,6 +931,9 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   // The `next-auth` shim's server modules (`NextAuth()`, `next-auth/jwt`, the providers).
   "denext/next-auth",
   "denext/next-auth/jwt",
+  "denext/next-auth/next",
+  "denext/next-auth/middleware",
+  "denext/next-auth/adapters",
   "denext/next-auth/providers",
   "denext/next-auth/providers/apple",
   "denext/next-auth/providers/auth0",

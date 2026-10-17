@@ -438,6 +438,30 @@ place it behaves differently from Auth.js:
 - **`session.user` includes `id`** (the token's `sub`, or the user's id).
 - **The built-in pages are plain HTML** (no `theme`), and their `?error=` codes are Auth.js's.
 
+### NextAuth.js v4 APIs
+
+The v4 server API (`NextAuth(authOptions)`, `getServerSession`, `next-auth/next`,
+`next-auth/middleware`) runs on the same shim, so everything above applies to a v4 app too. Where
+it differs from v4 itself:
+
+- **`getServerSession` only reads.** v4's `getServerSession(req, res, options)` writes a refreshed
+  session cookie onto `res`; denext's slides the session from the `session` endpoint, middleware
+  and route handlers instead, and a `jwt` callback's change made during `getServerSession` is not
+  written back.
+- **`next-auth/middleware` reads denext's session cookie**, opening the sealed token with the
+  `NextAuth()` config's secret (or `NEXTAUTH_SECRET`, or `withAuth`'s `secret`); `jwt.decode`
+  and `cookies` in its options are ignored. Its redirect is a `307` to the request's origin.
+- **`next-auth/react`'s server-side calls are answered in-process.** `getSession({ req })`,
+  `getCsrfToken({ req })` and `getProviders({ req })` read the current request's session from the
+  handlers without an HTTP round trip; outside a request they fetch `NEXTAUTH_URL_INTERNAL` /
+  `NEXTAUTH_URL` (else `http://localhost:$PORT`), never the request's `Host`. A CSRF token minted
+  there is set on the current response, which v4 drops.
+- **`signIn(oauthProvider, { redirect: false })` resolves with the provider URL** instead of
+  navigating (v5's behaviour; v4 documents `redirect: false` for Credentials and email only).
+- **`authorize(credentials, req)`'s `req` is a `Request`** that also answers v4's reads:
+  `req.headers["user-agent"]` (lower-case names), `req.query` and `req.body` (the submitted
+  fields). It has no body stream.
+
 ## Security posture — safe defaults
 
 Deliberate **safe defaults** that differ from Next's, each with a one-line

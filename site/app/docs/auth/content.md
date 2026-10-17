@@ -2204,7 +2204,8 @@ view instead of unmounting behind an error boundary.
 
 A Next.js app written for Auth.js v5 runs on denext with its source unchanged. `denext migrate`
 aliases `next-auth`, `next-auth/react`, `next-auth/jwt` and `next-auth/providers/*` to denext's
-compat modules, which map Auth.js onto `denextAuth`:
+compat modules, which map Auth.js onto `denextAuth` (a NextAuth.js v4 app too: see
+[NextAuth.js v4 apps](#nextauthjs-v4-apps)):
 
 ```ts
 // auth.ts — as written for Next.js
@@ -2291,6 +2292,69 @@ denext keeps its own defaults where they are stricter, and nothing is relaxed fo
   the GET, as Auth.js does.
 
 The full list is in [Differences](/docs/differences) and [Limitations](/docs/limitations).
+
+## NextAuth.js v4 apps
+
+An app written for NextAuth.js v4 (`next-auth@4`) migrates the same way, with no source changes:
+`denext migrate` also aliases v4's `next-auth/next`, `next-auth/middleware` and
+`next-auth/adapters`, wires `@denext/pages-router` for a `pages/api/auth/[...nextauth].ts` route,
+and reports the v4 APIs and Auth.js adapters it found (`denext migrate --check` lists what to
+check). The v4 server API runs on the same shim as v5's:
+
+```ts
+// lib/auth.ts — as written for NextAuth.js v4
+import type { NextAuthOptions } from "next-auth";
+import CredentialsProvider from "next-auth/providers/credentials";
+export const authOptions: NextAuthOptions = {
+  providers: [CredentialsProvider({ credentials: {}, authorize: (c, req) => check(c, req) })],
+};
+
+// pages/api/auth/[...nextauth].ts (Pages Router)
+import NextAuth from "next-auth";
+export default NextAuth(authOptions);
+
+// app/api/auth/[...nextauth]/route.ts (App Router)
+const handler = NextAuth(authOptions);
+export { handler as GET, handler as POST };
+
+// middleware.ts
+export { default } from "next-auth/middleware";
+export const config = { matcher: ["/dashboard/:path*"] };
+```
+
+- **`NextAuth(authOptions)`** returns the route handler for both routers (it is also v5's
+  `{ handlers, auth, signIn, signOut }`), and `NextAuth(req, res, authOptions)` answers a Pages API
+  route directly. A Pages API route's `(req, res)` is translated to a `Request` and back; every
+  endpoint is the v5 one, with the same CSRF, redirect and cookie rules.
+- **`getServerSession(authOptions)`** (from `next-auth` or `next-auth/next`) reads the session in a
+  Server Component, a route handler or a Server Action; **`getServerSession(req, res,
+  authOptions)`** in `getServerSideProps` and an API route. The same `authOptions` object always
+  reads the same instance as its route. `unstable_getServerSession` is the same function.
+- **`next-auth/middleware`**: the default export gates every path `config.matcher` selects;
+  `withAuth(middleware, { callbacks: { authorized }, pages })` runs `authorized({ token, req })`
+  (default: whether there is a token) and hands an authorized request to your middleware with
+  `req.nextauth.token`. An unauthorized request is redirected to `pages.signIn` (default
+  `/api/auth/signin`) with its path as `callbackUrl`; the auth endpoints, the sign-in and error
+  pages and the framework's assets are never gated. The token is the JWT strategy's, as in v4: it
+  opens with `NEXTAUTH_SECRET` even before the `[...nextauth]` route has loaded, and a database
+  session has none.
+- **`next-auth/react`**: `getSession({ req })` / `getSession(ctx)`, `getCsrfToken({ req })` and
+  `getProviders()` work on the server (`getServerSideProps`, an API route) — answered in-process
+  for the current request, else over HTTP to `NEXTAUTH_URL` (never the request's `Host`).
+  `useSession({ required, onUnauthenticated })`, `signIn(provider, { callbackUrl, redirect })` and
+  `signOut({ callbackUrl, redirect })` behave as in v4; `signIn` with a provider the server doesn't
+  list opens the sign-in page.
+- **`authorize(credentials, req)`** gets a `req` that answers v4's reads (`req.headers["x-forwarded-for"]`,
+  `req.query`, `req.body`) as well as v5's `Request` methods.
+- **Environment**: `NEXTAUTH_SECRET` and `NEXTAUTH_URL` (or v5's `AUTH_SECRET` / `AUTH_URL`).
+  Production needs `NEXTAUTH_URL`.
+
+An Auth.js adapter from the app's own dependencies — `@auth/prisma-adapter`,
+`@auth/drizzle-adapter`, or v4's `@next-auth/prisma-adapter` — backs users, linked accounts,
+verification tokens and `session: { strategy: "database" }` sessions on its own tables. A Prisma
+app runs on the Deno client `denext migrate` wires (`denext task prisma:setup` once); Drizzle runs
+on any of its drivers (on SQLite, `node:sqlite` through `drizzle-orm/sqlite-proxy` and denext's
+`better-sqlite3` compat).
 
 ## Password hashing
 

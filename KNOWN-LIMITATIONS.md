@@ -143,7 +143,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   has no id, so an IdP's LogoutRequest naming one SessionIndex ends all of that user's sessions
   signed in before it (a `sessionStore` ends exactly the named one).
 
-### `next-auth` (Auth.js v5) compat
+### `next-auth` (Auth.js v5 and NextAuth.js v4) compat
 
 - **Providers:** GitHub, Google, Apple, Discord, Microsoft Entra ID, GitLab, X (Twitter),
   LinkedIn, Facebook, Slack, Twitch, Spotify, Okta, Auth0, Keycloak, Cognito, Zoom, Notion,
@@ -157,8 +157,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   warning and `revokeAllSessions()` can't end its database sessions. Password hashes are not
   stored through it, and database sessions don't slide. With an adapter, a Credentials `authorize()` must return a user of the
   adapter's users table (by `id`), as with Auth.js; a user it doesn't know is refused.
-- **v4 APIs** (`next-auth/next`, `getServerSession`, `next-auth/middleware`'s `withAuth`) are
-  not shipped.
+- **NextAuth.js v4:** `next-auth/middleware` reads the JWT strategy's token only, as v4 does, so
+  with `session: { strategy: "database" }` every gated request is sent to sign in. A Pages API
+  route's `NextAuth(req, res, …)` takes the body the Pages Router already parsed (string fields
+  only). v4's `next-auth/client` (v3's API) and the `next-auth/providers/*` modules this list
+  doesn't name are not shipped.
 
 ### Backend (`@denext/backend`)
 

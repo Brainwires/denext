@@ -28,7 +28,8 @@ import {
 import { errorPage, signInPage, signOutPage, verifyRequestPage } from "./pages.ts";
 import type { ProviderDescriptor } from "./providers/shared.ts";
 import { currentAuthJsSession } from "./session.ts";
-import { type ActiveNextAuth, signInRecord } from "./state.ts";
+import { type ActiveNextAuth, activeNextAuth, signInRecord } from "./state.ts";
+import { currentContext } from "../../server/request-context.ts";
 
 /** The most a form POST here may carry. */
 const MAX_FORM_BYTES = 64 * 1024;
@@ -327,3 +328,27 @@ export function createHandlers(active: ActiveNextAuth): { GET: RouteHandler; POS
   };
   return { GET: route, POST: route };
 }
+
+/** Where `next-auth/react`'s server-side calls (v4's `getSession({ req })`) find the handlers. */
+const SERVER_HANDLERS = Symbol.for("denext.next-auth.server-handlers");
+
+/**
+ * Answer `GET {basePath}/<path>` in-process for the current request, with the active instance's
+ * handlers — what `next-auth/react`'s `getSession({ req })`, `getCsrfToken({ req })` and
+ * `getProviders({ req })` read on the server. `null` outside a request or before `NextAuth()`.
+ *
+ * @param path The endpoint (`session`, `csrf`, `providers`).
+ * @returns Its answer, or `null`.
+ */
+function answerForCurrentRequest(path: string): Promise<Response | null> {
+  const active = activeNextAuth();
+  const request = currentContext()?.request;
+  if (!active || !request || !/^[a-z-]+$/.test(path)) return Promise.resolve(null);
+  const url = new URL(`${active.basePath}/${path}`, request.url);
+  const headers = new Headers({ accept: "application/json" });
+  const cookie = request.headers.get("cookie");
+  if (cookie) headers.set("cookie", cookie);
+  return createHandlers(active).GET(new Request(url, { headers }));
+}
+
+(globalThis as Record<symbol, unknown>)[SERVER_HANDLERS] = answerForCurrentRequest;
