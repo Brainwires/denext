@@ -171,6 +171,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     optimizePackageImports: "union", // `string[] | false`: a chips branch + a `false` branch
     resolveAlias: "map",
     momentumSafeScroll: "toggle",
+    nextScriptWorkers: "toggle", // <Script strategy="worker"> through the app's Partytown
     lists: "segmented",
     platformExtensions: "union", // `boolean | PlatformExtensionsConfig`: a toggle + an options group
     reactNative: "union", // `boolean | ReactNativeConfig`: a toggle branch + an options group
