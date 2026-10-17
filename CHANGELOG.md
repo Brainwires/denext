@@ -342,10 +342,12 @@ and this project adheres to
   checkout (`deno run -A <denext>/cli.ts start`), a server module importing a specifier only the
   app's `deno.json` maps, such as a `"@gleam/"` prefix for compiled Gleam, failed with "not a
   dependency and not in import map": the CLI switched to the merged framework and app config only
-  for a manual `node_modules` or an `npm:` import. Any app entry the framework's config does not
-  resolve now switches too. An app that maps only what the framework resolves (denext's own
-  entries, a `jsr:` / `npm:` package the framework maps, a workspace package) still starts in one
-  process.
+  for a manual `node_modules` or an `npm:` import. Any app entry the running CLI cannot resolve
+  now switches too, asked of Deno's own resolver, so an app that maps only what the CLI's config
+  resolves still starts in one process: denext's own entries, the framework's packages, and every
+  key of an app whose config is passed with `--config` (a scaffolded app's least-privilege `start`
+  task, which has no `--allow-run` for a second process). A switch the CLI may not make, with no
+  `--allow-run`, now fails naming the keys and the fixes instead of with `NotCapable`.
 - **`denext analyze` reports a chunk only islands load as an island chunk.** It labelled every
   `chunk-*` file as shared runtime, so a library chunk that only client components import (and
   that a page without them never loads) was counted in the shared-runtime subtotal. `analyze`,

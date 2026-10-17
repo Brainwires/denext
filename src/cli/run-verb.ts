@@ -34,9 +34,11 @@ import { buildServesCss } from "../build/server-copies.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs } from "../build/bundle.ts";
 import {
   configAnchorsResolution,
+  type DenoConfigView,
   ensureFrameworkNodeModules,
-  frameworkResolvableKeys,
   readConfig,
+  resolvesInThisProcess,
+  unresolvedImportKeys,
   writeMergedModuleConfig,
 } from "../build/module-config.ts";
 import { loadEnv } from "../server/env.ts";
@@ -403,9 +405,8 @@ async function maybeReexecForModules(dir: string): Promise<boolean> {
   if (paths.configPath === join(frameworkRoot(), "deno.json")) return false;
   const appCfg = await readConfig(paths.configPath);
   const frameworkConfig = join(frameworkRoot(), "deno.json");
-  if (!configAnchorsResolution(appCfg, await frameworkResolvableKeys(frameworkConfig))) {
-    return false;
-  }
+  if (!configAnchorsResolution(appCfg, resolvesInThisProcess)) return false;
+  await assertMayReexec(appCfg);
   const configPath = await writeMergedModuleConfig(paths.outDir, paths.configPath, frameworkConfig);
   // Manual mode resolves the framework's own npm build deps (esbuild, …) from the
   // node_modules beside the merged config, which the app's tree does not carry;
@@ -414,6 +415,30 @@ async function maybeReexecForModules(dir: string): Promise<boolean> {
   // deps resolve via its own config regardless — see {@link ensureFrameworkNodeModules}.
   if (appCfg.nodeModulesDir === "manual") await ensureFrameworkNodeModules(paths.outDir);
   return await reexecWithConfig(configPath, "DENEXT_MODULE_ACTIVE");
+}
+
+/**
+ * Refuse, with the way out, a module re-exec this process may not spawn: a least-privilege run
+ * (no `--allow-run`) of a source checkout's CLI whose app maps keys the CLI's config cannot
+ * resolve would otherwise die on an opaque `NotCapable` from `Deno.Command`.
+ */
+async function assertMayReexec(appCfg: DenoConfigView): Promise<void> {
+  const run = await Deno.permissions.query({ name: "run", command: denoExecutable() })
+    .then((s) => s.state, () => "denied");
+  // At a terminal Deno asks for an ungranted permission; only a refusal it cannot ask about is ours.
+  if (run === "granted" || (run === "prompt" && Deno.stdin.isTerminal())) return;
+  const keys = unresolvedImportKeys(appCfg, resolvesInThisProcess);
+  const why = appCfg.nodeModulesDir === "manual"
+    ? 'its `nodeModulesDir: "manual"`'
+    : keys.length > 0
+    ? `import-map keys this CLI's config does not resolve (${keys.join(", ")})`
+    : "`npm:` imports";
+  throw new Error(
+    `denext: this project's deno.json needs a merged framework+app config for ${why}, which ` +
+      "this source checkout's CLI applies by re-running itself, but it has no --allow-run. " +
+      "Pass the app's config to the CLI (`deno run --config <app>/deno.json … cli.ts`), grant " +
+      `--allow-run=${denoExecutable()}, or run the published CLI (jsr:@denext/denext/cli).`,
+  );
 }
 
 /**
