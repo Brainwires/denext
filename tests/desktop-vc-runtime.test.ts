@@ -233,3 +233,25 @@ Deno.test("desktopWindowExitHint explains a window that Windows refused to start
   assertEquals(desktopWindowExitHint(1, "windows", "arm64"), null);
   assertEquals(desktopWindowExitHint(signed, "linux", "x86_64"), null);
 });
+
+Deno.test("bundleDesktopVcRuntime: with no deps, a non-Windows host skips with a warning", {
+  ignore: Deno.build.os === "windows",
+}, async () => {
+  const warned: unknown[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warned.push(args.join(" "));
+  try {
+    assertEquals(await bundleDesktopVcRuntime(await Deno.makeTempDir(), "arm64"), false);
+  } finally {
+    console.warn = realWarn;
+  }
+  assertEquals(warned.length, 1);
+  assertStringIncludes(String(warned[0]), "vc_redist.arm64.exe");
+});
+
+Deno.test("desktopWindowExitHint: the default host OS and architecture", () => {
+  if (Deno.build.os !== "windows") assertEquals(desktopWindowExitHint(0xC0000135), null);
+  const hint = desktopWindowExitHint(0xC0000135, "windows");
+  assert(hint !== null);
+  assertStringIncludes(hint, "vcruntime140.dll");
+});
