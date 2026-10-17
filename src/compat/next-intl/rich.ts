@@ -19,7 +19,7 @@
 
 import { Fragment, h } from "../../../mod.ts";
 import type { VNodeChild, VNodeChildren } from "../../jsx/types.ts";
-import { formatIcu, type IcuValue } from "./icu.ts";
+import { formatIcu, type IcuValue, MAX_ICU_DEPTH, MAX_ICU_LENGTH } from "./icu.ts";
 
 /** A rich-text tag handler: wraps the tag's already-rendered children in a node. */
 export type RichTagHandler = (chunks: VNodeChildren) => VNodeChild;
@@ -44,13 +44,21 @@ const TAG_CLOSE = /^<\/([a-zA-Z][a-zA-Z0-9_-]*)\s*>/;
  * only at ICU brace-depth 0; everything else (including ICU `{…}` arguments) is text.
  */
 function parseRich(message: string): RichNode[] {
-  return parseChildren({ message, i: 0 }, null);
+  // The ICU engine's bounds hold here too: the parse and render recurse once per tag level.
+  if (message.length > MAX_ICU_LENGTH) {
+    throw new SyntaxError(
+      `ICU message too long (${message.length} > ${MAX_ICU_LENGTH} characters)`,
+    );
+  }
+  return parseChildren({ message, i: 0, level: 0 }, null);
 }
 
 /** The parser's position in the message. */
 interface Cursor {
   message: string;
   i: number;
+  /** Tags open around the cursor. */
+  level: number;
 }
 
 /** A `<tag>`/`<tag/>`/`</tag>` at the cursor (not consumed), or null when `<` is literal. */
@@ -87,7 +95,7 @@ function parseChildren(cur: Cursor, stopTag: string | null): RichNode[] {
     if (tag?.kind === "open") {
       flush();
       cur.i += tag.length;
-      const children = tag.selfClosing ? [] : parseChildren(cur, tag.name);
+      const children = tag.selfClosing ? [] : parseNested(cur, tag.name);
       nodes.push({ kind: "tag", name: tag.name, children });
       continue;
     }
@@ -103,6 +111,21 @@ function parseChildren(cur: Cursor, stopTag: string | null): RichNode[] {
   }
   flush();
   return nodes;
+}
+
+/** A tag's children, one level deeper, refusing past {@link MAX_ICU_DEPTH} levels. */
+function parseNested(cur: Cursor, tag: string): RichNode[] {
+  if (++cur.level > MAX_ICU_DEPTH) {
+    throw new SyntaxError(`ICU message nesting too deep (> ${MAX_ICU_DEPTH} levels)`);
+  }
+  const children = parseChildren(cur, tag);
+  cur.level--;
+  return children;
+}
+
+/** The `<tag>` handler `values` holds as its own property (never `Object.prototype`'s). */
+function handlerOf(values: Record<string, unknown>, name: string): unknown {
+  return Object.hasOwn(values, name) ? values[name] : undefined;
 }
 
 /** ICU `{…}` nesting after `ch` (a stray `}` at depth 0 stays at 0). */
@@ -122,7 +145,7 @@ function renderRich(nodes: RichNode[], values: RichValues, locale: string): VNod
     }
     const children = renderRich(node.children, values, locale);
     const chunks: VNodeChildren = children.length === 1 ? children[0] : children;
-    const handler = values[node.name];
+    const handler = handlerOf(values, node.name);
     if (typeof handler === "function") {
       out.push((handler as RichTagHandler)(chunks));
     } else {
@@ -142,7 +165,7 @@ function renderMarkup(nodes: RichNode[], values: MarkupValues, locale: string): 
       continue;
     }
     const inner = renderMarkup(node.children, values, locale);
-    const handler = values[node.name];
+    const handler = handlerOf(values, node.name);
     out += typeof handler === "function" ? (handler as MarkupTagHandler)(inner) : inner;
   }
   return out;

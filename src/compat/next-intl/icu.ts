@@ -85,6 +85,18 @@ export const MAX_ICU_DEPTH = 1000;
 export const MAX_ICU_LENGTH = 256 * 1024;
 
 /**
+ * The most characters one message renders to. A `#` repeated through a plural branch renders the
+ * formatted count each time, so without a cap a message at {@link MAX_ICU_LENGTH} could render to
+ * hundreds of megabytes.
+ */
+const MAX_ICU_OUTPUT = 16 * 1024 * 1024;
+
+/** `obj[key]` when `key` is its own property (never `Object.prototype`'s `constructor`, …). */
+function own<T>(obj: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(obj, key) ? obj[key] : undefined;
+}
+
+/**
  * Parser over an ICU message string. Iterative — an explicit stack of submessages, never the JS
  * call stack — so nesting costs no stack and parsing is linear in the message's length; the
  * nesting ({@link MAX_ICU_DEPTH}) and the length ({@link MAX_ICU_LENGTH}) are capped, so a
@@ -215,7 +227,8 @@ class Parser {
     node.type = type;
     if (type === "plural" || type === "selectordinal" || type === "select") {
       this.#i++; // consume "," before the options
-      node.options = {};
+      // No prototype: a branch named `__proto__` / `constructor` is just a branch.
+      node.options = Object.create(null);
       this.#skipSpace();
       if (this.#s.startsWith("offset:", this.#i)) {
         this.#i += "offset:".length;
@@ -270,7 +283,7 @@ interface NumberStyle {
 /** Map an ICU number style (named or a `::` skeleton) to `Intl.NumberFormat` options. */
 function numberStyle(style: string | undefined): NumberStyle {
   if (style?.startsWith("::")) return parseNumberSkeleton(style.slice(2).trim());
-  const named = style ? NAMED_NUMBER_STYLES[style] : undefined;
+  const named = style ? own(NAMED_NUMBER_STYLES, style) : undefined;
   return { options: named ?? {}, scale: 1 };
 }
 
@@ -313,7 +326,7 @@ function applyNumberToken(o: NumberBag, tok: string): number {
     return Number.isFinite(n) ? n : 1;
   }
   // `%x100` is `percent scale/100`: the value is a fraction, and Intl's percent multiplies.
-  const fixed = stem === "%x100" ? { style: "percent" } : NUMBER_SKELETON_TOKENS[stem];
+  const fixed = stem === "%x100" ? { style: "percent" } : own(NUMBER_SKELETON_TOKENS, stem);
   Object.assign(o, fixed ?? stemOptions(stem, opts));
   return 1;
 }
@@ -375,7 +388,7 @@ const NUMBER_SKELETON_TOKENS: Record<string, NumberBag> = {
 
 /** A stem that carries options (`currency/EUR`) or a pattern (`.00`, `@@#`, `000`, `E0`). */
 function stemOptions(stem: string, opts: string[]): NumberBag {
-  const optioned = OPTION_STEMS[stem];
+  const optioned = own(OPTION_STEMS, stem);
   if (optioned) return opts.length > 0 ? optioned(opts) : {};
   if (/^\.[0#]*[+*]?$/.test(stem)) return { ...fractionDigits(stem), ...fractionOption(opts) };
   if (/^@+#*[+*]?$/.test(stem)) return significantDigits(stem);
@@ -393,8 +406,10 @@ const OPTION_STEMS: Record<string, (opts: string[]) => NumberBag> = {
   unit: ([u]) => ({ style: "unit", unit: u }),
   "per-measure-unit": ([u]) => ({ perUnit: simpleUnit(u) }),
   "integer-width": ([w]) => {
-    const zeros = (/0+$/.exec(w) ?? [""])[0].length;
-    return zeros > 0 ? { minimumIntegerDigits: zeros } : {};
+    // Counted, not matched: an unanchored `/0+$/` is quadratic on a long run of zeros.
+    let zeros = 0;
+    while (zeros < w.length && w[w.length - 1 - zeros] === "0") zeros++;
+    return zeros > 0 && zeros <= 21 ? { minimumIntegerDigits: zeros } : {};
   },
   "precision-increment": ([inc]) => roundingIncrement(inc),
   "numbering-system": ([ns]) => ({ numberingSystem: ns }),
@@ -438,6 +453,8 @@ const INCREMENTS = new Set([1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2
 
 /** `precision-increment/0.05` → round to 0.05 (fraction digits from the increment). */
 function roundingIncrement(inc: string): NumberBag {
+  // Bounded before the match: `(\d*)\.?(\d*)` backtracks quadratically on a long digit run.
+  if (inc.length > 32) return {};
   const m = /^(\d*)\.?(\d*)$/.exec(inc);
   if (!m) return {};
   const digits = m[2].length;
@@ -696,18 +713,24 @@ function render(nodes: Node[], values: IcuValues, locale: string): string {
       continue;
     }
     const node = frame.nodes[frame.i++];
-    if (typeof node === "string") {
-      const pound = frame.pound;
-      out += pound === undefined || !node.includes("#")
-        ? node
-        : replacePound(node, numberFormat(locale).format(pound));
-      continue;
-    }
-    const branch = node.options ? chooseBranch(node, values, locale, frame.pound) : null;
+    const branch = typeof node !== "string" && node.options
+      ? chooseBranch(node, values, locale, frame.pound)
+      : null;
     if (branch) stack.push(branch);
-    else out += renderArg(node, values, locale);
+    else out += renderPiece(node, frame.pound, values, locale);
+    if (out.length > MAX_ICU_OUTPUT) {
+      throw new RangeError(`ICU message output too long (> ${MAX_ICU_OUTPUT} characters)`);
+    }
   }
   return out;
+}
+
+/** A text run (its `#` the enclosing plural's count) or a simple argument, rendered. */
+function renderPiece(node: Node, pound: number | undefined, values: IcuValues, locale: string) {
+  if (typeof node !== "string") return renderArg(node, values, locale);
+  return pound === undefined || !node.includes("#")
+    ? node
+    : replacePound(node, numberFormat(locale).format(pound));
 }
 
 /**
@@ -721,9 +744,9 @@ function chooseBranch(
   pound?: number,
 ): RenderFrame {
   const options = node.options!;
-  const value = values[node.name];
+  const value = own(values, node.name);
   if (node.type === "select") {
-    return { nodes: options[String(value)] ?? options.other ?? [], i: 0, pound };
+    return { nodes: own(options, String(value)) ?? own(options, "other") ?? [], i: 0, pound };
   }
   return pluralBranch(node, numberOf(value), locale);
 }
@@ -732,18 +755,18 @@ function chooseBranch(
 function pluralBranch(node: ArgNode, n: number | null, locale: string): RenderFrame {
   const options = node.options!;
   // Non-numeric count falls back to the `other` branch with no `#` value.
-  if (n === null) return { nodes: options.other ?? [], i: 0 };
+  if (n === null) return { nodes: own(options, "other") ?? [], i: 0 };
   const adjusted = n - node.offset;
   const category = pluralRules(locale, node.type === "selectordinal" ? "ordinal" : "cardinal")
     .select(adjusted);
-  const nodes = options[`=${n}`] ?? options[category] ?? options.other ?? [];
+  const nodes = own(options, `=${n}`) ?? own(options, category) ?? own(options, "other") ?? [];
   return { nodes, i: 0, pound: adjusted };
 }
 
 function renderArg(node: ArgNode, values: IcuValues, locale: string): string {
-  const value = values[node.name];
+  const value = own(values, node.name);
   if (node.type === undefined) return value == null ? `{${node.name}}` : String(value);
-  const renderer = ARG_RENDERERS[node.type];
+  const renderer = own(ARG_RENDERERS, node.type);
   // Unknown type — fall back to the raw value.
   if (!renderer) return value == null ? "" : String(value);
   return renderer({ node, value, locale });

@@ -345,6 +345,21 @@ and this project adheres to
   shared one log, and a subscriber `authorize` allowed on one could replay the other's history.
   The channel id is now length-prefixed (`<prefix>:<length>:<channel>:<key>`). `history.ttlSeconds`
   must be finite, and a fractional-millisecond TTL no longer makes Redis refuse the expiry.
+- **Security: next-intl's ICU engine stays linear and bounded on a hostile message.** The
+  `integer-width/…` and `precision-increment/…` skeleton tokens matched with patterns that
+  backtracked quadratically, so one long digit run held the thread for seconds (minutes at the
+  262,144-character cap); they are now counted and length-checked. A `#` repeated through a plural
+  branch rendered the formatted count each time, so a message could expand to hundreds of
+  megabytes; output past 16 Mi characters is now a `RangeError`. `t.rich` / `t.markup` parsed
+  tags recursively with no bound, so a deeply nested message overflowed the stack; they now take
+  the ICU caps (1,000 levels, 262,144 characters) and throw a `SyntaxError` past them.
+- **A `select` value named like an `Object.prototype` key picks the `other` branch.** A select
+  on user data (`{g, select, male {…} other {…}}` with `g: "constructor"` / `"hasOwnProperty"`)
+  threw a `TypeError`, and `"toString"` rendered an empty string; branches, plural categories,
+  values, styles and renderers are now looked up as own keys only, and a branch named
+  `__proto__` is an ordinary branch. `t.rich` / `t.markup` look up tag handlers the same way, so
+  `<toString>` is a tag without a handler. An `integer-width` past 21 digits (more than `Intl`
+  allows) is ignored instead of throwing.
 
 ### Changed
 

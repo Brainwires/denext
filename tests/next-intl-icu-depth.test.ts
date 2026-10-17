@@ -185,3 +185,38 @@ Deno.test("ICU date skeletons: a field Intl cannot render throws (never a partia
   assertThrows(() => formatIcu("{d, date, ::yw}", { d }, "en"), RangeError, "week");
   assertThrows(() => formatIcu("{d, date, ::yD}", { d }, "en"), RangeError, "day-of-year");
 });
+
+Deno.test("ICU skeleton tokens: a long run of digits parses in linear time", () => {
+  for (
+    const message of [
+      `{n, number, ::integer-width/${"0".repeat(100_000)}x}`,
+      `{n, number, ::precision-increment/${"1".repeat(100_000)}x}`,
+    ]
+  ) {
+    const start = performance.now();
+    formatIcu(message, { n: 1 }, "en");
+    const ms = performance.now() - start;
+    assertEquals(ms < 500, true, `${message.slice(0, 40)}… took ${ms.toFixed(0)} ms`);
+  }
+  // A width Intl cannot express (over 21 digits) is ignored, not a RangeError.
+  assertEquals(formatIcu(`{n, number, ::integer-width/${"0".repeat(22)}}`, { n: 5 }, "en"), "5");
+});
+
+Deno.test("ICU select / plural / values: Object.prototype names are ordinary keys", () => {
+  const msg = "{g, select, male {M} other {O}}";
+  for (const g of ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"]) {
+    assertEquals(formatIcu(msg, { g }, "en"), "O", g);
+  }
+  // A branch named like a prototype key is chosen by its own value only.
+  assertEquals(formatIcu("{g, select, constructor {C} other {O}}", { g: "constructor" }), "C");
+  assertEquals(formatIcu("{g, select, __proto__ {P} other {O}}", { g: "x" }), "O");
+  assertEquals(formatIcu("{g, select, __proto__ {P} other {O}}", { g: "__proto__" }), "P");
+  // A simple argument missing from `values` stays a placeholder, prototype names included.
+  assertEquals(formatIcu("{constructor}", {}, "en"), "{constructor}");
+  assertEquals(formatIcu("{x, constructor}", { x: 1 }, "en"), "1");
+});
+
+Deno.test("ICU output: a `#` amplified through a plural branch is capped", () => {
+  const msg = "{n, plural, other {" + "#".repeat(200_000) + "}}";
+  assertThrows(() => formatIcu(msg, { n: 1e300 }, "en"), RangeError, "output too long");
+});
