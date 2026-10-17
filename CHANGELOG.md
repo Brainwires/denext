@@ -54,8 +54,8 @@ and this project adheres to
   `denext build --compile --target aarch64-pc-windows-msvc` builds onto the pinned `denort`, and
   `desktop package --target-os windows --arch arm64` packages on the pinned runtime; denext's
   `.msi` already declares Windows Installer schema 500, which an Arm64 package needs. Run on a
-  Windows 11 Arm64 VM (both backends, the desktop window test, the runtime's e2e suite and the
-  `.msi`); KNOWN-LIMITATIONS lists what has not run there yet.
+  Windows 11 Arm64 VM (both backends, the desktop window test, the runtime's e2e suite, the
+  `.msi` and `build --compile`); KNOWN-LIMITATIONS lists what has not run there yet.
 - **Spellcheck in Linux CEF windows out of the box.** The runtime ships Chromium's Hunspell
   dictionaries for en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT and copies the ones the
   profile uses on launch; an app adds other languages as `.bdic` files in `dictionaries/` beside

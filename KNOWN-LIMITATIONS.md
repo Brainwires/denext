@@ -41,11 +41,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   renders and hydrates, closing the window quits the verb cleanly); the desktop kitchen sink's
   window test on both backends with unsigned builds, the full-app update install, trial and
   rollback included; the runtime's own e2e suite on both backends, the menu accelerator and
-  context-menu keyboard checks included; and a `desktop package --arch arm64` `.msi`, installed
-  per user and per machine, upgraded, launched and uninstalled. Not yet run there: a physical
-  Arm64 PC (GPU rendering), Authenticode-signed builds and the trusted-update checks,
-  `denext build --compile --target aarch64-pc-windows-msvc`, and denext's own test suites (CI's
-  `windows-11-arm` job is still optional). A `desktop run` / `dev` window loads the VC++ runtime
+  context-menu keyboard checks included; a `desktop package --arch arm64` `.msi`, installed per
+  user and per machine, upgraded, launched and uninstalled; and a server binary from
+  `denext build --compile --target aarch64-pc-windows-msvc` (an Arm64 executable that serves
+  pages). Not yet run there: a physical Arm64 PC (GPU rendering), Authenticode-signed builds and
+  the trusted-update checks, and denext's own test suites (CI's `windows-11-arm` job is still
+  optional). A `desktop run` / `dev` window loads the VC++ runtime
   from System32, so it needs the Arm64 VC++ 2015-2022 redistributable on the machine; a packaged
   bundle carries the runtime next to its `.exe`.
 - **A CLI installed from JSR caches its verbs after the install, not during it.** `deno install
