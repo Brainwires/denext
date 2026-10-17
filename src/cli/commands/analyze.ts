@@ -9,6 +9,7 @@ import { projectDir } from "../shared.ts";
 import { build } from "../../build/build.ts";
 import {
   bundleAnalysisLines,
+  bundleIslandLines,
   type BundleMetafile,
   bundleReportMarkdown,
   bundleRoleLines,
@@ -21,6 +22,27 @@ async function readAnalyzeMeta(outDir: string): Promise<BundleMetafile | undefin
     return JSON.parse(await Deno.readTextFile(join(outDir, "analyze-meta.json"))) as BundleMetafile;
   } catch {
     return undefined; // native `deno bundle` path emits none, or --md wasn't set
+  }
+}
+
+/**
+ * Build the app. Under --md, keep stdout clean for `> report.md`: the build's progress logs go to
+ * stderr, so only the markdown report lands on stdout.
+ */
+async function buildForAnalyze(dir: string, md: boolean): Promise<string> {
+  const origLog = console.log;
+  const priorAnalyzeEnv = Deno.env.get("DENEXT_ANALYZE");
+  if (md) console.log = (...args: unknown[]) => console.error(...args);
+  try {
+    return (await build(dir)).outDir;
+  } finally {
+    if (md) {
+      console.log = origLog;
+      // Restore the env so a programmatic caller running build() again in-process doesn't
+      // keep capturing metafiles (the metafile capture is gated on DENEXT_ANALYZE).
+      if (priorAnalyzeEnv === undefined) Deno.env.delete("DENEXT_ANALYZE");
+      else Deno.env.set("DENEXT_ANALYZE", priorAnalyzeEnv);
+    }
   }
 }
 
@@ -50,23 +72,7 @@ export const analyzeCommand: CommandSpec = {
     } else {
       console.log(`\n  denext analyze  ▸  ${dir}\n`);
     }
-    // Under --md, keep stdout clean for `> report.md`: route the build's progress logs to
-    // stderr, so only the markdown report lands on stdout.
-    const origLog = console.log;
-    const priorAnalyzeEnv = Deno.env.get("DENEXT_ANALYZE");
-    if (md) console.log = (...args: unknown[]) => console.error(...args);
-    let outDir: string;
-    try {
-      ({ outDir } = await build(dir));
-    } finally {
-      if (md) {
-        console.log = origLog;
-        // Restore the env so a programmatic caller running build() again in-process doesn't
-        // keep capturing metafiles (the metafile capture is gated on DENEXT_ANALYZE).
-        if (priorAnalyzeEnv === undefined) Deno.env.delete("DENEXT_ANALYZE");
-        else Deno.env.set("DENEXT_ANALYZE", priorAnalyzeEnv);
-      }
-    }
+    const outDir = await buildForAnalyze(dir, md);
     const chunks = await readClientChunks(join(outDir, "client"));
     if (md) {
       console.log(bundleReportMarkdown(chunks, await readAnalyzeMeta(outDir)).join("\n"));
@@ -78,10 +84,10 @@ export const analyzeCommand: CommandSpec = {
     }
     console.log();
     for (const line of bundleAnalysisLines(chunks)) console.log(`  ${line}`);
-    const roleLines = bundleRoleLines(chunks);
-    if (roleLines.length > 0) {
+    for (const section of [bundleRoleLines(chunks), bundleIslandLines(chunks)]) {
+      if (section.length === 0) continue;
       console.log();
-      for (const line of roleLines) console.log(`  ${line}`);
+      for (const line of section) console.log(`  ${line}`);
     }
     console.log();
   },

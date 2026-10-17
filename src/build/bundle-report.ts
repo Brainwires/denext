@@ -137,7 +137,7 @@ function topModules(
 
 /**
  * A markdown bundle report for `denext analyze --md` (Bun 1.4's `--metafile-md`): a per-chunk
- * size table + per-role subtotals (both bundler paths), and — when an esbuild `metafile` is
+ * size table + per-role subtotals + the per-island breakdown (both bundler paths), and — when an esbuild `metafile` is
  * given (the compat/SPA path) — a per-chunk breakdown of the modules that dominate each chunk.
  *
  * @param chunks The emitted client chunks and their sizes.
@@ -161,6 +161,8 @@ export function bundleReportMarkdown(chunks: BundleChunk[], metafile?: BundleMet
   const roleLines = bundleRoleLines(chunks);
   // Reuse the terminal role subtotals verbatim, inside a fenced block (already aligned).
   if (roleLines.length > 0) lines.push("", "## By role", "", "```", ...roleLines, "```");
+  const islandLines = bundleIslandLines(chunks);
+  if (islandLines.length > 0) lines.push("", "## By island", "", "```", ...islandLines, "```");
   if (metafile) lines.push(...mdTopModules(sorted, metafile));
   return lines;
 }
@@ -206,13 +208,22 @@ function mdTopModules(sorted: BundleChunk[], metafile: BundleMetafile): string[]
 export type ChunkRole = "shared" | "island" | "on-demand" | "entry";
 
 /** Name prefixes of the framework's on-demand chunks (see {@linkcode classifyChunk}). */
-const ON_DEMAND_PREFIXES = ["lazy-", "class-runtime-", "momentum-scroll-", "nav-document-"];
+const ON_DEMAND_PREFIXES = [
+  "lazy-",
+  "class-runtime-",
+  "momentum-scroll-",
+  "nav-document-",
+  "flight-nav-stream-",
+  "flight-value-holes-",
+];
 
 /**
  * Classify a chunk by its content-hashed name prefix. `lazy-*` (deferred island hydration),
  * `class-runtime-*` (the class-component runtime), `momentum-scroll-*` (the iOS scroll shim) and
- * `nav-document-*` (the soft-navigation commit) are the framework's on-demand chunks: fetched only by a page that needs them, so they count
- * against neither the shared runtime nor the route entries.
+ * `nav-document-*` (the soft-navigation commit), `flight-nav-stream-*` (a streamed soft
+ * navigation's reader) and `flight-value-holes-*` (a streamed Flight payload's value holes) are the
+ * framework's on-demand chunks: fetched only by a page that needs them, so they count against
+ * neither the shared runtime nor the route entries, and are not islands.
  */
 export function classifyChunk(name: string): ChunkRole {
   if (name.startsWith("chunk-")) return "shared";
@@ -252,13 +263,125 @@ export function chunkRoles(chunks: BundleChunk[]): Map<string, ChunkRole> {
     if (roles.get(c.name) === "shared") continue;
     for (const dep of c.imports ?? []) if (roles.get(dep) === "shared") visit(c.name, dep);
   }
+  const ownerRole = importerRole(chunks, roles);
+  for (const [name, from] of owners) roles.set(name, ownedRole([...from].map(ownerRole)));
+  return roles;
+}
+
+/**
+ * The role of a chunk as an importer: a route entry, unless it is a content-hashed module another
+ * chunk loads with `import()` (a client component's own module), which is an island.
+ */
+function importerRole(
+  chunks: BundleChunk[],
+  roles: ReadonlyMap<string, ChunkRole>,
+): (name: string) => ChunkRole {
   const lazy = new Set(chunks.flatMap((c) => c.lazyImports ?? []));
-  const ownerRole = (name: string): ChunkRole => {
+  return (name) => {
     const role = roles.get(name)!;
     return role === "entry" && HASHED.test(name) && lazy.has(name) ? "island" : role;
   };
-  for (const [name, from] of owners) roles.set(name, ownedRole([...from].map(ownerRole)));
-  return roles;
+}
+
+/** Which island owns which island chunks (see {@linkcode islandBreakdown}). */
+export interface IslandBreakdown {
+  /**
+   * Each island — an `island-*` chunk, or a client component's lazily loaded module — with the
+   * island chunks only it reaches, largest island (own + exclusive bytes) first.
+   */
+  readonly islands: { readonly name: string; readonly exclusive: string[] }[];
+  /** The island chunks more than one island reaches, with the islands that reach each. */
+  readonly shared: { readonly name: string; readonly islands: string[] }[];
+}
+
+/**
+ * Split the island chunks ({@linkcode chunkRoles}' `island` role) between the islands that load
+ * them: a chunk one island alone reaches (through static imports, transitively) is that island's
+ * own, one several reach is shared between them. Empty without import data.
+ *
+ * @param chunks The emitted client chunks, with their `imports`.
+ * @returns Each island's exclusive chunks, and the chunks islands share.
+ */
+export function islandBreakdown(chunks: BundleChunk[]): IslandBreakdown {
+  if (!chunks.some((c) => c.imports)) return { islands: [], shared: [] };
+  const roles = chunkRoles(chunks);
+  // An island module is judged by its name (as chunkRoles judges importers), not its refined role.
+  const asImporter = importerRole(
+    chunks,
+    new Map(chunks.map((c) => [c.name, classifyChunk(c.name)])),
+  );
+  const byName = new Map(chunks.map((c) => [c.name, c]));
+  const roots = chunks.filter((c) => asImporter(c.name) === "island").map((c) => c.name);
+  const rootSet = new Set(roots);
+  const reachedBy = new Map<string, string[]>();
+  for (const root of roots) {
+    const seen = new Set<string>();
+    const stack = [...(byName.get(root)?.imports ?? [])];
+    while (stack.length > 0) {
+      const name = stack.pop()!;
+      if (seen.has(name) || rootSet.has(name) || roles.get(name) !== "island") continue;
+      seen.add(name);
+      reachedBy.set(name, [...(reachedBy.get(name) ?? []), root]);
+      stack.push(...(byName.get(name)?.imports ?? []));
+    }
+  }
+  const bytesOf = (name: string) => chunkMetric(byName.get(name)!);
+  const bySize = (a: string, b: string) => bytesOf(b) - bytesOf(a) || a.localeCompare(b);
+  const exclusiveOf = (root: string) =>
+    [...reachedBy].filter(([, from]) => from.length === 1 && from[0] === root).map(([n]) => n)
+      .sort(bySize);
+  const islands = roots.map((name) => ({ name, exclusive: exclusiveOf(name) }));
+  const total = (i: { name: string; exclusive: string[] }) =>
+    i.exclusive.reduce((s, n) => s + bytesOf(n), bytesOf(i.name));
+  islands.sort((a, b) => total(b) - total(a) || a.name.localeCompare(b.name));
+  const shared = [...reachedBy].filter(([, from]) => from.length > 1)
+    .map(([name, from]) => ({ name, islands: [...from].sort() }))
+    .sort((a, b) => bySize(a.name, b.name));
+  return { islands, shared };
+}
+
+/** `1.2 KB raw · 0.5 KB gz` (raw only when no chunk has a gzip size). */
+function sizeLabel(group: BundleChunk[]): string {
+  const raw = group.reduce((s, c) => s + c.bytes, 0);
+  const gz = group.reduce((s, c) => s + (c.gzip ?? 0), 0);
+  return gz > 0 ? `${kb(raw)} raw · ${kb(gz)} gz` : kb(raw);
+}
+
+/**
+ * The per-island breakdown for `denext analyze`: each island with what it alone loads (its own
+ * module plus its exclusive chunks, listed under it), then the chunks islands share and which
+ * islands load each. Empty when the app has no islands or the chunks carry no import data.
+ *
+ * @param chunks The emitted client chunks.
+ * @returns Section lines (already indented for the body).
+ */
+export function bundleIslandLines(chunks: BundleChunk[]): string[] {
+  const { islands, shared } = islandBreakdown(chunks);
+  if (islands.length === 0) return [];
+  const byName = new Map(chunks.map((c) => [c.name, c]));
+  const names = [...islands.flatMap((i) => [i.name, ...i.exclusive]), ...shared.map((s) => s.name)];
+  const width = Math.min(44, Math.max(...names.map((n) => n.length))) + 6;
+  const row = (indent: string, name: string, size: string, tail = "") =>
+    `${indent}${name.padEnd(width - indent.length)}${size}${tail}`;
+  const lines = ["By island:"];
+  for (const island of islands) {
+    const own = [island.name, ...island.exclusive].map((n) => byName.get(n)!);
+    const n = island.exclusive.length;
+    const tail = n > 0 ? `  (+${n} exclusive chunk${n === 1 ? "" : "s"})` : "";
+    lines.push(row("  ", island.name, sizeLabel(own), tail));
+    for (const name of island.exclusive) {
+      lines.push(row("    ", name, sizeLabel([byName.get(name)!])));
+    }
+  }
+  if (shared.length > 0) {
+    lines.push("  shared between islands:");
+    for (const s of shared) {
+      lines.push(
+        row("    ", s.name, sizeLabel([byName.get(s.name)!]), `  ${s.islands.join(", ")}`),
+      );
+    }
+  }
+  return lines;
 }
 
 /** The role of a chunk its importers of these roles reach: shared once any route entry does. */

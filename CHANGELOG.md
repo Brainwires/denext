@@ -233,6 +233,12 @@ and this project adheres to
   its `webSocketDebuggerUrl` and a `devtools://` URL. A non-loopback address is refused unless
   `--inspect-renderer-allow-remote` is also given. See
   [Debugging the window's page](https://denext.dev/docs/desktop#desktop-inspect-renderer).
+- **`denext analyze` breaks the island chunks down per island.** After the role subtotals, each
+  island (an `island-*` chunk or a client component's lazily loaded module) is listed with what it
+  alone loads: its own module plus the chunks only it reaches, then the chunks several islands
+  share and which islands load each. `--md` carries the same section (`## By island`). The
+  framework's `flight-nav-stream-*` and `flight-value-holes-*` chunks now count as on-demand
+  runtime, not route entries.
 - **CLI flags with an optional value.** A command's flag can take `--flag` alone or
   `--flag=value` (`optionalValue` on a `FlagSpec`); the bare form never takes the next argument
   as its value.

@@ -18,8 +18,19 @@ export default function Bundling() {
         <code>denext analyze</code>{" "}
         builds the app and breaks the client bundle down by chunk — sizes, proportion bars, and a
         per-role subtotal (shared runtime vs route entries vs islands), the shared-runtime line
-        being the one the size budgets track.
+        being the one the size budgets track. When the app has islands, a per-island breakdown
+        follows: each island with what it alone loads (its own module plus the chunks only it
+        reaches, listed under it), then the chunks several islands share and which islands load
+        each, so a heavy library one island pulls in is told apart from one every island pays for.
       </p>
+      <Code lang="text">
+        {`By island:
+  chart-K3J9QW2D.js                    56.1 KB raw · 18.0 KB gz  (+1 exclusive chunk)
+    chunk-QX81ZT0A.js                  54.0 KB raw · 17.2 KB gz
+  counter-V6JCWT7F.js                   0.9 KB raw · 0.4 KB gz
+  shared between islands:
+    chunk-7BD2LM4P.js                   3.1 KB raw · 1.2 KB gz  chart-K3J9QW2D.js, counter-V6JCWT7F.js`}
+      </Code>
       <Code lang="bash">
         {`denext analyze            # terminal breakdown by chunk + role
 denext analyze --json     # machine-readable chunk sizes
@@ -27,8 +38,9 @@ denext analyze --md > bundle-report.md   # a markdown report (CI artifact)`}
       </Code>
       <p>
         <code>--md</code>{" "}
-        prints a markdown report to stdout (pipe it to a file). It carries the per-chunk table and
-        role subtotals on every project, and — on the esbuild path (a{" "}
+        prints a markdown report to stdout (pipe it to a file). It carries the per-chunk table, the
+        role subtotals and the per-island breakdown on every project, and — on the esbuild path (a
+        {" "}
         <a href="/docs/migrating">drop-in compat</a> or <a href="/docs/spa">SPA</a>{" "}
         app) — a per-chunk breakdown of the modules that dominate each chunk, so you can see{" "}
         <em>which dependency</em> is fat:

@@ -3,6 +3,7 @@ import { join } from "@std/path";
 import {
   bundleAnalysisLines,
   type BundleChunk,
+  bundleIslandLines,
   type BundleMetafile,
   bundleReportMarkdown,
   bundleRoleLines,
@@ -10,6 +11,7 @@ import {
   chunkImports,
   chunkRoles,
   classifyChunk,
+  islandBreakdown,
   readClientChunks,
 } from "../src/build/bundle-report.ts";
 
@@ -67,6 +69,9 @@ Deno.test("classifyChunk: shared runtime, islands, and entries by name prefix", 
   assertEquals(classifyChunk("class-runtime-Q2ZQ7A3B.js"), "on-demand");
   assertEquals(classifyChunk("momentum-scroll-DT2RLQSK.js"), "on-demand");
   assertEquals(classifyChunk("nav-document-MLG7FNHP.js"), "on-demand");
+  // The framework's own lazily loaded modules are on-demand, never islands (`denext analyze`).
+  assertEquals(classifyChunk("flight-nav-stream-KUBQ2GO7.js"), "on-demand");
+  assertEquals(classifyChunk("flight-value-holes-LZ4ZSTDZ.js"), "on-demand");
 });
 
 Deno.test("bundleRoleLines: isolates the shared-runtime subtotal (the budget target)", () => {
@@ -178,6 +183,64 @@ Deno.test("bundleRoleLines / markdown: an island-only chunk is counted under isl
   const md = bundleReportMarkdown(ISLAND_GRAPH).join("\n");
   assertStringIncludes(md, "| `chunk-LUSTRE.js` | islands |");
   assertStringIncludes(md, "| `chunk-RT.js` | shared runtime |");
+});
+
+Deno.test("islandBreakdown: each island's exclusive chunks, and the chunks islands share", () => {
+  assertEquals(islandBreakdown(ISLAND_GRAPH), {
+    islands: [
+      // 900 B own + 536 B exclusive GLUE; register-counter has only its own 700 B.
+      { name: "lustre-counter-AAAAAAAA.js", exclusive: ["chunk-GLUE.js"] },
+      { name: "register-counter-BBBBBBBB.js", exclusive: [] },
+    ],
+    shared: [{
+      name: "chunk-LUSTRE.js",
+      islands: ["lustre-counter-AAAAAAAA.js", "register-counter-BBBBBBBB.js"],
+    }],
+  });
+  // An `island-*` chunk is an island too; shared runtime and on-demand chunks are never counted.
+  const named = islandBreakdown([
+    { name: "page.js", bytes: 1, imports: ["chunk-RT.js"], lazyImports: [] },
+    { name: "chunk-RT.js", bytes: 1, imports: [] },
+    { name: "island-A.js", bytes: 10, imports: ["chunk-RT.js", "chunk-A.js"] },
+    { name: "chunk-A.js", bytes: 5, imports: [] },
+  ]);
+  assertEquals(named, {
+    islands: [{ name: "island-A.js", exclusive: ["chunk-A.js"] }],
+    shared: [],
+  });
+  // A framework module loaded with import() is not an island.
+  const framework = islandBreakdown([
+    { name: "page.js", bytes: 1, imports: [], lazyImports: ["flight-nav-stream-KUBQ2GO7.js"] },
+    { name: "flight-nav-stream-KUBQ2GO7.js", bytes: 1, imports: [] },
+  ]);
+  assertEquals(framework, { islands: [], shared: [] });
+  // Sizes only (no import data), or no islands: nothing to split.
+  assertEquals(islandBreakdown(ISLAND_GRAPH.map(({ name, bytes }) => ({ name, bytes }))), {
+    islands: [],
+    shared: [],
+  });
+});
+
+Deno.test("bundleIslandLines / markdown: per-island rows, exclusive chunks, shared chunks", () => {
+  const lines = bundleIslandLines(ISLAND_GRAPH);
+  assertEquals(lines[0], "By island:");
+  const lustre = lines.findIndex((l) => l.trimStart().startsWith("lustre-counter-AAAAAAAA.js"));
+  assertStringIncludes(lines[lustre], "1.4 KB"); // 900 + 536 bytes
+  assertStringIncludes(lines[lustre], "(+1 exclusive chunk)");
+  assert(lines[lustre + 1].startsWith("    chunk-GLUE.js"), lines.join("\n"));
+  const sharedAt = lines.indexOf("  shared between islands:");
+  assert(sharedAt > lustre, lines.join("\n"));
+  assertStringIncludes(
+    lines[sharedAt + 1],
+    "lustre-counter-AAAAAAAA.js, register-counter-BBBBBBBB.js",
+  );
+  assertStringIncludes(lines[sharedAt + 1], "chunk-LUSTRE.js");
+  // Every size starts in one column.
+  const starts = lines.slice(1).filter((l) => /KB/.test(l)).map((l) => l.search(/\d+\.\d KB/));
+  assertEquals(new Set(starts).size, 1, lines.join("\n"));
+  const md = bundleReportMarkdown(ISLAND_GRAPH).join("\n");
+  assertStringIncludes(md, "## By island");
+  assertEquals(bundleIslandLines([{ name: "page.js", bytes: 1, imports: [] }]), []);
 });
 
 Deno.test("bundleRoleLines: every role's size starts in one column, a gap after the longest label", () => {
