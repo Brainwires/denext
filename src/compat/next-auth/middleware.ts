@@ -88,7 +88,15 @@ export type WithAuthMiddleware = (
 ) => Promise<NextMiddlewareResult>;
 
 /** Paths never gated: Next's and denext's assets. */
-const PUBLIC_PREFIXES = ["/_next", "/_denext", "/favicon.ico"];
+const PUBLIC_PATHS = ["/_next", "/_denext", "/favicon.ico"];
+
+/**
+ * Whether `path` is `prefix` or below it — on a segment boundary, so `/api/authz` is not under
+ * `/api/auth` (v4 compares bare prefixes; a gated `/api/authz` stays gated here).
+ */
+function under(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(`${prefix}/`);
+}
 
 /** The auth endpoints' path: `NEXTAUTH_URL`'s (or `AUTH_URL`'s) path, else `/api/auth`. */
 function authPath(): string {
@@ -142,9 +150,9 @@ function asNextRequest(request: Request): NextRequest {
 function ungated(req: NextRequest, signInPage: string, errorPage: string): boolean {
   const { pathname } = req.nextUrl;
   const basePath = req.nextUrl.basePath ?? "";
-  return `${basePath}${pathname}`.startsWith(authPath()) ||
+  return under(`${basePath}${pathname}`, authPath()) ||
     pathname === signInPage || pathname === errorPage ||
-    PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+    PUBLIC_PATHS.some((prefix) => under(pathname, prefix));
 }
 
 /** A redirect to `page` on the request's origin (with its base path), `params` added. */

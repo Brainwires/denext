@@ -450,7 +450,9 @@ it differs from v4 itself:
   written back.
 - **`next-auth/middleware` reads denext's session cookie**, opening the sealed token with the
   `NextAuth()` config's secret (or `NEXTAUTH_SECRET`, or `withAuth`'s `secret`); `jwt.decode`
-  and `cookies` in its options are ignored. Its redirect is a `307` to the request's origin.
+  and `cookies` in its options are ignored. Its redirect is a `307` to the request's origin. The
+  paths it never gates (the auth endpoints, `/_next`, `/_denext`, `/favicon.ico`) match on a
+  path-segment boundary, so `/api/authz` stays gated where v4's bare prefix test lets it through.
 - **`next-auth/react`'s server-side calls are answered in-process.** `getSession({ req })`,
   `getCsrfToken({ req })` and `getProviders({ req })` read the current request's session from the
   handlers without an HTTP round trip; outside a request they fetch `NEXTAUTH_URL_INTERNAL` /

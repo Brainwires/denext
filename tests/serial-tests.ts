@@ -55,6 +55,9 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/migrate-spa.test.ts",
   "tests/mobile-build.test.ts",
   "tests/mobile-sentry.test.ts",
+  "tests/next-auth-react-v4.test.ts",
+  "tests/next-auth-v4-app.test.ts",
+  "tests/next-auth-v4.test.ts",
   "tests/next-compat-build.test.ts",
   // Deno.chdir into a fixture: next/font/local resolves its files against the cwd.
   "tests/next-font-local-fallback.test.ts",

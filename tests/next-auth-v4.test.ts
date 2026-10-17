@@ -269,6 +269,10 @@ Deno.test("next-auth v4: the middleware default export gates on the session", as
   assertEquals((await gate("/api/auth/session")).value, undefined);
   assertEquals((await gate("/_next/static/x.js")).value, undefined);
   assertEquals((await gate("/_denext/client.js")).value, undefined);
+  // …on a path-segment boundary: a look-alike of an ungated prefix is still gated.
+  for (const lookAlike of ["/api/authz/admin", "/_nextsecret", "/favicon.ico.bak"]) {
+    assertEquals(((await gate(lookAlike)).value as Response).status, 307, lookAlike);
+  }
   await signIn(b);
   assertEquals((await gate("/dashboard")).value, undefined, "a session continues");
 });
