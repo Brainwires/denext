@@ -22,7 +22,7 @@ import {
   type AuthJsUserExtension,
   fromAuthJsAdapter,
 } from "../src/compat/next-auth/adapter.ts";
-import { requireAuth, revokeAllSessions } from "../src/server/auth/mod.ts";
+import { auth as denextAuth, requireAuth, revokeAllSessions } from "../src/server/auth/mod.ts";
 import type { OAuthProvider } from "../src/server/auth/types.ts";
 import {
   createRequestContext,
@@ -503,6 +503,29 @@ Deno.test("next-auth: a jwt callback returning null signs the session out", asyn
   allow = false;
   assertEquals(await (await a.call("/api/auth/session")).json(), null);
   assert(!a.jar.cookies.has("__Host-denext_auth"), "the cookie was cleared");
+});
+
+Deno.test("next-auth security: a jwt callback returning null at sign-in signs nobody in", async () => {
+  // Auth.js's deny pattern: `if (user?.banned) return null` in `jwt`.
+  const a = app({ callbacks: { jwt: ({ token, user }) => (user ? null : token) } });
+  await signInWithPassword(a);
+  assertEquals(await (await a.call("/api/auth/session")).json(), null);
+  assertEquals((await a.run(() => a.result.auth())).value, null);
+  // denext's own session reads (its auth endpoints, `requireSession`) see no session either.
+  assertEquals((await a.run(() => denextAuth())).value, null);
+});
+
+Deno.test("next-auth security: an Object.prototype name in ?error= is an unknown code, not a 500", async () => {
+  const { translateErrorLocation } = await import("../src/compat/next-auth/flows.ts");
+  const a = app();
+  for (const code of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+    for (const path of [`/api/auth/error?error=${code}`, `/api/auth/signin?error=${code}`]) {
+      const res = await a.call(path);
+      assert(res.status < 500, `${path}: ${res.status}`);
+      assert((await res.text()).includes("Unable to sign in."), path);
+    }
+    assertEquals(translateErrorLocation(`/x?error=${code}`), `/x?error=${code}`);
+  }
 });
 
 Deno.test("next-auth: providers, csrf and the built-in pages", async () => {

@@ -159,8 +159,10 @@ function isLoopbackHost(hostname: string): boolean {
  * `__Host-` cookie over plain http, even on `localhost`, so `denext dev` on
  * `http://localhost` could never hold a session. Over http — no `https:` `canonicalOrigin`,
  * neither the URL nor `x-forwarded-proto` says https — the names are plain on a loopback host,
- * and on any host outside production. Production over http on another host keeps `__Host-`
- * (which the browser refuses, as before): a session cookie there would travel in clear text.
+ * and on any host under `denext dev` (a phone on the LAN). Anywhere else over http on another
+ * host — production, or a staging server that is not `denext dev`, say behind a TLS proxy that
+ * sends no `x-forwarded-proto` — keeps `__Host-` (which the browser refuses, as before): a
+ * session cookie there would travel in clear text, and a sibling subdomain could plant one.
  * Outside a request (nothing to read the transport from) the prefix stays.
  *
  * @param config The auth config (its `canonicalOrigin`).
@@ -172,7 +174,12 @@ export function plainHttpCookies(config: AuthConfig): boolean {
   const url = new URL(request.url);
   const forwarded = request.headers.get("x-forwarded-proto")?.split(",")[0].trim().toLowerCase();
   if (url.protocol === "https:" || forwarded === "https") return false;
-  return isLoopbackHost(url.hostname) || !isProductionEnv();
+  return isLoopbackHost(url.hostname) || (devServer() && !isProductionEnv());
+}
+
+/** Running under `denext dev` (a phone on the LAN reaches it over http)? */
+function devServer(): boolean {
+  return (globalThis as { __denextDev?: boolean }).__denextDev === true;
 }
 
 /** Resolved options per config object — the plugin hands the same `config` to every request. */

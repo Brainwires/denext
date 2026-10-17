@@ -398,6 +398,21 @@ and this project adheres to
   a 500 although the write had run, so a client that retries a 5xx applied it twice. It now
   carries the route's own status with no body and `x-denext-batch-dropped: response too large`;
   an oversized read is still a 500.
+- **Security: `next-auth`'s `jwt` callback returning `null` at sign-in signs nobody in.** Auth.js
+  treats it as a veto (`if (user.banned) return null`); denext sealed an empty token, so the
+  user got a session whose `auth()` was `{ user: {} }` and passed an `authorized` check. The
+  sign-in now mints no live session — next-auth's `auth()` and denext's own session reads both
+  answer `null`. A session whose sealed Auth.js token no longer decodes (its secret retired, its
+  `exp` passed) is signed out, as in Auth.js, instead of reading as the user without the app's
+  claims.
+- **`next-auth`'s built-in pages answer an `?error=` named like an `Object.prototype` key.**
+  `/api/auth/error?error=constructor` (or `toString`, on the sign-in page too) was a 500 with an
+  error logged on every request; it is now an unknown code ("Unable to sign in.").
+- **Security: plain-http auth cookie names are for loopback hosts and `denext dev` only.**
+  Outside production, any host served over http dropped the `__Host-` prefix (and `Secure`)
+  from the session, transaction and CSRF cookies — a staging server behind a TLS proxy that
+  sends no `x-forwarded-proto` among them, where a sibling subdomain could then plant those
+  cookies. Another host keeps the prefix unless the server is `denext dev` (a phone on the LAN).
 
 ### Changed
 

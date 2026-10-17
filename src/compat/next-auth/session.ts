@@ -80,7 +80,7 @@ export async function sealSignInToken(
 ): Promise<AuthSession> {
   if (active.strategy !== "jwt") return payload;
   const record = signInRecord();
-  let token = defaultToken(payload.user);
+  let token: JWT | null = defaultToken(payload.user);
   const jwt = active.config.callbacks?.jwt;
   if (jwt) {
     const isNewUser = record.isNewUser === true;
@@ -91,8 +91,12 @@ export async function sealSignInToken(
       profile: record.profile,
       trigger: isNewUser ? "signUp" : "signIn",
       isNewUser,
-    })) ?? {};
+    })) ?? null;
   }
+  // `jwt` returning nothing at sign-in is Auth.js's veto: no session. The payload is minted
+  // already expired, so nothing — next-auth's `auth()`, denext's own session reads, the auth
+  // endpoints — ever reads it as signed in.
+  if (!token) return { ...payload, expiresAt: Math.floor(Date.now() / 1000) - 1 };
   return { ...payload, authjs: await seal(active, token) } as SealedSession;
 }
 
@@ -110,12 +114,14 @@ export interface ReadOptions {
   update?: { data: unknown };
 }
 
-/** The token a session carries: its sealed one, else the user's defaults. */
-async function storedToken(active: ActiveNextAuth, session: SealedSession): Promise<JWT> {
-  const stored = session.authjs
-    ? await decode({ token: session.authjs, secret: active.secret, salt: TOKEN_SALT })
-    : null;
-  return stored ?? defaultToken(session.user);
+/**
+ * The token a session carries: its sealed one, else (a session minted without one) the user's
+ * defaults. A sealed token that no longer decodes — its secret rotated out, its `exp` passed —
+ * is `null` (signed out), as Auth.js treats it: never the defaults without the app's claims.
+ */
+async function storedToken(active: ActiveNextAuth, session: SealedSession): Promise<JWT | null> {
+  if (!session.authjs) return defaultToken(session.user);
+  return await decode({ token: session.authjs, secret: active.secret, salt: TOKEN_SALT });
 }
 
 /** Write a read's outcome back: a sign-out when `jwt` returned nothing, else a changed token. */
@@ -141,6 +147,10 @@ async function readToken(
   options: ReadOptions,
 ): Promise<JWT | null> {
   const token = await storedToken(active, session);
+  if (!token) {
+    if (options.persist) await clearAuthSession(active.denext);
+    return null;
+  }
   const jwt = active.config.callbacks?.jwt;
   if (!jwt) return token;
   // A copy: a callback that edits `token` in place and returns it is still a change.
