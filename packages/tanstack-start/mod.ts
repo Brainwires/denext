@@ -18,10 +18,16 @@
  *   function's handler is split into the module the RPC resolves. denext's own transforms run on
  *   what it compiles (`"use cache"` with `cacheComponents` on); a `"use server"` module ships to
  *   the browser as its server functions' RPC stubs alone.
- * - **The browser build is guarded:** Start's import protection (a `*.server.*` file,
- *   `@tanstack/react-start/server`, a module marked server-only) and denext's server-only scan
- *   fail the build, naming the import chain. `denext build` builds the server bundle too, so
- *   `denext start` serves its first request without building.
+ * - **Both builds are guarded** by Start's import protection, its rules, options
+ *   (`importProtection`) and messages: in the browser a `*.server.*` file,
+ *   `@tanstack/react-start/server` or a module marked server-only, on the server a `*.client.*`
+ *   file or a module marked client-only, fails the build when tree-shaking kept the import; the
+ *   browser build also runs denext's server-only scan. `denext build` builds the server bundle
+ *   too, so `denext start` serves its first request without building.
+ * - **`denext export` prerenders** the app's pages with Start's prerender (its `prerender` and
+ *   `pages` options, the route tree's static paths, the links each page has), and leaves out and
+ *   lists the routes that need a server: server routes, pages that call a server function, and
+ *   dynamic routes no page covered.
  * - **denext's rules:** a server function called with a mutating method must come from the
  *   app's origin (the check Server Actions use; a cross-site call is a 403), and request bodies
  *   are capped (`maxBodyBytes`, default `actionMaxBodyBytes` or 1 MiB).
@@ -48,9 +54,21 @@ import type { DenextPlugin, PluginContext } from "@denext/denext/server";
 import type { OriginCheckOptions } from "@denext/denext/plugin-kit";
 import { join, relative } from "@std/path";
 import { buildStep, createBundles, type StartApp } from "./src/bundles.ts";
+import type { PrerenderOptions, RouteInfo, StartPage } from "./src/prerender.ts";
+import { compileImportProtection, type ImportProtectionOptions } from "./src/protect.ts";
 import { clientBootSource, entryPaths, serverEntrySource, writeIfChanged } from "./src/entries.ts";
 import { createHandler } from "./src/handler.ts";
 import { generateRouteTree } from "./src/route-tree.ts";
+
+export type {
+  ImportProtectionEnvRules,
+  ImportProtectionOptions,
+  ImportProtectionViolation,
+  Pattern,
+  ProtectionEnv,
+  TraceStep,
+} from "./src/protect.ts";
+export type { PagePrerenderOptions, PrerenderOptions, StartPage } from "./src/prerender.ts";
 
 /** Options for {@link tanstackStart}. */
 export interface TanStackStartOptions {
@@ -70,6 +88,19 @@ export interface TanStackStartOptions {
    * mutating method, on top of the app's own origin.
    */
   allowedOrigins?: string[];
+  /**
+   * Start's `importProtection` options (as `tanstackStart({ importProtection })` takes them in
+   * Start's Vite plugin): extra denied specifiers and files per side, the importers checked,
+   * `onViolation`, `enabled`. A violation always fails the build (Start's `error` behavior).
+   */
+  importProtection?: ImportProtectionOptions;
+  /**
+   * Start's `prerender` options for `denext export` (on by default there; `enabled: false`
+   * exports no TanStack routes).
+   */
+  prerender?: PrerenderOptions;
+  /** Start's `pages`: the paths `denext export` prerenders (default `/`, plus discovery). */
+  pages?: StartPage[];
 }
 
 /**
@@ -85,12 +116,15 @@ export function tanstackStart(options: TanStackStartOptions = {}): DenextPlugin 
       const src = join(ctx.projectRoot, options.srcDirectory ?? "src");
       const routerFile = join(src, options.router ?? "router.tsx");
       if (!(await exists(routerFile))) return; // not a Start app — nothing to do
+      let routes: RouteInfo[] | null = null;
       if (options.generateRouteTree !== false) {
-        ctx.addPrepareStep(() => generateRouteTree(ctx.projectRoot, src), {
-          watch: [`${projectRelative(ctx, join(src, "routes"))}/**`],
-        });
+        ctx.addPrepareStep(async () => {
+          routes = await generateRouteTree(ctx.projectRoot, src);
+        }, { watch: [`${projectRelative(ctx, join(src, "routes"))}/**`] });
       }
-      const bundles = createBundles(ctx, await prepareApp(ctx, src, routerFile));
+      const app = await prepareApp(ctx, src, routerFile);
+      const protection = compileImportProtection(options.importProtection, app.projectRoot, src);
+      const bundles = createBundles(ctx, app, protection);
       if (ctx.mode === "dev") {
         // An edit under the source directory: the next request builds both bundles again.
         ctx.addPrepareStep(() => bundles.reset(), { watch: [`${projectRelative(ctx, src)}/**`] });
@@ -104,14 +138,27 @@ export function tanstackStart(options: TanStackStartOptions = {}): DenextPlugin 
         maxBodyBytes: options.maxBodyBytes ?? ctx.config.actionMaxBodyBytes ?? 1024 * 1024,
         isStaticFile: (path) => isFile(join(publicDir, ...path.split("/"))),
       }));
-      ctx.addBuildStep(() => buildStep(ctx.mode, bundles));
+      ctx.addBuildStep((build) =>
+        buildStep(ctx.mode, bundles, build, {
+          options: options.prerender ?? {},
+          pages: options.pages ?? [],
+          routes: () => routes,
+          projectRoot: app.projectRoot,
+          basePath: app.basePath,
+        })
+      );
     },
   };
 }
 
 /** Write the generated entries and collect where the app's modules are. */
 async function prepareApp(ctx: PluginContext, src: string, routerFile: string): Promise<StartApp> {
-  const outDir = join(ctx.projectRoot, ".denext", "tanstack-start");
+  // The export's bundles (its server bundle is built to prerender) beside the build's.
+  const outDir = join(
+    ctx.projectRoot,
+    ".denext",
+    ctx.mode === "export" ? "tanstack-start-export" : "tanstack-start",
+  );
   const { server: serverEntry, boot } = entryPaths(outDir);
   await writeIfChanged(
     serverEntry,

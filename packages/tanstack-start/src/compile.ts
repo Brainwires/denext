@@ -14,17 +14,24 @@
 //   transforms (`"use cache"`, the `platform` fold) run on what it produced.
 // - **A `"use server"` module** in the browser build: its server functions stay RPC stubs and
 //   the rest of its source never ships (./use-server.ts), through denext's server-module stub.
-// - **The client bundle's guard** once it is built: Start's import protection and denext's
-//   server-only scan (./protect.ts) fail the build on server code the browser would get.
+// - **The bundles' guard** once each is built: Start's import protection on both sides (server
+//   code the browser would get, browser code the server would run) and denext's server-only scan
+//   in the browser (./protect.ts) fail the build. The browser build's import graph is kept for
+//   the export's prerender (which routes reach a server function).
 
 import { dirname, extname } from "@std/path";
 import {
-  DENIED_SPECIFIER,
-  type DeniedImport,
-  deniedImport,
-  formatViolations,
+  type BundleGraph,
+  bundleGraph,
+  compileImportProtection,
+  DENIED_NS,
+  formatGuardError,
+  type ImportProtection,
   importProtectionViolations,
   type Metafile,
+  newResolveRecord,
+  recordImport,
+  resolveFilter,
   serverOnlyLeaks,
 } from "./protect.ts";
 import type { ServerFnInfo, StartCompilerLike, StartEnv, StartToolchain } from "./toolchain.ts";
@@ -55,6 +62,11 @@ export interface StartBuildOptions {
   knownServerFns: Record<string, ServerFnInfo>;
   /** Called with every server function the compiler meets. */
   onServerFns?: (fns: Record<string, ServerFnInfo>) => void;
+  /**
+   * Start's import protection, as the app configures it. Default: Start's own rules, importers
+   * under the router module's directory checked.
+   */
+  protection?: ImportProtection;
 }
 
 /** A minimal esbuild plugin shape (the plugin-kit build takes them as `unknown[]`). */
@@ -89,6 +101,18 @@ export interface StartBuild {
    * `serverModuleSource` hook.
    */
   serverModuleSource(path: string): Promise<string | null>;
+  /**
+   * The browser build's import graph and the app modules it compiled into server-function RPC
+   * stubs, once a client build has run (`null` before, and for the server build).
+   */
+  clientGraph(): ClientGraph | null;
+}
+
+/** What a browser build reached: its import graph, and its server-function modules. */
+export interface ClientGraph {
+  graph: BundleGraph;
+  /** The app modules the browser gets as RPC stubs (they call a server function). */
+  serverFnModules: Set<string>;
 }
 
 const VIRTUAL_NS = "denext-tss";
@@ -211,11 +235,18 @@ export function startBuildPlugin(opts: StartBuildOptions): unknown {
 export function startBuild(opts: StartBuildOptions): StartBuild {
   const tc = opts.toolchain;
   let compiler: StartCompilerLike | undefined;
-  // What the browser build compiled, by real path: the server-only scan reads these.
+  // What the browser build compiled, by real path (the server-only scan reads these) and by the
+  // path the build used (the export's prerender reads its RPC stubs).
   const emitted = new Map<string, string>();
+  const emittedAt = new Map<string, string>();
   const record = async (path: string, code: string) => {
-    if (opts.env === "client") emitted.set(await Deno.realPath(path).catch(() => path), code);
+    if (opts.env !== "client") return;
+    emitted.set(await Deno.realPath(path).catch(() => path), code);
+    emittedAt.set(path, code);
   };
+  const protection = opts.protection ??
+    compileImportProtection(undefined, opts.projectRoot, dirname(opts.routerFile));
+  let graph: ClientGraph | null = null;
   const plugin = {
     name: `@denext/tanstack-start:${opts.env}`,
     setup(build: EsbuildPluginBuild) {
@@ -270,7 +301,14 @@ export function startBuild(opts: StartBuildOptions): StartBuild {
         if (out) await record(args.path, out.contents);
         return out;
       });
-      if (opts.env === "client") guardClientBundle(build, emitted);
+      guardBundle(build, opts.env, protection, emitted, (meta, cwd) => {
+        if (opts.env !== "client") return;
+        const serverFnModules = new Set<string>();
+        for (const [path, code] of emittedAt) {
+          if (code.includes("createClientRpc(")) serverFnModules.add(path);
+        }
+        graph = { graph: bundleGraph(meta, cwd), serverFnModules };
+      });
     },
   };
   return {
@@ -286,25 +324,33 @@ export function startBuild(opts: StartBuildOptions): StartBuild {
       await record(path, code);
       return code;
     },
+    clientGraph: () => graph,
   };
 }
 
 /**
- * Fail the browser build on server code it would ship: Start's import protection and denext's
- * server-only scan over the bundle's metafile, each compiled module read as compiled.
+ * Fail a build on what crossed sides: Start's import protection over the bundle's metafile (both
+ * sides) and, in the browser, denext's server-only scan, each compiled module read as compiled.
+ * `onGraph` receives the metafile of a build that passed.
  */
-function guardClientBundle(build: EsbuildPluginBuild, emitted: Map<string, string>): void {
+function guardBundle(
+  build: EsbuildPluginBuild,
+  env: StartEnv,
+  protection: ImportProtection,
+  emitted: Map<string, string>,
+  onGraph: (meta: Metafile, cwd: string) => void,
+): void {
   if (!build.initialOptions || !build.onEnd) return;
   build.initialOptions.metafile = true;
   const cwd = build.initialOptions.absWorkingDir ?? Deno.cwd();
-  // Start's server entry and server-only marker, imported by an app module: recorded, and an
-  // empty module in their place (CommonJS, so a named import still binds) until the end.
-  const denied: DeniedImport[] = [];
-  build.onResolve({ filter: DENIED_SPECIFIER }, (args) => {
-    const record = args.namespace === "file" ? deniedImport(args.path, args.importer) : null;
-    if (!record) return undefined;
-    denied.push(record);
-    return { path: args.path, namespace: DENIED_NS };
+  // Start's markers and the environment's denied specifiers, as the app's modules import them:
+  // recorded, and a denied one an empty module (CommonJS, so a named import still binds) until
+  // the end decides whether the import survived.
+  let record = newResolveRecord();
+  build.onResolve({ filter: resolveFilter(protection, env) }, (args) => {
+    if (args.namespace !== "file") return undefined;
+    const action = recordImport(protection, env, record, args.path, args.importer);
+    return action === "mock" ? { path: args.path, namespace: DENIED_NS } : undefined;
   });
   build.onLoad({ filter: /.*/, namespace: DENIED_NS }, () => ({
     contents: "module.exports = {};",
@@ -312,21 +358,30 @@ function guardClientBundle(build: EsbuildPluginBuild, emitted: Map<string, strin
     resolveDir: cwd,
   }));
   build.onEnd(async (result) => {
-    const found = denied.splice(0);
+    const seen = record;
+    record = newResolveRecord();
     if (result.errors.length > 0 || !result.metafile) return;
-    const read = async (path: string) =>
-      emitted.get(await Deno.realPath(path).catch(() => path)) ?? await Deno.readTextFile(path);
-    const protection = importProtectionViolations(result.metafile, cwd, found);
-    const reported = new Set(protection.map((v) => v.module));
-    const leaks = (await serverOnlyLeaks(result.metafile, cwd, read))
-      .filter((leak) => !reported.has(leak.module)); // Start's marker is denext's marker too
-    const message = formatViolations([...protection, ...leaks], cwd);
+    const violations = await importProtectionViolations(
+      result.metafile,
+      cwd,
+      protection,
+      env,
+      seen,
+    );
+    let leaks: Awaited<ReturnType<typeof serverOnlyLeaks>> = [];
+    if (env === "client") {
+      const read = async (path: string) =>
+        emitted.get(await Deno.realPath(path).catch(() => path)) ?? await Deno.readTextFile(path);
+      // Start's server-only marker is denext's marker too: reported once, by Start's rule.
+      const marked = new Set(violations.filter((v) => v.type === "marker").map((v) => v.importer));
+      leaks = (await serverOnlyLeaks(result.metafile, cwd, read))
+        .filter((leak) => !marked.has(leak.module));
+    }
+    const message = formatGuardError(violations, leaks, cwd);
     if (message) throw new Error(message);
+    onGraph(result.metafile, cwd);
   });
 }
-
-/** The namespace a denied import resolves into (an empty module; the build then fails). */
-const DENIED_NS = "denext-tss-denied";
 
 /**
  * One module through the plugin: an app module (or a package that builds on Start) the compiler

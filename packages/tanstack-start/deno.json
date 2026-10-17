@@ -20,7 +20,10 @@
         "router",
         "generateRouteTree",
         "maxBodyBytes",
-        "allowedOrigins"
+        "allowedOrigins",
+        "importProtection",
+        "prerender",
+        "pages"
       ]
     }
   },

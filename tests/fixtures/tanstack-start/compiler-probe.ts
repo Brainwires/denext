@@ -39,6 +39,11 @@ export async function plainAction() { return readFileSync("/etc/hosts", "utf8") 
 export default function Page() { return SECRET; }
 console.log("SIDE_EFFECT", SECRET, effect);
 `;
+// createClientOnlyFn: on the server its body, and the import only it used, are gone.
+const clientOnly = `import { createClientOnlyFn } from "@tanstack/react-start";
+import { track } from "./analytics.client.ts";
+export const report = createClientOnlyFn(() => track("x"));
+`;
 const seen: Record<string, ServerFnInfo> = {};
 const compile = async (env: "client" | "server", code = fns, id = "/p/src/fns.ts") =>
   (await tc.createCompiler({
@@ -57,6 +62,7 @@ console.log(JSON.stringify({
   client,
   ssr,
   ids: Object.keys(seen),
+  clientOnlyOnServer: await compile("server", clientOnly, "/p/src/report.ts"),
   resolver: tc.resolverModule(seen),
   useServer: browserServerModule(
     (await compile("client", mixed, "/p/src/mixed.ts"))!,

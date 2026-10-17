@@ -8,7 +8,13 @@
 // bundle prebuilt by `denext build` and loaded by `denext start`, and a project without a Start
 // router left alone. The browser half is tests/e2e/tanstack-start.e2e.test.ts.
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import {
   CLIENT_ENTRY,
@@ -22,6 +28,7 @@ import {
   serverEntrySource,
 } from "../packages/tanstack-start/src/entries.ts";
 import {
+  type ClientGraph,
   SPLIT_SUFFIX,
   startBuild,
   startBuildPlugin,
@@ -29,10 +36,17 @@ import {
   virtualModuleSource,
 } from "../packages/tanstack-start/src/compile.ts";
 import {
-  deniedImport,
-  formatViolations,
+  compileImportProtection,
+  deniedModulePath,
+  formatGuardError,
+  formatViolation,
+  type ImportProtectionOptions,
+  type ImportProtectionViolation,
   importProtectionViolations,
   type Metafile,
+  newResolveRecord,
+  recordImport,
+  resolveFilter,
   serverOnlyLeaks,
 } from "../packages/tanstack-start/src/protect.ts";
 import { coversServerFns, scanServerFns } from "../packages/tanstack-start/src/server-fns.ts";
@@ -48,8 +62,16 @@ import {
   createBundles,
   SERVER_RECORD,
   type StartApp,
+  type StartBundles,
   startDefines,
 } from "../packages/tanstack-start/src/bundles.ts";
+import {
+  formatRefusals,
+  prerenderPages,
+  routeFor,
+  type RouteInfo,
+  staticPaths,
+} from "../packages/tanstack-start/src/prerender.ts";
 import {
   buildNextCompatClientEntries,
   buildNextCompatModules,
@@ -57,7 +79,7 @@ import {
 import { loadBundleRef } from "../src/build/next-compat-loader.ts";
 import { stopNextCompat } from "../src/build/next-compat.ts";
 import { defaultLoader } from "../src/server/mod.ts";
-import type { PluginContext } from "../src/plugin/mod.ts";
+import type { PluginBuildContext, PluginContext } from "../src/plugin/mod.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -557,47 +579,217 @@ function metafile(graph: Record<string, Array<string | [string, string]>>): Meta
   return { inputs, outputs: { "client.js": { entryPoint: ".denext/entry.tsx", inputs: shipped } } };
 }
 
-Deno.test("tanstack-start import protection: *.server.* files, Start's server entry, the marker", () => {
-  const cwd = "/p";
+const P = "/p";
+const startRules = (options?: ImportProtectionOptions) =>
+  compileImportProtection(options, P, `${P}/src`);
+
+/** A resolve record, as a build fills it. */
+function recorded(
+  protection: ReturnType<typeof startRules>,
+  env: "client" | "server",
+  imports: Array<[string, string]>,
+) {
+  const record = newResolveRecord();
+  const actions = imports.map(([spec, importer]) =>
+    recordImport(protection, env, record, spec, importer)
+  );
+  return { record, actions };
+}
+
+Deno.test("tanstack-start import protection: Start's browser rules, in its words", async () => {
   const meta = metafile({
     ".denext/entry.tsx": ["src/router.tsx"],
-    "src/router.tsx": ["src/routes/a.tsx", "node_modules/pkg/index.js"],
+    "src/router.tsx": [["src/routes/a.tsx", "./routes/a.tsx"], "node_modules/pkg/index.js"],
     "src/routes/a.tsx": [
       ["src/db.server.ts", "../db.server.ts"],
       ["src/marked.ts", "../marked.ts"],
+      [deniedModulePath("@tanstack/react-start/server"), "@tanstack/react-start/server"],
     ],
     "src/db.server.ts": [],
     "src/marked.ts": [],
+    [deniedModulePath("@tanstack/react-start/server")]: [],
     // A package may import what an app module may not.
     "node_modules/pkg/index.js": ["node_modules/pkg/x.server.js"],
     "node_modules/pkg/x.server.js": [],
   });
-  const denied = [
-    deniedImport("@tanstack/react-start/server-only", "/p/src/marked.ts")!,
-    deniedImport("@tanstack/react-start/server", "/p/src/routes/a.tsx")!,
-  ];
-  assertEquals(deniedImport("@tanstack/react-start/server", "/p/node_modules/x/y.js"), null);
-  assertEquals(deniedImport("@tanstack/react-start", "/p/src/a.ts"), null);
-  const found = importProtectionViolations(meta, cwd, denied);
-  assertEquals(found.map((v) => [v.module, v.chain]), [
-    ["/p/src/marked.ts", ["/p/src/router.tsx", "/p/src/routes/a.tsx", "/p/src/marked.ts"]],
-    ["@tanstack/react-start/server", [
+  const rules = startRules();
+  const { record, actions } = recorded(rules, "client", [
+    ["@tanstack/react-start/server-only", "/p/src/marked.ts"],
+    ["@tanstack/react-start/server", "/p/src/routes/a.tsx"],
+    ["@tanstack/react-start/server", "/p/node_modules/x/y.js"],
+    ["@tanstack/react-start", "/p/src/a.ts"],
+  ]);
+  // Start's server entry and its marker are an empty module in the browser; the rest resolves.
+  assertEquals(actions, ["mock", "mock", "pass", "pass"]);
+  const found = await importProtectionViolations(meta, P, rules, "client", record);
+  assertEquals(found.map((v) => [v.type, v.importer, v.specifier, v.trace.map((s) => s.file)]), [
+    ["specifier", "/p/src/routes/a.tsx", "@tanstack/react-start/server", [
       "/p/src/router.tsx",
       "/p/src/routes/a.tsx",
-      "@tanstack/react-start/server",
     ]],
-    ["/p/src/db.server.ts", ["/p/src/router.tsx", "/p/src/routes/a.tsx", "/p/src/db.server.ts"]],
+    ["file", "/p/src/routes/a.tsx", "../db.server.ts", [
+      "/p/src/router.tsx",
+      "/p/src/routes/a.tsx",
+    ]],
+    ["marker", "/p/src/marked.ts", "@tanstack/react-start/server-only", [
+      "/p/src/router.tsx",
+      "/p/src/routes/a.tsx",
+      "/p/src/marked.ts",
+    ]],
   ]);
-  const message = formatViolations(found, cwd)!;
-  assertStringIncludes(message, "src/db.server.ts — is a *.server.* file");
+  const message = formatViolation(found[1], P);
+  assertStringIncludes(message, "[import-protection] Import denied in client environment");
+  assertStringIncludes(message, "  Denied by file pattern: **/*.server.*");
+  assertStringIncludes(message, "  Importer: src/routes/a.tsx\n");
+  assertStringIncludes(message, '  Import: "../db.server.ts"\n  Resolved: src/db.server.ts');
   assertStringIncludes(
     message,
-    "imported through src/router.tsx → src/routes/a.tsx → src/db.server.ts",
+    '    1. src/router.tsx (entry) (import "./routes/a.tsx")\n    2. src/routes/a.tsx\n',
   );
-  assertStringIncludes(message, "@tanstack/react-start/server — Start's server runtime");
-  assertStringIncludes(message, "createServerFn");
-  assertEquals(formatViolations([], cwd), null);
-  assertEquals(importProtectionViolations(meta, cwd, []).length, 1, "the file rule alone");
+  assertStringIncludes(message, "Use createServerFn().handler(() => ...)");
+  assertStringIncludes(
+    formatViolation(found[0], P),
+    "  Denied by specifier pattern: @tanstack/react-start/server",
+  );
+  assertStringIncludes(
+    formatViolation(found[2], P),
+    "  Denied by marker: module is restricted to the opposite environment",
+  );
+  assertEquals(formatGuardError([], [], P), null);
+});
+
+Deno.test("tanstack-start import protection: tree-shaken imports do not count", async () => {
+  const meta = metafile({
+    "src/router.tsx": ["src/routes/a.tsx"],
+    "src/routes/a.tsx": ["src/db.server.ts", [deniedModulePath("x-secret"), "x-secret"]],
+    "src/db.server.ts": [],
+    [deniedModulePath("x-secret")]: [],
+  });
+  // The import's module (and the denied specifier's stand-in) were dropped from the output.
+  meta.outputs["client.js"].inputs["src/db.server.ts"].bytesInOutput = 0;
+  meta.outputs["client.js"].inputs[deniedModulePath("x-secret")].bytesInOutput = 0;
+  const rules = startRules({ client: { specifiers: ["x-secret"] } });
+  const { record } = recorded(rules, "client", [["x-secret", "/p/src/routes/a.tsx"]]);
+  assertEquals(await importProtectionViolations(meta, P, rules, "client", record), []);
+});
+
+Deno.test("tanstack-start import protection: the server build refuses *.client.* and the client-only marker", async () => {
+  const meta = metafile({
+    "src/router.tsx": ["src/routes/a.tsx"],
+    "src/routes/a.tsx": [
+      ["src/widget.client.tsx", "../widget.client.tsx"],
+      "src/browser.ts",
+      "src/db.server.ts",
+    ],
+    "src/widget.client.tsx": [],
+    "src/browser.ts": [],
+    "src/db.server.ts": [],
+  });
+  const rules = startRules();
+  const { record, actions } = recorded(rules, "server", [
+    ["@tanstack/react-start/client-only", "/p/src/browser.ts"],
+    ["@tanstack/react-start/server-only", "/p/src/db.server.ts"],
+  ]);
+  assertEquals(actions, ["pass", "pass"], "both markers resolve on the server");
+  const found = await importProtectionViolations(meta, P, rules, "server", record);
+  assertEquals(found.map((v) => [v.type, v.importer, v.resolved]), [
+    ["file", "/p/src/routes/a.tsx", "/p/src/widget.client.tsx"],
+    ["marker", "/p/src/browser.ts", undefined],
+  ]);
+  const message = formatViolation(found[0], P);
+  assertStringIncludes(message, "[import-protection] Import denied in server environment");
+  assertStringIncludes(message, "  Denied by file pattern: **/*.client.*");
+  assertStringIncludes(message, "Use createClientOnlyFn(() => ...)");
+  // The browser's rules leave *.client.* alone; the server's leave *.server.* alone.
+  assertEquals(
+    (await importProtectionViolations(meta, P, rules, "client")).map((v) => v.resolved),
+    ["/p/src/db.server.ts"],
+  );
+  // One module may not carry both markers.
+  const both = newResolveRecord();
+  recordImport(rules, "server", both, "@tanstack/react-start/client-only", "/p/src/x.ts");
+  assertThrows(
+    () => recordImport(rules, "server", both, "@tanstack/react-start/server-only", "/p/src/x.ts"),
+    Error,
+    'File "src/x.ts" has both server-only and client-only markers',
+  );
+});
+
+Deno.test("tanstack-start import protection: the app's importProtection rules", async () => {
+  const meta = metafile({
+    "src/router.tsx": ["src/routes/a.tsx", "lib/shared.ts"],
+    "src/routes/a.tsx": [
+      ["src/db.server.ts", "../db.server.ts"],
+      ["src/secret/keys.ts", "../secret/keys.ts"],
+      ["src/legacy.client.ts", "../legacy.client.ts"],
+      [deniedModulePath("@prisma/client"), "@prisma/client"],
+    ],
+    "lib/shared.ts": [["src/db.server.ts", "../src/db.server.ts"]],
+    "src/db.server.ts": [],
+    "src/secret/keys.ts": [],
+    "src/legacy.client.ts": [],
+    [deniedModulePath("@prisma/client")]: [],
+  });
+  const files = (found: ImportProtectionViolation[]) =>
+    found.map((v) => `${v.type}:${v.importer.slice(3)}>${v.resolved?.slice(3) ?? v.specifier}`);
+  // client.specifiers add to Start's; client.files replace its *.server.* rule.
+  const client = startRules({
+    client: { specifiers: [/^@prisma\//], files: ["src/secret/**"] },
+  });
+  assertEquals(resolveFilter(client, "client").source, ".*", "a RegExp rule sees every import");
+  const { record } = recorded(client, "client", [
+    ["@prisma/client", "/p/src/routes/a.tsx"],
+    ["@tanstack/react-start/server", "/p/src/routes/a.tsx"],
+  ]);
+  assertEquals(record.denied.map((d) => d.specifier), [
+    "@prisma/client",
+    "@tanstack/react-start/server",
+  ]);
+  assertEquals(files(await importProtectionViolations(meta, P, client, "client", record)), [
+    "specifier:src/routes/a.tsx>@prisma/client",
+    "file:src/routes/a.tsx>src/secret/keys.ts",
+  ]);
+  // By default only importers under the source directory are checked; `include` widens it.
+  const wide = startRules({ include: ["**"] });
+  assertEquals(files(await importProtectionViolations(meta, P, wide, "client")), [
+    "file:src/routes/a.tsx>src/db.server.ts",
+    "file:lib/shared.ts>src/db.server.ts",
+  ]);
+  // `exclude` / `ignoreImporters` skip importers; `excludeFiles` exempts files.
+  for (
+    const options of [
+      { exclude: ["src/routes/**"] },
+      { ignoreImporters: [/routes\/a/] },
+      { client: { excludeFiles: ["**/db.server.ts"] } },
+      { enabled: false },
+    ] as ImportProtectionOptions[]
+  ) {
+    assertEquals(
+      await importProtectionViolations(meta, P, startRules(options), "client"),
+      [],
+      JSON.stringify(options),
+    );
+  }
+  // server.files replaces Start's *.client.* rule; server.specifiers apply on the server.
+  const server = startRules({ server: { files: ["**/legacy.*"], specifiers: ["@prisma/client"] } });
+  assertEquals(resolveFilter(server, "server").test("@prisma/client"), true);
+  assertEquals(resolveFilter(startRules(), "server").test("@prisma/client"), false);
+  const serverRecord = recorded(server, "server", [["@prisma/client", "/p/src/routes/a.tsx"]]);
+  assertEquals(serverRecord.actions, ["mock"]);
+  assertEquals(
+    files(await importProtectionViolations(meta, P, server, "server", serverRecord.record)),
+    ["specifier:src/routes/a.tsx>@prisma/client", "file:src/routes/a.tsx>src/legacy.client.ts"],
+  );
+  // onViolation: false waives one (and the hook sees Start's violation shape).
+  const seen: string[] = [];
+  const waived = startRules({
+    onViolation: (v) => {
+      seen.push(`${v.envType}:${v.type}:${v.behavior}`);
+      return v.resolved?.endsWith("db.server.ts") ? false : undefined;
+    },
+  });
+  assertEquals(await importProtectionViolations(meta, P, waived, "client"), []);
+  assertEquals(seen, ["client:file:error"]);
 });
 
 Deno.test("tanstack-start client guard: denext's server-only scan reads modules as compiled", async () => {
@@ -685,9 +877,96 @@ Deno.test({
     const js = await Deno.readTextFile(join(dir, ".denext", "client", "client.js"));
     assert(!js.includes("Deno.env"), "the compiled module shipped, not the source");
     const err = await assertRejects(() => build("bad.ts"));
-    assertStringIncludes(String(err), "server-only code would ship to the browser");
-    assertStringIncludes(String(err), "src/db.server.ts — is a *.server.* file");
-    assertStringIncludes(String(err), "imported through src/bad.ts → src/db.server.ts");
+    assertStringIncludes(String(err), "[import-protection] Import denied in client environment");
+    assertStringIncludes(String(err), "Denied by file pattern: **/*.server.*");
+    assertStringIncludes(String(err), '  Importer: src/bad.ts\n  Import: "./db.server.ts"');
+  } finally {
+    await stopNextCompat().catch(() => {});
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test({
+  name: "tanstack-start server bundle: the build fails on browser code the server would run",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_tss_sguard_" }));
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ imports: {} }));
+    await Deno.mkdir(join(dir, "src"));
+    const file = (name: string, code: string) => Deno.writeTextFile(join(dir, "src", name), code);
+    await file("widget.client.ts", `export const track = () => "WIDGET";\n`);
+    await file(
+      "browser.ts",
+      `import "@tanstack/react-start/client-only";\nexport const run = () => "BROWSER";\n`,
+    );
+    // createClientOnlyFn's body (and the import only it used) is gone on the server.
+    await file(
+      "safe.ts",
+      `import { track } from "./widget.client.ts";\n` +
+        `export const run = createClientOnlyFn(() => track());\n`,
+    );
+    await file(
+      "bad.ts",
+      `import { track } from "./widget.client.ts";\nexport const run = track;\n`,
+    );
+    await file("marked.ts", `import { run } from "./browser.ts";\nexport { run };\n`);
+    // An empty marker module, where the app's install would have Start's.
+    const marker = join(dir, "node_modules", "@tanstack", "react-start");
+    await Deno.mkdir(marker, { recursive: true });
+    await Deno.writeTextFile(
+      join(marker, "package.json"),
+      JSON.stringify({
+        name: "@tanstack/react-start",
+        exports: { "./client-only": "./client-only.js" },
+      }),
+    );
+    await Deno.writeTextFile(join(marker, "client-only.js"), "");
+    const { tc } = fakeToolchain();
+    const toolchain: StartToolchain = {
+      ...tc,
+      mayNeedCompile: (code) => code.includes("createClientOnlyFn"),
+      createCompiler: () => ({
+        compile: ({ code }) =>
+          Promise.resolve({
+            code: code.replace(/^import .*\n/, "").replace(
+              /createClientOnlyFn\(.*\)/,
+              "() => { throw new Error('client only'); }",
+            ),
+          }),
+        ingestModule: () => undefined,
+      }),
+    };
+    const build = (module: string, protection?: ImportProtectionOptions) =>
+      buildNextCompatModules({
+        projectDir: dir,
+        configPath: join(dir, "deno.json"),
+        outDir: join(dir, ".denext"),
+        modules: [join(dir, "src", module)],
+        resolveAllNodeModules: true,
+        extraPlugins: [startBuildPlugin({
+          env: "server",
+          toolchain,
+          projectRoot: dir,
+          routerFile: join(dir, "src", "router.tsx"),
+          startFile: null,
+          knownServerFns: {},
+          protection: protection &&
+            compileImportProtection(protection, dir, join(dir, "src")),
+        })],
+      });
+    await build("safe.ts");
+    const err = await assertRejects(() => build("bad.ts"));
+    assertStringIncludes(String(err), "[import-protection] Import denied in server environment");
+    assertStringIncludes(String(err), "Denied by file pattern: **/*.client.*");
+    assertStringIncludes(String(err), '  Importer: src/bad.ts\n  Import: "./widget.client.ts"');
+    const marked = await assertRejects(() => build("marked.ts"));
+    assertStringIncludes(String(marked), "Denied by marker");
+    assertStringIncludes(String(marked), "  Importer: src/browser.ts");
+    // The app's rules: `server.files` replaces Start's, and `enabled: false` turns it off.
+    await build("bad.ts", { server: { files: ["**/*.secret.*"] } });
+    await build("marked.ts", { enabled: false });
   } finally {
     await stopNextCompat().catch(() => {});
     await Deno.remove(dir, { recursive: true }).catch(() => {});
@@ -743,27 +1022,299 @@ Deno.test("tanstack-start: `denext start` loads the server bundle `denext build`
   }
 });
 
-Deno.test("tanstack-start: `denext build` builds the client, then the server bundle", async () => {
+/** Stand-in bundles that record what a build step asks of them. */
+function fakeBundles(over: Partial<StartBundles> = {}) {
   const calls: string[] = [];
-  const bundles = {
+  const bundles: StartBundles = {
     loadServerEntry: () => Promise.reject(new Error("not at build")),
     client: () => Promise.reject(new Error("not at build")),
     bundle: () => (calls.push("client"), Promise.resolve()),
+    clientGraph: () => null,
     prebuildServer: () => (calls.push("server"), Promise.resolve()),
     forgetServerBuild: () => (calls.push("forget"), Promise.resolve()),
     reset: () => {},
+    ...over,
   };
+  return { bundles, calls };
+}
+
+/** Run `fn` with console.warn / console.log captured. */
+async function captured<T>(fn: () => Promise<T>): Promise<{ value: T; out: string }> {
+  const { warn, log } = console;
+  let out = "";
+  console.warn = console.log = (...args: unknown[]) => (out += args.join(" ") + "\n");
+  try {
+    return { value: await fn(), out };
+  } finally {
+    Object.assign(console, { warn, log });
+  }
+}
+
+Deno.test("tanstack-start: `denext build` builds the client, then the server bundle", async () => {
+  const { bundles, calls } = fakeBundles();
   await buildStep("build", bundles);
   assertEquals(calls, ["forget", "client", "server"], "a stale record never outlives a build");
   calls.length = 0;
-  const warn = console.warn;
-  console.warn = () => {};
+  // An export with prerender off builds neither.
+  const plan = {
+    options: { enabled: false },
+    pages: [],
+    routes: () => null,
+    projectRoot: "/p",
+    basePath: "",
+  };
+  const { out } = await captured(() => buildStep("export", bundles, {} as never, plan));
+  assertEquals(calls, []);
+  assertStringIncludes(out, "prerender is off");
+});
+
+Deno.test("tanstack-start: `denext export` ships the client bundle and prerenders the pages", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_tss_export_" }));
   try {
-    await buildStep("export", bundles);
+    const clientDir = join(dir, "client");
+    await Deno.mkdir(clientDir);
+    await Deno.writeTextFile(join(clientDir, CLIENT_ENTRY), "boot()");
+    await Deno.writeTextFile(join(clientDir, "chunk-A.js"), "chunk()");
+    // A stale page from a previous export is gone.
+    await Deno.mkdir(join(dir, "out", "pages-static", "old"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "out", "pages-static", "old", "index.html"), "stale");
+    const emitted: string[] = [];
+    const { bundles } = fakeBundles({
+      client: () => Promise.resolve(clientDir),
+      loadServerEntry: () =>
+        Promise.resolve({
+          fetch: (req: Request) => {
+            const path = new URL(req.url).pathname;
+            return Promise.resolve(
+              new Response(`<a href="/about">a</a>${path}`, {
+                headers: { "content-type": "text/html" },
+              }),
+            );
+          },
+        }),
+    });
+    const build = {
+      outDir: join(dir, "out"),
+      emitFile: ({ fileName }: { fileName: string }) => (emitted.push(fileName), Promise.resolve()),
+    } as unknown as PluginBuildContext;
+    const { out } = await captured(() =>
+      buildStep("export", bundles, build, {
+        options: {},
+        pages: [],
+        routes: () => null,
+        projectRoot: dir,
+        basePath: "",
+      })
+    );
+    assertEquals(emitted.sort(), ["_tss/chunk-A.js", "_tss/client.js"]);
+    const page = (p: string) => Deno.readTextFile(join(dir, "out", "pages-static", p));
+    assertEquals(await page("index.html"), '<a href="/about">a</a>/');
+    assertEquals(await page("about/index.html"), '<a href="/about">a</a>/about', "crawled");
+    await assertRejects(() => page("old/index.html"));
+    assertStringIncludes(out, "prerendered 2 page(s)");
   } finally {
-    console.warn = warn;
+    await Deno.remove(dir, { recursive: true });
   }
-  assertEquals(calls, [], "a static export builds neither");
+});
+
+/** A route tree like the example's. */
+function exampleRoutes(dir: string): RouteInfo[] {
+  const root: RouteInfo = {
+    id: "__root__",
+    path: "/",
+    file: join(dir, "src/routes/__root.tsx"),
+    layout: true,
+    options: ["component"],
+  };
+  const route = (id: string, file: string, options: string[], parent = root): RouteInfo => ({
+    id,
+    path: id.replace(/\/_[^/]+/g, "") || "/",
+    file: join(dir, "src/routes", file),
+    layout: /\/_[^/]+$/.test(id),
+    options,
+    parent,
+  });
+  const posts = route("/posts", "posts/route.tsx", ["component"]);
+  return [
+    root,
+    route("/", "index.tsx", ["component", "loader"]),
+    route("/about", "about.tsx", ["component"]),
+    route("/notes", "notes.tsx", ["component", "loader"]),
+    route("/api/hello", "api/hello.ts", ["server"]),
+    posts,
+    route("/posts/", "posts/index.tsx", ["component", "loader"], posts),
+    route("/posts/$postId", "posts/$postId.tsx", ["component", "loader"], posts),
+    route("/docs/$slug", "docs/$slug.tsx", ["component"]),
+    route("/_auth", "_auth.tsx", ["component"]),
+  ];
+}
+
+/** A client graph in which `notes.tsx` reaches a server function. */
+function exampleClientGraph(dir: string): ClientGraph {
+  const routes = join(dir, "src/routes");
+  return {
+    graph: {
+      imports: new Map([
+        [join(routes, "notes.tsx"), [{ to: join(dir, "src/functions/notes.ts"), specifier: "x" }]],
+        [join(routes, "about.tsx"), [{ to: join(dir, "node_modules/x/rpc.js"), specifier: "x" }]],
+      ]),
+      importers: new Map(),
+      kept: new Set(),
+    },
+    serverFnModules: new Set([
+      join(dir, "src/functions/notes.ts"),
+      join(dir, "node_modules/x/rpc.js"),
+    ]),
+  };
+}
+
+Deno.test("tanstack-start prerender: Start's pages, discovery and crawl; server routes refused", async () => {
+  const dir = "/app";
+  const routes = exampleRoutes(dir);
+  assertEquals(staticPaths(routes), ["/", "/about", "/notes", "/posts", "/posts/"]);
+  assertEquals(routeFor(routes, "/posts/1")?.id, "/posts/$postId");
+  assertEquals(routeFor(routes, "/posts")?.id, "/posts/", "the index route renders /posts");
+  assertEquals(routeFor(routes, "/nope"), undefined);
+  const requested: string[] = [];
+  const files = new Map<string, string>();
+  const links: Record<string, string> = {
+    "/": '<a href="/posts">p</a><a href="/notes">n</a><a href="https://x.dev/">x</a>',
+    "/posts": '<a href="/posts/1">1</a><a href="./x">rel</a>',
+  };
+  const result = await prerenderPages({
+    options: { concurrency: 2 },
+    pages: [],
+    routes,
+    client: exampleClientGraph(dir),
+    projectRoot: dir,
+    basePath: "",
+    fetch: (req) => {
+      const path = new URL(req.url).pathname;
+      requested.push(path);
+      if (path === "/x") return Promise.resolve(new Response(null, { status: 404 }));
+      return Promise.resolve(
+        new Response(`${links[path] ?? ""}${path}`, { headers: { "content-type": "text/html" } }),
+      );
+    },
+    write: (file, html) => (files.set(file, html), Promise.resolve()),
+  }).catch((err) => err);
+  // `./x` is a crawled page that 404s: Start's failOnError fails the export.
+  assertStringIncludes(String(result), "Failed to fetch /x: 404");
+  // Without it: every static page, the crawled dynamic one; the server routes refused.
+  files.clear();
+  const ok = await prerenderPages({
+    options: { filter: (page) => page.path !== "/x" },
+    pages: [],
+    routes,
+    client: exampleClientGraph(dir),
+    projectRoot: dir,
+    basePath: "",
+    fetch: (req) => {
+      const path = new URL(req.url).pathname;
+      return Promise.resolve(
+        new Response(`${links[path] ?? ""}${path}`, { headers: { "content-type": "text/html" } }),
+      );
+    },
+    write: (file, html) => (files.set(file, html), Promise.resolve()),
+  });
+  assertEquals([...files.keys()].sort(), [
+    "about/index.html",
+    "index.html",
+    "posts/1/index.html",
+    "posts/index.html",
+  ]);
+  assertEquals(ok.refused.map((r) => [r.path, r.reason.split(":")[0]]), [
+    ["/api/hello", "a server route (server.handlers)"],
+    ["/docs/$slug", "a dynamic route no prerendered page links to"],
+    ["/notes", "calls a server function (createServerFn)"],
+  ]);
+  assert(!requested.includes("/notes"), "a page that needs a server is never rendered");
+  const report = formatRefusals(ok.refused, dir)!;
+  assertStringIncludes(report, "3 route(s) need a server and are not in the export");
+  assertStringIncludes(report, "    /notes  (src/routes/notes.tsx) — calls a server function");
+  assertEquals(formatRefusals([], dir), null);
+});
+
+Deno.test("tanstack-start prerender: page options, redirects and the base path", async () => {
+  const files = new Map<string, string>();
+  const seenHeaders: string[] = [];
+  const succeeded: string[] = [];
+  const result = await prerenderPages({
+    options: { autoSubfolderIndex: false, crawlLinks: false, headers: { "x-a": "1" } },
+    pages: [
+      { path: "/old" },
+      { path: "/feed", prerender: { outputPath: "/feed.xml" } },
+      { path: "/skip", prerender: { enabled: false } },
+      { path: "/hi", prerender: { onSuccess: ({ page }) => void succeeded.push(page.path) } },
+    ],
+    routes: null,
+    client: null,
+    projectRoot: "/app",
+    basePath: "/base",
+    fetch: (req) => {
+      const path = new URL(req.url).pathname;
+      seenHeaders.push(req.headers.get("x-a") ?? "");
+      if (path === "/base/old") {
+        return Promise.resolve(
+          new Response(null, { status: 307, headers: { location: "/base/new" } }),
+        );
+      }
+      const type = path.endsWith("feed") ? "application/xml" : "text/html";
+      return Promise.resolve(new Response(path, { headers: { "content-type": type } }));
+    },
+    write: (file, html) => (files.set(file, html), Promise.resolve()),
+  });
+  assertEquals(Object.fromEntries(files), {
+    "old.html": "/base/new",
+    "feed.xml": "/base/feed",
+    "hi.html": "/base/hi",
+  });
+  assertEquals(result.written.sort(), ["/feed", "/hi", "/old"]);
+  assertEquals(result.refused, []);
+  assertEquals(succeeded, ["/hi"]);
+  assert(seenHeaders.every((h) => h === "1"), "the prerender headers ride every request");
+  // retryCount retries a failed page; with failOnError off a page that keeps failing is skipped.
+  let flaky = 0;
+  const retried = new Map<string, string>();
+  const lenient = await prerenderPages({
+    options: { failOnError: false, retryCount: 1, retryDelay: 0, crawlLinks: false },
+    pages: [{ path: "/flaky" }, { path: "/gone" }],
+    routes: null,
+    client: null,
+    projectRoot: "/app",
+    basePath: "",
+    fetch: (req) => {
+      const path = new URL(req.url).pathname;
+      const fail = path === "/gone" || (path === "/flaky" && flaky++ === 0);
+      return Promise.resolve(
+        new Response(path, { status: fail ? 500 : 200, headers: { "content-type": "text/html" } }),
+      );
+    },
+    write: (file, html) => (retried.set(file, html), Promise.resolve()),
+  });
+  assertEquals(Object.fromEntries(retried), { "flaky/index.html": "/flaky" });
+  assertEquals(lenient.written, ["/flaky"]);
+  // A path outside the app is refused before any request.
+  await assertRejects(
+    () =>
+      prerenderPages({
+        options: {},
+        pages: [{ path: "https://evil.example/" }],
+        routes: null,
+        client: null,
+        projectRoot: "/app",
+        basePath: "",
+        fetch: () => Promise.reject(new Error("no request")),
+        write: () => Promise.resolve(),
+      }),
+    Error,
+    "prerender page path must be relative",
+  );
+});
+
+Deno.test("tanstack-start: the export's server bundle is Start's prerendering build", () => {
+  assertEquals(startDefines("")["process.env.TSS_PRERENDERING"], '"false"');
+  assertEquals(startDefines("", true)["process.env.TSS_PRERENDERING"], '"true"');
 });
 
 // TanStack's real compiler, from the example app's install (`deno install` in
@@ -799,6 +1350,10 @@ Deno.test({
   assertEquals(r.ids.length, 1);
   assertStringIncludes(r.client, r.ids[0], "both sides name the function by the same id");
   assertStringIncludes(r.resolver, "/p/src/fns.ts" + SPLIT_SUFFIX);
+  // On the server a createClientOnlyFn body is replaced and its client-only import dropped, so
+  // the server build's import protection never sees it.
+  assertStringIncludes(r.clientOnlyOnServer, "export const report");
+  assert(!r.clientOnlyOnServer.includes("analytics.client"), r.clientOnlyOnServer);
   // A "use server" module's browser half: its server functions stay RPC stubs, every other
   // export throws, and nothing else of it ships.
   const useServer = r.useServer as string;

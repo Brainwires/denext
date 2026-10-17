@@ -17,11 +17,26 @@ TanStack's generator and answers every request with Start's own handler
 - TanStack's own compiler (`@tanstack/start-plugin-core`) builds both bundles: server-function
   RPC stubs and no server-only code in the browser, the provider split on the server. denext's
   own transforms run on what it compiles: `"use cache"` (with `cacheComponents` on) still caches.
-- The browser build fails, naming the import chain, on Start's import protection (a
-  `*.server.*` file, `@tanstack/react-start/server`, or a module marked
-  `@tanstack/react-start/server-only`, reached from client code) and on denext's server-only scan
-  (a `node:` import, the `server-only` marker or the `Deno` global in a module the browser gets,
-  read as compiled).
+- Start's import protection guards both builds, with Start's rules, build-mode semantics and
+  messages (`[import-protection] Import denied in client environment`, the pattern, importer,
+  resolved file and trace): the browser build refuses a `*.server.*` file,
+  `@tanstack/react-start/server` and a module marked `@tanstack/react-start/server-only`; the
+  server build refuses a `*.client.*` file and a module marked
+  `@tanstack/react-start/client-only`. An import counts only when tree-shaking kept it, after
+  TanStack's compiler removed what a `createServerFn` handler, a `createServerOnlyFn` body (in the
+  browser) or a `createClientOnlyFn` body (on the server) alone used.
+- `importProtection`: Start's own option shape (`client` / `server` with `specifiers`, `files`
+  and `excludeFiles`, plus `include`, `exclude`, `ignoreImporters`, `onViolation` and `enabled`),
+  merged with Start's defaults the way Start merges them, applied to both builds.
+- The browser build also fails on denext's server-only scan (a `node:` import, the `server-only`
+  marker or the `Deno` global in a module the browser gets, read as compiled).
+- `denext export` prerenders the app with Start's prerender: its `prerender` and `pages` options
+  (`filter`, `crawlLinks`, `autoSubfolderIndex`, `autoStaticPathsDiscovery`, `concurrency`,
+  `failOnError`, `maxRedirects`, `retryCount`, `retryDelay`, `headers`, `onSuccess`, a page's
+  `outputPath`), the route tree's static paths and the links each page has, rendered through the
+  server bundle and written beside the client bundle. Routes that need a server — server routes,
+  pages that call a server function from the browser, dynamic routes no prerendered page covers —
+  are left out and listed with the reason.
 - A `"use server"` module that declares server functions ships only their RPC stubs: its other
   exports throw when called in the browser, and the rest of its source stays on the server.
 - `denext build` builds the server bundle as well as the client bundle, so a build error surfaces

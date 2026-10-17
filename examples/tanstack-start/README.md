@@ -10,6 +10,7 @@ the document — run by the [`@denext/tanstack-start`](../../packages/tanstack-s
 denext task install   # installs the TanStack packages into node_modules (once)
 denext task dev       # http://localhost:3000
 denext task build && denext task start
+denext export .       # a static site in out/ (Start's prerender)
 ```
 
 ## What it shows
@@ -32,5 +33,10 @@ denext task build && denext task start
 - **Hydration, then client navigation** — the browser hydrates the document with Start's
   `StartClient` (the counter on `/` answers clicks), and a `<Link>` runs the next route's loader
   in the browser.
+- **A static export** — `denext export` prerenders the pages with Start's own prerender (the
+  static routes, then the links they have, so `/posts/1`…`/posts/3` too) into `out/`, and lists
+  what needs a server: `/api/hello` (a server route) and `/notes` (it calls a server function).
+  `/boom` is filtered out in `denext.config.ts` (its loader fails on purpose, which would fail
+  the export). Serve `out/` from any static host: the pages hydrate and navigate on the client.
 - **npm from `node_modules`** — `nodeModulesDir: "manual"` + `package.json`, with `react`
   aliased to denext in `deno.json` (what `denext migrate` writes).

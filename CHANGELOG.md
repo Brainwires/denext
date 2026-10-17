@@ -191,11 +191,21 @@ and this project adheres to
   validators, middleware) answer at `/_serverFn/<id>` in Start's RPC format; a route's
   `server.handlers` serve as server routes. TanStack's own compiler builds the browser and server
   bundles, so no server function body or server route handler reaches the browser, and denext's
-  own transforms run on what it compiles (`"use cache"` with `cacheComponents` on). The browser
-  build fails, naming the import chain, on Start's import protection (a `*.server.*` file,
-  `@tanstack/react-start/server` or a module marked `@tanstack/react-start/server-only` reached
-  from client code) and on denext's server-only scan (a `node:` import, the `server-only` marker
-  or the `Deno` global in a shipped module, read as compiled). A `"use server"` module that
+  own transforms run on what it compiles (`"use cache"` with `cacheComponents` on). Start's
+  import protection guards both builds, with Start's rules, semantics and messages: the browser
+  build refuses a `*.server.*` file, `@tanstack/react-start/server` and a module marked
+  `@tanstack/react-start/server-only`, the server build a `*.client.*` file and a module marked
+  `@tanstack/react-start/client-only`, each only when tree-shaking kept the import (an import
+  used only inside a `createServerFn` handler, `createServerOnlyFn` or `createClientOnlyFn` body is
+  compiled away first). The app's own rules come from the plugin's `importProtection` option, in
+  the shape Start's Vite plugin takes (`client` / `server` `specifiers`, `files`, `excludeFiles`,
+  `include`, `exclude`, `ignoreImporters`, `onViolation`, `enabled`). The browser build also
+  fails on denext's server-only scan (a `node:` import, the `server-only` marker or the `Deno`
+  global in a shipped module, read as compiled). `denext export` prerenders the app with Start's
+  own `prerender` and `pages` options (the listed pages, the route tree's static paths, the links
+  each page has, `filter`, `crawlLinks`, `failOnError`, …) into a static site that hydrates and
+  navigates on the client; the routes that need a server (server routes, pages that call a
+  server function, dynamic routes no page covered) are left out and listed with the reason. A `"use server"` module that
   declares server functions ships only their RPC stubs; its other exports throw in the browser
   and the rest of its source stays on the server. `denext build` builds the server bundle too, so
   a build error surfaces at build and `denext start` serves the first request without building.

@@ -2,18 +2,29 @@
 // `@denext/denext/build/next-compat` and TanStack's own compiler as an extra esbuild plugin: the
 // server bundle (Start's handler and the app) and the client bundle. `denext build` builds both
 // and records where the server bundle is (`server.json`), so `denext start` loads it without
-// building; dev builds each on first use and again after an edit.
+// building; dev builds each on first use and again after an edit; `denext export` builds both
+// and prerenders the app's pages through the server bundle (./prerender.ts).
 
-import type { PluginContext } from "@denext/denext/server";
+import type { PluginBuildContext, PluginContext } from "@denext/denext/server";
 import {
   buildNextCompatClientEntries,
   buildNextCompatModules,
   createNextCompatServerLoader,
 } from "@denext/denext/build/next-compat";
 import { join, relative } from "@std/path";
-import { startBuild } from "./compile.ts";
+import { type ClientGraph, type StartBuild, startBuild } from "./compile.ts";
 import { clientEntrySource } from "./entries.ts";
 import { CLIENT_ENTRY, CLIENT_PREFIX, routerManifest, SERVER_FN_SEGMENT } from "./handler.ts";
+import {
+  formatRefusals,
+  PAGES_DIR,
+  pageWriter,
+  type PrerenderOptions,
+  prerenderPages,
+  type RouteInfo,
+  type StartPage,
+} from "./prerender.ts";
+import type { ImportProtection } from "./protect.ts";
 import { coversServerFns, scanServerFns } from "./server-fns.ts";
 import { loadStartToolchain, type ServerFnInfo, type StartEnv } from "./toolchain.ts";
 
@@ -49,6 +60,8 @@ export interface StartBundles {
   client(): Promise<string>;
   /** Build the client bundle. */
   bundle(): Promise<void>;
+  /** The last client build's import graph (`null` before one). */
+  clientGraph(): ClientGraph | null;
   /** Build the server bundle and record it for `denext start` (`server.json`). */
   prebuildServer(): Promise<void>;
   /** Drop the record of a previous build's server bundle (a failed build leaves none). */
@@ -57,13 +70,18 @@ export interface StartBundles {
   reset(): void;
 }
 
-/** Start's build-time `process.env` constants (its Vite plugin defines the same). */
-export function startDefines(basePath: string): Record<string, string> {
+/**
+ * Start's build-time `process.env` constants (its Vite plugin defines the same).
+ *
+ * @param basePath The app's `basePath` (`""` when none).
+ * @param prerendering The bundle is the export's server bundle (Start's `TSS_PRERENDERING`).
+ */
+export function startDefines(basePath: string, prerendering = false): Record<string, string> {
   const values: Record<string, string> = {
     TSS_SERVER_FN_BASE: `${basePath}${SERVER_FN_SEGMENT}`,
     TSS_ROUTER_BASEPATH: basePath || "/",
     TSS_DEV_SERVER: "false",
-    TSS_PRERENDERING: "false",
+    TSS_PRERENDERING: String(prerendering),
     TSS_SHELL: "false",
     TSS_INLINE_CSS_ENABLED: "false",
     TSS_DEV_SSR_STYLES_ENABLED: "false",
@@ -80,8 +98,13 @@ export function startDefines(basePath: string): Record<string, string> {
  *
  * @param ctx The plugin context (mode, config, module loader).
  * @param app The app's modules and output paths.
+ * @param protection Start's import protection, as the app configures it.
  */
-export function createBundles(ctx: PluginContext, app: StartApp): StartBundles {
+export function createBundles(
+  ctx: PluginContext,
+  app: StartApp,
+  protection?: ImportProtection,
+): StartBundles {
   let tc: ReturnType<typeof loadStartToolchain> | undefined;
   const toolchain = () => (tc ??= loadStartToolchain(app.projectRoot));
   const compat = {
@@ -92,7 +115,7 @@ export function createBundles(ctx: PluginContext, app: StartApp): StartBundles {
     // TanStack Router's error boundaries are class components.
     classComponents: ctx.config.classComponents !== false,
     resolveAllNodeModules: ctx.config.nodeResolve !== false,
-    define: startDefines(app.basePath),
+    define: startDefines(app.basePath, ctx.mode === "export"),
   };
   const startOf = async (
     env: StartEnv,
@@ -108,6 +131,7 @@ export function createBundles(ctx: PluginContext, app: StartApp): StartBundles {
       manifest: routerManifest(`${app.basePath}${CLIENT_PREFIX}${CLIENT_ENTRY}`),
       knownServerFns,
       onServerFns,
+      protection,
     });
 
   // The resolver maps every server function the compiler meets. The functions are found by a
@@ -129,8 +153,10 @@ export function createBundles(ctx: PluginContext, app: StartApp): StartBundles {
       known = { ...known, ...seen };
     }
   };
+  let lastClient: StartBuild | undefined;
   const bundle = async () => {
     const start = await startOf("client", {});
+    lastClient = start;
     await buildNextCompatClientEntries({
       ...compat,
       clientDir: app.clientDir,
@@ -164,6 +190,7 @@ export function createBundles(ctx: PluginContext, app: StartApp): StartBundles {
     client: () =>
       built ??= (ctx.mode === "prod" ? Promise.resolve() : bundle()).then(() => app.clientDir),
     bundle,
+    clientGraph: () => lastClient?.clientGraph() ?? null,
     forgetServerBuild: () => Deno.remove(serverRecord).catch(() => {}),
     async prebuildServer() {
       const moduleMap = await buildServer();
@@ -211,23 +238,82 @@ async function readServerRecord(path: string, app: StartApp): Promise<Map<string
   return new Map([[app.serverEntry, `${join(app.outDir, record.bundle)}#${record.key}`]]);
 }
 
+/** What `denext export` prerenders: Start's `prerender` and `pages` options, and the routes. */
+export interface ExportPlan {
+  options: PrerenderOptions;
+  pages: StartPage[];
+  /** The route tree the prepare step generated (`null` when the plugin does not generate it). */
+  routes(): RouteInfo[] | null;
+  /** The project root and the app's `basePath`. */
+  projectRoot: string;
+  basePath: string;
+}
+
 /**
- * `denext build`'s step: the client bundle, then the server bundle, so a build error in either
- * fails the build and `denext start`'s first request builds nothing. A static export serves no
- * Start routes.
+ * The build step: `denext build` builds the client bundle, then the server bundle, so a build
+ * error in either fails the build and `denext start`'s first request builds nothing. `denext
+ * export` prerenders the app's pages ({@link exportStep}), unless `prerender.enabled` is
+ * `false`.
  *
  * @param mode The plugin context's mode.
  * @param bundles The app's bundles.
+ * @param build The build step's context (the export's emit seam).
+ * @param plan What the export prerenders.
  */
-export async function buildStep(mode: PluginContext["mode"], bundles: StartBundles): Promise<void> {
+export async function buildStep(
+  mode: PluginContext["mode"],
+  bundles: StartBundles,
+  build?: PluginBuildContext,
+  plan?: ExportPlan,
+): Promise<void> {
   if (mode === "export") {
+    if (build && plan && plan.options.enabled !== false) {
+      return await exportStep(build, bundles, plan);
+    }
     console.warn(
-      "[@denext/tanstack-start] a static export does not server-render TanStack routes; " +
-        "`denext start` serves them.",
+      "[@denext/tanstack-start] prerender is off (`prerender.enabled: false`): the export has " +
+        "no TanStack routes; `denext start` serves them.",
     );
     return;
   }
   await bundles.forgetServerBuild();
   await bundles.bundle();
   await bundles.prebuildServer();
+}
+
+/**
+ * `denext export`: the client bundle into the export (`/_tss/`), then Start's prerender of the
+ * app's pages through the server bundle into `<outDir>/pages-static/` (which the export copies to
+ * its root), the routes that need a server left out and listed.
+ *
+ * @param build The build step's context.
+ * @param bundles The app's bundles (built for the export).
+ * @param plan What the export prerenders.
+ */
+async function exportStep(
+  build: PluginBuildContext,
+  bundles: StartBundles,
+  plan: ExportPlan,
+): Promise<void> {
+  await Deno.remove(join(build.outDir, PAGES_DIR), { recursive: true }).catch(() => {});
+  const clientDir = await bundles.client();
+  for await (const entry of Deno.readDir(clientDir)) {
+    if (!entry.isFile) continue;
+    const source = await Deno.readFile(join(clientDir, entry.name));
+    await build.emitFile({ fileName: `${CLIENT_PREFIX.slice(1)}${entry.name}`, source });
+  }
+  const server = await bundles.loadServerEntry();
+  const { written, refused } = await prerenderPages({
+    options: plan.options,
+    pages: plan.pages,
+    routes: plan.routes(),
+    client: bundles.clientGraph(),
+    projectRoot: plan.projectRoot,
+    basePath: plan.basePath,
+    fetch: (request) => server.fetch(request),
+    write: pageWriter(build.outDir),
+  });
+  console.log(`[@denext/tanstack-start] prerendered ${written.length} page(s)`);
+  const report = formatRefusals(refused, plan.projectRoot);
+  if (report) console.warn(report);
 }

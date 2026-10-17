@@ -6,7 +6,9 @@
 // promise streaming in after the shell, a route's error component), server routes answer with
 // their handlers, and server functions (`createServerFn`) are called over Start's RPC — from a
 // loader on the server, and from the browser after hydration, with middleware and validation.
-// denext refuses a cross-origin server function POST before Start sees it.
+// denext refuses a cross-origin server function POST before Start sees it. Then `denext export`:
+// Start's prerender writes the static pages (and the crawled dynamic ones), lists the routes that
+// need a server, and the static site hydrates and navigates on the client in Chromium.
 //
 // Opt-in + NETWORK-REQUIRED (`deno install` fetches the TanStack packages from npm):
 // `deno task test:e2e`. Skipped automatically if the install can't reach npm.
@@ -260,5 +262,105 @@ Deno.test({
     }
   } finally {
     await server.close();
+  }
+});
+
+/** Serve a static export as a static host would: `<path>/index.html`, then the file itself. */
+function serveStatic(root: string): { origin: string; close(): Promise<void> } {
+  const server = Deno.serve({ port: 0, hostname: "127.0.0.1", onListen() {} }, async (req) => {
+    const path = decodeURIComponent(new URL(req.url).pathname);
+    for (const candidate of [join(root, path, "index.html"), join(root, path)]) {
+      const body = await Deno.readFile(candidate).catch(() => null);
+      if (!body) continue;
+      const type = candidate.endsWith(".js")
+        ? "text/javascript; charset=utf-8"
+        : "text/html; charset=utf-8";
+      return new Response(body, { headers: { "content-type": type } });
+    }
+    return new Response("Not Found", { status: 404 });
+  });
+  return { origin: `http://127.0.0.1:${server.addr.port}`, close: () => server.shutdown() };
+}
+
+Deno.test({
+  name: "e2e: examples/tanstack-start exports a static site with Start's prerender",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async (t) => {
+  const install = await runDeno(["install"], EXAMPLE, 180_000);
+  if (!install.ok) {
+    console.warn("e2e: `deno install` failed (npm unreachable?) — skipping.\n" + install.out);
+    return;
+  }
+  const exported = await runDeno(["run", "-A", CLI, "export", "."], EXAMPLE, 240_000);
+  assert(exported.ok, "denext export failed:\n" + exported.out);
+  const out = join(EXAMPLE, "out");
+
+  await t.step("the static pages, the crawled ones and the client bundle are written", async () => {
+    for (
+      const page of [
+        "index.html",
+        "about/index.html",
+        "deferred/index.html",
+        "posts/index.html",
+        "posts/1/index.html",
+        "posts/3/index.html",
+        "_tss/client.js",
+      ]
+    ) {
+      await Deno.stat(join(out, page));
+    }
+    const post = await Deno.readTextFile(join(out, "posts", "3", "index.html"));
+    assert(post.startsWith("<!DOCTYPE html><html"), "a whole document");
+    assertStringIncludes(post, "<title>The plugin owns the route tree</title>");
+    assertStringIncludes(post, "/_tss/client.js");
+    // The deferred loader's value is in the page: the prerender waited for the whole stream.
+    assertStringIncludes(
+      await Deno.readTextFile(join(out, "deferred", "index.html")),
+      "streamed in later",
+    );
+  });
+
+  await t.step("the routes that need a server are listed and left out", async () => {
+    assertStringIncludes(exported.out, "2 route(s) need a server and are not in the export");
+    assertStringIncludes(exported.out, "/api/hello  (src/routes/api/hello.ts) — a server route");
+    assertStringIncludes(exported.out, "/notes  (src/routes/notes.tsx) — calls a server function");
+    for (const missing of ["notes", "api", "boom"]) {
+      assertEquals(
+        await Deno.stat(join(out, missing)).then(() => true, () => false),
+        false,
+        `${missing} is not in the export`,
+      );
+    }
+  });
+
+  const host = serveStatic(out);
+  const browser = await launchBrowser();
+  try {
+    await t.step("a static page hydrates and navigates on the client", async () => {
+      const page = await browser.newPage(host.origin + "/posts");
+      const errors = collectConsoleErrors(page);
+      await page.waitForSelector("#posts", { timeout: 20_000 });
+      await hydrated(page);
+      await page.evaluate(() => {
+        (globalThis as unknown as { __sameDocument: boolean }).__sameDocument = true;
+      });
+      await (await page.$('#posts a[href="/posts/2"]'))!.click();
+      await page.waitForSelector("#posts-layout #post", { timeout: 15_000 });
+      const state = await page.evaluate(() => ({
+        path: location.pathname,
+        sameDocument:
+          (globalThis as unknown as { __sameDocument?: boolean }).__sameDocument === true,
+        text: document.querySelector("#post")?.textContent ?? "",
+      }));
+      assertEquals(state.path, "/posts/2");
+      assert(state.sameDocument, "a client navigation, not a document load");
+      assertStringIncludes(state.text, "Then the router takes over");
+      assertNoConsoleErrors(errors);
+      await page.close();
+    });
+  } finally {
+    await browser.close();
+    await host.close();
   }
 });

@@ -1,7 +1,8 @@
 # @denext/tanstack-start
 
 Run a [TanStack Start](https://tanstack.com/start) app on [denext](https://denext.dev), through
-the plugin-kit seams alone: server functions, server routes, streamed pages, hydration.
+the plugin-kit seams alone: server functions, server routes, streamed pages, hydration, Start's
+import protection and its prerender.
 TanStack's own runtime answers every request; denext builds the app, applies its request rules
 and serves it.
 
@@ -48,11 +49,24 @@ The app lists `@tanstack/react-start` (with `@tanstack/react-router`) in `packag
   `/_tss/` and named in the router manifest, so `<Scripts />` loads it. From there navigation is
   TanStack's.
 
-- **Refuses server code in the browser build,** naming the chain of imports that reached it:
-  Start's import protection (a `*.server.*` file, `@tanstack/react-start/server`, or a module
-  marked with `import "@tanstack/react-start/server-only"`, reached from client code) and denext's
-  own server-only scan (a `node:` import, the `server-only` marker or the `Deno` global in a
-  module the browser gets, read as TanStack's compiler left it).
+- **Applies Start's import protection to both builds,** with its rules, options and messages
+  (`[import-protection] Import denied in client environment`, the pattern, the importer, the
+  trace from an entry): the browser build refuses a `*.server.*` file,
+  `@tanstack/react-start/server` and a module marked with
+  `import "@tanstack/react-start/server-only"`; the server build refuses a `*.client.*` file and a
+  module marked with `import "@tanstack/react-start/client-only"`. As in a Start build, an import
+  counts only when tree-shaking kept it, and the compiler's safe boundaries come first: an import
+  used only inside a `createServerFn` handler or a `createServerOnlyFn` body is gone from the
+  browser build, and one used only inside a `createClientOnlyFn` body is gone from the server
+  build. The browser build also runs denext's own server-only scan (a `node:` import, the
+  `server-only` marker or the `Deno` global in a module the browser gets, read as TanStack's
+  compiler left it).
+- **Prerenders with `denext export`,** using Start's own `prerender` and `pages` options: the
+  pages you list (or `/`), every static path in the route tree, and the links each page has, each
+  rendered through Start's handler and written as `<path>/index.html` beside the client bundle.
+  Routes that need a server are left out and listed with the reason, as the `static` deploy
+  preset lists them: server routes, pages that call a server function from the browser, and
+  dynamic routes no prerendered page links to.
 - **Keeps denext's directives:** `"use cache"` caches in the server bundle (with
   `cacheComponents` on), Start-compiled modules included. A `"use server"` module's source never
   reaches the browser: its server functions are RPC stubs there, and its other exports throw when
@@ -104,11 +118,52 @@ export const addNote = createServerFn({ method: "POST" })
 | `generateRouteTree` | `true`                                     | `false` keeps generating `routeTree.gen.ts` yourself.               |
 | `maxBodyBytes`      | the app's `actionMaxBodyBytes`, else 1 MiB | The request-body cap for server functions and server routes.        |
 | `allowedOrigins`    | none                                       | Other origins (or bare hosts) allowed to POST to a server function. |
+| `importProtection`  | Start's rules                              | Start's `importProtection` options (below).                         |
+| `prerender`         | on in `denext export`                      | Start's `prerender` options (below); `enabled: false` turns it off. |
+| `pages`             | `[{ path: "/" }]`                          | Start's `pages`: the paths `denext export` prerenders.              |
 
-## Not yet
+### `importProtection`
 
-`denext export` prerendering of Start routes is not provided. Import protection covers the client
-build with Start's default rules; custom rules (`importProtection` in Start's Vite options) and
-the server build's `*.client.*` rule are not applied.
+The same shape as `tanstackStart({ importProtection })` in Start's Vite plugin:
+
+```ts
+tanstackStart({
+  importProtection: {
+    // Added to Start's browser rules (its own specifiers always apply).
+    client: { specifiers: ["@prisma/client", /^node:/], files: ["**/*.server.*", "src/db/**"] },
+    // Replace Start's server rules.
+    server: { files: ["**/*.client.*", "**/*.browser.*"] },
+    // Which importers are checked (default: those under srcDirectory).
+    exclude: ["src/legacy/**"],
+    onViolation: (v) => v.importer.endsWith("allowed.ts") ? false : undefined,
+  },
+});
+```
+
+`client.specifiers` adds to Start's; every other list replaces Start's default for that side
+(`files`, `excludeFiles`, `server.specifiers`). Patterns are globs over paths relative to the
+project (or specifiers as written), or regular expressions. `include`, `exclude` and
+`ignoreImporters` choose the importers checked; `onViolation` returning `false` waives a
+violation; `enabled: false` turns Start's rules off (denext's server-only scan still runs). A
+violation always fails the build, Start's `behavior: "error"` (`behavior`, `mockAccess`, `log`
+and `maxTraceDepth` are not applied).
+
+### `prerender` and `pages`
+
+The same shape as Start's: `prerender: { enabled, filter, crawlLinks, autoSubfolderIndex,
+autoStaticPathsDiscovery, concurrency, failOnError, maxRedirects, retryCount, retryDelay, headers,
+onSuccess }` and `pages: [{ path, prerender: { enabled, outputPath, … } }]`. A page that does not
+answer 2xx fails the export (`failOnError`), as in Start:
+
+```ts
+tanstackStart({
+  prerender: { filter: ({ path }) => !path.startsWith("/admin") },
+  pages: [{ path: "/posts/42" }],
+});
+```
+
+Prerendering is on whenever you run `denext export`; `denext build` / `denext start` serve every
+route as before. The prerender reads the route tree the plugin generates, so with
+`generateRouteTree: false` only the `pages` you list (and their links) are prerendered.
 
 Licensed MIT. Part of the denext project.
