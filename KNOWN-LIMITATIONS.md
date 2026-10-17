@@ -34,11 +34,20 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **Built for six targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64,
   arm64). Elsewhere, and offline on first use, commands run on stock Deno, without `Deno.SQL` or
   Vitest/Jest compatibility in `deno test`.
-- **Windows on Arm is pinned, not yet run** (toolchain 2.9.7-denext.21): the Arm64 CLI, `denort`
-  and runtime archives are pinned and verified like the others (the fork builds and tests them on
-  a Windows on Arm runner), but denext's own suites have not run on a Windows on Arm machine yet:
-  the toolchain there, `denext build --compile --target aarch64-pc-windows-msvc`, and a
-  `desktop package --arch arm64` window and its `.msi` are pending that run.
+- **Windows on Arm has run on a VM, not yet on Arm64 hardware** (toolchain 2.9.7-denext.21). On
+  a Windows 11 Arm64 virtual machine (QEMU/KVM on an Arm64 board, software rendering through WARP,
+  no GPU) these pass: `denext toolchain install` (`deno --version` reports `2.9.7-denext.21`,
+  `aarch64-pc-windows-msvc`); `desktop run` and `desktop dev` windows on WebView2 and CEF (the page
+  renders and hydrates, closing the window quits the verb cleanly); the desktop kitchen sink's
+  window test on both backends with unsigned builds, the full-app update install, trial and
+  rollback included; the runtime's own e2e suite on both backends, the menu accelerator and
+  context-menu keyboard checks included; and a `desktop package --arch arm64` `.msi`, installed
+  per user and per machine, upgraded, launched and uninstalled. Not yet run there: a physical
+  Arm64 PC (GPU rendering), Authenticode-signed builds and the trusted-update checks,
+  `denext build --compile --target aarch64-pc-windows-msvc`, and denext's own test suites (CI's
+  `windows-11-arm` job is still optional). A `desktop run` / `dev` window loads the VC++ runtime
+  from System32, so it needs the Arm64 VC++ 2015-2022 redistributable on the machine; a packaged
+  bundle carries the runtime next to its `.exe`.
 - **A CLI installed from JSR caches its verbs after the install, not during it.** `deno install
   -g jsr:@denext/denext/cli` caches the entrypoint; each verb's modules are cached by the CLI's
   first online run (in the background) or by `denext toolchain install`. A verb used offline

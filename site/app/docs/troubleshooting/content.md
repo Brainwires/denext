@@ -471,6 +471,19 @@ rather than wait for the orchestrator's `SIGKILL`.
 process then exits as soon as they are closed. See
 [Graceful shutdown](/docs/deploy#10-graceful-shutdown).
 
+## `denext desktop run` on Windows: "the desktop window could not start … (0xC0000135)"
+
+**Cause.** The window built by `desktop run` / `desktop dev` loads the VC++
+2015-2022 runtime (`vcruntime140.dll`, `msvcp140.dll`, and on x64
+`vcruntime140_1.dll`) from System32, and this machine has no redistributable for
+its architecture, so Windows refused to start it. A fresh Windows on Arm machine
+is the usual case. A packaged bundle is not affected when it was packaged on a
+machine that has the runtime: it carries the DLLs next to its `.exe`.
+
+**Fix.** Install the redistributable the message names
+(`https://aka.ms/vs/17/release/vc_redist.arm64.exe` on Windows on Arm,
+`vc_redist.x64.exe` on x64), then run the verb again.
+
 ## Mobile (Capacitor)
 
 The entries below are for an app in a Capacitor shell. The full guide is

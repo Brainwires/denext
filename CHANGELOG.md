@@ -53,8 +53,9 @@ and this project adheres to
   the compiled `denext` binary on Windows on Arm runs its verbs on the toolchain,
   `denext build --compile --target aarch64-pc-windows-msvc` builds onto the pinned `denort`, and
   `desktop package --target-os windows --arch arm64` packages on the pinned runtime; denext's
-  `.msi` already declares Windows Installer schema 500, which an Arm64 package needs. Not yet run
-  on a Windows on Arm machine by denext's own suites (see KNOWN-LIMITATIONS).
+  `.msi` already declares Windows Installer schema 500, which an Arm64 package needs. Run on a
+  Windows 11 Arm64 VM (both backends, the desktop window test, the runtime's e2e suite and the
+  `.msi`); KNOWN-LIMITATIONS lists what has not run there yet.
 - **Spellcheck in Linux CEF windows out of the box.** The runtime ships Chromium's Hunspell
   dictionaries for en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT and copies the ones the
   profile uses on launch; an app adds other languages as `.bdic` files in `dictionaries/` beside
@@ -538,6 +539,11 @@ and this project adheres to
 - **A Lustre view's `include` path can't write onto `Object.prototype` in the browser.** A
   handler's `include` path naming `__proto__` (or `constructor.prototype`) copied the event's data
   onto every object's prototype; such a path now copies nothing.
+- **`denext desktop run` / `dev` say why a Windows window exits at once with nothing printed.**
+  The unpackaged window loads the VC++ 2015-2022 runtime from System32 (only a packaged bundle
+  carries it app-local), so on a machine without the redistributable for its architecture — a
+  fresh Windows on Arm one, say — it exited with `0xC0000135` and the verb ended silently. The
+  verb now names the missing DLLs and the redistributable to install for the host's architecture.
 
 ### Changed
 

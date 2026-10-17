@@ -163,3 +163,30 @@ export async function bundleDesktopVcRuntime(
   );
   return true;
 }
+
+/** Windows' `STATUS_DLL_NOT_FOUND`, the exit status of a process whose imports didn't load. */
+const STATUS_DLL_NOT_FOUND = 0xc0000135;
+
+/**
+ * Why an unpackaged window (`denext desktop run` / `dev`) exited at once, when its exit code says
+ * Windows refused to start it: `0xC0000135`, an imported DLL not found. The scratch build loads
+ * the VC++ 2015-2022 runtime from System32 (only a packaged bundle carries it app-local), so on a
+ * machine without the redistributable for its architecture (a fresh Windows on Arm one, say) the
+ * window exits before it prints anything.
+ *
+ * @param code The window process's exit code (Deno reports it signed: `-1073741515`).
+ * @param os The host OS (default `Deno.build.os`).
+ * @param hostArch The host architecture (default from `Deno.build.arch`).
+ * @returns The lines to print, or `null` for any other exit.
+ */
+export function desktopWindowExitHint(
+  code: number,
+  os: string = Deno.build.os,
+  hostArch: DesktopWindowsArch = Deno.build.arch === "aarch64" ? "arm64" : "x86_64",
+): string | null {
+  if (os !== "windows" || code >>> 0 !== STATUS_DLL_NOT_FOUND) return null;
+  return `denext: the desktop window could not start: Windows did not find a DLL it imports ` +
+    `(0xC0000135).\n  It loads the VC++ 2015-2022 runtime (${
+      DESKTOP_VC_RUNTIME_DLLS[hostArch].join(", ")
+    }) from System32; install the ${hostArch} redistributable: ${desktopVcRedistUrl(hostArch)}`;
+}

@@ -52,6 +52,7 @@ import {
   resolveDesktopRuntimeEnv,
 } from "../../build/desktop-runtime.ts";
 import { denoExecutable } from "../../build/bundle.ts";
+import { desktopWindowExitHint } from "../../build/desktop-vc-runtime.ts";
 import { desktopDenoFlags } from "../../desktop/deno-flags.ts";
 import {
   desktopAppName,
@@ -394,7 +395,11 @@ function launchDesktopWindow(
     stdout: "inherit",
     stderr: "inherit",
   }).spawn();
-  const code = child.status.then((s) => s.code);
+  const code = child.status.then((s) => {
+    const hint = desktopWindowExitHint(s.code);
+    if (hint) console.error(hint);
+    return s.code;
+  });
   return {
     code,
     finished: code.then(() => {}),

@@ -15,6 +15,7 @@ import {
   type DesktopVcRuntimeDeps,
   type DesktopWindowsArch,
 } from "../src/build/desktop.ts";
+import { desktopWindowExitHint } from "../src/build/desktop-vc-runtime.ts";
 
 const MACHINES = { x86_64: 0x8664, arm64: 0xaa64, x86: 0x14c } as const;
 
@@ -211,4 +212,24 @@ Deno.test("bundleDesktopVcRuntime: reads real files by default", async () => {
     await Deno.remove(sys, { recursive: true });
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+// An unpackaged window (`desktop run` / `dev`) loads the VC++ runtime from System32: without the
+// redistributable it exits with STATUS_DLL_NOT_FOUND before printing anything (seen on a fresh
+// Windows on Arm VM), so the verb names the missing redistributable.
+Deno.test("desktopWindowExitHint explains a window that Windows refused to start", () => {
+  const signed = -1073741515; // 0xC0000135 as Deno reports it
+  const arm = desktopWindowExitHint(signed, "windows", "arm64");
+  assert(arm !== null);
+  assertStringIncludes(arm, "0xC0000135");
+  assertStringIncludes(arm, "vcruntime140.dll, msvcp140.dll");
+  assertStringIncludes(arm, desktopVcRedistUrl("arm64"));
+  const x64 = desktopWindowExitHint(0xc0000135, "windows", "x86_64");
+  assert(x64 !== null);
+  assertStringIncludes(x64, "vcruntime140_1.dll");
+  assertStringIncludes(x64, desktopVcRedistUrl("x86_64"));
+  // Any other exit, or another OS, gets no hint.
+  assertEquals(desktopWindowExitHint(0, "windows", "arm64"), null);
+  assertEquals(desktopWindowExitHint(1, "windows", "arm64"), null);
+  assertEquals(desktopWindowExitHint(signed, "linux", "x86_64"), null);
 });
