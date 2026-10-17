@@ -32,7 +32,12 @@ async function readAnalyzeMeta(outDir: string): Promise<BundleMetafile | undefin
 async function buildForAnalyze(dir: string, md: boolean): Promise<string> {
   const origLog = console.log;
   const priorAnalyzeEnv = Deno.env.get("DENEXT_ANALYZE");
-  if (md) console.log = (...args: unknown[]) => console.error(...args);
+  if (md) {
+    // Ask the esbuild (compat/SPA) build to emit a metafile; read the prior value first so the
+    // finally below restores the caller's environment, not this "1".
+    Deno.env.set("DENEXT_ANALYZE", "1");
+    console.log = (...args: unknown[]) => console.error(...args);
+  }
   try {
     return (await build(dir)).outDir;
   } finally {
@@ -62,10 +67,8 @@ export const analyzeCommand: CommandSpec = {
   run: async (ctx) => {
     const dir = projectDir(ctx);
     const md = ctx.flags.md === true;
-    // For --md, ask the esbuild (compat/SPA) build to emit a metafile, and clear any stale one
-    // so this run only accumulates its own outputs.
+    // For --md, clear any stale metafile so this run only accumulates its own outputs.
     if (md) {
-      Deno.env.set("DENEXT_ANALYZE", "1");
       try {
         await Deno.remove(join(dir, ".denext", "analyze-meta.json"));
       } catch { /* none to clear */ }
