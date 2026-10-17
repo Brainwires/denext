@@ -255,9 +255,45 @@ and this project adheres to
 - **CLI flags with an optional value.** A command's flag can take `--flag` alone or
   `--flag=value` (`optionalValue` on a `FlagSpec`); the bare form never takes the next argument
   as its value.
+- **`"use cache: private"` and `"use cache: remote"` (Next.js 16).** A `"use cache: private"`
+  function may read `cookies()` and `headers()`: its result is never stored on the server,
+  matching calls within one request share one run, and the render is per request (a PPR prerender
+  makes it a hole). `connection()` and cookie writes inside it throw, as does nesting it in
+  `"use cache"` or `unstable_cache()` or calling it outside a request, with Next.js's messages.
+  `"use cache: remote"` (and any `"use cache: <name>"`) is a shared entry in the configured cache
+  store. The directive works on functions, methods and at the top of a module.
+- **`cacheLife` in `denext.config.ts`.** Named profiles for `cacheLife("name")`, as in Next.js 16's
+  config (a name matching a built-in overrides it), validated at load with Next.js's messages;
+  Next 15's `experimental.cacheLife` is read and warns that it moved, and `denext migrate`
+  carries either from `next.config` (`Infinity` included).
+- **`navigation()` and `prefetch()` from `next/cache` (Next.js 16.4).** In a request they resolve
+  at once and keep the content below them cacheable; outside a request or inside a cached
+  function they throw, as in Next.js. Next 16.4 canary's `unstable_navigation` /
+  `unstable_prefetch` are kept as aliases, so an app that adopted them links. `io()` now returns
+  a promise, as Next's does.
+- **A cached function that calls another carries its tags and lifetime.** An outer
+  `"use cache"` entry now holds the tags of the cached functions it called, so
+  `revalidateTag(innerTag)` refreshes it too, and lives no longer than they do unless it sets
+  `cacheLife()` itself.
 
 ### Changed
 
+- **`cacheLife()` follows Next.js 16.** The built-in `seconds` profile keeps a 30-second
+  `stale` and `max` expires after a year (it never expired); several calls keep the lowest value
+  of each field instead of the last call's; an unknown profile name, an invalid inline profile
+  (`false`, a non-number, `expire` below `revalidate`) and a call outside a `"use cache"` or
+  `"use cache: private"` function (an `unstable_cache()` loader included) throw with Next.js's
+  messages instead of falling back or being ignored. `revalidateTag(tag, profile)` checks its
+  profile the same way.
+- **`revalidateTag()`, `revalidatePath()` and `updateTag()` throw inside a cached function**, as
+  in Next.js: a cached body that revalidates would skip the call whenever it is served from cache.
+- **`useEffectEvent` follows React 19.2.** Calling the returned function during a render throws
+  React's error, and the handler it forwards to changes when the render commits (before layout
+  effects), so a render that never commits leaves the previous one.
+- **The React / Next.js parity baseline moved to Next.js 16.4.1 and React 19.2.9**
+  (`deno task parity:refresh`), with no open gaps; `React.version` reports 19.2.9. The baseline
+  keeps to React's 19.2 line until React 19.3's Fragment refs land (see KNOWN-LIMITATIONS);
+  19.3 adds no export denext lacks, and `deno task parity:drift` still compares against it.
 - **The React Native parity ledger moved to React Native 0.88.** `deno task parity:native`
   checks React Native mode's `react-native` surface and the list adapters against 0.88's types
   (captured from `0.88.0-rc.5`) instead of 0.86.3, and reports no gaps.

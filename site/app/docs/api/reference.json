@@ -1969,7 +1969,7 @@
           "params": [],
           "returns": "",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "Profiler",
@@ -3393,15 +3393,15 @@
           "slug": "useEffectEvent",
           "kind": "function",
           "signature": "useEffectEvent<A, R>(handler: (...args: A) => R): (...args: A) => R",
-          "doc": "Return a **stable** callback that always sees the latest props/state — React 19.2's useEffectEvent. Use it for the \"event\" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes). Do not call the returned function during render.",
-          "docFull": "Return a **stable** callback that always sees the latest props/state — React\n19.2's `useEffectEvent`. Use it for the \"event\" part of an Effect that should\nnot itself be a dependency (so the Effect doesn't re-run when the handler's\nclosure changes). Do not call the returned function during render.",
+          "doc": "Return a callback that always sees the latest committed props/state — React 19.2's useEffectEvent. Use it for the \"event\" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes).",
+          "docFull": "Return a callback that always sees the latest committed props/state — React 19.2's\n`useEffectEvent`. Use it for the \"event\" part of an Effect that should not itself be a\ndependency (so the Effect doesn't re-run when the handler's closure changes).\n\nAs in React, the handler it forwards to is swapped in when the render commits (before any\nlayout or passive effect runs), not while rendering, so a render that never commits leaves\nthe previous one in place; and calling it during a render throws. Its identity is stable\n(React's is not guaranteed to be — don't list it as an Effect dependency either way).",
           "params": [
             {
               "name": "handler",
-              "doc": "The event handler; its latest version is always invoked."
+              "doc": "The event handler; its latest committed version is invoked."
             }
           ],
-          "returns": "A referentially-stable function forwarding to the latest handler.",
+          "returns": "A function forwarding to the latest committed handler.",
           "examples": [],
           "denextOnly": false
         },
@@ -5972,8 +5972,8 @@
           "slug": "cacheLife",
           "kind": "function",
           "signature": "cacheLife(profile: string | CacheLifeProfile): void",
-          "doc": "Set the cache lifetime of the enclosing use cache function (Next.js cacheLife). A no-op when called outside a cached scope. The last call wins.",
-          "docFull": "Set the cache lifetime of the enclosing `use cache` function (Next.js `cacheLife`).\nA no-op when called outside a cached scope. The last call wins.",
+          "doc": "Set the cache lifetime of the enclosing use cache function (Next.js cacheLife). When it is called more than once, each field keeps the lowest value set (as in Next.js).",
+          "docFull": "Set the cache lifetime of the enclosing `use cache` function (Next.js `cacheLife`). When it\nis called more than once, each field keeps the lowest value set (as in Next.js).",
           "params": [
             {
               "name": "profile",
@@ -12354,8 +12354,8 @@
           "slug": "registerCacheLifeProfiles",
           "kind": "function",
           "signature": "registerCacheLifeProfiles(profiles: Record<string, CacheLifeProfile>): void",
-          "doc": "Register named cacheLife profiles (typically from denext.config). A custom profile whose name collides with a built-in overrides it. Idempotent-ish: a later call with the same name wins.",
-          "docFull": "Register named cacheLife profiles (typically from `denext.config`). A custom\nprofile whose name collides with a built-in overrides it. Idempotent-ish: a later\ncall with the same name wins.",
+          "doc": "Register named cacheLife profiles (the config's cacheLife, Next.js's next.config key). A custom profile whose name collides with a built-in overrides it, and a later call with the same name wins. Each profile is validated first.",
+          "docFull": "Register named cacheLife profiles (the config's `cacheLife`, Next.js's `next.config`\nkey). A custom profile whose name collides with a built-in overrides it, and a later call\nwith the same name wins. Each profile is validated first.",
           "params": [
             {
               "name": "profiles",
@@ -12945,8 +12945,8 @@
           "slug": "resolveCacheLife",
           "kind": "function",
           "signature": "resolveCacheLife(profile: string | CacheLifeProfile): CacheLifeProfile",
-          "doc": "Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete CacheLifeProfile. An unknown name falls back to the default profile. Missing fields inherit from default.",
-          "docFull": "Resolve a cacheLife argument — a built-in/custom profile name or an inline\nprofile object — to a concrete {@link CacheLifeProfile}. An unknown name falls\nback to the `default` profile. Missing fields inherit from `default`.",
+          "doc": "Resolve a cacheLife argument — a built-in/custom profile name or an inline profile object — to a concrete CacheLifeProfile. Missing fields inherit from the default profile (a configured default included).",
+          "docFull": "Resolve a cacheLife argument — a built-in/custom profile name or an inline\nprofile object — to a concrete {@link CacheLifeProfile}. Missing fields inherit from the\n`default` profile (a configured `default` included).",
           "params": [
             {
               "name": "profile",
@@ -17337,7 +17337,7 @@
           "params": [],
           "returns": "",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": false
         },
         {
           "name": "Profiler",
@@ -18189,15 +18189,15 @@
           "slug": "useEffectEvent",
           "kind": "function",
           "signature": "useEffectEvent<A, R>(handler: (...args: A) => R): (...args: A) => R",
-          "doc": "Return a **stable** callback that always sees the latest props/state — React 19.2's useEffectEvent. Use it for the \"event\" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes). Do not call the returned function during render.",
-          "docFull": "Return a **stable** callback that always sees the latest props/state — React\n19.2's `useEffectEvent`. Use it for the \"event\" part of an Effect that should\nnot itself be a dependency (so the Effect doesn't re-run when the handler's\nclosure changes). Do not call the returned function during render.",
+          "doc": "Return a callback that always sees the latest committed props/state — React 19.2's useEffectEvent. Use it for the \"event\" part of an Effect that should not itself be a dependency (so the Effect doesn't re-run when the handler's closure changes).",
+          "docFull": "Return a callback that always sees the latest committed props/state — React 19.2's\n`useEffectEvent`. Use it for the \"event\" part of an Effect that should not itself be a\ndependency (so the Effect doesn't re-run when the handler's closure changes).\n\nAs in React, the handler it forwards to is swapped in when the render commits (before any\nlayout or passive effect runs), not while rendering, so a render that never commits leaves\nthe previous one in place; and calling it during a render throws. Its identity is stable\n(React's is not guaranteed to be — don't list it as an Effect dependency either way).",
           "params": [
             {
               "name": "handler",
-              "doc": "The event handler; its latest version is always invoked."
+              "doc": "The event handler; its latest committed version is invoked."
             }
           ],
-          "returns": "A referentially-stable function forwarding to the latest handler.",
+          "returns": "A function forwarding to the latest committed handler.",
           "examples": [],
           "denextOnly": false
         },

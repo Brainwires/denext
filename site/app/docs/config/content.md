@@ -133,11 +133,20 @@ See [Images](/docs/images) for the full model.
   compiles into cross-request server caching (`cacheLife`/`cacheTag`), plus the
   PPR render path — a cached, request-independent static shell with per-request
   dynamic holes behind `<Suspense>`, Flight-capable. Caching is a choice, not a
-  default, so it stays opt-in. Its documented bounds (see KNOWN-LIMITATIONS):
-  reading request data (`cookies()`/`headers()`) inside `use cache` throws, and
-  a streamed hole can't add to the already-flushed head. Inert when off — the
+  default, so it stays opt-in. As in Next.js, reading request data
+  (`cookies()`/`headers()`) inside `use cache` throws — `"use cache: private"` may read
+  them — and a streamed hole can't add to the already-flushed head (see
+  KNOWN-LIMITATIONS). Inert when off — the
   render path is byte-for-byte unchanged. The pre-2.0
   `experimental.cacheComponents` is still honored and warns in dev.
+
+- **`cacheLife`** — `Record<string, { stale?, revalidate?, expire? }>` (seconds; `Infinity`
+  for never). Named profiles for `cacheLife("name")` inside a `"use cache"` function, as in
+  Next.js 16's `next.config`. A name matching a built-in (`default`, `seconds`, `minutes`,
+  `hours`, `days`, `weeks`, `max`) overrides it; a field a custom profile leaves out comes
+  from `default`. Validated at load as Next.js does (`false` is refused; `expire` must be at
+  least `revalidate`). Next 15's `experimental.cacheLife` is still read and warns that it
+  moved; `denext migrate` carries either from `next.config`.
 
 See [Data & caching](/docs/data).
 

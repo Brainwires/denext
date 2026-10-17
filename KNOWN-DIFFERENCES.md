@@ -71,6 +71,12 @@ internal design choice with no observable difference lives in
   `Component` is the function-component _type_. Everything else React exposes
   (`cache`, `Children`, `cloneElement`, `forwardRef`, `Activity`, the hook and
   event types, …) is on both.
+- **`useEffectEvent` returns the same function on every render.** React 19.2 gives it no stable
+  identity (it is not meant to be an Effect dependency); denext's is stable. Everything else
+  matches: calling it during a render throws, and its handler changes when the render commits.
+- **`react-dom/server`'s `resume` throws.** denext's `prerender` resolves every Suspense boundary
+  and returns `postponed: null`, so there is never postponed state to resume; denext's own
+  Partial Prerendering (`cacheComponents`) uses its renderer, not React's postponed state.
 - **SSR attribute serialization follows ReactDOMServer's tables, with a few differences.**
   `true` on an attribute React doesn't know renders `name=""` (React drops it), matching what the
   client reconciler sets; `autoCapitalize={true}` renders `"true"`; `'` is escaped as `&#39;`
@@ -176,6 +182,40 @@ internal design choice with no observable difference lives in
   tree as well, so it has no such layer and treats `client-only` as an empty marker on both
   sides; `server-only` in the client bundle is still a build error, and the runtime
   `clientOnly()` guard still throws on the server.
+
+## Cache Components (`"use cache"`)
+
+- **`"use cache: private"` has no browser-side cache.** In Next.js the client router keeps a
+  private function's rendered output in memory for its `cacheLife` `stale` time and fills it
+  ahead of time by runtime prefetching. denext renders a route when it is requested, so a
+  private function runs on each request and navigation; within one request, matching calls
+  share one run (Next.js's production server behaves the same). It may read `cookies()` and
+  `headers()`, not `connection()`, and makes the render dynamic.
+- **`"use cache: remote"` (and any other `"use cache: <name>"`) uses the configured cache
+  store.** Next.js routes each kind to a `cacheHandlers` entry; denext has one backing store
+  (`cache.store`: node:sqlite by default, or a Redis / Postgres / custom `CacheStore` shared by
+  every instance), so `remote` and plain `"use cache"` entries live in the same place.
+  `cacheHandlers` is not read. A value that doesn't survive JSON (a cached component's element
+  tree) stays in the process either way.
+- **`navigation()` and `prefetch()` resolve at once.** They mark render stages for Next.js's
+  partial and runtime prefetching, which denext doesn't do; in a request they resolve
+  immediately and keep the content below them cacheable. They throw where Next.js's do
+  (outside a request, inside a cached function).
+- **A nested cache passes on what is left of its life.** An outer `"use cache"` without its own
+  `cacheLife()` lives no longer than the inner entries it read: Next.js takes the inner entry's
+  `revalidate` / `expire` durations, denext the time each has left (the same for a fresh entry,
+  shorter for a cached one). Next.js's errors for a short-lived entry nested in an outer one
+  without `cacheLife()` are not raised.
+- **`revalidateTag(tag)` with one argument is not deprecated.** Next.js 16 warns and asks for a
+  profile; in denext it stays the immediate purge that Live, `useApi({ tags })` and the
+  backend's realtime build on, and it does not warn. `revalidateTag(tag, profile)` is the
+  stale-while-revalidate form, as in Next.js.
+- **`updateTag()`, `refresh()` and `revalidateTag()` / `revalidatePath()` also work outside a
+  Server Action** — in a route handler, a job or a webhook — where Next.js throws
+  (`updateTag` and `refresh` are Server Action only there, and none of them may run during a
+  render). Inside a cached function all of them throw, as in Next.js.
+- **`cacheTag()` works outside a cached function**, where Next.js throws: it tags the page being
+  rendered, so `revalidateTag()` purges it. `cacheLife()` outside one throws, as in Next.js.
 
 ## Remix and React Router
 
