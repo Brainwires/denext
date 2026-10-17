@@ -293,7 +293,10 @@ and this project adheres to
   nodes, so a component test could neither query the injected markup (`getByText`, `getByRole`)
   nor catch a render that pruned or re-created it. The markup is now parsed into elements and
   text: attributes, character references, void elements, the unparsed text of `<script>` /
-  `<style>` / `<textarea>` / `<title>`, and comments dropped.
+  `<style>` / `<textarea>` / `<title>`, and comments dropped. Tags are tokenized as a browser
+  tokenizes them, in one pass over the markup, so hostile markup cannot stall a test (an unclosed
+  run of attributes took minutes per 200 KB with a pattern-matched tag), and elements nest at most
+  512 deep, as in Blink's parser, so the parsed tree always serializes.
 - **A source checkout's `denext start` resolves an app's own import-map entries.** From a
   checkout (`deno run -A <denext>/cli.ts start`), a server module importing a specifier only the
   app's `deno.json` maps, such as a `"@gleam/"` prefix for compiled Gleam, failed with "not a

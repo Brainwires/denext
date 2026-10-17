@@ -99,11 +99,109 @@ const VOID_ELEMENTS = new Set(
 );
 /** Elements whose content is text up to their end tag (never parsed as markup). */
 const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title"]);
-/** A start or end tag: `/`, the name, the attribute run, and a self-closing `/`. */
-const TAG_RE =
-  /<(\/?)([a-zA-Z][\w:.-]*)((?:\s+[^\s"'>\/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)\s*(\/?)>/y;
-/** One attribute of a tag's attribute run, with its double-, single- or unquoted value. */
-const ATTR_RE = /([^\s"'>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+/**
+ * How deep parsed elements nest: deeper ones are added beside the deepest open element instead,
+ * as Blink's parser does (its limit is 512), so a hostile `<div><div>…` stays serializable.
+ */
+const MAX_PARSE_DEPTH = 512;
+/** HTML's whitespace, which separates a tag's name and attributes. */
+const isSpace = (c: string) => c === " " || c === "\t" || c === "\n" || c === "\f" || c === "\r";
+/** An ASCII letter, the only thing that opens a tag after `<` or `</`. */
+const isAlpha = (c: string | undefined) =>
+  c !== undefined && ((c >= "a" && c <= "z") || (c >= "A" && c <= "Z"));
+
+/** One tokenized tag. */
+interface Tag {
+  readonly end: boolean;
+  readonly name: string;
+  readonly attrs: ReadonlyArray<readonly [string, string]>;
+  readonly selfClosing: boolean;
+  /** The index just past its `>`. */
+  readonly next: number;
+}
+
+/**
+ * The tag at `lt` (a `<` followed by a letter, or `</` and a letter), tokenized as HTML's tag
+ * states do: the name and each attribute name run to whitespace, `/` or `>` (an attribute's also to
+ * `=`), a value is quoted (and may hold `>`) or runs to whitespace or `>`, a stray `/` is skipped,
+ * and the first of a repeated attribute wins. One pass, never re-read: `null` only when the input
+ * ends inside the tag.
+ */
+function scanTag(html: string, lt: number): Tag | null {
+  return new TagScanner(html, lt).scan();
+}
+
+/** One {@link scanTag}: a cursor over the tag's characters. */
+class TagScanner {
+  #i: number;
+  readonly #end: boolean;
+  readonly #attrs: Array<readonly [string, string]> = [];
+  readonly #seen = new Set<string>();
+
+  constructor(readonly html: string, lt: number) {
+    this.#end = html[lt + 1] === "/";
+    this.#i = lt + (this.#end ? 2 : 1);
+  }
+
+  scan(): Tag | null {
+    const { html } = this;
+    const name = this.#runTo((c) => isSpace(c) || c === "/" || c === ">").toLowerCase();
+    let selfClosing = false;
+    while (this.#i < html.length) {
+      const c = html[this.#i];
+      if (c === ">") {
+        return { end: this.#end, name, attrs: this.#attrs, selfClosing, next: this.#i + 1 };
+      }
+      selfClosing = c === "/" && html[this.#i + 1] === ">";
+      if (isSpace(c) || c === "/") this.#i++;
+      else if (!this.#attribute()) return null;
+    }
+    return null;
+  }
+
+  /** The characters from the cursor up to one `stop` accepts (or the end). */
+  #runTo(stop: (c: string) => boolean): string {
+    const from = this.#i;
+    while (this.#i < this.html.length && !stop(this.html[this.#i])) this.#i++;
+    return this.html.slice(from, this.#i);
+  }
+
+  #skipSpace(): void {
+    while (this.#i < this.html.length && isSpace(this.html[this.#i])) this.#i++;
+  }
+
+  /** One attribute (its name may start with `=`); `false` when the input ends in its value. */
+  #attribute(): boolean {
+    const first = this.html[this.#i++];
+    const name = first + this.#runTo((c) => isSpace(c) || c === "/" || c === ">" || c === "=");
+    const after = this.#i;
+    this.#skipSpace();
+    let value: string | null = "";
+    if (this.html[this.#i] === "=") {
+      this.#i++;
+      value = this.#value();
+    } else this.#i = after;
+    if (value === null) return false;
+    if (!this.#seen.has(name)) {
+      this.#seen.add(name);
+      this.#attrs.push([name, decodeRefs(value)]);
+    }
+    return true;
+  }
+
+  /** An attribute value after its `=`: quoted, or up to whitespace or `>`; `null` at the end. */
+  #value(): string | null {
+    this.#skipSpace();
+    const q = this.html[this.#i];
+    if (q !== '"' && q !== "'") return this.#runTo((c) => isSpace(c) || c === ">");
+    const close = this.html.indexOf(q, this.#i + 1);
+    if (close === -1) return null;
+    const value = this.html.slice(this.#i + 1, close);
+    this.#i = close + 1;
+    return value;
+  }
+}
+
 const NAMED_REFS: Record<string, string> = {
   amp: "&",
   lt: "<",
@@ -147,6 +245,8 @@ class HtmlFragmentParser {
   #text = "";
   readonly #open: TreeNode[];
   readonly #names: string[] = [""];
+  /** How many elements of each name are open (a stray end tag is then found without a search). */
+  readonly #openCount = new Map<string, number>();
 
   constructor(readonly html: string, readonly build: HtmlNodeBuilder, parent: TreeNode) {
     this.#open = [parent];
@@ -166,50 +266,62 @@ class HtmlFragmentParser {
 
   /** The markup at `lt` (a `<`): a comment, a tag, or a `<` that is only text. */
   #markup(lt: number): void {
-    if (this.html.startsWith("<!--", lt)) {
+    const { html } = this;
+    if (html.startsWith("<!--", lt)) {
       this.#flush();
-      const end = this.html.indexOf("-->", lt + 4);
-      this.#i = end === -1 ? this.html.length : end + 3;
+      const end = html.indexOf("-->", lt + 4);
+      this.#i = end === -1 ? html.length : end + 3;
       return;
     }
-    TAG_RE.lastIndex = lt;
-    const tag = TAG_RE.exec(this.html);
-    if (tag === null) {
+    if (!isAlpha(html[lt + (html[lt + 1] === "/" ? 2 : 1)])) {
       this.#text += "<";
       this.#i = lt + 1;
       return;
     }
+    const tag = scanTag(html, lt);
+    if (tag === null) {
+      // The input ends inside the tag: what is left stays text (it is never re-scanned).
+      this.#text += html.slice(lt);
+      this.#i = html.length;
+      return;
+    }
     this.#flush();
-    this.#i = TAG_RE.lastIndex;
-    const name = tag[2].toLowerCase();
-    if (tag[1] === "/") this.#close(name);
-    else this.#start(name, tag[3], tag[4] === "/");
+    this.#i = tag.next;
+    if (tag.end) this.#close(tag.name);
+    else this.#start(tag.name, tag.attrs, tag.selfClosing);
   }
 
   /** A start tag: the element, its attributes, then its content (unless void or raw text). */
-  #start(name: string, attrs: string, selfClosing: boolean): void {
+  #start(name: string, attrs: Tag["attrs"], selfClosing: boolean): void {
     const el = this.build.element(name);
-    for (const a of attrs.matchAll(ATTR_RE)) {
-      el.setAttribute(a[1], decodeRefs(a[2] ?? a[3] ?? a[4] ?? ""));
-    }
+    for (const [attr, value] of attrs) el.setAttribute(attr, value);
     insertChild(this.#current(), el, null);
     if (RAW_TEXT_ELEMENTS.has(name)) this.#rawText(name, el);
-    else if (!VOID_ELEMENTS.has(name) && !selfClosing) {
+    else if (
+      !VOID_ELEMENTS.has(name) && !selfClosing && this.#open.length < MAX_PARSE_DEPTH
+    ) {
       this.#open.push(el);
       this.#names.push(name);
+      this.#openCount.set(name, (this.#openCount.get(name) ?? 0) + 1);
     }
   }
 
   /** An end tag closes its open element and every one inside it; a stray one is ignored. */
   #close(name: string): void {
+    if (!this.#openCount.get(name)) return;
     const at = this.#names.lastIndexOf(name);
-    if (at > 0) this.#open.length = this.#names.length = at;
+    for (const closed of this.#names.splice(at)) {
+      this.#openCount.set(closed, this.#openCount.get(closed)! - 1);
+    }
+    this.#open.length = at;
   }
 
   /** A raw-text element's content, as one text node, through its end tag. */
   #rawText(name: string, el: TreeNode): void {
     const { html } = this;
-    const close = html.toLowerCase().indexOf(`</${name}`, this.#i);
+    const endTag = new RegExp(`</${name}(?=[\\t\\n\\f\\r />]|$)`, "gi");
+    endTag.lastIndex = this.#i;
+    const close = endTag.exec(html)?.index ?? -1;
     const body = html.slice(this.#i, close === -1 ? html.length : close);
     const escapable = name === "textarea" || name === "title";
     if (body !== "") insertChild(el, this.build.text(escapable ? decodeRefs(body) : body), null);
