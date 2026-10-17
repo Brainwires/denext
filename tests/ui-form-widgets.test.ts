@@ -164,6 +164,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     compress: "union", // `boolean | CompressConfig`: a toggle branch + an options group
     nodeResolve: "toggle",
     cacheComponents: "toggle",
+    cacheLife: "map",
     reactCompiler: "toggle",
     asyncContext: "toggle",
     features: "map",
