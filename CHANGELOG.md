@@ -226,6 +226,16 @@ and this project adheres to
   `package.json` / `prisma.config.ts` becomes `deno run -A <seed>`, so `prisma db seed` seeds
   on Deno; the tests run under `denext test`. They used to keep the native client migrate
   removes from `package.json`.
+- **`denext desktop dev --inspect-renderer[=<addr>]`** opens the window's page to a debugger: on
+  CEF (every OS) and WebView2 the Chrome DevTools Protocol on `http://127.0.0.1:<port>`, on
+  WebKitGTK WebKit's own inspector; WKWebView has no remote port (Safari > Develop). With no
+  address it picks a free loopback port, and it prints the endpoint and, once the page has loaded,
+  its `webSocketDebuggerUrl` and a `devtools://` URL. A non-loopback address is refused unless
+  `--inspect-renderer-allow-remote` is also given. See
+  [Debugging the window's page](https://denext.dev/docs/desktop#desktop-inspect-renderer).
+- **CLI flags with an optional value.** A command's flag can take `--flag` alone or
+  `--flag=value` (`optionalValue` on a `FlagSpec`); the bare form never takes the next argument
+  as its value.
 
 ### Changed
 

@@ -573,7 +573,9 @@ exit 78 instead of running without Chromium's sandbox (a tarball / AppImage on U
 default, warms the resolver up at launch). A window hands at most 3 refused navigations a second to the
 browser. `registerShortcut(accel, fn)`
 needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`. DevTools are on in
-`desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`. `denext desktop run` / `dev` build the app into a temp dir with the
+`desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`;
+`denext desktop dev --inspect-renderer[=<addr>]` opens the window's page to a CDP client (CEF,
+WebView2; a free loopback port by default, non-loopback refused). `denext desktop run` / `dev` build the app into a temp dir with the
 packaging scripts' least-privilege flags and launch it (a bare `deno desktop` only compiles). An extension's
 `--allow-*` goes in `desktop.extraPermissions`, never in `scripts/package-*.ts`. Under the stock
 runtime these answer `unavailable` and the page keeps its web path. Under the pinned runtime `clipboard` reaches the OS clipboard

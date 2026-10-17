@@ -13,6 +13,7 @@ interface Flag {
   altNames?: string[];
   type: string;
   valueName?: string;
+  optionalValue?: boolean;
   default?: string | number | boolean;
   description: string;
 }
@@ -40,10 +41,11 @@ const cli = cliJson as unknown as {
   denoVerbs: { name: string; summary: string }[];
 };
 
-/** `--port, -p <port>` — the label column of a flags table. */
+/** `--port, -p <port>` (or `--inspect-renderer[=<addr>]`) — the label column of a flags table. */
 function flagLabel(f: Flag): string {
   const alt = (f.altNames ?? []).map((n) => `, --${n}`).join("");
   const alias = f.alias ? `, -${f.alias}` : "";
+  if (f.optionalValue) return `--${f.name}${f.valueName ?? ""}${alias}${alt}`;
   return `--${f.name}${alias}${alt}${f.valueName ? " " + f.valueName : ""}`;
 }
 

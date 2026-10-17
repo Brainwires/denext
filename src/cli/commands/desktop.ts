@@ -48,6 +48,7 @@ import { syncDesktopAppConfigAt, unpackagedLaunchEnv } from "../../build/desktop
 import {
   DESKTOP_RUNTIME_ATTEST_ENV,
   DESKTOP_RUNTIME_VERIFY_ENV,
+  projectDesktopBackend,
   resolveDesktopRuntimeEnv,
 } from "../../build/desktop-runtime.ts";
 import { denoExecutable } from "../../build/bundle.ts";
@@ -58,6 +59,11 @@ import {
 } from "../../build/desktop-package-script.ts";
 import { desktopPackageMeta } from "../../build/desktop-installers.ts";
 import { desktopNpmArgsFor } from "../../build/desktop-capabilities.ts";
+import {
+  announceCdpPages,
+  inspectRendererLaunch,
+  type InspectRendererPlan,
+} from "../../build/desktop-inspect-renderer.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
 function desktopDir(ctx: CommandContext): string {
@@ -81,6 +87,20 @@ async function exportSpa(dir: string): Promise<void> {
   console.log(`  Exported ${result.pages} page(s) to ${result.outDir}\n`);
 }
 
+/** The `denext desktop <action>` handlers. */
+const DESKTOP_ACTIONS: Record<
+  string,
+  (ctx: CommandContext, dir: string, entry: string) => Promise<void>
+> = {
+  build: (_ctx, dir) => exportSpa(dir),
+  run: (_ctx, dir, entry) => runDesktop(dir, entry),
+  dev: (ctx, dir, entry) => runDesktopDevSession(ctx, dir, entry),
+  package: (ctx, dir) => packageDesktop(ctx, dir),
+  add: (ctx) => desktopAdd(ctx),
+  "publish-update": (ctx, dir) => desktopPublishUpdate(ctx, dir),
+  doctor: async (ctx, dir) => void await desktopDoctor(ctx, dir),
+};
+
 export const desktopCommand: CommandSpec = {
   name: "desktop",
   summary: "Build/run/package the app as a native desktop app",
@@ -97,6 +117,8 @@ export const desktopCommand: CommandSpec = {
     "  denext desktop build                   Export the SPA to out/\n" +
     "  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n" +
     "  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n" +
+    "  denext desktop dev --inspect-renderer  …and open the window's renderer to a debugger (CDP on\n" +
+    "                                         a free loopback port; --inspect-renderer=127.0.0.1:9229)\n" +
     "  denext desktop package                 Build a distributable bundle for the host OS\n" +
     "  denext desktop package --target-os windows  Cross-build (Linux and Windows from any OS)\n" +
     "  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n" +
@@ -150,6 +172,20 @@ export const desktopCommand: CommandSpec = {
       help: "dev: attach to a dev server on the LAN (a non-loopback target; opt in explicitly)",
     },
     {
+      name: "inspect-renderer",
+      type: "string",
+      optionalValue: true,
+      valueName: "[=<addr>]",
+      help: "dev: open the window's renderer to a debugger — the Chrome DevTools Protocol on CEF " +
+        "and WebView2, WebKit's inspector on WebKitGTK (default: 127.0.0.1 and a free port)",
+    },
+    {
+      name: "inspect-renderer-allow-remote",
+      type: "boolean",
+      help: "dev: let --inspect-renderer take a non-loopback address (the port is full control " +
+        "of the page)",
+    },
+    {
       name: "format",
       type: "string",
       valueName: "<list>",
@@ -187,13 +223,11 @@ export const desktopCommand: CommandSpec = {
     if (ctx.flags["attest-runtime"] === true) Deno.env.set(DESKTOP_RUNTIME_ATTEST_ENV, "1");
     const dir = desktopDir(ctx);
     const entry = (ctx.flags.entry as string | undefined) ?? "desktop.ts";
-    if (action === "build") return await exportSpa(dir);
-    if (action === "run") return await runDesktop(dir, entry);
-    if (action === "dev") return await runDesktopDevSession(ctx, dir, entry);
-    if (action === "package") return await packageDesktop(ctx, dir);
-    if (action === "add") return await desktopAdd(ctx);
-    if (action === "publish-update") return await desktopPublishUpdate(ctx, dir);
-    if (action === "doctor") return void await desktopDoctor(ctx, dir);
+    if (action !== "dev" && ctx.flags["inspect-renderer"] !== undefined) {
+      fail("denext desktop: --inspect-renderer applies to `denext desktop dev` only.");
+    }
+    const handler = Object.hasOwn(DESKTOP_ACTIONS, action) ? DESKTOP_ACTIONS[action] : undefined;
+    if (handler) return await handler(ctx, dir, entry);
     console.error(
       `denext desktop: unknown action "${action}" (expected run | build | dev | package | add | ` +
         `publish-update | doctor).`,
@@ -394,18 +428,11 @@ async function runDesktopDevSession(
         "  Scaffold one with `denext create --desktop`, or pass --entry <file>.",
     );
   }
-  let target: { host: string; url: string };
-  try {
-    target = desktopDevTarget({
-      lan: ctx.flags.lan === true,
-      host: typeof ctx.flags.host === "string" ? ctx.flags.host : undefined,
-      port: typeof ctx.flags.port === "number" ? ctx.flags.port : 3000,
-    });
-  } catch (err) {
-    fail(err instanceof Error ? err.message : String(err));
-  }
+  const target = devTargetOrFail(ctx);
   let launch: DesktopWindowLaunch;
+  let inspect: InspectRendererPlan | undefined;
   try {
+    inspect = await inspectRendererFor(ctx, dir);
     launch = await prepareDesktopWindow(dir, true);
   } catch (err) {
     fail(`denext desktop dev: ${err instanceof Error ? err.message : String(err)}`);
@@ -414,25 +441,89 @@ async function runDesktopDevSession(
   try {
     await runDesktopDev({
       startServer: () => startOrAttachDevServer(dir, target.host, target.url),
-      spawnWindow: async (devUrl) => {
-        const devEntry = await writeDesktopDevEntry(dir, launch.buildDir, entry);
-        const built = await buildDesktopWindow(dir, devEntry, launch, {
-          dev: true,
-          // The window's runtime reaches a LAN dev server over the network.
-          netHosts: lan ? [new URL(devUrl).hostname] : [],
-        });
-        return launchDesktopWindow(built, dir, {
-          ...launch.env,
-          [DESKTOP_DEV_URL_ENV]: devUrl,
-          ...(lan ? { [DESKTOP_DEV_LAN_ENV]: "1" } : {}),
-        });
-      },
+      spawnWindow: (devUrl) => spawnDevWindow({ dir, entry, launch, devUrl, lan, inspect }),
       waitForStop: waitForShutdownSignal,
       log: (line) => console.log(line),
     });
   } catch (err) {
     fail(`denext desktop dev: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/** The `desktop dev` server target from `--lan` / `--host` / `--port`, or exit with why not. */
+function devTargetOrFail(ctx: CommandContext): { host: string; url: string } {
+  try {
+    return desktopDevTarget({
+      lan: ctx.flags.lan === true,
+      host: typeof ctx.flags.host === "string" ? ctx.flags.host : undefined,
+      port: typeof ctx.flags.port === "number" ? ctx.flags.port : 3000,
+    });
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** One `desktop dev` window: build the generated dev entry, then open it on the dev server. */
+async function spawnDevWindow(o: {
+  dir: string;
+  entry: string;
+  launch: DesktopWindowLaunch;
+  devUrl: string;
+  lan: boolean;
+  inspect: InspectRendererPlan | undefined;
+}): Promise<DesktopWindow> {
+  const { dir, launch, devUrl, lan, inspect } = o;
+  const devEntry = await writeDesktopDevEntry(dir, launch.buildDir, o.entry);
+  const built = await buildDesktopWindow(dir, devEntry, launch, {
+    dev: true,
+    // The window's runtime reaches a LAN dev server over the network.
+    netHosts: lan ? [new URL(devUrl).hostname] : [],
+  });
+  const window = launchDesktopWindow(built, dir, {
+    ...launch.env,
+    ...inspect?.env,
+    [DESKTOP_DEV_URL_ENV]: devUrl,
+    ...(lan ? { [DESKTOP_DEV_LAN_ENV]: "1" } : {}),
+  });
+  return inspect?.protocol === "cdp" && inspect.endpoint
+    ? announceRendererPages(window, inspect.endpoint)
+    : window;
+}
+
+/**
+ * `--inspect-renderer[=<addr>]`: the launch env for the project's backend on this OS (a free
+ * loopback port for a bare flag; a non-loopback address only with
+ * `--inspect-renderer-allow-remote`), with the endpoint printed. `undefined` without the flag.
+ */
+async function inspectRendererFor(
+  ctx: CommandContext,
+  dir: string,
+): Promise<InspectRendererPlan | undefined> {
+  const value = ctx.flags["inspect-renderer"];
+  if (value === undefined || value === false) return undefined;
+  const { plan, lines } = inspectRendererLaunch({
+    value: value === true ? true : String(value),
+    allowRemote: ctx.flags["inspect-renderer-allow-remote"] === true,
+    backend: await projectDesktopBackend(dir),
+    os: hostDesktopOs(),
+    inherited: Deno.env.toObject(),
+  });
+  for (const line of lines) console.log(line);
+  return plan;
+}
+
+/** Print the window's CDP page targets once they appear; stops polling when the window stops. */
+function announceRendererPages<W extends DesktopWindow>(window: W, endpoint: string): W {
+  const ac = new AbortController();
+  void announceCdpPages(endpoint, { log: (l) => console.log(l), signal: ac.signal });
+  void window.finished.then(() => ac.abort());
+  return {
+    ...window,
+    stop: async () => {
+      ac.abort();
+      await window.stop();
+    },
+  };
 }
 
 /**

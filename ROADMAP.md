@@ -27,14 +27,6 @@
   them, drop the runtime download, the Deno 2.9.7 pin and the cross-host backend directory
   (2.9.7's CLI looks a prebuilt backend up under the host's executable name), and archive the
   forks.
-- **`denext desktop dev --inspect-renderer[=<addr>]`:** runtime 2.9.7-denext.21 has the CLI-only
-  prototype (`deno desktop --inspect-renderer`; the fork's `doc/denext-inspect-renderer.md`), but
-  `desktop dev` launches the built executable itself, so denext has to put the same environment on
-  that launch per backend (CEF `LAUFEY_REMOTE_DEBUGGING_PORT`, WebView2
-  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, WebKitGTK `WEBKIT_INSPECTOR_HTTP_SERVER`), pick a free
-  port for a bare flag (the CLI parser has no optional-value flags yet), and print the page's
-  `webSocketDebuggerUrl`. Then the MCP tools (`src/profile/browser.ts` already drives CDP) can
-  attach to a desktop window.
 
 ## Mobile and React Native
 

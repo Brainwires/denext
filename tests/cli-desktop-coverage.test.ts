@@ -874,3 +874,19 @@ Deno.test("desktop add sidecar: a config whose desktop is code is refused with t
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("desktop --inspect-renderer: dev only, and a non-loopback address is refused", async () => {
+  const dir = await tempDir("denext_desktop_inspect_");
+  try {
+    const run = await runVerb(["run"], dir, { "inspect-renderer": true });
+    assertEquals(run.code, 1);
+    assertStringIncludes(run.err, "--inspect-renderer applies to `denext desktop dev` only");
+    await Deno.writeTextFile(join(dir, "desktop.ts"), "");
+    const remote = await runVerb(["dev"], dir, { "inspect-renderer": "0.0.0.0:9229" });
+    assertEquals(remote.code, 1);
+    assertStringIncludes(remote.err, "refusing the non-loopback address");
+    assertStringIncludes(remote.err, "--inspect-renderer-allow-remote");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
