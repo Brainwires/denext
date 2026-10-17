@@ -426,6 +426,12 @@ and this project adheres to
 - **`revalidatePath()` in a Server Action updates the calling page.** As in Next.js, the client
   that ran the action re-renders its route; before, a form submitted through the hydrated client
   ran the action but left the page showing the old data until a reload.
+- **An in-process API call reaches a route a plugin serves.** The typed client's SSR call
+  (`createApiClient` inside a request) and a typed-API batch item run as sub-requests through the
+  pipeline, but one for a route only a plugin handles (a Pages Router API route, a plugin's own
+  endpoint) answered 404. An unmatched sub-request now goes to the plugins' request handlers, as a
+  real request does, still in process; an App Router route keeps precedence, and a path nothing
+  claims is still the JSON 404.
 - **`denext build` and `denext export` exit when they are done** even when an app module keeps the
   event loop alive at its top level (a database pool that connects when it is created, such as
   Prisma's MariaDB adapter, a Redis client, an interval). They used to finish and then wait forever.

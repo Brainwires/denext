@@ -489,6 +489,16 @@ async function withAppCors(state: RequestState, pending: Promise<Response>): Pro
   return applyCors(state.request, await pending, state.app.cors ?? null);
 }
 
+/**
+ * A sub-request no App Router API route matched: a plugin's request handler (a Pages Router
+ * API route, a plugin-served endpoint) gets it — the same claim-hook a real request reaches —
+ * else a bare JSON 404 (never a page render or an asset of the App Router's own).
+ */
+async function dispatchSubRequestFallback(state: RequestState): Promise<Response> {
+  const claimed = await state.app.config.matchExternal?.(state.request);
+  return finalize(state, claimed ?? subRequestNotFound(state.pathname));
+}
+
 /** A sub-request that matched no API route: a bare JSON 404 (never a page or an asset). */
 function subRequestNotFound(pathname: string): Response {
   return new Response(
@@ -553,7 +563,8 @@ async function dispatch(state: RequestState): Promise<Response> {
   applyRewriteRules(state);
   // A sub-request (a batch item, an SSR self-call) is API-only: no actions, no batch, no
   // metadata files, no page render, no static asset — it can reach nothing a client could not,
-  // and nothing heavier than the route it names.
+  // and nothing heavier than the route it names. A route a plugin serves is reached through the
+  // plugin's handler, as a real request reaches it.
   const subRequest = state.request.headers.get(BATCH_ITEM_HEADER) === "1";
   const reserved = subRequest ? null : await dispatchReserved(state);
   if (reserved) return reserved;
@@ -567,7 +578,7 @@ async function dispatch(state: RequestState): Promise<Response> {
   if (softNavPost instanceof Response) return softNavPost;
   const fromApi = await dispatchApi(state, manifest, routingPath, softNavPost);
   if (fromApi) return fromApi;
-  if (subRequest) return finalize(state, subRequestNotFound(state.pathname));
+  if (subRequest) return await dispatchSubRequestFallback(state);
   const fromPage = dispatchPage(state, manifest, routingPath, localeInfo, softNavPost);
   return await withAppCors(state, fromPage ?? serveFallback(state, manifest, routingPath));
 }

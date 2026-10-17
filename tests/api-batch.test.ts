@@ -204,3 +204,25 @@ Deno.test("api batch: item Set-Cookies merge onto the batch response; a crashing
     console.error = errors;
   }
 });
+
+Deno.test("api batch: an item for a route a plugin serves (matchExternal) reaches the plugin", async () => {
+  const app = batchApp({
+    matchExternal: (req: Request) =>
+      Promise.resolve(
+        new URL(req.url).pathname === "/api/legacy"
+          ? Response.json({ legacy: true, cookie: req.headers.get("cookie") })
+          : null,
+      ),
+  });
+  const res = await app(batchRequest([
+    { id: 0, m: "GET", p: "/api/legacy" },
+    { id: 1, m: "GET", p: "/api/unclaimed" },
+  ]));
+  const { r } = await res.json();
+  const byId = Object.fromEntries(r.map((x: { id: number }) => [x.id, x]));
+  assertEquals(byId[0].s, 200);
+  assertEquals(JSON.parse(byId[0].t), { legacy: true, cookie: "session=abc" });
+  // Nothing claims it: the bare JSON 404 as before.
+  assertEquals(byId[1].s, 404);
+  assertEquals(JSON.parse(byId[1].t).error.code, "not_found");
+});

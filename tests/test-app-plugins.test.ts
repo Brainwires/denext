@@ -186,3 +186,31 @@ Deno.test("probeApp: sets the config plugins up and runs their teardowns when do
     assertEquals(pluginLog(), ["setup:probe:dev", "prepare:probe", "teardown:probe"]);
   });
 });
+
+const API_CLIENT = new URL("../src/runtime/api-client.ts", import.meta.url).href;
+
+Deno.test("createTestApp: an App Router route calls a Pages API route in process (no network, no 404)", async () => {
+  await withProject(
+    {
+      ...PAGES_APP,
+      // A hybrid app: an App Router route handler calls the Pages API route through the typed
+      // client. In process, that is a sub-request the pages plugin must answer.
+      "app/api/proxy/route.ts": `import { createApiClient } from "${API_CLIENT}";
+const noNetwork = () => { throw new Error("the in-process call must not touch the network"); };
+export async function GET() {
+  const api = createApiClient({ fetch: noNetwork });
+  return Response.json({ via: "proxy", inner: await api("/api/hello", "GET", { query: { name: "sub" } }) });
+}
+`,
+    },
+    async (dir) => {
+      await using app = await createTestApp(dir);
+      const res = await createTestClient(app).get("/api/proxy");
+      assertEquals(res.status, 200, res.text);
+      assertEquals(JSON.parse(res.text), {
+        via: "proxy",
+        inner: { hello: "sub", method: "GET" },
+      });
+    },
+  );
+});
