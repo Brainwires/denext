@@ -1,8 +1,8 @@
 // CI smoke test for `denext desktop run` (macOS / Linux; Linux under a display, e.g. xvfb-run):
 // run the verb on a project, wait until the launched app's server is listening, quit it the way
 // Ctrl-C does, and check what the verb promises — a window process that started with its
-// permissions (no `NotCapable`), a clean exit, no bundle left in the project folder, and the scratch
-// build removed.
+// permissions (no `NotCapable`), no Deno.serve legacy-abort notice on the pinned runtime, a clean
+// exit, no bundle left in the project folder, and the scratch build removed.
 //
 //   deno run -A scripts/ci/desktop-run-smoke.ts examples/native
 //
@@ -75,6 +75,11 @@ if (outcome === "listening" && status.code !== 0) {
 }
 if (/NotCapable/.test(output)) problems.push("the app hit a permission error (NotCapable)");
 if (!/Opening the desktop window/.test(output)) problems.push("the verb never opened a window");
+// On the pinned runtime the build passes --unstable-no-legacy-abort, which the runtime keeps
+// (2.9.7-denext.21): the window's first request prints no Deno.serve legacy-abort notice.
+if (!/STOCK/.test(output) && output.includes("(legacy behavior)")) {
+  problems.push("the app printed Deno.serve's legacy-abort notice on the pinned runtime");
+}
 const added = [...await entries(project)].filter((n) =>
   !before.has(n) && n !== "out" && n !== ".denext"
 );
