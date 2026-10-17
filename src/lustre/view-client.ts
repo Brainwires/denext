@@ -86,8 +86,13 @@ function mountFrame(vid: string, v: ViewState) {
   };
 }
 
+/** Path segments that would walk into (or write over) a prototype. */
+const UNSAFE_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+
 /** The value at `path` (dot-separated) of `from`, copied into `into` at the same path. */
 function copyPath(from: unknown, into: Record<string, unknown>, path: string[]): void {
+  // An `include` path naming `__proto__` would write the event's data onto Object.prototype.
+  if (path.some((key) => UNSAFE_SEGMENTS.has(key))) return;
   let input = from as Record<string, unknown> | undefined;
   let output = into;
   for (let i = 0; i < path.length; i++) {

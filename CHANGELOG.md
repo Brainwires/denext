@@ -413,6 +413,9 @@ and this project adheres to
   from the session, transaction and CSRF cookies — a staging server behind a TLS proxy that
   sends no `x-forwarded-proto` among them, where a sibling subdomain could then plant those
   cookies. Another host keeps the prefix unless the server is `denext dev` (a phone on the LAN).
+- **A Lustre view's `include` path can't write onto `Object.prototype` in the browser.** A
+  handler's `include` path naming `__proto__` (or `constructor.prototype`) copied the event's data
+  onto every object's prototype; such a path now copies nothing.
 
 ### Changed
 
