@@ -245,6 +245,61 @@ Deno.test("deploy runner: project files are never clobbered unless generated", a
   }
 });
 
+Deno.test("deploy runner: an adapter name can't point its emptied output directory elsewhere", async () => {
+  const { paths, manifest } = await fixtureManifest();
+  try {
+    await Deno.writeTextFile(join(paths.projectDir, "keep.txt"), "x");
+    for (const name of ["../..", "..", "", "a/b", "a\\b", "/abs", ".hidden", "a..b"]) {
+      const adapter: DeployAdapter = { name, prepare: () => {} };
+      await assertRejects(
+        () => runDeployPrepare({ paths, manifest, adapter, log: () => {} }),
+        Error,
+        "deploy adapter's name",
+        name,
+      );
+    }
+    assertEquals(await Deno.readTextFile(join(paths.projectDir, "keep.txt")), "x");
+    const ok: DeployAdapter = { name: "my-host_2.0", prepare: () => {} };
+    await runDeployPrepare({ paths, manifest, adapter: ok, log: () => {} });
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
+Deno.test("deploy preset generic-host: an option can't add a directive to the unit or proxy files", async () => {
+  const { paths, manifest } = await fixtureManifest();
+  try {
+    const bad: Array<Parameters<typeof genericHost>[0]> = [
+      { domain: "example.com;\n  location /admin { allow all; }" },
+      { domain: "example.com\nimport /etc/passwd" },
+      { directory: "/srv/app\nExecStartPre=/bin/sh -c id" },
+      { directory: "/srv/my app" },
+      { directory: "srv/app" },
+      { directory: "/srv/../etc" },
+      { deno: "/usr/bin/deno --allow-all" },
+      { user: "root\nUser=root" },
+      { port: 0 },
+      { port: 3000.5 },
+      { maxConnections: -1 },
+    ];
+    for (const options of bad) {
+      const { ctx } = recordingContext(manifest, paths.projectDir);
+      await assertRejects(
+        () => Promise.resolve(genericHost(options).prepare(ctx)),
+        Error,
+        "generic-host",
+        JSON.stringify(options),
+      );
+    }
+    const { ctx, files } = recordingContext(manifest, paths.projectDir);
+    await genericHost({ domain: "*.shop.example.com", directory: "/srv/shop-2", user: "_shop" })
+      .prepare(ctx);
+    assertStringIncludes(files.get("output/Caddyfile") ?? "", "*.shop.example.com {");
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
 Deno.test("deploy runner: a dry run writes and runs nothing", async () => {
   const { paths, manifest } = await fixtureManifest();
   try {

@@ -31,10 +31,51 @@ export interface GenericHostPresetOptions {
 /** The options with every default filled in. */
 type Resolved = Required<GenericHostPresetOptions>;
 
-/** Fill in the defaults. */
+/** An absolute path a unit file and a shell take as one word. */
+const SAFE_PATH = /^\/[A-Za-z0-9._@+\/-]*$/;
+/** A host name (or `*.` wildcard) nginx's `server_name` and a Caddy site address take as is. */
+const SAFE_DOMAIN =
+  /^(?:\*\.)?[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*$/;
+/** A POSIX user name. */
+const SAFE_USER = /^[a-z_][a-z0-9_-]{0,31}$/;
+
+const safePath = (v: unknown) =>
+  typeof v === "string" && SAFE_PATH.test(v) && !v.split("/").includes("..");
+const PATH_RULE = "an absolute path of letters, digits and ._@+-/";
+
+/** Each option's check and what it must be. */
+const OPTION_RULES: ReadonlyArray<readonly [keyof Resolved, (v: unknown) => boolean, string]> = [
+  ["directory", safePath, PATH_RULE],
+  ["deno", safePath, PATH_RULE],
+  ["user", (v) => typeof v === "string" && SAFE_USER.test(v), "a user name"],
+  ["domain", (v) => typeof v === "string" && SAFE_DOMAIN.test(v), "a host name"],
+  [
+    "port",
+    (v) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 65535,
+    "a TCP port",
+  ],
+  ["maxConnections", (v) => Number.isInteger(v) && (v as number) >= 1, "a positive whole number"],
+];
+
+/**
+ * The options as they go into the generated files: each is checked, so a value can't end its line
+ * or its directive (a newline in `domain`, a `;` in `directory`) and add another.
+ */
+function checkOptions(o: Resolved): Resolved {
+  for (const [key, ok, what] of OPTION_RULES) {
+    if (!ok(o[key])) {
+      throw new Error(
+        `denext: deploy (generic-host) option ${key} ${JSON.stringify(o[key])} is not ${what}`,
+      );
+    }
+  }
+  return o;
+}
+
+/** Fill in the defaults, then check every value. */
 function resolveOptions(options: GenericHostPresetOptions, projectDir: string): Resolved {
   const name = appName(options.name, projectDir);
-  return {
+  return checkOptions({
     name,
     directory: options.directory ?? `/srv/${name}`,
     user: options.user ?? name,
@@ -42,7 +83,7 @@ function resolveOptions(options: GenericHostPresetOptions, projectDir: string): 
     domain: options.domain ?? "example.com",
     deno: options.deno ?? "/usr/local/bin/deno",
     maxConnections: options.maxConnections ?? 100,
-  };
+  });
 }
 
 /** The `ExecStart` command line. */
