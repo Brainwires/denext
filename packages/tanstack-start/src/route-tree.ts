@@ -7,7 +7,7 @@
 // plugin itself depends on no npm package.
 
 import { createRequire } from "node:module";
-import { join, relative, toFileUrl } from "@std/path";
+import { join, relative, resolve, toFileUrl } from "@std/path";
 import type { RouteInfo } from "./prerender.ts";
 
 /** A route node, as far as the plugin reads one (`RouteNode` in TanStack's types). */
@@ -86,7 +86,8 @@ function routeInfos(
     const made: RouteInfo = {
       id: isRoot ? "__root__" : node.routePath ?? "",
       path: isRoot ? "/" : fullPathOf(node),
-      file: node.fullPath,
+      // The generator writes `/`; the bundles' module ids use the platform's separator.
+      file: resolve(node.fullPath),
       layout: isRoot || node.isNonPath === true,
       options: [...(node.createFileRouteProps ?? [])],
     };

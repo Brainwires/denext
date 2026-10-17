@@ -513,6 +513,55 @@ Deno.test("tanstack-start: TanStack's packages come from the app's own dependenc
   }
 });
 
+Deno.test("tanstack-start route tree: the generator's routes come back, parents linked", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_tss_routes_" }));
+  try {
+    await Deno.writeTextFile(join(dir, "package.json"), "{}");
+    // A stand-in generator: its plugin hook gets the route nodes TanStack's would (`/` paths).
+    const pkg = join(dir, "node_modules", "@tanstack", "router-generator");
+    await Deno.mkdir(pkg, { recursive: true });
+    await Deno.writeTextFile(
+      join(pkg, "package.json"),
+      JSON.stringify({ name: "@tanstack/router-generator", main: "index.cjs" }),
+    );
+    const routes = `${dir.replace(/\\/g, "/")}/src/routes`;
+    await Deno.writeTextFile(
+      join(pkg, "index.cjs"),
+      `const root = { fullPath: "${routes}/__root.tsx" };
+const posts = { fullPath: "${routes}/posts/route.tsx", routePath: "/posts",
+  createFileRouteProps: new Set(["component"]) };
+const post = { fullPath: "${routes}/posts/$id.tsx", routePath: "/posts/$id", parent: posts,
+  createFileRouteProps: new Set(["component", "loader"]) };
+const layout = { fullPath: "${routes}/_auth.tsx", routePath: "/_auth", isNonPath: true };
+exports.getConfig = (inline) => inline;
+exports.inferFullPath = (node) => node.routePath.replace(/\\/_[^/]+/g, "") || "/";
+exports.Generator = class {
+  constructor({ config }) { this.config = config; }
+  async run() {
+    for (const p of this.config.plugins) {
+      p.onRouteTreeChanged({ rootRouteNode: root, routeNodes: [root, posts, post, layout] });
+    }
+  }
+};
+`,
+    );
+    const infos = await generateRouteTree(dir, join(dir, "src"));
+    assertEquals(
+      infos.map((r) => [r.id, r.path, r.layout, r.options, r.parent?.id]),
+      [
+        ["__root__", "/", true, [], undefined],
+        ["/posts", "/posts", false, ["component"], "__root__"],
+        ["/posts/$id", "/posts/$id", false, ["component", "loader"], "/posts"],
+        ["/_auth", "/", true, [], "__root__"],
+      ],
+    );
+    // Module paths in the platform's form, as the bundles' import graph has them.
+    assertEquals(infos[2].file, join(dir, "src", "routes", "posts", "$id.tsx"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test({
   name: 'tanstack-start server bundle: a module Start\'s compiler rewrote still gets "use cache"',
   sanitizeOps: false,
