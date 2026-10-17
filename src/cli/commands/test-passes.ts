@@ -88,7 +88,10 @@ export function coverageDir(args: readonly string[]): string | undefined {
 export interface TestPlan {
   /** The test passes (`deno test …`), every one run even when an earlier one fails. */
   readonly passes: readonly string[][];
-  /** The coverage directory to empty before the passes (a combined report only). */
+  /**
+   * The coverage directory whose raw profiles go before the passes (a combined report only): see
+   * {@link clearCoverageProfiles} — never the directory itself.
+   */
   readonly clean?: string;
   /** The `deno coverage …` runs that make the combined report, after the passes. */
   readonly report: readonly string[][];
@@ -143,6 +146,31 @@ export function planTestRun(
       ]
       : [],
   };
+}
+
+/** A raw coverage profile `deno test --coverage` writes: `<uuid>.json`. */
+const PROFILE_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/i;
+
+/**
+ * Remove the raw profiles an earlier run left in `dir` (so the combined report covers this run
+ * only), and nothing else: `--coverage=.` or `--coverage=src` names a directory that holds the
+ * project, which must survive. Returns how many profiles went.
+ *
+ * @param dir The coverage directory (absolute).
+ * @returns The number of files removed.
+ */
+export async function clearCoverageProfiles(dir: string): Promise<number> {
+  let removed = 0;
+  try {
+    for await (const e of Deno.readDir(dir)) {
+      if (!e.isFile || !PROFILE_FILE.test(e.name)) continue;
+      await Deno.remove(join(dir, e.name));
+      removed++;
+    }
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+  }
+  return removed;
 }
 
 /**

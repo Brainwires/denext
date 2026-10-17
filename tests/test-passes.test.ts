@@ -6,6 +6,7 @@
 import { assert, assertEquals, assertMatch } from "@std/assert";
 import { join } from "@std/path";
 import {
+  clearCoverageProfiles,
   coverageDir,
   findVitestFiles,
   planTestRun,
@@ -62,6 +63,27 @@ Deno.test("planTestRun: --coverage accumulates both passes, then one report", ()
   assertEquals(raw.report, []);
   assertEquals(raw.clean, undefined);
   assertEquals(raw.passes.length, 2);
+});
+
+Deno.test("clearCoverageProfiles: only the raw profiles go, never the directory (--coverage=.)", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-cov-clean-" });
+  try {
+    const profile = "a083a8bc-200f-4081-a16b-fa8597568c37.json";
+    await Deno.writeTextFile(join(root, profile), "{}");
+    await Deno.writeTextFile(join(root, "deno.json"), "{}");
+    await Deno.mkdir(join(root, "src"));
+    await Deno.writeTextFile(join(root, "src", "app.ts"), "");
+    // `denext test --coverage=.` plans `clean: "."`: the project directory itself.
+    assertEquals(planTestRun(["--coverage=."], ["v.vitest.ts"], true).clean, ".");
+    assertEquals(await clearCoverageProfiles(join(root, ".")), 1);
+    assertEquals(
+      (await Array.fromAsync(Deno.readDir(root))).map((e) => e.name).sort(),
+      ["deno.json", "src"],
+    );
+    assertEquals(await clearCoverageProfiles(join(root, "missing")), 0);
+  } finally {
+    removeTempDirSync(root);
+  }
 });
 
 Deno.test("planTestRun: off the toolchain, or watching, the Vitest files are named, not run", () => {

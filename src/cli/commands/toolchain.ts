@@ -15,7 +15,7 @@ import {
 import { RAW_FLAG } from "../explain-output.ts";
 import { join } from "@std/path";
 import { denoExecutable } from "../../build/deno-executable.ts";
-import { coverageDir, findVitestFiles, planTestRun } from "./test-passes.ts";
+import { clearCoverageProfiles, coverageDir, findVitestFiles, planTestRun } from "./test-passes.ts";
 import { rawDiagnostics } from "../../build/explain/mod.ts";
 
 /**
@@ -81,7 +81,7 @@ async function runTests(ctx: CommandContext): Promise<never> {
   if (plan.passes.length === 1 && plan.report.length === 0) {
     return spawnDenoAndExit(plan.passes[0], cwd);
   }
-  if (plan.clean) await Deno.remove(join(cwd, plan.clean), { recursive: true }).catch(() => {});
+  if (plan.clean) await clearCoverageProfiles(join(cwd, plan.clean)).catch(() => {});
   let code = 0;
   for (const pass of plan.passes) code = (await runDenoStep(pass, cwd)) || code;
   for (const report of plan.report) code = (await runDenoStep(report, cwd)) || code;

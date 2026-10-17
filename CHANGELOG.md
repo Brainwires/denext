@@ -203,6 +203,8 @@ and this project adheres to
   `denext test --coverage[=<dir>]` writes both passes into one directory and makes one report
   (summary, `<dir>/lcov.info`, `<dir>/html/`); the toolchain's `deno coverage` maps each profile
   back through the form its module was emitted in, so a line either pass ran counts as covered.
+  Before the passes it removes only the raw profiles (`<uuid>.json`) an earlier run left there,
+  never the directory: `--coverage=.` names the project itself.
 - **next-intl's ICU messages: every skeleton token `Intl` can express, and deep nesting.**
   Number skeletons take the long and concise forms next-intl's formatter reads: units
   (`unit/…`, `measure-unit/…` with `per-measure-unit/…`), `unit-width-*`, significant digits
