@@ -72,6 +72,14 @@ is not the pinned build (stock Deno that inherited the marker inside `denext tas
 `-denext.N` that a `toolchain link` from before a denext upgrade still points at) switches to the
 pinned one.
 
+The switch also passes the toolchain's runtime flag, `--unstable-no-legacy-abort`: `request.signal`
+aborts only when a response is not delivered, and Deno prints no legacy-abort notice on the first
+request. A server verb (`dev`, `start`, `profile`) started on the toolchain directly (the `deno`
+that `toolchain link` puts on PATH, or a `deno task` step running it) checks whether it has that
+flag, with one loopback request, and re-runs once on the same binary with it when it does not.
+Without `--allow-run` it keeps serving in-process; put `"unstable": ["no-legacy-abort"]` in the
+project's `deno.json` to have the flag there too.
+
 A compiled `denext` binary can't change its own runtime. It hands the toolchain to the processes it
 starts instead (through `DENO_BIN`, unless you set `DENO_BIN` yourself), and the project's pinned
 denext then runs on it. Finding a project's own verbs (`denext commands`, a project verb,

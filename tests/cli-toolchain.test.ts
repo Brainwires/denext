@@ -10,6 +10,7 @@ import {
   maybeReexecToolchain,
   type ReexecToolchainDeps,
   runsProjectCode,
+  servesInProcess,
   toolchainApplies,
 } from "../src/cli/self-exec.ts";
 import { buildRegistry } from "../src/cli/register.ts";
@@ -90,7 +91,10 @@ function deps(
     pinnedVersion: "2.9.7-denext.15",
     standalone: () => false,
     resolve: () => (seen.resolved++, Promise.resolve(choice)),
-    spawn: (deno, marker) => (seen.spawned.push([deno, marker]), Promise.resolve(42)),
+    spawn: (deno, marker, env) => (
+      seen.spawned.push(env === undefined ? [deno, marker] : [deno, marker, JSON.stringify(env)]),
+        Promise.resolve(42)
+    ),
     exit: (code) => void seen.exits.push(code),
     warn: (m) => void seen.warned.push(m),
     ...over,
@@ -152,6 +156,91 @@ Deno.test("maybeReexecToolchain: a stock choice continues in-process, after its 
   const silent = deps({ kind: "stock", reason: "DENEXT_DENO=stock" });
   assertEquals(await maybeReexecToolchain(true, silent.d), false);
   assertEquals(silent.seen.warned, []);
+});
+
+Deno.test("servesInProcess: dev, start and profile; never export, a build or a project verb", () => {
+  for (const name of ["dev", "start", "profile"]) assert(servesInProcess({ name }), name);
+  for (const name of ["export", "build", "test", "job", "desktop", "mobile"]) {
+    assert(!servesInProcess({ name }), name);
+  }
+  assert(!servesInProcess({ name: "start", source: "project" }));
+  assert(!servesInProcess({ name: "dev", source: "plugin" }));
+});
+
+/** Seams of a serving verb already on the pinned toolchain (`toolchain link`'s `deno`). */
+function onToolchain(
+  legacy: boolean | undefined,
+  over: Partial<ReexecToolchainDeps> & { vars?: Record<string, string> } = {},
+) {
+  let probes = 0;
+  const r = deps(TOOLCHAIN, {
+    denoVersion: "2.9.7-denext.15",
+    execPath: "/linked/deno",
+    pids: { pid: 200, ppid: 100 },
+    legacyAbort: () => (probes++, Promise.resolve(legacy)),
+    ...over,
+  });
+  return { ...r, probes: () => probes };
+}
+
+Deno.test("maybeReexecToolchain on the toolchain without its runtime flags: one re-run on the same binary", async () => {
+  const markers: Record<string, string>[] = [{}, { DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.15" }];
+  for (const vars of markers) {
+    const { d, seen, probes } = onToolchain(true, { vars });
+    assert(await maybeReexecToolchain(true, d));
+    assertEquals(probes(), 1);
+    assertEquals(seen.resolved, 0, "no toolchain lookup: it is this binary");
+    // The marker is this version, so the spawn adds --unstable-no-legacy-abort, and the child
+    // is told it has it (this pid).
+    assertEquals(seen.spawned, [[
+      "/linked/deno",
+      "2.9.7-denext.15",
+      JSON.stringify({ DENEXT_RUNTIME_FLAGS_FOR: "200" }),
+    ]]);
+    assertEquals(seen.exits, [42]);
+  }
+});
+
+Deno.test("maybeReexecToolchain on the toolchain: no re-run when the flag is on, unknown, or already given", async () => {
+  for (const legacy of [false, undefined]) {
+    const { d, seen, probes } = onToolchain(legacy);
+    assertEquals(await maybeReexecToolchain(true, d), false);
+    assertEquals([probes(), seen.spawned.length], [1, 0]);
+  }
+  // The child of that re-run: its parent told it, so it never probes or re-runs again.
+  const child = onToolchain(true, { vars: { DENEXT_RUNTIME_FLAGS_FOR: "100" } });
+  assertEquals(await maybeReexecToolchain(true, child.d), false);
+  assertEquals([child.probes(), child.seen.spawned.length], [0, 0]);
+  // A value leaked from further up names another process: this one still checks.
+  const leaked = onToolchain(true, { vars: { DENEXT_RUNTIME_FLAGS_FOR: "7" } });
+  assert(await maybeReexecToolchain(true, leaked.d));
+  assertEquals(leaked.probes(), 1);
+});
+
+Deno.test("maybeReexecToolchain on the toolchain: nothing to check off a serving verb, a DENEXT_DENO path or stock", async () => {
+  // No probe given: the verb serves nothing, or this process may not spawn its own Deno.
+  const quiet = onToolchain(true, { legacyAbort: undefined });
+  assertEquals(await maybeReexecToolchain(true, quiet.d), false);
+  assertEquals(quiet.seen.spawned, []);
+  // A DENEXT_DENO=<path> binary may predate the flag.
+  const path = onToolchain(true, { vars: { DENEXT_TOOLCHAIN_ACTIVE: "path" } });
+  assertEquals(await maybeReexecToolchain(true, path.d), false);
+  assertEquals([path.probes(), path.seen.spawned.length], [0, 0]);
+  // A verb that runs no project code.
+  const none = onToolchain(true);
+  assertEquals(await maybeReexecToolchain(false, none.d), false);
+  assertEquals(none.probes(), 0);
+});
+
+Deno.test("maybeReexecToolchain from stock Deno: the toolchain child is told it has the runtime flags", async () => {
+  const { d, seen, probes } = onToolchain(true, { denoVersion: "2.9.6" });
+  assert(await maybeReexecToolchain(true, d));
+  assertEquals(probes(), 0, "stock Deno is never probed: it re-execs onto the toolchain anyway");
+  assertEquals(seen.spawned, [[
+    "/cache/deno",
+    "2.9.7-denext.15",
+    JSON.stringify({ DENEXT_RUNTIME_FLAGS_FOR: "200" }),
+  ]]);
 });
 
 Deno.test("maybeReexecToolchain in a compiled binary: children get the toolchain, the user's DENO_BIN wins", async () => {

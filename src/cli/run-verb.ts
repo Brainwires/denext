@@ -10,11 +10,13 @@ import {
   childToolchainMarker,
   entrypointArg,
   isStandaloneBinary,
+  legacyAbortActive,
   maybeReexecPinned as reexecPinned,
   maybeReexecToolchain,
   mergeRunFlags,
   pinnedConfigArgs,
   pinnedDenextCli,
+  servesInProcess,
   toolchainApplies,
   toolchainConfigArgs,
   toolchainRuntimeFlags,
@@ -283,6 +285,19 @@ async function toolchainPermissionFlags(): Promise<string[]> {
   return flags;
 }
 
+/**
+ * Whether this process may start its own Deno binary again without asking: a least-privilege
+ * `start` (no `--allow-run`) keeps serving in-process rather than prompt or fail.
+ */
+function mayRespawnSelf(): boolean {
+  try {
+    return Deno.permissions.querySync({ name: "run", command: Deno.execPath() }).state ===
+      "granted";
+  } catch {
+    return false;
+  }
+}
+
 /** The pinned toolchain version, or `null` (none pinned, or an unreadable pin file override). */
 function pinnedToolchainVersion(): string | null {
   try {
@@ -313,7 +328,7 @@ function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boole
     pinnedVersion: pinnedToolchainVersion(),
     standalone: () => standalone,
     resolve: () => resolveDenoToolchain(),
-    spawn: async (deno, marker) =>
+    spawn: async (deno, marker, env = {}) =>
       spawnCliChild(
         deno,
         [
@@ -331,11 +346,18 @@ function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boole
           ),
         ],
         entrypointArg(entryUrl()),
-        { DENEXT_TOOLCHAIN_ACTIVE: marker },
+        { ...env, DENEXT_TOOLCHAIN_ACTIVE: marker },
       ),
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),
     pathEnv: (deno) => denoPathEnv(deno),
+    // Already on the toolchain but started without its runtime flags (`toolchain link`'s `deno`,
+    // a `deno task` step): a serving verb re-runs once with them.
+    legacyAbort: !standalone && servesInProcess(command) && mayRespawnSelf()
+      ? legacyAbortActive
+      : undefined,
+    execPath: Deno.execPath(),
+    pids: { pid: Deno.pid, ppid: Deno.ppid },
   });
 }
 

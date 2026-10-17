@@ -410,6 +410,13 @@ and this project adheres to
   `denext/desktop` as they are; an existing `scripts/package-macos.ts` gets it from
   `denext desktop package --regenerate-scripts` (`desktopRuntimeDenoFlags` from `denext/desktop`
   adds it to a script of your own). A stock-runtime build passes nothing new.
+- `denext dev`, `start` and `profile` no longer print that notice when the CLI is started on
+  denext's Deno toolchain itself (the `deno` that `denext toolchain link` puts on PATH, or a
+  `deno task` step running it) rather than switched onto it: only the switch passed
+  `--unstable-no-legacy-abort`. Such a server now checks whether `Deno.serve` runs the legacy
+  abort (one loopback request, a few milliseconds) and, when it does, re-runs once on the same
+  binary with the flag. A run without `--allow-run`, or with the flag already on (on the command
+  line or in the config's `"unstable"` list), keeps serving in-process; stock Deno is unaffected.
   `denext desktop package` now warns about an existing `scripts/package-macos.ts` that does not
   call `desktopRuntimeDenoFlags`, and says to run `--regenerate-scripts`.
 - A Windows Arm64 package built on Windows on Arm no longer ships an x64 `vcruntime140_1.dll`.
