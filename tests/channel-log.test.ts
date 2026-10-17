@@ -34,6 +34,7 @@ Deno.test("resolveHistory / cursors: validated retention, numeric cursor order",
   assertThrows(() => resolveHistory(0), TypeError);
   assertThrows(() => resolveHistory(1001), TypeError);
   assertThrows(() => resolveHistory({ size: 3, ttlSeconds: 0 }), TypeError);
+  assertThrows(() => resolveHistory({ size: 3, ttlSeconds: Infinity }), TypeError);
   assert(compareCursors("10", "9") > 0, "by value, not by string");
   assert(compareCursors("0", "1") < 0);
   assertEquals(compareCursors("42", "42"), 0);
@@ -209,8 +210,7 @@ Deno.test("channel replay: a lapsed authorization is re-checked before replaying
   allowed = false;
   // Its drain-time resume replays from the log only if `authorize` still says yes.
   const sub = c.channelSubs.get("s")!;
-  sub.cursor = "0";
-  sub.pending = "{}";
+  sub.resumeFrom = "0";
   c.recoverChannels = new Set(["s"]);
   hub.replayPending(c);
   await flush();
@@ -239,6 +239,98 @@ Deno.test("channel replay: a back-pressured subscriber resumes every shed publis
   drain();
   await flush();
   assertEquals(values(c), [1, 2, 3, 4], "all of them, not just the latest");
+  hub.dispose();
+  resetChannels();
+});
+
+Deno.test("channel replay: a live publish during the log read neither skips nor doubles history", async () => {
+  resetChannels();
+  const { hub, conn } = fakeHub();
+  const inner = inMemoryChannelLog();
+  let gate: Promise<void> | null = null;
+  const transport = {
+    publish: (ev: Parameters<typeof hub.deliver>[0]) => hub.deliver(ev),
+    subscribe: () => () => {},
+    log: {
+      append: inner.append,
+      // The read waits on `gate` — a Redis round trip, say — while live publishes arrive.
+      since: async (...args: Parameters<typeof inner.since>) => {
+        if (gate) await gate;
+        return inner.since(...args);
+      },
+    },
+  };
+  setChannelTransport(transport);
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 40));
+  const ch = createChannel<{ n: number }>({ id: "race", authorize: () => true, history: 10 });
+  for (let n = 1; n <= 3; n++) await ch.publish("k", { n });
+  await flush();
+  let open!: () => void;
+  gate = new Promise((resolve) => (open = resolve));
+  const c = conn("p");
+  const subscribed = hub.subscribe(c, { subId: "s", channelId: "race", key: "k", since: "0" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await ch.publish("k", { n: 4 }); // logged, then fanned out while the replay still reads
+  await flush();
+  gate = null;
+  open();
+  await subscribed;
+  await flush();
+  assertEquals(values(c), [1, 2, 3, 4], "the history in order, then the live one, each once");
+  hub.dispose();
+  resetChannels();
+});
+
+Deno.test("channel replay: a lapsed re-auth releases every held logged publish, not the latest", async () => {
+  resetChannels();
+  const { hub, conn } = fakeHub();
+  const flush = wire(hub);
+  let release!: () => void;
+  let calls = 0;
+  const ch = createChannel<{ n: number }>({
+    id: "reauth",
+    authorize: () => {
+      if (++calls !== 2) return true;
+      return new Promise<boolean>((resolve) => (release = () => resolve(true)));
+    },
+    history: 10,
+  });
+  const c = conn("p");
+  await hub.subscribe(c, { subId: "s", channelId: "reauth", key: "k" });
+  c.channelSubs.get("s")!.authExpires = 0; // the TTL lapsed
+  for (let n = 1; n <= 3; n++) await ch.publish("k", { n });
+  await flush();
+  assertEquals(values(c), [], "held while `authorize` runs again");
+  release();
+  await flush();
+  assertEquals(values(c), [1, 2, 3]);
+  hub.dispose();
+  resetChannels();
+});
+
+Deno.test("channel replay: another instance's cursor under a per-instance log hides no local publish", async () => {
+  resetChannels();
+  const { hub, conn } = fakeHub();
+  const flush = wire(hub); // a transport with no shared log: each instance logs its own
+  const ch = createChannel<{ n: number }>({ id: "skew", authorize: () => true, history: 10 });
+  const c = conn("p");
+  await hub.subscribe(c, { subId: "s", channelId: "skew", key: "k" });
+  // A replica whose clock runs ahead publishes first…
+  hub.deliver({
+    kind: "publish",
+    channelId: "skew",
+    key: "k",
+    encoded: '{"n":1}',
+    cursor: String((Date.now() + 60_000) * 1000),
+    seq: 1,
+    instance: "another-replica",
+  });
+  await flush();
+  // …then this instance: its cursor is lower, but it is a different log's.
+  await ch.publish("k", { n: 2 });
+  await flush();
+  assertEquals(values(c), [1, 2]);
+  assertEquals(c.frames.filter((f) => f.type === "channel")[0].cursor, undefined);
   hub.dispose();
   resetChannels();
 });
@@ -275,12 +367,28 @@ Deno.test("redisChannelLog: one log every replica shares, trimmed and expiring",
     assertEquals(seen.map((e) => e.encoded), ['{"n":2}', '{"n":3}'], "trimmed to `size`");
     assertEquals(seen[0].enc, 1);
     assertEquals((await logA.since("c", "k", c2, 10)).map((e) => e.cursor), [c3]);
-    const zset = server.peek("t:c:k");
+    const zset = server.peek("t:1:c:k");
     assertEquals(zset?.type, "zset");
     assert(zset?.expireAt !== undefined, "the key expires");
   } finally {
     await a.close();
     await b.close();
+    await server.close();
+  }
+});
+
+Deno.test("redisChannelLog: a channel id with `:` never shares another channel's log", async () => {
+  const server = fakeRedis();
+  const client = redisClient(server.url);
+  try {
+    const log = redisChannelLog(client, { prefix: "t" });
+    await log.append("orders:admin", "x", entry(1), H(5));
+    assertEquals(await log.since("orders", "admin:x", "0", 5), []);
+    assertEquals((await log.since("orders:admin", "x", "0", 5)).length, 1);
+    await log.append("c", "k", entry(2), H(5, 60.0005)); // a fractional-ms TTL still logs
+    assertEquals(server.peek("t:1:c:k")?.type, "zset");
+  } finally {
+    await client.close();
     await server.close();
   }
 });

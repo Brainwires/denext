@@ -19,10 +19,12 @@ import { liveDevtoolsEnabled, recordChannelPush } from "./live-devtools.ts";
 import {
   type ChannelEvent,
   type ChannelIdleReason,
+  channelInstanceId,
   channelLog,
+  channelLogShared,
   getChannel,
 } from "../runtime/channel.ts";
-import { compareCursors, isCursor } from "../runtime/channel-log.ts";
+import { type ChannelLogEntry, compareCursors, isCursor } from "../runtime/channel-log.ts";
 import { inRootContext } from "./root-context.ts";
 import type { LiveError, LiveServerMessage } from "../runtime/live-protocol.ts";
 
@@ -34,8 +36,17 @@ export interface ChannelSub {
   key: string;
   /** Epoch ms after which the next frame triggers a re-authorization. */
   authExpires: number;
-  /** A frame held back (back-pressure or pending re-auth); latest wins. */
+  /** An unlogged frame held back (back-pressure or pending re-auth); latest wins. */
   pending?: string;
+  /**
+   * A logged frame was held back: once it can go, the log is replayed after this cursor (every
+   * held publish, not just the latest).
+   */
+  resumeFrom?: string;
+  /** Replay steps in flight for this sub: a logged live frame meanwhile is left to them. */
+  replaying?: number;
+  /** Bumped when a logged live frame was left to an in-flight replay (it reads again). */
+  missed?: number;
   /** A re-authorization in flight. */
   reauth?: Promise<void>;
   /** This subscription's entry in the fan-out index (so removal is a Set delete, not a scan). */
@@ -82,6 +93,9 @@ export interface ChannelHubDeps<C extends ChannelConn> {
 
 /** Publisher bursts within this window collapse into one fan-out per (channel, key). */
 const COALESCE_MS = 16;
+
+/** Log reads one replay makes at most while live publishes keep arriving during them. */
+const MAX_REPLAY_ROUNDS = 8;
 
 /** The hub's channel operations. */
 export interface ChannelHub<C extends ChannelConn> {
@@ -164,23 +178,66 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     cursor?: string,
   ): void => {
     if (cursor && sub.cursor && compareCursors(cursor, sub.cursor) <= 0) return;
-    if (sub.authExpires <= Date.now()) {
-      sub.pending = text;
-      startReauth(conn, subId, sub);
-      return;
-    }
-    if (deps.backPressured(conn)) {
-      sub.pending = text;
-      (conn.recoverChannels ??= new Set()).add(subId);
-      deps.armRecover(conn);
-      return;
-    }
+    if (deferred(conn, subId, sub, text, cursor)) return;
     // No await between this check and `sendFrame`'s own `bufferedAmount` check, so the two
     // reads see the same buffer — a frame that clears this branch is never shed by `sendFrame`
     // (which drops `channel` frames). `fanOut` re-enters `sendTo` per subscriber, so a send that
     // pushes the buffer over the limit back-pressures the NEXT sub here, not silently downstream.
     deps.sendFrame(conn, text, msg);
     if (cursor) sub.cursor = cursor;
+  };
+
+  /**
+   * Keep a frame from going out now: left to an in-flight replay, held for a re-authorization,
+   * or held for a back-pressured socket. `false` when it may go.
+   */
+  const deferred = (
+    conn: C,
+    subId: string,
+    sub: ChannelSub,
+    text: string,
+    cursor?: string,
+  ): boolean => {
+    if (cursor && sub.replaying) {
+      // A replay is reading the log: this publish is in it (logged before it was sent), so the
+      // replay sends it in order — sent now, it would advance the cursor past entries the read
+      // has yet to return, and those would be skipped.
+      sub.missed = (sub.missed ?? 0) + 1;
+      return true;
+    }
+    if (sub.authExpires <= Date.now()) {
+      hold(sub, text, cursor);
+      startReauth(conn, subId, sub);
+      return true;
+    }
+    if (!deps.backPressured(conn)) return false;
+    hold(sub, text, cursor);
+    (conn.recoverChannels ??= new Set()).add(subId);
+    deps.armRecover(conn);
+    return true;
+  };
+
+  /**
+   * Hold a frame back: an unlogged one as the sub's `pending` (latest wins); a logged one as the
+   * cursor to replay the log from (the first held one's predecessor), so none is lost.
+   */
+  const hold = (sub: ChannelSub, text: string, cursor?: string): void => {
+    if (!cursor) {
+      sub.pending = text;
+      return;
+    }
+    sub.resumeFrom ??= sub.cursor ?? (BigInt(cursor) - 1n).toString();
+  };
+
+  /** Send what a sub held back: its unlogged frame, then the log after its resume cursor. */
+  const flushHeld = (conn: C, subId: string, sub: ChannelSub): void => {
+    const text = sub.pending;
+    const from = sub.resumeFrom;
+    sub.pending = sub.resumeFrom = undefined;
+    if (text) sendTo(conn, subId, sub, text, { type: "channel", subId, seq: 0, value: null });
+    if (from !== undefined && conn.channelSubs.get(subId) === sub) {
+      void replay(conn, subId, sub, from);
+    }
   };
 
   /** A `channel` frame's text (assembled by interpolation; the cursor is digits only). */
@@ -196,22 +253,74 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
   const replay = async (conn: C, subId: string, sub: ChannelSub, since: string): Promise<void> => {
     const history = getChannel(sub.channelId)?.history;
     if (!history) return;
-    if (sub.authExpires <= Date.now()) {
-      const decision = await deps.withRenderSlot(() => authorizeSub(conn, sub));
-      if (conn.channelSubs.get(subId) !== sub) return;
-      if (decision !== "allow") {
-        deps.sendError(conn, "denied", "channel access revoked", { subId });
-        return remove(conn, subId);
-      }
-      sub.authExpires = Date.now() + ttlMs(sub.channelId);
+    if (!(await whileReplaying(sub, () => replayAllowed(conn, subId, sub)))) return;
+    let from: string | null = since;
+    for (let round = 0; from !== null && round < MAX_REPLAY_ROUNDS; round++) {
+      from = await replayRound(conn, subId, sub, from, history.size);
     }
-    const entries = await channelLog().since(sub.channelId, sub.key, since, history.size)
-      .catch(() => []);
+  };
+
+  /**
+   * One log read of a replay, sent. Returns the cursor to read again from when a live frame was
+   * left to this read, else `null` (done, the sub is gone, or held back: the drain resumes it).
+   */
+  const replayRound = async (
+    conn: C,
+    subId: string,
+    sub: ChannelSub,
+    from: string,
+    size: number,
+  ): Promise<string | null> => {
+    const missed = sub.missed ?? 0;
+    const entries = await whileReplaying(
+      sub,
+      () => channelLog().since(sub.channelId, sub.key, from, size).catch(() => []),
+    );
+    if (!sendEntries(conn, subId, sub, entries)) return null;
+    if ((sub.missed ?? 0) === missed || sub.resumeFrom !== undefined) return null;
+    return sub.cursor ?? from;
+  };
+
+  /**
+   * Run `fn` (a replay's `authorize` or log read) with the sub's logged live frames left to the
+   * replay: one arriving meanwhile is counted in `missed`, and the replay reads again.
+   */
+  const whileReplaying = async <T>(sub: ChannelSub, fn: () => Promise<T>): Promise<T> => {
+    sub.replaying = (sub.replaying ?? 0) + 1;
+    try {
+      return await fn();
+    } finally {
+      sub.replaying -= 1;
+    }
+  };
+
+  /** May the replay go on? Still this connection's sub, and allowed (re-checked past the TTL). */
+  const replayAllowed = async (conn: C, subId: string, sub: ChannelSub): Promise<boolean> => {
+    if (sub.authExpires > Date.now()) return true;
+    const decision = await deps.withRenderSlot(() => authorizeSub(conn, sub));
+    if (conn.channelSubs.get(subId) !== sub) return false;
+    if (decision !== "allow") {
+      deps.sendError(conn, "denied", "channel access revoked", { subId });
+      remove(conn, subId);
+      return false;
+    }
+    sub.authExpires = Date.now() + ttlMs(sub.channelId);
+    return true;
+  };
+
+  /** Send logged entries in order; `false` once the sub is gone (or an entry is malformed). */
+  const sendEntries = (
+    conn: C,
+    subId: string,
+    sub: ChannelSub,
+    entries: ChannelLogEntry[],
+  ): boolean => {
     for (const e of entries) {
-      if (conn.channelSubs.get(subId) !== sub || !isJsonText(e.encoded)) return;
+      if (conn.channelSubs.get(subId) !== sub || !isJsonText(e.encoded)) return false;
       const text = frameText(subId, 0, e.encoded, e.enc, e.cursor);
       sendTo(conn, subId, sub, text, { type: "channel", subId, seq: 0, value: null }, e.cursor);
     }
+    return true;
   };
 
   /** Lazy re-authorization on traffic: allow → refresh the TTL and flush; deny → drop. */
@@ -227,9 +336,7 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
           return;
         }
         sub.authExpires = Date.now() + ttlMs(sub.channelId);
-        const text = sub.pending;
-        sub.pending = undefined;
-        if (text) sendTo(conn, subId, sub, text, { type: "channel", subId, seq: 0, value: null });
+        flushHeld(conn, subId, sub);
       })
       .catch(() => {
         sub.reauth = undefined;
@@ -271,7 +378,7 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     // The frame is assembled by interpolation for speed; the transport is trusted by design,
     // but a malformed event (a non-numeric seq, a non-JSON payload) must not corrupt it.
     if (!Number.isFinite(ev.seq) || !isJsonText(ev.encoded)) return;
-    const cursor = isCursor(ev.cursor) ? ev.cursor : undefined;
+    const cursor = resumableCursor(ev);
     for (const { conn, subId } of [...subs]) {
       const sub = conn.channelSubs.get(subId);
       if (!sub) continue;
@@ -359,15 +466,8 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
       conn.recoverChannels = undefined;
       for (const subId of ids) {
         const sub = conn.channelSubs.get(subId);
-        const text = sub?.pending;
-        if (!sub || !text) continue;
-        sub.pending = undefined;
         // A logged channel resumes from its log: every publish it shed, not just the latest.
-        if (sub.cursor && getChannel(sub.channelId)?.history) {
-          void replay(conn, subId, sub, sub.cursor);
-          continue;
-        }
-        sendTo(conn, subId, sub, text, { type: "channel", subId, seq: 0, value: null });
+        if (sub) flushHeld(conn, subId, sub);
       }
     },
   };
@@ -391,6 +491,16 @@ function keyLifecycle(
   } catch (err) {
     console.error(`denext channels: ${hook} on ${channelId} threw`, err);
   }
+}
+
+/**
+ * An event's replay cursor, when a subscriber can resume from it: one issued by this instance's
+ * log, or by a log every instance shares. Another instance's, under a log that is not shared,
+ * would make this instance's own (lower) cursors look already seen.
+ */
+function resumableCursor(ev: ChannelEvent): string | undefined {
+  if (!isCursor(ev.cursor)) return undefined;
+  return ev.instance === channelInstanceId() || channelLogShared() ? ev.cursor : undefined;
 }
 
 /**

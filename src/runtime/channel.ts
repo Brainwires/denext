@@ -424,6 +424,16 @@ export function channelLog(): ChannelLog {
 }
 
 /**
+ * Does every instance read the same replay log (the transport brings one)? Without, a cursor is
+ * meaningful only on the instance that issued it.
+ *
+ * @returns Whether the log is shared.
+ */
+export function channelLogShared(): boolean {
+  return transport.log !== undefined;
+}
+
+/**
  * Be told when the transport changes (the hub uses this to re-subscribe). Returns the current
  * transport immediately.
  *

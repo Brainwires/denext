@@ -57,7 +57,7 @@ const DEFAULT_HISTORY_TTL_SECONDS = 24 * 60 * 60;
  *
  * @param option `history` as given to `createChannel`.
  * @returns The retention, or `undefined`.
- * @throws TypeError for a size outside 1–1000 or a non-positive TTL.
+ * @throws TypeError for a size outside 1–1000 or a TTL that is not a finite positive number.
  */
 export function resolveHistory(
   option: number | { size: number; ttlSeconds?: number } | undefined,
@@ -69,7 +69,9 @@ export function resolveHistory(
   if (!Number.isInteger(size) || size < 1 || size > MAX_HISTORY_SIZE) {
     throw new TypeError(`createChannel: \`history\` keeps 1–${MAX_HISTORY_SIZE} entries per key`);
   }
-  if (!(ttlSeconds > 0)) throw new TypeError("createChannel: `history.ttlSeconds` must be > 0");
+  if (!(ttlSeconds > 0) || !Number.isFinite(ttlSeconds)) {
+    throw new TypeError("createChannel: `history.ttlSeconds` must be a finite number > 0");
+  }
   return { size, ttlSeconds };
 }
 

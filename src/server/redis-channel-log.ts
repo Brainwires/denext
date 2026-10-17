@@ -3,7 +3,7 @@
  * subscriber on any replica replays a channel key's history (`createChannel({ history })`), not
  * only what its own instance published.
  *
- * Each (channel, key) is one sorted set (`<prefix>:<channel>:<key>`) scored by cursor, trimmed to
+ * Each (channel, key) is one sorted set (`<prefix>:<channel length>:<channel>:<key>`) scored by cursor, trimmed to
  * the channel's `size` on every append and expiring `ttlSeconds` after its latest one; an entry
  * older than the TTL is skipped on read. Cursors come from one counter for the whole app
  * (`<prefix>:seq`, seeded from the clock), so they grow across keys, replicas and restarts.
@@ -41,7 +41,11 @@ export function redisChannelLog(
 ): ChannelLog {
   const prefix = options.prefix ?? "denext:chlog";
   const seqKey = `${prefix}:seq`;
-  const keyOf = (channelId: string, key: string) => `${prefix}:${channelId}:${key}`;
+  // The channel id is length-prefixed: ids and keys may both contain `:`, and channel "a:b" key
+  // "c" must never share a log with channel "a" key "b:c" (one's subscriber would replay the
+  // other's history).
+  const keyOf = (channelId: string, key: string) =>
+    `${prefix}:${channelId.length}:${channelId}:${key}`;
   let seeded: Promise<unknown> | undefined;
 
   return {
@@ -54,18 +58,19 @@ export function redisChannelLog(
         throw err;
       });
       const cursor = String(await client.command("INCR", seqKey));
-      const now = Date.now();
+      // Whole milliseconds: PEXPIREAT refuses a fraction (a `ttlSeconds` of 0.5005, say).
+      const expires = Math.ceil(Date.now() + history.ttlSeconds * 1000);
       const stored: Stored = {
         c: cursor,
         v: entry.encoded,
         ...(entry.enc ? { e: entry.enc } : {}),
-        x: now + history.ttlSeconds * 1000,
+        x: expires,
       };
       const zkey = keyOf(channelId, key);
       await client.pipeline([
         ["ZADD", zkey, cursor, JSON.stringify(stored)],
         ["ZREMRANGEBYRANK", zkey, 0, -(history.size + 1)],
-        ["PEXPIREAT", zkey, now + history.ttlSeconds * 1000],
+        ["PEXPIREAT", zkey, expires],
       ]);
       return cursor;
     },

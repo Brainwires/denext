@@ -326,6 +326,25 @@ and this project adheres to
   original instance running its parked copy (effects, subscriptions, snapshot rewrites) until the
   park window ended. The resuming instance now announces it on the channel transport, and the
   instance holding the parked copy stops it at once and drops its pending store writes.
+- **A channel replay (`createChannel({ history })`) no longer loses history to a live publish.**
+  A publish fanned out while a `since` replay was still reading the log (a Redis round trip, say)
+  went out first and moved the subscriber's cursor past the entries the read then returned, so
+  they were skipped. A logged publish that lands during the read is now left to the replay, which
+  reads again from where it got to; the subscriber gets the history in order, then the live
+  publish, each once.
+- **A channel with `history` releases every publish it held during a re-authorization.** When
+  the auth TTL lapsed, the publishes that arrived while `authorize` ran again were held as the
+  latest one only; they now resume from the log, as a back-pressured subscriber's already did
+  (which now also covers a subscriber that had not received a logged publish yet).
+- **A channel's live publishes are no longer dropped across replicas without a shared log.**
+  Under a transport with no shared log (the in-memory or `broadcastChannelTransport`), another
+  instance's cursor was compared with this instance's, so a replica whose clock ran ahead made the
+  next local publishes look already seen. A cursor now travels only from the log that issued it.
+- **Security: the Redis replay log keeps channels apart.** Its sorted sets were named
+  `<prefix>:<channel>:<key>`, so channel `orders:admin` key `x` and channel `orders` key `admin:x`
+  shared one log, and a subscriber `authorize` allowed on one could replay the other's history.
+  The channel id is now length-prefixed (`<prefix>:<length>:<channel>:<key>`). `history.ttlSeconds`
+  must be finite, and a fractional-millisecond TTL no longer makes Redis refuse the expiry.
 
 ### Changed
 
