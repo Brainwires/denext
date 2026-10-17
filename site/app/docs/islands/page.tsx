@@ -221,9 +221,20 @@ export default function Chart() { /* … */ }
         gated runtimes). The click that wakes a <code>client:interaction</code>{" "}
         island reaches its handler: the island hydrates while that event bubbles, before the page's
         listener dispatches it (an <code>onClickCapture</code>{" "}
-        handler in the island misses it). The island's code stays in the page bundle (the page
-        imports it), a module-level <code>hydrate</code>{" "}
+        handler in the island misses it). A module-level <code>hydrate</code>{" "}
         default is not read, and a class or lazy component renders eagerly.
+      </p>
+      <p>
+        The island's code leaves the page bundle too. When a component is imported only for
+        directive elements, <code>denext build</code> and <code>denext export</code>{" "}
+        move it (and what only it imports) into a chunk of its own, fetched when the strategy fires,
+        so a <code>client:visible</code>{" "}
+        island below the fold costs no JavaScript until it nears the viewport. A{" "}
+        <code>client:interaction</code>{" "}
+        island whose chunk is still loading holds the gesture at its wrapper and replays it once
+        hydrated. A component that is also used without a directive, or a module that a Flight route
+        also reaches, keeps the island's code in the page bundle; <code>denext dev</code>{" "}
+        always does.
       </p>
 
       <h2>In SPA mode: deferred mounts</h2>

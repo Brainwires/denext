@@ -63,11 +63,17 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Islands, resumability and Cache Components
 
-- **On an isomorphic route an island hydrates in the page's tree, its code in the page bundle.**
-  The page imports the component, so its code is not split off; a module-level `hydrate`
-  default is not read (only the usage-site directive), a class or lazy component renders
-  eagerly, and an `on*Capture` handler in a `client:interaction` island misses the event that
-  woke it. `client:only` skips SSR by definition.
+- **On an isomorphic route an island hydrates in the page's tree, after the page.** Context
+  reaches it from the page, so the page's own tree hydrates first. Its code splits into a chunk of
+  its own only when the component is imported for directive elements alone, in a module that no
+  Flight route, `global-error` or `instrumentation-client` also reaches, and only in
+  `denext build` / `export`; otherwise (and in `denext dev` and a next-compat drop-in) it stays in
+  the page bundle. A module-level `hydrate` default is not read (only the usage-site directive). A
+  class or `lazy()` component renders eagerly; when split, it holds the page's hydration until its
+  chunk lands, and a `useId` below it may differ from the server's. An `on*Capture` handler in a
+  `client:interaction` island misses the event that woke it. While a split island's chunk loads,
+  the gesture is held at its wrapper and replayed: a capture-phase listener above the island sees
+  it twice. `client:only` skips SSR by definition.
 - **In SPA mode the directives defer the mount, not hydration.** There is no server HTML to keep
   inert, so the directives defer the component's mount and split its code instead: only for a
   component imported by name, not a member tag or a module-level `hydrate` default; a component

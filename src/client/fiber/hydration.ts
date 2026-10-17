@@ -95,7 +95,7 @@ export function beginHostHydration(wip: Fiber): void {
 }
 
 /** The server node at the hydration cursor (null past the end, or with no cursor). */
-function cursorNode(): Node | null {
+export function cursorNode(): Node | null {
   return hydrationCursor
     ? (hydrationCursor.parent.childNodes[hydrationCursor.index] ?? null)
     : null;

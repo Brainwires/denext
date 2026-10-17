@@ -7,6 +7,7 @@ import { asyncContextEnabled, featureFlags, reactCompilerEnabled } from "../../s
 import { prodMinify } from "../minify.ts";
 import { compileAsyncContextModules } from "../async-context-transform.ts";
 import { compileFeatureModules } from "../feature-transform.ts";
+import { compileIsoIslandModules } from "../iso-islands.ts";
 import { collectComponentSources, compileModules } from "../compiler.ts";
 import { type AppCss, buildAppCss } from "../css.ts";
 import { routeNeedsHydration } from "../hydration.ts";
@@ -116,6 +117,8 @@ function warnClobbered(asyncContextMap: RewriteMap, compilerMap: RewriteMap, qrl
  * config flags; qrl auto-wrap self-filters to modules
  * that opt into resumability, so it always runs and is inert for every other app.
  * On overlap the later spread wins: qrl over auto-memo (intended), async-context over both.
+ * The isomorphic routes' island split (needs a `client:*` directive) and then the build-constant
+ * fold each read the output of the passes before them.
  *
  * `denext build` and `denext export` both call this, and every native client bundle either of
  * them makes resolves through the result (./routes.ts, ../export-pipeline/context.ts).
@@ -151,6 +154,12 @@ export async function clientTransforms(
   }
   warnClobbered(asyncContextMap, compilerMap, qrlMap);
   const merged = { ...compilerMap, ...qrlMap, ...asyncContextMap };
+  // The isomorphic routes' `client:*` islands split into chunks of their own, over the passes
+  // above (src/build/iso-islands.ts).
+  const isoMap = await compileIsoIslandModules(ctx, await sources(), merged, outDir);
+  const split = Object.keys(isoMap).length;
+  if (split > 0) log(`islands: split the client:* islands of ${split} isomorphic module(s)`);
+  Object.assign(merged, isoMap);
   // The build-constant fold runs LAST, over each module's already-transformed source (so it
   // never clobbers auto-memo/qrl/async-context), replacing `feature("KEY")` with the configured
   // literal and `platform` (denext/platform) with the target, so `deno bundle`

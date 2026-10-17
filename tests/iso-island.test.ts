@@ -16,6 +16,7 @@ import { resetLazyIslands, setLazyScheduler } from "../src/client/lazy-hydrate.t
 import { setIslandRender } from "../src/client/fiber/render-component.ts";
 import { setIslandHydration } from "../src/client/fiber/hydration.ts";
 import { DomDocument, type DomEl, fireEventOn } from "../src/testing/dom.ts";
+import { serverDom } from "./helpers/server-dom.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import type { PageRoute } from "../src/router/manifest.ts";
 import { appUsesIsoIslands, generateRouteEntry } from "../src/build/bundle.ts";
@@ -68,27 +69,6 @@ Deno.test("server: a client:* component renders inside the island wrapper, the d
   const streamed = await renderShell(h(Page, { strategy: "idle" }), null);
   assertStringIncludes(streamed.shell, 'data-dnx-strategy="idle"');
 });
-
-/** Build `html` (the server render) as testing-DOM nodes under a container. */
-function serverDom(html: string): { doc: DomDocument; container: DomEl } {
-  const doc = new DomDocument();
-  const container = doc.createElement("div");
-  // A tiny markup reader: the server output here is elements, attributes and text only.
-  const stack: DomEl[] = [container];
-  for (const m of html.matchAll(/<(\/?)([a-z0-9]+)([^>]*)>|([^<]+)/g)) {
-    const top = stack[stack.length - 1];
-    if (m[4] !== undefined) {
-      top.appendChild(doc.createTextNode(m[4].replace(/&amp;/g, "&")) as never);
-    } else if (m[1]) stack.pop();
-    else {
-      const el = doc.createElement(m[2]);
-      for (const a of m[3].matchAll(/([\w:-]+)="([^"]*)"/g)) el.setAttribute(a[1], a[2]);
-      top.appendChild(el as never);
-      stack.push(el);
-    }
-  }
-  return { doc, container };
-}
 
 /** A scheduler whose `visible` trigger the test fires. */
 function manualVisible() {
@@ -165,6 +145,42 @@ Deno.test("client:interaction: the event that triggers hydration reaches the isl
     fireEventOn(button, "click");
     flushSync();
     assertEquals(button.textContent, "c dark 2", "one click: hydrated, then handled");
+  } finally {
+    teardown();
+  }
+});
+
+/** A page with state of its own: its re-render reaches the island element before it hydrates. */
+function StatefulPage(): VNode {
+  const [n, setN] = useState(0);
+  return h(
+    "main",
+    null,
+    h("button", { onClick: () => setN(n + 1) }, `page ${n}`),
+    h(Counter, { "client:interaction": true, start: 1, label: "c" }),
+  );
+}
+
+Deno.test("an island the page re-rendered before its trigger still hydrates in its wrapper", async () => {
+  manualVisible();
+  try {
+    const html = await renderToString(h(StatefulPage, null));
+    const { doc, container } = serverDom(html);
+    setDocument(doc as Any);
+    installIsoIslands();
+    hydrateRoot(container as Any, h(StatefulPage, null));
+    flushSync();
+    const main = container.children[0];
+    const pageButton = main.children[0] as DomEl;
+    const button = main.children[1].children[0] as DomEl;
+    fireEventOn(pageButton, "click");
+    flushSync();
+    assertEquals(pageButton.textContent, "page 1");
+    fireEventOn(button, "click");
+    flushSync();
+    assertEquals(main.children[1].getAttribute("data-dnx-island"), "", "the wrapper stays");
+    assert(main.children[1].children[0] === button, "the server's <button> was adopted");
+    assertEquals(button.textContent, "c light 2", "hydrated, then handled");
   } finally {
     teardown();
   }

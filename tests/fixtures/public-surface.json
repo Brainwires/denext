@@ -4827,6 +4827,7 @@
     "installShellSupport:function",
     "installSingletonSupport:function",
     "installViewTransitionSupport:function",
+    "isoIslandChunk:function",
     "loadClassRuntime:function",
     "parseFlight:function",
     "performModuleRefresh:function",

@@ -252,6 +252,17 @@ and this project adheres to
   tree, so context, events and error boundaries work as without the directive. The click that
   wakes a `client:interaction` island reaches its handler. The runtime ships only in an app whose
   sources write a directive (a build scan).
+- **Islands on isomorphic routes split their code.** `denext build` and `denext export` move a
+  `client:*` island's component out of the page bundle into a chunk of its own when the component
+  is imported only for directive elements, and that chunk is fetched when the island's strategy
+  fires: a `client:visible` island below the fold loads no code until it nears the viewport. The
+  island still hydrates in the page's tree, with the page's context and its props. A
+  `client:interaction` island whose chunk is still loading holds the gesture and replays it once
+  hydrated, so the page's own handlers see it once. A `client:load` island's chunk is fetched
+  while the page hydrates. On a content-heavy page with six islands (headless Chromium, 4x CPU
+  throttle), the JavaScript loaded before the first interaction fell from 54.6 KB to 28.6 KB
+  gzipped (163 KB to 73 KB unpacked), and the first island became interactive after 243 ms
+  instead of 275 ms.
 - **A true JSX owner stack in development.** The dev builds compile JSX to `jsxDEV` (esbuild's
   `jsxDev` in the unbundled dev loop, `react-jsxdev` in a dev `deno bundle`), which records each
   element's owner and the file, line and column of its JSX. `captureOwnerStack()` and the
