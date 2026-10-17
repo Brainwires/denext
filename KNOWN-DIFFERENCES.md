@@ -142,6 +142,17 @@ internal design choice with no observable difference lives in
 
 ## Next.js routing and config
 
+- **A Server Action form posts to its own endpoint.** React's server-action form encoding renders
+  `action=""` with a hidden `$ACTION_ID_<id>` input and posts to the page; denext renders
+  `action="/_denext/action/<id>" method="post"`, runs the action there and answers with a 303
+  back to the page (the `Referer`, same origin only). Both work without JavaScript; with it, the
+  hydrated client intercepts the submit either way. The form carries no `encType`, so a no-JS file
+  input posts its file name only.
+- **An inline Server Action can't close over a component's values.** Next.js binds the locals an
+  inline `"use server"` function reads (encrypted into the page) and supports `action.bind(null,
+  value)`; denext hoists the function to module scope with nothing bound, so one that reads a
+  local of an enclosing function or block is a build error naming the variables. Pass the value
+  in the form (a hidden input) or move the action to a `"use server"` module.
 - **Config `rewrites` have one phase.** Next distinguishes `beforeFiles` /
   `afterFiles` / `fallback` rewrites; denext runs its single `rewrites` list after
   middleware and before the filesystem (Next's `beforeFiles` position). Middleware

@@ -13112,8 +13112,8 @@
           "slug": "revalidatePath",
           "kind": "function",
           "signature": "revalidatePath(path: string, _type?: layout | page): Promise<void>",
-          "doc": "Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store.",
-          "docFull": "Invalidate the cached render(s) of `path`. As with {@link revalidateTag}, `await` the\nreturned promise when using an async store.",
+          "doc": "Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store. Inside a Server Action the client that called it also re-renders its current route.",
+          "docFull": "Invalidate the cached render(s) of `path`. As with {@link revalidateTag}, `await` the\nreturned promise when using an async store. Inside a Server Action the client that called it\nalso re-renders its current route.",
           "params": [
             {
               "name": "path",
@@ -33959,8 +33959,8 @@
           "slug": "revalidatePath",
           "kind": "function",
           "signature": "revalidatePath(path: string, _type?: layout | page): Promise<void>",
-          "doc": "Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store.",
-          "docFull": "Invalidate the cached render(s) of `path`. As with {@link revalidateTag}, `await` the\nreturned promise when using an async store.",
+          "doc": "Invalidate the cached render(s) of path. As with revalidateTag, await the returned promise when using an async store. Inside a Server Action the client that called it also re-renders its current route.",
+          "docFull": "Invalidate the cached render(s) of `path`. As with {@link revalidateTag}, `await` the\nreturned promise when using an async store. Inside a Server Action the client that called it\nalso re-renders its current route.",
           "params": [
             {
               "name": "path",

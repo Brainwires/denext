@@ -393,6 +393,31 @@ and this project adheres to
 
 ### Fixed
 
+- **A Server Component's `<form action={serverAction}>` works on a next-compat page whose app has
+  no `"use client"` module.** The build bundled `"use server"` modules into the compat server
+  bundle only when some route reached a client island; otherwise the page rendered its own copy of
+  the action module while the server registered another, so the form had no `action` and a
+  JavaScript-free submit did nothing, and an action module importing `next/*` stopped the server
+  at startup.
+- **A root layout's `<html>`, `<head>` and `<body>` are the document's own tags.** The page render
+  emitted them inside the page container (`<div id="__denext"><html>…`), invalid HTML the browser
+  repaired by dropping them. Their content is now rendered in the container and their attributes
+  (`lang`, `className`, …) are on the document's tags, on every route (Flight, hydrated, streamed,
+  PPR, `generateMetadata`), native and next-compat alike.
+- **Inline Server Actions (`async function save() { "use server"; … }` inside a Server
+  Component) work.** next-compat builds hoist each one to a server reference registered when its
+  module loads, so `<form action={save}>` renders its endpoint and runs with JavaScript off or on.
+  Before, the form had no `action`. One that reads a local of an enclosing function is a build
+  error naming the variables (denext does not bind closed-over values).
+- **An inline `"use server"` function never ships to the browser.** In a `"use client"` module, or
+  any module a client bundle reaches, it now fails the build with Next.js's error ("It is not
+  allowed to define inline "use server" annotated Server Actions in Client Components"), on the
+  native and next-compat bundles alike, and the unbundled dev server serves that error instead of
+  the module. Before, the function's body, and what it closed over, was bundled into the client
+  JavaScript.
+- **`revalidatePath()` in a Server Action updates the calling page.** As in Next.js, the client
+  that ran the action re-renders its route; before, a form submitted through the hydrated client
+  ran the action but left the page showing the old data until a reload.
 - **`denext build` and `denext export` exit when they are done** even when an app module keeps the
   event loop alive at its top level (a database pool that connects when it is created, such as
   Prisma's MariaDB adapter, a Redis client, an interval). They used to finish and then wait forever.
