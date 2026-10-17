@@ -239,6 +239,14 @@ export async function addGleamPackages(
   io: GleamIo = { log: console.log, error: console.error },
   host: GleamHost = DEFAULT_HOST,
 ): Promise<boolean> {
+  const bad = packages.length === 0 ? [""] : packages.filter((p) => !HEX_PACKAGE.test(p));
+  if (bad.length > 0) {
+    io.error(
+      `denext add gleam: ${bad.map((p) => JSON.stringify(p)).join(", ")} is not a Hex package ` +
+        "name (lowercase letters, digits and _, optionally @<version>: gleam:lustre@5)",
+    );
+    return false;
+  }
   const dir = await gleamProjectDir(root, options);
   const found = await gleamBinary(options, host, root);
   if ("reason" in found) {
@@ -273,6 +281,12 @@ export async function addGleamPackages(
   return true;
 }
 
+/**
+ * A Hex package name with an optional version (`gleam_json`, `lustre@5`, `lustre@5.7.1`): what
+ * `gleam add` is handed, so nothing else (a `--flag`, a path) reaches its command line.
+ */
+const HEX_PACKAGE = /^[a-z][a-z0-9_]*(?:@[0-9][0-9A-Za-z.+-]*)?$/;
+
 /** The app's name from `deno.json`, if it has one. */
 async function appName(root: string): Promise<string | undefined> {
   try {
@@ -290,7 +304,8 @@ function importTarget(root: string, dir: string): string {
 
 /**
  * Map `@gleam/` onto the project's JavaScript build in `deno.json`'s import map. A `deno.json`
- * that is not plain JSON (comments) is left alone: the caller prints the entry to add instead.
+ * that is not plain JSON (comments), and an app configured by a `deno.jsonc`, are left alone: the
+ * caller prints the entry to add instead.
  *
  * @param root The app root.
  * @param dir The Gleam project directory.
@@ -298,9 +313,13 @@ function importTarget(root: string, dir: string): string {
  */
 async function mapGleamImports(root: string, dir: string): Promise<boolean> {
   const path = join(root, "deno.json");
+  const text = await Deno.readTextFile(path).catch(() => null);
+  // No deno.json beside a deno.jsonc: a new deno.json would take its place (Deno reads deno.json
+  // first), dropping the whole config. The caller prints the entry to add instead.
+  if (text === null && await exists(join(root, "deno.jsonc"))) return false;
   let config: { imports?: Record<string, string> };
   try {
-    config = JSON.parse(await Deno.readTextFile(path).catch(() => "{}"));
+    config = JSON.parse(text ?? "{}");
   } catch {
     return false;
   }

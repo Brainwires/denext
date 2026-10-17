@@ -39,7 +39,9 @@ export async function lustreVersion(gleamDir: string): Promise<string | null> {
     const toml = await Deno.readTextFile(
       join(gleamDir, "build", "packages", "lustre", "gleam.toml"),
     );
-    return /^version\s*=\s*"([^"]+)"/m.exec(toml)?.[1] ?? "unknown";
+    const version = /^version\s*=\s*"([^"\n]*)"/m.exec(toml)?.[1] ?? "";
+    // The kits write it into a doc comment and a string: only a version's characters get there.
+    return /^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(version) ? version : "unknown";
   } catch {
     return "unknown";
   }

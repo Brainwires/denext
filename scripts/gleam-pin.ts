@@ -20,7 +20,7 @@ const REPO = "gleam-lang/gleam";
 const MIN_AGE_DAYS = 14;
 const OUT = fromFileUrl(new URL("../src/build/gleam-toolchain-pin.json", import.meta.url));
 
-interface Asset {
+export interface Asset {
   name: string;
   size: number;
   digest?: string | null;
@@ -53,11 +53,23 @@ async function sidecarSha256(asset: Asset, assets: Asset[]): Promise<string> {
   return text.trim().split(/\s+/)[0].toLowerCase();
 }
 
-/** Check a download's SHA-256 against the release's `.sha256` sidecar and GitHub's digest. */
-async function crossCheck(asset: Asset, assets: Asset[], bytes: Uint8Array, sha256: string) {
+/**
+ * Check a download's SHA-256 against the release's `.sha256` sidecar and GitHub's digest. Both
+ * are required: an asset GitHub records no digest for is refused (with only the sidecar, the hash
+ * would be checked against a file from the same release it came from).
+ */
+export async function crossCheck(
+  asset: Asset,
+  assets: Asset[],
+  bytes: Uint8Array,
+  sha256: string,
+): Promise<void> {
+  if (!asset.digest?.startsWith("sha256:")) {
+    throw new Error(`${asset.name}: GitHub records no sha256 digest for it; refusing to pin it`);
+  }
   const claims: [string, string][] = [
     ["its .sha256", await sidecarSha256(asset, assets)],
-    ["GitHub's digest", (asset.digest ?? `sha256:${sha256}`).replace(/^sha256:/, "")],
+    ["GitHub's digest", asset.digest.slice("sha256:".length)],
   ];
   const wrong = claims.filter(([, claimed]) => claimed !== sha256);
   if (wrong.length > 0 || bytes.byteLength !== asset.size) {

@@ -228,6 +228,29 @@ Deno.test("writeLustreKits: .denext/lustre.ts for a Lustre project, rewritten on
   }
 });
 
+Deno.test('lustreVersion: a manifest version that is not a version is "unknown", never code', async () => {
+  const app = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-lustre-ver-" }));
+  try {
+    const gleamDir = join(app, "gleam");
+    const lustreJs = join(gleamDir, "build", "dev", "javascript", "lustre");
+    await Deno.mkdir(lustreJs, { recursive: true });
+    await Deno.writeTextFile(join(lustreJs, "lustre.mjs"), "export {};\n");
+    const pkg = join(gleamDir, "build", "packages", "lustre");
+    await Deno.mkdir(pkg, { recursive: true });
+    // The kits interpolate the version into a doc comment: a newline or `*/` would end it.
+    const hostile = "1.0 */\nglobalThis.pwned = 1;\n/*";
+    await Deno.writeTextFile(join(pkg, "gleam.toml"), `name = "lustre"\nversion = "${hostile}"\n`);
+    assertEquals(await lustreVersion(gleamDir), "unknown");
+    await writeLustreKits(app, gleamDir);
+    const kit = await Deno.readTextFile(join(app, ".denext", "lustre.ts"));
+    assert(!kit.includes("pwned"), kit);
+    await Deno.writeTextFile(join(pkg, "gleam.toml"), 'version = "5.8.0-rc.1+build.2"\n');
+    assertEquals(await lustreVersion(gleamDir), "5.8.0-rc.1+build.2");
+  } finally {
+    removeTempDirSync(app);
+  }
+});
+
 Deno.test("denext/gleam: importable from client code (no static path to the build plugin)", async () => {
   const entry = fromFileUrl(new URL("../src/gleam.ts", import.meta.url));
   const out = await new Deno.Command(Deno.execPath(), {

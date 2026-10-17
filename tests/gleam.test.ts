@@ -262,6 +262,44 @@ Deno.test("denext add gleam:<package>: project, package, build and the @gleam/ i
   }
 });
 
+Deno.test("denext add gleam: never shadows a deno.jsonc with a new deno.json", async () => {
+  const app = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-gleam-jsonc-" }));
+  const lines: string[] = [];
+  const io = { log: (l: string) => lines.push(l), error: (l: string) => lines.push(`!${l}`) };
+  try {
+    // Deno reads deno.json before deno.jsonc: a new deno.json would replace the whole config.
+    const jsonc = '{\n  // the config\n  "tasks": { "dev": "denext dev" }\n}\n';
+    await Deno.writeTextFile(join(app, "deno.jsonc"), jsonc);
+    assert(await addGleamPackages(app, ["gleam_json"], {}, io, fakeGleam()), lines.join("\n"));
+    assertEquals(await Deno.stat(join(app, "deno.json")).catch(() => null), null);
+    assertEquals(await Deno.readTextFile(join(app, "deno.jsonc")), jsonc);
+    assert(lines.some((l) => l.includes('add "@gleam/": "./gleam/build/dev/javascript/"')));
+  } finally {
+    removeTempDirSync(app);
+  }
+});
+
+Deno.test("denext add gleam: refuses a name that is not a Hex package before running gleam", async () => {
+  const app = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-gleam-name-" }));
+  const lines: string[] = [];
+  const io = { log: (l: string) => lines.push(l), error: (l: string) => lines.push(`!${l}`) };
+  try {
+    for (const bad of [["--dev"], ["-h"], ["lustre", "../x"], ["Lustre"], []]) {
+      const fake = fakeGleam();
+      lines.length = 0;
+      assert(!await addGleamPackages(app, bad, {}, io, fake), JSON.stringify(bad));
+      assertEquals(fake.calls, [], `${JSON.stringify(bad)}: gleam never ran`);
+      assertStringIncludes(lines.join("\n"), "Hex package");
+    }
+    assertEquals([...Deno.readDirSync(app)], [], "nothing was written");
+    const fake = fakeGleam();
+    assert(await addGleamPackages(app, ["lustre@5", "gleam_json@3.0.1"], {}, io, fake));
+    assert(fake.calls.some((c) => c.startsWith("gleam add lustre@5 gleam_json@3.0.1 ")));
+  } finally {
+    removeTempDirSync(app);
+  }
+});
+
 /** Where DENEXT_TEST_GLEAM_DOWNLOAD=1 caches the pinned Gleam for this file (removed at unload). */
 const DOWNLOAD_ROOT = Deno.env.get("DENEXT_TEST_GLEAM_DOWNLOAD") === "1"
   ? await Deno.makeTempDir({ prefix: "denext-gleam-pinned-" })

@@ -259,7 +259,11 @@ and this project adheres to
   the prefetch command (the plugin keeps a project's existing compiled output, with one warning).
   After each build denext adds the type reference Gleam leaves off `prelude.mjs` and each
   `gleam.mjs`, without which Deno types Gleam's `List` / `Result` from the JavaScript and
-  reports its declarations as duplicates. See
+  reports its declarations as duplicates. `denext add gleam:` takes only Hex package names
+  (`gleam:lustre@5`), so nothing else reaches `gleam add`'s command line, and in an app configured
+  by a `deno.jsonc` it prints the `@gleam/` entry to add rather than create a `deno.json` that
+  would take the `deno.jsonc`'s place. The Lustre kits take Lustre's version only when it reads as
+  a version, and `deno task gleam:pin` refuses an asset GitHub records no digest for. See
   [Gleam](https://denext.dev/docs/gleam).
 
 ### Fixed

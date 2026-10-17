@@ -321,3 +321,15 @@ Deno.test({
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("gleam:pin refuses an asset GitHub records no digest for (no silent sidecar-only pin)", async () => {
+  const { crossCheck } = await import("../scripts/gleam-pin.ts");
+  const asset = { name: "gleam-v1-x.tar.gz", size: 1, browser_download_url: "https://x.invalid/a" };
+  for (const digest of [undefined, null, "", "md5:abc"]) {
+    await assertRejects(
+      () => crossCheck({ ...asset, digest }, [], new Uint8Array(1), "0".repeat(64)),
+      Error,
+      "no sha256 digest",
+    );
+  }
+});
