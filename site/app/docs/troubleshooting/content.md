@@ -7,19 +7,6 @@ lead: Symptom → cause → fix for the errors people actually hit, each pointin
 Each entry is one symptom: what you see, the one-line cause, the fix, and a link
 to the page that owns the full explanation. Search this page for the error text.
 
-## "No matching export" for `unstable_navigation` / `unstable_prefetch`
-
-**Cause.** Next 16.4 canary's navigation-stage APIs (`unstable_navigation` /
-`unstable_prefetch` from `next/cache`, the "prefetch stage" experiment) are not
-provided, so a compat build of an app importing them fails to link.
-
-**Fix.** Pin the app before the commit that adopted those APIs, or stop
-importing them. There is no shim — the upstream surface is still a canary
-experiment.
-
-See [Known limitations](/docs/limitations) for the full list of upstream-named unstable and
-unprovided APIs.
-
 ## `denext migrate` fails resolving the CLI's own build dependencies
 
 **Cause.** The project already has `node_modules` installed, so Deno runs in

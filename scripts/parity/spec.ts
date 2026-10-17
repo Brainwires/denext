@@ -36,6 +36,26 @@ export const REAL_PACKAGES = [
  */
 export const REAL_PACKAGE_TAGS: Readonly<Record<string, string>> = { "next-auth": "beta" };
 
+/**
+ * Release lines the committed BASELINE is held to (`parity:refresh`), while `parity:drift`
+ * still installs `latest` and reports what a newer release adds.
+ *
+ * React stays on its 19.2 line: 19.3 adds no export denext lacks (`ViewTransition` and
+ * `addTransitionType` lose their `unstable_` prefix; denext has both), but it ships Fragment
+ * refs (`<Fragment ref>` → a `FragmentInstance`), which denext's reconciler does not implement
+ * yet (KNOWN-LIMITATIONS). The compat layer reports the version whose behaviour it mirrors
+ * (`REACT_COMPAT_VERSION`), so a library that feature-detects 19.3 by version doesn't hand a
+ * ref to a Fragment.
+ */
+export const BASELINE_HOLDS: Readonly<Record<string, string>> = {
+  react: "~19.2",
+  "react-dom": "~19.2",
+  "react-is": "~19.2",
+  "@types/react": "~19.2",
+  "@types/react-dom": "~19.2",
+  "@types/react-is": "~19.2",
+};
+
 /** The `next-auth/providers/*` modules the shim ships (each one's default export is checked). */
 export const NEXT_AUTH_PROVIDERS = [
   "apple",

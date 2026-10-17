@@ -1,18 +1,18 @@
 {
   "versions": {
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "react-is": "19.2.8",
-    "next": "16.3.3",
-    "next-intl": "4.14.1",
+    "react": "19.2.9",
+    "react-dom": "19.2.9",
+    "react-is": "19.2.9",
+    "next": "16.4.1",
+    "next-intl": "4.14.9",
     "@remix-run/react": "2.17.5",
     "@remix-run/node": "2.17.5",
     "next-auth": "5.0.0-beta.32",
     "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.5",
+    "@types/react-dom": "19.2.7",
     "@types/react-is": "19.2.0"
   },
-  "capturedAt": "2026-10-16T02:42:29.357Z",
+  "capturedAt": "2026-10-17T05:54:12.977Z",
   "surfaces": [
     {
       "specifier": "react",
@@ -1413,6 +1413,79 @@
             }
           ],
           "typeParamCount": 0
+        },
+        "resume": {
+          "name": "resume",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "version": {
+          "name": "version",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
         }
       }
     },
@@ -1475,6 +1548,65 @@
             }
           ],
           "typeParamCount": 0
+        },
+        "version": {
+          "name": "version",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
         }
       }
     },
@@ -2578,6 +2710,34 @@
               "arity": 1,
               "requiredArity": 0,
               "restParam": true
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "navigation": {
+          "name": "navigation",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "prefetch": {
+          "name": "prefetch",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
             }
           ],
           "typeParamCount": 0

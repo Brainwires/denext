@@ -7,8 +7,8 @@
 //
 // Pin: cd0363f (2026-07-23) is the last commit before the playground adopted Next 16.4
 // canary's navigation-stage APIs (`unstable_navigation` / `unstable_prefetch` from
-// `next/cache`, #233), which denext's compat layer does not provide (KNOWN-LIMITATIONS →
-// Experimental / unstable APIs). Bump deliberately, with that gap closed or waived.
+// `next/cache`, #233). denext's `next/cache` now provides them (and the stable
+// `navigation` / `prefetch`); bump deliberately, after a bed run on the newer commit.
 //
 // NETWORK-REQUIRED (GitHub clone + pnpm install): `deno task test:migration-bed`.
 
