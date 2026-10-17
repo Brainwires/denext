@@ -19,6 +19,7 @@ import {
 import { type ProjectPaths, routeId } from "../paths.ts";
 import { appBoundaryManifest } from "../pipeline-shared.ts";
 import { parseServerCopies, type ServerCopiesManifest } from "../server-copies.ts";
+import { setBuildServerActionsKey } from "../../server/action-bound.ts";
 
 /** What `denext start` reads from `manifest.json` (absent/old fields fall back). */
 export interface BuildInfo {
@@ -46,6 +47,15 @@ export interface BuildInfo {
   serverCopies?: ServerCopiesManifest | null;
 }
 
+/** Install the build's bound-action key; a malformed one is reported, never fatal here. */
+function installBuildKey(key: string): void {
+  try {
+    setBuildServerActionsKey(key);
+  } catch (err) {
+    console.error("denext:", (err as Error).message);
+  }
+}
+
 /** Read the build manifest; a missing/invalid one means "nothing static, no compat". */
 export async function readBuildInfo(paths: ProjectPaths): Promise<BuildInfo> {
   const info: BuildInfo = {
@@ -62,6 +72,8 @@ export async function readBuildInfo(paths: ProjectPaths): Promise<BuildInfo> {
     }
     // Install build-self-hosted Google fonts so renderFontStyles emits local CSS.
     if (bm.fonts && typeof bm.fonts === "object") setSelfHostedFonts(bm.fonts);
+    // The key this build seals bound Server Action values under (unless the env sets one).
+    if (typeof bm.serverActionsKey === "string") installBuildKey(bm.serverActionsKey);
     info.nextCompat = bm.nextCompat === true;
     if (typeof bm.buildId === "string" && bm.buildId) info.buildId = bm.buildId;
     info.buildIdPinned = bm.buildIdPinned === true;

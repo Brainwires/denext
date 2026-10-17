@@ -17,10 +17,15 @@
 //     }
 //     const _dnxInlineAction0 = _dnxServerRef("a…", async function add(fd) { "use server"; … });
 //
-//   Next binds the values a nested action closes over (encrypted, round-tripped through the
-//   page); denext does not, so an action that reads a local of an enclosing function or block
-//   is a build error naming the variables, never a reference that runs with another request's
-//   values.
+//   A declaration is hoisted to the top of its block, as JavaScript hoists it. One that reads
+//   locals of an enclosing function or block gets them as leading arguments, bound at its site
+//   and sealed into its reference id (AES-GCM, ../server/action-bound.ts), as Next.js encrypts
+//   them:
+//
+//     const del = _dnxBindAction(_dnxInlineAction0, () => [id], "del");
+//     const _dnxInlineAction0 = _dnxServerRef("a…", (id, ...args) => (async function del() {
+//       "use server"; await remove(id);
+//     })(...args));
 // - Client side ({@linkcode findInlineServerActions}, {@linkcode inlineServerActionError}): a
 //   module the browser gets must not hold one at all — its body, and whatever it closes over,
 //   would ship. Next refuses the build with the same message.
@@ -42,6 +47,7 @@ import {
   txt,
 } from "./swc-ast.ts";
 import { BLOCK_SCOPES, boundNames, FN_SCOPES } from "./use-cache-transform.ts";
+import { projectSourceFiles } from "./platform-extensions.ts";
 
 /** Next.js's build error for an inline `"use server"` function in client code (verbatim). */
 export const INLINE_ACTION_IN_CLIENT_ERROR =
@@ -139,13 +145,76 @@ function fnName(fn: Node): string | undefined {
   return (fn.identifier?.value as string | undefined) ?? undefined;
 }
 
+/**
+ * An inline `"use server"` function denext can't make a server reference of. The server copy
+ * compiler (./use-cache-loader.ts) lets it through instead of loading the module as written,
+ * where the form would silently render with no `action`.
+ */
+export class InlineServerActionError extends Error {
+  override name = "InlineServerActionError";
+}
+
 /** A build error for `fn` in `moduleUrl`. */
 function inlineError(ctx: Ctx, moduleUrl: string, fn: Node, message: string): Error {
-  return new Error(`denext: ${message}\n    at ${moduleUrl}:${where(ctx, fn)}`);
+  return new InlineServerActionError(`denext: ${message}\n    at ${moduleUrl}:${where(ctx, fn)}`);
+}
+
+/**
+ * Whether `source` holds an inline `"use server"` function (a module that is itself
+ * `"use server"` holds none). A cheap text test first: only a module that mentions the
+ * directive is parsed.
+ *
+ * @param source A module's source.
+ */
+export async function hasInlineServerActions(source: string): Promise<boolean> {
+  return (await findInlineServerActions(source)).length > 0;
+}
+
+/**
+ * The modules among `files` (absolute paths) that hold an inline `"use server"` function: the
+ * native server render loads each through a compiled copy (./use-cache-loader.ts). An unreadable
+ * file holds none.
+ *
+ * @param files The project's source modules.
+ */
+export async function inlineServerActionModules(files: Iterable<string>): Promise<string[]> {
+  const all = [...files];
+  const found: string[] = [];
+  // A bounded number of reads at a time (a large project has thousands of modules).
+  for (let i = 0; i < all.length; i += 64) {
+    const batch = all.slice(i, i + 64);
+    const hits = await Promise.all(batch.map(async (file) => {
+      const source = await Deno.readTextFile(file).catch(() => "");
+      return await hasInlineServerActions(source);
+    }));
+    batch.forEach((file, j) => hits[j] && found.push(file));
+  }
+  return found;
+}
+
+/**
+ * The project's modules that hold an inline `"use server"` function (absolute paths): whether
+ * the native server render needs its copy compiler at all, when nothing else (Cache Components,
+ * platform files, stylesheets) asks for it.
+ *
+ * @param projectDir The project root.
+ */
+export async function projectInlineServerActionModules(projectDir: string): Promise<string[]> {
+  return await inlineServerActionModules(await Array.fromAsync(projectSourceFiles(projectDir)));
+}
+
+/**
+ * Where a declaration hoisted to the top of `scope` goes: after a block's opening brace (and a
+ * function body's directives), or null for a scope that is not a block (it stays in place).
+ */
+function blockStart(ctx: Ctx, scope: Node): number | null {
+  if (scope?.type !== "BlockStatement") return null;
+  const directives = prologueEnd(ctx, scope.stmts ?? []);
+  return directives > 0 ? directives : startOf(ctx, scope) + 1;
 }
 
 /** Reject what denext can't make a server reference of (see the module comment). */
-function assertHoistable(ctx: Ctx, moduleUrl: string, { fn, scopes }: Found): void {
+function assertHoistable(ctx: Ctx, moduleUrl: string, { fn }: Found): void {
   if (
     fn.type !== "FunctionDeclaration" && fn.type !== "FunctionExpression" &&
     fn.type !== "ArrowFunctionExpression"
@@ -158,19 +227,54 @@ function assertHoistable(ctx: Ctx, moduleUrl: string, { fn, scopes }: Found): vo
         'from a "use server" module.',
     );
   }
+}
+
+/** A module-scope inline action, registered in place (a declaration keeps its binding). */
+function moduleScopeEdits(ctx: Ctx, fn: Node, id: string, name: string | undefined): Edit[] {
+  const isDecl = fn.type === "FunctionDeclaration";
+  const start = startOf(ctx, fn);
+  const end = endOf(ctx, fn);
+  const prefix = isDecl ? `const ${name} = _dnxServerRef(${id}, ` : `_dnxServerRef(${id}, `;
+  return [
+    { start, end: start, text: prefix },
+    { start: end, end, text: isDecl ? ");" : ")" },
+  ];
+}
+
+/**
+ * A nested inline action: the function moves to module scope (the returned statement, `ref`)
+ * and its site reads the registered reference, bound to the enclosing values it reads (sealed
+ * into its id, ../server/action-bound.ts). Pushes the site's edits onto `edits`.
+ */
+function nestedEdits(
+  ctx: Ctx,
+  { fn, scopes }: Found,
+  id: string,
+  name: string | undefined,
+  ref: string,
+  edits: Edit[],
+): string {
   const bound = boundNames(fn, scopes);
-  if (bound.length === 0) return;
-  throw inlineError(
-    ctx,
-    moduleUrl,
-    fn,
-    `the inline Server Action ${fnName(fn) ?? "(anonymous)"} reads ${
-      bound.map((n) => `\`${n}\``).join(", ")
-    } from an enclosing function or block. denext hoists inline actions to module scope and ` +
-      "does not bind the values they close over: pass them in the form (a hidden input) or as " +
-      "an argument (`action.bind(null, value)` is not supported either), or move the action to " +
-      'a "use server" module.',
-  );
+  const params = bound.join(", ");
+  const handler = bound.length === 0
+    ? txt(ctx, fn)
+    : `(${params}, ...args) => (${txt(ctx, fn)})(...args)`;
+  const site = bound.length === 0
+    ? ref
+    : `_dnxBindAction(${ref}, () => [${params}], ${JSON.stringify(name ?? "")})`;
+  const start = startOf(ctx, fn);
+  const end = endOf(ctx, fn);
+  // A declaration is hoisted in its block, as JavaScript hoists it: a use above it (or a value it
+  // reads declared below it) still finds it. The values are read when the reference is first
+  // rendered or called.
+  const at = fn.type === "FunctionDeclaration" ? blockStart(ctx, scopes[scopes.length - 1]) : null;
+  if (fn.type !== "FunctionDeclaration") edits.push({ start, end, text: site });
+  else if (at === null) edits.push({ start, end, text: `const ${name} = ${site};` });
+  else {
+    edits.push({ start, end, text: "" });
+    edits.push({ start: at, end: at, text: `const ${name} = ${site};` });
+  }
+  return `const ${ref} = _dnxServerRef(${id}, ${handler});`;
 }
 
 /**
@@ -181,8 +285,7 @@ function assertHoistable(ctx: Ctx, moduleUrl: string, { fn, scopes }: Found): vo
  * @param source The module source.
  * @param moduleUrl The module's absolute URL: it keys the action ids.
  * @returns The rewritten code and whether anything changed.
- * @throws When an inline action closes over an enclosing function's or block's values, or is
- *   a method.
+ * @throws {InlineServerActionError} When an inline action is a method.
  */
 export async function transformInlineServerActions(
   source: string,
@@ -199,31 +302,20 @@ export async function transformInlineServerActions(
   const hoisted: string[] = [];
   found.forEach((f, i) => {
     assertHoistable(ctx, moduleUrl, f);
-    const { fn, scopes } = f;
-    const name = fnName(fn);
+    const name = fnName(f.fn);
     const id = JSON.stringify(actionIdFor(moduleUrl, `inline:${i}:${name ?? ""}`));
-    const isDecl = fn.type === "FunctionDeclaration";
-    const start = startOf(ctx, fn);
-    const end = endOf(ctx, fn);
-    if (scopes.length === 0) {
-      // Module scope: register in place (a declaration keeps its binding, `export` included).
-      const prefix = isDecl ? `const ${name} = _dnxServerRef(${id}, ` : `_dnxServerRef(${id}, `;
-      edits.push({ start, end: start, text: prefix });
-      edits.push({ start: end, end, text: isDecl ? ");" : ")" });
-      return;
-    }
-    // Nested: the function moves to module scope; its site reads the registered reference.
-    const ref = `_dnxInlineAction${i}`;
-    hoisted.push(`const ${ref} = _dnxServerRef(${id}, ${txt(ctx, fn)});`);
-    edits.push({ start, end, text: isDecl ? `const ${name} = ${ref};` : ref });
+    if (f.scopes.length === 0) edits.push(...moduleScopeEdits(ctx, f.fn, id, name));
+    else hoisted.push(nestedEdits(ctx, f, id, name, `_dnxInlineAction${i}`, edits));
   });
   const importAt = prologueEnd(ctx, body);
-  const runtime = JSON.stringify(new URL("../runtime/server-action.ts", import.meta.url).href);
+  const runtime = JSON.stringify(new URL("../server/action-bound.ts", import.meta.url).href);
   edits.push({
     start: importAt,
     end: importAt,
     order: -1,
-    text: `\nimport { registerServerReference as _dnxServerRef } from ${runtime};\n`,
+    text:
+      `\nimport { bindInlineAction as _dnxBindAction, inlineServerReference as _dnxServerRef } ` +
+      `from ${runtime};\n`,
   });
   if (hoisted.length > 0) {
     const tail = ctx.bytes.length;

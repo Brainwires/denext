@@ -7,6 +7,7 @@ import { join } from "@std/path";
 import { resetFonts } from "../../compat/next/font/registry.ts";
 import { extractPublicEnvRefs } from "../../runtime/public-env.ts";
 import { defaultLoader } from "../../server/mod.ts";
+import { generateServerActionsKey } from "../../server/action-bound.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import { type BundleChunk, bundleSummaryLines } from "../bundle-report.ts";
 import { emitTypedModules } from "../emit-typed-modules.ts";
@@ -110,6 +111,10 @@ function buildManifestFor(
     // Keys this build's cached pages (the prod server passes it to `PageCache`). A pinned id
     // (`DENEXT_BUILD_ID`) also lets `denext start` sweep other builds from a shared store.
     buildId: resolveBuildId(pinnedId),
+    // Seals the values bound to Server Actions (src/server/action-bound.ts): new per build, read
+    // only by the server (`DENEXT_SERVER_ACTIONS_ENCRYPTION_KEY` overrides it for replicas built
+    // separately).
+    serverActionsKey: generateServerActionsKey(),
     ...(pinnedId ? { buildIdPinned: true } : {}),
     generatedRoutes: ctx.routes,
     flight: ctx.hasFlight,

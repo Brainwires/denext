@@ -21,7 +21,7 @@ Deno.test({
 }, async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_ncform_" }));
   try {
-    await writeActionFormFixture(dir, false);
+    await writeActionFormFixture(dir, false, true);
     await build(dir);
     const manifest = JSON.parse(await Deno.readTextFile(join(dir, ".denext", "manifest.json")));
     assert(
@@ -40,6 +40,8 @@ Deno.test({
         const [form, title, listed] of [
           ["exported", "from-the-module", "from-the-module"],
           ["inline", "from-inline", "inline:from-inline"],
+          // A bound inline action: `tag` was "closed-0" when the page rendered the form.
+          ["closure", "from-closure", "closed-0:from-closure"],
         ]
       ) {
         const action = html.match(new RegExp(`<form id="${form}" action="([^"]+)" method="post">`))

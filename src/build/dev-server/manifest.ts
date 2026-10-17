@@ -29,7 +29,7 @@ import { boundaryRefLoader } from "../next-compat-loader.ts";
 import { createUnbundledDev, type UnbundledDev } from "../dev-unbundled.ts";
 import { getCss, getTransformMaps } from "./assets.ts";
 import { compatBuildOf, ensureCompatBuilt, isCompat } from "./compat.ts";
-import { createDevLoader } from "./loaders.ts";
+import { createDevLoader, devInlineActionModules } from "./loaders.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import type { DevBoundary, DevState } from "./state.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
@@ -348,6 +348,11 @@ export async function devActionScope(
   } catch (err) {
     if (!request || !resolveAction(request, platform)) throw err;
     console.error('[denext] a "use server" module failed to load:', err);
+  }
+  // An inline action registers when its module loads: a form posted from a page this server
+  // has not rendered (it restarted since) finds it once the modules holding one are loaded.
+  if (request && !resolveAction(request, platform) && !(await isCompat(st))) {
+    await Promise.all((await devInlineActionModules(st)).map((file) => load(file)));
   }
   return platform;
 }

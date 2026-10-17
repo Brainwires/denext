@@ -30,6 +30,7 @@ import {
   projectPlatformRedirects,
 } from "../platform-extensions.ts";
 import { createUseCacheLoader } from "../use-cache-loader.ts";
+import { projectInlineServerActionModules } from "../inline-server-action.ts";
 import { assetUrlBase } from "../prod-server/assets.ts";
 import { platformImportMap } from "../platform-imports.ts";
 import type { ExportContext, StaticExportOptions, StaticExportResult } from "./context.ts";
@@ -140,7 +141,10 @@ async function exportLoader(
   const useCache = resolveCacheComponents(paths.config);
   installCacheLifeProfiles(resolveCacheLifeProfiles(paths.config));
   // A target other than `web` folds `platform` (denext/platform) in the copies it renders.
-  if (!useCache && Object.keys(redirects).length === 0 && platform === "web") {
+  if (
+    !useCache && Object.keys(redirects).length === 0 && platform === "web" &&
+    (await projectInlineServerActionModules(paths.projectDir)).length === 0
+  ) {
     return defaultLoader;
   }
   // Per target: Deno caches a module by URL for the life of the process, so two targets'

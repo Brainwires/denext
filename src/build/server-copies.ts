@@ -1,8 +1,8 @@
 // The production server render's module copies, made at build time.
 //
 // A native App Router app's server render loads some modules through copies: the web target's
-// platform files (`BigButton.web.tsx`, applied by rewriting the importers) and Cache Components'
-// `"use cache"` compile (./use-cache-loader.ts). `denext build` writes those copies under
+// platform files (`BigButton.web.tsx`, applied by rewriting the importers), Cache Components'
+// `"use cache"` compile and inline `"use server"` functions (./use-cache-loader.ts). `denext build` writes those copies under
 // `<outDir>/server-copies/` and records them, with the redirects, in `manifest.json`
 // ({@linkcode ServerCopiesManifest}), so `denext start` walks nothing and writes nothing: it
 // serves the same files the build's client bundles resolved, on a read-only filesystem too.
@@ -19,6 +19,7 @@ import type { ModuleLoader } from "../server/types.ts";
 import type { ProjectPaths } from "./paths.ts";
 import { createPlatformScanner } from "./platform-extensions.ts";
 import { compileServerCopies, createPrecompiledLoader } from "./use-cache-loader.ts";
+import { inlineServerActionModules } from "./inline-server-action.ts";
 
 /** Where the build writes the copies, under the out dir. */
 const COPIES_DIR = "server-copies";
@@ -69,7 +70,8 @@ function cssRedirects(cssImportMap: Readonly<Record<string, string>> | undefined
 
 /**
  * Compile the server copies of a native App Router build (the web target's platform files,
- * `"use cache"` when Cache Components are on, and every stylesheet import pointed at its shim)
+ * `"use cache"` when Cache Components are on, inline `"use server"` functions as registered
+ * server references, and every stylesheet import pointed at its shim)
  * into `<outDir>/server-copies/`, and describe them for `manifest.json`. Null for a next-compat
  * build, whose server bundles carry the first two.
  *
@@ -99,7 +101,11 @@ export async function buildServerCopies(
     css: hasCss,
     relocatable: true,
   };
-  if (!useCache && !hasCss && Object.keys(redirects).length === 0) return manifest;
+  const files = await scanner.files();
+  const inline = await inlineServerActionModules(files);
+  if (!useCache && !hasCss && inline.length === 0 && Object.keys(redirects).length === 0) {
+    return manifest;
+  }
   // Only the platform redirects are recorded: the server loads a module, never a stylesheet, as
   // an entry, so the CSS ones live in the copies alone.
   for (const [from, to] of Object.entries(redirects)) {
@@ -109,7 +115,7 @@ export async function buildServerCopies(
   }
   const copies = await compileServerCopies(
     { projectDir, cacheDir, redirects: { ...css, ...redirects }, useCache, relocatable: true },
-    await scanner.files(),
+    files,
   );
   for (const [from, to] of Object.entries(copies)) {
     const a = relativeTo(projectDir, from);

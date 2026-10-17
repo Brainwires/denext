@@ -10,7 +10,7 @@
 import { join } from "@std/path";
 
 /** The files of the fixture app, keyed by project-relative path. */
-function files(island: boolean): Record<string, string> {
+function files(island: boolean, closure: boolean): Record<string, string> {
   return {
     "deno.json": JSON.stringify({ nodeModulesDir: "manual", imports: {} }),
     "package.json": JSON.stringify({
@@ -65,7 +65,18 @@ export default async function Home() {
     formData.set("title", "inline:" + String(formData.get("title") ?? ""));
     await addItem(formData);
   }
-  return (
+${
+      closure
+        ? `  const tag = "closed-" + items.length;
+  // Reads a component local: bound (sealed) into the form's action.
+  async function addClosure(formData: FormData) {
+    "use server";
+    formData.set("title", tag + ":" + String(formData.get("title") ?? ""));
+    await addItem(formData);
+  }
+`
+        : ""
+    }  return (
     <main>
       <h1>Items</h1>
       ${island ? "<Counter />" : ""}
@@ -78,7 +89,15 @@ export default async function Home() {
         <input name="title" />
         <button id="add-inline" type="submit">Add inline</button>
       </form>
-    </main>
+${
+      closure
+        ? `      <form id="closure" action={addClosure}>
+        <input name="title" />
+        <button type="submit">Add closure</button>
+      </form>
+`
+        : ""
+    }    </main>
   );
 }
 `,
@@ -90,9 +109,14 @@ export default async function Home() {
  *
  * @param dir An empty directory.
  * @param island Render a `"use client"` component on the page too.
+ * @param closure Add a form whose inline action reads a component local (a bound action).
  */
-export async function writeActionFormFixture(dir: string, island: boolean): Promise<void> {
-  for (const [rel, text] of Object.entries(files(island))) {
+export async function writeActionFormFixture(
+  dir: string,
+  island: boolean,
+  closure = false,
+): Promise<void> {
+  for (const [rel, text] of Object.entries(files(island, closure))) {
     const path = join(dir, rel);
     await Deno.mkdir(join(path, ".."), { recursive: true });
     await Deno.writeTextFile(path, text);

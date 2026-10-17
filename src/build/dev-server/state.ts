@@ -306,6 +306,11 @@ export interface DevState extends DevInspectState {
    * edit reaches the render while an unchanged module keeps its instance.
    */
   readonly devCopies: DevCopies;
+  /**
+   * The modules holding an inline `"use server"` function (`devInlineActionModules`), scanned
+   * once per generation when asked: they render through compiled copies.
+   */
+  inlineActionScan: { gen: number; modules: Promise<string[]> } | null;
 
   /**
    * Client bundle cache keyed by route path (cleared on change). Entry code only; split
@@ -388,6 +393,7 @@ export function createDevState(options: DevServerOptions): DevState {
     useCacheEnabled: resolveCacheComponents(paths.config) ?? false,
     ucLoads: new Map(),
     devCopies: new DevCopies(paths.projectDir),
+    inlineActionScan: null,
     bundleCache: new Map(),
     chunkCache: new Map(),
     routeInFlight: new Map(),

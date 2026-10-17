@@ -9,7 +9,8 @@
 //   visitor's cookies to abuse.
 // - POST only: actions can never be triggered by a GET (no <img>/link CSRF).
 // - Bounded dispatch: only ids explicitly registered via `serverAction` resolve;
-//   the id is a Map key, never a path or eval target.
+//   the id is a Map key, never a path or eval target. A bound action's id carries its values
+//   sealed with AES-GCM for that action (./action-bound.ts): one that does not open is unknown.
 // - No leakage: handler errors are logged server-side and returned to the client
 //   as a generic message, never a stack trace or internal detail.
 // - Redirects are forced to 303 (POST -> GET) and, for no-JS posts, restricted
@@ -29,6 +30,7 @@ import {
 } from "../runtime/error-boundary.ts";
 import { safeRedirectLocation } from "./config.ts";
 import { currentContext } from "./request-context.ts";
+import { resolveBoundAction } from "./action-bound.ts";
 
 /**
  * Default max Server Action request body size (bytes) — 1 MiB, matching Next.js'
@@ -183,11 +185,15 @@ export function resolveAction(
   scope?: string,
 ): ReturnType<typeof getServerAction> {
   const pathname = new URL(request.url).pathname;
+  let id: string;
   try {
-    return getServerAction(decodeURIComponent(pathname.slice(ACTION_PREFIX.length)), scope);
+    id = decodeURIComponent(pathname.slice(ACTION_PREFIX.length));
   } catch {
     return undefined;
   }
+  // A bound action (`<id>.<token>`): its values open only for the action they were sealed for.
+  return getServerAction(id, scope) ??
+    resolveBoundAction(id, (actionId) => getServerAction(actionId, scope)) ?? undefined;
 }
 
 /**

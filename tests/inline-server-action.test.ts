@@ -1,6 +1,7 @@
 // Inline `"use server"` functions (src/build/inline-server-action.ts):
 //   - on the server they become registered server references (hoisted to module scope when
-//     nested), and one that closes over an enclosing function's values is a build error;
+//     nested); one that closes over an enclosing function's values gets them bound (sealed into
+//     its reference id, tests/action-bound.test.ts);
 //   - no client bundle may ship one: the compat (esbuild) and native (`deno bundle`) client
 //     builds fail with Next's error, and the unbundled dev server serves the error instead.
 // Before, a client component's inline action shipped its body to the browser, and a Server
@@ -11,6 +12,7 @@ import { fromFileUrl, join } from "@std/path";
 import {
   findInlineServerActions,
   INLINE_ACTION_IN_CLIENT_ERROR,
+  InlineServerActionError,
   transformInlineServerActions,
 } from "../src/build/inline-server-action.ts";
 import { generateServerStub } from "../src/build/client-imports.ts";
@@ -32,7 +34,7 @@ export default function Page() {
 `;
   const { code, changed } = await transformInlineServerActions(src, MOD);
   assert(changed);
-  assertStringIncludes(code, "import { registerServerReference as _dnxServerRef }");
+  assertStringIncludes(code, "inlineServerReference as _dnxServerRef");
   assertStringIncludes(code, "const add = _dnxInlineAction0;");
   assert(
     /const _dnxInlineAction0 = _dnxServerRef\("a[a-z0-9]+", async function add\(fd: FormData\) \{\s*"use server";/
@@ -73,16 +75,68 @@ Deno.test("the registered reference is a server action: callable, with its endpo
   }
 });
 
-Deno.test("an inline action that closes over a component's values is a build error", async () => {
+Deno.test("an inline action that closes over a component's values gets them bound", async () => {
   const src = `export default function Page({ id }: { id: string }) {
   const prefix = "p";
   async function del() { "use server"; await remove(prefix + id); }
   return <form action={del} />;
 }
 `;
-  const err = await assertRejects(() => transformInlineServerActions(src, MOD), Error);
-  assertStringIncludes(err.message, "the inline Server Action del reads `id`, `prefix`");
-  assertStringIncludes(err.message, `${MOD}:3:3`);
+  const { code } = await transformInlineServerActions(src, MOD);
+  // The hoisted function takes the values it reads first, in a stable (sorted) order.
+  assert(
+    /const _dnxInlineAction0 = _dnxServerRef\("a[a-z0-9]+", \(id, prefix, \.\.\.args\) => \(async function del\(\)/
+      .test(code),
+    code,
+  );
+  // The site binds them, read lazily; the declaration moved to the top of its block.
+  assertStringIncludes(
+    code,
+    'export default function Page({ id }: { id: string }) {const del = _dnxBindAction(_dnxInlineAction0, () => [id, prefix], "del");',
+  );
+  assertEquals(code.match(/async function del/g)?.length, 1, "the body is in one place");
+});
+
+Deno.test("a bound inline action runs with the values its component had", async () => {
+  const { code } = await transformInlineServerActions(
+    `export default function Page(n: number) {
+  // Declared above the value it reads, and used above its own declaration: both hoisted.
+  const early = ping;
+  async function ping(m: number) { "use server"; return [base, n, m]; }
+  const base = "b";
+  return { early, ping };
+}
+`,
+    MOD,
+  );
+  const dir = await Deno.makeTempDir({ prefix: "denext_inline_bound_" });
+  try {
+    const file = join(dir, "page.ts");
+    await Deno.writeTextFile(file, code);
+    const mod = await import(`file://${file}`);
+    const { early, ping } = mod.default(7);
+    assert(early === ping, "a use above the declaration reads the same reference");
+    assert(isServerAction(ping), "tagged as a server action");
+    assertEquals(await ping(1), ["b", 7, 1]);
+    assert(ping.denextActionId.includes("."), "its id carries the sealed values");
+    assert(mod.default(8).ping.denextActionId !== ping.denextActionId, "a render per values");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test('a "use server" method is a build error naming it', async () => {
+  const src = `export default function Page() {
+  const o = { async m() { "use server"; return 1; } };
+  return o;
+}
+`;
+  const err = await assertRejects(
+    () => transformInlineServerActions(src, MOD),
+    InlineServerActionError,
+  );
+  assertStringIncludes(err.message, 'a "use server" method is not supported');
+  assertStringIncludes(err.message, `${MOD}:2:15`);
 });
 
 Deno.test('a "use server" module, or a module with no inline action, is left as written', async () => {

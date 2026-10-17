@@ -45,6 +45,10 @@ function registryFor(scope: string): Map<string, ActionHandler> {
   return scoped;
 }
 
+// Server-only: gives each server reference a `bind` that keeps it one (installed by
+// src/server/action-bound.ts, which seals the bound values; never set in the browser).
+let decorateReference: ((fn: ActionHandler, id: string) => void) | null = null;
+
 /**
  * Define a server action. Give it a **stable, explicit id** (unique per app) so
  * the client stub and the server handler agree across the boundary.
@@ -85,7 +89,21 @@ export function registerServerReference<A extends unknown[], R>(
 ): ServerActionRef<A, R> {
   registry.set(id, handler as (...args: unknown[]) => unknown);
   const ref = (...args: A) => Promise.resolve(handler(...args));
+  decorateReference?.(ref as unknown as ActionHandler, id);
   return Object.assign(ref, { denextActionId: id }) as ServerActionRef<A, R>;
+}
+
+/**
+ * Install the server's server-reference decorator (src/server/action-bound.ts): every reference
+ * {@linkcode registerServerReference} creates or {@linkcode tagServerExports} tags afterwards
+ * passes through it.
+ *
+ * @param decorate Called with each reference and its id.
+ */
+export function setServerReferenceDecorator(
+  decorate: (fn: ActionHandler, id: string) => void,
+): void {
+  decorateReference = decorate;
 }
 
 /** Readable `module#export` names behind the opaque ids (dev diagnostics only). */
@@ -144,6 +162,7 @@ export function tagServerExports(
       enumerable: false,
       configurable: true,
     });
+    decorateReference?.(value as ActionHandler, id);
     // A `defineSubscription` export: its definition is registered (and made live-readable).
     const def = (value as { [SUBSCRIPTION_DEF]?: SubscriptionDef })[SUBSCRIPTION_DEF];
     if (def) registerSubscription(id, def);
