@@ -214,11 +214,17 @@ Deno.test("install.ps1: Windows on Arm installs the Arm64 binary", {
     // instead, not a failure warning.
     assertStringIncludes(run.out, "no Windows on Arm Deno toolchain could be installed");
     assert(!run.out.includes("could not be installed now"), run.out);
-    // An x64 machine still gets the x64 build from the same release.
     const x64 = await install(release, join(dir, "x64"), { PROCESSOR_ARCHITECTURE: "AMD64" });
     assertEquals(x64.code, 0, x64.out);
-    assertStringIncludes(x64.out, "for x86_64-pc-windows-msvc");
-    assertStringIncludes(x64.out, "could not be installed now");
+    if (Deno.build.arch === "aarch64") {
+      // On a real Arm machine install.ps1 reads the native architecture from the registry, so an
+      // x64 PowerShell under emulation (PROCESSOR_ARCHITECTURE=AMD64) still gets the Arm64 build.
+      assertStringIncludes(x64.out, "for aarch64-pc-windows-msvc");
+    } else {
+      // An x64 machine still gets the x64 build from the same release.
+      assertStringIncludes(x64.out, "for x86_64-pc-windows-msvc");
+      assertStringIncludes(x64.out, "could not be installed now");
+    }
   } finally {
     await release.close();
     await Deno.remove(dir, { recursive: true });
