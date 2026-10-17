@@ -156,6 +156,24 @@ Deno.test("unbundled @dep inventory: every denext specifier the client can impor
   }
 });
 
+Deno.test("native: every denext specifier a transformed module imports has an @dep entry", async () => {
+  const { DEP_ENTRYPOINTS } = await import("../src/build/dev-unbundled/state.ts");
+  const st = state(false);
+  const e: TransformEntry = { mtimeMs: 0, code: "", deps: [], selfAccepting: false };
+  // The dev transform compiles JSX with `jsxDev`, so every component module imports
+  // `denext/jsx-dev-runtime`: it shares jsx-runtime's entry. Its own slug 404'd and no
+  // unbundled dev page hydrated (a failed module fetch is not a console error).
+  assertEquals(
+    rewriteSpecifier(st, "denext/jsx-dev-runtime", null, e),
+    `${DEP_PREFIX}denext_jsx-runtime.js`,
+  );
+  for (const spec of ["denext", "denext/jsx-runtime", "denext/jsx-dev-runtime", "denext/client"]) {
+    const url = rewriteSpecifier(st, spec, null, e);
+    const slug = url.slice(DEP_PREFIX.length).replace(/\.js$/, "");
+    assert(slug in DEP_ENTRYPOINTS, `${spec} → ${url} has no @dep entry`);
+  }
+});
+
 Deno.test("compat: an npm island named by path rides the npm bundle; unknown denext/* stays out", () => {
   const st = state(true);
   const e: TransformEntry = { mtimeMs: 0, code: "", deps: [], selfAccepting: false };

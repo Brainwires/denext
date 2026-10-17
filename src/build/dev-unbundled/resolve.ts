@@ -288,6 +288,12 @@ export function rewriteSpecifier(
     if (u) return u;
     // fall through: unmapped next/* server surface, node:/scheme — leave to the browser.
   }
-  if (spec === "denext" || spec.startsWith("denext/")) return `${DEP_PREFIX}${depSlug(spec)}.js`;
+  if (spec === "denext" || spec.startsWith("denext/")) {
+    // The dev JSX transform (`jsxDev`) imports `denext/jsx-dev-runtime`: the same module as
+    // `denext/jsx-runtime` (it exports `jsxDEV`), so the one @dep entry — and one runtime
+    // instance. Its own slug has no entry and 404'd, and the page never hydrated.
+    const dep = spec === "denext/jsx-dev-runtime" ? "denext/jsx-runtime" : spec;
+    return `${DEP_PREFIX}${depSlug(dep)}.js`;
+  }
   return spec; // node:/data:/http(s): — leave for the browser (native client won't hit these)
 }

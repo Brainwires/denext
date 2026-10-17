@@ -341,7 +341,7 @@ Deno.test({
     try {
       await t.step(
         "denext dev: the same, published from node_modules at startup",
-        () => assertProbeRanInWorker(browser, dev.origin, false),
+        () => assertProbeRanInWorker(browser, dev.origin, true),
       );
     } finally {
       await dev.close();
