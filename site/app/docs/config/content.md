@@ -654,12 +654,15 @@ every `--platform` target included.
   strict default CSP with no `workerSrc` or `scriptSrc` opt-in. App Router pages are supported
   (Next limits it to `pages/`), and a worker script a client component renders later, on a page
   that loaded `boot.js`, is handed to Partytown too (on any other page it takes the fallback).
-  Partytown's own settings go on `window.partytown` before `boot.js` runs (its `lib` defaults to
-  denext's path). Without the flag, or with no Partytown installed, worker scripts run on the
-  main thread as `afterInteractive` and dev warns with the fix; Next fails the build in the second
-  case. Partytown's [trade-offs](https://partytown.qwik.dev/trade-offs) apply: a cross-origin
-  script is fetched from the worker and needs CORS, and the code it runs is outside the page's
-  CSP.
+  Only denext's own worker scripts run: each carries a per-response nonce the page's CSP lists, so
+  an injected `text/partytown` script is left inert (see
+  [Security](/docs/security#script-strategyworker-partytown-and-html-injection)). Partytown's
+  other settings go on `window.partytown` before `boot.js` runs; `lib` and `debug` are denext's.
+  Without the flag, or with no Partytown installed, worker scripts run on the main thread as
+  `afterInteractive` and dev warns with the fix; Next fails the build in the second case.
+  Partytown's [trade-offs](https://partytown.qwik.dev/trade-offs) apply: a cross-origin script is
+  fetched from the worker and needs CORS, and what a worker script loads is outside the page's
+  `scriptSrc`.
 
 > **`experimental` is superseded.** Every key denext shipped under it is a
 > top-level field now. Next.js's own spellings stay readable as obsolete aliases

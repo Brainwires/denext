@@ -10,10 +10,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **`<Script strategy="worker">` runs off the main thread only through the app's own
   Partytown**, as in Next: it needs `nextScriptWorkers` (Next's `experimental.nextScriptWorkers`)
   and `@qwik.dev/partytown` (or `@builder.io/partytown`) in `node_modules`, else it runs on the
-  main thread as `afterInteractive`. Partytown's trade-offs apply: a cross-origin script is
-  fetched by the worker and needs CORS (or a `partytown.resolveUrl` proxy), and its code runs
-  outside the page's CSP (what it does to the page still goes through it). SPA mode always uses
-  the main-thread fallback.
+  main thread as `afterInteractive`. It needs service workers (Partytown's atomics mode, its
+  debug build and the iframes a worker script creates get no Partytown, so an injection cannot
+  use them either), and a worker script inside a `"use cache"` body or a PPR shell runs on the
+  main thread, since that output cannot carry the response's nonce. Partytown's trade-offs
+  apply: a cross-origin script is fetched by the worker and needs CORS, and what a worker script
+  loads is outside the page's `scriptSrc`. SPA mode always uses the main-thread fallback.
 - **`next/og` renders satori's subset** (flexbox, inline `style`, `tw`): the same engine and
   limits as Next. Arbitrary CSS would need a layout engine or a headless browser.
 - **Async `startTransition` is scoped by a time window by default.** Browsers have no

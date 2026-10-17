@@ -12,6 +12,12 @@
 // The policy blocks external scripts/styles by default; a route opts specific
 // hosts in via its `csp` segment-config export.
 //
+// The one exception is `<Script strategy="worker">` under `nextScriptWorkers`: that page's
+// policy lists a per-response `'nonce-…'` (see `scriptSources`), which Partytown's boot checks
+// before it runs a script in its worker. It is safe to cache with the document: the nonce
+// authorizes only markup rendered in that same response, which a later injection cannot join
+// (a `"use cache"` body and a PPR shell, whose output is combined with later renders, get none).
+//
 // SEC-L1 — scope: `computeCsp` runs on the fully BUFFERED document (the whole HTML
 // string is in hand, so inline <style> bodies can be hashed). The STREAMING HTML and
 // PPR paths flush bytes before the document is complete, but they still carry the
@@ -24,6 +30,7 @@
 
 import type { CspSetting, RouteCsp } from "./segment-config.ts";
 import { swapRuntimeHash } from "./swap-runtime.ts";
+import { scriptWorkerNonce } from "../runtime/script.ts";
 
 export type { CspSetting, RouteCsp };
 
@@ -68,6 +75,21 @@ function extractInlineForCsp(html: string): { styles: string[] } {
 function styleSources(styleHashes: string[], route?: RouteCsp): string[] {
   const extra = route?.styleSrc ?? [];
   return ["'self'", ...(extra.includes("'unsafe-inline'") ? [] : styleHashes), ...extra];
+}
+
+/**
+ * `script-src`: `'self'`, the given fixed sources, the route's opt-ins, and — when
+ * `nextScriptWorkers` publishes Partytown — this response's worker-script nonce (see
+ * `scriptWorkerNonce`). The nonce is the only per-response value in the policy: Partytown's
+ * boot runs a `text/partytown` script only when it carries a nonce the policy lists, so an
+ * injected one never reaches the worker. It is left out when the opt-ins include
+ * `'unsafe-inline'`, which a nonce would switch off (CSP Level 2); there inline script runs
+ * anyway, so the nonce would guard nothing.
+ */
+function scriptSources(fixed: string[], route?: RouteCsp): string[] {
+  const extra = route?.scriptSrc ?? [];
+  const nonce = extra.includes("'unsafe-inline'") ? null : scriptWorkerNonce();
+  return ["'self'", ...fixed, ...extra, ...(nonce ? [`'nonce-${nonce}'`] : [])];
 }
 
 /** A directive's fixed base sources followed by the route's opt-ins for it. */
@@ -123,11 +145,7 @@ export async function computeCsp(html: string, route?: RouteCsp): Promise<string
     styles.map(async (s) => `'sha256-${await sha256Base64(s)}'`),
   );
 
-  return assembleCsp(
-    ["'self'", ...(route?.scriptSrc ?? [])],
-    styleSources(styleHashes, route),
-    route,
-  );
+  return assembleCsp(scriptSources([], route), styleSources(styleHashes, route), route);
 }
 
 /**
@@ -151,7 +169,7 @@ export async function computeStreamingCsp(
   );
 
   return assembleCsp(
-    ["'self'", await swapRuntimeHash(), ...(route?.scriptSrc ?? [])],
+    scriptSources([await swapRuntimeHash()], route),
     styleSources(styleHashes, route),
     route,
   );

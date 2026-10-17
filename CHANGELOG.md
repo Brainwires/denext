@@ -14,14 +14,18 @@ and this project adheres to
   `nextScriptWorkers: true` (Next's `experimental.nextScriptWorkers`, honored too; `denext migrate`
   carries it) and `@qwik.dev/partytown` (or Next's `@builder.io/partytown`) in the app's
   `node_modules`, a worker script renders as `type="text/partytown"` after a same-origin `boot.js`,
-  and runs in Partytown's web worker, reaching the page through its proxy. `denext dev`, `denext
-  build` (then `denext start`, a compiled binary included) and `denext export` publish the package's
-  files under `/_denext/~partytown/`, below `basePath`, so it works under the strict default CSP
-  with no opt-in. App Router pages are supported, and a worker script a client component renders
-  after load, on a page that loaded `boot.js`, is handed to Partytown too. Without the flag or the
-  package the script still runs on the main thread, and the dev warning names the fix. Nothing
-  reaches a page that does not render a worker script. `tests/e2e/script-worker.e2e.test.ts` checks
-  it in Chromium.
+  and runs in Partytown's web worker, reaching the page through its proxy. `denext dev`,
+  `denext build` (then `denext start`, a compiled binary included) and `denext export` publish
+  what Partytown needs under `/_denext/~partytown/`, below `basePath`, so it works under the strict
+  default CSP with no opt-in. Only denext's own worker scripts run: each carries a per-response
+  nonce the page's CSP lists, `boot.js` holds every `text/partytown` script inert until it has
+  checked that nonce, and the service worker serves Partytown's sandbox only to a tab a checked
+  boot announced, so an HTML injection gains nothing (see the
+  [security notes](/docs/security#script-strategyworker-partytown-and-html-injection)). App Router
+  pages are supported, and a worker script a client component renders after load, on a page that
+  loaded `boot.js`, is handed to Partytown too. Without the flag or the package the script still
+  runs on the main thread, and the dev warning names the fix. Nothing reaches a page that does not
+  render a worker script. `tests/e2e/script-worker.e2e.test.ts` checks it in Chromium.
 - **`denext migrate` wires Prisma on Postgres and MySQL.** The schema's `datasource` decides the
   driver adapter: `postgresql` gets `@prisma/adapter-pg` (over npm `pg`), `mysql` gets
   `@prisma/adapter-mariadb` (over npm `mariadb`, which takes a `mysql://` URL), read from the

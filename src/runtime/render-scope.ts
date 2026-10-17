@@ -22,6 +22,11 @@ export interface RenderScope {
    * generated browser entry to load the class runtime before hydrating.
    */
   usedClasses?: boolean;
+  /**
+   * The CSP nonce of this response's `<Script strategy="worker">` scripts (see
+   * `scriptWorkerNonce` in script.ts), minted on first use; the document's CSP lists it.
+   */
+  scriptNonce?: string;
 }
 
 // The out-of-request fallback is keyed on globalThis so an inlined next-compat runtime copy
