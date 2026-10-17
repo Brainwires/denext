@@ -22,6 +22,7 @@ import {
   toolchainRuntimeFlags,
 } from "./self-exec.ts";
 import { loadDenoToolchainPin, resolveDenoToolchain } from "../build/deno-toolchain.ts";
+import { applyNativeCheckEngine } from "../build/native-check.ts";
 import { denoPathEnv } from "./deno-path.ts";
 import { resolveProject } from "../build/paths.ts";
 import {
@@ -559,6 +560,16 @@ export async function runVerb(
   entry = entryModuleUrl;
   const command = await materializeCommand(parsed);
   if (await toolchainGate(command, ctx)) return;
+  // On the toolchain now: its type checking runs natively unless the compiler is unverified or the
+  // project opts out (src/build/native-check.ts) — decided before the verb starts any Deno.
+  const standalone = isStandaloneBinary();
+  if (toolchainApplies(command, ctx.positionals[0], standalone)) {
+    // A compiled executable's children run the toolchain it handed them (its marker).
+    const running = standalone
+      ? Deno.env.get("DENEXT_TOOLCHAIN_ACTIVE") ?? Deno.version.deno
+      : Deno.version.deno;
+    await applyNativeCheckEngine({ running }).catch(() => {});
+  }
   if (await moduleGate(command, ctx)) return;
   await noticeShadow(command, cwd);
   // Cargo-style build locks, taken here — in the process that runs the verb, after any re-exec —

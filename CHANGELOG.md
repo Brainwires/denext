@@ -27,6 +27,17 @@ and this project adheres to
   too) for replicas built separately; an edited or forged token is an unknown action. Nothing
   changes in the browser: the values ride the action's reference id. Before, an inline action that
   read a local was a build error.
+- **Type checking on the native TypeScript 7 compiler.** From the Deno toolchain release that ships
+  it, `denext check`, the dev type-check overlay, `denext test` and every other command that
+  type-checks run TypeScript 7.0.2's native compiler (`tsgo`), carried in the toolchain archive's
+  `typescript-check/` beside `deno`: installed only when its binary and every file of the directory hash to the
+  pin (`deno-toolchain-pin.json`'s `tsgo`), never downloaded from npm, and listed by
+  `denext toolchain status`. A cold check of denext's own entry points takes about half the time
+  of the in-process TypeScript 6.0.3; an unchanged project still hits Deno's check cache.
+  `DENEXT_NATIVE_CHECK=0` (or Deno's `DENO_CHECK_ENGINE=tsc` / `--check-engine=tsc`) keeps the
+  in-process checker, and denext picks it by itself, with one warning, when the toolchain's
+  compiler failed verification. The explanations of type errors read the native output, related
+  information included.
 
 ### Changed
 

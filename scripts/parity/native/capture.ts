@@ -33,8 +33,9 @@ export async function captureReal(
 ): Promise<Captured> {
   const dir = await Deno.makeTempDir({ prefix: "denext_parity_native_" });
   try {
-    // typescript is the extractor's own dependency; pin a major so resolution is stable.
-    const dependencies = { ...deps, typescript: "^5" };
+    // typescript is the extractor's own dependency: 7.0.x, whose IPC API the extractor speaks
+    // (typescript/unstable/sync), pinned to the minor until that API settles.
+    const dependencies = { ...deps, typescript: "~7.0.2" };
     await Deno.writeTextFile(
       `${dir}/package.json`,
       JSON.stringify(

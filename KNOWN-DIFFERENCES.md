@@ -484,6 +484,22 @@ it differs from v4 itself:
 The `next-auth` parity check (`tests/react-parity.test.ts`) holds these modules to both
 `next-auth@beta` (v5) and `next-auth@4`.
 
+## Type checking (TypeScript 7)
+
+On a Deno toolchain that type-checks natively (see `denext toolchain status`), type errors come
+from TypeScript 7.0's compiler rather than `tsc` 6:
+
+- Union types print sorted (TypeScript 7's stable type ordering): `"dark" | "light"` where `tsc` 6
+  printed `"light" | "dark"`, so a "use one of" suggestion lists them in that order.
+- TypeScript 7.0.2 rejects a regular expression character-class range bounded by a literal
+  (unescaped) character above U+07FF with TS1516; write the escape (`\uD7FF`) instead.
+- The check writes a generated `tsconfig.json` and the dependency types it needs into the project's
+  `.deno/` (with its own `.gitignore`).
+- A graph the stock project model can't express yet (sloppy imports, `--ext`, `text` / `bytes`
+  imports, `@deno-types` / `X-TypeScript-Types` redirects, CommonJS modules, code blocks checked
+  with `--doc`, a Vitest or Jest config's aliases, a custom JSR registry) is checked by the
+  in-process TypeScript 6.0.3, as before. `DENEXT_NATIVE_CHECK=0` selects it for everything.
+
 ## Security posture — safe defaults
 
 Deliberate **safe defaults** that differ from Next's, each with a one-line

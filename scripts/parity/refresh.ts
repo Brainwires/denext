@@ -35,8 +35,9 @@ async function captureReal(
       realDependencySpec(p, pinned[p] ?? holds[p] ?? REAL_PACKAGE_TAGS[p] ?? "latest"),
     ]),
   );
-  // typescript is the extractor's own dependency; pin a major so resolution is stable.
-  deps["typescript"] = "^5";
+  // typescript is the extractor's own dependency: 7.0.x, whose IPC API (typescript/unstable/sync)
+  // the extractor speaks; pinned to the minor until that API settles.
+  deps["typescript"] = "~7.0.2";
   await Deno.writeTextFile(
     `${dir}/package.json`,
     JSON.stringify({ name: "denext-parity-real", private: true, dependencies: deps }, null, 2),

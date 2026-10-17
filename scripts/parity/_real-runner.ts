@@ -10,6 +10,6 @@
 import { extractRealSurfaces, readVersions } from "./extract-real.ts";
 
 const workDir = Deno.args[0] ?? Deno.cwd();
-const surfaces = extractRealSurfaces(workDir);
+const surfaces = await extractRealSurfaces(workDir);
 const versions = readVersions(workDir);
 console.log(JSON.stringify({ versions, surfaces }));
