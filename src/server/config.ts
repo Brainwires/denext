@@ -2024,6 +2024,16 @@ export interface DenextConfig {
    */
   optimizePackageImports?: string[] | false;
   /**
+   * Run `<Script strategy="worker">` in a web worker through Partytown, as Next.js does (its
+   * `experimental.nextScriptWorkers`, honored with a dev warning when this field is absent).
+   * The app installs Partytown itself — `@qwik.dev/partytown`, or Next's
+   * `@builder.io/partytown`, in `node_modules` — and `denext dev` / `build` / `export` serve its
+   * files from the app's own origin under `/_denext/~partytown/`, so the strict default CSP
+   * needs no opt-in. Off (the default), or with no Partytown installed, worker scripts run on
+   * the main thread as `afterInteractive`, with a dev warning naming the fix.
+   */
+  nextScriptWorkers?: boolean;
+  /**
    * Module aliases for the esbuild bundles, optionally sensitive to the importing file, as
    * Metro's `resolveRequest` and Vite's `resolve.alias` express them. A key is an import
    * specifier, matched exactly; its value is where that import goes: a package or package
@@ -2407,6 +2417,11 @@ export interface ExperimentalConfig {
    * for migrated Next apps. The top-level field wins.
    */
   cacheLife?: Record<string, CacheLifeProfile>;
+  /**
+   * @deprecated Next.js's spelling of the top-level `nextScriptWorkers`, kept as an obsolete
+   * alias for migrated Next apps. The top-level field wins.
+   */
+  nextScriptWorkers?: boolean;
 }
 
 /**

@@ -978,7 +978,7 @@ const NEXT_DROP_GUIDANCE: Record<string, string> = {
   compiler: "", // SWC/Babel compiler options don't apply to Deno's toolchain.
   swcMinify: "", // minification is handled by the denext build, always on for prod.
   experimental:
-    "Next experimental flags have no denext equivalent — except `ppr`/`useCache`/`dynamicIO`, which map to top-level `cacheComponents: true`, `cacheLife`, which is carried to top-level `cacheLife`, and `optimizePackageImports`, which is top-level `optimizePackageImports` (lucide-react, date-fns, … are optimized by default).",
+    "Next experimental flags have no denext equivalent — except `ppr`/`useCache`/`dynamicIO`, which map to top-level `cacheComponents: true`, `cacheLife`, which is carried to top-level `cacheLife`, `optimizePackageImports`, which is top-level `optimizePackageImports` (lucide-react, date-fns, … are optimized by default), and `nextScriptWorkers`, which is carried to top-level `nextScriptWorkers` (Partytown stays the app's own dependency).",
   poweredByHeader: "", // denext never emits an X-Powered-By header.
   productionBrowserSourceMaps: "", // source-map emission is governed by the denext build.
 };
@@ -1021,6 +1021,8 @@ if (cfg && typeof cfg === "object") {
       JSON.stringify(life, (_k, v) => v === Infinity ? ${JSON.stringify(INFINITY_MARKER)} : v),
     );
   }
+  // \`<Script strategy="worker">\`'s Partytown flag: experimental in Next, top-level here.
+  if (cfg.experimental?.nextScriptWorkers === true) out.fields.nextScriptWorkers = true;
   for (const fn of RULES) {
     if (typeof cfg[fn] === "function") {
       try { out.rules[fn] = await cfg[fn](); } catch { /* skip a rule fn that throws */ }

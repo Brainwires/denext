@@ -162,6 +162,32 @@ Deno.test("next.config cacheLife (top-level or Next 15's experimental) carries, 
   }
 });
 
+Deno.test("next.config experimental.nextScriptWorkers carries to top-level nextScriptWorkers", async () => {
+  const dir = await tmp("mig_script_workers");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "app",
+        dependencies: { react: "19.0.0", "@builder.io/partytown": "0.10.3" },
+      }),
+    );
+    await Deno.writeTextFile(join(dir, "package-lock.json"), "{}\n");
+    await Deno.mkdir(join(dir, "app"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "next.config.mjs"),
+      `export default { experimental: { nextScriptWorkers: true, typedRoutes: true } };\n`,
+    );
+    await migrateProject(dir);
+    const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assertStringIncludes(cfg, "  nextScriptWorkers: true,");
+    assert(!cfg.includes("typedRoutes"), "only the honored experimental key is carried");
+    assert(!/^\s*experimental:/m.test(cfg), "no experimental block is written");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("migrate is idempotent — a second run produces byte-identical generated files", async () => {
   const dir = await tmp("mig_idem");
   try {

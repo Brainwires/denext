@@ -644,20 +644,38 @@ every `--platform` target included.
   baseline (`"all"` bakes `--allow-all`). See
   [Deployment targets](/docs/deployment-targets#a-single-binary-with-denext-build---compile).
 
+- **`nextScriptWorkers`** — `boolean` (default `false`). Next.js's `experimental.nextScriptWorkers`
+  (that spelling is honored with a dev warning): `<Script strategy="worker">` runs in a web worker
+  through [Partytown](https://partytown.qwik.dev/), which the app installs (`@qwik.dev/partytown`,
+  or Next's `@builder.io/partytown`, in `node_modules`: `deno add npm:@qwik.dev/partytown` with
+  `"nodeModulesDir": "auto"`, or your package manager). `denext dev`, `denext build` and
+  `denext export` publish its files under `/_denext/~partytown/` (below `basePath`) on the app's
+  own origin, plus a `boot.js` holding Next's inline config and snippet, so it works under the
+  strict default CSP with no `workerSrc` or `scriptSrc` opt-in. App Router pages are supported
+  (Next limits it to `pages/`), and a worker script a client component renders later, on a page
+  that loaded `boot.js`, is handed to Partytown too (on any other page it takes the fallback).
+  Partytown's own settings go on `window.partytown` before `boot.js` runs (its `lib` defaults to
+  denext's path). Without the flag, or with no Partytown installed, worker scripts run on the
+  main thread as `afterInteractive` and dev warns with the fix; Next fails the build in the second
+  case. Partytown's [trade-offs](https://partytown.qwik.dev/trade-offs) apply: a cross-origin
+  script is fetched from the worker and needs CORS, and the code it runs is outside the page's
+  CSP.
+
 > **`experimental` is superseded.** Every key denext shipped under it is a
-> top-level field now. Next.js's own spellings stay readable as obsolete
-> aliases for migrated Next apps — `experimental.reactCompiler` →
-> `reactCompiler`, `experimental.cacheComponents` → `cacheComponents` and
-> `experimental.optimizePackageImports` → `optimizePackageImports` — honored
-> when the top-level field is absent (the top-level one wins when both are
-> set), each with a dev warning naming the new field. denext's own former keys
-> were **removed in 3.0** and are a config error naming their replacement:
+> top-level field now. Next.js's own spellings stay readable as obsolete aliases
+> for migrated Next apps — `experimental.reactCompiler` → `reactCompiler`,
+> `experimental.cacheComponents` → `cacheComponents`,
+> `experimental.optimizePackageImports` → `optimizePackageImports` and
+> `experimental.nextScriptWorkers` → `nextScriptWorkers` — honored when the
+> top-level field is absent (the top-level one wins when both are set), each
+> with a dev warning naming the new field. denext's own former keys were
+> **removed in 3.0** and are a config error naming their replacement:
 > `experimental.compiler` → `reactCompiler`, `experimental.asyncContext` →
 > `asyncContext`, `experimental.features` → `features`,
 > `experimental.nodeResolve` → `nodeResolve`. `experimental.streaming` →
-> `streaming` and `experimental.live` → `live` are no longer read at all —
-> move the value up. An unknown `experimental.*` key warns with a
-> did-you-mean, like a top-level one.
+> `streaming` and `experimental.live` → `live` are no longer read at all — move
+> the value up. An unknown `experimental.*` key warns with a did-you-mean, like
+> a top-level one.
 
 ## Config schema
 

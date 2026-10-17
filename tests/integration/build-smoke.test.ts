@@ -270,6 +270,8 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     ["DOMParser", "full-HTML soft navigation (nav-document.ts)"],
     // The class-runtime-unavailable text is reconciler code 5's full text (errors.ts).
     ["class components are disabled", "reconciler error texts"],
+    // `<Script strategy="worker">`'s Partytown markup rides <Script> (0 bytes unless imported).
+    ["text/partytown", "the Script worker strategy"],
   ];
   let shared = "";
   for await (const e of Deno.readDir(clientDir)) {

@@ -65,6 +65,7 @@ const MOVED_EXPERIMENTAL_KEYS: ReadonlyMap<string, { to: string; honored: boolea
   ["cacheLife", { to: "cacheLife", honored: true }], // Next 15's spelling
   ["reactCompiler", { to: "reactCompiler", honored: true }], // Next 15's spelling
   ["optimizePackageImports", { to: "optimizePackageImports", honored: true }], // Next's spelling
+  ["nextScriptWorkers", { to: "nextScriptWorkers", honored: true }], // Next's spelling
 ]);
 
 /**

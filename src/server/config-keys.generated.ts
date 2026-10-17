@@ -56,6 +56,7 @@ export const CONFIG_KEYS = [
   "asyncContext",
   "features",
   "optimizePackageImports",
+  "nextScriptWorkers",
   "resolveAlias",
   "momentumSafeScroll",
   "lists",
@@ -81,4 +82,5 @@ export const EXPERIMENTAL_KEYS = [
   "optimizePackageImports",
   "cacheComponents",
   "cacheLife",
+  "nextScriptWorkers",
 ] as const;

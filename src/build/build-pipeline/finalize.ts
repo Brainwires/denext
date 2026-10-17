@@ -18,6 +18,7 @@ import { serializeBoundary } from "../module-graph.ts";
 import { collectPageFontEntries } from "../pipeline-shared.ts";
 import { precompressDir } from "../precompress.ts";
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "../self-host-fonts.ts";
+import { PARTYTOWN_BUILD_DIR, preparePartytown } from "../partytown.ts";
 import { type BuildContext, log, timed } from "./context.ts";
 
 /**
@@ -201,6 +202,13 @@ export async function finalizeBuild(
 ): Promise<void> {
   const publicEnvKeys = await timed("publicEnvKeys", () => collectPublicEnvKeys(ctx.clientDir));
   const fonts = await timed("selfHostPageFonts", () => selfHostPageFonts(ctx));
+  // `<Script strategy="worker">`: the app's Partytown, swapped in with the client dir.
+  await timed("partytown", () =>
+    preparePartytown(
+      ctx.paths.config,
+      ctx.projectDir,
+      join(ctx.clientDir, PARTYTOWN_BUILD_DIR),
+    ));
   const serverCopies = await timed(
     "serverCopies",
     () => buildServerCopies(ctx.paths, ctx.compat, ctx.css?.importMap),

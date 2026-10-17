@@ -517,6 +517,14 @@ or weaker than ideal.
    mints multi-audience tokens without `azp` can opt back into membership with
    `strictAudience: false`.
 
+An opt-in with a security trade-off, not a gap: **`nextScriptWorkers`** runs `<Script
+strategy="worker">` through the app's Partytown. The page itself still runs only same-origin
+`script-src 'self'` code (`/_denext/~partytown/boot.js` and its service worker), but the code
+Partytown runs in its worker — a `<script type="text/partytown">`'s source, fetched or inline —
+is outside the page's CSP, and anything that can inject such an element into a page that loads
+`boot.js` gets it run there. What that code does to the page goes through Partytown's proxy and
+is still subject to the page's CSP. Turn it on only for scripts you would allow in `scriptSrc`.
+
 The former backlog of parity checks is complete — each is now a case in
 `tests/nextjs-cve-parity.test.ts` or `tests/safe-fetch.test.ts`; see the
 `Security` sections of the changelog, 0.12.0 → 2.0.0.
