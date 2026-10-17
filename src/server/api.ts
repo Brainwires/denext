@@ -36,6 +36,8 @@ import { safeRedirectLocation } from "./config.ts";
 import { decodeWire, WIRE_HEADER, WireCodecError } from "../runtime/wire-codec.ts";
 import {
   applyCors,
+  BATCH_CORS_HEADER,
+  corsOriginAllowed,
   type CorsPolicy,
   endpointCorsPolicy,
   isPreflight,
@@ -86,7 +88,21 @@ export async function handleApi(
   const mod = (await load(match.route.filePath)) as ApiModule;
   const cors = endpointCorsPolicy(options.cors ?? null, mod, request);
   if (cors && isPreflight(request)) return preflightResponse(request, cors);
+  if (!batchItemAllowed(request, cors)) {
+    const error = { code: "cors_forbidden", status: 403, message: "origin not allowed" };
+    return Response.json({ error }, { status: 403 });
+  }
   return applyCors(request, await dispatchToHandler(mod, match, request, options), cors);
+}
+
+/**
+ * A batch item from another origin (`BATCH_CORS_HEADER`) runs only under a route policy that
+ * allows that origin: the batch passed on the app's `cors`, and a route's own `cors()` may be
+ * narrower — as a direct call's preflight would enforce.
+ */
+function batchItemAllowed(request: Request, cors: CorsPolicy | null): boolean {
+  if (request.headers.get(BATCH_CORS_HEADER) !== "1") return true;
+  return cors !== null && corsOriginAllowed(cors, request.headers.get("origin"));
 }
 
 /** Run the module's handler for the request's method (or the 405 / HEAD-from-GET fallbacks). */

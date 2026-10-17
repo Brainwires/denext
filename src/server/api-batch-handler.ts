@@ -30,7 +30,7 @@
 import type { RequestState } from "./pipeline-state.ts";
 import { finalize } from "./pipeline-state.ts";
 import { verifyOrigin } from "./origin-check.ts";
-import { corsCredentialless } from "./cors.ts";
+import { BATCH_CORS_HEADER, corsCredentialless } from "./cors.ts";
 import { originOptions, reportRequestError } from "./app-config.ts";
 import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
 import { requestOrigin } from "./absolute-url.ts";
@@ -107,7 +107,11 @@ export async function handleApiBatch(
   if (request.headers.get(BATCH_ITEM_HEADER)) {
     return finalize(state, batchError(400, "nested batch"));
   }
-  if (!verifyOrigin(request, config) && !corsCredentialless(request, state.app.cors ?? null)) {
+  // A batch let in by the app's `cors` alone (another origin, no cookie) runs each item under
+  // that item's route policy too (`BATCH_CORS_HEADER`): a route whose own `cors()` leaves the
+  // origin out is no more reachable through the batch than directly.
+  const crossOrigin = !verifyOrigin(request, config);
+  if (crossOrigin && !corsCredentialless(request, state.app.cors ?? null)) {
     return finalize(state, batchError(403, "forbidden"));
   }
   if (request.headers.get(API_BATCH_HEADER) !== "1") {
@@ -125,7 +129,7 @@ export async function handleApiBatch(
     config.apiBatch?.mutations !== false,
   );
   if (items instanceof Response) return finalize(state, items);
-  const results = await runItems(state, items, cfg, runSub);
+  const results = await runItems(state, items, cfg, runSub, crossOrigin);
   return finalize(state, batchResponse(results));
 }
 
@@ -265,6 +269,7 @@ async function runItems(
   items: ResolvedItem[],
   cfg: BatchCaps,
   runSub: SubRequestRunner,
+  crossOrigin: boolean,
 ): Promise<BatchResult[]> {
   const acquire = gateFor(state.app, cfg);
   // One budget for the whole batch: N items × the per-item cap must not be N× the memory.
@@ -273,7 +278,12 @@ async function runItems(
     let release: (() => void) | null = null;
     try {
       release = await acquire();
-      return await runItem(state, item, cfg.maxItemResponseBytes, budget, runSub);
+      return await runItem(
+        state,
+        item,
+        { maxBytes: cfg.maxItemResponseBytes, budget, crossOrigin },
+        runSub,
+      );
     } catch (err) {
       return itemFailure(state, item, err);
     } finally {
@@ -301,8 +311,12 @@ function phasesOf(items: ResolvedItem[]): ResolvedItem[][] {
  * its allowlisted headers, and the batch's verified `Origin` (else `Referer`) — the proof the
  * route's own CSRF check reads.
  */
-function itemHeaders(state: RequestState, item: ResolvedItem): Headers {
+function itemHeaders(state: RequestState, item: ResolvedItem, crossOrigin: boolean): Headers {
   const headers = new Headers();
+  if (crossOrigin) {
+    headers.set(BATCH_CORS_HEADER, "1");
+    headers.set("origin", state.request.headers.get("origin")!);
+  }
   if (!isBatchMutation(item.m)) return headers;
   if (item.b !== undefined) headers.set("content-type", "application/json");
   if (item.benc === 1) headers.set("x-denext-wire", "1");
@@ -314,12 +328,21 @@ function itemHeaders(state: RequestState, item: ResolvedItem): Headers {
   return headers;
 }
 
+/** How one item runs: its response caps, and whether the batch came from another origin. */
+interface ItemRun {
+  /** The item's response cap. */
+  maxBytes: number;
+  /** The batch's shared response budget. */
+  budget: { left: number };
+  /** Let in by the app's `cors` (another origin, no cookie). */
+  crossOrigin: boolean;
+}
+
 /** Run one item as a sub-request and package its response. */
 async function runItem(
   state: RequestState,
   item: ResolvedItem,
-  maxBytes: number,
-  budget: { left: number },
+  { maxBytes, budget, crossOrigin }: ItemRun,
   runSub: SubRequestRunner,
 ): Promise<BatchResult> {
   const request = synthesizeSubRequest({
@@ -328,29 +351,42 @@ async function runItem(
     parent: state.request,
     parentCtx: state.ctx,
     idSuffix: `#${item.id}`,
-    extraHeaders: itemHeaders(state, item),
+    extraHeaders: itemHeaders(state, item, crossOrigin),
     body: item.b,
     inheritHost: isBatchMutation(item.m),
   });
   const res = await runSub(request, state.ctx);
   for (const sc of res.headers.getSetCookie()) state.ctx.outgoingHeaders.append("set-cookie", sc);
-  const cap = Math.min(maxBytes, Math.max(0, budget.left));
-  const text = await readResponseText(res, cap);
-  if (text === null) return { id: item.id, s: 500, t: "response too large" };
-  // Items run concurrently: charge the shared budget on completion and let it decide — the
-  // item that overdraws it is the one that is too large, whichever finished first.
-  budget.left -= new TextEncoder().encode(text).byteLength;
-  if (budget.left < 0) return { id: item.id, s: 500, t: "response too large" };
   const h: Record<string, string> = {};
   for (const name of BATCH_RESULT_HEADERS) {
     const v = res.headers.get(name);
     if (v !== null) h[name] = v;
   }
+  const cap = Math.min(maxBytes, Math.max(0, budget.left));
+  const text = await readResponseText(res, cap);
+  // Items run concurrently: charge the shared budget on completion and let it decide — the
+  // item that overdraws it is the one that is too large, whichever finished first.
+  if (text !== null) budget.left -= new TextEncoder().encode(text).byteLength;
+  if (text === null || budget.left < 0) return tooLarge(item, res.status, h);
   const result: BatchResult = { id: item.id, s: res.status, h };
   if (text.length > 0) result.t = text;
   if (res.headers.get("x-denext-wire") === "1") result.enc = 1;
   return result;
 }
+
+/**
+ * An item whose response is over its cap. A read is a 500 (asking again is harmless); a
+ * mutation already ran, so it keeps its own status with the body dropped (and says so) — a 5xx
+ * would invite a retry that applies the change twice.
+ */
+function tooLarge(item: ResolvedItem, status: number, h: Record<string, string>): BatchResult {
+  if (!isBatchMutation(item.m)) return { id: item.id, s: 500, t: "response too large" };
+  const { "content-type": _dropped, ...rest } = h;
+  return { id: item.id, s: status, h: { ...rest, [BATCH_DROPPED_HEADER]: "response too large" } };
+}
+
+/** On a mutation's result whose response body was over the cap: why the body is missing. */
+const BATCH_DROPPED_HEADER = "x-denext-batch-dropped";
 
 /**
  * Read a response body under `maxBytes`, STREAMING — the cap is enforced as chunks arrive, so a

@@ -11,7 +11,7 @@ import type { RouteManifest } from "../src/router/manifest.ts";
 import type { ApiModule } from "../src/server/types.ts";
 import type { IsoNavPayload } from "../src/server/document.ts";
 import { json } from "../src/server/typed-response.ts";
-import { createApi, csrf } from "../src/server/mod.ts";
+import { cors, createApi, csrf } from "../src/server/mod.ts";
 import { API_BATCH_HEADER, API_BATCH_PATH } from "../src/runtime/api-batch-protocol.ts";
 import { createApiClient } from "../src/runtime/api-client.ts";
 import { useApi } from "../src/client/use-api.ts";
@@ -45,6 +45,21 @@ function orderedApp(extra: Record<string, unknown> = {}) {
         log.push("reset");
         return new Response(null, { status: 204 });
       },
+    },
+    // A route whose own policy is narrower than the app's: only `https://only.example`.
+    "narrow.ts": {
+      POST: createApi().use(cors({ origins: ["https://only.example"] })).define({}, () => {
+        log.push("narrow");
+        return { ok: true };
+      }),
+    },
+    // A write whose answer is bigger than a small item cap.
+    "big.ts": {
+      POST: () => {
+        store.n += 1;
+        return json({ pad: "x".repeat(2048) });
+      },
+      GET: () => json({ pad: "x".repeat(2048) }),
     },
     "guarded.ts": {
       // The route's own CSRF check (double submit): it needs the batch's Origin and the
@@ -120,6 +135,47 @@ Deno.test("api batch mutations: the route's own CSRF check sees the batch Origin
     origin: "http://evil.example",
   }));
   assertEquals(cross.status, 403);
+});
+
+Deno.test("api batch: a cookieless batch from an app-cors origin runs no item a route's own cors() refuses", async () => {
+  const PARTNER = "https://partner.example";
+  const { app, log } = orderedApp({ cors: { origins: [PARTNER, "https://only.example"] } });
+  const cross = (origin: string) => {
+    const req = batch([
+      { id: 0, m: "POST", p: "/api/narrow", b: "{}" },
+      { id: 1, m: "GET", p: "/api/count" },
+    ], { origin, authorization: "Bearer t" });
+    req.headers.delete("cookie"); // nothing ambient: the app's cors may let it in
+    return req;
+  };
+  const res = await app(cross(PARTNER));
+  assertEquals(res.status, 200, "the app's cors lets the batch in");
+  const { r } = await res.json();
+  assertEquals(r[0].s, 403, "the route's own policy leaves the origin out");
+  assertEquals(JSON.parse(r[0].t).error.code, "cors_forbidden");
+  assertEquals(r[1].s, 200, "a route under the app's policy still answers");
+  assertEquals(log.includes("narrow"), false, "the refused handler never ran");
+  const allowed = await (await app(cross("https://only.example"))).json();
+  assertEquals(allowed.r[0].s, 200);
+  // A same-origin batch is unaffected.
+  assertEquals(
+    (await (await app(batch([{ id: 0, m: "POST", p: "/api/narrow", b: "{}" }])))
+      .json()).r[0].s,
+    200,
+  );
+});
+
+Deno.test("api batch: a mutation whose answer is over the cap keeps its status (never a 5xx to retry)", async () => {
+  const { app, store } = orderedApp({ apiBatch: { maxItemResponseBytes: 1000 } });
+  const { r } = await (await app(batch([
+    { id: 0, m: "POST", p: "/api/big" },
+    { id: 1, m: "GET", p: "/api/big" },
+  ]))).json();
+  assertEquals(store.n, 1, "the write ran");
+  assertEquals(r[0].s, 200, "its own status, not a 500");
+  assertEquals(r[0].t, undefined);
+  assertEquals(r[0].h["x-denext-batch-dropped"], "response too large");
+  assertEquals(r[1].s, 500, "a read over the cap stays a 500 (safe to ask again)");
 });
 
 Deno.test("api batch mutations: malformed mutation items and apiBatch.mutations:false fail the whole batch", async () => {

@@ -360,6 +360,15 @@ and this project adheres to
   `__proto__` is an ordinary branch. `t.rich` / `t.markup` look up tag handlers the same way, so
   `<toString>` is a tag without a handler. An `integer-width` past 21 digits (more than `Intl`
   allows) is ignored instead of throwing.
+- **Security: a batch from another origin reaches only routes whose own policy allows it.** A
+  cookieless API batch from an origin the app's `cors` allows ran every item, mutations included,
+  even on a route whose own `cors()` (or `export const cors`) leaves that origin out, and handed
+  back the answer — what that route's preflight refuses on a direct call. Such an item is now a
+  403 `cors_forbidden` and its handler does not run; a same-origin batch is unchanged.
+- **A batched mutation whose answer is over the item cap keeps its status.** It was reported as
+  a 500 although the write had run, so a client that retries a 5xx applied it twice. It now
+  carries the route's own status with no body and `x-denext-batch-dropped: response too large`;
+  an oversized read is still a 500.
 
 ### Changed
 
