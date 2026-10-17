@@ -211,6 +211,7 @@ Deno.test("every row property of the eight list fields gets a typed control", ()
     help: "text",
     valueName: "text",
     repeatable: "toggle",
+    optionalValue: "toggle",
   });
   assertRowKinds(["commands", "0", "positionals"], {
     name: "text",
