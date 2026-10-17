@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Added
 
+- **`denext migrate` wires Prisma on Postgres and MySQL.** The schema's `datasource` decides the
+  driver adapter: `postgresql` gets `@prisma/adapter-pg` (over npm `pg`), `mysql` gets
+  `@prisma/adapter-mariadb` (over npm `mariadb`, which takes a `mysql://` URL), read from the
+  variable the datasource's `url = env("…")` names. Neither needs the `links` shim the SQLite path
+  uses, and the `prisma:setup` task installs, generates and runs `prisma migrate deploy` (or
+  `db push`), refusing early when the URL is not set. A `sqlserver` or `mongodb` datasource is no
+  longer handed the SQLite adapter: its constructions are left as they are, with a note.
+  `tests/e2e/prisma-server-db.e2e.test.ts` runs a migrated app against live databases.
 - **Deno Desktop runtime 2.9.7-denext.21, pinned** (the toolchain moves with it). What it brings to
   denext apps is below; [the runtime releases](https://denext.dev/docs/desktop-runtime#runtime-releases)
   list the rest.
@@ -333,6 +341,13 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext build` and `denext export` exit when they are done** even when an app module keeps the
+  event loop alive at its top level (a database pool that connects when it is created, such as
+  Prisma's MariaDB adapter, a Redis client, an interval). They used to finish and then wait forever.
+- **A page that reaches a database driver no longer ships as a hydrated route.** The static-route
+  check read `const onError = …` and `this.onClose = …` in a driver's code (Prisma's
+  `@prisma/adapter-pg`) as JSX event props, so the page was bundled for the browser and the build
+  failed on the driver's `node:` imports. Only a JSX prop counts now.
 - **The `generic-host` deploy preset checks the options it writes into the systemd unit and the
   nginx / Caddy files.** `domain`, `directory`, `deno`, `user`, `port` and `maxConnections` went
   in verbatim, so a value with a newline or a `;` (from a config built from the environment, say)

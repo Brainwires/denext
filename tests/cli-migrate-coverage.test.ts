@@ -149,3 +149,48 @@ Deno.test("migrate --json prints the result as one JSON document (no banner)", a
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/** A Next app on Prisma whose datasource is `provider`, with a seed and a client module. */
+async function prismaApp(provider: string): Promise<string> {
+  const dir = await nextApp(false);
+  const pkg = JSON.parse(await Deno.readTextFile(join(dir, "package.json")));
+  pkg.dependencies["@prisma/client"] = "^5.22.0";
+  pkg.prisma = { seed: "tsx prisma/seed.ts" };
+  await Deno.writeTextFile(join(dir, "package.json"), JSON.stringify(pkg));
+  await Deno.mkdir(join(dir, "prisma"));
+  await Deno.writeTextFile(
+    join(dir, "prisma/schema.prisma"),
+    `datasource db {\n  provider = "${provider}"\n  url      = env("DATABASE_URL")\n}\n`,
+  );
+  const client =
+    `import { PrismaClient } from "@prisma/client";\nexport const db = new PrismaClient();\n`;
+  await Deno.writeTextFile(join(dir, "prisma/seed.ts"), client);
+  await Deno.writeTextFile(join(dir, "app/db.ts"), client);
+  return dir;
+}
+
+for (
+  const [provider, adapter, setup] of [
+    ["sqlite", "@prisma/adapter-better-sqlite3", "bundles the compat, installs"],
+    ["postgresql", "@prisma/adapter-pg", "(installs, `prisma generate`"],
+    ["sqlserver", null, "(installs, `prisma generate`"],
+  ] as const
+) {
+  Deno.test(`migrate reports the Prisma wiring for a ${provider} datasource`, async () => {
+    const dir = await prismaApp(provider);
+    const cap = capture();
+    try {
+      await migrateCommand.run(makeCtx({ positionals: [dir] }));
+    } finally {
+      cap.restore();
+      await Deno.remove(dir, { recursive: true });
+    }
+    const out = cap.logs.join("\n");
+    assertStringIncludes(out, `Prisma detected (${provider}) — wired to the ESM/Deno client`);
+    if (adapter) assertStringIncludes(out, `+ ${adapter} driver adapter`);
+    else assert(!out.includes("driver adapter (no"), "no adapter is claimed for an unwired one");
+    assertStringIncludes(out, "seed + test tooling on the Deno client too");
+    assertStringIncludes(out, "seed with `denext task prisma:seed`");
+    assertStringIncludes(out, setup);
+  });
+}

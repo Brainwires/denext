@@ -11,11 +11,14 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { migrateProject } from "../src/build/migrate.ts";
+import { readDatasource, wiredProvider } from "../src/build/prisma-migrate.ts";
 
 const REPO_ROOT = fromFileUrl(new URL("..", import.meta.url));
 
 /** Write a minimal App-Router + Prisma app into a fresh temp dir; return its path. */
-async function scaffoldPrismaApp(): Promise<string> {
+async function scaffoldPrismaApp(
+  datasource = `provider = "sqlite"\n  url      = env("DATABASE_URL")`,
+): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext-prisma-" });
   await Deno.writeTextFile(
     join(dir, "package.json"),
@@ -29,7 +32,7 @@ async function scaffoldPrismaApp(): Promise<string> {
   await Deno.mkdir(join(dir, "prisma"), { recursive: true });
   await Deno.writeTextFile(
     join(dir, "prisma", "schema.prisma"),
-    `datasource db {\n  provider = "sqlite"\n  url      = env("DATABASE_URL")\n}\n\n` +
+    `datasource db {\n  ${datasource}\n}\n\n` +
       `generator client {\n  provider = "prisma-client-js"\n}\n\n` +
       `model Note {\n  id Int @id @default(autoincrement())\n  title String\n}\n`,
   );
@@ -268,3 +271,133 @@ Deno.test("prisma migrate: generated start task uses -A (it re-execs a child den
   assertStringIncludes(deno.tasks?.start ?? "", "-A");
   await Deno.remove(dir, { recursive: true });
 });
+
+// ── Postgres / MySQL datasources: the database's own driver adapter, no `links` shim ──
+
+const PG_DATASOURCE = `provider  = "postgresql"\n  url       = env("POSTGRES_PRISMA_URL")\n` +
+  `  directUrl = env("POSTGRES_URL_NON_POOLING")`;
+
+Deno.test("prisma migrate: a postgresql datasource gets @prisma/adapter-pg, no links shim", async () => {
+  const dir = await scaffoldPrismaApp(PG_DATASOURCE);
+  const r = await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  assertEquals(r.prisma?.provider, "postgresql");
+  assertEquals(r.prisma?.adapter, "@prisma/adapter-pg");
+  assertEquals(r.prisma?.clientModules, ["app/db.server.ts"]);
+  assertEquals(r.prisma?.warnings, []);
+  const db = await read(dir, "app/db.server.ts");
+  assertStringIncludes(db, `import { PrismaPg as __PrismaPg } from "@prisma/adapter-pg";`);
+  // The URL comes from the variable the datasource names, not a hard-coded DATABASE_URL.
+  assertStringIncludes(db, `connectionString: Deno.env.get("POSTGRES_PRISMA_URL")`);
+  assertStringIncludes(db, "new PrismaClient({ adapter: __denextPrismaAdapter() })");
+  assert(!db.includes("better-sqlite3"), "no SQLite adapter for a Postgres datasource");
+  assertStringIncludes(
+    await read(dir, "tests/db-utils.ts"),
+    "new PrismaClient({ adapter: __denextPrismaAdapter(), log: [] })",
+  );
+  const deno = JSON.parse(await read(dir, "deno.json")) as {
+    nodeModulesDir?: string;
+    links?: string[];
+    imports?: Record<string, string>;
+  };
+  assertEquals(deno.nodeModulesDir, "manual");
+  assertEquals(deno.links, undefined, "pg is pure JS: no `links` substitution");
+  assertEquals(deno.imports?.["@prisma/adapter-pg"], "npm:@prisma/adapter-pg@6.19.3");
+  assert(!("@prisma/adapter-better-sqlite3" in (deno.imports ?? {})));
+  // No compat bundle: neither the patch package nor its bundle step.
+  assert(!(await exists(join(dir, "patch/better-sqlite3/package.json"))));
+  const setup = await read(dir, "scripts/denext-prisma-setup.ts");
+  assert(!setup.includes("bundle the better-sqlite3 compat"));
+  assertStringIncludes(setup, `const URL_VAR = "POSTGRES_PRISMA_URL";`);
+  assertStringIncludes(setup, "migrate", "SQL migrations are applied with `migrate deploy`");
+  // The schema's datasource (directUrl included) is left for the Prisma CLI.
+  const schema = await read(dir, "prisma/schema.prisma");
+  assertStringIncludes(schema, `directUrl = env("POSTGRES_URL_NON_POOLING")`);
+  assertStringIncludes(schema, `runtime         = "deno"`);
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: the postgres setup script type-checks and stops without a URL", async () => {
+  const dir = await scaffoldPrismaApp(PG_DATASOURCE);
+  await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  const script = join(dir, "scripts/denext-prisma-setup.ts");
+  const checked = await new Deno.Command(Deno.execPath(), {
+    args: ["check", "--no-config", "--quiet", script],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assert(checked.success, new TextDecoder().decode(checked.stderr));
+  const env = { ...Deno.env.toObject() };
+  delete env.POSTGRES_PRISMA_URL;
+  const ran = await new Deno.Command(Deno.execPath(), {
+    args: ["run", "-A", "--no-config", script],
+    cwd: dir,
+    env,
+    clearEnv: true,
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assert(!ran.success, "setup must refuse to run without the datasource URL");
+  assertStringIncludes(new TextDecoder().decode(ran.stderr), "set POSTGRES_PRISMA_URL");
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: `postgres` (Prisma's alias) wires the pg adapter too", async () => {
+  const dir = await scaffoldPrismaApp(`provider = "postgres"\n  url = env("DATABASE_URL")`);
+  const r = await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  assertEquals(r.prisma?.adapter, "@prisma/adapter-pg");
+  assertStringIncludes(await read(dir, "app/db.server.ts"), `Deno.env.get("DATABASE_URL")`);
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: a mysql datasource gets @prisma/adapter-mariadb", async () => {
+  const dir = await scaffoldPrismaApp(`provider = "mysql"\n  url      = env("DATABASE_URL")`);
+  const r = await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  assertEquals(r.prisma?.provider, "mysql");
+  assertEquals(r.prisma?.adapter, "@prisma/adapter-mariadb");
+  const db = await read(dir, "app/db.server.ts");
+  assertStringIncludes(
+    db,
+    `import { PrismaMariaDb as __PrismaMariaDb } from "@prisma/adapter-mariadb";`,
+  );
+  assertStringIncludes(db, `new __PrismaMariaDb(Deno.env.get("DATABASE_URL") ?? "")`);
+  const deno = JSON.parse(await read(dir, "deno.json")) as {
+    links?: string[];
+    imports?: Record<string, string>;
+  };
+  assertEquals(deno.links, undefined);
+  assertEquals(deno.imports?.["@prisma/adapter-mariadb"], "npm:@prisma/adapter-mariadb@6.19.3");
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: an unwired provider keeps its constructions and says why", async () => {
+  const dir = await scaffoldPrismaApp(`provider = "sqlserver"\n  url = env("DATABASE_URL")`);
+  const r = await migrateProject(dir, { denextLocalPath: REPO_ROOT });
+  assertEquals(r.prisma?.adapter, null);
+  assertEquals(r.prisma?.clientModules, []);
+  assert(r.prisma?.warnings.some((w) => w.includes(`"sqlserver" has no driver adapter`)));
+  const db = await read(dir, "app/db.server.ts");
+  assertStringIncludes(db, "new PrismaClient()", "no SQLite adapter forced onto SQL Server");
+  assert(!db.includes("__denextPrismaAdapter"));
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("prisma migrate: readDatasource / wiredProvider", () => {
+  assertEquals(
+    readDatasource(`datasource db {\n  provider = "postgresql"\n  url = env("PG_URL")\n}\n`),
+    { provider: "postgresql", envVar: "PG_URL" },
+  );
+  assertEquals(
+    readDatasource(`datasource db {\n  provider = "sqlite"\n  url = "file:./dev.db"\n}`),
+    { provider: "sqlite", envVar: null },
+  );
+  assertEquals(readDatasource("model A { id Int @id }"), { provider: null, envVar: null });
+  assertEquals(wiredProvider(null), "sqlite");
+  assertEquals(wiredProvider("postgres"), "postgresql");
+  assertEquals(wiredProvider("mysql"), "mysql");
+  assertEquals(wiredProvider("mongodb"), null);
+  assertEquals(wiredProvider("cockroachdb"), null);
+});
+
+async function exists(path: string): Promise<boolean> {
+  return await Deno.stat(path).then(() => true, () => false);
+}

@@ -814,7 +814,7 @@ async function writeAppRouterDenoJson(
     // otherwise the App-Router native passes resolve npm deps via `auto`.
     nodeModulesDir: prismaWiring?.nodeModulesDir ?? "auto",
     minimumDependencyAge: DENEXT_MIN_DEP_AGE,
-    ...(prismaWiring ? { links: prismaWiring.links } : {}),
+    ...(prismaWiring?.links.length ? { links: prismaWiring.links } : {}),
     unstable: ["sloppy-imports"],
     compilerOptions: {
       jsx: "react-jsx",

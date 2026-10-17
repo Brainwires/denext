@@ -51,6 +51,26 @@ Deno.test("static: a <Link>-only page stays static (anchor works without JS)", a
   assertEquals(need, false);
 });
 
+Deno.test("static: an `onX` variable or member in a reached module is not an event prop", async () => {
+  // A server-only page reaching a database driver adapter (Prisma's `@prisma/adapter-pg` has
+  // `const onError = (err) => …` and `this.onError(e)`) must stay static: hydrating it bundles
+  // the driver for the browser, which fails the build on its `node:` imports.
+  const need = await routeNeedsHydration(
+    route("page.tsx"),
+    withSources({
+      "page.tsx": `import { db } from "./db.ts"; export default async () => <p>{await db()}</p>;`,
+      "adapter.mjs": `const onError = (err) => log(err);\nconn.on("error", onError);\n` +
+        `this.onClose = () => {};\nif (opts.onNotice === undefined) {}\n`,
+    }, ["adapter.mjs"]),
+  );
+  assertEquals(need, false);
+  const prop = await routeNeedsHydration(
+    route("page.tsx"),
+    withSources({ "page.tsx": `export default () => <input onChange = {() => 1} />;` }),
+  );
+  assertEquals(prop, true, "a spaced JSX prop still counts");
+});
+
 Deno.test("interactive: a Remix route using <Form>/useActionData forces hydration", async () => {
   // A migrated Remix route's client component reaches its interactivity through
   // `denext/remix` hooks/components (framework code, excluded from the crawl), so

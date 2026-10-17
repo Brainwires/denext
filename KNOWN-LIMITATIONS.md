@@ -225,8 +225,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **`getLoadContext` values read from the Express request are `TODO` stubs** after migration, and
   `cspNonce` is `undefined` (denext's CSP is hash-based). The synthesized `ServerBuild` is flat.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
-- **Prisma auto-migration wires SQLite only:** non-SQLite datasources need their own driver
-  adapter.
+- **Prisma auto-migration wires SQLite, Postgres and MySQL only:** a `sqlserver`, `mongodb` or
+  `cockroachdb` datasource keeps its `new PrismaClient()` unwired (SQL Server takes
+  `@prisma/adapter-mssql` by hand; Prisma 6 has no MongoDB driver adapter). Postgres runs over npm
+  `pg`, not denext's `Deno.SQL`, whose results carry no column types for a Prisma adapter.
 
 ### TanStack Start
 

@@ -229,11 +229,11 @@ function reportEffect(r: MigrateResult): void {
   );
 }
 
-/** The Prisma rewiring (ESM/Deno client + better-sqlite3 driver adapter). */
+/** The Prisma rewiring (ESM/Deno client + the datasource's driver adapter). */
 function reportPrisma(p: NonNullable<MigrateResult["prisma"]>): void {
   console.log(
-    "  ▸ Prisma detected — wired to the ESM/Deno client + better-sqlite3 driver adapter " +
-      "(no native Rust engine).",
+    `  ▸ Prisma detected (${p.provider}) — wired to the ESM/Deno client` +
+      (p.adapter ? ` + ${p.adapter} driver adapter` : "") + " (no native Rust engine).",
   );
   console.log(
     `    schema generator → prisma-client (deno) · ${p.refsRewritten.length} @prisma/client ` +
@@ -248,8 +248,9 @@ function reportPrisma(p: NonNullable<MigrateResult["prisma"]>): void {
   }
   printReviewNotes(p.warnings, 8);
   console.log(
-    `    ‼️  run \`denext task ${p.setupTask}\` ONCE (bundles the compat, installs, ` +
-      "`prisma generate` + `db push`) before `denext task build`/`dev`.",
+    `    ‼️  run \`denext task ${p.setupTask}\` ONCE (` +
+      (p.provider === "sqlite" ? "bundles the compat, installs" : "installs") +
+      ", `prisma generate` + `migrate deploy` / `db push`) before `denext task build`/`dev`.",
   );
 }
 
