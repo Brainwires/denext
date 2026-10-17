@@ -16,6 +16,7 @@ import { wrapOnLoad } from "./onload-wrap.ts";
 import { inNodeModules } from "./path-segments.ts";
 import type { Platform } from "./platform-extensions.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
+import { transformInlineServerActions } from "./inline-server-action.ts";
 
 /** Rewrite one app module's source; `null` leaves it as it is. */
 export type SourceTransform = (code: string, path: string) => Promise<string | null>;
@@ -27,6 +28,8 @@ const SOURCE_MODULE = /\.(?:[cm]?[jt]sx?)$/;
 export interface CompatTransformOptions {
   /** Apply the `"use cache"` transform (the server bundle, with `cacheComponents` on). */
   useCache?: boolean;
+  /** Hoist inline `"use server"` functions to server references (the server bundle). */
+  inlineActions?: boolean;
   /** Fold `platform` to this target in the project's own modules. */
   platform?: Platform;
   /** The project root: only modules under it are folded. */
@@ -35,15 +38,15 @@ export interface CompatTransformOptions {
 
 /**
  * The transforms denext applies to an app module after a caller plugin answered it, or `null`
- * when none is on: the `platform` fold, then `"use cache"` (each skips a module without its
- * marker before parsing).
+ * when none is on: the `platform` fold, then `"use cache"`, then the inline `"use server"` hoist
+ * (each skips a module without its marker before parsing).
  *
  * @param options Which transforms the bundle runs.
  */
 export function compatSourceTransform(options: CompatTransformOptions): SourceTransform | null {
-  const { useCache, platform, projectDir } = options;
+  const { useCache, inlineActions, platform, projectDir } = options;
   const fold = platform && projectDir ? platform : undefined;
-  if (!useCache && !fold) return null;
+  if (!useCache && !inlineActions && !fold) return null;
   return async (code, path) => {
     let out = code;
     if (fold && out.includes(PLATFORM_SPECIFIER) && isInside(path, projectDir!)) {
@@ -53,6 +56,10 @@ export function compatSourceTransform(options: CompatTransformOptions): SourceTr
     if (useCache && out.includes("use cache")) {
       const cached = await transformUseCache(out, toFileUrl(path).href);
       if (cached.changed) out = cached.code;
+    }
+    if (inlineActions && out.includes("use server")) {
+      const hoisted = await transformInlineServerActions(out, toFileUrl(path).href);
+      if (hoisted.changed) out = hoisted.code;
     }
     return out === code ? null : out;
   };

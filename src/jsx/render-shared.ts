@@ -34,7 +34,9 @@ import {
   headDedupKey,
   HOISTED_TAGS,
   hostChildren,
+  isDocumentTag,
   type ProviderScope,
+  recordDocumentAttrs,
   resolveContextType,
   serializeAttributes,
   VOID_ELEMENTS,
@@ -308,33 +310,10 @@ function hostHtml(tag: string, attrs: string, inner: string): string {
 }
 
 /**
- * Hand a root layout's `<html>`/`<body>` attributes to the document assembler (through the
- * server's request-scoped recorder), which puts them on the real document tags: nested in the
- * page container, the parser would keep only the attributes the real tag lacks — `lang` (denext
- * always sets its own) would be lost. Plain string/number values only: a React-only prop
- * (`suppressHydrationWarning`) or a handler is not an attribute.
- */
-function recordDocumentAttrs(tag: string, props: Record<string, unknown>): void {
-  if (tag !== "html" && tag !== "body") return;
-  const sink = (globalThis as {
-    __denextDocumentAttrsSink?: (part: "html" | "body", attrs: Record<string, unknown>) => void;
-  }).__denextDocumentAttrsSink;
-  if (!sink) return;
-  const attrs: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(props)) {
-    if (typeof value === "string" || typeof value === "number") attrs[name] = value;
-  }
-  sink(tag, attrs);
-}
-
-/** Tags the HTML parser drops when they are nested in the page container (content stays). */
-const DOCUMENT_TAGS = new Set(["html", "head", "body"]);
-
-/**
- * A Flight host node. A root layout's `<html>`/`<head>`/`<body>` are the exception: their HTML
- * is nested in the page container (`#__denext`), where the browser's parser drops the three tags
- * and keeps their content in place (a `<head>`'s hoisted `<title>`/`<meta>`/`<link>` are already
- * gone; its `<style>`/`<script>` stay). The Flight tree mirrors that parsed DOM — the children
+ * A Flight host node. A root layout's `<html>`/`<head>`/`<body>` are the exception: the page
+ * render emits only their content, in the page container (`#__denext`), while the document
+ * assembler writes the real tags (a `<head>`'s hoisted `<title>`/`<meta>`/`<link>` are already
+ * gone; its `<style>`/`<script>` stay in place). The Flight tree mirrors that DOM — the children
  * alone — so the client hydrates the server markup instead of re-creating the page.
  */
 export function flightHost(
@@ -343,7 +322,7 @@ export function flightHost(
   c: FlightNode[],
   key?: unknown,
 ): FlightNode {
-  return DOCUMENT_TAGS.has(tag) ? c : withFlightKey({ $: "h", t: tag, p, c }, key);
+  return isDocumentTag(tag) ? c : withFlightKey({ $: "h", t: tag, p, c }, key);
 }
 
 /**
@@ -386,6 +365,9 @@ export async function renderHostHtml(
     return "";
   }
   recordDocumentAttrs(tag, props);
+  // The page render (a head collector is active): a root layout's `<html>`/`<head>`/`<body>`
+  // are the document's own tags, which the assembler writes; only their content goes here.
+  if (head !== null && isDocumentTag(tag)) return await ops.renderChildren(children);
   if (VOID_ELEMENTS.has(tag)) return hostHtml(tag, attrs, "");
   const dangerous = dangerousInnerHtml(props, tag);
   if (dangerous !== null) return hostHtml(tag, attrs, dangerous);
@@ -451,7 +433,9 @@ export async function renderHostDual(
   }
   const inner = await r.renderChildren(children, scopes, head);
   return {
-    html: hostHtml(tag, attrs, inner.html),
+    // A root layout's document tags in the page render: their content only (see
+    // `renderHostHtml`); the Flight node is already peeled to the children.
+    html: head !== null && isDocumentTag(tag) ? inner.html : hostHtml(tag, attrs, inner.html),
     flight: flightHost(tag, p, asFlightArray(inner.flight), node.key),
   };
 }

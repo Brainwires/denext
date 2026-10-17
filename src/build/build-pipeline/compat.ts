@@ -27,7 +27,8 @@ function compatOptions(ctx: BuildContext) {
 
 /**
  * Bundle the route server modules (page/layout/…) AND every boundary island +
- * server-action module as separate entries in ONE code-split pass. As entries they
+ * server-action module (an app with no island has its action modules too) as separate
+ * entries in ONE code-split pass. As entries they
  * become their own chunks (never inlined into the page bundle), so a page's reference to
  * an island resolves — through the shared runtime chunk — to the SAME module instance
  * the SSR loader tags as a client reference. That shared identity is what lets the
@@ -35,9 +36,13 @@ function compatOptions(ctx: BuildContext) {
  */
 async function compatServerBundles(ctx: BuildContext): Promise<void> {
   const { projectDir, paths } = ctx;
+  // The crawl's boundary when no route reaches a client island: its `"use server"` modules
+  // must still be entries, or a page inlines its own copy of the action module and the copy
+  // the server tags (loaded from source) is another instance: `<form action={fn}>` then
+  // renders with no action URL, and a module importing `next/*` fails to load at startup.
   const modules = compatModuleList(
     ctx.manifest.pages,
-    ctx.boundary,
+    ctx.boundary ?? ctx.crawledBoundary,
     ctx.manifest.api,
     paths.middlewarePath,
     ctx.manifest.rootGlobalError,

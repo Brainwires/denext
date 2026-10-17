@@ -19,6 +19,7 @@ import {
 } from "./server-only-scan.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
 import { clientImportMap, type ClientImports, type ServerModules } from "./client-imports.ts";
+import { findInlineServerActions, inlineServerActionError } from "./inline-server-action.ts";
 import {
   findShippedServerModules,
   formatServerModuleLeaks,
@@ -1707,6 +1708,38 @@ async function assertNoServerModules(
 }
 
 /**
+ * Fail a bundle that shipped an app module holding an inline `"use server"` function (Next's
+ * build error, see ./inline-server-action.ts): its body, and whatever it closes over, would be
+ * served publicly. Each shipped app module (a rewritten copy read as itself) is scanned once.
+ */
+async function assertNoInlineServerActions(
+  shipped: Array<{ sources: Set<string> }>,
+  originals: Map<string, string>,
+  projectDir: string,
+): Promise<void> {
+  const raws = new Set(shipped.flatMap(({ sources }) => [...sources]));
+  const found = new Map<string, string[]>();
+  for (const raw of raws) {
+    const rel = shippedAppModule(raw, originals, projectDir);
+    if (rel === null) continue;
+    const at = await findInlineServerActions(await Deno.readTextFile(raw).catch(() => ""));
+    if (at.length > 0) found.set(rel, at);
+  }
+  if (found.size > 0) throw new Error(inlineServerActionError(found));
+}
+
+/** A shipped source's app module (project-relative; a copy as its original), or null. */
+function shippedAppModule(
+  raw: string,
+  originals: Map<string, string>,
+  projectDir: string,
+): string | null {
+  if (!/\.(?:[cm]?[jt]sx?)$/.test(raw)) return null;
+  const rel = relative(projectDir, originals.get(raw) ?? raw);
+  return rel.startsWith("..") || /(^|[\\/])node_modules[\\/]/.test(rel) ? null : rel;
+}
+
+/**
  * Fail a browser bundle that shipped server-only code — a `node:` import, a
  * `server-only` marker, or a `Deno.` access reached from a route's isomorphic tree or a
  * `"use client"` island (see {@linkcode findServerOnlyLeaks}). `deno bundle
@@ -1736,6 +1769,7 @@ async function assertNoServerOnlyLeaks(
     shippedBy.push({ label: label ?? "the app's client entry", entry: path, sources });
   }
   await assertNoServerModules(shippedBy, resolution, projectDir);
+  await assertNoInlineServerActions(shippedBy, originals, projectDir);
   const found = new Map<string, { leak: ServerOnlyLeak; entries: string[] }>();
   for (const [i, { source }] of entries.entries()) {
     const label = await generatedEntryLabel(source, projectDir);

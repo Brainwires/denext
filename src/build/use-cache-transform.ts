@@ -28,7 +28,6 @@
 // `"use cache"` instance method, and `this` / `super` / `arguments` inside a cached
 // function (a nested non-arrow function rebinds them, so it may use them).
 
-import { frameworkFileUrl } from "./bundle.ts";
 import {
   absolutizeSpecifiers,
   applyEdits,
@@ -49,7 +48,9 @@ import {
 
 /** The absolute URL generated modules import the `use cache` runtime from. */
 function runtimeUrl(): string {
-  return frameworkFileUrl("src/server/cache.ts");
+  // Relative to this module (the framework's own scheme: a file:// checkout or JSR), as
+  // `frameworkFileUrl` resolves it — without importing the bundler.
+  return new URL("../server/cache.ts", import.meta.url).href;
 }
 
 /** A short, stable module id (djb2 → base36) used as the cache-key prefix. */
@@ -284,7 +285,7 @@ const INSTANCE_METHOD_ERROR =
   "methods instead.";
 
 /** Function-like nodes: each opens a scope the transform tracks for closures. */
-const FN_SCOPES = new Set([
+export const FN_SCOPES = new Set([
   ...FN_TYPES,
   "ClassMethod",
   "PrivateMethod",
@@ -447,7 +448,7 @@ function newScopeScan(): ScopeScan {
  * method can close over: a loop variable, a `catch` parameter or a block `let`/`const` has a
  * value per iteration / block, so it is bound like an enclosing function's local.
  */
-const BLOCK_SCOPES = new Set([
+export const BLOCK_SCOPES: ReadonlySet<string> = new Set([
   "BlockStatement",
   "ForStatement",
   "ForInStatement",
@@ -488,7 +489,7 @@ function scopeNames(fn: Node): { decls: Set<string>; free: Set<string> } {
 }
 
 /** The enclosing-scope names `fn` reads, sorted: what its cache key binds. */
-function boundNames(fn: Node, scopes: readonly Node[]): string[] {
+export function boundNames(fn: Node, scopes: readonly Node[]): string[] {
   if (scopes.length === 0) return []; // module scope: nothing is closed over per call site
   const outer = new Set<string>();
   for (const scope of scopes) for (const name of declaredNames(scope)) outer.add(name);

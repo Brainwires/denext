@@ -58,6 +58,11 @@ import {
 } from "./sqlite-wasm.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
 import { chainSourceTransforms, compatSourceTransform } from "./compat-chain.ts";
+import {
+  findInlineServerActions,
+  inlineServerActionError,
+  transformInlineServerActions,
+} from "./inline-server-action.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 import * as esbuild from "./esbuild/mod.ts";
 import {
@@ -2624,27 +2629,36 @@ function frameworkUrlExternalPlugin(): esbuild.Plugin {
 }
 
 /**
- * esbuild plugin (SSR bundle): apply the `"use cache"` transform to app modules IN the bundle.
- * The runtime use-cache loader rewrites a source module into a `.denext/server-cache/uc_*`
- * copy and imports it natively — which, for a compat app, bypasses the react→denext bundle
- * (the copy's `next/*` and `.mdx` imports then fail under Deno's loader). Transforming at
- * bundle time keeps every module inside the one bundle, identity intact, and `use cache`
- * semantics active. Modules without the directive fall through to the normal loader.
- * Exported for testing.
+ * esbuild plugin (SSR bundle): the server-side directive transforms, applied to app modules IN
+ * the bundle — `"use cache"` (when `useCache`, Cache Components on) and inline `"use server"`
+ * functions (always: each becomes a registered server reference, hoisted to module scope when
+ * nested; see ./inline-server-action.ts). The runtime use-cache loader rewrites a source module
+ * into a `.denext/server-cache/uc_*` copy and imports it natively — which, for a compat app,
+ * bypasses the react→denext bundle (the copy's `next/*` and `.mdx` imports then fail under
+ * Deno's loader). Transforming at bundle time keeps every module inside the one bundle, identity
+ * intact. Modules with neither directive fall through to the normal loader. Exported for testing.
+ *
+ * @param options.useCache Compile `"use cache"` (default true).
  */
-export function cacheDirectivePlugin(): esbuild.Plugin {
+export function cacheDirectivePlugin(options: { useCache?: boolean } = {}): esbuild.Plugin {
+  const useCache = options.useCache ?? true;
   return {
-    name: "denext-use-cache",
+    name: "denext-server-directives",
     setup(build) {
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs)$/, namespace: "file" }, async (args) => {
         if (inNodeModules(args.path)) return undefined;
         const source = await Deno.readTextFile(args.path);
-        if (!source.includes("use cache")) return undefined;
-        const { code, changed } = await transformUseCache(source, toFileUrl(args.path).href);
-        if (!changed) return undefined;
+        const cache = useCache && source.includes("use cache");
+        if (!cache && !source.includes("use server")) return undefined;
+        const url = toFileUrl(args.path).href;
+        const cached = cache
+          ? await transformUseCache(source, url)
+          : { code: source, changed: false };
+        const inline = await transformInlineServerActions(cached.code, url);
+        if (!cached.changed && !inline.changed) return undefined;
         const ext = extname(args.path).slice(1);
         return {
-          contents: code,
+          contents: inline.code,
           loader: (ext === "mjs" ? "js" : ext) as esbuild.Loader,
           resolveDir: dirname(args.path),
         };
@@ -2728,6 +2742,7 @@ function leadingPlugins(options: BundleNextCompatModulesOptions): esbuild.Plugin
   const lists = options.domLists ? [domListsPlugin(options.platform ?? "browser")] : [];
   const transform = compatSourceTransform({
     useCache: options.platform === "deno" && options.useCache === true,
+    inlineActions: options.platform === "deno",
     platform: options.buildTarget,
     projectDir: options.absWorkingDir,
   });
@@ -2786,7 +2801,7 @@ async function sourcePlugins(
     ...(options.assets ? [viteAssetPlugin(options.assets, workerBuild)] : []),
     ...(options.cssImportMap ? [cssShimPlugin(options.cssImportMap)] : []),
     ...(fumadocs ? [fumadocsMdxPlugin(fumadocs)] : []),
-    ...(deno && options.useCache ? [cacheDirectivePlugin()] : []),
+    ...(deno ? [cacheDirectivePlugin({ useCache: options.useCache === true })] : []),
     mdxPlugin(options.mdxOptions),
     ...(deno ? [prismaGeneratedClientExternalPlugin(options.configPath)] : []),
   ];
@@ -2947,7 +2962,11 @@ export function serverStubPlugin(
             resolveDir: dirname(args.path),
           };
         }
-        if ((await readDirective(args.path)) !== "server") return null;
+        if ((await readDirective(args.path)) !== "server") {
+          // An app module holding an inline `"use server"` function fails the build here, at
+          // load (Next's error), so no output is written with its body in it.
+          return inNodeModules(args.path) ? null : await inlineActionErrors(args.path, cwdOf());
+        }
         const own = inNodeModules(args.path) ? null : await unregistered?.(args.path);
         if (own != null) {
           return { contents: own, loader: sourceLoader(args.path), resolveDir: dirname(args.path) };
@@ -2965,9 +2984,10 @@ export function serverStubPlugin(
           resolveDir: dirname(args.path),
         };
       });
+      const cwdOf = () => build.initialOptions.absWorkingDir ?? Deno.cwd();
       build.onEnd((result) => {
         if (unknown.size === 0) return;
-        const cwd = build.initialOptions.absWorkingDir ?? Deno.cwd();
+        const cwd = cwdOf();
         const leaks: ServerModuleLeak[] = [...unknown].map((module) => ({
           module,
           entries: ["a client bundle"],
@@ -2985,6 +3005,26 @@ function sourceLoader(path: string): esbuild.Loader {
   const ext = extname(path).slice(1);
   if (ext === "mjs" || ext === "cjs") return "js";
   return (ext === "mts" || ext === "cts" ? "ts" : ext) as esbuild.Loader;
+}
+
+/**
+ * The esbuild load result failing `path` when it holds an inline `"use server"` function
+ * (Next's error, naming its positions), else null (the next plugin loads it).
+ */
+async function inlineActionErrors(
+  path: string,
+  cwd: string,
+): Promise<{ errors: esbuild.PartialMessage[] } | null> {
+  let source: string;
+  try {
+    source = await Deno.readTextFile(path);
+  } catch {
+    return null; // unreadable: esbuild reports it
+  }
+  const at = await findInlineServerActions(source);
+  if (at.length === 0) return null;
+  const rel = relative(cwd, path);
+  return { errors: [{ text: inlineServerActionError(new Map([[rel, at]])) }] };
 }
 
 /**

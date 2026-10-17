@@ -892,6 +892,35 @@ function invokeSync(type: unknown, props: Props, ctx: RenderCtx): VNodeChild | P
     | Promise<VNodeChild>;
 }
 
+/** The document's own tags: a root layout renders them; the page render emits their content. */
+const DOCUMENT_TAGS = new Set(["html", "head", "body"]);
+
+/** Whether `tag` is `<html>`, `<head>` or `<body>` (see {@link recordDocumentAttrs}). */
+export function isDocumentTag(tag: string): boolean {
+  return DOCUMENT_TAGS.has(tag);
+}
+
+/**
+ * Hand a root layout's `<html>`/`<body>` attributes to the document assembler (through the
+ * server's request-scoped recorder), which puts them on the real document tags. In the page
+ * render (a head collector is active) the layout's own `<html>`/`<head>`/`<body>` tags are not
+ * emitted — only their content, inside the page container — so these attributes reach the
+ * document only through here. Plain string/number values only: a React-only prop
+ * (`suppressHydrationWarning`) or a handler is not an attribute.
+ */
+export function recordDocumentAttrs(tag: string, props: Record<string, unknown>): void {
+  if (tag !== "html" && tag !== "body") return;
+  const sink = (globalThis as {
+    __denextDocumentAttrsSink?: (part: "html" | "body", attrs: Record<string, unknown>) => void;
+  }).__denextDocumentAttrsSink;
+  if (!sink) return;
+  const attrs: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(props)) {
+    if (typeof value === "string" || typeof value === "number") attrs[name] = value;
+  }
+  sink(tag, attrs);
+}
+
 /** Intrinsic element. */
 function renderHostInto(
   tag: string,
@@ -907,6 +936,12 @@ function renderHostInto(
   // React 19 document metadata: hoist <title>/<meta>/<link> into the head
   // collector (when one is active) instead of emitting them inline.
   if (ctx.head && HOISTED_TAGS.has(tag)) return hoistInto(ctx.head, tag, attrs, props, ctx, key);
+  // The page render: a root layout's `<html>`/`<head>`/`<body>` are the document's own tags,
+  // which the assembler writes (with these attributes); only their content goes here.
+  if (ctx.head && isDocumentTag(tag)) {
+    recordDocumentAttrs(tag, props);
+    return renderChildrenInto(hostChildren(tag, props), ctx);
+  }
   if (VOID_ELEMENTS.has(tag)) {
     ctx.out.push(`<${tag}${attrs}>`);
     return;

@@ -1569,7 +1569,8 @@ export function revalidateTag(tag: string, profile?: string | CacheLifeProfile):
 
 /**
  * Invalidate the cached render(s) of `path`. As with {@link revalidateTag}, `await` the
- * returned promise when using an async store.
+ * returned promise when using an async store. Inside a Server Action the client that called it
+ * also re-renders its current route.
  *
  * @param path The pathname to purge.
  * @param type Next's optional hint (`"layout"` | `"page"`) for dynamic paths. denext
@@ -1577,6 +1578,10 @@ export function revalidateTag(tag: string, profile?: string | CacheLifeProfile):
  */
 export function revalidatePath(path: string, _type?: "layout" | "page"): Promise<void> {
   assertNotRevalidatingInCache(`revalidatePath(${JSON.stringify(path)})`);
+  // As in Next.js, a Server Action that revalidates a path updates the UI at once: its response
+  // tells the client router to re-render the current route (only an action response reads it).
+  const ctx = currentContext();
+  if (ctx) ctx.refreshRequested = true;
   return invalidate("path", path);
 }
 

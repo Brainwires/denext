@@ -30,6 +30,16 @@ Deno.test('compatSourceTransform: "use cache" after the caller, the fold inside 
   assertEquals(await fold(src, "/elsewhere/a.ts"), null, "outside the project");
 });
 
+Deno.test('compatSourceTransform: an inline "use server" function is hoisted (server bundle)', async () => {
+  const hoist = compatSourceTransform({ inlineActions: true })!;
+  const src =
+    `export default function P() {\n  async function save() { "use server"; return 1; }\n` +
+    `  return save;\n}\n`;
+  const out = await hoist(src, "/p/app/page.tsx");
+  assertStringIncludes(out ?? "unchanged", "const save = _dnxInlineAction0;");
+  assertEquals(await hoist(`export const a = 1;\n`, "/p/app/a.ts"), null, "no directive");
+});
+
 Deno.test("chainSourceTransforms: what a caller plugin answers goes through denext's transforms", async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_chain_" }));
   try {
