@@ -13,7 +13,8 @@
     ]
   },
   "unstable": [
-    "sloppy-imports"
+    "sloppy-imports",
+    "no-legacy-abort"
   ],
   "compilerOptions": {
     "jsx": "react-jsx",
