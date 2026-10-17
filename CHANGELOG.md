@@ -272,6 +272,8 @@ and this project adheres to
   `denext/desktop` as they are; an existing `scripts/package-macos.ts` gets it from
   `denext desktop package --regenerate-scripts` (`desktopRuntimeDenoFlags` from `denext/desktop`
   adds it to a script of your own). A stock-runtime build passes nothing new.
+  `denext desktop package` now warns about an existing `scripts/package-macos.ts` that does not
+  call `desktopRuntimeDenoFlags`, and says to run `--regenerate-scripts`.
 - Quitting a macOS CEF app takes about 0.65 s instead of about 5.2 s: the host no longer waits out
   a 5-second bound for Chromium's code-sign clone cleanup helper (runtime 2.9.7-denext.21).
 - A Live socket frame whose `type` names an `Object.prototype` key (`"__proto__"`, `"constructor"`, …) is ignored

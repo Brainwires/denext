@@ -464,12 +464,48 @@ Deno.test("desktop package: a pre-3.1 script is warned about, and --format is no
 
 Deno.test("packageScriptAge reads the current templates as current", () => {
   for (const name of ["package-macos.ts", "package-linux.ts", "package-windows.ts"]) {
-    assertEquals(packageScriptAge(templateFor(name)), { runtime: true, formats: true }, name);
+    assertEquals(
+      packageScriptAge(templateFor(name)),
+      { runtime: true, formats: true, runtimeFlags: true },
+      name,
+    );
   }
   assertEquals(
-    packageScriptWarnings("package-linux.ts", { runtime: true, formats: true }, "deb"),
+    packageScriptWarnings(
+      "package-linux.ts",
+      { runtime: true, formats: true, runtimeFlags: true },
+      "deb",
+    ),
     [],
   );
+});
+
+Deno.test("packageScriptAge flags a macOS script that predates desktopRuntimeDenoFlags", () => {
+  // The macOS template as it was before the 2.9.7-denext.21 pin: it resolves the runtime env and
+  // runs `deno desktop` itself, without the pinned runtime's flags.
+  const current = templateFor("package-macos.ts");
+  const stale = current
+    .replace("  desktopRuntimeDenoFlags,\n", "")
+    .replace("    ...desktopRuntimeDenoFlags(env, denoFlags),\n", "");
+  assert(stale !== current && !stale.includes("desktopRuntimeDenoFlags"), "template shape moved");
+  const age = packageScriptAge(stale);
+  assertEquals(age, { runtime: true, formats: true, runtimeFlags: false });
+  const lines = packageScriptWarnings("package-macos.ts", age, undefined);
+  assertEquals(lines.length, 1);
+  assertStringIncludes(
+    lines[0],
+    "scripts/package-macos.ts does not pass the pinned runtime's flags",
+  );
+  assertStringIncludes(lines[0], "--unstable-no-legacy-abort");
+  assertStringIncludes(lines[0], "denext desktop package --regenerate-scripts");
+  // A pre-3.1 script gets the older warning only (regenerating fixes both).
+  const legacy = packageScriptWarnings(
+    "package-macos.ts",
+    { runtime: false, formats: false, runtimeFlags: false },
+    undefined,
+  );
+  assertEquals(legacy.length, 1);
+  assertStringIncludes(legacy[0], "predates denext 3.1");
 });
 
 Deno.test("desktop package --target-os macos is refused off macOS", async () => {

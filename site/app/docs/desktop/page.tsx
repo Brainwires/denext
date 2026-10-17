@@ -1637,7 +1637,11 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         satisfy them. <code>denext desktop package --regenerate-scripts</code> rewrites{" "}
         <code>scripts/package-*.ts</code> from the current template, keeping a <code>.bak</code>
         {" "}
-        of any file it changes.
+        of any file it changes. <code>denext desktop package</code>{" "}
+        warns when a script is stale: one from before denext 3.1 builds on the stock runtime, and a
+        {" "}
+        <code>scripts/package-macos.ts</code> that does not call{" "}
+        <code>desktopRuntimeDenoFlags</code> builds without <code>--unstable-no-legacy-abort</code>.
       </Callout>
       <Callout kind="note">
         <strong>What is verified.</strong>{" "}

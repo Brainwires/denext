@@ -528,6 +528,11 @@ export interface PackageScriptAge {
   readonly runtime: boolean;
   /** It takes `--format` (parses its arguments with `parseDesktopPackageArgs`). */
   readonly formats: boolean;
+  /**
+   * It passes the pinned runtime's flags (`--unstable-no-legacy-abort`): it calls
+   * `desktopRuntimeDenoFlags` itself, or builds through `buildDesktopBundle`, which does.
+   */
+  readonly runtimeFlags: boolean;
 }
 
 /**
@@ -540,12 +545,15 @@ export function packageScriptAge(text: string): PackageScriptAge {
   return {
     runtime: /\b(desktopRuntimeEnv|buildDesktopBundle)\b/.test(text),
     formats: /\bparseDesktopPackageArgs\b/.test(text),
+    runtimeFlags: /\b(desktopRuntimeDenoFlags|buildDesktopBundle)\b/.test(text),
   };
 }
 
 /**
- * The warnings for a packaging script that predates denext 3.1: it builds on the stock runtime,
- * and a `--format` is not passed to a script that cannot read it.
+ * The warnings for a stale packaging script: one predating denext 3.1 builds on the stock runtime,
+ * one predating the 2.9.7-denext.21 pin (a macOS script calling `deno desktop` itself) builds without the pinned
+ * runtime's `--unstable-no-legacy-abort`, and a `--format` is not passed to a script that cannot
+ * read it.
  *
  * @param name The script's file name (`package-linux.ts`).
  * @param age What it supports.
@@ -562,6 +570,14 @@ export function packageScriptWarnings(
     out.push(
       `  ⚠ scripts/${name} predates denext 3.1: it builds with the stock Deno Desktop runtime ` +
         "and none of the default installers.\n" +
+        "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
+        "(the old file is kept as a .bak).",
+    );
+  } else if (!age.runtimeFlags) {
+    out.push(
+      `  ⚠ scripts/${name} does not pass the pinned runtime's flags (desktopRuntimeDenoFlags): ` +
+        "the app is built without --unstable-no-legacy-abort, so it aborts request.signal after " +
+        "each response and prints Deno.serve's legacy-abort notice.\n" +
         "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
         "(the old file is kept as a .bak).",
     );
